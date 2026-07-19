@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
-	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -52,10 +51,6 @@ func NewAssetFileHandler(pool *pgxpool.Pool, st *storage.Service, logger *slog.L
 }
 
 func (h *AssetFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if auth.IdentityFromContext(r.Context()) == nil {
-		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
-		return
-	}
 	assetID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, `{"error":"invalid asset id"}`, http.StatusBadRequest)

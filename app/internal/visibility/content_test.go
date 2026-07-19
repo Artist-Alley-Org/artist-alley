@@ -198,11 +198,24 @@ func TestCanReadContent_FailsClosed(t *testing.T) {
 		}
 	})
 
-	t.Run("anonymous caller denies even at public", func(t *testing.T) {
+	// #415 changed this contract: the binary plane is no longer
+	// authenticated-only. An anonymous caller reads PUBLIC bytes and
+	// nothing else — that split is the whole point of public mode.
+	t.Run("anonymous reads public bytes", func(t *testing.T) {
 		pub := seedContentAsset(t, pool, "public", nil, false)
-		ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), notAdmin, pub)
-		if err != nil || ok {
-			t.Errorf("anonymous admitted (ok=%v err=%v); binary plane is authenticated-only", ok, err)
+		ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), nil, pub)
+		if err != nil || !ok {
+			t.Errorf("anonymous denied a public asset (ok=%v err=%v); public mode cannot serve images", ok, err)
+		}
+	})
+
+	t.Run("anonymous is denied every non-public tier", func(t *testing.T) {
+		for _, tier := range []string{"team", "restricted", "embargo"} {
+			id := seedContentAsset(t, pool, tier, nil, false)
+			ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), nil, id)
+			if err != nil || ok {
+				t.Errorf("anonymous admitted to a %s asset (ok=%v err=%v)", tier, ok, err)
+			}
 		}
 	})
 
