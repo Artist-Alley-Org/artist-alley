@@ -70,21 +70,40 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 	switch p.entity {
 	case EntityAsset:
 		if p.caller.IsAnonymous {
-			return fmt.Sprintf(
-				" AND (%sdeleted_at IS NULL AND %sstatus = 'active'"+
-					" AND %ssensitivity = 'public' AND %sprocessing_status = 'ready')",
-				a, a, a, a,
-			), nil
+			conds := []string{}
+			if !p.includeSoftDeleted {
+				conds = append(conds, a+"deleted_at IS NULL")
+			}
+			// These three always apply. IncludeSoftDeleted must never
+			// reach them — that narrowness is the point (see the option).
+			conds = append(conds,
+				a+"status = 'active'",
+				a+"sensitivity = 'public'",
+				a+"processing_status = 'ready'",
+			)
+			return " AND (" + strings.Join(conds, " AND ") + ")", nil
 		}
 		// Authenticated: unchanged. Do not tighten here without
 		// deciding the sensitivity rule — every splice site moves.
+		if p.includeSoftDeleted {
+			// Soft-delete is the whole authenticated rule today, so
+			// waiving it leaves nothing to assert. Emitting TRUE rather
+			// than "" keeps the "fragment always starts with AND"
+			// contract every splice site relies on.
+			return " AND (TRUE)", nil
+		}
 		return fmt.Sprintf(" AND (%sdeleted_at IS NULL)", a), nil
 	case EntityCollection:
 		if p.caller.IsAnonymous {
+			if p.includeSoftDeleted {
+				return fmt.Sprintf(" AND (%svisibility = 'public')", a), nil
+			}
 			return fmt.Sprintf(
 				" AND (%sdeleted_at IS NULL AND %svisibility = 'public')", a, a,
 			), nil
 		}
+		// Authenticated collections assert no soft-delete conjunct, so
+		// IncludeSoftDeleted has nothing to waive here.
 		idx := argOffset + 1
 		frag := fmt.Sprintf(
 			" AND (%sowner_user_ref = $%d OR EXISTS ("+
@@ -102,11 +121,19 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 			// author, and binding AnonymousCaller (0) against
 			// author_user_ref would be a coincidence waiting to happen
 			// if a real ref were ever 0.
+			if p.includeSoftDeleted {
+				return fmt.Sprintf(" AND (%svisibility = 'public')", a), nil
+			}
 			return fmt.Sprintf(
 				" AND (%sdeleted_at IS NULL AND %svisibility = 'public')", a, a,
 			), nil
 		}
 		idx := argOffset + 1
+		if p.includeSoftDeleted {
+			return fmt.Sprintf(
+				" AND ((%svisibility = 'public' OR %sauthor_user_ref = $%d))", a, a, idx,
+			), []any{p.caller.UserRef}
+		}
 		frag := fmt.Sprintf(
 			" AND (%sdeleted_at IS NULL AND (%svisibility = 'public' OR %sauthor_user_ref = $%d))",
 			a, a, a, idx,

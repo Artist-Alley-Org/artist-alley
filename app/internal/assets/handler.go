@@ -51,6 +51,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // softDeleteReasonMaxLen bounds the operator-supplied reason string
@@ -1144,7 +1145,9 @@ func (h *Handler) ListAssets(
 		}
 		rowCount = len(rows)
 	} else {
-		rows, err := q.ListAssetsPage(ctx, ListAssetsPageParams{
+		// Hand-built so the visibility predicate can be spliced in
+		// (#429) — sqlc's static SQL cannot take a runtime fragment.
+		rows, err := ListAssetsPageGated(ctx, h.Pool, visibility.NewCaller(&callerID.UserRef), ListAssetsPageGatedParams{
 			IncludeDeleted:  includeDeletedArg,
 			OwnerUserRef:    ownerRef,
 			AssetType:       resType,
