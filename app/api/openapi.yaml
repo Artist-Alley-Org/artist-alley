@@ -3435,9 +3435,10 @@ paths:
         cursor pagination plus simple filters; richer search lands
         with ADR 0010.
       tags: [assets]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       parameters:
         - name: owner_ref
           in: query
@@ -3510,9 +3511,10 @@ paths:
     get:
       operationId: getAsset
       tags: [assets]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       responses:
         "200":
           description: The asset
@@ -5756,9 +5758,10 @@ paths:
         match the assets list contract — pass back `next_cursor`
         opaquely as `cursor` to retrieve the following page.
       tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       parameters:
         - name: owner_ref
           in: query
@@ -5879,9 +5882,10 @@ paths:
       operationId: getCollection
       summary: Fetch a single collection by id
       tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       responses:
         "200":
           description: The collection
