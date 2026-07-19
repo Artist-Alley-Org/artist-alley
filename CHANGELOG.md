@@ -5,6 +5,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [Unreleased]
+
+Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
+
+### Operator-facing changes
+
+- **A `public` visibility tier now exists** for collections and posts, and
+  anonymous callers have a defined, enforced view of content: published,
+  public, ready assets and public collections/posts only. Content
+  visibility is decided in exactly one place — the visibility predicate —
+  which every read path splices in (ADR 0063). **No surface is anonymous
+  yet**; this is the model and its enforcement, not an open door.
+  Authenticated behaviour is deliberately unchanged, including the
+  known gap where an authenticated caller sees assets of any sensitivity
+  (tracked separately; the rule needs a product decision).
+
+### Infrastructure / housekeeping
+
+- `app/schema.sql` refreshed from a cleanly migrated database. The
+  committed copy had drifted in **column order** — Postgres physical
+  order is creation order, so columns added by later migrations land at
+  the tail, and the stale file described an order the migrations never
+  produce. That silently changed which Go types sqlc generated. Query
+  column lists were realigned with the real schema; pg_dump's
+  `\restrict`/`\unrestrict` markers are stripped so the file is
+  byte-reproducible.
+- Version files corrected to 0.4.0 (they had been left at 0.3.1).
+
 ## [v0.4.0] — 2026-07-18
 
 Operator visibility: the async pipeline and the storage layer are now
