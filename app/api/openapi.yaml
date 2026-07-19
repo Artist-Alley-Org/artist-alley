@@ -6012,9 +6012,9 @@ paths:
         admin-arranged sequence. Joined onto assets for thumb/title
         without an N+1.
       tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#438). Documentary only — the handler
+      # guard enforces access, not this block.
+      security: []
       parameters:
         - name: limit
           in: query

@@ -556,3 +556,136 @@ func TestGetCollection_NonOwnerDenied(t *testing.T) {
 			strRR.Code)
 	}
 }
+
+// anonRouter builds a router with NO identity in context, so handlers
+// see an anonymous caller (#438).
+func anonRouter(t *testing.T, pool *pgxpool.Pool) chi.Router {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := collections.NewHandler(pool, logger, nil)
+	h.SetActivitiesWriter(activities.NewWriter(pool, logger, nil),
+		func(ctx context.Context) string { return "https://test.example" })
+	router := chi.NewRouter()
+	openapi.HandlerFromMux(openapi.NewStrictHandler(
+		collShim{PanicShim: &strictservershim.PanicShim{}, h: h}, nil), router)
+	return router
+}
+
+// setAssetTier forces an asset's publication/sensitivity so the row
+// predicate has something to discriminate on.
+func setAssetTier(t *testing.T, pool *pgxpool.Pool, assetID, status, sensitivity string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET status=$2, sensitivity=$3, processing_status='ready' WHERE id=$1`,
+		assetID, status, sensitivity); err != nil {
+		t.Fatalf("set asset tier: %v", err)
+	}
+}
+
+// TestListCollectionResources_ParentGate covers the PARENT half of #438:
+// before this, any authenticated caller could enumerate any collection's
+// contents. Removing the CanSee call from ListCollectionResources fails
+// this test and only this one.
+func TestListCollectionResources_ParentGate(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	const ownerRef, strangerRef int64 = 720081, 720082
+	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
+	strangerRouter, _ := makeRouter(t, pool, strangerRef /*admin=*/, false)
+
+	id := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_private_contents", "visibility": "private",
+	})
+
+	// Owner can list — otherwise a gate denying everyone would pass below.
+	ownRR := httptest.NewRecorder()
+	ownerRouter.ServeHTTP(ownRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
+	if ownRR.Code != http.StatusOK {
+		t.Fatalf("owner list: status=%d want 200 body=%s", ownRR.Code, ownRR.Body.String())
+	}
+
+	// An authenticated stranger with no ACL must not.
+	strRR := httptest.NewRecorder()
+	strangerRouter.ServeHTTP(strRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
+	if strRR.Code != http.StatusNotFound {
+		t.Errorf("stranger list: status=%d want 404 — an authenticated caller must not "+
+			"enumerate a private collection's contents (visibility.CanSee on the parent)", strRR.Code)
+	}
+
+	// Anonymous likewise.
+	anonRR := httptest.NewRecorder()
+	anonRouter(t, pool).ServeHTTP(anonRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
+	if anonRR.Code != http.StatusNotFound {
+		t.Errorf("anonymous list on a private collection: status=%d want 404", anonRR.Code)
+	}
+}
+
+// TestListCollectionResources_RowFiltering covers the ROW half, which the
+// parent gate cannot: a PUBLIC collection may contain non-public assets.
+// Removing the predicate splice from the query fails this test and not
+// the parent-gate one — that separation is the point.
+func TestListCollectionResources_RowFiltering(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	const ownerRef int64 = 720091
+	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
+
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_public_mixed", "visibility": "public",
+	})
+
+	pubAsset := mustInsertAsset(t, pool, ownerRef, "ct_public_asset")
+	draftAsset := mustInsertAsset(t, pool, ownerRef, "ct_draft_asset")
+	setAssetTier(t, pool, pubAsset, "active", "public")
+	setAssetTier(t, pool, draftAsset, "draft", "public")
+
+	for _, a := range []string{pubAsset, draftAsset} {
+		rr := postJSON(t, ownerRouter, "/collections/"+colID+"/resources", map[string]any{"asset_id": a})
+		if rr.Code >= 300 {
+			t.Fatalf("pin %s: status=%d body=%s", a, rr.Code, rr.Body.String())
+		}
+	}
+
+	count := func(t *testing.T, r chi.Router) int {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/collections/"+colID+"/resources", nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("list: status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		var page struct {
+			Items []struct {
+				AssetID string `json:"asset_id"`
+			} `json:"items"`
+		}
+		mustDecode(t, rr.Body.Bytes(), &page)
+		return len(page.Items)
+	}
+
+	// The owner sees both — proves the pins landed and the query works.
+	if got := count(t, ownerRouter); got != 2 {
+		t.Fatalf("owner sees %d rows, want 2 (both pinned assets)", got)
+	}
+
+	// An anonymous caller sees ONLY the published-public one. Without the
+	// predicate splice this returns 2 and leaks the draft's title,
+	// status and file_hash.
+	if got := count(t, anonRouter(t, pool)); got != 1 {
+		t.Errorf("anonymous sees %d rows, want 1 — a public collection's DRAFT contents "+
+			"must not be enumerable (asset predicate spliced into the resources query)", got)
+	}
+}
