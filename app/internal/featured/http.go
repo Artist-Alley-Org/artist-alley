@@ -27,6 +27,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // HTTPHandler adapts featured.Handler to the openapi strict-server
@@ -216,4 +217,66 @@ func insertRowToAPI(r FeaturedItem) openapi.FeaturedItem {
 		Position:    int(r.Position),
 		CreatedAt:   r.CreatedAt.Time,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /featured — the PUBLIC rail (#417, ADR 0065)
+// ---------------------------------------------------------------------------
+
+// GetPublicFeaturedRail serves the anonymous-readable rail.
+//
+// No capability check and no identity requirement, deliberately: this
+// is the public surface, and what a caller may see is decided by the
+// visibility predicate inside ListPublicRail rather than by a gate
+// here. Adding a second check at this layer would be the fourth
+// expression of a rule that already has one home (ADR 0063) — the
+// defect class that cost #210, #212, #432 and #449.
+//
+// The install-wide public-mode toggle still applies: an anonymous
+// request to this route is rejected by auth/middleware.go before it
+// arrives when the operator has not opened the install (#445).
+func (h *HTTPHandler) GetPublicFeaturedRail(
+	ctx context.Context,
+	req openapi.GetPublicFeaturedRailRequestObject,
+) (openapi.GetPublicFeaturedRailResponseObject, error) {
+	limit := int32(24)
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+
+	// Anonymous callers resolve to the anonymous predicate; there is no
+	// nil-identity special case beyond building the caller.
+	caller := visibility.NewCaller(nil)
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		caller = visibility.NewCaller(&id.UserRef)
+	}
+
+	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, limit)
+	if err != nil {
+		return nil, fmt.Errorf("featured: public rail: %w", err)
+	}
+	items := make([]openapi.FeaturedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, railRowToAPI(r))
+	}
+	return openapi.GetPublicFeaturedRail200JSONResponse{Items: items}, nil
+}
+
+// railRowToAPI mirrors listRowToAPI. The thumbnail hints are already
+// suppressed in SQL for non-public assets (ADR 0020), so this copies
+// what it is given rather than re-deciding.
+func railRowToAPI(r RailRow) openapi.FeaturedItem {
+	out := openapi.FeaturedItem{
+		Id:          uuid.UUID(r.ID.Bytes),
+		SubjectKind: openapi.FeaturedItemSubjectKind(r.SubjectKind),
+		SubjectId:   uuid.UUID(r.SubjectID.Bytes),
+		Position:    int(r.Position),
+		Title:       r.Title,
+	}
+	if r.SubjectKind == "asset" {
+		out.AssetFileHash = r.AssetFileHash
+		hasImg := r.AssetHasImage
+		out.AssetHasImage = &hasImg
+	}
+	return out
 }

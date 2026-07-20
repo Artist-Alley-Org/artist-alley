@@ -7,6 +7,7 @@
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
+  import FeaturedRail from '$components/FeaturedRail.svelte';
   import PostCard from '$components/PostCard.svelte';
   import PostHost from '$components/PostHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
@@ -233,6 +234,13 @@
       {t('browse.results_for', { query })}
     </p>
   {/if}
+
+  <!-- #417 — the curated rail sits ABOVE both branches below. For a
+       guest it is the entire landing page (posts are members-only);
+       for a member it is a curated strip over their feed. Rendering it
+       outside the guest/member split is what makes it the same surface
+       for both, which is the point of curating it. -->
+  <FeaturedRail />
 
   {#if guestFeed}
     <!-- Calm empty state, not an alert. See the !auth.user branch in

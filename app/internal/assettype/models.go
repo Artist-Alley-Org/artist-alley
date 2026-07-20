@@ -266,7 +266,6 @@ type Collection struct {
 	Visibility     string             `json:"visibility"`
 	Membership     string             `json:"membership"`
 	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
-	Featured       bool               `json:"featured"`
 	Purpose        *string            `json:"purpose"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
@@ -409,6 +408,8 @@ type FeaturedItem struct {
 	Position         int32              `json:"position"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	CreatedByUserRef *int64             `json:"created_by_user_ref"`
+	Scope            string             `json:"scope"`
+	TeamID           pgtype.UUID        `json:"team_id"`
 }
 
 type FederationDirectory struct {

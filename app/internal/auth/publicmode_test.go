@@ -29,6 +29,7 @@ func TestIsPublicSurface(t *testing.T) {
 		{"/api/v1/collections", true, "collection list"},
 		{"/api/v1/collections/1234/resources", true, "collection contents"},
 		{"/api/v1/search", true, "search"},
+		{"/api/v1/featured", true, "public featured rail"},
 		{"/api/v1/search/facets", true, "facets"},
 		{"/api/v1/search/suggest", true, "suggest"},
 		{"/api/v1/search/by-image", true, "reverse image search"},

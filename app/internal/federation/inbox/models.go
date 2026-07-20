@@ -266,7 +266,6 @@ type Collection struct {
 	Visibility     string
 	Membership     string
 	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
 	Purpose        *string
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
@@ -409,6 +408,8 @@ type FeaturedItem struct {
 	Position         int32
 	CreatedAt        pgtype.Timestamptz
 	CreatedByUserRef *int64
+	Scope            string
+	TeamID           pgtype.UUID
 }
 
 type FederationDirectory struct {

@@ -13,7 +13,6 @@
     name: string;
     description: string;
     visibility: string;
-    featured: boolean;
     owner_user_ref: number;
     created_at: string;
     updated_at: string;
@@ -31,7 +30,6 @@
   let name = $state('');
   let description = $state('');
   let visibility = $state<'private' | 'org-only' | 'followers' | 'explicit-share'>('private');
-  let featured = $state(false);
   let submitting = $state(false);
   let error = $state<string | null>(null);
   // Phase 1.16 edit-safety: capture updated_at on open so the
@@ -46,7 +44,6 @@
       name = collection.name;
       description = collection.description;
       visibility = collection.visibility as 'private' | 'org-only' | 'followers' | 'explicit-share';
-      featured = collection.featured;
       baselineUpdatedAt = collection.updated_at;
       error = null;
       conflict = null;
@@ -64,7 +61,6 @@
           name: name.trim(),
           description,
           visibility,
-          featured,
           if_unchanged_since: baselineUpdatedAt || undefined,
         },
       });
@@ -145,11 +141,6 @@
         {/each}
       </div>
     </fieldset>
-    <label class="flex items-center gap-2 text-sm">
-      <input type="checkbox" bind:checked={featured} class="h-4 w-4 rounded border-border" />
-      <span>{t('collections.featured_flag')}</span>
-    </label>
-
     <CollectionFieldsSection collectionId={collection.id} />
   </div>
 
