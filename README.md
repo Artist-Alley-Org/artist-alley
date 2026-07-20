@@ -1,14 +1,13 @@
 # artist-alley
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/mscrnt/artist-alley)](https://goreportcard.com/report/github.com/mscrnt/artist-alley)
-[![Go version](https://img.shields.io/github/go-mod/go-version/mscrnt/artist-alley?filename=app/go.mod)](app/go.mod)
+[![Go version](https://img.shields.io/github/go-mod/go-version/Artist-Alley-Org/artist-alley?filename=app/go.mod)](app/go.mod)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/mscrnt/artist-alley?include_prereleases&sort=semver)](https://github.com/mscrnt/artist-alley/releases)
+[![Latest release](https://img.shields.io/github/v/release/Artist-Alley-Org/artist-alley?include_prereleases&sort=semver)](https://github.com/Artist-Alley-Org/artist-alley/releases)
 [![Docs](https://img.shields.io/badge/docs-artist--alley.org-7c3aed)](https://artist-alley.org)
 
 A self-hosted **art review and archival tool for game studios**. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
-> **Status:** pre-MVP, active development. The architecture is settled; the feature set is still landing. Not production-ready.
+> **Status:** pre-1.0, active development. Releases are tagged and shipping (latest **v0.4.0**); the feature set is still landing. Not production-ready.
 
 ---
 
@@ -85,7 +84,7 @@ ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decis
 Requirements: Docker with Compose v2.
 
 ```bash
-git clone git@github.com:mscrnt/artist-alley.git
+git clone git@github.com:Artist-Alley-Org/artist-alley.git
 cd artist-alley
 ./scripts/bootstrap.sh
 ```
@@ -129,17 +128,18 @@ artist-alley/
 
 ## Roadmap
 
-The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`docs/roadmap.md`](docs/roadmap.md). Highlights:
+The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`docs/roadmap.md`](docs/roadmap.md). Every open issue is milestoned — see [**Milestones**](https://github.com/Artist-Alley-Org/artist-alley/milestones) for the release train.
 
-- **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth (full admin surface — paginated user list, lifecycle states, multi-device session management, password change/reset/history, teams admin UI, per-user capability grants/revokes, per-asset-type ACLs, audit-log viewer), upload pipeline, posts + collections, browse feed, post-detail modal, admin shell, theming, i18n, universal asset viewer with format coverage across image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets, whiteboard / brush surface, **license verifier + admin upload UI + capability-level enterprise-feature gating + identity-provider registry** (Phase 1.17.O/P — see [ADR 0017 § Status](docs/adr/0017-monetization-and-licensing.md)).
-- **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging, the load-bearing review tool arc (Phase 1.18.B) — video player → polish → captions → image sequences → presentation rooms → annotation system → timeline assembly → A/B compare → DCC integrations → native 3D viewer. Real LDAP / SAML impls plug into the existing provider registry slots.
-- **On the map:** advanced search, real LDAP/SAML/OAuth impls (foundation in place), tenant CRUD + per-tenant routing, storage tooling, reports, moderation, brand workspace, AI creative editing, federation, plugin ecosystem, observability, capability add-ons, premium add-on layer (commerce / ads / DCC plugins / cloud-bridge AI), external imports framework, caption / subtitle artifacts, native viewers for proprietary DCC formats.
+- **Shipped (v0.1.0 – v0.4.0):** single-binary deploy, Postgres + pluggable storage, identity/auth with a full admin surface, upload pipeline, posts + collections, the universal asset viewer (image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets), federation over [ArchivePub](docs/protocol/archivepub.md), media derivatives, responsive UI, and the operator surfaces — jobs admin, storage admin, and storage integrity sweeps.
+- **In flight (v0.5.0 — public mode):** anonymous browsing. Content visibility now has a single enforcement point ([ADR 0063](docs/adr/0063-content-visibility-predicate.md)), asset sensitivity gates bytes rather than rows ([ADR 0064](docs/adr/0064-sensitivity-gates-content-not-rows.md)), and public browsing is an operator setting that is **off by default**. Remaining: the public featured rail and audit-log PII gating.
+- **Next (v0.6.0 – v0.10.0):** reports and moderation, the audit log, observability, runtime licensing, privacy and consent, share links, bulk operations, the capability add-on layer, external imports, the review-tool arc, commerce, and the plugin ecosystem — sequenced so no milestone depends on a later one.
+- **v1.0.0:** feature-complete. Everything currently on the roadmap and in the issue tracker targets GA; new work defaults there unless explicitly labelled `post-v1.0.0`.
 
 ---
 
 ## Contributing
 
-Early days — please open an [issue](https://github.com/mscrnt/artist-alley/issues) or [Discussion](https://github.com/mscrnt/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer docs](https://artist-alley.org/developers/) — particularly [coding standards](https://artist-alley.org/developers/coding-standards/) and [security](https://artist-alley.org/developers/security/) — before opening a PR.
+Early days — please open an [issue](https://github.com/Artist-Alley-Org/artist-alley/issues) or [Discussion](https://github.com/Artist-Alley-Org/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer docs](https://artist-alley.org/developers/) — particularly [coding standards](https://artist-alley.org/developers/coding-standards/) and [security](https://artist-alley.org/developers/security/) — before opening a PR.
 
 Architectural changes need an ADR per the convention in [ADR 0035](docs/adr/0035-adr-conventions/). Reverse-engineering or interoperability work needs to follow the clean-room methodology in [ADR 0040](docs/adr/0040-clean-room-reverse-engineering-methodology/).
 
