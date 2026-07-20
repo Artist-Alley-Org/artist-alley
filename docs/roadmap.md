@@ -52,6 +52,7 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
 
 | Version | Date | Headline |
 |---|---|---|
+| **v0.5.0** | 2026-07-20 | Public mode — anonymous browsing behind an operator toggle (off by default); single visibility enforcement point (ADR 0063); sensitivity gates content not rows (ADR 0064); featured rail on the placement model (ADR 0065); audit-IP PII gating |
 | **v0.4.0** | 2026-07-18 | Operator visibility — jobs admin (queue / workers / failed / concurrency), storage usage + variant inventory, and integrity sweeps (orphan scan + checksum verify) as batched job kinds |
 | **v0.3.1** | 2026-07-17 | Admin UI for read-only capability holders; repo-wide `gofmt` gate; `make release` |
 | **v0.3.0** | 2026-07-17 | Media derivatives on seed/upload; read-only admin via `*.read` caps; responsive + WCAG-2.2-AA surface (390px → 4k) |
