@@ -398,21 +398,22 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 
 // --- phase: featured --------------------------------------------------
 
-// applyFeatured marks each collection flagged `"featured": true` in
-// dataset.collections.json (#380) so the demo's featured surfaces aren't
-// empty on a fresh reset. There are TWO of them, deliberately separate
-// (see 00002_featured_items.sql), and one flag drives both:
+// applyFeatured places each collection flagged `"featured": true` in
+// dataset.collections.json (#380) onto the public rail, so the demo's
+// featured surfaces aren't empty on a fresh reset.
 //
-//	featured_items row      — the admin-curated rail /admin/content/
-//	                          featured reads. #356 made that page
-//	                          readable by demo-viewer, so it must not
-//	                          open to nothing.
-//	collections.featured    — the boolean the PUBLIC /collections
-//	                          "featured" tab filters on. #341 built no
-//	                          public featured_items renderer, so this
-//	                          column is the only public featured
-//	                          surface — without it the front-of-house
-//	                          tab stays empty.
+// ONE writer, not two. This phase used to write both a featured_items
+// row AND collections.featured, because there were two featured
+// mechanisms and the boolean was the only one with a public renderer.
+// ADR 0065 collapsed them: featuring is a placement, the boolean is
+// gone, and #417 gave featured_items the public rail the boolean used
+// to stand in for. Since #416 that rail is the entire landing page for
+// a logged-out visitor, which is why these placements are scope
+// 'public' — an empty front page on a fresh demo is exactly the
+// failure this phase exists to prevent.
+//
+// The catalogue's `"featured": true` stays as vocabulary; it now means
+// "place this publicly" rather than "set a column".
 //
 // Runs after applyCollections, so every flagged collection already has
 // a row + a stable id in r.collections. subject_kind is always
@@ -420,9 +421,9 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 // assets live in the archive manifest, not this versioned catalogue, so
 // featuring them would belong to a different phase.
 //
-// Idempotent: the UPDATE is naturally so, the INSERT is ON CONFLICT DO
-// NOTHING, and the owner is the bootstrap admin — the same
-// created_by_user_ref applyCollections uses for the collections.
+// Idempotent: ON CONFLICT DO NOTHING on the placement constraint, and
+// the owner is the bootstrap admin — the same created_by_user_ref
+// applyCollections uses for the collections.
 func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
 	featured := 0
 	for _, c := range cat.Collections {
@@ -436,11 +437,6 @@ func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
 			r.log.Warn("seed.featured.unknown_collection", "name", c.Name)
 			continue
 		}
-		// Public browse-tab flag.
-		if err := r.q.SeedSetCollectionFeatured(ctx, id); err != nil {
-			return fmt.Errorf("flag collection %s featured: %w", c.Name, err)
-		}
-		// Admin curation rail.
 		if err := r.q.SeedInsertFeatured(ctx, SeedInsertFeaturedParams{
 			SubjectKind:      "collection",
 			SubjectID:        id,

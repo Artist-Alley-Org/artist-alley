@@ -32,9 +32,13 @@ type catTeam struct {
 type catCollection struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// Featured flags a collection for the homepage + /admin/featured
-	// curation surface (#380). Absent/false leaves it unfeatured.
-	// applyFeatured writes a featured_items row per flagged entry.
+	// Featured places a collection on the PUBLIC rail + /admin/featured
+	// (#380, ADR 0065). Absent/false leaves it unplaced.
+	//
+	// Still a boolean in the catalogue, but it no longer maps to a
+	// boolean in the database: applyFeatured writes one featured_items
+	// placement at scope='public' per flagged entry. collections.featured
+	// is gone.
 	Featured bool `json:"featured"`
 }
 
