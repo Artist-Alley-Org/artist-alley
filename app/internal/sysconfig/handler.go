@@ -31,6 +31,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/email"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -63,6 +64,12 @@ type Handler struct {
 	// (test fixtures that don't exercise email), SendSMTPTestEmail
 	// returns a 500 explaining the boot wire is missing.
 	Email *EmailDeps
+
+	// CacheReg is the process cache registry, used to broadcast the
+	// public-mode invalidation after a toggle write (#445). nil-safe —
+	// InvalidatePublicMode no-ops, which in an uncached fixture is
+	// correct because the reader has no cache to stale out.
+	CacheReg *cache.Registry
 
 	// DemoMode mirrors config.Config.DemoMode (env AA_DEMO_MODE). When
 	// true it's surfaced on the public /appearance boot payload so the
@@ -618,4 +625,71 @@ func (h *Handler) GetPublicAppearance(
 	demo := h.DemoMode
 	out.DemoMode = &demo
 	return openapi.GetPublicAppearance200JSONResponse(out), nil
+}
+
+// ---------------------------------------------------------------------------
+// Public mode (#445)
+// ---------------------------------------------------------------------------
+//
+// Its own endpoint rather than a field on SiteConfig, because
+// UpdateSiteConfig is a whole-object replace: folding the flag in there
+// would mean an admin renaming the site from a stale form silently
+// turns public access off (or on). A setting that changes who can read
+// the install must not be collateral damage of an unrelated save.
+//
+// Read is gated on system.config.read and write on system.config.write,
+// matching the other system settings. There is no separate
+// `system.public_mode.write` cap — inventing one would imply a role
+// that can publish the install without being able to change the rest of
+// its configuration, and no such role exists.
+
+func (h *Handler) GetPublicMode(
+	ctx context.Context,
+	_ openapi.GetPublicModeRequestObject,
+) (openapi.GetPublicModeResponseObject, error) {
+	if _, denied := h.requireCap(ctx, CapConfigRead); denied != nil {
+		return publicModeDenial(denied), nil
+	}
+	cfg, err := h.Store.GetPublicMode(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get public mode: %w", err)
+	}
+	return openapi.GetPublicMode200JSONResponse{Enabled: cfg.Enabled}, nil
+}
+
+func (h *Handler) UpdatePublicMode(
+	ctx context.Context,
+	req openapi.UpdatePublicModeRequestObject,
+) (openapi.UpdatePublicModeResponseObject, error) {
+	id, denied := h.requireCap(ctx, CapConfigWrite)
+	if denied != nil {
+		return publicModeUpdateDenial(denied), nil
+	}
+	if req.Body == nil {
+		return openapi.UpdatePublicMode400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	before, beforeErr := h.Store.GetPublicMode(ctx)
+	cfg := PublicModeConfig{Enabled: req.Body.Enabled}
+	if err := h.Store.SetPublicMode(ctx, cfg); err != nil {
+		return nil, fmt.Errorf("sysconfig: set public mode: %w", err)
+	}
+	// Invalidate BEFORE returning, so the admin's next request already
+	// sees the new state. The auth middleware reads this flag through a
+	// process-local cache fed by NOTIFY; without this the toggle would
+	// appear to do nothing until the entry aged out.
+	InvalidatePublicMode(ctx, h.CacheReg)
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*PublicModeConfig)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminPublicModeUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
+	}
+	return openapi.UpdatePublicMode200JSONResponse{Enabled: cfg.Enabled}, nil
 }

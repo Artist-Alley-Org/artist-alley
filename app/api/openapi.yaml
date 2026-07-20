@@ -8120,6 +8120,61 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/public-mode:
+    get:
+      operationId: getPublicMode
+      summary: Read whether the install serves anonymous visitors
+      description: |
+        Reports whether public mode is enabled. When disabled (the
+        default, and the state of every install that has never set it),
+        anonymous callers are refused the public read surface: assets,
+        collections, search and IIIF. Authenticated access is unaffected
+        in either state, and row-level visibility and content
+        sensitivity rules still apply on top when it is enabled.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current public-mode state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicModeConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updatePublicMode
+      summary: Enable or disable anonymous access to the public surface
+      description: |
+        Turns anonymous access to the public read surface on or off.
+        Requires the `system.config.write` capability. The change takes
+        effect on the next request without a restart, and is recorded
+        as an `admin.system.public_mode_updated` audit event.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicModeConfig" }
+      responses:
+        "200":
+          description: Updated public-mode state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicModeConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /appearance:
     get:
       operationId: getPublicAppearance
@@ -9194,6 +9249,18 @@ components:
             outgoing links (e.g., password-reset emails). May be empty
             at install time and filled in later.
           example: https://art.example.com
+    PublicModeConfig:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            When true, anonymous callers may reach the public read
+            surface (assets, collections, search, IIIF). When false —
+            the default, and the state of any install that has never
+            set it — those routes return 401 to anonymous callers.
+          example: false
     SMTPConfig:
       type: object
       required: [host, port, encryption, from_address]

@@ -555,6 +555,16 @@ func (*PanicShim) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequ
 	panic("PanicShim: UpdateAuthConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetPublicMode panics by default; test shims override.
+func (*PanicShim) GetPublicMode(context.Context, openapi.GetPublicModeRequestObject) (openapi.GetPublicModeResponseObject, error) {
+	panic("PanicShim: GetPublicMode called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdatePublicMode panics by default; test shims override.
+func (*PanicShim) UpdatePublicMode(context.Context, openapi.UpdatePublicModeRequestObject) (openapi.UpdatePublicModeResponseObject, error) {
+	panic("PanicShim: UpdatePublicMode called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetSiteConfig panics by default; test shims override.
 func (*PanicShim) GetSiteConfig(context.Context, openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
 	panic("PanicShim: GetSiteConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
