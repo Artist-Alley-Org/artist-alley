@@ -46,8 +46,10 @@ import (
 //     replaces a hard FALSE short-circuit that existed because no
 //     collection COULD be public before migration 00008 added the
 //     tier.
-//   - Collection, authenticated: owner OR a live collection_acls
-//     grant, unchanged.
+//   - Collection, authenticated: public OR owner OR a live
+//     collection_acls grant. The public disjunct restores the invariant
+//     that authenticated callers see at least what anonymous ones do —
+//     without it, signing in REMOVED access to public collections.
 //   - Post, anonymous: soft-delete + visibility='public'. The old
 //     branch filtered on 'public' while the CHECK constraint forbade
 //     that value, so it matched zero rows and only looked like
@@ -102,17 +104,64 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 				" AND (%sdeleted_at IS NULL AND %svisibility = 'public')", a, a,
 			), nil
 		}
-		// Authenticated collections assert no soft-delete conjunct, so
-		// IncludeSoftDeleted has nothing to waive here.
+		// Authenticated: owner OR a live ACL grant OR the collection is
+		// public.
+		//
+		// The public disjunct is the fix for the inversion this branch
+		// used to produce. Without it the authenticated rule was
+		// owner-or-ACL and nothing else, which meant signing in REMOVED
+		// access to public content: an anonymous caller got the
+		// collection, and the same person authenticated got 404. Every
+		// signed-in non-owner was affected, system.admin included.
+		//
+		// It stayed latent because nothing exercised it — GetCollection
+		// carried no visibility check until #439, and anonymous callers
+		// never reached these paths until #437/#439/#442 opened them.
+		// #445 made it observable by opening the anonymous side.
+		//
+		// The invariant this restores: an authenticated caller sees AT
+		// LEAST what an anonymous one sees. EntityPost below has always
+		// had exactly this shape (`visibility = 'public' OR author`);
+		// collections were the outlier.
+		//
+		// The public disjunct carries its OWN soft-delete conjunct
+		// rather than being hoisted into a shared one. Hoisting would
+		// change the owner and ACL paths, which are correct today and
+		// out of scope: an owner may still see their own soft-deleted
+		// collection. Scoping it here makes the public path match the
+		// anonymous branch exactly, so the two agree on the row set
+		// instead of the authenticated caller seeing MORE — a
+		// soft-deleted public collection — which would just invert the
+		// bug in the other direction.
+		//
+		// NO system.admin bypass here, deliberately. Caller carries a
+		// user ref and nothing else; admitting capabilities would mean
+		// threading a checker through Filter and therefore through all
+		// twelve splice sites, to answer a product question nobody has
+		// asked yet — whether an admin may browse OTHER people's
+		// PRIVATE collections. After this fix an admin sees every
+		// public collection plus their own plus anything ACL'd to them,
+		// which is the same floor as every other authenticated caller.
+		// If admins need more, that is an explicit, narrow option in
+		// the shape of IncludeSoftDeleted (#429), enforced by the
+		// caller — not a silent bypass inside the rule.
+		//
+		// Placeholder note: this adds a literal-only disjunct, so the
+		// branch still binds exactly ONE arg at argOffset+1. No splice
+		// site moves.
 		idx := argOffset + 1
+		public := fmt.Sprintf("%svisibility = 'public'", a)
+		if !p.includeSoftDeleted {
+			public = fmt.Sprintf("%sdeleted_at IS NULL AND %svisibility = 'public'", a, a)
+		}
 		frag := fmt.Sprintf(
-			" AND (%sowner_user_ref = $%d OR EXISTS ("+
+			" AND ((%s) OR %sowner_user_ref = $%d OR EXISTS ("+
 				"SELECT 1 FROM collection_acls acl "+
 				"WHERE acl.collection_id = %sid "+
 				"AND acl.principal_type = 'user' "+
 				"AND acl.principal_id = $%d::TEXT "+
 				"AND (acl.expires_at IS NULL OR acl.expires_at > NOW())))",
-			a, idx, a, idx,
+			public, a, idx, a, idx,
 		)
 		return frag, []any{p.caller.UserRef}
 	case EntityPost:
