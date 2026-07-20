@@ -40,6 +40,19 @@ type catCollection struct {
 	// placement at scope='public' per flagged entry. collections.featured
 	// is gone.
 	Featured bool `json:"featured"`
+
+	// Visibility is the collection's own visibility tier. Absent means
+	// "org-only", which is what every entry got before this field
+	// existed — so leaving it out preserves the previous behaviour
+	// exactly.
+	//
+	// It has to exist as a field, not just as a key in the JSON: the
+	// seeder reads this struct, so an unmodelled key is silently
+	// ignored. Placing a collection publicly while it stays org-only
+	// produces a rail that renders nothing to an anonymous visitor —
+	// correctly, since featuring never widens access (ADR 0065), but
+	// invisibly. The placement and the tier have to move together.
+	Visibility string `json:"visibility"`
 }
 
 type catField struct {

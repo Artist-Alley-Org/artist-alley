@@ -376,12 +376,20 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 	for _, c := range cat.Collections {
 		cid := parseUUID(c.ID)
+		// org-only unless the catalogue says otherwise. That default is
+		// the restrictive one on purpose: a demo dataset should not
+		// publish anything by accident, and every entry that predates
+		// the field keeps exactly the tier it had.
+		vis := c.Visibility
+		if vis == "" {
+			vis = "org-only"
+		}
 		id, err := r.q.SeedInsertCollection(ctx, SeedInsertCollectionParams{
 			ID:           cid,
 			OwnerUserRef: r.adminRef,
 			Name:         c.Name,
 			Description:  c.Name + " — seeded collection",
-			Visibility:   "org-only",
+			Visibility:   vis,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
