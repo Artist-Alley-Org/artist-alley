@@ -52,6 +52,17 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   for. Which capabilities are legitimately requestable is decided with
   the access-grant flow, which remains deliberately unbuilt.
 
+- **Signing in no longer hid public collections, and logged-out
+  visitors could no longer see private ones.** Two visibility defects
+  surfaced while opening anonymous access, both now fixed. An
+  authenticated user got "not found" on a public collection they did
+  not own — signing in *removed* access, and an administrator saw less
+  than a logged-out stranger. Separately, the collection **list**
+  endpoint applied no visibility rule at all, so an anonymous request
+  returned every collection in the system, private ones included, with
+  their names. Listing now goes through the same single visibility
+  decision as every other read path.
+
 - **A collection's contents are now visible to logged-out visitors —
   and were previously readable by any signed-in account.** Listing what
   is inside a collection applied no visibility check at all: any
