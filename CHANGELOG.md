@@ -52,6 +52,15 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   for. Which capabilities are legitimately requestable is decided with
   the access-grant flow, which remains deliberately unbuilt.
 
+- **Public browsing is now an operator choice, and it is off by
+  default.** Anonymous access had no switch: any instance running this
+  code served its public content to the internet whether the operator
+  wanted that or not, and an existing install would have had it turned
+  on by an upgrade. There is now a setting for it, enforced at the API
+  rather than by hiding pages — turning it off means anonymous requests
+  are refused, not merely unlinked. A fresh install starts private, and
+  first-boot, login and SSO keep working with it off.
+
 - **Signing in no longer hid public collections, and logged-out
   visitors could no longer see private ones.** Two visibility defects
   surfaced while opening anonymous access, both now fixed. An
