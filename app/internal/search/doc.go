@@ -30,21 +30,25 @@
 // setweight. Field-weighted retrofit is a clean seam left for a
 // later sub-phase.
 //
-// Visibility: matches the existing per-entity list handlers. No
-// shared VisibleFor helper exists in the codebase today (pre-audit
-// Q2); rather than build one from scratch inside a foundation PR,
-// the search queries replicate each entity's existing "handler
-// composes visibility" pattern:
+// Visibility: every read path composes the SINGLE shared predicate,
+// visibility.Filter (ADR 0063). This comment used to describe a
+// pre-audit world where no shared helper existed and each query
+// replicated a per-entity gate; that helper now exists and every
+// entity routes through it, so the per-entity descriptions below are
+// kept only as a map of what the predicate resolves to:
 //
-//   - assets: no visibility gate (matches ListAssetsPage)
-//   - collections: owner OR explicit-share ACL grant
-//   - posts: public visibility OR authored by caller
+//   - assets, anonymous: not-deleted + status='active' +
+//     sensitivity='public' + processing_status='ready'. (The earlier
+//     "no visibility gate" note was wrong on both the anonymous and
+//     authenticated halves — #210.)
+//   - assets, authenticated: not-deleted only; the sensitivity rule
+//     for signed-in callers is deliberately deferred (#288, ADR 0064).
+//   - collections: public OR owner OR a live ACL grant.
+//   - posts: public OR authored by caller.
 //
-// This is a documented divergence from the brief's "same helper
-// unmodified" requirement — the helper simply doesn't exist today.
-// The search package's visibility replication is the load-bearing
-// unit under test; any future shared VisibleFor helper is a
-// straight substitution.
+// by_image.go's anonymous branch was the last hand-rolled copy of the
+// asset floor and now delegates to the predicate too (#210). Any
+// remaining inline visibility SQL in this package is a bug.
 //
 // Federation: search runs against the local corpus. Federated
 // entities (origin_server_id NOT NULL) appear in results iff they

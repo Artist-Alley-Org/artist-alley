@@ -18,12 +18,20 @@
 //
 // Every manifest passes through:
 //
-//  1. The shared visibility gate — the presentation subsystem
-//     ADDS its own sensitivity check ON TOP OF visibility.Filter
-//     because Phase 1.54.A's anonymous visibility for assets is
-//     soft-delete only (pre-audit Q5 finding). Restricted +
-//     embargoed assets are gated at the IIIF layer regardless of
-//     what the shared filter allows.
+//  1. The IIIF CONTENT-PLANE gate (ADR 0064) — restricted/team
+//     assets return 404, embargoed assets return a stub. This is NOT
+//     a second copy of the row-visibility rule (ADR 0063), and an
+//     earlier version of this comment was wrong to describe it as
+//     "on top of visibility.Filter": that predicate is NOT invoked on
+//     the manifest route at all. LoadAsset (loader.go) reads by id
+//     with `deleted_at IS NULL` and nothing else, so this gate is the
+//     SOLE sensitivity enforcement on this path, not a supplementary
+//     one — removing it exposes a restricted asset's full manifest to
+//     any anonymous caller once public mode is on. The row plane
+//     decides whether a caller may know an asset EXISTS; the content
+//     plane decides what its manifest may CONTAIN. Two planes, two
+//     rules, by design — see #432, which settled that this is not
+//     redundancy.
 //  2. The federated-URI resolver — assets with a non-nil
 //     origin_server_id surface their canvas as the remote peer's
 //     actor URI per ADR 0043. Local instance never proxies remote

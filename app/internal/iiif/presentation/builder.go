@@ -147,9 +147,11 @@ func (b *Builder) BuildAssetManifest(entity EntityRef, isAnonymous bool) (*Manif
 // entities in the canonical (sort_order, added_at) order the
 // callers hand us.
 //
-// Anonymous callers hit the sensitivity gate; members list is
-// already pre-filtered by the caller via visibility.Filter + the
-// IIIF-layer sensitivity check on each member.
+// Anonymous callers hit the content-plane sensitivity gate (ADR
+// 0064). NOTE: the members list is NOT pre-filtered by
+// visibility.Filter — LoadCollectionMembers reads with deleted_at
+// only (loader.go) — so the per-member check below is the sole gate,
+// not a supplement. See #432.
 func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef, isAnonymous bool) (*CollectionManifest, error) {
 	if isAnonymous {
 		if entity.Sensitivity == SensitivityRestricted || entity.Sensitivity == SensitivityTeam {
@@ -177,10 +179,13 @@ func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef,
 		cm.Metadata = entity.Metadata
 	}
 
-	// Filter members here as a last-defence pass. The caller
-	// SHOULD have visibility-gated already; this belt-and-braces
-	// gate ensures restricted members can't leak into an
-	// anonymous manifest even if a caller misses.
+	// Filter restricted/team members out of an anonymous manifest.
+	// This is described elsewhere in the tree as "belt-and-braces on
+	// top of the caller's visibility.Filter" — that is WRONG and the
+	// wording is being corrected under #432: LoadCollectionMembers
+	// applies no predicate, so this loop is the ONLY thing keeping a
+	// restricted member out of an anonymous collection manifest. Do
+	// not remove it on the belief that an upstream gate covers it.
 	items := make([]CollectionMember, 0, len(members))
 	for _, mem := range members {
 		if isAnonymous && (mem.Sensitivity == SensitivityRestricted || mem.Sensitivity == SensitivityTeam) {

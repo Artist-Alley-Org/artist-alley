@@ -20,6 +20,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualprovider"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // ByImageHandler serves POST /search/by-image.
@@ -241,33 +242,43 @@ func readAll(f interface {
 }
 
 // filterVisibleAssetIDs applies the shared visibility floor to a
-// set of candidate asset IDs. Anonymous callers get only assets
-// with sensitivity='public'. Authenticated callers get the full
-// row-level visibility check (owned OR public OR team-scoped).
+// set of candidate asset IDs.
 //
-// Kept in this file because the visibility helper lives at
-// app/internal/visibility/ and takes an assets-typed floor; going
-// through it here would require threading a Filter through the
-// by-image handler's boot wiring, which is out of scope for the
-// activation PR. Follow-up (#185) consolidates.
+// The anonymous branch now delegates to visibility.Filter (#210,
+// closing the #185 follow-up). It used to hand-roll
+// `deleted_at IS NULL AND sensitivity = 'public'` inline — a genuine
+// second expression of the anonymous asset floor, the exact class
+// ADR 0063's single predicate exists to eliminate.
+//
+// Delegating also TIGHTENS this path. The predicate's anonymous asset
+// branch requires status='active' AND processing_status='ready' on top
+// of the two conjuncts this file checked, so a public-but-draft or a
+// public-but-still-processing asset now correctly drops out of
+// reverse-image results, matching every other anonymous read path. That
+// is a behaviour change, not a pure refactor — see the PR.
+//
+// The authenticated branch is unchanged: it returns every candidate id
+// and lets the downstream asset-detail lookup filter, which is the
+// deliberately-deferred authenticated sensitivity rule (#288 / ADR
+// 0064), out of scope here.
 func filterVisibleAssetIDs(ctx context.Context, pool *pgxpool.Pool, identity *auth.Identity, ids []uuid.UUID) (map[uuid.UUID]struct{}, error) {
 	visible := make(map[uuid.UUID]struct{}, len(ids))
 	if len(ids) == 0 {
 		return visible, nil
 	}
-	// For MVP: anonymous callers see only public + non-embargo
-	// assets; authenticated callers see everything (list of ids
-	// they can't access will be filtered by asset-detail lookup
-	// downstream). This is intentionally coarse; #185 will supply
-	// the real shared floor.
 	if identity == nil {
-		const sql = `
-			SELECT id FROM assets
-			WHERE id = ANY($1::uuid[])
-			  AND deleted_at IS NULL
-			  AND sensitivity = 'public'
-		`
-		rows, err := pool.Query(ctx, sql, ids)
+		// $1 is the id set; the predicate's own args start at $2. Its
+		// anonymous asset branch binds none, but composing on the
+		// offset keeps this correct if that ever changes.
+		pred, err := visibility.Filter(ctx, visibility.EntityAsset, visibility.NewCaller(nil))
+		if err != nil {
+			return nil, fmt.Errorf("visibility filter: %w", err)
+		}
+		visFrag, visArgs := pred.ToSQL("", 1)
+		sql := `SELECT id FROM assets WHERE id = ANY($1::uuid[])` + visFrag
+		args := append([]any{ids}, visArgs...)
+
+		rows, err := pool.Query(ctx, sql, args...)
 		if err != nil {
 			return nil, fmt.Errorf("visibility filter: %w", err)
 		}
