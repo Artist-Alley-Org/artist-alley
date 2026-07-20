@@ -3,6 +3,25 @@
 A snapshot of what's shipped, what's in flight, and what's on the
 map. Subject to change as we learn what teams actually need.
 
+
+## Contents
+
+| Section | What's in it |
+|---|---|
+| [Foundation status](#foundation-status) | Where the pre-1.0 foundation stands |
+| [Shipped](#shipped) | Tagged releases and the capabilities they delivered |
+| [Release roadmap](#release-roadmap) | The version train, v0.5.0 → v1.0.0 |
+| [In flight](#in-flight) | What is being built right now |
+| [Review tool arc](#review-tool--the-load-bearing-ux-arc) | Phase 1.18.B, sub-phase by sub-phase |
+| [Admin settings](#admin-settings--fleshing-out-every-placeholder) | Every admin placeholder and its plan |
+| [Up next](#up-next) | Queued behind the current milestone |
+| [On the map](#on-the-map) | Planned, scheduled to a version |
+| [Not building](#things-we-deliberately-arent-building) | Deliberate exclusions |
+
+> **Looking for user-facing release notes?** See
+> [`CHANGELOG.md`](../CHANGELOG.md). This file is the engineering log —
+> longer, and organised by phase rather than by release.
+
 ## Foundation status
 
 **Pre-v1.0 foundation is essentially complete.** Fifty-eight accepted
@@ -27,22 +46,9 @@ squash point #1 executed at the tag (single baseline migration, ADR
 ## Shipped
 
 The current release stream covers the foundations:
+### Releases
 
-- **v0.1.0 — first public tag (2026-07-11).** The first-ever tagged
-  release: AGPL-3.0-only + dual commercial licensing executed
-  (1.55.AA), org move to Artist-Alley-Org, site split (docs site
-  moved to the private artist-alley-site repo), migration fold to a
-  single baseline migration (ADR 0057), Docker-only distribution
-  (GHCR + Docker Hub, Sigstore-signed). Pre-1.0 still means schemas
-  can break across minors.
-- **v0.1.1 — first patch release (2026-07-13).** Worker-pool claim
-  fix (#279) restoring media processing, GHCR owner-casing fix
-  (#280), dependency cleanup (#281 / #283 / #284) clearing all open
-  Dependabot alerts.
-- **v0.2.0 (2026-07-16).** Admin tile unlock (Tier 1–3), a public
-  read-only demo at demo.artist-alley.org, env-gated `AA_DEMO_MODE`,
-  native `aa seed` (retiring the Python `apply.py` loader), and CI
-  parallelised across three self-hosted runners.
+
 - **v0.4.0 (2026-07-18).** Operator visibility. The async pipeline became
   observable and manageable — queue, workers, live counts, failed jobs with
   requeue/cancel, per-type concurrency, and scheduled work, read-gated on
@@ -66,6 +72,23 @@ The current release stream covers the foundations:
   with a single-column `feed` view; seeded featured content; and a
   CI/nightly-stability arc that turned the federation nightly green for
   the first time since 2026-06-21.
+- **v0.2.0 (2026-07-16).** Admin tile unlock (Tier 1–3), a public
+  read-only demo at demo.artist-alley.org, env-gated `AA_DEMO_MODE`,
+  native `aa seed` (retiring the Python `apply.py` loader), and CI
+  parallelised across three self-hosted runners.
+- **v0.1.1 — first patch release (2026-07-13).** Worker-pool claim
+  fix (#279) restoring media processing, GHCR owner-casing fix
+  (#280), dependency cleanup (#281 / #283 / #284) clearing all open
+  Dependabot alerts.
+- **v0.1.0 — first public tag (2026-07-11).** The first-ever tagged
+  release: AGPL-3.0-only + dual commercial licensing executed
+  (1.55.AA), org move to Artist-Alley-Org, site split (docs site
+  moved to the private artist-alley-site repo), migration fold to a
+  single baseline migration (ADR 0057), Docker-only distribution
+  (GHCR + Docker Hub, Sigstore-signed). Pre-1.0 still means schemas
+  can break across minors.
+### Foundational capabilities
+
 - **Single binary deploy.** Go server with the SvelteKit SPA
   embedded via `go:embed`. Multi-arch Docker images (amd64 + arm64),
   every image Sigstore-signed. Docker is the sole distribution
