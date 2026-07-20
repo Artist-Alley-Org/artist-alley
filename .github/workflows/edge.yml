@@ -44,7 +44,7 @@ jobs:
       - name: Clear stale git locks (persistent self-hosted workspace)
         run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
