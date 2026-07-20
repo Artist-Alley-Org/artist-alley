@@ -52,6 +52,17 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   for. Which capabilities are legitimately requestable is decided with
   the access-grant flow, which remains deliberately unbuilt.
 
+- **A logged-out visitor now has something to look at.** Curated
+  content can be featured for a public audience, and the front page
+  renders it. Featuring is now a placement rather than a flag on the
+  thing featured — the same collection can be featured publicly and
+  internally at once, with its own ordering in each, and an individual
+  asset can be featured without wrapping it in a collection.
+  Two separate featured mechanisms had grown up side by side; there is
+  now one. Featuring never widens access: a featured item renders only
+  if the viewer could already see it, so publishing the rail does not
+  publish the library.
+
 - **Public browsing is now an operator choice, and it is off by
   default.** Anonymous access had no switch: any instance running this
   code served its public content to the internet whether the operator
