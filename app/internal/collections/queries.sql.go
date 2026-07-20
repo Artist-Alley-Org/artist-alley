@@ -107,10 +107,10 @@ const createCollection = `-- name: CreateCollection :one
 
 INSERT INTO collections (
     owner_user_ref, name, description, visibility, membership,
-    expires_at, featured, purpose, origin_server_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    expires_at, purpose, origin_server_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
-          expires_at, featured, purpose, origin_server_id,
+          expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason
 `
@@ -122,7 +122,6 @@ type CreateCollectionParams struct {
 	Visibility     string
 	Membership     string
 	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
 	Purpose        *string
 	OriginServerID pgtype.UUID
 }
@@ -146,7 +145,6 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		arg.Visibility,
 		arg.Membership,
 		arg.ExpiresAt,
-		arg.Featured,
 		arg.Purpose,
 		arg.OriginServerID,
 	)
@@ -159,7 +157,6 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.Visibility,
 		&i.Membership,
 		&i.ExpiresAt,
-		&i.Featured,
 		&i.Purpose,
 		&i.OriginServerID,
 		&i.CreatedAt,
@@ -195,7 +192,7 @@ func (q *Queries) DeleteCollection(ctx context.Context, arg DeleteCollectionPara
 
 const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
+       expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason
 FROM collections
@@ -215,7 +212,6 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.Visibility,
 		&i.Membership,
 		&i.ExpiresAt,
-		&i.Featured,
 		&i.Purpose,
 		&i.OriginServerID,
 		&i.CreatedAt,
@@ -230,7 +226,7 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 
 const getCollectionIncludingDeleted = `-- name: GetCollectionIncludingDeleted :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
+       expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason
 FROM collections
@@ -251,7 +247,6 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.Visibility,
 		&i.Membership,
 		&i.ExpiresAt,
-		&i.Featured,
 		&i.Purpose,
 		&i.OriginServerID,
 		&i.CreatedAt,
@@ -391,7 +386,7 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 
 const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
+       expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason
 FROM collections c
@@ -399,7 +394,12 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
   AND ($3::BIGINT   IS NULL OR owner_user_ref <> $3::BIGINT)
   AND ($4::TEXT        IS NULL OR visibility     = $4::TEXT)
-  AND ($5::BOOLEAN       IS NULL OR featured       = $5::BOOLEAN)
+  AND ($5::BOOLEAN       IS NULL OR $5::BOOLEAN = EXISTS (
+         SELECT 1 FROM featured_items fi
+          WHERE fi.subject_kind = 'collection'
+            AND fi.subject_id   = c.id
+            AND fi.scope        = 'org'
+       ))
   AND ($6::TEXT            IS NULL OR name ILIKE '%' || $6::TEXT || '%')
   AND ($7::BIGINT IS NULL OR EXISTS (
          SELECT 1 FROM collection_acls a
@@ -466,7 +466,6 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.Visibility,
 			&i.Membership,
 			&i.ExpiresAt,
-			&i.Featured,
 			&i.Purpose,
 			&i.OriginServerID,
 			&i.CreatedAt,
@@ -534,13 +533,12 @@ UPDATE collections SET
     description = COALESCE($2, description),
     visibility  = COALESCE($3,  visibility),
     membership  = COALESCE($4,  membership),
-    featured    = COALESCE($5,    featured),
-    purpose     = COALESCE($6,     purpose),
-    expires_at  = COALESCE($7,  expires_at),
+    purpose     = COALESCE($5,     purpose),
+    expires_at  = COALESCE($6,  expires_at),
     updated_at  = NOW()
-WHERE id = $8
+WHERE id = $7
 RETURNING id, owner_user_ref, name, description, visibility, membership,
-          expires_at, featured, purpose, origin_server_id,
+          expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason
 `
@@ -550,7 +548,6 @@ type UpdateCollectionParams struct {
 	Description *string
 	Visibility  *string
 	Membership  *string
-	Featured    *bool
 	Purpose     *string
 	ExpiresAt   pgtype.Timestamptz
 	ID          pgtype.UUID
@@ -563,7 +560,6 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.Description,
 		arg.Visibility,
 		arg.Membership,
-		arg.Featured,
 		arg.Purpose,
 		arg.ExpiresAt,
 		arg.ID,
@@ -577,7 +573,6 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.Visibility,
 		&i.Membership,
 		&i.ExpiresAt,
-		&i.Featured,
 		&i.Purpose,
 		&i.OriginServerID,
 		&i.CreatedAt,

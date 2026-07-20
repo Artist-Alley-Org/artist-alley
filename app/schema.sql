@@ -1074,7 +1074,6 @@ CREATE TABLE public.collections (
     visibility text DEFAULT 'private'::text NOT NULL,
     membership text DEFAULT 'manual'::text NOT NULL,
     expires_at timestamp with time zone,
-    featured boolean DEFAULT false NOT NULL,
     purpose text,
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -1216,7 +1215,11 @@ CREATE TABLE public.featured_items (
     "position" integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by_user_ref bigint,
-    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text])))
+    scope text DEFAULT 'org'::text NOT NULL,
+    team_id uuid,
+    CONSTRAINT featured_items_scope_check CHECK ((scope = ANY (ARRAY['public'::text, 'org'::text, 'team'::text]))),
+    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
+    CONSTRAINT featured_items_team_scope_check CHECK ((((scope = 'team'::text) AND (team_id IS NOT NULL)) OR ((scope <> 'team'::text) AND (team_id IS NULL))))
 );
 
 
@@ -2676,11 +2679,11 @@ ALTER TABLE ONLY public.featured_items
 
 
 --
--- Name: featured_items featured_items_subject_unique; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: featured_items featured_items_placement_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.featured_items
-    ADD CONSTRAINT featured_items_subject_unique UNIQUE (subject_kind, subject_id);
+    ADD CONSTRAINT featured_items_placement_unique UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id);
 
 
 --
@@ -3615,13 +3618,6 @@ CREATE INDEX collections_expires_idx ON public.collections USING btree (expires_
 
 
 --
--- Name: collections_featured_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX collections_featured_idx ON public.collections USING btree (featured) WHERE featured;
-
-
---
 -- Name: collections_name_trgm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3731,6 +3727,13 @@ CREATE INDEX digest_queue_pending_idx ON public.digest_queue USING btree (cadenc
 --
 
 CREATE INDEX featured_items_order_idx ON public.featured_items USING btree ("position", created_at);
+
+
+--
+-- Name: featured_items_scope_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX featured_items_scope_order_idx ON public.featured_items USING btree (scope, "position", created_at);
 
 
 --
@@ -5222,6 +5225,14 @@ ALTER TABLE ONLY public.email_verification_token
 
 ALTER TABLE ONLY public.extraction_failure
     ADD CONSTRAINT extraction_failure_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: featured_items featured_items_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
 
 
 --

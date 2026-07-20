@@ -79,10 +79,14 @@ type ListCollectionsPageGatedParams struct {
 	// IncludeDeleted is superadmin-only and is enforced as such by the
 	// caller. It waives ONLY the soft-delete dimension of the
 	// predicate — never visibility or ownership.
-	IncludeDeleted  *bool
-	OwnerUserRef    *int64
-	ExcludeOwner    *int64
-	Visibility      *string
+	IncludeDeleted *bool
+	OwnerUserRef   *int64
+	ExcludeOwner   *int64
+	Visibility     *string
+	// Featured now resolves through featured_items at scope='org'
+	// (ADR 0065). The boolean column is gone; the filter's MEANING is
+	// unchanged for callers — "is this featured internally" — which is
+	// what the collections hub's Featured tab has always asked.
 	Featured        *bool
 	QName           *string
 	SharedWithUser  *int64
@@ -94,7 +98,7 @@ type ListCollectionsPageGatedParams struct {
 // listCollectionsPageColumns mirrors the sqlc query's SELECT list
 // exactly. Order matters: rows scan positionally into Collection.
 const listCollectionsPageColumns = `c.id, c.owner_user_ref, c.name, c.description, c.visibility, c.membership,
-       c.expires_at, c.featured, c.purpose, c.origin_server_id,
+       c.expires_at, c.purpose, c.origin_server_id,
        c.created_at, c.updated_at, c.search_text, c.smart_query,
        c.deleted_at, c.deleted_reason`
 
@@ -138,7 +142,12 @@ WHERE ($1::BOOLEAN IS TRUE OR c.deleted_at IS NULL)
   AND ($2::BIGINT IS NULL OR c.owner_user_ref = $2::BIGINT)
   AND ($3::BIGINT IS NULL OR c.owner_user_ref <> $3::BIGINT)
   AND ($4::TEXT IS NULL OR c.visibility = $4::TEXT)
-  AND ($5::BOOLEAN IS NULL OR c.featured = $5::BOOLEAN)
+  AND ($5::BOOLEAN IS NULL OR $5::BOOLEAN = EXISTS (
+         SELECT 1 FROM featured_items fi
+          WHERE fi.subject_kind = 'collection'
+            AND fi.subject_id   = c.id
+            AND fi.scope        = 'org'
+       ))
   AND ($6::TEXT IS NULL OR c.name ILIKE '%' || $6::TEXT || '%')
   AND ($7::BIGINT IS NULL OR EXISTS (
          SELECT 1 FROM collection_acls a
@@ -166,7 +175,7 @@ LIMIT $10::INTEGER`)
 		var i Collection
 		if err := rows.Scan(
 			&i.ID, &i.OwnerUserRef, &i.Name, &i.Description, &i.Visibility, &i.Membership,
-			&i.ExpiresAt, &i.Featured, &i.Purpose, &i.OriginServerID,
+			&i.ExpiresAt, &i.Purpose, &i.OriginServerID,
 			&i.CreatedAt, &i.UpdatedAt, &i.SearchText, &i.SmartQuery,
 			&i.DeletedAt, &i.DeletedReason,
 		); err != nil {

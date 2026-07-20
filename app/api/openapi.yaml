@@ -5777,6 +5777,12 @@ paths:
         - name: featured
           in: query
           required: false
+          description: |
+            Filters on whether the collection has an ORG-scoped
+            placement in `featured_items` (ADR 0065). Featuring is a
+            placement, not a property of the collection, so this asks
+            "is it featured internally", not "is its featured flag
+            set" — the flag no longer exists.
           schema: { type: boolean }
         - name: tab
           in: query
@@ -5784,7 +5790,7 @@ paths:
           description: |
             Pre-canned filter for the collections hub:
             - `mine` — collections owned by the caller (any visibility)
-            - `featured` — visibility=public AND featured=true
+            - `featured` — visibility=public AND org-featured (ADR 0065)
             - `public` — visibility=public (every install-public collection)
             - `shared` — collections the caller has ACL access to but doesn't own
             - `all` — every collection the caller is allowed to see (default)
@@ -8175,6 +8181,43 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /featured:
+    get:
+      operationId: getPublicFeaturedRail
+      summary: The public featured rail
+      description: |
+        Admin-curated placements at `scope = 'public'` (ADR 0065),
+        in display order.
+
+        FEATURING NEVER WIDENS ACCESS. A placement renders only if the
+        caller can already see its subject under the visibility rules
+        that govern every other read; a placement pointing at content
+        the caller may not see returns nothing at all, rather than an
+        entry with a blank title. Per-asset sensitivity still applies:
+        a non-public asset carries no thumbnail hint.
+
+        Anonymous-readable, and gated by the install's public-mode
+        setting like the rest of the public surface.
+      tags: [featured]
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 24 }
+      responses:
+        "200":
+          description: Featured placements the caller may see, in order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeaturedItem" }
+
   /appearance:
     get:
       operationId: getPublicAppearance
@@ -10243,7 +10286,7 @@ components:
         orthogonal axes: visibility, membership, and lifecycle.
       required:
         [id, owner_user_ref, name, description, visibility, membership,
-         featured, created_at, updated_at]
+         created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         owner_user_ref: { type: integer, format: int64 }
@@ -10263,7 +10306,6 @@ components:
           format: date-time
           nullable: true
           description: TTL. Null = permanent.
-        featured: { type: boolean }
         purpose:
           type: string
           nullable: true
@@ -10312,7 +10354,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        featured: { type: boolean, default: false }
         purpose:
           type: string
           nullable: true
@@ -10354,7 +10395,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        featured: { type: boolean }
         purpose:
           type: string
           nullable: true

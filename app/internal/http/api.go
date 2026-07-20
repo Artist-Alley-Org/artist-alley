@@ -2952,6 +2952,9 @@ func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAd
 
 // --- featured content (GitHub #341) ---------------------------------------
 
+func (s *apiServer) GetPublicFeaturedRail(ctx context.Context, req openapi.GetPublicFeaturedRailRequestObject) (openapi.GetPublicFeaturedRailResponseObject, error) {
+	return s.featuredHTTP.GetPublicFeaturedRail(ctx, req)
+}
 func (s *apiServer) ListFeaturedItems(ctx context.Context, req openapi.ListFeaturedItemsRequestObject) (openapi.ListFeaturedItemsResponseObject, error) {
 	return s.featuredHTTP.ListFeaturedItems(ctx, req)
 }

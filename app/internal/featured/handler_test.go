@@ -45,8 +45,13 @@ func TestAdd_AppendsWithIncreasingPositions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add b: %v", err)
 	}
-	if r1.Position != 0 || r2.Position != 1 {
-		t.Errorf("positions = %d,%d; want 0,1", r1.Position, r2.Position)
+	// Asserted as a DELTA, not as absolute 0,1. Add() appends at
+	// (global MAX(position) + 1), so any row left in featured_items by
+	// another test — or by the ADR 0065 migration backfilling existing
+	// curation — makes an absolute assertion fail for reasons that have
+	// nothing to do with appending. This failed exactly that way once.
+	if r2.Position != r1.Position+1 {
+		t.Errorf("positions = %d,%d; second must be first+1", r1.Position, r2.Position)
 	}
 }
 
