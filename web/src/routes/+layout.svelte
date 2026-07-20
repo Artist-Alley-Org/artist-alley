@@ -51,9 +51,19 @@
   });
 
   // Pages that show the global nav chrome. Login/setup keep the bare
-  // layout; everything else under the auth gate gets the header.
+  // layout; everything else gets the header.
+  //
+  // No longer gated on a session (#416). It was `!!auth.user` because
+  // before public mode an anonymous visitor could not reach any page
+  // that rendered chrome — so the condition was equivalent to "not
+  // login/setup" and the auth term was free. With public routes it
+  // stopped being free: a guest on /collections got a page with no
+  // header at all, no way to search, and no way to sign in. The route
+  // gate in +layout.ts decides who may be here; this only decides
+  // whether the page has chrome, and every page that is not
+  // login/setup does.
   const showChrome = $derived(
-    !!auth.user && page.url.pathname !== '/login' && page.url.pathname !== '/setup'
+    page.url.pathname !== '/login' && page.url.pathname !== '/setup'
   );
 
   // The navbar search input is present on every authenticated page
@@ -214,12 +224,18 @@
           >
             {t('nav.collections')}
           </a>
-          <a
-            href="/review"
-            class={`rounded-md px-3 py-1.5 text-sm font-medium ${reviewActive ? 'bg-state-selected text-fg' : 'text-fg hover:bg-state-hover'}`}
-          >
-            {t('nav.review')}
-          </a>
+          <!-- Review is members-only (#416): offering it to a guest
+               produces a nav entry that bounces to the sign-in page,
+               which reads as broken rather than as gated. Same rule as
+               the drawer's link filter. -->
+          {#if auth.user}
+            <a
+              href="/review"
+              class={`rounded-md px-3 py-1.5 text-sm font-medium ${reviewActive ? 'bg-state-selected text-fg' : 'text-fg hover:bg-state-hover'}`}
+            >
+              {t('nav.review')}
+            </a>
+          {/if}
         </nav>
 
         {#if showSearch}
@@ -273,9 +289,17 @@
         <!-- ml-auto so the cluster stays right-aligned when search
              wraps to its own row and no longer provides the flex push. -->
         <div class="ml-auto flex shrink-0 items-center gap-1.5 md:ml-0">
-          <NavUploadButton />
-          <NotificationsButton />
-          <MessagesButton />
+          <!-- Member-only controls (#416). Each one opens a surface a
+               guest cannot use, so showing them signed-out would offer
+               three buttons that all dead-end. UserMenu below renders
+               its own signed-out state (a sign-in link) rather than
+               disappearing, and AdminMenu already self-gates on
+               capabilities a guest never has. -->
+          {#if auth.user}
+            <NavUploadButton />
+            <NotificationsButton />
+            <MessagesButton />
+          {/if}
           <!-- UserMenu + AdminMenu are dropdown triggers; below md their
                CONTENTS move into the drawer, so hide the triggers there
                to avoid two ways in. Upload / notifications / messages
