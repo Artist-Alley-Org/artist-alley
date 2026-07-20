@@ -175,7 +175,13 @@
     "theme_system": "System",
     "language": "Language",
     "api_tokens": "API tokens",
-    "sign_out": "Sign out"
+    "sign_out": "Sign out",
+    "sign_in": "Sign in",
+    "browsing_as_guest": "You're browsing as a guest",
+    "guest_feed_title": "The feed is for members",
+    "guest_feed_hint": "Posts are only visible to signed-in members. You can still browse collections and search.",
+    "guest_browse_collections": "Browse collections",
+    "sign_in_hint": "Sign in to upload, collect and comment."
   },
   "admin_menu": {
     "title": "Admin",
@@ -1913,6 +1919,9 @@
       "error_create": "Couldn't create the collection.",
       "error_save": "Couldn't save the collection.",
       "error_not_found": "Collection not found.",
+      "not_found_or_private": "This collection isn't available.",
+      "not_found_or_private_hint": "It may have been removed, or it isn't public.",
+      "not_found_sign_in_hint": "If you have access to it, sign in to view it.",
       "conflict_heading": "Someone else edited this collection",
       "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
       "conflict_overwrite": "Overwrite their changes with mine",

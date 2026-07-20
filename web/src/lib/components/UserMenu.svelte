@@ -178,4 +178,17 @@
       {t('user_menu.sign_out')}
     </button>
   </Menu>
+{:else}
+  <!-- Signed out (#416). Before public mode there was no such state —
+       an anonymous visitor never reached a page with a navbar — so this
+       branch rendered nothing and the header ended in dead space. A
+       guest needs the way back in to be the obvious thing in the
+       corner where the account menu would be. -->
+  <a
+    href="/login"
+    data-testid="nav-sign-in"
+    class="tap-target inline-flex items-center rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg hover:border-border-strong hover:bg-surface-elevated"
+  >
+    {t('user_menu.sign_in')}
+  </a>
 {/if}

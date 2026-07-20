@@ -9161,7 +9161,7 @@ components:
           example: "0.3.1"
     SetupStatus:
       type: object
-      required: [needs_setup, deployment, defaults]
+      required: [needs_setup, deployment, defaults, public_mode]
       properties:
         needs_setup:
           type: boolean
@@ -9170,6 +9170,20 @@ components:
           $ref: "#/components/schemas/SetupDeploymentInfo"
         defaults:
           $ref: "#/components/schemas/SetupDefaults"
+        public_mode:
+          type: boolean
+          description: |
+            True when the install serves its public read surface to
+            anonymous visitors. The frontend reads this to decide
+            whether a signed-out visitor may stay on a public route or
+            must be sent to the sign-in page; the server enforces the
+            same setting independently, so this field is a rendering
+            hint and never the access decision.
+
+            It rides on this endpoint because the frontend already
+            calls it first on every navigation, before it knows whether
+            a session exists — so the flag is available at the moment
+            the routing decision is made, without a second request.
     SetupDeploymentInfo:
       type: object
       required: [db_host, db_port, db_name, storage_backend]
