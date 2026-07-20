@@ -185,7 +185,7 @@ func (c *HealthCounter) Snapshot() healthhandler.SubsystemHealth {
 		// Ephemeral operator-facing hints per the B-5 Notes[]
 		// convention. Dashboard renders each as a bullet.
 		"note=Multi-page PDF surfaced as metadata-only until per-page Image API grammar lands (see follow-up)",
-		"note=Anonymous callers gated at IIIF layer; consolidation with visibility.Filter tracked in #185",
+		"note=Anonymous callers gated at the IIIF content plane (ADR 0064); this is not the row predicate and is not being consolidated into it — see #432",
 		"note=Federation peer resolver falls back to empty-string on directory failure — degraded remote canvas, not 500",
 	}
 
