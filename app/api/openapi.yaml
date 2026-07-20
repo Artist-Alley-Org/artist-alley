@@ -899,7 +899,7 @@ paths:
   /federation/peers/handshake:
     post:
       operationId: postFederationHandshake
-      summary: Peer-to-peer handshake endpoint (1.22.B-b)
+      summary: Peer-to-peer handshake endpoint
       description: |
         Public unauthenticated endpoint — accepts signed
         handshake envelopes from peer instances per
@@ -932,7 +932,7 @@ paths:
   /admin/federation/peers/initiate:
     post:
       operationId: initiateFederationHandshake
-      summary: Initiate an outbound handshake (1.22.B-b)
+      summary: Initiate an outbound handshake
       description: |
         Admin "Pair by URL" entry. Creates a local
         pending_outbound row + sends a signed offer envelope to
@@ -1436,7 +1436,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
     post:
       operationId: createFederationPeer
-      summary: Manually add a federation peer (1.22.B-a)
+      summary: Manually add a federation peer
       description: |
         Manual peer entry — the operator pastes the peer's
         instance URL + display name + the PEM-encoded Ed25519
@@ -2746,7 +2746,7 @@ paths:
   /admin/requests:
     get:
       operationId: listAdminRequests
-      summary: List pending resource requests (approver-facing, Phase 1.17.E)
+      summary: List pending resource requests (approver-facing)
       description: |
         Returns the pending resource_request rows, oldest first.
         Requires `share.grant` capability OR `system.admin`.
@@ -4064,10 +4064,10 @@ paths:
         (Twitter / IG uploads, embedded video on non-HTML5
         surfaces).
 
-        The handler itself is a Phase 1.18.B-3-b stub today — the
-        endpoint enqueues + returns 202 + the job id; the worker
-        will surface a TerminalError until the ffmpeg integration
-        ships. Job result will carry the new asset id.
+        This endpoint is a stub: it enqueues the job and returns 202
+        with the job id, but the worker surfaces a TerminalError
+        because the ffmpeg integration is not implemented yet. When
+        it is, the job result will carry the new asset id.
 
         422 when the asset's renderable kind isn't audio/video
         (image / 3D / document assets reject up-front).
@@ -6761,7 +6761,7 @@ paths:
   /admin/system/users:
     get:
       operationId: getAdminUserGates
-      summary: Read the per-field self-edit gates (admin, Phase 1.17.F)
+      summary: Read the per-field self-edit gates (admin)
       tags: [admin, users]
       security:
         - cookieAuth: []
@@ -6778,7 +6778,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
     patch:
       operationId: updateAdminUserGates
-      summary: Update the per-field self-edit gates (admin, Phase 1.17.F)
+      summary: Update the per-field self-edit gates (admin)
       description: |
         Operator writes the five boolean flags. The handler upserts
         each `users.allow_self_edit.*` system_config row and invokes
@@ -8017,7 +8017,7 @@ paths:
   /admin/system/aiedit:
     get:
       operationId: getAIEditConfig
-      summary: Read the AI image-edit (1.14.E) configuration
+      summary: Read the AI image-edit configuration
       description: |
         Returns the operator-set MCP server name that handles
         image-edit dispatch. Empty means the feature is disabled —
@@ -8723,8 +8723,9 @@ paths:
       summary: Live per-type per-status job counts
       description: |
         Aggregate counts grouped by (type, status) for the live queue
-        dashboard (#400). The UI polls this on an interval (no SSE this
-        sprint). Gated on `system.jobs.read` (or `system.admin`).
+        dashboard. The UI polls this on an interval; there is no
+        server-sent-events stream. Gated on `system.jobs.read` (or
+        `system.admin`).
       tags: [admin, jobs]
       security:
         - cookieAuth: []
@@ -8776,9 +8777,9 @@ paths:
       operationId: cancelJob
       summary: Cancel a pending or failed job
       description: |
-        Admin action (#401): move a pending/failed job to `cancelled`.
-        A running job cannot be cancelled this sprint (409). Gated on
-        `system.admin`.
+        Admin action: move a pending or failed job to `cancelled`.
+        Cancelling a job that is already running is not supported and
+        returns 409. Gated on `system.admin`.
       tags: [admin, jobs]
       security:
         - cookieAuth: []
@@ -10419,7 +10420,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/SubtitleTrack' }
           description: |
-            Phase 1.18.B-3 — WebVTT subtitle / caption tracks
+            WebVTT subtitle / caption tracks
             attached to this asset. Empty array when none, or when
             the asset's renderable kind doesn't support subtitles
             (image, 3D, document, etc.). Tracks ride along with the
@@ -10531,7 +10532,7 @@ components:
       type: object
       required: [lang, file_hash, source_format, confidence]
       description: |
-        Phase 1.18.B-3 — one WebVTT subtitle track attached to an
+        One WebVTT subtitle track attached to an
         asset. NOT a first-class asset; rides along with its parent
         in the Asset.subtitle_tracks array. Tracks are uniquely
         identified by (asset_id, lang) — re-uploading the same lang
