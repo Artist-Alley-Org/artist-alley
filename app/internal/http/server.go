@@ -309,6 +309,16 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// app/api/openapi.yaml. apiServer composes every feature package
 	// into a single struct that satisfies openapi.StrictServerInterface.
 	resolver := auth.NewResolver(pool, logger, sessions, cacheReg)
+	// Public mode (#445) — the resolver consults this on every request
+	// that resolves to no identity. Wired here rather than inside
+	// NewResolver because the reader needs the sysconfig Store, which
+	// is built above but belongs to a package that imports auth.
+	//
+	// Load-bearing: auth.Resolver treats a nil reader as OFF, which
+	// DENIES the public surface. If this wire is ever dropped, the
+	// symptom is "the toggle won't turn on", not "the install is
+	// public regardless of the toggle".
+	resolver.SetPublicMode(sysconfig.NewPublicModeReader(sysCfg, cacheReg, logger))
 	// Hoisted so we can stash on Server below (the federation
 	// directory poller lives on this struct + Run() needs it).
 	var impl *apiServer
