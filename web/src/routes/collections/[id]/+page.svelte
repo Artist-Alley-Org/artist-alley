@@ -30,7 +30,6 @@
     name: string;
     description: string;
     visibility: string;
-    featured: boolean;
     owner_user_ref: number;
     created_at: string;
     updated_at: string;
@@ -207,11 +206,6 @@
             <span class="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted">
               {visibilityLabel}
             </span>
-            {#if collection.featured}
-              <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
-                {t('collections.featured')}
-              </span>
-            {/if}
           </div>
           {#if collection.description}
             <p class="mt-2 max-w-3xl text-sm text-fg-muted">{collection.description}</p>
