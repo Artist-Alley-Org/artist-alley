@@ -100,6 +100,13 @@ var PublicSurfaceRoutes = []publicRoute{
 	{path: "/assets", prefix: true, why: "asset list, item, bytes, variants and archive entries"},
 	{path: "/collections", prefix: true, why: "collection list, item and contents"},
 
+	// The featured rail (#417). This is the landing page for a public
+	// install — with posts members-only, it is the only content an
+	// anonymous visitor sees at `/`. Its own query composes the
+	// visibility predicate, so gating here decides audience, not
+	// access.
+	{path: "/featured", prefix: true, why: "public featured rail"},
+
 	// Search. Anonymous search is what makes a public install
 	// browsable rather than merely linkable. The results are subject
 	// to the same visibility predicate as everything else.

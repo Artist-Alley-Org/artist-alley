@@ -270,7 +270,6 @@ func (h *Handler) CreateCollection(
 			Visibility:   visibility,
 			Membership:   membership,
 			ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-			Featured:     boolOr(in.Featured, false),
 			Purpose:      in.Purpose,
 		})
 		if err != nil {
@@ -481,7 +480,6 @@ func (h *Handler) UpdateCollection(
 			Description: in.Description,
 			Visibility:  visPtr,
 			Membership:  memPtr,
-			Featured:    in.Featured,
 			Purpose:     in.Purpose,
 			ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
 		})
@@ -1246,7 +1244,6 @@ func rowToAPI(r Collection) openapi.Collection {
 		Description:  r.Description,
 		Visibility:   openapi.CollectionVisibility(r.Visibility),
 		Membership:   openapi.CollectionMembership(r.Membership),
-		Featured:     r.Featured,
 		Purpose:      r.Purpose,
 		CreatedAt:    r.CreatedAt.Time,
 		UpdatedAt:    r.UpdatedAt.Time,

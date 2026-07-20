@@ -14,10 +14,10 @@
 -- name: CreateCollection :one
 INSERT INTO collections (
     owner_user_ref, name, description, visibility, membership,
-    expires_at, featured, purpose, origin_server_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    expires_at, purpose, origin_server_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
-          expires_at, featured, purpose, origin_server_id,
+          expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason;
 
@@ -25,7 +25,7 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 -- Filters soft-deleted rows by default. Admin surfaces reading
 -- deleted rows use GetCollectionIncludingDeleted below.
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
+       expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason
 FROM collections
@@ -36,7 +36,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- the Restore path (which needs to Get the row to fire the audit
 -- event even after deleted_at IS NOT NULL).
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
+       expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason
 FROM collections
@@ -49,13 +49,12 @@ UPDATE collections SET
     description = COALESCE(sqlc.narg('description'), description),
     visibility  = COALESCE(sqlc.narg('visibility'),  visibility),
     membership  = COALESCE(sqlc.narg('membership'),  membership),
-    featured    = COALESCE(sqlc.narg('featured'),    featured),
     purpose     = COALESCE(sqlc.narg('purpose'),     purpose),
     expires_at  = COALESCE(sqlc.narg('expires_at'),  expires_at),
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
-          expires_at, featured, purpose, origin_server_id,
+          expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason;
 
@@ -85,7 +84,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- caller has an ACL grant on but doesn't own. The handler also passes
 -- the caller's user_ref into `exclude_owner` to drop owned rows.
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
+       expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason
 FROM collections c
@@ -93,7 +92,12 @@ WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
   AND (sqlc.narg('exclude_owner')::BIGINT   IS NULL OR owner_user_ref <> sqlc.narg('exclude_owner')::BIGINT)
   AND (sqlc.narg('visibility')::TEXT        IS NULL OR visibility     = sqlc.narg('visibility')::TEXT)
-  AND (sqlc.narg('featured')::BOOLEAN       IS NULL OR featured       = sqlc.narg('featured')::BOOLEAN)
+  AND (sqlc.narg('featured')::BOOLEAN       IS NULL OR sqlc.narg('featured')::BOOLEAN = EXISTS (
+         SELECT 1 FROM featured_items fi
+          WHERE fi.subject_kind = 'collection'
+            AND fi.subject_id   = c.id
+            AND fi.scope        = 'org'
+       ))
   AND (sqlc.narg('q_name')::TEXT            IS NULL OR name ILIKE '%' || sqlc.narg('q_name')::TEXT || '%')
   AND (sqlc.narg('shared_with_user')::BIGINT IS NULL OR EXISTS (
          SELECT 1 FROM collection_acls a

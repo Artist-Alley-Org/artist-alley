@@ -92,17 +92,19 @@ func TestCollectionLifecycle(t *testing.T) {
 	}
 
 	// Patch (rename + feature)
+	// `featured` is no longer a field on the collection (ADR 0065) —
+	// featuring is a placement in featured_items, set through the
+	// /admin/featured surface, so a PATCH here cannot express it.
 	pRR := patchJSON(t, ownerRouter, "/collections/"+id, map[string]any{
-		"name":     "ct_renamed",
-		"featured": true,
+		"name": "ct_renamed",
 	})
 	if pRR.Code != http.StatusOK {
 		t.Fatalf("patch: %d body=%s", pRR.Code, pRR.Body.String())
 	}
 	var patched openapi.Collection
 	mustDecode(t, pRR.Body.Bytes(), &patched)
-	if patched.Name != "ct_renamed" || !patched.Featured {
-		t.Errorf("patch didn't take: name=%q featured=%v", patched.Name, patched.Featured)
+	if patched.Name != "ct_renamed" {
+		t.Errorf("patch didn't take: name=%q", patched.Name)
 	}
 
 	// Intruder cannot patch
@@ -289,16 +291,35 @@ func TestListCollectionsFilters(t *testing.T) {
 
 	// Make three with deterministic created_at spacing so the
 	// cursor pagination has stable ordering.
+	var firstID string
 	for i := 0; i < 3; i++ {
-		body := map[string]any{"name": fmt.Sprintf("ct_list_%d", i)}
-		if i == 0 {
-			body["featured"] = true
-		}
-		rr := postJSON(t, router, "/collections", body)
+		rr := postJSON(t, router, "/collections", map[string]any{
+			"name": fmt.Sprintf("ct_list_%d", i),
+		})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("seed %d: %d", i, rr.Code)
 		}
+		if i == 0 {
+			var c openapi.Collection
+			mustDecode(t, rr.Body.Bytes(), &c)
+			firstID = c.Id.String()
+		}
 	}
+
+	// Featuring is a PLACEMENT now (ADR 0065), not a field on the
+	// collection — so the fixture inserts one instead of setting a
+	// flag at create time. The ?featured= filter's meaning is
+	// unchanged from a caller's point of view: "is this featured
+	// internally", which is scope='org'.
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO featured_items (subject_kind, subject_id, position, scope)
+		VALUES ('collection',$1,0,'org') ON CONFLICT DO NOTHING`, firstID); err != nil {
+		t.Fatalf("seed org placement: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM featured_items WHERE subject_id=$1`, firstID)
+	})
 
 	// owner_ref filter
 	mineRR := httptest.NewRecorder()

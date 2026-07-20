@@ -114,12 +114,26 @@ func seedBrowseCollections(t *testing.T, pool *pgxpool.Pool) []uuid.UUID {
 		// deterministic rather than tie-broken by chance.
 		_, err := pool.Exec(ctx, `
 			INSERT INTO collections (id, name, owner_user_ref, visibility, membership,
-			                         featured, created_at, deleted_at)
-			VALUES ($1,$2,$3,$4,'manual',$5,
-			        NOW() - ($6::int * INTERVAL '1 minute'), `+del+`)`,
-			id, s.name, listCollOwner, s.visibility, s.featured, i)
+			                         created_at, deleted_at)
+			VALUES ($1,$2,$3,$4,'manual',
+			        NOW() - ($5::int * INTERVAL '1 minute'), `+del+`)`,
+			id, s.name, listCollOwner, s.visibility, i)
 		if err != nil {
 			t.Fatalf("seed %q: %v", s.name, err)
+		}
+		// #449 seeded `featured` as a column; ADR 0065 made it a
+		// placement, so the ?featured= filter now resolves through
+		// featured_items at scope='org'. Same meaning, different home.
+		if s.featured {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO featured_items (subject_kind, subject_id, position, scope)
+				VALUES ('collection',$1,$2,'org') ON CONFLICT DO NOTHING`, id, i); err != nil {
+				t.Fatalf("seed org placement for %q: %v", s.name, err)
+			}
+			t.Cleanup(func() {
+				_, _ = pool.Exec(context.Background(),
+					`DELETE FROM featured_items WHERE subject_id=$1`, id)
+			})
 		}
 	}
 	t.Cleanup(func() {
@@ -410,7 +424,7 @@ func assertSameCollections(t *testing.T, want, got []Collection) {
 				i, uuid.UUID(want[i].ID.Bytes), uuid.UUID(got[i].ID.Bytes))
 		}
 		if want[i].Name != got[i].Name || want[i].Visibility != got[i].Visibility ||
-			want[i].Featured != got[i].Featured || want[i].OwnerUserRef != got[i].OwnerUserRef {
+			want[i].OwnerUserRef != got[i].OwnerUserRef {
 			t.Errorf("row %d (%v): column mismatch between sqlc and gated results",
 				i, uuid.UUID(want[i].ID.Bytes))
 		}
