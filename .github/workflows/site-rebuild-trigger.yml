@@ -1,20 +1,71 @@
-# Site rebuild trigger.
+# Site rebuild trigger — repository_dispatch sender.
 #
-# The public docs + marketing site now lives in the private repo
-# mscrnt/artist-alley-site (serves www.artist-alley.org). It pulls this
-# repo's docs from `dev` at build time — so when an OSS doc source that
-# the site renders changes, the private site needs to rebuild.
+# The public docs + marketing site lives in the private repo
+# Artist-Alley-Org/artist-alley-site (serves www.artist-alley.org). It
+# renders docs sourced from THIS repo, so when one of those sources
+# changes on `dev`, the site has to rebuild against that exact commit.
 #
-# This workflow fires a Cloudflare Pages Deploy Hook (stored as the
-# SITE_DEPLOY_HOOK secret) on pushes to `dev` that touch the source the
-# site consumes: ADRs, the roadmap, install docs, the OpenAPI spec, and
-# the DB schema. Secret-gated: if SITE_DEPLOY_HOOK is unset the step
-# logs + no-ops rather than failing, so the trigger is safe to land
-# before the secret exists.
+# ---------------------------------------------------------------------
+# WHY THIS IS A DISPATCH AND NOT A DEPLOY HOOK ANY MORE
+# ---------------------------------------------------------------------
+#
+# This workflow used to POST a Cloudflare Pages deploy hook. A deploy
+# hook returns success for having been ACCEPTED, not for having built
+# anything — so the run went green whether or not a site was produced.
+# That is exactly how 19 consecutive production deploys failed silently
+# over 24 hours on 2026-07-18/19 with every visible signal green; the
+# failures were only found by querying the Pages API directly.
+#
+# A repository_dispatch lands in the site repo's own Actions tab, where
+# the build either succeeds or shows up red next to the sha that caused
+# it. The signal now describes reality instead of describing that a
+# request was sent.
+#
+# THE DEPLOY HOOK IS GONE, DELIBERATELY. Keeping it as a fallback was
+# considered and rejected:
+#
+#   * It reintroduces the ambiguity this change exists to remove. With
+#     both paths firing, a green run means "at least one of two things
+#     happened" — and the failure we spent a day finding is precisely
+#     the one that hides inside that sentence.
+#   * It cannot be a real fallback. A Cloudflare deploy hook is a bare
+#     POST with no body: there is no field in which to put a sha. So
+#     the hook can only ever rebuild whatever the site's default state
+#     resolves to, which in a two-quick-pushes race is the WRONG
+#     commit — the exact failure `sha` was added to prevent. A fallback
+#     that silently builds the wrong content is worse than no fallback.
+#   * If a dispatch fails, the correct response is a red run somebody
+#     re-runs, not a second quiet path that papers over it.
+#
+# So there is one path, and it is observable end to end:
+#   push to dev → this dispatch → site Actions run → Cloudflare deploy.
+#
+# ---------------------------------------------------------------------
+# SECRET: SITE_DISPATCH_TOKEN
+# ---------------------------------------------------------------------
+#
+#   What      Fine-grained personal access token.
+#   Target    Artist-Alley-Org/artist-alley-site (that repo ONLY — the
+#             token needs no access to this repo).
+#   Scope     Repository permissions → Contents: Read and write.
+#             Write is required: POST /repos/{owner}/{repo}/dispatches
+#             is listed under Contents (write) in GitHub's fine-grained
+#             permission reference. Read alone returns 404.
+#   Owner     Resource owner must be the Artist-Alley-Org organisation,
+#             not a personal account — the site repo moved orgs, and a
+#             token scoped to the old mscrnt/ path will not resolve.
+#   Expires   Set at creation. RECORD THE DATE HERE WHEN ROTATING:
+#             expires ......... (fill in on next rotation)
+#   Renews    @mscrnt.
+#
+# PAT EXPIRY IS NOT HYPOTHETICAL. OSS_CHECKOUT_TOKEN expired on
+# 2026-07-12 and broke the site build. When this one expires the
+# dispatch step fails loudly and this workflow goes red — which is the
+# intended behaviour, and the reason the no-op guard the deploy-hook
+# version had was removed. A skipped dispatch and a working dispatch
+# must never look the same.
 #
 # Runs on the self-hosted OSS runner — zero hosted CI minutes.
-#
-# Phase 1.55.Z — OSS-side cleanup of the site split.
 
 name: Site rebuild trigger
 
@@ -27,25 +78,138 @@ on:
       - 'docs/install/**'
       - 'app/api/openapi.yaml'
       - 'app/schema.sql'
+  # Manual fire, for verifying the wiring end to end and for
+  # re-triggering a build after a token rotation without having to
+  # invent a docs commit.
+  workflow_dispatch:
 
 concurrency:
   group: site-rebuild-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  trigger:
-    name: Fire Cloudflare Pages deploy hook
+  dispatch:
+    name: Dispatch oss-docs-changed to the site repo
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 5
     steps:
-      - name: POST the deploy hook (secret-gated)
+      # fetch-depth 0 so the changed-path diff below can reach
+      # github.event.before, which on a multi-commit push is further
+      # back than a shallow clone reaches. The self-hosted runner
+      # reuses its workspace, so this is an incremental fetch.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect the changed paths
+        id: paths
         env:
-          SITE_DEPLOY_HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
-          if [ -z "${SITE_DEPLOY_HOOK}" ]; then
-            echo "SITE_DEPLOY_HOOK is not set — skipping site rebuild (no-op)."
+          set -euo pipefail
+          # Informational only — the receiver renders it in the run
+          # summary so a reviewer can see which sources moved. Never
+          # load-bearing, so every unknown case degrades to a label
+          # rather than failing the dispatch.
+          changed=""
+          if [ "${{ github.event_name }}" = "push" ] \
+             && [ -n "${BEFORE}" ] \
+             && [ "${BEFORE}" != "0000000000000000000000000000000000000000" ]; then
+            changed="$(git diff --name-only "${BEFORE}" "${AFTER}" -- \
+                        docs/adr docs/roadmap.md docs/install \
+                        app/api/openapi.yaml app/schema.sql | paste -sd ',' -)"
+          fi
+          [ -n "${changed}" ] || changed="(manual dispatch)"
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+          echo "Changed site-consumed sources: ${changed}"
+
+      - name: Dispatch oss-docs-changed
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHANGED: ${{ steps.paths.outputs.changed }}
+        run: |
+          set -euo pipefail
+
+          # Fail loudly on a missing secret. The deploy-hook version of
+          # this workflow no-opped here, which was right for a trigger
+          # landing before its secret existed and is wrong now: a
+          # skipped dispatch and a successful one would be
+          # indistinguishable, which is the entire defect class this
+          # change removes.
+          if [ -z "${SITE_DISPATCH_TOKEN:-}" ]; then
+            echo "::error::SITE_DISPATCH_TOKEN is not set. The site will NOT rebuild."
+            echo "Create a fine-grained PAT on Artist-Alley-Org/artist-alley-site with"
+            echo "Contents: Read and write, and store it as the SITE_DISPATCH_TOKEN secret."
+            exit 1
+          fi
+
+          # jq builds the payload so a path containing a quote or a
+          # backslash cannot produce malformed JSON. Guarded rather
+          # than assumed — a missing tool must fail here, not silently
+          # emit a body the receiver rejects.
+          command -v jq >/dev/null || {
+            echo "::error::jq is not installed on this runner; cannot build the dispatch payload."
+            exit 1
+          }
+
+          # `sha` is the load-bearing field: the receiver checks out
+          # client_payload.sha rather than dev-tip, so two quick pushes
+          # cannot race and have the second dispatch build the first's
+          # content. It must be the full 40-character sha — the
+          # receiver hard-errors on anything else. github.sha is
+          # already full-length.
+          payload="$(jq -n \
+            --arg sha "${SHA}" \
+            --arg ref "${REF}" \
+            --arg run_url "${RUN_URL}" \
+            --arg paths "${CHANGED}" \
+            '{event_type: "oss-docs-changed",
+              client_payload: {sha: $sha, ref: $ref, run_url: $run_url, paths: $paths}}')"
+
+          echo "Dispatching oss-docs-changed for ${SHA}"
+
+          # Capture the status separately instead of using curl -f, so
+          # the failure message can distinguish the cases that actually
+          # differ in what you do about them.
+          body="$(mktemp)"
+          status="$(curl -sS -o "${body}" -w '%{http_code}' \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${SITE_DISPATCH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/Artist-Alley-Org/artist-alley-site/dispatches \
+            -d "${payload}")"
+
+          if [ "${status}" = "204" ]; then
+            echo "Dispatched. Watch the build here:"
+            echo "  ${{ github.server_url }}/Artist-Alley-Org/artist-alley-site/actions"
+            {
+              echo "### Dispatched \`oss-docs-changed\`"
+              echo ""
+              echo "| field | value |"
+              echo "| --- | --- |"
+              echo "| sha | \`${SHA}\` |"
+              echo "| ref | \`${REF}\` |"
+              echo "| paths | \`${CHANGED}\` |"
+              echo ""
+              echo "[Site repo Actions](${{ github.server_url }}/Artist-Alley-Org/artist-alley-site/actions)"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "Firing Cloudflare Pages deploy hook for the private site…"
-          curl -fsS -X POST "${SITE_DEPLOY_HOOK}" >/dev/null
-          echo "Deploy hook fired — the private site will rebuild + pull the latest docs."
+
+          echo "::error::repository_dispatch failed with HTTP ${status}. The site will NOT rebuild."
+          cat "${body}"
+          case "${status}" in
+            401) echo "401 — the token is invalid, revoked, or expired. Rotate SITE_DISPATCH_TOKEN." ;;
+            403) echo "403 — the token is valid but forbidden here (SSO authorisation, or an org policy)." ;;
+            404) echo "404 — GitHub returns 404 rather than 403 when a fine-grained token cannot SEE the"
+                 echo "      repository, so this is almost certainly a scope problem, not a missing repo."
+                 echo "      Check: resource owner is Artist-Alley-Org, artist-alley-site is selected, and"
+                 echo "      Contents is Read and WRITE (read alone yields exactly this 404)." ;;
+            422) echo "422 — the payload was rejected. Check event_type and client_payload shape." ;;
+          esac
+          exit 1
