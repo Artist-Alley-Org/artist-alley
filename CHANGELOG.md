@@ -114,6 +114,17 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
 
 ### Infrastructure / housekeeping
 
+- **The site now rebuilds from a signal that can fail.** When docs
+  this repo owns change, the marketing site was rebuilt by firing a
+  Cloudflare deploy hook — a bare POST that reports success for having
+  been sent, not for a build that worked. Nineteen production deploys
+  failed over twenty-four hours behind that signal with nothing to show
+  it. The trigger now dispatches to the site repository instead,
+  carrying the exact commit that changed so a rapid second push cannot
+  cause the wrong content to be built, and a rejected credential fails
+  loudly rather than skipping silently.
+
+
 - `app/schema.sql` refreshed from a cleanly migrated database. The
   committed copy had drifted in **column order** — Postgres physical
   order is creation order, so columns added by later migrations land at
