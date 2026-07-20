@@ -38,6 +38,17 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
   response cannot be used to confirm that a restricted asset exists.
 
+- **Two remaining copies of the visibility rule were removed, and a
+  latent IIIF gap was found in the process.** Reverse-image search
+  carried its own hand-written "anonymous sees public only" filter; it
+  now uses the same visibility predicate as every other read path,
+  which also correctly hides draft and still-processing assets that the
+  old copy let through. The IIIF manifest layer keeps its own
+  sensitivity gate — investigation confirmed it is not a duplicate but
+  the *only* thing refusing a restricted asset's manifest to an
+  anonymous caller, and a misleading code comment that invited its
+  removal was corrected.
+
 - **Audit-log IP addresses are now gated behind their own capability.**
   A read-only auditor could previously see the IP of every actor in the
   log — personal data that identifies people and approximates their
