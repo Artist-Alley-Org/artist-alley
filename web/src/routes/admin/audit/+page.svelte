@@ -30,6 +30,21 @@
   }
 
   let items = $state<AuditEvent[]>([]);
+
+  // #425 — actor IPs need system.audit.pii.read on top of
+  // system.audit.read, so the API omits the field entirely for callers
+  // without it and this column would otherwise be a wall of dashes.
+  //
+  // Derived from the DATA, not from a capability check. The server is
+  // the authority on whether IPs are being served; calling auth.can()
+  // here would be a second copy of that rule, free to disagree with
+  // the response it is describing. `'ip' in ev` distinguishes "omitted
+  // because you may not see it" from "null because none was recorded",
+  // which is exactly why the API omits rather than blanks.
+  //
+  // Hiding the column is NOT the fix — the fix is that the field is
+  // not sent. This only avoids a useless column.
+  const showIP = $derived(items.some((ev) => 'ip' in (ev as unknown as Record<string, unknown>)));
   let total = $state(0);
   let nextCursor = $state<string | null>(null);
   let loading = $state(true);
@@ -218,7 +233,9 @@
           <th class="px-3 py-2 text-left font-medium">{t('admin.audit.col_type')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.audit.col_actor')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.audit.col_subject')}</th>
-          <th class="px-3 py-2 text-left font-medium">{t('admin.audit.col_ip')}</th>
+          {#if showIP}
+            <th class="px-3 py-2 text-left font-medium">{t('admin.audit.col_ip')}</th>
+          {/if}
         </tr>
       </thead>
       <tbody>
@@ -231,11 +248,13 @@
             <td class="px-3 py-2 font-mono text-xs">{it.event_type}</td>
             <td class="px-3 py-2 text-xs">{it.actor_user_ref != null ? `#${it.actor_user_ref}` : '—'}</td>
             <td class="px-3 py-2 text-xs">{it.subject_user_ref != null ? `#${it.subject_user_ref}` : '—'}</td>
-            <td class="px-3 py-2 font-mono text-xs text-fg-muted">{it.ip ?? '—'}</td>
+            {#if showIP}
+              <td class="px-3 py-2 font-mono text-xs text-fg-muted">{it.ip ?? '—'}</td>
+            {/if}
           </tr>
           {#if expanded[it.id]}
             <tr class="border-t border-border bg-surface-elevated/40">
-              <td colspan="5" class="px-3 py-3">
+              <td colspan={showIP ? 5 : 4} class="px-3 py-3">
                 <dl class="grid grid-cols-1 gap-1 text-xs">
                   <div><dt class="inline font-medium">{t('admin.audit.label_event_id')}</dt> <dd class="inline font-mono">{it.id}</dd></div>
                   {#if it.user_agent}

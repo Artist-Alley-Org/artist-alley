@@ -12181,6 +12181,17 @@ components:
         ip:
           type: string
           nullable: true
+          description: |
+            Actor IP address — PERSONAL DATA, and returned only to
+            callers holding `system.audit.pii.read` on top of
+            `system.audit.read` (#425).
+
+            Absent from the response entirely for callers without that
+            capability, rather than blanked, so an empty value always
+            means "no IP recorded" and never "you may not see it".
+            Consumers must already tolerate absence: the field has
+            always been optional and nullable, since not every event
+            carries an address.
         user_agent:
           type: string
           nullable: true
