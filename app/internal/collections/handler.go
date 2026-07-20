@@ -640,7 +640,9 @@ func (h *Handler) ListCollections(
 	req openapi.ListCollectionsRequestObject,
 ) (openapi.ListCollectionsResponseObject, error) {
 	// #415 — anonymous callers are admitted; the predicate decides which
-	// rows they see (anonymous => public, non-deleted only).
+	// rows they see (anonymous => public, non-deleted only). #449 made
+	// that true: until then this comment described an intent the query
+	// never implemented.
 	id := auth.IdentityFromContext(ctx)
 
 	// Phase 1.55.C-1b: ?include_deleted=true is admin-only.
@@ -741,7 +743,11 @@ func (h *Handler) ListCollections(
 		t := true
 		includeDeletedArg = &t
 	}
-	rows, err := New(h.Pool).ListCollectionsPage(ctx, ListCollectionsPageParams{
+	// #449 — gated. The sqlc query this replaces applied no visibility
+	// rule, so a caller who set none of the optional filters received
+	// the whole table; anonymous callers enumerated private
+	// collections. See ListCollectionsPageGated.
+	rows, err := ListCollectionsPageGated(ctx, h.Pool, collectionCaller(ctx), ListCollectionsPageGatedParams{
 		IncludeDeleted:  includeDeletedArg,
 		OwnerUserRef:    ownerPtr,
 		ExcludeOwner:    excludeOwnerPtr,
