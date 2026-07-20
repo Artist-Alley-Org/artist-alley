@@ -637,36 +637,13 @@ map to the milestones below.
   (#419 destructive orphan cleanup, #412 variant drill-down, #408 jobs live
   concurrency reload, plus duplicates / reimport / backends config and the
   RS-parity extensions) moved to **v0.6.0** under #22.
-- **v0.5.0 — public mode: anonymous browsing** (epic #413). Content is
-  currently unreachable without an account — only four endpoints are
-  unauthenticated. The visibility predicate **is** the enforcement path
-  (spliced into ~11 read sites), but it had no `public` tier to express:
-  `collections` and `posts` constrained visibility to four non-public
-  values, and the asset case was a soft-delete check and nothing more.
-  **P0a (#414) shipped** — migration 00008 adds the public tier, the three
-  anonymous cases live only in the predicate, and an entity × caller
-  contract test pins them (ADR 0063). **P0b (#429) shipped** — `ListAssetsPage` converted from
-  sqlc-generated static SQL to hand-built SQL, so the predicate now reaches
-  asset browse; the superadmin `include_deleted` escape waives one dimension,
-  never the predicate. **P1 (#415) shipped** — anonymous callers now read
-  `public`-tier bytes (#437) and the four read operations `listAssets` /
-  `getAsset` / `listCollections` / `getCollection` (#439). That work also
-  closed a pre-existing hole: both detail endpoints previously checked only
-  that *some* caller was signed in, so any authenticated account could read
-  any asset or collection by id.
-  **P2a (#445) shipped** — public browsing is now an operator setting,
-  enforced at the API and **off by default**, so an existing install stays
-  private across an upgrade. The collection-contents gate (#438), the
-  capability-vocabulary fix (#434), and two visibility defects the arc
-  surfaced (#447 authenticated callers denied public collections; #449 an
-  ungated collection list exposing private names anonymously) all shipped.
-  Remaining: the logged-out frontend (P2b #416 — the last large item), the
-  public featured rail (P3 #417, closing #382), audit-log IP gating (#425),
-  and two leftover duplicate expressions of the visibility rule (#432 IIIF,
-  #210 by-image).
-  Asset `sensitivity` is **decided and enforced on the content plane**
-  (ADR 0064): it gates bytes, never rows, so restricted assets stay listed
-  rather than vanishing. Row-level blur-and-reveal remains Phase 1.28.
+- **v0.5.0 — public mode: anonymous browsing** (epic #413) — **shipped
+  2026-07-20.** Content is reachable without an account, behind an operator
+  toggle that defaults off. Visibility has one enforcement point (ADR 0063);
+  sensitivity gates content, not rows (ADR 0064); the featured rail runs on a
+  placement model (ADR 0065); audit IPs are gated behind a dedicated
+  capability. Opening the surface exposed and closed three pre-existing access
+  holes (#447, #449, #438). Deferred, tracked: #458, #460, #462.
 - **v0.6.0 — Reports & Moderation, plus the storage remainder** (#23 + #24 +
   #22, with #419 / #412 / #408 / #431 and the personal-data anonymisation
   switch #426).
