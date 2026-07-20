@@ -35,12 +35,20 @@
     ADMIN_SECTIONS.filter((s) => s.tiles.some((t) => auth.canSeeTile(t))),
   );
 
-  const NAV_LINKS: Array<{ href: string; labelKey: string }> = [
-    { href: '/',            labelKey: 'nav.gallery' },
+  const NAV_LINKS: Array<{ href: string; labelKey: string; public?: boolean }> = [
+    { href: '/',            labelKey: 'nav.gallery',      public: true },
     { href: '/blogs',       labelKey: 'nav.blogs' },
-    { href: '/collections', labelKey: 'nav.collections' },
+    { href: '/collections', labelKey: 'nav.collections',  public: true },
     { href: '/review',      labelKey: 'nav.review' },
   ];
+
+  // A guest sees only the links they can actually open (#416). Listing
+  // /blogs and /review to a signed-out visitor would render a menu
+  // where two of four entries bounce straight to the sign-in page,
+  // which reads as broken rather than as gated. The flag is explicit
+  // per link and mirrors the route list in +layout.ts — when a route
+  // becomes public there, it gets `public: true` here.
+  const navLinks = $derived(u ? NAV_LINKS : NAV_LINKS.filter((l) => l.public));
 
   // Navigating from a drawer link should close the drawer. SvelteKit
   // does client-side nav, so there's no reload to dismiss it for us.
@@ -104,11 +112,29 @@
             <p class="truncate text-xs text-fg-muted">@{u.username}</p>
           </div>
         </div>
+      {:else}
+        <!-- Guest header (#416). This component assumed a non-null user
+             throughout, which was safe while no anonymous visitor could
+             reach a page that renders it. Public mode makes that
+             reachable, so the signed-out state has to be a designed one
+             rather than an absence. -->
+        <div class="border-b border-border px-4 py-3">
+          <p class="text-sm font-medium text-fg">{t('user_menu.browsing_as_guest')}</p>
+          <p class="mt-0.5 text-xs text-fg-muted">{t('user_menu.sign_in_hint')}</p>
+          <a
+            href="/login"
+            onclick={close}
+            data-testid="drawer-sign-in"
+            class="tap-target mt-2 inline-flex items-center rounded-lg bg-accent px-3 py-2 text-sm font-medium text-on-accent"
+          >
+            {t('user_menu.sign_in')}
+          </a>
+        </div>
       {/if}
 
       <!-- Primary nav -->
       <div class="px-2 py-2">
-        {#each NAV_LINKS as link (link.href)}
+        {#each navLinks as link (link.href)}
           <a
             href={link.href}
             onclick={close}
@@ -133,16 +159,6 @@
           </a>
           <button
             type="button"
-            onclick={cycleTheme}
-            class="tap-target flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm text-fg hover:bg-state-hover"
-          >
-            <span>{t('user_menu.theme')}</span>
-            <span class="text-xs text-fg-muted">
-              {theme.pref === 'light' ? t('user_menu.theme_light') : theme.pref === 'dark' ? t('user_menu.theme_dark') : t('user_menu.theme_system')}
-            </span>
-          </button>
-          <button
-            type="button"
             onclick={signOut}
             class="tap-target flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm text-fg hover:bg-state-hover"
           >
@@ -150,6 +166,22 @@
           </button>
         </div>
       {/if}
+
+      <!-- Theme sits OUTSIDE the signed-in block: it was inside it, so a
+           guest drawer had no theme control at all. Appearance is not an
+           account setting. -->
+      <div class="border-t border-border px-2 py-2">
+        <button
+          type="button"
+          onclick={cycleTheme}
+          class="tap-target flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm text-fg hover:bg-state-hover"
+        >
+          <span>{t('user_menu.theme')}</span>
+          <span class="text-xs text-fg-muted">
+            {theme.pref === 'light' ? t('user_menu.theme_light') : theme.pref === 'dark' ? t('user_menu.theme_dark') : t('user_menu.theme_system')}
+          </span>
+        </button>
+      </div>
 
       <!-- Admin sections — gated per-capability (#385), same as the
            desktop AdminMenu: any read-cap holder sees the block, and

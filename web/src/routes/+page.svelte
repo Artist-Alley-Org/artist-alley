@@ -6,6 +6,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
+  import { auth } from '$stores/auth.svelte';
   import PostCard from '$components/PostCard.svelte';
   import PostHost from '$components/PostHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
@@ -61,6 +62,9 @@
   let loading = $state(false);
   let initialLoaded = $state(false);
   let error = $state<string | null>(null);
+  // Signed-out visitor on the members-only feed — an expected state,
+  // deliberately kept distinct from `error`.
+  let guestFeed = $state(false);
   let sentinel: HTMLElement | undefined = $state();
 
   let generation = 0;
@@ -68,6 +72,7 @@
   async function fetchPage(q: string, cursor: string | null, reset: boolean) {
     loading = true;
     error = null;
+    guestFeed = false;
     const gen = ++generation;
     try {
       const params: Record<string, string | number> = { limit: PAGE };
@@ -96,6 +101,18 @@
       if (gen !== generation) return;
 
       if (apiErr || !data) {
+        // A signed-out visitor gets 401 here and that is EXPECTED
+        // (#416). `/` is a public route so a guest can reach the site
+        // root, but its only data source is the posts feed, and posts
+        // stay members-only — the followers visibility tier is not
+        // modelled in the predicate yet. Rendering "authentication
+        // required" in a red alert told a guest something had broken.
+        // Nothing had; they are simply looking at a members-only
+        // surface, so it gets an empty state, not an error.
+        if (!auth.user) {
+          guestFeed = true;
+          return;
+        }
         throw new Error(
           (apiErr as { error?: string } | undefined)?.error ?? t('common.failed_to_load'),
         );
@@ -154,7 +171,9 @@
   });
 
   const hasMore = $derived(nextCursor !== null);
-  const showEmpty = $derived(initialLoaded && items.length === 0 && !error);
+  // guestFeed has its own empty state below; without this the generic
+  // "nothing here yet" block would render underneath it.
+  const showEmpty = $derived(initialLoaded && items.length === 0 && !error && !guestFeed);
 
   // ?post={uuid} → overlay the PostModal on top of the feed. The
   // feed stays mounted (no scroll loss, no re-fetch). PostCard's
@@ -215,7 +234,31 @@
     </p>
   {/if}
 
-  {#if error}
+  {#if guestFeed}
+    <!-- Calm empty state, not an alert. See the !auth.user branch in
+         the loader. -->
+    <div
+      class="rounded-xl border border-dashed border-border p-12 text-center"
+      data-testid="guest-feed-empty"
+    >
+      <p class="text-base font-medium text-fg">{t('user_menu.guest_feed_title')}</p>
+      <p class="mx-auto mt-1 max-w-md text-sm text-fg-muted">{t('user_menu.guest_feed_hint')}</p>
+      <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <a
+          href="/collections"
+          class="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium text-fg hover:border-border-strong"
+        >
+          {t('user_menu.guest_browse_collections')}
+        </a>
+        <a
+          href="/login"
+          class="inline-flex items-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent"
+        >
+          {t('user_menu.sign_in')}
+        </a>
+      </div>
+    </div>
+  {:else if error}
     <div role="alert" class="rounded-md border border-danger/40 bg-danger-container px-4 py-3 text-sm text-danger">
       {error}
     </div>

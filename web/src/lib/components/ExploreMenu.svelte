@@ -8,6 +8,7 @@
   // rest get added inline as their phases ship.
 
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import Menu from '$components/Menu.svelte';
 </script>
 
@@ -28,7 +29,12 @@
   <a href="/" role="menuitem" class="block px-3 py-1.5 text-sm text-fg hover:bg-surface">
     {t('nav.gallery')}
   </a>
-  <a href="/blogs" role="menuitem" class="block px-3 py-1.5 text-sm text-fg hover:bg-surface">
-    {t('nav.blogs')}
-  </a>
+  <!-- Blogs is members-only (#416); a guest picking it from this menu
+       would land on the sign-in page. Gallery above stays: `/` is a
+       public route and renders a guest empty state. -->
+  {#if auth.user}
+    <a href="/blogs" role="menuitem" class="block px-3 py-1.5 text-sm text-fg hover:bg-surface">
+      {t('nav.blogs')}
+    </a>
+  {/if}
 </Menu>
