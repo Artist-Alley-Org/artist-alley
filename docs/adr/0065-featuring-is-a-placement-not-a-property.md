@@ -67,10 +67,25 @@ Therefore:
    `UNIQUE (subject_kind, subject_id)` means a subject can be featured **exactly
    once, globally** — so featuring something publicly *and* internally is
    currently impossible. It becomes
-   `UNIQUE (subject_kind, subject_id, scope, team_id)`.
-4. **Remove `collections.featured`**, migrating existing rows into
+   `UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id)`.
+
+   **`NULLS NOT DISTINCT` is load-bearing, and this ADR originally got it wrong.**
+   `team_id` is NULL for `public` and `org` placements, and Postgres treats NULLs
+   as distinct under a plain `UNIQUE` — so the constraint as first specified would
+   have enforced **nothing at all** on exactly the two scopes that matter, allowing
+   the same subject to be featured publicly without limit. Verified empirically
+   during #417 (PR #456) rather than reasoned about: two `('x', NULL)` rows both
+   insert under plain `UNIQUE`; the second is rejected under `NULLS NOT DISTINCT`.
+   Requires PG15+; the stack and CI run 16.
+
+4. **`team_id` is its own column, not derived from the subject.** A placement names
+   its *audience*, which is not necessarily the subject's owner — and more
+   decisively, **`collections` has no `team_id` column at all** (only
+   `owner_user_ref`). Deriving the audience from the subject is not expressible for
+   half the subject kinds.
+5. **Remove `collections.featured`**, migrating existing rows into
    `featured_items` at `scope = 'org'` (its current de-facto meaning).
-5. **Keep from ADR 0027 only what is not about featuring**:
+6. **Keep from ADR 0027 only what is not about featuring**:
    `collection_parent_id` (hierarchy) and a hero/thumbnail field (presentation).
 
 ### What this supersedes in ADR 0027
