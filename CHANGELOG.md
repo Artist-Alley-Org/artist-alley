@@ -7,7 +7,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
+Nothing here yet — v0.5.0 was just cut.
+
+## [v0.5.0] — 2026-07-20 — Public mode: anonymous browsing
+
+Content is now reachable without an account, on an operator's terms. The
+visibility model got a single enforcement point, sensitivity moved to the
+content plane, and opening the surface surfaced (and closed) three
+pre-existing access holes in the foundation it was built on.
 
 ### Operator-facing changes
 
