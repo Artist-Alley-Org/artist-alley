@@ -627,12 +627,16 @@ map to the milestones below.
   closed a pre-existing hole: both detail endpoints previously checked only
   that *some* caller was signed in, so any authenticated account could read
   any asset or collection by id.
-  Remaining: the collection-contents gate (#438 — the last endpoint a public
-  collection page needs, and an open hole where any authenticated caller can
-  enumerate any collection), a logged-out frontend with operator controls
-  (P2 #416), and the public featured rail (P3 #417, closing #382), plus the
-  capability-vocabulary fix (#434) and two leftover duplicate expressions of
-  the visibility rule (#432 IIIF, #210 by-image).
+  **P2a (#445) shipped** — public browsing is now an operator setting,
+  enforced at the API and **off by default**, so an existing install stays
+  private across an upgrade. The collection-contents gate (#438), the
+  capability-vocabulary fix (#434), and two visibility defects the arc
+  surfaced (#447 authenticated callers denied public collections; #449 an
+  ungated collection list exposing private names anonymously) all shipped.
+  Remaining: the logged-out frontend (P2b #416 — the last large item), the
+  public featured rail (P3 #417, closing #382), audit-log IP gating (#425),
+  and two leftover duplicate expressions of the visibility rule (#432 IIIF,
+  #210 by-image).
   Asset `sensitivity` is **decided and enforced on the content plane**
   (ADR 0064): it gates bytes, never rows, so restricted assets stay listed
   rather than vanishing. Row-level blur-and-reveal remains Phase 1.28.
