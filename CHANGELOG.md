@@ -294,6 +294,62 @@ Post-v0.1.2 incremental work. No-spec-impact.
   release image behind a write-blocking nginx edge, seeded from the
   Layer-A dataset, and auto-redeploys on each release.
 
+## [v0.1.2] — 2026-07-15
+
+> Reconstructed from the `v0.1.1..v0.1.2` commit range — this release was
+> tagged without CHANGELOG or GitHub release notes at the time.
+
+Brand, polish, and dependency hygiene; no wire-format changes.
+
+### User-facing changes
+
+- **Burnt/Steel brand.** Repaletted to the burnt accent + steel secondary,
+  wired through components; finalized the chevron mark and the configured
+  site-name handling; enlarged the sign-in brand mark; added a `viewBox`
+  to the favicon/logo SVGs so the browser-tab favicon renders.
+- **API docs are cleaner.** A usable getting-started, clearer error
+  documentation, and internal phase codes dropped from the published spec
+  (the first pass of the ongoing scrub).
+- **Install quickstart fixed** — corrected `AA_MASTER_KEY`, the image path,
+  the cosign identity, and pgvector setup.
+
+### Fixes
+
+- **Per-type job concurrency caps** are now applied in the single-process
+  worker pool.
+- **Saved-search notifications** no longer hot-loop — reschedules are
+  grid-aligned.
+
+### Infrastructure / housekeeping
+
+- Supply-chain forks retargeted from `mscrnt/*` to `Artist-Alley-Org`.
+- `pdfjs-dist` upgraded to v6; dependency sweep clearing Dependabot alerts.
+- Test suite isolated from the shared dev database (#291); CI prunes
+  dangling images to stop a runner disk leak.
+- Real-world IP scrubbed from published surfaces; ArchivePub stamped
+  v1.0-final (spec-only).
+
+## [v0.1.1] — 2026-07-13
+
+> Reconstructed from the `v0.1.0..v0.1.1` commit range — tagged without
+> notes at the time.
+
+A patch release restoring media processing and clearing shipped-artifact
+vulnerabilities.
+
+### Fixes
+
+- **In-process worker pool never claimed jobs** (nil `Types` + a gate
+  guard), so media processing silently stalled after v0.1.0. Fixed (#279)
+  — this is the reason v0.1.1 exists.
+- **GHCR image owner casing** — the org rename broke edge + release image
+  pushes; the owner is now lowercased (#280).
+
+### Infrastructure / housekeeping
+
+- Shipped-artifact vulnerabilities cleared (torch floor raised, `aa-clip`
+  bumped, npm sweep) — all open Dependabot alerts closed.
+
 ## [v0.1.0] — 2026-07-11 — Encryption arc (Phase 1.22.I)
 
 The full encrypted-federation arc (1.22.I-a through 1.22.I-i) is
