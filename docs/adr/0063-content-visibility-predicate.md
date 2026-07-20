@@ -91,7 +91,17 @@ the splice-site count from eleven to **twelve**. Both landed the same shape, and
 pattern for any read path the predicate cannot reach:
 
 - Add a hand-built `<Query>Gated` alongside the sqlc query (`assets/list_page.go`,
-  `collections/resources_page.go`), mirroring the SELECT list exactly — rows scan positionally.
+  `collections/resources_page.go`, `collections` list), mirroring the SELECT list exactly — rows
+  scan positionally. **Third application 2026-07-20 (#449, PR #450):** `ListCollectionsPage` was
+  the last ungated read path, and the only one opened to anonymous callers *before* conversion —
+  an anonymous `GET /collections` returned every collection including private ones. Twelve splice
+  sites, now thirteen.
+- **Delete the inline visibility clauses the predicate now subsumes — but verify "subsumes"
+  per branch, do not assume it.** The authenticated `EntityCollection` branch is `owner OR ACL`
+  with **no `deleted_at` conjunct** — the only authenticated branch without one. Dropping the
+  inline soft-delete clause there made every signed-in caller see soft-deleted collections and
+  rendered `include_deleted` meaningless (#450 caught it with a parity test). That clause stays
+  until the branch gains its own conjunct — tracked as **#451**.
 - **Delete the inline visibility clauses the predicate now subsumes.** `ListAssetsPage` shed its
   `deleted_at IS NULL`; the resources query shed `a.deleted_at IS NULL`. Leaving one behind
   recreates the two-expressions-of-one-rule defect this ADR exists to prevent — the same class
