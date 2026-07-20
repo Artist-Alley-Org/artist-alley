@@ -38,6 +38,16 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
   response cannot be used to confirm that a restricted asset exists.
 
+- **Audit-log IP addresses are now gated behind their own capability.**
+  A read-only auditor could previously see the IP of every actor in the
+  log — personal data that identifies people and approximates their
+  location — because it rode along with the ordinary
+  `system.audit.read` view. Seeing *what happened* and seeing *from
+  where* are now separate grants: `system.audit.read` returns the log
+  without IPs, and a dedicated `system.audit.pii.read` is required to
+  see them. The address is withheld at the API, not merely hidden in
+  the UI.
+
 - **Access requests can no longer name a capability that doesn't exist.**
   `requested_capability` on an asset-access request was free text stored
   verbatim, in a field that feeds an authorisation decision — so a
