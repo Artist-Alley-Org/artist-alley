@@ -249,11 +249,65 @@ func TestMatrix_Collections(t *testing.T) {
 		}
 	})
 
-	t.Run("authenticated non-owner sees none of them (no ACL grant)", func(t *testing.T) {
+	// This subtest previously asserted that an authenticated non-owner
+	// sees NONE of these — which is what the branch did, and was the
+	// bug. It pinned the defect as the contract, so the fix had to
+	// replace it rather than extend it.
+	//
+	// A non-owner's floor is the anonymous row set: public and not
+	// soft-deleted. Above that floor they need an ACL grant, same as
+	// before.
+	t.Run("authenticated non-owner sees public collections, and only those", func(t *testing.T) {
 		got := visibleIDs(t, pool, EntityCollection, userCaller(other), "collections", ids)
 		for i, s := range seeds {
+			// anonSees IS the expectation here: with no ACL grant, an
+			// authenticated non-owner gets exactly the anonymous set.
+			if got[ids[i]] != s.anonSees {
+				t.Errorf("non-owner: %q visible=%v, want %v — a signed-in caller must see "+
+					"at least what an anonymous one does, and no more without a grant",
+					s.name, got[ids[i]], s.anonSees)
+			}
+		}
+	})
+
+	// The regression in one assertion, stated as the invariant rather
+	// than as a row list. Signing in must never take access away.
+	t.Run("signing in never removes access", func(t *testing.T) {
+		anon := visibleIDs(t, pool, EntityCollection, anonCaller(), "collections", ids)
+		user := visibleIDs(t, pool, EntityCollection, userCaller(other), "collections", ids)
+		for i, s := range seeds {
+			if anon[ids[i]] && !user[ids[i]] {
+				t.Errorf("%q is visible anonymously but NOT to an authenticated non-owner; "+
+					"signing in removed access to public content", s.name)
+			}
+		}
+	})
+
+	// A fix that makes everything visible is worse than the bug, so
+	// pin the negative side explicitly rather than leaving it implied
+	// by the table above.
+	t.Run("private collections stay invisible to a non-owner", func(t *testing.T) {
+		got := visibleIDs(t, pool, EntityCollection, userCaller(other), "collections", ids)
+		for i, s := range seeds {
+			if s.visibility == "public" {
+				continue
+			}
 			if got[ids[i]] {
-				t.Errorf("non-owner: %q visible without an ACL grant", s.name)
+				t.Errorf("non-owner: %q (visibility=%q) became visible; the public disjunct "+
+					"must not widen anything else", s.name, s.visibility)
+			}
+		}
+	})
+
+	// The soft-delete conjunct is scoped to the public disjunct, not
+	// hoisted. If somebody later hoists it, the owner subtest above
+	// goes red — and if somebody drops it, this goes red.
+	t.Run("a soft-deleted public collection is hidden from a non-owner", func(t *testing.T) {
+		got := visibleIDs(t, pool, EntityCollection, userCaller(other), "collections", ids)
+		for i, s := range seeds {
+			if s.visibility == "public" && s.deleted && got[ids[i]] {
+				t.Errorf("non-owner: %q is soft-deleted but visible; the public disjunct "+
+					"carries its own deleted_at conjunct", s.name)
 			}
 		}
 	})
