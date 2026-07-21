@@ -644,7 +644,7 @@ map to the milestones below.
   placement model (ADR 0065); audit IPs are gated behind a dedicated
   capability. Opening the surface exposed and closed three pre-existing access
   holes (#447, #449, #438). Deferred, tracked: #458, #460, #462.
-"> **On the milestones past v0.6.0:** every open issue is assigned to a version in
+> **On the milestones past v0.6.0:** every open issue is assigned to a version in
 > **dependency order** — nothing sits in a milestone that depends on a later one. The
 > *sizes* are provisional: several later milestones currently hold more epics than a
 > single release has ever shipped, and each gets a scope-cut when it is actually planned
