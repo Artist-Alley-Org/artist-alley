@@ -560,9 +560,10 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			Variants: iiifVariantLister{store: sysCfg},
 			Streamer: iiifStreamer{storage: storageSvc},
 			Logger:   logger,
-			RequireID: func(r *http.Request) bool {
-				return auth.IdentityFromContext(r.Context()) != nil
-			},
+			// No RequireID gate (#460): anonymous admission is the
+			// public-mode middleware's job (this group runs
+			// resolver.ResolveIdentity), and the visibility predicate
+			// inside PoolLookup decides which rows any caller resolves.
 		}
 		iiifRootHandler.Mount(r)
 

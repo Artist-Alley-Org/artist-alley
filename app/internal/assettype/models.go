@@ -224,6 +224,15 @@ type AuditEvent struct {
 	Ip             *netip.Addr        `json:"ip"`
 	UserAgent      *string            `json:"user_agent"`
 	Metadata       []byte             `json:"metadata"`
+	LegalHold      bool               `json:"legal_hold"`
+	Category       *string            `json:"category"`
+}
+
+type AuditRetentionPolicy struct {
+	Category  string             `json:"category"`
+	Retention pgtype.Interval    `json:"retention"`
+	UpdatedBy *int64             `json:"updated_by"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type BrushPack struct {
@@ -813,6 +822,20 @@ type SavedSearch struct {
 	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ScheduledAction struct {
+	ID           pgtype.UUID        `json:"id"`
+	Action       string             `json:"action"`
+	TargetKind   string             `json:"target_kind"`
+	TargetID     string             `json:"target_id"`
+	Params       []byte             `json:"params"`
+	ScheduledFor pgtype.Timestamptz `json:"scheduled_for"`
+	State        string             `json:"state"`
+	Error        *string            `json:"error"`
+	CreatedBy    *int64             `json:"created_by"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ExecutedAt   pgtype.Timestamptz `json:"executed_at"`
 }
 
 type SearchFeedback struct {

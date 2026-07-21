@@ -7,7 +7,29 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-Nothing here yet — v0.5.0 was just cut.
+Work on `dev` since v0.5.0.
+
+### Operator-facing changes
+
+- **Audit-log retention and export.** The audit log now has a retention
+  policy — configurable per event category (a default of 7 years, with
+  shorter or longer holds per category), a legal-hold flag that exempts
+  individual events from purge, and a nightly enforcement pass. A GDPR
+  erasure request anonymises a user across the log — the events are
+  kept, the person is replaced by a `deleted-user` placeholder — so the
+  trail survives without the personal data. And the whole log can be
+  exported as CSV or NDJSON over a date range, streamed so exports of
+  millions of rows don't exhaust memory; IP addresses are withheld from
+  the export for callers who can't see them in the live view.
+
+- **Scheduled actions.** Operators (and, later, the privacy, commerce and
+  audit-retention features) can now schedule a change to run at a future
+  time — change an asset's sensitivity, soft-delete, change state, or
+  notify — and cancel it before it fires. Each action executes atomically
+  with its audit entry, so it either fully happens and is logged or fully
+  does not; a failure is recorded rather than half-applied. This is the
+  generic engine (ADR 0020); the asset-gating features that use it —
+  blur, reveal, timed embargo lift — land in later sprints.
 
 ## [v0.5.0] — 2026-07-20 — Public mode: anonymous browsing
 

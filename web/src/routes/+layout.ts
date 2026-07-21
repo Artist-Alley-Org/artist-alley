@@ -50,12 +50,16 @@ const ALWAYS_PUBLIC_ROUTE_IDS = new Set(['/login', '/setup']);
 // authenticated until it does. Do not add it here to "finish the
 // set".
 //
-// Asset detail has no entry because assets have no standalone route —
-// they render inside the viewer/modal on the routes above.
+// `/assets/[id]` is the standalone asset page (#475). It is safe to
+// make public for the same reason `/collections/[id]` is: the getAsset
+// endpoint applies the visibility predicate (ADR 0064) and returns 404
+// for any asset the caller may not see, so the page can never confirm
+// a hidden asset exists — the gate lives on the server, not here.
 const PUBLIC_MODE_ROUTE_IDS = new Set([
   '/',
   '/collections',
   '/collections/[id]',
+  '/assets/[id]',
   '/search',
   '/search/advanced',
 ]);

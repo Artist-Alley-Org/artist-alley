@@ -46,6 +46,104 @@ func (q *Queries) CountAuditEvents(ctx context.Context, arg CountAuditEventsPara
 	return total, err
 }
 
+const distinctAuditCategories = `-- name: DistinctAuditCategories :many
+SELECT DISTINCT category FROM audit_events WHERE category <> ''
+`
+
+// Every category currently present in the log, so the purge covers
+// categories that have no explicit policy row (they get the default).
+func (q *Queries) DistinctAuditCategories(ctx context.Context) ([]*string, error) {
+	rows, err := q.db.Query(ctx, distinctAuditCategories)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var category *string
+		if err := rows.Scan(&category); err != nil {
+			return nil, err
+		}
+		items = append(items, category)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const exportAuditEventsPage = `-- name: ExportAuditEventsPage :many
+SELECT id, event_type, occurred_at, subject_user_ref, actor_user_ref,
+       ip, user_agent, metadata, legal_hold
+FROM audit_events
+WHERE ( $1::timestamptz IS NULL OR occurred_at >= $1::timestamptz )
+  AND ( $2::timestamptz IS NULL OR occurred_at <= $2::timestamptz )
+  AND ( $3::timestamptz IS NULL
+        OR occurred_at > $3::timestamptz
+        OR (occurred_at = $3::timestamptz AND id > $4::uuid) )
+ORDER BY occurred_at ASC, id ASC
+LIMIT $5::int
+`
+
+type ExportAuditEventsPageParams struct {
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+	CursorAt pgtype.Timestamptz
+	CursorID pgtype.UUID
+	Lim      int32
+}
+
+type ExportAuditEventsPageRow struct {
+	ID             pgtype.UUID
+	EventType      string
+	OccurredAt     pgtype.Timestamptz
+	SubjectUserRef *int64
+	ActorUserRef   *int64
+	Ip             *netip.Addr
+	UserAgent      *string
+	Metadata       []byte
+	LegalHold      bool
+}
+
+// One keyset page for the streaming export. Ascending (occurred_at, id)
+// so the cursor advances forward through the whole range; the caller
+// pulls page after page and never holds more than one in memory.
+func (q *Queries) ExportAuditEventsPage(ctx context.Context, arg ExportAuditEventsPageParams) ([]ExportAuditEventsPageRow, error) {
+	rows, err := q.db.Query(ctx, exportAuditEventsPage,
+		arg.Since,
+		arg.Until,
+		arg.CursorAt,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExportAuditEventsPageRow
+	for rows.Next() {
+		var i ExportAuditEventsPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventType,
+			&i.OccurredAt,
+			&i.SubjectUserRef,
+			&i.ActorUserRef,
+			&i.Ip,
+			&i.UserAgent,
+			&i.Metadata,
+			&i.LegalHold,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
 INSERT INTO audit_events (
     event_type,
@@ -142,6 +240,17 @@ type ListAuditEventsParams struct {
 	Lim            int32
 }
 
+type ListAuditEventsRow struct {
+	ID             pgtype.UUID
+	EventType      string
+	OccurredAt     pgtype.Timestamptz
+	SubjectUserRef *int64
+	ActorUserRef   *int64
+	Ip             *netip.Addr
+	UserAgent      *string
+	Metadata       []byte
+}
+
 // Admin audit viewer (Phase 1.17.K). Supports keyset pagination on
 // (occurred_at DESC, id DESC) — cursor params @cursor_at + @cursor_id
 // are the last row of the previous page. NULL cursor values fetch the
@@ -153,7 +262,7 @@ type ListAuditEventsParams struct {
 //	@actor_user_ref    — actor (admin who did it)
 //	@subject_user_ref  — subject (user it happened to)
 //	@since / @until    — occurred_at window
-func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]AuditEvent, error) {
+func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]ListAuditEventsRow, error) {
 	rows, err := q.db.Query(ctx, listAuditEvents,
 		arg.EventType,
 		arg.ActorUserRef,
@@ -168,9 +277,9 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditEvent
+	var items []ListAuditEventsRow
 	for rows.Next() {
-		var i AuditEvent
+		var i ListAuditEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.EventType,
@@ -191,13 +300,77 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 	return items, nil
 }
 
+const listRetentionPolicies = `-- name: ListRetentionPolicies :many
+
+SELECT category, retention, updated_by, updated_at
+FROM audit_retention_policy
+ORDER BY category
+`
+
+// ---------------------------------------------------------------------------
+// Retention + export (#467, ADR 0032).
+// ---------------------------------------------------------------------------
+// Per-category retention durations. Categories absent here fall to the
+// code default (7 years).
+func (q *Queries) ListRetentionPolicies(ctx context.Context) ([]AuditRetentionPolicy, error) {
+	rows, err := q.db.Query(ctx, listRetentionPolicies)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditRetentionPolicy
+	for rows.Next() {
+		var i AuditRetentionPolicy
+		if err := rows.Scan(
+			&i.Category,
+			&i.Retention,
+			&i.UpdatedBy,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const purgeAuditCategoryBatch = `-- name: PurgeAuditCategoryBatch :execrows
+DELETE FROM audit_events
+WHERE id IN (
+    SELECT id FROM audit_events
+    WHERE category = $1::text
+      AND occurred_at < $2::timestamptz
+      AND legal_hold = false
+    LIMIT $3::int
+)
+`
+
+type PurgeAuditCategoryBatchParams struct {
+	Category string
+	Cutoff   pgtype.Timestamptz
+	Lim      int32
+}
+
+// Deletes up to @lim over-age, non-held rows of one category. Batched
+// so a large backlog can't wedge one giant transaction; the caller
+// loops until a batch comes back short. legal_hold rows are exempt.
+func (q *Queries) PurgeAuditCategoryBatch(ctx context.Context, arg PurgeAuditCategoryBatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeAuditCategoryBatch, arg.Category, arg.Cutoff, arg.Lim)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recentAuditEventsForUser = `-- name: RecentAuditEventsForUser :many
 SELECT id,
        event_type,
        occurred_at,
        subject_user_ref,
        actor_user_ref,
-       ip,
        user_agent,
        metadata
 FROM audit_events
@@ -211,24 +384,40 @@ type RecentAuditEventsForUserParams struct {
 	Limit          int32
 }
 
+type RecentAuditEventsForUserRow struct {
+	ID             pgtype.UUID
+	EventType      string
+	OccurredAt     pgtype.Timestamptz
+	SubjectUserRef *int64
+	ActorUserRef   *int64
+	UserAgent      *string
+	Metadata       []byte
+}
+
 // Powers "your recent activity" surfaces. The partial index on
 // (subject_user_ref, occurred_at DESC) keeps this fast.
-func (q *Queries) RecentAuditEventsForUser(ctx context.Context, arg RecentAuditEventsForUserParams) ([]AuditEvent, error) {
+//
+// `ip` is deliberately NOT selected (#458). Actor IP is personal data
+// gated behind system.audit.pii.read (#425), and this query has no
+// caller today — so leaving ip in the SELECT was a latent trap: a
+// future caller would render it un-gated. When per-user activity does
+// need IP, it wires through the same includeIP gate as the export path
+// (audit/export.go) rather than pulling the raw column here.
+func (q *Queries) RecentAuditEventsForUser(ctx context.Context, arg RecentAuditEventsForUserParams) ([]RecentAuditEventsForUserRow, error) {
 	rows, err := q.db.Query(ctx, recentAuditEventsForUser, arg.SubjectUserRef, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditEvent
+	var items []RecentAuditEventsForUserRow
 	for rows.Next() {
-		var i AuditEvent
+		var i RecentAuditEventsForUserRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.EventType,
 			&i.OccurredAt,
 			&i.SubjectUserRef,
 			&i.ActorUserRef,
-			&i.Ip,
 			&i.UserAgent,
 			&i.Metadata,
 		); err != nil {
@@ -240,4 +429,25 @@ func (q *Queries) RecentAuditEventsForUser(ctx context.Context, arg RecentAuditE
 		return nil, err
 	}
 	return items, nil
+}
+
+const tombstoneActor = `-- name: TombstoneActor :execrows
+UPDATE audit_events
+SET actor_user_ref = NULL,
+    metadata = jsonb_set(metadata, '{actor_tombstone}',
+                         to_jsonb('deleted-user-' || $1::text))
+WHERE actor_user_ref = $1::bigint
+`
+
+// GDPR DSAR (ADR 0024): a user is being deleted. Their audit rows are
+// PRESERVED — this only anonymizes the actor identity: the numeric ref
+// is cleared and a `deleted-user-{ref}` pseudonym is recorded in
+// metadata so the trail stays continuous without pointing at a now-gone
+// user row. Rows survive; identity does not.
+func (q *Queries) TombstoneActor(ctx context.Context, userRef string) (int64, error) {
+	result, err := q.db.Exec(ctx, tombstoneActor, userRef)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

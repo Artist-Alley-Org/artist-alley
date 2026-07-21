@@ -46,10 +46,12 @@ import (
 //     replaces a hard FALSE short-circuit that existed because no
 //     collection COULD be public before migration 00008 added the
 //     tier.
-//   - Collection, authenticated: public OR owner OR a live
-//     collection_acls grant. The public disjunct restores the invariant
-//     that authenticated callers see at least what anonymous ones do —
-//     without it, signing in REMOVED access to public collections.
+//   - Collection, authenticated: soft-delete + (public OR owner OR a
+//     live collection_acls grant). The public disjunct keeps the
+//     invariant that authenticated callers see at least what anonymous
+//     ones do; the soft-delete conjunct spans the whole predicate (#451)
+//     so an owner's soft-deleted collections stay out of browse lists,
+//     matching the asset and post branches.
 //   - Post, anonymous: soft-delete + visibility='public'. The old
 //     branch filtered on 'public' while the CHECK constraint forbade
 //     that value, so it matched zero rows and only looked like
@@ -124,46 +126,48 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 		// had exactly this shape (`visibility = 'public' OR author`);
 		// collections were the outlier.
 		//
-		// The public disjunct carries its OWN soft-delete conjunct
-		// rather than being hoisted into a shared one. Hoisting would
-		// change the owner and ACL paths, which are correct today and
-		// out of scope: an owner may still see their own soft-deleted
-		// collection. Scoping it here makes the public path match the
-		// anonymous branch exactly, so the two agree on the row set
-		// instead of the authenticated caller seeing MORE — a
-		// soft-deleted public collection — which would just invert the
-		// bug in the other direction.
+		// Soft-delete conjoins the WHOLE predicate, not just the public
+		// disjunct (#451). #448 originally scoped deleted_at into the
+		// public disjunct only, on the reasoning that an owner may still
+		// see their own soft-deleted collection — but that made this the
+		// one authenticated branch out of step with EntityAsset and
+		// EntityPost, both of which exclude soft-deleted rows across the
+		// entire predicate. A soft-deleted collection belongs in the
+		// trash view, not a browse list, for its owner exactly as for
+		// anyone else. So the shape now mirrors EntityPost below:
+		//   deleted_at IS NULL AND (public OR owner OR ACL)
 		//
 		// NO system.admin bypass here, deliberately. Caller carries a
 		// user ref and nothing else; admitting capabilities would mean
 		// threading a checker through Filter and therefore through all
 		// twelve splice sites, to answer a product question nobody has
 		// asked yet — whether an admin may browse OTHER people's
-		// PRIVATE collections. After this fix an admin sees every
-		// public collection plus their own plus anything ACL'd to them,
-		// which is the same floor as every other authenticated caller.
-		// If admins need more, that is an explicit, narrow option in
-		// the shape of IncludeSoftDeleted (#429), enforced by the
-		// caller — not a silent bypass inside the rule.
+		// PRIVATE collections. An admin sees every public collection
+		// plus their own plus anything ACL'd to them, the same floor as
+		// every other authenticated caller. If admins need more, that is
+		// an explicit, narrow option in the shape of IncludeSoftDeleted
+		// (#429), enforced by the caller — not a silent bypass here.
 		//
-		// Placeholder note: this adds a literal-only disjunct, so the
-		// branch still binds exactly ONE arg at argOffset+1. No splice
-		// site moves.
+		// includeSoftDeleted (superadmin escape hatch) waives ONLY the
+		// soft-delete conjunct, never the visibility disjunction — same
+		// as EntityPost's includeSoftDeleted path.
+		//
+		// Placeholder note: literal-only disjuncts, so the branch binds
+		// exactly ONE arg at argOffset+1. No splice site moves.
 		idx := argOffset + 1
-		public := fmt.Sprintf("%svisibility = 'public'", a)
-		if !p.includeSoftDeleted {
-			public = fmt.Sprintf("%sdeleted_at IS NULL AND %svisibility = 'public'", a, a)
-		}
-		frag := fmt.Sprintf(
-			" AND ((%s) OR %sowner_user_ref = $%d OR EXISTS ("+
+		visible := fmt.Sprintf(
+			"%svisibility = 'public' OR %sowner_user_ref = $%d OR EXISTS ("+
 				"SELECT 1 FROM collection_acls acl "+
 				"WHERE acl.collection_id = %sid "+
 				"AND acl.principal_type = 'user' "+
 				"AND acl.principal_id = $%d::TEXT "+
-				"AND (acl.expires_at IS NULL OR acl.expires_at > NOW())))",
-			public, a, idx, a, idx,
+				"AND (acl.expires_at IS NULL OR acl.expires_at > NOW()))",
+			a, a, idx, a, idx,
 		)
-		return frag, []any{p.caller.UserRef}
+		if p.includeSoftDeleted {
+			return fmt.Sprintf(" AND ((%s))", visible), []any{p.caller.UserRef}
+		}
+		return fmt.Sprintf(" AND (%sdeleted_at IS NULL AND (%s))", a, visible), []any{p.caller.UserRef}
 	case EntityPost:
 		if p.caller.IsAnonymous {
 			// No author comparison: an anonymous caller cannot be an

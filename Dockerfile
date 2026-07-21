@@ -124,6 +124,18 @@ LABEL org.opencontainers.image.description="Self-hosted art review and archival 
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
 
+# buildx populates TARGETARCH per platform in a multi-arch build. We use
+# it to install Blender on amd64 only (see the Blender block below).
+ARG TARGETARCH
+
+# Blender pin — MUST stay identical to infra/docker/app/Dockerfile's
+# BLENDER_VERSION / BLENDER_SHA256 (the local-compose runtime image). The
+# two runtime stages diverging is exactly what shipped a release image
+# with no Blender (#470); CI's "Blender pins in sync across Dockerfiles"
+# step (codegen-drift job) fails if these drift apart. Bump both together.
+ARG BLENDER_VERSION=4.2.9
+ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl libwebp7 \
         ffmpeg librsvg2-bin poppler-utils ghostscript imagemagick unar \
@@ -132,10 +144,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && mkdir -p /var/lib/aa-storage \
  && chown app:app /var/lib/aa-storage
 
+# Blender (Cycles/Workbench CPU) drives preview.model — the 3D turntable
+# + poster thumbnails. The official portable tarball is x64-glibc only;
+# Blender ships no arm64 build on the LTS line, and this image is built
+# multi-arch (linux/amd64,linux/arm64). So install Blender ONLY on amd64;
+# arm64 ships without it and preview.model degrades gracefully (the
+# ModelHandler no-ops when the `blender` binary is absent from PATH —
+# arm64 deployments simply get no 3D thumbnails until a community build
+# is wired, a v0.6.0 follow-up). The GL/X libs below are the ones Blender
+# dlopens on startup even in --background; without them it aborts before
+# our script runs. xz-utils is only needed for extraction and is purged.
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            xz-utils \
+            libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
+            libxkbcommon0 libxext6 libsm6 libice6 \
+     && curl -fL -o /tmp/blender.tar.xz \
+            "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+     && echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum -c - \
+     && mkdir -p /opt/blender \
+     && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
+     && ln -s /opt/blender/blender /usr/local/bin/blender \
+     && rm /tmp/blender.tar.xz \
+     && apt-get purge -y xz-utils \
+     && apt-get autoremove -y \
+     && rm -rf /var/lib/apt/lists/* ; \
+    fi
+
 USER app
 WORKDIR /app
 
 COPY --from=go-build --chown=app:app /out/aa /app/aa
+# turntable.py + helpers — the ModelHandler defaults its ScriptPath to
+# /app/blender/turntable.py. Harmless on arm64 (no Blender to run it).
+COPY --chown=app:app scripts/blender /app/blender
 
 ENV AA_HTTP_ADDR=":8080" \
     AA_STORAGE_BACKEND="fs" \

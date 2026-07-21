@@ -215,6 +215,11 @@ func (*PanicShim) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAud
 	panic("PanicShim: ListAdminAuditEventTypes called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ExportAuditEvents panics by default; test shims override.
+func (*PanicShim) ExportAuditEvents(context.Context, openapi.ExportAuditEventsRequestObject) (openapi.ExportAuditEventsResponseObject, error) {
+	panic("PanicShim: ExportAuditEvents called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RestoreCollection panics by default; test shims override.
 func (*PanicShim) RestoreCollection(context.Context, openapi.RestoreCollectionRequestObject) (openapi.RestoreCollectionResponseObject, error) {
 	panic("PanicShim: RestoreCollection called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -473,6 +478,16 @@ func (*PanicShim) ListAdminRequests(context.Context, openapi.ListAdminRequestsRe
 // DecideAdminRequest panics by default; test shims override.
 func (*PanicShim) DecideAdminRequest(context.Context, openapi.DecideAdminRequestRequestObject) (openapi.DecideAdminRequestResponseObject, error) {
 	panic("PanicShim: DecideAdminRequest called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListScheduledActions panics by default; test shims override.
+func (*PanicShim) ListScheduledActions(context.Context, openapi.ListScheduledActionsRequestObject) (openapi.ListScheduledActionsResponseObject, error) {
+	panic("PanicShim: ListScheduledActions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// CancelScheduledAction panics by default; test shims override.
+func (*PanicShim) CancelScheduledAction(context.Context, openapi.CancelScheduledActionRequestObject) (openapi.CancelScheduledActionResponseObject, error) {
+	panic("PanicShim: CancelScheduledAction called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // SeedCreateComment panics by default; test shims override.

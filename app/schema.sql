@@ -925,7 +925,22 @@ CREATE TABLE public.audit_events (
     actor_user_ref bigint,
     ip inet,
     user_agent text,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    legal_hold boolean DEFAULT false NOT NULL,
+    category text GENERATED ALWAYS AS (split_part(event_type, '.'::text, 1)) STORED
+);
+
+
+--
+-- Name: audit_retention_policy; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_retention_policy (
+    category text NOT NULL,
+    retention interval NOT NULL,
+    updated_by bigint,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_retention_policy_positive CHECK ((retention > '00:00:00'::interval))
 );
 
 
@@ -1936,6 +1951,28 @@ CREATE TABLE public.saved_search (
 
 
 --
+-- Name: scheduled_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scheduled_actions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    action text NOT NULL,
+    target_kind text NOT NULL,
+    target_id text NOT NULL,
+    params jsonb DEFAULT '{}'::jsonb NOT NULL,
+    scheduled_for timestamp with time zone NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    error text,
+    created_by bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    executed_at timestamp with time zone,
+    CONSTRAINT scheduled_actions_action_check CHECK ((action = ANY (ARRAY['restrict'::text, 'delete'::text, 'change_state'::text, 'change_sensitivity'::text, 'notify'::text]))),
+    CONSTRAINT scheduled_actions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'done'::text, 'cancelled'::text, 'failed'::text]))),
+    CONSTRAINT scheduled_actions_target_kind_check CHECK ((target_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'user'::text])))
+);
+
+
+--
 -- Name: search_feedback; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2543,6 +2580,14 @@ ALTER TABLE ONLY public.audit_events
 
 
 --
+-- Name: audit_retention_policy audit_retention_policy_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_retention_policy
+    ADD CONSTRAINT audit_retention_policy_pkey PRIMARY KEY (category);
+
+
+--
 -- Name: brush_pack_stamps brush_pack_stamps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2972,6 +3017,14 @@ ALTER TABLE ONLY public.saved_search
 
 ALTER TABLE ONLY public.saved_search
     ADD CONSTRAINT saved_search_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scheduled_actions scheduled_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_actions
+    ADD CONSTRAINT scheduled_actions_pkey PRIMARY KEY (id);
 
 
 --
@@ -3503,6 +3556,13 @@ CREATE INDEX audit_events__subject_time_idx ON public.audit_events USING btree (
 --
 
 CREATE INDEX audit_events__type_time_idx ON public.audit_events USING btree (event_type, occurred_at DESC);
+
+
+--
+-- Name: audit_events_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_events_retention_idx ON public.audit_events USING btree (category, occurred_at) WHERE (legal_hold = false);
 
 
 --
@@ -4455,6 +4515,20 @@ CREATE INDEX saved_search_due_idx ON public.saved_search USING btree (last_run_a
 --
 
 CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_user_ref, id);
+
+
+--
+-- Name: scheduled_actions_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_actions_created_idx ON public.scheduled_actions USING btree (created_at DESC);
+
+
+--
+-- Name: scheduled_actions_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_actions_due_idx ON public.scheduled_actions USING btree (scheduled_for) WHERE (state = 'pending'::text);
 
 
 --
