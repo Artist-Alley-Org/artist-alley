@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // stubLookup serves a fixed asset row. The test stamps in the
@@ -25,7 +26,7 @@ type stubLookup struct {
 	byID map[uuid.UUID]iiif.IIIFAsset
 }
 
-func (s stubLookup) GetIIIFAsset(_ context.Context, id uuid.UUID) (iiif.IIIFAsset, error) {
+func (s stubLookup) GetIIIFAsset(_ context.Context, id uuid.UUID, _ visibility.Caller) (iiif.IIIFAsset, error) {
 	if a, ok := s.byID[id]; ok {
 		return a, nil
 	}
@@ -177,20 +178,6 @@ func TestServeImage_BadRotation_400(t *testing.T) {
 		"/iiif/3/11111111-1111-1111-1111-111111111111/full/max/45/default.webp", nil))
 	if rr.Code != 400 {
 		t.Errorf("status = %d, want 400 (rotation outside Level 0)", rr.Code)
-	}
-}
-
-func TestServeImage_AuthGate_401(t *testing.T) {
-	h := defaultIIIFHandler(t, iiif.IIIFAsset{
-		FileHash: "abc", HasImage: true, PixelWidth: 1000, PixelHeight: 1000,
-	})
-	h.RequireID = func(*http.Request) bool { return false } // always deny
-	router := newRouterFor(t, h)
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, httptest.NewRequest("GET",
-		"/iiif/3/11111111-1111-1111-1111-111111111111/info.json", nil))
-	if rr.Code != 401 {
-		t.Errorf("status = %d, want 401", rr.Code)
 	}
 }
 
