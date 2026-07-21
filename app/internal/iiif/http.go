@@ -17,6 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // AssetLookup resolves an asset id to the bits the IIIF surface
@@ -24,7 +27,7 @@ import (
 // inject in-memory stubs; boot wires against the live DB pool
 // via NewLookupFromPool.
 type AssetLookup interface {
-	GetIIIFAsset(ctx context.Context, id uuid.UUID) (IIIFAsset, error)
+	GetIIIFAsset(ctx context.Context, id uuid.UUID, caller visibility.Caller) (IIIFAsset, error)
 }
 
 // VariantLister returns the install's configured pre-baked
@@ -55,18 +58,17 @@ var ErrAssetNotFound = errors.New("iiif: asset not found")
 
 // Handler is the IIIF Image API 3.0 Level 0 HTTP surface.
 type Handler struct {
-	Lookup    AssetLookup
-	Variants  VariantLister
-	Streamer  VariantStreamer
-	RequireID func(*http.Request) bool // returns true when an Identity is on the context
-	Logger    *slog.Logger
+	Lookup   AssetLookup
+	Variants VariantLister
+	Streamer VariantStreamer
+	Logger   *slog.Logger
 }
 
-// NewHandler wires the handler with sensible defaults. RequireID
-// is the auth gate — when nil, requests pass through (useful for
-// tests). Production mounts the handler under a middleware that
-// runs the resolver; RequireID then checks for an Identity in
-// context.
+// NewHandler wires the handler with sensible defaults. Anonymous
+// admission is the mounting middleware's job (the public-mode gate,
+// #445) — the handler no longer runs its own identity check; the
+// visibility predicate inside GetIIIFAsset decides which rows a caller,
+// anonymous or not, may resolve (#460).
 func NewHandler(lookup AssetLookup, variants VariantLister, streamer VariantStreamer, logger *slog.Logger) *Handler {
 	return &Handler{
 		Lookup:   lookup,
@@ -88,10 +90,6 @@ func (h *Handler) Mount(r chi.Router) {
 
 // serveInfo emits the Image Information Document.
 func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request) {
-	if !h.authed(r) {
-		writeJSONError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -99,7 +97,7 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	asset, err := h.Lookup.GetIIIFAsset(ctx, id)
+	asset, err := h.Lookup.GetIIIFAsset(ctx, id, callerFrom(r))
 	if errors.Is(err, ErrAssetNotFound) {
 		writeJSONError(w, http.StatusNotFound, "asset not found")
 		return
@@ -146,10 +144,6 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request) {
 // variant bytes through. Caller-Content-Type is whatever the
 // storage layer recorded (typically image/webp).
 func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
-	if !h.authed(r) {
-		writeJSONError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -167,7 +161,15 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	asset, err := h.Lookup.GetIIIFAsset(ctx, id)
+	// Row plane only. GetIIIFAsset gates EXISTENCE via the visibility
+	// predicate. It does NOT gate the tile BYTES via
+	// visibility.CanReadContent (ADR 0064) — so an authenticated
+	// non-owner who can resolve a restricted asset (the deferred
+	// authenticated-sensitivity rule) can still fetch its tiles here.
+	// That content-plane gap is PRE-EXISTING, not introduced by #460,
+	// and wiring CanReadContent needs the pool + a capability checker
+	// into this handler; flagged as a follow-up rather than half-wired.
+	asset, err := h.Lookup.GetIIIFAsset(ctx, id, callerFrom(r))
 	if errors.Is(err, ErrAssetNotFound) {
 		writeJSONError(w, http.StatusNotFound, "asset not found")
 		return
@@ -222,14 +224,15 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
-// authed reports whether the caller passes the auth gate.
-// Defaults to "allow" when RequireID is unwired (tests that
-// just want to exercise the URL grammar).
-func (h *Handler) authed(r *http.Request) bool {
-	if h.RequireID == nil {
-		return true
+// callerFrom builds the visibility caller for the request. Anonymous
+// (nil identity) resolves against the anonymous predicate; an
+// authenticated request carries its user ref. The predicate, not this
+// helper, decides row visibility.
+func callerFrom(r *http.Request) visibility.Caller {
+	if id := auth.IdentityFromContext(r.Context()); id != nil {
+		return visibility.NewCaller(&id.UserRef)
 	}
-	return h.RequireID(r)
+	return visibility.NewCaller(nil)
 }
 
 func (h *Handler) warn(ctx context.Context, msg string, args ...any) {
@@ -282,8 +285,26 @@ type PoolLookup struct {
 }
 
 // GetIIIFAsset implements AssetLookup.
-func (l PoolLookup) GetIIIFAsset(ctx context.Context, id uuid.UUID) (IIIFAsset, error) {
-	const q = `
+//
+// The row is resolved through the SINGLE visibility predicate (ADR
+// 0063), exactly as the browse path does (#460). Before this, IIIF was
+// a SECOND row-existence path: it resolved any non-deleted asset by id
+// with no visibility check, so a request to info.json could confirm a
+// non-public asset existed and read its pixel dimensions. Now the
+// predicate is spliced in — an anonymous caller resolves only
+// public+active+ready assets, an authenticated caller resolves any
+// non-deleted asset (the deferred authenticated-sensitivity rule, same
+// as browse) — and a row the caller may not see comes back as
+// ErrAssetNotFound, which the handler maps to 404 (never 403: the row
+// plane must not confirm a hidden asset exists).
+func (l PoolLookup) GetIIIFAsset(ctx context.Context, id uuid.UUID, caller visibility.Caller) (IIIFAsset, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
+	if err != nil {
+		return IIIFAsset{}, err
+	}
+	// $1 = id; the predicate's args start at $2.
+	visFrag, visArgs := pred.ToSQL("a", 1)
+	q := `
 		SELECT a.file_hash,
 		       a.has_image,
 		       COALESCE(w.value_num, 0)::INT AS pixel_width,
@@ -295,12 +316,11 @@ func (l PoolLookup) GetIIIFAsset(ctx context.Context, id uuid.UUID) (IIIFAsset, 
 		  LEFT JOIN asset_field_value h
 		         ON h.asset_id = a.id
 		        AND h.field_id = (SELECT id FROM field_definition WHERE code = 'pixel_height' LIMIT 1)
-		 WHERE a.id = $1
-		   AND a.deleted_at IS NULL
-	`
+		 WHERE a.id = $1` + visFrag
 	var out IIIFAsset
 	var fileHash *string
-	err := l.Pool.QueryRow(ctx, q, id).Scan(&fileHash, &out.HasImage, &out.PixelWidth, &out.PixelHeight)
+	args := append([]any{id}, visArgs...)
+	err = l.Pool.QueryRow(ctx, q, args...).Scan(&fileHash, &out.HasImage, &out.PixelWidth, &out.PixelHeight)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return IIIFAsset{}, ErrAssetNotFound
