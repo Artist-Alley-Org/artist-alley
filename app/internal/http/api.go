@@ -86,6 +86,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/requests"
+	"github.com/mscrnt/artist-alley/app/internal/scheduledactions"
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
@@ -144,6 +145,7 @@ type apiServer struct {
 	jobs              *jobs.HTTPHandler
 	brushpacks        *brushpacks.Handler
 	audit             *audit.HTTPHandler
+	scheduledActions  *scheduledactions.HTTPHandler
 	licensing         *licensing.Handler
 	userprefs         *userprefs.Handler
 	aiAdmin           *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
@@ -275,30 +277,31 @@ type apiServer struct {
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
 	s := &apiServer{
-		pool:         pool,
-		cacheReg:     cacheReg,
-		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
-		resourceType: assettype.NewHandler(pool, logger),
-		storage:      storage.NewHandler(storageSvc, logger),
-		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg, sysCfg),
-		subtitles:    subtitles.NewHandler(pool, cacheReg, logger),
-		metadata:     metadata.NewHandler(pool, logger, cacheReg),
-		collections:  collections.NewHandler(pool, logger, cacheReg),
-		posts:        posts.NewHandler(pool, logger, cacheReg),
-		teams:        teams.NewHandler(pool, logger, cacheReg),
-		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
-		social:       social.NewHandler(pool, logger, cacheReg),
-		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
-		workflow:     workflow.NewHandler(pool, logger, cacheReg),
-		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode),
-		i18n:         i18n.NewHandler(logger),
-		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
-		jobsSvc:      jobSvc,
-		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
-		audit:        audit.NewHTTPHandler(pool, logger),
-		licensing:    licensing.NewHandler(licState, logger),
-		userprefs:    userprefs.NewHandler(pool, logger, cacheReg),
-		aiAdmin:      newAIAdminHandler(pool, cacheReg),
+		pool:             pool,
+		cacheReg:         cacheReg,
+		auth:             authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
+		resourceType:     assettype.NewHandler(pool, logger),
+		storage:          storage.NewHandler(storageSvc, logger),
+		assets:           assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg, sysCfg),
+		subtitles:        subtitles.NewHandler(pool, cacheReg, logger),
+		metadata:         metadata.NewHandler(pool, logger, cacheReg),
+		collections:      collections.NewHandler(pool, logger, cacheReg),
+		posts:            posts.NewHandler(pool, logger, cacheReg),
+		teams:            teams.NewHandler(pool, logger, cacheReg),
+		users:            usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
+		social:           social.NewHandler(pool, logger, cacheReg),
+		setup:            setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
+		workflow:         workflow.NewHandler(pool, logger, cacheReg),
+		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode),
+		i18n:             i18n.NewHandler(logger),
+		jobs:             jobs.NewHTTPHandler(jobSvc, logger),
+		jobsSvc:          jobSvc,
+		brushpacks:       brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
+		audit:            audit.NewHTTPHandler(pool, logger),
+		scheduledActions: scheduledactions.NewHTTPHandler(scheduledactions.NewStore(pool), logger),
+		licensing:        licensing.NewHandler(licState, logger),
+		userprefs:        userprefs.NewHandler(pool, logger, cacheReg),
+		aiAdmin:          newAIAdminHandler(pool, cacheReg),
 	}
 	// Phase 1.14.A-bridge — assemble the AI bridge aggregator from
 	// the assets.Handler (real reader + tag writer) + stubs for the
@@ -998,6 +1001,26 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// block + channel-pref gating).
 	s.activities = activities.NewWriter(pool, logger, cacheReg)
 	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
+
+	// #40 sprint 1 — the scheduled-action reaper. A recurring job on
+	// the queue that drains due scheduled_actions through five audited
+	// executors and self-re-enqueues. Registered here because it needs
+	// the notification writer built just above; seeded once at boot via
+	// EnsureScheduled (idempotent). The reaper writes audit rows
+	// tx-bound with each domain change.
+	jobSvc.Registry.Register(&scheduledactions.ReaperJob{
+		Pool:     pool,
+		Jobs:     jobSvc,
+		Rec:      auditRec,
+		Notifier: socialNotifyAdapter{w: notifWriter},
+		Logger:   logger,
+	})
+	if err := scheduledactions.EnsureScheduled(context.Background(), jobSvc); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"scheduled_actions.reap.initial_enqueue_error",
+			slog.String("err", err.Error()),
+		)
+	}
 	s.activitiesAdmin = activities.NewAdminHandler(s.activities)
 
 	// Federation peer registry (Phase 1.22.B-a). Two cache
@@ -3080,6 +3103,12 @@ func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequ
 
 // --- audit viewer (Phase 1.17.K) ------------------------------------------
 
+func (s *apiServer) ListScheduledActions(ctx context.Context, req openapi.ListScheduledActionsRequestObject) (openapi.ListScheduledActionsResponseObject, error) {
+	return s.scheduledActions.ListScheduledActions(ctx, req)
+}
+func (s *apiServer) CancelScheduledAction(ctx context.Context, req openapi.CancelScheduledActionRequestObject) (openapi.CancelScheduledActionResponseObject, error) {
+	return s.scheduledActions.CancelScheduledAction(ctx, req)
+}
 func (s *apiServer) ListAdminAuditEvents(ctx context.Context, req openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
 	return s.audit.ListAdminAuditEvents(ctx, req)
 }

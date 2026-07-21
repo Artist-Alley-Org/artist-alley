@@ -1936,6 +1936,28 @@ CREATE TABLE public.saved_search (
 
 
 --
+-- Name: scheduled_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scheduled_actions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    action text NOT NULL,
+    target_kind text NOT NULL,
+    target_id text NOT NULL,
+    params jsonb DEFAULT '{}'::jsonb NOT NULL,
+    scheduled_for timestamp with time zone NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    error text,
+    created_by bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    executed_at timestamp with time zone,
+    CONSTRAINT scheduled_actions_action_check CHECK ((action = ANY (ARRAY['restrict'::text, 'delete'::text, 'change_state'::text, 'change_sensitivity'::text, 'notify'::text]))),
+    CONSTRAINT scheduled_actions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'done'::text, 'cancelled'::text, 'failed'::text]))),
+    CONSTRAINT scheduled_actions_target_kind_check CHECK ((target_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'user'::text])))
+);
+
+
+--
 -- Name: search_feedback; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2972,6 +2994,14 @@ ALTER TABLE ONLY public.saved_search
 
 ALTER TABLE ONLY public.saved_search
     ADD CONSTRAINT saved_search_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scheduled_actions scheduled_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_actions
+    ADD CONSTRAINT scheduled_actions_pkey PRIMARY KEY (id);
 
 
 --
@@ -4455,6 +4485,20 @@ CREATE INDEX saved_search_due_idx ON public.saved_search USING btree (last_run_a
 --
 
 CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_user_ref, id);
+
+
+--
+-- Name: scheduled_actions_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_actions_created_idx ON public.scheduled_actions USING btree (created_at DESC);
+
+
+--
+-- Name: scheduled_actions_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_actions_due_idx ON public.scheduled_actions USING btree (scheduled_for) WHERE (state = 'pending'::text);
 
 
 --

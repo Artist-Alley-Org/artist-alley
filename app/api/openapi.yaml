@@ -1988,6 +1988,88 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/scheduled-actions:
+    get:
+      operationId: listScheduledActions
+      summary: List scheduled actions
+      description: |
+        The "Scheduled actions" admin surface (ADR 0020). Lists every
+        scheduled action — pending, done, cancelled and failed —
+        newest first, so an operator can see what is queued to fire,
+        cancel it before it does, and review what already ran. Filter
+        by `state` to narrow to a single lifecycle bucket.
+      tags: [scheduled-actions]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: Narrow to one lifecycle state.
+          schema:
+            type: string
+            enum: [pending, done, cancelled, failed]
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque next-page token from a prior response.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of scheduled actions, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledActionList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/scheduled-actions/{id}/cancel:
+    post:
+      operationId: cancelScheduledAction
+      summary: Cancel a pending scheduled action
+      description: |
+        Cancels a scheduled action before it fires (ADR 0020). Only a
+        `pending` action can be cancelled; a done / failed / already-
+        cancelled one is terminal and returns 409. This is the reason
+        scheduled actions are a durable table rather than raw enqueued
+        jobs: a subscription-expiry action must be cancellable if the
+        subscription renews.
+      tags: [scheduled-actions]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The action after cancellation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledAction" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The action is not pending and cannot be cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /admin/seed/timestamps:
     post:
       operationId: seedBackfillTimestamps
@@ -12207,6 +12289,63 @@ components:
           type: integer
           format: int64
           description: Total rows matching the filter (cursor-independent).
+        next_cursor:
+          type: string
+          nullable: true
+
+    ScheduledAction:
+      type: object
+      description: |
+        One row of the scheduled_actions table (ADR 0020) — a declarative
+        future action executed by the reaper through the jobs queue.
+      required: [id, action, target_kind, target_id, scheduled_for, state, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        action:
+          type: string
+          enum: [restrict, delete, change_state, change_sensitivity, notify]
+        target_kind:
+          type: string
+          enum: [asset, post, collection, user]
+        target_id:
+          type: string
+          description: |
+            The target's id as text. A UUID for asset/post/collection, a
+            user ref for user — the column is polymorphic across both.
+        params:
+          type: object
+          additionalProperties: true
+          description: >-
+            Per-action parameters. For change_sensitivity, a `to` field
+            naming the target tier; for change_state, a `to_state` code;
+            for delete, an optional `reason`.
+        scheduled_for: { type: string, format: date-time }
+        state:
+          type: string
+          enum: [pending, done, cancelled, failed]
+        error:
+          type: string
+          nullable: true
+          description: Failure message when state is `failed`; null otherwise.
+        created_by:
+          type: integer
+          format: int64
+          nullable: true
+          description: User who scheduled it; null for system-scheduled actions.
+        created_at: { type: string, format: date-time }
+        executed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the reaper ran it; null while pending or cancelled.
+
+    ScheduledActionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduledAction" }
         next_cursor:
           type: string
           nullable: true
