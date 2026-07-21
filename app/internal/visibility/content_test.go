@@ -63,6 +63,18 @@ const (
 func notAdmin(string) bool { return false }
 func isAdmin(string) bool  { return true }
 
+// onlyCap builds a CapabilityChecker that holds EXACTLY the given codes
+// and nothing else — the honest model of a role granted a scoped
+// capability. Used to prove content.read.all admits bytes without the
+// caller holding system.admin or any write capability.
+func onlyCap(codes ...string) CapabilityChecker {
+	set := make(map[string]bool, len(codes))
+	for _, c := range codes {
+		set[c] = true
+	}
+	return func(code string) bool { return set[code] }
+}
+
 // seedContentAsset inserts one asset at a tier, optionally with a team
 // and optionally ownerless.
 func seedContentAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string, teamID *uuid.UUID, ownerless bool) uuid.UUID {
@@ -161,6 +173,59 @@ func TestCanReadContent_Tiers(t *testing.T) {
 	t.Run("embargo is never weaker than restricted", func(t *testing.T) {
 		if can(t, pool, ctStranger, notAdmin, embargo) {
 			t.Error("embargo admitted a non-owner")
+		}
+	})
+}
+
+// TestCanReadContent_ContentReadAll pins the #474 capability: a caller
+// holding ONLY content.read.all — no system.admin, no ownership, no team
+// — receives the bytes at every non-public tier, and a caller without it
+// is still denied. The whole point is the public demo rendering a
+// mostly-restricted catalogue without the system.admin wildcard.
+func TestCanReadContent_ContentReadAll(t *testing.T) {
+	pool := contentPool(t)
+
+	teamID := seedTeamWithMember(t, pool, ctMember) // ctStranger is NOT a member
+	tiers := map[string]uuid.UUID{
+		"restricted": seedContentAsset(t, pool, "restricted", nil, false),
+		"embargo":    seedContentAsset(t, pool, "embargo", nil, false),
+		"team":       seedContentAsset(t, pool, "team", &teamID, false),
+	}
+
+	// The capability holder is a stranger: not the owner, not a team
+	// member. Content.read.all is the only reason they could pass.
+	readAll := onlyCap(ContentReadAll)
+
+	for tier, id := range tiers {
+		t.Run("content.read.all admits "+tier, func(t *testing.T) {
+			if !can(t, pool, ctStranger, readAll, id) {
+				t.Errorf("content.read.all holder denied %s bytes; the cap must admit every tier", tier)
+			}
+			// ...and without the cap, the same stranger is still refused —
+			// this is the byte-gating #474 is lifting, and it must stay
+			// closed for anyone who lacks the capability.
+			if can(t, pool, ctStranger, notAdmin, id) {
+				t.Errorf("a caller WITHOUT content.read.all was admitted to %s; the gate must stay closed", tier)
+			}
+		})
+	}
+
+	// The cap is content-only: holding it confers no admin/write. The
+	// checker returns true for content.read.all ALONE — so the fact that
+	// CanReadContent passes above, while this same checker reports false
+	// for system.admin and representative write capabilities, is the
+	// proof that no wider privilege rode in on it.
+	t.Run("content.read.all confers no admin or write capability", func(t *testing.T) {
+		for _, other := range []string{
+			SystemAdmin,
+			"system.config.write",
+			"assets.write",
+			"assets.delete",
+			"system.storage.write",
+		} {
+			if readAll(other) {
+				t.Errorf("content.read.all holder unexpectedly also holds %q; the cap must grant content bytes only", other)
+			}
 		}
 	})
 }

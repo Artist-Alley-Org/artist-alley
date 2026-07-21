@@ -16,6 +16,19 @@ import (
 // check in this package.
 const SystemAdmin = "system.admin"
 
+// ContentReadAll grants read access to asset BYTES at every sensitivity
+// tier, and nothing else (#474). It is narrower than SystemAdmin by
+// design: SystemAdmin is a wildcard that also unlocks every admin
+// surface (system config, SMTP, federation keys, user PII), whereas
+// ContentReadAll unlocks only the binary plane here in CanReadContent —
+// no admin surfaces, no writes. It exists so a role like the public
+// demo's demo-viewer can render every asset's derivatives across a
+// mostly-restricted catalogue without being handed the wildcard. It is
+// honoured ONLY at this content gate; holding it confers no other
+// capability, because capability checks are independent — a caller holds
+// exactly the codes granted to it.
+const ContentReadAll = "content.read.all"
+
 // CapabilityChecker answers "does this caller hold capability X".
 // Declared as a func rather than an interface because auth.Identity.Can
 // takes variadic options, so it does not satisfy a plain Can(string)
@@ -63,7 +76,12 @@ func CanReadContent(
 	// the ownership comparison below — see the !IsAnonymous guard there,
 	// which stops the AnonymousCaller sentinel (int64 0) from matching
 	// an asset owned by ref 0.
-	if caps != nil && caps(SystemAdmin) {
+	// SystemAdmin (wildcard) OR ContentReadAll (binary-plane-only, #474)
+	// short-circuits the sensitivity resolution below. ContentReadAll
+	// admits the bytes at EVERY tier — restricted, team, embargo — which
+	// is the point: a demo-viewer must render a mostly-restricted
+	// catalogue. It grants nothing beyond these bytes; see its doc.
+	if caps != nil && (caps(SystemAdmin) || caps(ContentReadAll)) {
 		return true, nil
 	}
 
