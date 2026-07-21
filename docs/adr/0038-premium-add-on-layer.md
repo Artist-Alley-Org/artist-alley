@@ -155,8 +155,10 @@ An add-on is **paid** if it falls in one of two buckets:
 - `aa-backup-dr` — multi-region S3 replication, point-in-time
   restore, scripted DR drills.
 - `aa-sso-premium` — Okta / Auth0 / WorkOS / Azure AD bridges with
-  rich SCIM provisioning; generic SAML / OIDC stays in Enterprise
-  tier.
+  rich SCIM provisioning. Generic self-hosted SAML / OIDC / LDAP is
+  **free** ([ADR 0066](0066-generic-sso-ldap-not-license-gated.md)); this
+  add-on is only the managed hosted-IdP bridges + SCIM, priced for the
+  per-vendor operational burden we carry rather than the operator.
 - `aa-compliance` — SOC 2 / HIPAA / GDPR audit-export templates,
   signing keys, retention-policy enforcement helpers.
 
