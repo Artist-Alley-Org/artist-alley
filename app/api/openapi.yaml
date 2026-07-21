@@ -1988,6 +1988,69 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/audit/export:
+    get:
+      operationId: exportAuditEvents
+      summary: Export the audit log (streamed CSV or JSON)
+      description: |
+        Streams the audit log over a date range as CSV or NDJSON
+        (newline-delimited JSON, `format=json`), with an
+        operator-picked column subset (ADR 0032 §Export). The response
+        is streamed from a keyset cursor, never buffered, so a
+        multi-million-row export runs in bounded memory.
+
+        Gated on `system.audit.read`. Actor IP is redacted for callers
+        without `system.audit.pii.read`, exactly as the /admin/audit
+        list view redacts it (#425) — the export must not leak what the
+        list withholds. Requesting the `ip` column without that
+        capability yields an empty ip field, not a 403, so the column
+        layout stays stable.
+      tags: [audit]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.audit.read"]
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: Output format. Defaults to csv.
+          schema:
+            type: string
+            enum: [csv, json]
+            default: csv
+        - name: columns
+          in: query
+          required: false
+          description: >-
+            Comma-separated column subset, in order. Defaults to all
+            columns. Recognised: id, event_type, occurred_at,
+            actor_user_ref, subject_user_ref, ip, user_agent, metadata,
+            legal_hold. Unknown names are ignored.
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          description: ISO-8601 lower bound on occurred_at (inclusive).
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: ISO-8601 upper bound on occurred_at (inclusive).
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The streamed export.
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+            application/x-ndjson:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/scheduled-actions:
     get:
       operationId: listScheduledActions

@@ -875,6 +875,20 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 				Jobs:      jobSvc,
 				Logger:    logger,
 			})
+			// #467 — nightly audit retention purge. Recurring job on the
+			// same queue (NOT the per-target scheduled-action engine — a
+			// category purge is a bulk set-delete). Wakes at 03:00 UTC,
+			// self-re-enqueues. Reads audit_retention_policy each run so
+			// operator changes take effect without a restart.
+			jobSvc.Registry.Register(&audit.RetentionJob{
+				Pool: pool, Jobs: jobSvc, Rec: auditRec, Logger: logger, GCHourUTC: 3,
+			})
+			if err := audit.EnsureRetentionScheduled(context.Background(), jobSvc, 3); err != nil {
+				logger.LogAttrs(context.Background(), slog.LevelWarn,
+					"audit.retention.initial_enqueue_error",
+					slog.String("err", err.Error()),
+				)
+			}
 			if err := softdelete.EnsureScheduled(context.Background(), jobSvc, sysCfg); err != nil {
 				logger.LogAttrs(context.Background(), slog.LevelWarn,
 					"softdelete.gc.initial_enqueue_error",
@@ -3108,6 +3122,9 @@ func (s *apiServer) ListScheduledActions(ctx context.Context, req openapi.ListSc
 }
 func (s *apiServer) CancelScheduledAction(ctx context.Context, req openapi.CancelScheduledActionRequestObject) (openapi.CancelScheduledActionResponseObject, error) {
 	return s.scheduledActions.CancelScheduledAction(ctx, req)
+}
+func (s *apiServer) ExportAuditEvents(ctx context.Context, req openapi.ExportAuditEventsRequestObject) (openapi.ExportAuditEventsResponseObject, error) {
+	return s.audit.ExportAuditEvents(ctx, req)
 }
 func (s *apiServer) ListAdminAuditEvents(ctx context.Context, req openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
 	return s.audit.ListAdminAuditEvents(ctx, req)

@@ -124,6 +124,13 @@ const (
 	EventScheduledActionExecuted = "scheduled_action.executed"
 	EventScheduledActionFailed   = "scheduled_action.failed"
 
+	// #467 — the retention purge is itself an auditable event (ADR
+	// 0032). One per category per nightly run that deleted anything,
+	// with the count + cutoff. Category 'system', so it is retained
+	// under the system policy (the default 7y) and does not purge
+	// itself out on the next run.
+	EventAuditRetentionPurged = "system.audit.retention_purged"
+
 	// Phase 1.16.B-5-followup — search feedback abuse-review event.
 	// Fires whenever an admin opens the per-user feedback log page
 	// so we have an audit trail for who's browsing which user's
@@ -692,6 +699,17 @@ func (r *Recorder) RequestExpired(ctx context.Context, requesterRef int64, reque
 		"request_id": requestID,
 		"capability": capability,
 		"expired_at": expiredAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// RetentionPurged records that a nightly purge deleted `deleted` rows
+// of `category` older than `cutoff` (#467, ADR 0032). System-initiated,
+// so actor is nil.
+func (r *Recorder) RetentionPurged(ctx context.Context, category string, deleted int64, cutoff time.Time) {
+	r.write(ctx, EventAuditRetentionPurged, nil, nil, reqContext{}, map[string]any{
+		"category": category,
+		"deleted":  deleted,
+		"cutoff":   cutoff.UTC().Format(time.RFC3339Nano),
 	})
 }
 
