@@ -163,7 +163,6 @@
           name,
           visibility: 'private',
           membership: 'manual',
-          featured: false,
         },
       });
       if (error || !data) {

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -61,14 +61,15 @@ tags:
       like/comment counters. Browse-page reads from /posts; assets
       are the file-bearing members beneath. Single-asset uploads
       still become Posts (a Post with one member) so the shape is
-      uniform end-to-end. Phase 1.13.D-2.
+      uniform end-to-end.
   - name: collections
     description: |
       User-owned groupings of assets, per ADR 0009. UUID-keyed,
       federation-prepared. Three orthogonal axes — visibility
       (private/shared/public), membership (manual/query/hybrid), and
-      lifecycle (permanent vs `expires_at`). Phase 1.11.A ships
-      manual membership; query and grants land in 1.11.B/C.
+      lifecycle (permanent vs `expires_at`). Manual membership is
+      available today; query and grant-based membership are not yet
+      implemented.
   - name: teams
     description: |
       Organisational units with a DAG hierarchy. A team can have
@@ -464,7 +465,7 @@ paths:
       operationId: listAdminUserCapabilities
       summary: List a user's explicit grants + revokes (admin)
       description: |
-        Phase 1.17.F — returns the per-user GRANT and REVOKE override
+        Returns the per-user GRANT and REVOKE override
         lists. Role-derived capabilities are not included (they're
         already returned by GET /auth/me/capabilities and the role
         editor surface). This list is the additive/subtractive
@@ -861,7 +862,7 @@ paths:
         instance Ed25519 public key, the canonical instance URL,
         and the display name. This is what peers fetch when
         verifying inbound handshakes or HTTP-Sig'd requests
-        (the latter ships in Phase 1.22.D).
+        (HTTP-Signature verification is enforced on the inbox).
       tags: [federation]
       responses:
         "200":
@@ -899,7 +900,7 @@ paths:
   /federation/peers/handshake:
     post:
       operationId: postFederationHandshake
-      summary: Peer-to-peer handshake endpoint (1.22.B-b)
+      summary: Peer-to-peer handshake endpoint
       description: |
         Public unauthenticated endpoint — accepts signed
         handshake envelopes from peer instances per
@@ -932,7 +933,7 @@ paths:
   /admin/federation/peers/initiate:
     post:
       operationId: initiateFederationHandshake
-      summary: Initiate an outbound handshake (1.22.B-b)
+      summary: Initiate an outbound handshake
       description: |
         Admin "Pair by URL" entry. Creates a local
         pending_outbound row + sends a signed offer envelope to
@@ -1436,7 +1437,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
     post:
       operationId: createFederationPeer
-      summary: Manually add a federation peer (1.22.B-a)
+      summary: Manually add a federation peer
       description: |
         Manual peer entry — the operator pastes the peer's
         instance URL + display name + the PEM-encoded Ed25519
@@ -1567,9 +1568,9 @@ paths:
       summary: Defederate a peer
       description: |
         Removes the peer row. Per ADR 0043 §"Trust model" the
-        Phase 1.22.C federation_shares table cascades on this
-        delete and Phase 1.22.D emits the final aa:Unshare
-        activity to the peer so they purge their local cache.
+        federation_shares table cascades on this delete and the
+        server emits the final aa:Unshare activity to the peer so
+        they purge their local cache.
         Cascade + activity emission happen automatically when
         those phases ship; this endpoint is the entry point.
       tags: [admin, federation]
@@ -1591,7 +1592,7 @@ paths:
       operationId: getFederationKeyHealth
       summary: Aggregate federation key + capability health
       description: |
-        Phase 1.22.I-h admin observability surface. One round-trip
+        Admin observability surface. One round-trip
         feeds the /admin/federation/key-health dashboard's five
         tiles: users without keypair (I-b backfill gap), remote
         actors missing encryption keys (I-c cache miss), peers
@@ -1626,7 +1627,7 @@ paths:
       operationId: rotateUserFederationKeysAsAdmin
       summary: Admin-initiated rotation on behalf of a user
       description: |
-        Phase 1.22.I-h compromised-key recovery path. Forces
+        Compromised-key recovery path. Forces
         rotation for the named user; the new federation_user_keys
         row + the demoted previous row both record
         rotated_by_user_ref = the admin's ref. Distinct from
@@ -1654,7 +1655,7 @@ paths:
       operationId: rotateOwnFederationKeys
       summary: Rotate my own X25519 federation keypair
       description: |
-        Phase 1.22.I-h user self-rotation. Generates a fresh
+        User self-rotation. Generates a fresh
         X25519 keypair, demotes the previous current key to
         retained state with the configured grace window
         (federation.user_keys.retained_until_days, default 30d),
@@ -1771,7 +1772,7 @@ paths:
         The artist-alley app NEVER calls the license server at
         verification time. This endpoint just reads the in-memory
         cache populated at startup (and refreshed on
-        POST /admin/license/upload — Phase 1.17.O-2).
+        POST /admin/license/upload).
       tags: [licensing]
       security:
         - cookieAuth: []
@@ -2142,7 +2143,7 @@ paths:
       operationId: changeMyPassword
       summary: Change my password
       description: |
-        Phase 1.17.D — self-service password change. Verifies the
+        Self-service password change. Verifies the
         current password, applies the policy (min length / complexity
         from system_config.auth.password_policy), rejects reuse of
         the last 5 passwords, and (optionally) revokes every other
@@ -2176,7 +2177,7 @@ paths:
       operationId: getAccountPreferences
       summary: Get my notification + view preferences
       description: |
-        Phase 1.17.G — per-user application-behavior preferences:
+        Per-user application-behavior preferences:
         which channels (in_app, email) the user wants each notification
         event delivered through, plus default-view selections (home
         tab, browse layout, browse sort) that apply to the user's
@@ -2211,7 +2212,7 @@ paths:
       operationId: patchAccountPreferences
       summary: Replace my notification + view preferences
       description: |
-        Phase 1.17.G — upserts the caller's preferences. The wire
+        Upserts the caller's preferences. The wire
         contract is full-object replacement: the client sends the
         entire resolved object, the server validates against the
         build's `known_event_types` + `known_channels` catalogs, and
@@ -2260,7 +2261,7 @@ paths:
       operationId: adminResetUserPassword
       summary: Issue a one-shot password for a user (admin helpdesk)
       description: |
-        Phase 1.17.D — admin/helpdesk password reset. Generates a
+        Admin/helpdesk password reset. Generates a
         cryptographically random temporary password, stores its hash,
         and returns the plaintext ONCE in the response so the admin
         can share it with the user out-of-band (chat / SMS / call).
@@ -2556,7 +2557,7 @@ paths:
       operationId: listMySessions
       summary: List my active sessions (multi-device)
       description: |
-        Phase 1.17.C — surfaces the caller's own active sessions for
+        Surfaces the caller's own active sessions for
         the /account/sessions self-service page. The row that's
         authenticating this request carries `current: true` so the
         UI can hide its own revoke button.
@@ -2609,7 +2610,7 @@ paths:
       operationId: listAdminUserSessions
       summary: List a user's active sessions (admin)
       description: |
-        Phase 1.17.C — admin view of a specific user's sessions for
+        Admin view of a specific user's sessions for
         the per-user admin detail page. Same row shape as the
         self-service endpoint; `current` is omitted (admins are
         viewing someone else's sessions, not their own).
@@ -2746,7 +2747,7 @@ paths:
   /admin/requests:
     get:
       operationId: listAdminRequests
-      summary: List pending resource requests (approver-facing, Phase 1.17.E)
+      summary: List pending resource requests (approver-facing)
       description: |
         Returns the pending resource_request rows, oldest first.
         Requires `share.grant` capability OR `system.admin`.
@@ -3037,7 +3038,7 @@ paths:
       operationId: setAdminUserStatus
       summary: Change a user's lifecycle status (admin)
       description: |
-        Phase 1.17.B — admin-only lifecycle transition. Moves a user
+        Admin-only lifecycle transition. Moves a user
         through pending / active / disabled. The audit log records
         the before / after / reason tuple.
       tags: [users]
@@ -3435,9 +3436,10 @@ paths:
         cursor pagination plus simple filters; richer search lands
         with ADR 0010.
       tags: [assets]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       parameters:
         - name: owner_ref
           in: query
@@ -3465,11 +3467,10 @@ paths:
           description: |
             Plain-text search. Matched against the search_text TSVECTOR
             on each asset (built from title + description + tags + the
-            searchable field-value text by the Phase 1.9 metadata
+            searchable field-value text by the metadata
             trigger). Whitespace-separated tokens AND together via
             plainto_tsquery. Ignored when `tag` is also provided.
-            Phase 1.12 will replace this with the full search DSL (ADR
-            0010).
+            A future search DSL (ADR 0010) will replace this.
           schema: { type: string, maxLength: 200 }
         - name: cursor
           in: query
@@ -3510,9 +3511,10 @@ paths:
     get:
       operationId: getAsset
       tags: [assets]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       responses:
         "200":
           description: The asset
@@ -3531,7 +3533,7 @@ paths:
         modified. Use `tags` (array) to replace the full tag set; use
         `POST /assets/{id}/tags` for additive changes.
 
-        Phase 1.16 optimistic concurrency: pass the asset's last-
+        Optimistic concurrency: pass the asset's last-
         known `updated_at` value as `if_unchanged_since` in the
         body; if the row has been edited since, the server returns
         409 with the current `updated_at` so the client can reload.
@@ -3573,7 +3575,7 @@ paths:
         is removed; the GC sweeper later collects bytes that are no
         longer pinned by anyone.
 
-        Phase 1.55.C-1b: accepts optional `{reason}` body captured
+        Accepts optional `{reason}` body captured
         into `deleted_reason` for the admin recovery-window audit.
       tags: [assets]
       security:
@@ -4062,10 +4064,10 @@ paths:
         (Twitter / IG uploads, embedded video on non-HTML5
         surfaces).
 
-        The handler itself is a Phase 1.18.B-3-b stub today — the
-        endpoint enqueues + returns 202 + the job id; the worker
-        will surface a TerminalError until the ffmpeg integration
-        ships. Job result will carry the new asset id.
+        This endpoint is a stub: it enqueues the job and returns 202
+        with the job id, but the worker surfaces a TerminalError
+        because the ffmpeg integration is not implemented yet. When
+        it is, the job result will carry the new asset id.
 
         422 when the asset's renderable kind isn't audio/video
         (image / 3D / document assets reject up-front).
@@ -4975,8 +4977,8 @@ paths:
       description: |
         The browse-page feed. Public posts visible to authenticated
         callers; the author's own posts of any visibility are also
-        returned. Phase 1.13.G adds anonymous access when the system
-        config allows it.
+        returned. Anonymous access to this feed is not yet
+        implemented.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -4996,8 +4998,8 @@ paths:
           in: query
           required: false
           description: |
-            Plain-text search over the post's TSVECTOR. Phase 1.12
-            (search DSL) replaces this with the full query language.
+            Plain-text search over the post's TSVECTOR. A future
+            search DSL will replace this with a full query language.
           schema: { type: string, maxLength: 200 }
         - name: tag
           in: query
@@ -5031,7 +5033,6 @@ paths:
           description: |
             Admin-only. When `true`, soft-deleted posts appear
             alongside live rows. Non-admin callers ignored.
-            Phase 1.55.C-1b.
           schema: { type: boolean, default: false }
       responses:
         "200":
@@ -5104,7 +5105,7 @@ paths:
       operationId: updatePost
       summary: Partial update of a post
       description: |
-        Phase 1.16 optimistic concurrency: pass the post's last-
+        Optimistic concurrency: pass the post's last-
         known `updated_at` as `if_unchanged_since`; 409 if the
         row has been edited since.
       tags: [posts]
@@ -5143,7 +5144,7 @@ paths:
         deleted (an asset may belong to multiple posts; storage pins
         are owned at the asset layer).
 
-        Phase 1.55.C-1b: accepts optional `{reason}` body captured
+        Accepts optional `{reason}` body captured
         into `deleted_reason` for the admin recovery-window audit.
       tags: [posts]
       security:
@@ -5756,9 +5757,10 @@ paths:
         match the assets list contract — pass back `next_cursor`
         opaquely as `cursor` to retrieve the following page.
       tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       parameters:
         - name: owner_ref
           in: query
@@ -5774,6 +5776,12 @@ paths:
         - name: featured
           in: query
           required: false
+          description: |
+            Filters on whether the collection has an ORG-scoped
+            placement in `featured_items` (ADR 0065). Featuring is a
+            placement, not a property of the collection, so this asks
+            "is it featured internally", not "is its featured flag
+            set" — the flag no longer exists.
           schema: { type: boolean }
         - name: tab
           in: query
@@ -5781,7 +5789,7 @@ paths:
           description: |
             Pre-canned filter for the collections hub:
             - `mine` — collections owned by the caller (any visibility)
-            - `featured` — visibility=public AND featured=true
+            - `featured` — visibility=public AND org-featured (ADR 0065)
             - `public` — visibility=public (every install-public collection)
             - `shared` — collections the caller has ACL access to but doesn't own
             - `all` — every collection the caller is allowed to see (default)
@@ -5809,7 +5817,6 @@ paths:
           description: |
             Admin-only. When `true`, soft-deleted collections appear
             alongside live rows. Non-admin callers ignored.
-            Phase 1.55.C-1b.
           schema: { type: boolean, default: false }
       responses:
         "200":
@@ -5852,8 +5859,8 @@ paths:
             A required collection-scoped field (see
             `field_definition.subject_kind = 'collection'` +
             `required = true`) is missing from the request body.
-            Phase 1.9.B introduced this gate; only CREATE enforces
-            it, subsequent UPDATEs don't re-validate.
+            This gate is enforced on CREATE only; subsequent
+            UPDATEs don't re-validate.
           content:
             application/json:
               schema:
@@ -5879,9 +5886,10 @@ paths:
       operationId: getCollection
       summary: Fetch a single collection by id
       tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#415). Documentary only — the handler
+      # guard enforces access, not this block: /search has served
+      # anonymous traffic without it.
+      security: []
       responses:
         "200":
           description: The collection
@@ -5900,7 +5908,7 @@ paths:
         `expires_at: null` to remove the TTL; omit the field to keep
         the current value.
 
-        Phase 1.16 optimistic concurrency: pass the collection's
+        Optimistic concurrency: pass the collection's
         last-known `updated_at` as `if_unchanged_since`; 409 if
         the row has been edited since.
       tags: [collections]
@@ -5935,7 +5943,7 @@ paths:
       operationId: deleteCollection
       summary: Soft-delete a collection
       description: |
-        Phase 1.55.C-1b: soft-delete. Sets `deleted_at = NOW()` +
+        Soft-delete. Sets `deleted_at = NOW()` +
         `deleted_reason` from the optional body; the row remains for
         the operator recovery window (default 30 days per
         `sysconfig.soft_delete.collection_retention_days`) before the
@@ -6008,9 +6016,9 @@ paths:
         admin-arranged sequence. Joined onto assets for thumb/title
         without an N+1.
       tags: [collections]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      # Anonymous-readable (#438). Documentary only — the handler
+      # guard enforces access, not this block.
+      security: []
       parameters:
         - name: limit
           in: query
@@ -6711,7 +6719,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           description: |
-            Phase 1.17.F — operator has disabled self-edit for the
+            Operator has disabled self-edit for the
             field carried in `field`. The frontend renders an
             inline "locked by your administrator" tooltip without
             blocking other fields.
@@ -6757,7 +6765,7 @@ paths:
   /admin/system/users:
     get:
       operationId: getAdminUserGates
-      summary: Read the per-field self-edit gates (admin, Phase 1.17.F)
+      summary: Read the per-field self-edit gates (admin)
       tags: [admin, users]
       security:
         - cookieAuth: []
@@ -6774,7 +6782,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
     patch:
       operationId: updateAdminUserGates
-      summary: Update the per-field self-edit gates (admin, Phase 1.17.F)
+      summary: Update the per-field self-edit gates (admin)
       description: |
         Operator writes the five boolean flags. The handler upserts
         each `users.allow_self_edit.*` system_config row and invokes
@@ -6835,14 +6843,14 @@ paths:
       operationId: followUser
       summary: Follow this user
       description: |
-        Phase 1.17.G2 — directional follow. Idempotent: re-following
+        Directional follow. Idempotent: re-following
         someone you already follow returns 204 too. Self-follow is
         rejected with 400. Cross-block-edge follow (either party has
         blocked the other) is rejected with 403 — modern platforms
         treat blocks as a hard interaction stop.
 
-        Wires the long-parked `posts.visibility='followers'` gate
-        from Phase 1.13. The browse-feed "Following" tab also
+        Wires the long-parked `posts.visibility='followers'` gate.
+        The browse-feed "Following" tab also
         activates the moment any follow row exists.
       tags: [social]
       security:
@@ -6863,7 +6871,7 @@ paths:
       operationId: unfollowUser
       summary: Stop following this user
       description: |
-        Phase 1.17.G2 — idempotent unfollow. Returns 204 whether
+        Idempotent unfollow. Returns 204 whether
         the edge existed or not. Symmetric to followUser; never
         affects the reverse follow (if the target also follows you,
         they continue to follow you).
@@ -6943,7 +6951,7 @@ paths:
       operationId: getUserRelationship
       summary: Caller's social-graph relationship with this user
       description: |
-        Phase 1.17.G2 — the single round-trip the profile page
+        The single round-trip the profile page
         consumes to decide which "Follow/Unfollow/Blocked/Block"
         button to render. Reports both directions of follow + the
         bidirectional block bit. Anonymous callers receive an
@@ -6975,7 +6983,7 @@ paths:
       operationId: blockUser
       summary: Block this user
       description: |
-        Phase 1.17.G2 — directional block. Auto-unfollows BOTH
+        Directional block. Auto-unfollows BOTH
         directions before persisting the block (continuing to
         follow a blocked user is a contradictory state, so the
         block implies a follower-graph cleanup). The optional
@@ -7003,7 +7011,7 @@ paths:
       operationId: unblockUser
       summary: Stop blocking this user
       description: |
-        Phase 1.17.G2 — idempotent unblock. Does NOT re-establish
+        Idempotent unblock. Does NOT re-establish
         any prior follow edges (the original block auto-unfollowed
         them); callers wanting to follow again must do so explicitly.
       tags: [social]
@@ -7110,7 +7118,7 @@ paths:
         the same gate the FollowUser path enforces.
 
         On success, a `direct_message_received` notification fires
-        to the recipient via the Phase 1.17.I2 notifications writer
+        to the recipient via the notifications writer
         (which independently re-runs the block + channel-pref
         gates, so a user who muted the verb still gets the DM in
         their inbox but no bell ping).
@@ -7278,7 +7286,7 @@ paths:
       operationId: listMyBlocked
       summary: My block list (private to the caller)
       description: |
-        Phase 1.17.G2 — paginated list of users the caller has
+        Paginated list of users the caller has
         blocked, with the optional private reason. The reverse
         direction ("who blocked me") is deliberately NOT exposed
         per platform convention — it's the blocker's privacy.
@@ -7664,9 +7672,9 @@ paths:
         with-empty-local-providers, etc.) so the admin UI can render
         them inline.
 
-        Distinct from `/admin/system/ai` (the Phase 1.16 placeholder
-        that holds the raw provider list). Phase 1.14.A introduces
-        the typed config layer that drives the router + privacy gate
+        Distinct from `/admin/system/ai` (the placeholder that holds
+        the raw provider list). This is the typed config layer that
+        drives the router + privacy gate
         + budget tracker.
       tags: [ai-admin]
       security:
@@ -8013,7 +8021,7 @@ paths:
   /admin/system/aiedit:
     get:
       operationId: getAIEditConfig
-      summary: Read the AI image-edit (1.14.E) configuration
+      summary: Read the AI image-edit configuration
       description: |
         Returns the operator-set MCP server name that handles
         image-edit dispatch. Empty means the feature is disabled —
@@ -8115,6 +8123,98 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /admin/system/public-mode:
+    get:
+      operationId: getPublicMode
+      summary: Read whether the install serves anonymous visitors
+      description: |
+        Reports whether public mode is enabled. When disabled (the
+        default, and the state of every install that has never set it),
+        anonymous callers are refused the public read surface: assets,
+        collections, search and IIIF. Authenticated access is unaffected
+        in either state, and row-level visibility and content
+        sensitivity rules still apply on top when it is enabled.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current public-mode state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicModeConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updatePublicMode
+      summary: Enable or disable anonymous access to the public surface
+      description: |
+        Turns anonymous access to the public read surface on or off.
+        Requires the `system.config.write` capability. The change takes
+        effect on the next request without a restart, and is recorded
+        as an `admin.system.public_mode_updated` audit event.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicModeConfig" }
+      responses:
+        "200":
+          description: Updated public-mode state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicModeConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /featured:
+    get:
+      operationId: getPublicFeaturedRail
+      summary: The public featured rail
+      description: |
+        Admin-curated placements at `scope = 'public'` (ADR 0065),
+        in display order.
+
+        FEATURING NEVER WIDENS ACCESS. A placement renders only if the
+        caller can already see its subject under the visibility rules
+        that govern every other read; a placement pointing at content
+        the caller may not see returns nothing at all, rather than an
+        entry with a blank title. Per-asset sensitivity still applies:
+        a non-public asset carries no thumbnail hint.
+
+        Anonymous-readable, and gated by the install's public-mode
+        setting like the rest of the public surface.
+      tags: [featured]
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 24 }
+      responses:
+        "200":
+          description: Featured placements the caller may see, in order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeaturedItem" }
 
   /appearance:
     get:
@@ -8719,8 +8819,9 @@ paths:
       summary: Live per-type per-status job counts
       description: |
         Aggregate counts grouped by (type, status) for the live queue
-        dashboard (#400). The UI polls this on an interval (no SSE this
-        sprint). Gated on `system.jobs.read` (or `system.admin`).
+        dashboard. The UI polls this on an interval; there is no
+        server-sent-events stream. Gated on `system.jobs.read` (or
+        `system.admin`).
       tags: [admin, jobs]
       security:
         - cookieAuth: []
@@ -8772,9 +8873,9 @@ paths:
       operationId: cancelJob
       summary: Cancel a pending or failed job
       description: |
-        Admin action (#401): move a pending/failed job to `cancelled`.
-        A running job cannot be cancelled this sprint (409). Gated on
-        `system.admin`.
+        Admin action: move a pending or failed job to `cancelled`.
+        Cancelling a job that is already running is not supported and
+        returns 409. Gated on `system.admin`.
       tags: [admin, jobs]
       security:
         - cookieAuth: []
@@ -9049,7 +9150,7 @@ components:
         totp_code:
           type: string
           description: |
-            Phase 1.19.B — TOTP code (6 digits) or recovery code
+            TOTP code (6 digits) or recovery code
             (10 chars + optional hyphen) for users with 2FA
             confirmed. When 2FA is enabled and this field is
             missing or wrong the server returns 401 with
@@ -9101,7 +9202,7 @@ components:
           example: "0.3.1"
     SetupStatus:
       type: object
-      required: [needs_setup, deployment, defaults]
+      required: [needs_setup, deployment, defaults, public_mode]
       properties:
         needs_setup:
           type: boolean
@@ -9110,6 +9211,20 @@ components:
           $ref: "#/components/schemas/SetupDeploymentInfo"
         defaults:
           $ref: "#/components/schemas/SetupDefaults"
+        public_mode:
+          type: boolean
+          description: |
+            True when the install serves its public read surface to
+            anonymous visitors. The frontend reads this to decide
+            whether a signed-out visitor may stay on a public route or
+            must be sent to the sign-in page; the server enforces the
+            same setting independently, so this field is a rendering
+            hint and never the access decision.
+
+            It rides on this endpoint because the frontend already
+            calls it first on every navigation, before it knows whether
+            a session exists — so the flag is available at the moment
+            the routing decision is made, without a second request.
     SetupDeploymentInfo:
       type: object
       required: [db_host, db_port, db_name, storage_backend]
@@ -9189,6 +9304,18 @@ components:
             outgoing links (e.g., password-reset emails). May be empty
             at install time and filled in later.
           example: https://art.example.com
+    PublicModeConfig:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            When true, anonymous callers may reach the public read
+            surface (assets, collections, search, IIIF). When false —
+            the default, and the state of any install that has never
+            set it — those routes return 401 to anonymous callers.
+          example: false
     SMTPConfig:
       type: object
       required: [host, port, encryption, from_address]
@@ -9309,7 +9436,7 @@ components:
         self_registration:
           type: object
           description: |
-            Phase 1.19.C — self-service signup tunables. Default
+            Self-service signup tunables. Default
             zero-valued (disabled, verification on, role "Base") so
             installs upgrading without opting in stay closed.
           properties:
@@ -9332,7 +9459,7 @@ components:
     AIInferenceConfig:
       type: object
       description: |
-        Phase 1.14.A AI inference subsystem snapshot. Returned by
+        AI inference subsystem snapshot. Returned by
         GET /admin/ai/config; writable via PUT with the
         AIInferenceConfigWrite shape (the read shape carries
         findings + computed defaults that the write shape doesn't
@@ -9606,9 +9733,9 @@ components:
     AIEditConfig:
       type: object
       description: |
-        Phase 1.14.E-1 — AI image-edit subsystem configuration. E-1
-        ships one field; E-2 expands the typed surface (per-op MCP
-        server overrides, default workflow selection, ...).
+        AI image-edit subsystem configuration. One field today; the
+        typed surface (per-op MCP server overrides, default workflow
+        selection, ...) may expand later.
       properties:
         image_edit_server:
           type: string
@@ -9622,7 +9749,7 @@ components:
     Img2ImgRequest:
       type: object
       description: |
-        Phase 1.14.E-1 — payload for POST
+        Payload for POST
         /assets/{id}/edit/img2img. Zero-value knobs (denoise_strength,
         steps, seed) tell the bridge to apply its own defaults; the
         operator's workflow defaults stay authoritative unless the
@@ -9658,7 +9785,7 @@ components:
     AssetEditJobAccepted:
       type: object
       description: |
-        Phase 1.14.E-1 — 202 response for the enqueue endpoints.
+        The 202 response for the enqueue endpoints.
         Caller polls /jobs/{job_id} for status; on completion the
         job result carries the new derivative asset id.
       required: [job_id, source_asset_id]
@@ -9952,14 +10079,14 @@ components:
           description: |
             CanonicalField the metadata-extraction pipeline writes
             into this field. Empty = no extraction (the field stays
-            operator-managed). Phase 1.18.A-2. Edited via the
+            operator-managed). Edited via the
             dedicated PUT …/extraction endpoint.
         extraction_mode:
           type: string
           enum: ["", skip_if_set, replace, append, prepend]
           description: |
             Write behaviour when extraction has a value. Empty =
-            default (skip_if_set). Phase 1.18.A-2.
+            default (skip_if_set).
         status:
           type: string
           enum: [active, deprecated, archived]
@@ -10157,7 +10284,7 @@ components:
         orthogonal axes: visibility, membership, and lifecycle.
       required:
         [id, owner_user_ref, name, description, visibility, membership,
-         featured, created_at, updated_at]
+         created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         owner_user_ref: { type: integer, format: int64 }
@@ -10177,7 +10304,6 @@ components:
           format: date-time
           nullable: true
           description: TTL. Null = permanent.
-        featured: { type: boolean }
         purpose:
           type: string
           nullable: true
@@ -10226,14 +10352,13 @@ components:
           type: string
           format: date-time
           nullable: true
-        featured: { type: boolean, default: false }
         purpose:
           type: string
           nullable: true
         field_values:
           type: array
           description: |
-            Phase 1.9.B — initial values for collection-scoped custom
+            Initial values for collection-scoped custom
             fields. The handler validates that every `required=true`
             collection field is present; missing required fields
             return 422 with `required_collection_field_missing`.
@@ -10268,7 +10393,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        featured: { type: boolean }
         purpose:
           type: string
           nullable: true
@@ -10276,7 +10400,7 @@ components:
           type: string
           format: date-time
           description: |
-            Phase 1.16 optimistic-concurrency guard. When set, the
+            Optimistic-concurrency guard. When set, the
             server returns 409 EditConflict if the collection's
             `updated_at` has advanced past this value. Omit to
             opt out of the check (legacy behaviour).
@@ -10364,7 +10488,7 @@ components:
         tag_details:
           type: array
           description: |
-            Phase 1.14.B — per-tag source/confidence/provenance.
+            Per-tag source/confidence/provenance.
             Same set of tags as `tags`, ordered the same way; this
             field is the typed projection the frontend
             AssetTagBadge renders.
@@ -10415,7 +10539,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/SubtitleTrack' }
           description: |
-            Phase 1.18.B-3 — WebVTT subtitle / caption tracks
+            WebVTT subtitle / caption tracks
             attached to this asset. Empty array when none, or when
             the asset's renderable kind doesn't support subtitles
             (image, 3D, document, etc.). Tracks ride along with the
@@ -10480,7 +10604,7 @@ components:
     ResourceRequest:
       type: object
       description: |
-        Phase 1.17.E — a resource_request row. The state machine
+        A resource_request row. The state machine
         is pending → granted / denied (admin decision); granted
         → expired (CapabilitySweeper cascade). Terminal states
         admit no further transitions.
@@ -10527,7 +10651,7 @@ components:
       type: object
       required: [lang, file_hash, source_format, confidence]
       description: |
-        Phase 1.18.B-3 — one WebVTT subtitle track attached to an
+        One WebVTT subtitle track attached to an
         asset. NOT a first-class asset; rides along with its parent
         in the Asset.subtitle_tracks array. Tracks are uniquely
         identified by (asset_id, lang) — re-uploading the same lang
@@ -10572,7 +10696,7 @@ components:
     AssetWithDedup:
       type: object
       description: |
-        Phase 1.18.A-2 follow-up A — Asset payload extended with
+        Asset payload extended with
         a `duplicate_warning` field. Returned from POST /assets
         with HTTP 200 when the operator's `upload.dedup_behavior`
         is `warn` and a duplicate hash was detected: the EXISTING
@@ -10606,7 +10730,7 @@ components:
     UploadConflict:
       type: object
       description: |
-        Phase 1.18.A-2 follow-up A — 409 response shape returned
+        409 response shape returned
         from POST /assets when `upload.dedup_behavior` is `block`
         and a duplicate hash was detected. The caller is expected
         to either navigate to the existing asset or change their
@@ -10679,7 +10803,7 @@ components:
           type: string
           format: date-time
           description: |
-            Phase 1.16 optimistic-concurrency guard. When set, the
+            Optimistic-concurrency guard. When set, the
             server returns 409 Conflict if the asset's `updated_at`
             timestamp has advanced past this value (i.e. someone
             else edited the row between your GET and your PATCH).
@@ -10692,7 +10816,7 @@ components:
         Returned with HTTP 409 when an optimistic-concurrency check
         fails. Carries the row's current `updated_at` so the
         client can decide whether to reload + retry or surface a
-        diff UI. Phase 1.16.
+        diff UI.
       required: [error, updated_at]
       properties:
         error:
@@ -10713,8 +10837,6 @@ components:
         The body itself is optional — a bare DELETE with no body is
         still valid + writes `deleted_reason` = NULL. When present,
         an empty-string `reason` is treated the same as missing.
-
-        Phase 1.55.C-1b.
       properties:
         reason:
           type: string
@@ -10740,7 +10862,7 @@ components:
       required: [value, source]
       description: |
         One tag with full source/confidence/provenance metadata.
-        Phase 1.14.B — backs the per-source UI badge.
+        Backs the per-source UI badge.
       properties:
         value:
           type: string
@@ -10972,7 +11094,7 @@ components:
           type: string
           format: date-time
           description: |
-            Phase 1.16 optimistic-concurrency guard. When set, the
+            Optimistic-concurrency guard. When set, the
             server returns 409 EditConflict if the post's
             `updated_at` has advanced past this value. Omit to
             opt out of the check (legacy behaviour).
@@ -11202,8 +11324,8 @@ components:
         admin list table needs — username, email, status, last
         activity, primary role — without surfacing password-bearing
         columns. `status` maps to the underlying user.approved
-        column (1=active, 0=pending, 2=disabled per Phase 1.17.B's
-        lifecycle state machine). `primary_role` is the user's
+        column (1=active, 0=pending, 2=disabled per the lifecycle
+        state machine). `primary_role` is the user's
         alphabetically-first global role assignment; per-team
         assignments live on the user detail page.
       required: [ref, username, display_name, status, created_at]
@@ -11245,7 +11367,7 @@ components:
           format: date-time
           nullable: true
           description: |
-            Phase 1.19.D per-username lockout deadline. Null when the
+            Per-username lockout deadline. Null when the
             account has never been locked OR the last lockout has
             been cleared. Values in the past are semantically
             "unlocked" (auto-clear happens at read time; the stale
@@ -11256,7 +11378,7 @@ components:
           type: integer
           format: int32
           description: |
-            Phase 1.19.D — running count of consecutive failed
+            Running count of consecutive failed
             login attempts. Zero on a fresh row + after any
             successful login. Threshold-crossing triggers lockout.
             Surfaced here so admins can see who's under attack
@@ -11266,8 +11388,8 @@ components:
           nullable: true
           description: |
             Login provider for this user — empty / null = native, else
-            'simpleldap' / 'simplesaml' / etc. once Phase 1.17.O wires
-            the enterprise SSO surfaces. Surfaced here so the admin
+            'simpleldap' / 'simplesaml' / etc. for the enterprise SSO
+            surfaces. Surfaced here so the admin
             list can show the auth-source badge.
         profile_origin_server_id:
           type: string
@@ -11523,7 +11645,7 @@ components:
       type: object
       required: [username, email, password]
       description: |
-        Phase 1.19.C self-registration payload. Validation is
+        Self-registration payload. Validation is
         server-side authoritative; the frontend mirrors the same
         regexes for early UX feedback.
       properties:
@@ -11595,7 +11717,7 @@ components:
       type: object
       required: [enrolled, confirmed, recovery_codes_remaining]
       description: |
-        Phase 1.19.B caller-facing 2FA enrollment status.
+        Caller-facing 2FA enrollment status.
       properties:
         enrolled:
           type: boolean
@@ -11785,7 +11907,7 @@ components:
         overrides, set for team-scoped ones. `note` is the
         admin-supplied justification recorded at grant/revoke time.
 
-        Phase 1.17.C — `expires_at` is the optional time-bound
+        `expires_at` is the optional time-bound
         expiry. NULL means permanent (the existing default behavior);
         non-null rows get reaped by the background capability
         sweeper once NOW() passes the expiry.
@@ -11806,8 +11928,8 @@ components:
           nullable: true
           description: |
             Acting admin's user_ref at time of grant/revoke. Null
-            when the row predates Phase 1.17.F or was inserted by
-            seed migration.
+            when the row predates actor recording or was inserted
+            by seed migration.
         granted_at:
           type: string
           format: date-time
@@ -11816,7 +11938,7 @@ components:
           format: date-time
           nullable: true
           description: |
-            Phase 1.17.C — optional auto-expiry timestamp. Null
+            Optional auto-expiry timestamp. Null
             means permanent. Reaped by the background sweeper.
 
     UserCapabilityOverrides:
@@ -11842,7 +11964,7 @@ components:
         /admin/users/{ref}/revokes. Pass `team_id` to scope the
         override to a team — omit / null for a global override.
 
-        Phase 1.17.C — `expires_at` is optional. When set, the
+        `expires_at` is optional. When set, the
         grant or revoke auto-expires at that time and is reaped by
         the background sweeper. Past values are rejected with 400
         (operator must explicitly choose to delete an already-
@@ -11865,7 +11987,7 @@ components:
           format: date-time
           nullable: true
           description: |
-            Phase 1.17.C — optional auto-expiry. NULL / omitted =
+            Optional auto-expiry. NULL / omitted =
             permanent. Past values rejected with 400.
 
     LicenseStatus:
@@ -12055,6 +12177,17 @@ components:
         ip:
           type: string
           nullable: true
+          description: |
+            Actor IP address — PERSONAL DATA, and returned only to
+            callers holding `system.audit.pii.read` on top of
+            `system.audit.read` (#425).
+
+            Absent from the response entirely for callers without that
+            capability, rather than blanked, so an empty value always
+            means "no IP recorded" and never "you may not see it".
+            Consumers must already tolerate absence: the field has
+            always been optional and nullable, since not every event
+            carries an address.
         user_agent:
           type: string
           nullable: true
@@ -12081,7 +12214,7 @@ components:
     SelfEditGates:
       type: object
       description: |
-        Phase 1.17.F — per-field self-edit gates. Each flag
+        Per-field self-edit gates. Each flag
         controls whether users may edit that field on their own
         profile. Operators set these via PATCH /admin/system/users;
         users read them via GET /account/selfedit-gates to render
@@ -12217,7 +12350,7 @@ components:
       description: |
         Compact user-card projection used by the follow/follower
         lists. Smaller than UserPublic — only the fields the card
-        renders. Phase 1.17.G2.
+        renders.
       required: [ref, username]
       properties:
         ref: { type: integer, format: int64 }
@@ -12243,7 +12376,7 @@ components:
     UserRelationship:
       type: object
       description: |
-        Phase 1.17.G2 — caller's relationship with the target user.
+        Caller's relationship with the target user.
         Profile pages consume this in one round-trip to decide which
         Follow/Unfollow/Block/Unblock button(s) to render. `is_self`
         short-circuits all the other flags.
@@ -12272,7 +12405,7 @@ components:
 
     BlockUserRequest:
       type: object
-      description: Phase 1.17.G2 — optional reason recorded with the block.
+      description: Optional reason recorded with the block.
       properties:
         reason:
           type: string
@@ -13244,7 +13377,7 @@ components:
     UserKeyRotationResult:
       type: object
       description: |
-        Phase 1.22.I-h response from the rotation endpoints
+        Response from the rotation endpoints
         (/account/security/rotate-federation-keys and
         /admin/federation/users/{ref}/rotate-keys). The new public
         key is base64-encoded for transport; clients render it as
@@ -13284,7 +13417,7 @@ components:
     FederationKeyHealth:
       type: object
       description: |
-        Phase 1.22.I-h aggregate counts feeding the
+        Aggregate counts feeding the
         /admin/federation/key-health dashboard. Five counts in
         one round-trip; drill-down endpoints (
         ListUsersMissingKeypair, ListRecentRotations) cover the
@@ -13347,7 +13480,7 @@ components:
     FederationKeyRotationEvent:
       type: object
       description: |
-        Phase 1.22.I-h audit-style projection of a single
+        Audit-style projection of a single
         rotation. Pulled from federation_user_keys.rotated_at +
         rotated_by_user_ref so the dashboard renders without
         joining audit_events.
@@ -13375,7 +13508,7 @@ components:
     UserMissingKeypair:
       type: object
       description: |
-        Phase 1.22.I-h drill-down row for the "users missing
+        Drill-down row for the "users missing
         keypair" tile on the admin federation health dashboard.
       required: [ref, username]
       properties:
@@ -14140,9 +14273,8 @@ components:
             type: string
           description: |
             Capability codes this token may exercise. Empty array means
-            the token can do whatever the user can do. (The
-            capability/role model itself lands in Phase 1.3; for now
-            scopes are recorded but not enforced.)
+            the token can do whatever the user can do. (Token scopes
+            are recorded but not yet enforced.)
     WorkflowState:
       type: object
       description: |
@@ -14498,8 +14630,8 @@ components:
         — populating both is equivalent to passing the singleton's
         value inside the array.
 
-        Phase 1.18.A-3.B adds `file_extensions` + `include_non_image`
-        so operators can target raws / PDFs without spilling the
+        The `file_extensions` and `include_non_image` fields let
+        operators target raws / PDFs without spilling the
         backfill over their entire image catalogue.
       properties:
         asset_type_ref:
@@ -14532,7 +14664,7 @@ components:
           description: |
             Open the population to non-image assets (PDFs today;
             comics + ebooks later). Defaults to false so older
-            callers keep the Phase 1.18.A-2 PR-B image-only scope.
+            callers keep the original image-only scope.
 
     MetadataBackfillRun:
       type: object

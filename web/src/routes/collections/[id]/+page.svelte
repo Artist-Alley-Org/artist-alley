@@ -30,7 +30,6 @@
     name: string;
     description: string;
     visibility: string;
-    featured: boolean;
     owner_user_ref: number;
     created_at: string;
     updated_at: string;
@@ -53,6 +52,10 @@
   let loading = $state(true);
   let membersLoading = $state(true);
   let error = $state<string | null>(null);
+  // Separate from `error` on purpose: one is "we could not load this",
+  // the other is "this is not yours to see", and they should not look
+  // the same to a visitor.
+  let notFound = $state(false);
   let editOpen = $state(false);
   let shareOpen = $state(false);
   let copyFeedback = $state(false);
@@ -67,11 +70,23 @@
   async function load() {
     loading = true;
     error = null;
+    notFound = false;
     try {
-      const { data, error: apiErr } = await api.GET('/collections/{id}', {
+      const { data, error: apiErr, response } = await api.GET('/collections/{id}', {
         params: { path: { id } },
       });
       if (apiErr || !data) {
+        // 404 is not a failure (#416). The visibility predicate returns
+        // 404 rather than 403 for a collection the caller may not see,
+        // so "private" and "deleted" are indistinguishable by design —
+        // and with public mode on, a signed-out visitor following a
+        // link to a private collection hits this on a completely normal
+        // path. Rendering the API's raw string in a red danger banner
+        // told them something had gone wrong. Nothing had.
+        if (response?.status === 404) {
+          notFound = true;
+          return;
+        }
         error = (apiErr as { error?: string } | undefined)?.error ?? t('collections.error_not_found');
         return;
       }
@@ -154,6 +169,24 @@
 <div class="w-full px-4 py-6 sm:px-6">
   {#if loading}
     <p class="text-fg-muted">{t('common.loading')}</p>
+  {:else if notFound}
+    <!-- Calm empty state, not an alert. See the 404 branch in load(). -->
+    <div class="py-16 text-center" data-testid="collection-unavailable">
+      <p class="text-base font-medium text-fg">{t('collections.not_found_or_private')}</p>
+      <p class="mt-1 text-sm text-fg-muted">{t('collections.not_found_or_private_hint')}</p>
+      {#if !auth.user}
+        <p class="mt-1 text-sm text-fg-muted">{t('collections.not_found_sign_in_hint')}</p>
+        <a
+          href="/login"
+          class="mt-4 inline-flex items-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent"
+        >
+          {t('user_menu.sign_in')}
+        </a>
+      {/if}
+      <p class="mt-4">
+        <a href="/collections" class="text-sm text-accent hover:underline">{t('collections.title')}</a>
+      </p>
+    </div>
   {:else if error}
     <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
       {error}
@@ -173,11 +206,6 @@
             <span class="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted">
               {visibilityLabel}
             </span>
-            {#if collection.featured}
-              <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
-                {t('collections.featured')}
-              </span>
-            {/if}
           </div>
           {#if collection.description}
             <p class="mt-2 max-w-3xl text-sm text-fg-muted">{collection.description}</p>

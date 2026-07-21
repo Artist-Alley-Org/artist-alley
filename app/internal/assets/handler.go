@@ -51,6 +51,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // softDeleteReasonMaxLen bounds the operator-supplied reason string
@@ -755,13 +756,30 @@ func jobTypeForExt(ext *string) jobs.JobType {
 // GetAsset
 // ---------------------------------------------------------------------------
 
+// callerFromContext builds the visibility caller for the request,
+// anonymous when there is no identity (#415).
+func callerFromContext(ctx context.Context) visibility.Caller {
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		return visibility.NewCaller(&id.UserRef)
+	}
+	return visibility.NewCaller(nil)
+}
+
 func (h *Handler) GetAsset(
 	ctx context.Context,
 	req openapi.GetAssetRequestObject,
 ) (openapi.GetAssetResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
-		return openapi.GetAsset401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+	// #415 — anonymous callers are admitted, but every caller (including
+	// authenticated ones) must now pass a real visibility check. Before
+	// this, ANY authenticated caller could fetch ANY asset by id: the
+	// only gate was "is there an identity". CanSee replaces that.
+	caller := callerFromContext(ctx)
+	visible, err := visibility.CanSee(ctx, h.Pool, visibility.EntityAsset, caller, uuid.UUID(req.Id))
+	if err != nil || !visible {
+		// Fail closed, and 404 rather than 403 so this does not confirm
+		// that a hidden asset exists at that id.
+		return openapi.GetAsset404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
 	}
 	q := New(h.Pool)
@@ -1042,17 +1060,15 @@ func (h *Handler) ListAssets(
 	ctx context.Context,
 	req openapi.ListAssetsRequestObject,
 ) (openapi.ListAssetsResponseObject, error) {
+	// #415 — anonymous callers are admitted. Row visibility is already
+	// decided by the predicate inside ListAssetsPageGated, which returns
+	// only published-public rows for an anonymous caller.
 	callerID := auth.IdentityFromContext(ctx)
-	if callerID == nil {
-		return openapi.ListAssets401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
 
 	// Phase 1.55.C-1b: ?include_deleted=true is admin-only. Non-
 	// admins silently see the default filtered list.
 	var includeDeletedArg *bool
-	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && callerID.Can(auth.SuperAdminCapability) {
+	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && callerID != nil && callerID.Can(auth.SuperAdminCapability) {
 		t := true
 		includeDeletedArg = &t
 	}
@@ -1144,7 +1160,9 @@ func (h *Handler) ListAssets(
 		}
 		rowCount = len(rows)
 	} else {
-		rows, err := q.ListAssetsPage(ctx, ListAssetsPageParams{
+		// Hand-built so the visibility predicate can be spliced in
+		// (#429) — sqlc's static SQL cannot take a runtime fragment.
+		rows, err := ListAssetsPageGated(ctx, h.Pool, callerFromContext(ctx), ListAssetsPageGatedParams{
 			IncludeDeleted:  includeDeletedArg,
 			OwnerUserRef:    ownerRef,
 			AssetType:       resType,
@@ -1195,13 +1213,44 @@ func (h *Handler) ListAssets(
 // DownloadAssetFile / DownloadAssetVariant
 // ---------------------------------------------------------------------------
 
+// contentCaller resolves the (caller, capabilities) pair the content
+// checker needs, admitting ANONYMOUS callers (#416).
+//
+// These two handlers used to return 401 above the checker, which made
+// them the last byte-serving paths that could not serve a guest — the
+// raw-http ones in internal/http/handlers moved to this shape in #415
+// (see requireContentAccess, which this mirrors). CanReadContent has
+// admitted anonymous callers for public-tier assets since #415 and is
+// tested for it; these handlers simply never let it run, so a public
+// collection rendered for a signed-out visitor with every thumbnail
+// broken.
+//
+// Letting anonymous through here does NOT widen access. CanReadContent
+// still decides, and it admits an anonymous caller to the public tier
+// only — team, restricted and embargo all deny. And with public mode
+// off, auth/middleware.go rejects /assets/* for anonymous before any
+// of this runs, so on a private install these lines are unreachable.
+//
+// An anonymous caller carries no capabilities: nil CapabilityChecker,
+// never admin.
+func contentCaller(ctx context.Context) (visibility.Caller, visibility.CapabilityChecker) {
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		return visibility.NewCaller(&id.UserRef), func(code string) bool { return id.Can(code) }
+	}
+	return visibility.NewCaller(nil), nil
+}
+
 func (h *Handler) DownloadAssetFile(
 	ctx context.Context,
 	req openapi.DownloadAssetFileRequestObject,
 ) (openapi.DownloadAssetFileResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
-		return openapi.DownloadAssetFile401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
+	// plane does not confirm that a restricted asset exists.
+	caller, caps := contentCaller(ctx)
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id))
+	if err != nil || !allowed {
+		return openapi.DownloadAssetFile404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
 	}
 	hash, ok, err := h.resolveAssetFileHash(ctx, uuid.UUID(req.Id))
@@ -1233,9 +1282,13 @@ func (h *Handler) DownloadAssetVariant(
 	ctx context.Context,
 	req openapi.DownloadAssetVariantRequestObject,
 ) (openapi.DownloadAssetVariantResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
-		return openapi.DownloadAssetVariant401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
+	// plane does not confirm that a restricted asset exists.
+	caller, caps := contentCaller(ctx)
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id))
+	if err != nil || !allowed {
+		return openapi.DownloadAssetVariant404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
 	}
 	hash, ok, err := h.resolveAssetFileHash(ctx, uuid.UUID(req.Id))

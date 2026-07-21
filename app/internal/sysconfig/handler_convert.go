@@ -510,3 +510,31 @@ func appearanceConfigUpdateDenial(err error401or403) openapi.UpdateAppearanceCon
 // fmt usage marker so the import sticks even if we later remove the
 // only fmt call (currently in handler.go).
 var _ = fmt.Sprintf
+
+func publicModeDenial(err error401or403) openapi.GetPublicModeResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.GetPublicMode401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.GetPublicMode403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
+func publicModeUpdateDenial(err error401or403) openapi.UpdatePublicModeResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.UpdatePublicMode401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.UpdatePublicMode403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}

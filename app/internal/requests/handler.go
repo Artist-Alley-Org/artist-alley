@@ -154,14 +154,39 @@ var ErrRequestNotFound = errors.New("requests: not found")
 // Submit
 // ---------------------------------------------------------------------------
 
+// ErrUnknownCapability is returned by Submit when requested_capability
+// names something that is not in the capabilities registry (#434). The
+// DB enforces this too (FK, migration 00009); checking here turns a
+// constraint violation into a clean 400 that names the problem.
+var ErrUnknownCapability = errors.New("requests: unknown capability")
+
 // Submit creates a fresh pending request. The handler is permissive
-// — any authenticated user may submit any request; the approver
-// gate decides whether to grant. Audit fires alongside the row
+// about WHO may ask — any authenticated user may submit a request, and
+// the approver gate decides whether to grant — but the capability named
+// must exist. It is deliberately NOT permissive about the string
+// itself: this field feeds an authorisation decision, so it may only
+// name a real capability (#434).
+//
+// Note what this does not settle: a real capability is not necessarily
+// a REQUESTABLE one. Nothing stops a request naming system.admin, and
+// that rule belongs to the grant path (ADR 0064). Audit fires alongside the row
 // insert; the per-admin pending-count cache is wildcard-evicted
 // so every approver's badge picks up the new pending entry on
 // their next read.
 func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput) (ResourceRequest, error) {
 	q := New(h.Pool)
+
+	var known bool
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM capabilities WHERE code = $1)`,
+		in.RequestedCapability,
+	).Scan(&known); err != nil {
+		return ResourceRequest{}, fmt.Errorf("requests: capability lookup: %w", err)
+	}
+	if !known {
+		return ResourceRequest{}, fmt.Errorf("%w: %q", ErrUnknownCapability, in.RequestedCapability)
+	}
+
 	row, err := q.InsertResourceRequest(ctx, InsertResourceRequestParams{
 		RequesterUserRef:    in.RequesterUserRef,
 		TargetAssetID:       pgtype.UUID{Bytes: in.TargetAssetID, Valid: true},

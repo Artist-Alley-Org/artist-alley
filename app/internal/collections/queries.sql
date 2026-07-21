@@ -2,23 +2,32 @@
 -- collections (the entity)
 -- ---------------------------------------------------------------------------
 
+-- Column ORDER in the explicit lists below is load-bearing, not style.
+-- It matches the physical column order a migrated database actually has
+-- (search_text/smart_query were added before the soft-delete columns).
+-- When a query's column list matches table order, sqlc reuses the
+-- Collection model; when it doesn't, sqlc emits a bespoke per-query Row
+-- struct and every caller that assigns to Collection stops compiling.
+-- See #420 -- app/schema.sql previously described an order migrations
+-- never produce, which is what hid this.
+
 -- name: CreateCollection :one
 INSERT INTO collections (
     owner_user_ref, name, description, visibility, membership,
-    expires_at, featured, purpose, origin_server_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    expires_at, purpose, origin_server_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
-          expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, deleted_at, deleted_reason,
-          search_text, smart_query;
+          expires_at, purpose, origin_server_id,
+          created_at, updated_at, search_text, smart_query,
+          deleted_at, deleted_reason;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
 -- deleted rows use GetCollectionIncludingDeleted below.
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       expires_at, purpose, origin_server_id,
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -27,9 +36,9 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- the Restore path (which needs to Get the row to fire the audit
 -- event even after deleted_at IS NOT NULL).
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       expires_at, purpose, origin_server_id,
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections
 WHERE id = $1;
 
@@ -40,15 +49,14 @@ UPDATE collections SET
     description = COALESCE(sqlc.narg('description'), description),
     visibility  = COALESCE(sqlc.narg('visibility'),  visibility),
     membership  = COALESCE(sqlc.narg('membership'),  membership),
-    featured    = COALESCE(sqlc.narg('featured'),    featured),
     purpose     = COALESCE(sqlc.narg('purpose'),     purpose),
     expires_at  = COALESCE(sqlc.narg('expires_at'),  expires_at),
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
-          expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, deleted_at, deleted_reason,
-          search_text, smart_query;
+          expires_at, purpose, origin_server_id,
+          created_at, updated_at, search_text, smart_query,
+          deleted_at, deleted_reason;
 
 -- name: ClearCollectionExpiresAt :exec
 -- Separate query because COALESCE can't express "explicitly set to NULL".
@@ -76,15 +84,20 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- caller has an ACL grant on but doesn't own. The handler also passes
 -- the caller's user_ref into `exclude_owner` to drop owned rows.
 SELECT id, owner_user_ref, name, description, visibility, membership,
-       expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       expires_at, purpose, origin_server_id,
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
   AND (sqlc.narg('exclude_owner')::BIGINT   IS NULL OR owner_user_ref <> sqlc.narg('exclude_owner')::BIGINT)
   AND (sqlc.narg('visibility')::TEXT        IS NULL OR visibility     = sqlc.narg('visibility')::TEXT)
-  AND (sqlc.narg('featured')::BOOLEAN       IS NULL OR featured       = sqlc.narg('featured')::BOOLEAN)
+  AND (sqlc.narg('featured')::BOOLEAN       IS NULL OR sqlc.narg('featured')::BOOLEAN = EXISTS (
+         SELECT 1 FROM featured_items fi
+          WHERE fi.subject_kind = 'collection'
+            AND fi.subject_id   = c.id
+            AND fi.scope        = 'org'
+       ))
   AND (sqlc.narg('q_name')::TEXT            IS NULL OR name ILIKE '%' || sqlc.narg('q_name')::TEXT || '%')
   AND (sqlc.narg('shared_with_user')::BIGINT IS NULL OR EXISTS (
          SELECT 1 FROM collection_acls a
@@ -125,6 +138,12 @@ ON CONFLICT (collection_id, asset_id) DO UPDATE SET
 DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2;
 
 -- name: ListCollectionResourcesPage :many
+-- NOT THE ENFORCEMENT PATH. Applies no visibility predicate; nothing in
+-- production calls it. Collection contents go through
+-- ListCollectionResourcesPageGated (resources_page.go), which splices
+-- visibility.Predicate — sqlc's static SQL cannot take a runtime
+-- fragment (#438). Retained for its generated row shape, which stays in
+-- sync with the schema. Do not call it from handler code.
 -- Returns pinned members, sorted by sort_order then added_at. Excludes
 -- expired-membership rows. Joined onto assets so the list can carry
 -- the title/thumb/type the front-end needs without an N+1.

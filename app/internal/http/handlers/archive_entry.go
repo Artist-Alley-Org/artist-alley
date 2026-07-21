@@ -23,7 +23,6 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/archive"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
-	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -75,15 +74,12 @@ func NewArchiveEntryHandler(pool *pgxpool.Pool, st *storage.Service, logger *slo
 }
 
 func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if auth.IdentityFromContext(r.Context()) == nil {
-		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
-		return
-	}
 	assetID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, `{"error":"invalid asset id"}`, http.StatusBadRequest)
 		return
 	}
+
 	entryPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if entryPath == "" {
 		http.Error(w, `{"error":"missing path query parameter"}`, http.StatusBadRequest)
@@ -93,6 +89,13 @@ func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// rooted inside the archive; nothing outside can ever match.
 	if strings.HasPrefix(entryPath, "/") || strings.Contains(entryPath, "..") {
 		http.Error(w, `{"error":"invalid entry path"}`, http.StatusBadRequest)
+		return
+	}
+
+	// #433 — sensitivity gates CONTENT. Placed after request-shape
+	// validation (which discloses nothing) and before any archive is
+	// opened, so no byte of a gated asset is touched.
+	if !requireContentAccess(w, r, h.Pool, assetID) {
 		return
 	}
 

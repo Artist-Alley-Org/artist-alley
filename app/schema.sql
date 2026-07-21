@@ -1,8 +1,21 @@
 --
+-- app/schema.sql — sqlc's schema input (app/sqlc.yaml points EVERY package
+-- entry at this one file, so drift here affects generated types codebase-wide).
+--
+-- GENERATED, do not hand-edit. Regenerate from the migrations (#420):
+--
+--   createdb schema_ref && <run app migrations against it>
+--   pg_dump --schema-only --no-owner --no-privileges -d schema_ref
+--
+-- pg_dump's \restrict/\unrestrict lines are stripped: they are psql
+-- meta-commands rather than DDL, and their per-invocation random token would
+-- otherwise make this file differ on every regeneration.
+--
+--
+--
 -- PostgreSQL database dump
 --
 
-\restrict BIawPaLNrAa1UYpG7hem3AQptIFpU8M7DvjZ4he0fDcFV12iKTSuRDviek2Uif9
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -17,20 +30,6 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
-
---
--- Name: public; Type: SCHEMA; Schema: -; Owner: -
---
-
--- *not* creating schema, since initdb creates it
-
-
---
--- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON SCHEMA public IS '';
-
 
 --
 -- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
@@ -719,17 +718,6 @@ CREATE TABLE public.asset_embedding_d768 (
 );
 
 
-CREATE TABLE public.asset_visual_embedding (
-    asset_id uuid NOT NULL,
-    embedding public.vector(768) NOT NULL,
-    model text NOT NULL,
-    checkpoint text NOT NULL,
-    provider text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
 --
 -- Name: asset_field_value; Type: TABLE; Schema: public; Owner: -
 --
@@ -857,6 +845,21 @@ CREATE TABLE public.asset_types (
 
 
 --
+-- Name: asset_visual_embedding; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.asset_visual_embedding (
+    asset_id uuid NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    model text NOT NULL,
+    checkpoint text NOT NULL,
+    provider text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: assets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -878,7 +881,6 @@ CREATE TABLE public.assets (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     deleted_at timestamp with time zone,
-    deleted_reason text,
     search_text tsvector,
     state_id uuid,
     team_id uuid,
@@ -890,6 +892,7 @@ CREATE TABLE public.assets (
     processing_finished_at timestamp with time zone,
     sensitivity text DEFAULT 'public'::text NOT NULL,
     page_count integer,
+    deleted_reason text,
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1071,17 +1074,16 @@ CREATE TABLE public.collections (
     visibility text DEFAULT 'private'::text NOT NULL,
     membership text DEFAULT 'manual'::text NOT NULL,
     expires_at timestamp with time zone,
-    featured boolean DEFAULT false NOT NULL,
     purpose text,
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    deleted_at timestamp with time zone,
-    deleted_reason text,
     search_text tsvector,
     smart_query text,
+    deleted_at timestamp with time zone,
+    deleted_reason text,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
-    CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text])))
+    CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 
 
@@ -1136,6 +1138,22 @@ CREATE TABLE public.creative_lineage (
 
 
 --
+-- Name: digest_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.digest_queue (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_ref bigint NOT NULL,
+    topic text NOT NULL,
+    cadence text NOT NULL,
+    notification_id uuid NOT NULL,
+    queued_at timestamp with time zone DEFAULT now() NOT NULL,
+    sent_at timestamp with time zone,
+    CONSTRAINT digest_queue_cadence_check CHECK ((cadence = ANY (ARRAY['hourly'::text, 'daily'::text, 'weekly'::text])))
+);
+
+
+--
 -- Name: direct_messages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1183,6 +1201,25 @@ CREATE TABLE public.extraction_failure (
     occurred_at timestamp with time zone DEFAULT now() NOT NULL,
     dismissed_at timestamp with time zone,
     CONSTRAINT extraction_failure_error_kind_check CHECK ((error_kind = ANY (ARRAY['unsupported_format'::text, 'malformed_file'::text, 'library_panic'::text, 'validation'::text, 'no_metadata'::text])))
+);
+
+
+--
+-- Name: featured_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.featured_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    subject_kind text NOT NULL,
+    subject_id uuid NOT NULL,
+    "position" integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_user_ref bigint,
+    scope text DEFAULT 'org'::text NOT NULL,
+    team_id uuid,
+    CONSTRAINT featured_items_scope_check CHECK ((scope = ANY (ARRAY['public'::text, 'org'::text, 'team'::text]))),
+    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
+    CONSTRAINT featured_items_team_scope_check CHECK ((((scope = 'team'::text) AND (team_id IS NOT NULL)) OR ((scope <> 'team'::text) AND (team_id IS NULL))))
 );
 
 
@@ -1797,14 +1834,14 @@ CREATE TABLE public.posts (
     search_text tsvector,
     origin_server_id uuid,
     deleted_at timestamp with time zone,
-    deleted_reason text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     state_id uuid,
     team_id uuid,
     cover_thumbnail_asset_id uuid,
     subtitle_track_override jsonb,
-    CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text])))
+    deleted_reason text,
+    CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 
 
@@ -1813,21 +1850,6 @@ CREATE TABLE public.posts (
 --
 
 COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for the parent asset''s subtitle tracks. NULL means use the asset''s intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.';
-
-
---
--- Name: featured_items; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.featured_items (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    subject_kind text NOT NULL,
-    subject_id uuid NOT NULL,
-    position integer DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    created_by_user_ref bigint,
-    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text])))
-);
 
 
 --
@@ -1914,6 +1936,25 @@ CREATE TABLE public.saved_search (
 
 
 --
+-- Name: search_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.search_feedback (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    query_hash text NOT NULL,
+    dsl_query text NOT NULL,
+    hit_asset_id uuid NOT NULL,
+    hit_position integer NOT NULL,
+    direction text NOT NULL,
+    user_ref bigint NOT NULL,
+    ip_hash text,
+    feedback_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT search_feedback_direction_check CHECK ((direction = ANY (ARRAY['up'::text, 'down'::text]))),
+    CONSTRAINT search_feedback_hit_position_check CHECK ((hit_position >= 1))
+);
+
+
+--
 -- Name: search_reindex_run; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1950,25 +1991,6 @@ CREATE TABLE public.search_visual_backfill_run (
     failed bigint DEFAULT 0 NOT NULL,
     started_by_user_ref bigint,
     last_error text
-);
-
-
---
--- Name: search_feedback; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.search_feedback (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    query_hash text NOT NULL,
-    dsl_query text NOT NULL,
-    hit_asset_id uuid NOT NULL,
-    hit_position integer NOT NULL,
-    direction text NOT NULL,
-    user_ref bigint NOT NULL,
-    ip_hash text,
-    feedback_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT search_feedback_direction_check CHECK ((direction = ANY (ARRAY['up'::text, 'down'::text]))),
-    CONSTRAINT search_feedback_hit_position_check CHECK ((hit_position >= 1))
 );
 
 
@@ -2018,6 +2040,44 @@ CREATE TABLE public.storage_pins (
     pin_subject_type text NOT NULL,
     pin_subject_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: storage_sweep_findings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_sweep_findings (
+    id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    finding text NOT NULL,
+    object_hash text NOT NULL,
+    variant_key text NOT NULL,
+    detail text DEFAULT ''::text NOT NULL,
+    detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT storage_sweep_findings_finding_check CHECK ((finding = ANY (ARRAY['missing_object'::text, 'orphan_object'::text, 'checksum_mismatch'::text, 'size_mismatch'::text])))
+);
+
+
+--
+-- Name: storage_sweep_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_sweep_runs (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    cursor text,
+    objects_scanned bigint DEFAULT 0 NOT NULL,
+    findings_count bigint DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    error text,
+    triggered_by_user_ref bigint,
+    CONSTRAINT storage_sweep_runs_counts_check CHECK (((objects_scanned >= 0) AND (findings_count >= 0))),
+    CONSTRAINT storage_sweep_runs_kind_check CHECK ((kind = ANY (ARRAY['orphan_scan'::text, 'checksum_verify'::text]))),
+    CONSTRAINT storage_sweep_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])))
 );
 
 
@@ -2212,22 +2272,6 @@ CREATE TABLE public.user_preferences (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL
-);
-
-
---
--- Name: digest_queue; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.digest_queue (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_ref bigint NOT NULL,
-    topic text NOT NULL,
-    cadence text NOT NULL,
-    notification_id uuid NOT NULL,
-    queued_at timestamp with time zone DEFAULT now() NOT NULL,
-    sent_at timestamp with time zone,
-    CONSTRAINT digest_queue_cadence_check CHECK ((cadence = ANY (ARRAY['hourly'::text, 'daily'::text, 'weekly'::text])))
 );
 
 
@@ -2475,6 +2519,14 @@ ALTER TABLE ONLY public.asset_type_acls
 
 
 --
+-- Name: asset_visual_embedding asset_visual_embedding_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_visual_embedding
+    ADD CONSTRAINT asset_visual_embedding_pkey PRIMARY KEY (asset_id);
+
+
+--
 -- Name: assets assets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2579,6 +2631,14 @@ ALTER TABLE ONLY public.creative_lineage
 
 
 --
+-- Name: digest_queue digest_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.digest_queue
+    ADD CONSTRAINT digest_queue_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: direct_messages direct_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2608,6 +2668,22 @@ ALTER TABLE ONLY public.email_verification_token
 
 ALTER TABLE ONLY public.extraction_failure
     ADD CONSTRAINT extraction_failure_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: featured_items featured_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: featured_items featured_items_placement_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_placement_unique UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id);
 
 
 --
@@ -2843,22 +2919,6 @@ ALTER TABLE ONLY public.posts
 
 
 --
--- Name: featured_items featured_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.featured_items
-    ADD CONSTRAINT featured_items_pkey PRIMARY KEY (id);
-
-
---
--- Name: featured_items featured_items_subject_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.featured_items
-    ADD CONSTRAINT featured_items_subject_unique UNIQUE (subject_kind, subject_id);
-
-
---
 -- Name: resource_request resource_request_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2923,11 +2983,11 @@ ALTER TABLE ONLY public.search_feedback
 
 
 --
--- Name: search_feedback search_feedback_user_ref_hit_asset_query_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: search_feedback search_feedback_user_ref_hit_asset_id_query_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.search_feedback
-    ADD CONSTRAINT search_feedback_user_ref_hit_asset_query_hash_key UNIQUE (user_ref, hit_asset_id, query_hash);
+    ADD CONSTRAINT search_feedback_user_ref_hit_asset_id_query_hash_key UNIQUE (user_ref, hit_asset_id, query_hash);
 
 
 --
@@ -2976,6 +3036,22 @@ ALTER TABLE ONLY public.storage_objects
 
 ALTER TABLE ONLY public.storage_pins
     ADD CONSTRAINT storage_pins_pkey PRIMARY KEY (object_hash, pin_subject_type, pin_subject_id);
+
+
+--
+-- Name: storage_sweep_findings storage_sweep_findings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_sweep_findings
+    ADD CONSTRAINT storage_sweep_findings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: storage_sweep_runs storage_sweep_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_sweep_runs
+    ADD CONSTRAINT storage_sweep_runs_pkey PRIMARY KEY (id);
 
 
 --
@@ -3088,37 +3164,6 @@ ALTER TABLE ONLY public."user"
 
 ALTER TABLE ONLY public.user_preferences
     ADD CONSTRAINT user_preferences_pkey PRIMARY KEY (user_ref);
-
-
---
--- Name: digest_queue digest_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.digest_queue
-    ADD CONSTRAINT digest_queue_pkey PRIMARY KEY (id);
-
-
---
--- Name: digest_queue digest_queue_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.digest_queue
-    ADD CONSTRAINT digest_queue_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
-
-
---
--- Name: digest_queue digest_queue_notification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.digest_queue
-    ADD CONSTRAINT digest_queue_notification_id_fkey FOREIGN KEY (notification_id) REFERENCES public.notifications(id) ON DELETE CASCADE;
-
-
---
--- Name: digest_queue_pending_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX digest_queue_pending_idx ON public.digest_queue USING btree (cadence, user_ref) WHERE (sent_at IS NULL);
 
 
 --
@@ -3370,6 +3415,13 @@ CREATE INDEX assets_created_at_idx ON public.assets USING btree (created_at DESC
 
 
 --
+-- Name: assets_deleted_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX assets_deleted_at_idx ON public.assets USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
+
+
+--
 -- Name: assets_file_hash_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3552,6 +3604,13 @@ CREATE INDEX collections_created_at_idx ON public.collections USING btree (creat
 
 
 --
+-- Name: collections_deleted_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_deleted_at_idx ON public.collections USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
+
+
+--
 -- Name: collections_expires_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3559,17 +3618,17 @@ CREATE INDEX collections_expires_idx ON public.collections USING btree (expires_
 
 
 --
--- Name: collections_featured_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX collections_featured_idx ON public.collections USING btree (featured) WHERE featured;
-
-
---
 -- Name: collections_name_trgm; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX collections_name_trgm ON public.collections USING gin (name public.gin_trgm_ops) WHERE (name <> ''::text);
+
+
+--
+-- Name: collections_owner_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_owner_active_idx ON public.collections USING btree (owner_user_ref) WHERE (deleted_at IS NULL);
 
 
 --
@@ -3615,6 +3674,20 @@ CREATE INDEX comments_author_idx ON public.comments USING btree (author_user_ref
 
 
 --
+-- Name: comments_parent_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX comments_parent_id_idx ON public.comments USING btree (parent_id) WHERE ((parent_id IS NOT NULL) AND (deleted_at IS NULL));
+
+
+--
+-- Name: comments_peer_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX comments_peer_id_idx ON public.comments USING btree (peer_id) WHERE (peer_id IS NOT NULL);
+
+
+--
 -- Name: comments_target_active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3640,6 +3713,27 @@ CREATE INDEX comments_thread_idx ON public.comments USING btree (root_id, depth,
 --
 
 CREATE INDEX comments_whiteboards_idx ON public.comments USING btree (target_kind, target_id, created_at DESC) WHERE ((annotation_type = 'whiteboard'::text) AND (deleted_at IS NULL));
+
+
+--
+-- Name: digest_queue_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX digest_queue_pending_idx ON public.digest_queue USING btree (cadence, user_ref) WHERE (sent_at IS NULL);
+
+
+--
+-- Name: featured_items_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX featured_items_order_idx ON public.featured_items USING btree ("position", created_at);
+
+
+--
+-- Name: featured_items_scope_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX featured_items_scope_order_idx ON public.featured_items USING btree (scope, "position", created_at);
 
 
 --
@@ -3675,6 +3769,13 @@ CREATE INDEX federation_inbox_by_peer_idx ON public.federation_inbox USING btree
 --
 
 CREATE INDEX federation_inbox_by_status_idx ON public.federation_inbox USING btree (status, received_at DESC);
+
+
+--
+-- Name: federation_inbox_correlation_activity_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_inbox_correlation_activity_id_idx ON public.federation_inbox USING btree (correlation_activity_id) WHERE (correlation_activity_id IS NOT NULL);
 
 
 --
@@ -3811,10 +3912,24 @@ CREATE INDEX federation_shares_expiring_idx ON public.federation_shares USING bt
 
 
 --
+-- Name: federation_shares_granted_activity_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_shares_granted_activity_id_idx ON public.federation_shares USING btree (granted_activity_id) WHERE (granted_activity_id IS NOT NULL);
+
+
+--
 -- Name: federation_shares_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX federation_shares_lookup_idx ON public.federation_shares USING btree (object_kind, object_id, peer_id) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: federation_shares_revoked_activity_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_shares_revoked_activity_id_idx ON public.federation_shares USING btree (revoked_activity_id) WHERE (revoked_activity_id IS NOT NULL);
 
 
 --
@@ -3832,10 +3947,24 @@ CREATE INDEX federation_user_keys_retained_idx ON public.federation_user_keys US
 
 
 --
+-- Name: federation_user_keys_rotated_by_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_user_keys_rotated_by_idx ON public.federation_user_keys USING btree (rotated_by_user_ref) WHERE (rotated_by_user_ref IS NOT NULL);
+
+
+--
 -- Name: field_definition_applies_to_gin; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX field_definition_applies_to_gin ON public.field_definition USING gin (applies_to);
+
+
+--
+-- Name: field_definition_deprecated_replacement_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_definition_deprecated_replacement_idx ON public.field_definition USING btree (deprecated_replacement_id) WHERE (deprecated_replacement_id IS NOT NULL);
 
 
 --
@@ -3906,6 +4035,20 @@ CREATE INDEX idx_asset_tag_ai_provenance ON public.asset_tag USING btree (create
 --
 
 CREATE INDEX idx_asset_tag_asset_source ON public.asset_tag USING btree (asset_id, source);
+
+
+--
+-- Name: idx_asset_visual_embedding_hnsw_cosine; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_visual_embedding_hnsw_cosine ON public.asset_visual_embedding USING hnsw (embedding public.vector_cosine_ops) WITH (m='16', ef_construction='64');
+
+
+--
+-- Name: idx_asset_visual_embedding_provider; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_visual_embedding_provider ON public.asset_visual_embedding USING btree (provider, model);
 
 
 --
@@ -4112,6 +4255,13 @@ CREATE INDEX idx_user_totp_recovery_active ON public.user_totp_recovery_code USI
 
 
 --
+-- Name: idx_users_lockout_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_users_lockout_active ON public."user" USING btree (lockout_until) WHERE (lockout_until IS NOT NULL);
+
+
+--
 -- Name: jobs_lease_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4158,6 +4308,13 @@ CREATE INDEX likes_target_idx ON public.likes USING btree (target_kind, target_i
 --
 
 CREATE INDEX likes_user_idx ON public.likes USING btree (user_ref, liked_at DESC);
+
+
+--
+-- Name: metadata_backfill_run_started_by_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX metadata_backfill_run_started_by_idx ON public.metadata_backfill_run USING btree (started_by_user_ref) WHERE (started_by_user_ref IS NOT NULL);
 
 
 --
@@ -4210,10 +4367,24 @@ CREATE INDEX posts_author_idx ON public.posts USING btree (author_user_ref, post
 
 
 --
+-- Name: posts_cover_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_cover_asset_id_idx ON public.posts USING btree (cover_asset_id) WHERE (cover_asset_id IS NOT NULL);
+
+
+--
 -- Name: posts_cover_thumbnail_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX posts_cover_thumbnail_idx ON public.posts USING btree (cover_thumbnail_asset_id) WHERE (cover_thumbnail_asset_id IS NOT NULL);
+
+
+--
+-- Name: posts_deleted_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_deleted_at_idx ON public.posts USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
 --
@@ -4256,6 +4427,13 @@ CREATE INDEX posts_title_trgm ON public.posts USING gin (title public.gin_trgm_o
 --
 
 CREATE INDEX posts_visibility_idx ON public.posts USING btree (visibility) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: resource_request_decided_by_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX resource_request_decided_by_idx ON public.resource_request USING btree (decided_by_user_ref) WHERE (decided_by_user_ref IS NOT NULL);
 
 
 --
@@ -4315,17 +4493,10 @@ CREATE UNIQUE INDEX search_reindex_run_active_uniq ON public.search_reindex_run 
 
 
 --
--- Name: search_visual_backfill_run_active_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: search_reindex_run_started_by_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX search_visual_backfill_run_active_uniq ON public.search_visual_backfill_run USING btree ((true)) WHERE ((completed_at IS NULL) AND (cancelled_at IS NULL));
-
-
---
--- Name: search_visual_backfill_run_started_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX search_visual_backfill_run_started_idx ON public.search_visual_backfill_run USING btree (started_at DESC);
+CREATE INDEX search_reindex_run_started_by_idx ON public.search_reindex_run USING btree (started_by_user_ref) WHERE (started_by_user_ref IS NOT NULL);
 
 
 --
@@ -4333,6 +4504,27 @@ CREATE INDEX search_visual_backfill_run_started_idx ON public.search_visual_back
 --
 
 CREATE INDEX search_reindex_run_started_idx ON public.search_reindex_run USING btree (started_at DESC);
+
+
+--
+-- Name: search_visual_backfill_run_active_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX search_visual_backfill_run_active_uniq ON public.search_visual_backfill_run USING btree ((true)) WHERE ((completed_at IS NULL) AND (cancelled_at IS NULL));
+
+
+--
+-- Name: search_visual_backfill_run_started_by_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_visual_backfill_run_started_by_idx ON public.search_visual_backfill_run USING btree (started_by_user_ref) WHERE (started_by_user_ref IS NOT NULL);
+
+
+--
+-- Name: search_visual_backfill_run_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_visual_backfill_run_started_idx ON public.search_visual_backfill_run USING btree (started_at DESC);
 
 
 --
@@ -4361,6 +4553,27 @@ CREATE INDEX storage_objects__gc_idx ON public.storage_objects USING btree (gc_e
 --
 
 CREATE INDEX storage_pins__subject_idx ON public.storage_pins USING btree (pin_subject_type, pin_subject_id);
+
+
+--
+-- Name: storage_sweep_findings_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_sweep_findings_run_idx ON public.storage_sweep_findings USING btree (run_id, detected_at DESC);
+
+
+--
+-- Name: storage_sweep_findings_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_sweep_findings_subject_idx ON public.storage_sweep_findings USING btree (object_hash, variant_key) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: storage_sweep_runs_kind_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_sweep_runs_kind_started_idx ON public.storage_sweep_runs USING btree (kind, started_at DESC);
 
 
 --
@@ -4518,10 +4731,24 @@ CREATE UNIQUE INDEX user_username_uniq_idx ON public."user" USING btree (usernam
 
 
 --
+-- Name: workflow_audit_from_state_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_audit_from_state_id_idx ON public.workflow_audit USING btree (from_state_id) WHERE (from_state_id IS NOT NULL);
+
+
+--
 -- Name: workflow_audit_resource_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_audit_resource_idx ON public.workflow_audit USING btree (resource_kind, resource_id, transitioned_at DESC);
+
+
+--
+-- Name: workflow_audit_to_state_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_audit_to_state_id_idx ON public.workflow_audit USING btree (to_state_id) WHERE (to_state_id IS NOT NULL);
 
 
 --
@@ -4543,6 +4770,13 @@ CREATE UNIQUE INDEX workflow_states_one_initial_per_domain ON public.workflow_st
 --
 
 CREATE INDEX workflow_transitions_from_idx ON public.workflow_transitions USING btree (from_state_id);
+
+
+--
+-- Name: workflow_transitions_required_capability_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_transitions_required_capability_idx ON public.workflow_transitions USING btree (required_capability) WHERE (required_capability IS NOT NULL);
 
 
 --
@@ -4802,6 +5036,14 @@ ALTER TABLE ONLY public.asset_type_acls
 
 
 --
+-- Name: asset_visual_embedding asset_visual_embedding_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_visual_embedding
+    ADD CONSTRAINT asset_visual_embedding_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: assets assets_asset_type_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4954,6 +5196,22 @@ ALTER TABLE ONLY public.creative_lineage
 
 
 --
+-- Name: digest_queue digest_queue_notification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.digest_queue
+    ADD CONSTRAINT digest_queue_notification_id_fkey FOREIGN KEY (notification_id) REFERENCES public.notifications(id) ON DELETE CASCADE;
+
+
+--
+-- Name: digest_queue digest_queue_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.digest_queue
+    ADD CONSTRAINT digest_queue_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
 -- Name: email_verification_token email_verification_token_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4967,6 +5225,14 @@ ALTER TABLE ONLY public.email_verification_token
 
 ALTER TABLE ONLY public.extraction_failure
     ADD CONSTRAINT extraction_failure_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: featured_items featured_items_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
 
 
 --
@@ -5166,7 +5432,15 @@ ALTER TABLE ONLY public.posts
 --
 
 ALTER TABLE ONLY public.resource_request
-    ADD CONSTRAINT resource_request_decided_by_user_ref_fkey FOREIGN KEY (decided_by_user_ref) REFERENCES public."user"(ref);
+    ADD CONSTRAINT resource_request_decided_by_user_ref_fkey FOREIGN KEY (decided_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: resource_request resource_request_requested_capability_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_request
+    ADD CONSTRAINT resource_request_requested_capability_fkey FOREIGN KEY (requested_capability) REFERENCES public.capabilities(code) ON DELETE RESTRICT;
 
 
 --
@@ -5230,7 +5504,7 @@ ALTER TABLE ONLY public.search_feedback
 --
 
 ALTER TABLE ONLY public.search_reindex_run
-    ADD CONSTRAINT search_reindex_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref);
+    ADD CONSTRAINT search_reindex_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
 
 
 --
@@ -5238,7 +5512,7 @@ ALTER TABLE ONLY public.search_reindex_run
 --
 
 ALTER TABLE ONLY public.search_visual_backfill_run
-    ADD CONSTRAINT search_visual_backfill_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref);
+    ADD CONSTRAINT search_visual_backfill_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
 
 
 --
@@ -5255,6 +5529,14 @@ ALTER TABLE ONLY public.sessions
 
 ALTER TABLE ONLY public.storage_pins
     ADD CONSTRAINT storage_pins_object_hash_fkey FOREIGN KEY (object_hash) REFERENCES public.storage_objects(hash) ON DELETE RESTRICT;
+
+
+--
+-- Name: storage_sweep_findings storage_sweep_findings_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_sweep_findings
+    ADD CONSTRAINT storage_sweep_findings_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.storage_sweep_runs(id) ON DELETE CASCADE;
 
 
 --
@@ -5421,46 +5703,4 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict BIawPaLNrAa1UYpG7hem3AQptIFpU8M7DvjZ4he0fDcFV12iKTSuRDviek2Uif9
 
-
---
--- Storage integrity sweeps (#403, migration 00007). Appended rather
--- than re-dumping the whole schema: a full pg_dump refresh also pulls
--- in unrelated drift that has accumulated since this file was last
--- regenerated, which changes sqlc output for other packages.
---
-
-CREATE TABLE public.storage_sweep_runs (
-    id uuid NOT NULL,
-    kind text NOT NULL,
-    status text DEFAULT 'running'::text NOT NULL,
-    cursor text,
-    objects_scanned bigint DEFAULT 0 NOT NULL,
-    findings_count bigint DEFAULT 0 NOT NULL,
-    started_at timestamp with time zone DEFAULT now() NOT NULL,
-    finished_at timestamp with time zone,
-    error text,
-    triggered_by_user_ref bigint,
-    CONSTRAINT storage_sweep_runs_counts_check CHECK (((objects_scanned >= 0) AND (findings_count >= 0))),
-    CONSTRAINT storage_sweep_runs_kind_check CHECK ((kind = ANY (ARRAY['orphan_scan'::text, 'checksum_verify'::text]))),
-    CONSTRAINT storage_sweep_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])))
-);
-
-CREATE TABLE public.storage_sweep_findings (
-    id uuid NOT NULL,
-    run_id uuid NOT NULL,
-    finding text NOT NULL,
-    object_hash text NOT NULL,
-    variant_key text NOT NULL,
-    detail text DEFAULT ''::text NOT NULL,
-    detected_at timestamp with time zone DEFAULT now() NOT NULL,
-    resolved_at timestamp with time zone,
-    CONSTRAINT storage_sweep_findings_finding_check CHECK ((finding = ANY (ARRAY['missing_object'::text, 'orphan_object'::text, 'checksum_mismatch'::text, 'size_mismatch'::text])))
-);
-
-CREATE INDEX storage_sweep_findings_run_idx ON public.storage_sweep_findings USING btree (run_id, detected_at DESC);
-
-CREATE INDEX storage_sweep_findings_subject_idx ON public.storage_sweep_findings USING btree (object_hash, variant_key) WHERE (resolved_at IS NULL);
-
-CREATE INDEX storage_sweep_runs_kind_started_idx ON public.storage_sweep_runs USING btree (kind, started_at DESC);

@@ -108,6 +108,13 @@ const (
 	EventAdminAIConfigUpdated         = "admin.system.ai_config_updated"
 	EventAdminAppearanceConfigUpdated = "admin.system.appearance_config_updated"
 
+	// #445 — the public-mode toggle gets its own event rather than
+	// riding on site_config_updated. This is the one system setting
+	// whose flip changes who can read the install at all, so "when did
+	// this install become public, and who did it" has to be answerable
+	// without diffing changesets on an unrelated event.
+	EventAdminPublicModeUpdated = "admin.system.public_mode_updated"
+
 	// Phase 1.16.B-5-followup — search feedback abuse-review event.
 	// Fires whenever an admin opens the per-user feedback log page
 	// so we have an audit trail for who's browsing which user's

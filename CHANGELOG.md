@@ -5,6 +5,175 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [Unreleased]
+
+Nothing here yet — v0.5.0 was just cut.
+
+## [v0.5.0] — 2026-07-20 — Public mode: anonymous browsing
+
+Content is now reachable without an account, on an operator's terms. The
+visibility model got a single enforcement point, sensitivity moved to the
+content plane, and opening the surface surfaced (and closed) three
+pre-existing access holes in the foundation it was built on.
+
+### Operator-facing changes
+
+- **A `public` visibility tier now exists** for collections and posts, and
+  anonymous callers have a defined, enforced view of content: published,
+  public, ready assets and public collections/posts only. Content
+  visibility is decided in exactly one place — the visibility predicate —
+  which every read path splices in (ADR 0063).
+  Authenticated behaviour is deliberately unchanged. An authenticated
+  caller still *sees* assets of every sensitivity in listings — that is
+  intended, not a gap: sensitivity gates the bytes, never the rows, so
+  restricted material stays listed as a locked item rather than
+  vanishing (ADR 0020 via ADR 0064).
+- **Asset browse now goes through that same predicate.** The browse query was
+  sqlc-generated static SQL, which cannot accept a runtime fragment — it was
+  the one read path visibility could not reach. Converted to hand-built SQL and
+  gated. The superadmin-only `include_deleted` flag waives the soft-delete
+  check **and only that** — publication status, sensitivity and processing
+  state still apply, so the flag cannot drift into meaning "skip authorization".
+
+- **Asset sensitivity is now enforced when serving files.** Previously any
+  authenticated caller could download any asset's bytes — including `draft`
+  and `restricted` material — because the byte-streaming endpoints checked
+  only that a caller was signed in. Sensitivity now gates **content**: `team`
+  assets require team membership, and `restricted`/`embargo` are limited to
+  the owner and system administrators. Listing is deliberately unchanged —
+  restricted assets remain visible as locked items rather than vanishing
+  (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
+  response cannot be used to confirm that a restricted asset exists.
+
+- **Two remaining copies of the visibility rule were removed, and a
+  latent IIIF gap was found in the process.** Reverse-image search
+  carried its own hand-written "anonymous sees public only" filter; it
+  now uses the same visibility predicate as every other read path,
+  which also correctly hides draft and still-processing assets that the
+  old copy let through. The IIIF manifest layer keeps its own
+  sensitivity gate — investigation confirmed it is not a duplicate but
+  the *only* thing refusing a restricted asset's manifest to an
+  anonymous caller, and a misleading code comment that invited its
+  removal was corrected.
+
+- **Audit-log IP addresses are now gated behind their own capability.**
+  A read-only auditor could previously see the IP of every actor in the
+  log — personal data that identifies people and approximates their
+  location — because it rode along with the ordinary
+  `system.audit.read` view. Seeing *what happened* and seeing *from
+  where* are now separate grants: `system.audit.read` returns the log
+  without IPs, and a dedicated `system.audit.pii.read` is required to
+  see them. The address is withheld at the API, not merely hidden in
+  the UI.
+
+- **Access requests can no longer name a capability that doesn't exist.**
+  `requested_capability` on an asset-access request was free text stored
+  verbatim, in a field that feeds an authorisation decision — so a
+  requester could put anything at all in it. It is now constrained to
+  the real capability registry by a foreign key, and a request naming an
+  unknown capability is rejected with a clear 400 instead of failing
+  deeper in. Deleting a capability that still has outstanding requests
+  now fails loudly rather than silently discarding the record of who
+  asked for what.
+  This narrows the field rather than fully securing it: a request can
+  still name a *real* capability the requester shouldn't be able to ask
+  for. Which capabilities are legitimately requestable is decided with
+  the access-grant flow, which remains deliberately unbuilt.
+
+- **A logged-out visitor now has something to look at.** Curated
+  content can be featured for a public audience, and the front page
+  renders it. Featuring is now a placement rather than a flag on the
+  thing featured — the same collection can be featured publicly and
+  internally at once, with its own ordering in each, and an individual
+  asset can be featured without wrapping it in a collection.
+  Two separate featured mechanisms had grown up side by side; there is
+  now one. Featuring never widens access: a featured item renders only
+  if the viewer could already see it, so publishing the rail does not
+  publish the library.
+
+- **Public browsing is now an operator choice, and it is off by
+  default.** Anonymous access had no switch: any instance running this
+  code served its public content to the internet whether the operator
+  wanted that or not, and an existing install would have had it turned
+  on by an upgrade. There is now a setting for it, enforced at the API
+  rather than by hiding pages — turning it off means anonymous requests
+  are refused, not merely unlinked. A fresh install starts private, and
+  first-boot, login and SSO keep working with it off.
+
+- **Signing in no longer hid public collections, and logged-out
+  visitors could no longer see private ones.** Two visibility defects
+  surfaced while opening anonymous access, both now fixed. An
+  authenticated user got "not found" on a public collection they did
+  not own — signing in *removed* access, and an administrator saw less
+  than a logged-out stranger. Separately, the collection **list**
+  endpoint applied no visibility rule at all, so an anonymous request
+  returned every collection in the system, private ones included, with
+  their names. Listing now goes through the same single visibility
+  decision as every other read path.
+
+- **A collection's contents are now visible to logged-out visitors —
+  and were previously readable by any signed-in account.** Listing what
+  is inside a collection applied no visibility check at all: any
+  authenticated caller could enumerate the full contents of any
+  collection by id, including collections they had no access to, and the
+  response carried titles, types and publication status for draft
+  material. The endpoint now checks the caller may see the collection,
+  and filters the contents themselves — so a public collection shows
+  only its public items to an anonymous visitor, while its owner still
+  sees everything. Public collection pages render their contents rather
+  than appearing empty.
+
+- **Browsing without an account now works.** Listing assets and
+  collections, and opening a single asset or collection, no longer
+  require a signed-in caller: `GET /assets`, `GET /assets/{id}`,
+  `GET /collections` and `GET /collections/{id}` serve anonymous
+  requests, with the visibility predicate deciding what comes back —
+  published, public, ready content only. Every write path still
+  requires authentication.
+  **This also closed a pre-existing hole**, which is the more important
+  half: the two detail endpoints previously checked only that *some*
+  caller was signed in and then fetched by id, so any authenticated
+  account could read any asset or collection — including another
+  user's private collection — simply by knowing its id. Both now run a
+  real visibility check, and a denial returns 404 rather than 403 so a
+  response cannot confirm that a hidden item exists.
+  One consequence to expect: a public collection's *contents* are not
+  yet anonymous, so a logged-out collection page shows its title and an
+  empty body until that lands separately.
+
+- **Anonymous visitors can now load public images.** The byte-streaming
+  endpoints previously required a signed-in caller before anything else
+  ran; they now defer to the same content check, which admits anonymous
+  callers to `public`-tier assets and nothing else. `team`, `restricted`
+  and `embargo` bytes remain unreachable without an account, across
+  every byte-serving path (originals, derivatives, HLS segments and
+  archive entries). This is the first surface where an anonymous request
+  receives real content rather than metadata — the metadata endpoints
+  are still authenticated and land separately.
+
+### Infrastructure / housekeeping
+
+- **The site now rebuilds from a signal that can fail.** When docs
+  this repo owns change, the marketing site was rebuilt by firing a
+  Cloudflare deploy hook — a bare POST that reports success for having
+  been sent, not for a build that worked. Nineteen production deploys
+  failed over twenty-four hours behind that signal with nothing to show
+  it. The trigger now dispatches to the site repository instead,
+  carrying the exact commit that changed so a rapid second push cannot
+  cause the wrong content to be built, and a rejected credential fails
+  loudly rather than skipping silently.
+
+
+- `app/schema.sql` refreshed from a cleanly migrated database. The
+  committed copy had drifted in **column order** — Postgres physical
+  order is creation order, so columns added by later migrations land at
+  the tail, and the stale file described an order the migrations never
+  produce. That silently changed which Go types sqlc generated. Query
+  column lists were realigned with the real schema; pg_dump's
+  `\restrict`/`\unrestrict` markers are stripped so the file is
+  byte-reproducible.
+- Version files corrected to 0.4.0 (they had been left at 0.3.1).
+
 ## [v0.4.0] — 2026-07-18
 
 Operator visibility: the async pipeline and the storage layer are now
@@ -132,7 +301,63 @@ Post-v0.1.2 incremental work. No-spec-impact.
   release image behind a write-blocking nginx edge, seeded from the
   Layer-A dataset, and auto-redeploys on each release.
 
-## [Unreleased] — Encryption arc (Phase 1.22.I) complete
+## [v0.1.2] — 2026-07-15
+
+> Reconstructed from the `v0.1.1..v0.1.2` commit range — this release was
+> tagged without CHANGELOG or GitHub release notes at the time.
+
+Brand, polish, and dependency hygiene; no wire-format changes.
+
+### User-facing changes
+
+- **Burnt/Steel brand.** Repaletted to the burnt accent + steel secondary,
+  wired through components; finalized the chevron mark and the configured
+  site-name handling; enlarged the sign-in brand mark; added a `viewBox`
+  to the favicon/logo SVGs so the browser-tab favicon renders.
+- **API docs are cleaner.** A usable getting-started, clearer error
+  documentation, and internal phase codes dropped from the published spec
+  (the first pass of the ongoing scrub).
+- **Install quickstart fixed** — corrected `AA_MASTER_KEY`, the image path,
+  the cosign identity, and pgvector setup.
+
+### Fixes
+
+- **Per-type job concurrency caps** are now applied in the single-process
+  worker pool.
+- **Saved-search notifications** no longer hot-loop — reschedules are
+  grid-aligned.
+
+### Infrastructure / housekeeping
+
+- Supply-chain forks retargeted from `mscrnt/*` to `Artist-Alley-Org`.
+- `pdfjs-dist` upgraded to v6; dependency sweep clearing Dependabot alerts.
+- Test suite isolated from the shared dev database (#291); CI prunes
+  dangling images to stop a runner disk leak.
+- Real-world IP scrubbed from published surfaces; ArchivePub stamped
+  v1.0-final (spec-only).
+
+## [v0.1.1] — 2026-07-13
+
+> Reconstructed from the `v0.1.0..v0.1.1` commit range — tagged without
+> notes at the time.
+
+A patch release restoring media processing and clearing shipped-artifact
+vulnerabilities.
+
+### Fixes
+
+- **In-process worker pool never claimed jobs** (nil `Types` + a gate
+  guard), so media processing silently stalled after v0.1.0. Fixed (#279)
+  — this is the reason v0.1.1 exists.
+- **GHCR image owner casing** — the org rename broke edge + release image
+  pushes; the owner is now lowercased (#280).
+
+### Infrastructure / housekeeping
+
+- Shipped-artifact vulnerabilities cleared (torch floor raised, `aa-clip`
+  bumped, npm sweep) — all open Dependabot alerts closed.
+
+## [v0.1.0] — 2026-07-11 — Encryption arc (Phase 1.22.I)
 
 The full encrypted-federation arc (1.22.I-a through 1.22.I-i) is
 shipped + dogfood-validated end-to-end. ArchivePub spec at

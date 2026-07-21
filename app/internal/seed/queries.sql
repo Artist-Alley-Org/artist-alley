@@ -179,32 +179,34 @@ VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (id) DO NOTHING
 RETURNING id;
 
--- name: SeedSetCollectionFeatured :exec
--- Sets the per-collection browse-filter flag (collections.featured),
--- which is what the PUBLIC /collections "featured" tab filters on —
--- distinct from the featured_items curation rail the admin page reads
--- (see 00002_featured_items.sql). Idempotent by nature (UPDATE), so a
--- re-seed is a no-op. Only ever sets TRUE; unflagging a collection in
--- the catalogue takes effect on the next full reset, which is how the
--- demo re-seeds.
-UPDATE collections SET featured = TRUE WHERE id = $1;
-
 -- name: SeedInsertFeatured :exec
--- Feature one collection/asset on the homepage + /admin/featured (#380).
+-- Feature one collection/asset on the public rail + /admin/featured
+-- (#380, ADR 0065).
+--
+-- scope='public' because the demo's flagged collections are exactly
+-- what a public rail should show — a freshly-reset demo whose landing
+-- page is empty is the thing this phase exists to prevent, and since
+-- #416 the rail IS the landing page for a logged-out visitor.
+--
 -- Position appends after any existing rows (max+1) — the SAME rule as
 -- the admin InsertFeaturedItem (internal/featured/queries.sql), so
--- seeded rows and later admin curation interleave in one order. The
--- (subject_kind, subject_id) unique constraint + ON CONFLICT DO NOTHING
--- make a re-seed a no-op: no duplicates, and no position drift because
--- the conflicting row is already counted in MAX(position).
-INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref)
+-- seeded rows and later admin curation interleave in one order.
+--
+-- ON CONFLICT names the PLACEMENT constraint, not the old
+-- (subject_kind, subject_id) one that 00010 dropped. That rename is
+-- not cosmetic: an ON CONFLICT target with no matching constraint is a
+-- runtime error ("there is no unique or exclusion constraint matching
+-- the ON CONFLICT specification"), so leaving it would have failed the
+-- seed one statement after the boolean UPDATE did.
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope)
 VALUES (
     $1,
     $2,
     (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items),
-    $3
+    $3,
+    'public'
 )
-ON CONFLICT (subject_kind, subject_id) DO NOTHING;
+ON CONFLICT (subject_kind, subject_id, scope, team_id) DO NOTHING;
 
 -- name: SeedInsertAsset :one
 -- Stable id from the MANIFEST. A bare ON CONFLICT DO NOTHING catches

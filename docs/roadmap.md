@@ -3,6 +3,25 @@
 A snapshot of what's shipped, what's in flight, and what's on the
 map. Subject to change as we learn what teams actually need.
 
+
+## Contents
+
+| Section | What's in it |
+|---|---|
+| [Foundation status](#foundation-status) | Where the pre-1.0 foundation stands |
+| [Shipped](#shipped) | Tagged releases and the capabilities they delivered |
+| [Release roadmap](#release-roadmap) | The version train, v0.5.0 → v1.0.0 |
+| [In flight](#in-flight) | What is being built right now |
+| [Review tool arc](#review-tool--the-load-bearing-ux-arc) | Phase 1.18.B, sub-phase by sub-phase |
+| [Admin settings](#admin-settings--fleshing-out-every-placeholder) | Every admin placeholder and its plan |
+| [Up next](#up-next) | Queued behind the current milestone |
+| [On the map](#on-the-map) | Planned, scheduled to a version |
+| [Not building](#things-we-deliberately-arent-building) | Deliberate exclusions |
+
+> **Looking for user-facing release notes?** See
+> [`CHANGELOG.md`](../CHANGELOG.md). This file is the engineering log —
+> longer, and organised by phase rather than by release.
+
 ## Foundation status
 
 **Pre-v1.0 foundation is essentially complete.** Fifty-eight accepted
@@ -27,45 +46,24 @@ squash point #1 executed at the tag (single baseline migration, ADR
 ## Shipped
 
 The current release stream covers the foundations:
+### Releases
 
-- **v0.1.0 — first public tag (2026-07-11).** The first-ever tagged
-  release: AGPL-3.0-only + dual commercial licensing executed
-  (1.55.AA), org move to Artist-Alley-Org, site split (docs site
-  moved to the private artist-alley-site repo), migration fold to a
-  single baseline migration (ADR 0057), Docker-only distribution
-  (GHCR + Docker Hub, Sigstore-signed). Pre-1.0 still means schemas
-  can break across minors.
-- **v0.1.1 — first patch release (2026-07-13).** Worker-pool claim
-  fix (#279) restoring media processing, GHCR owner-casing fix
-  (#280), dependency cleanup (#281 / #283 / #284) clearing all open
-  Dependabot alerts.
-- **v0.2.0 (2026-07-16).** Admin tile unlock (Tier 1–3), a public
-  read-only demo at demo.artist-alley.org, env-gated `AA_DEMO_MODE`,
-  native `aa seed` (retiring the Python `apply.py` loader), and CI
-  parallelised across three self-hosted runners.
-- **v0.4.0 (2026-07-18).** Operator visibility. The async pipeline became
-  observable and manageable — queue, workers, live counts, failed jobs with
-  requeue/cancel, per-type concurrency, and scheduled work, read-gated on
-  `system.jobs.read`. Storage gained usage + variant inventory
-  (`system.storage.read`) and **integrity sweeps**: orphan scan (both
-  directions, on a new ordered cursor-resumable backend `List` — ADR 0062)
-  and checksum verification against the content-addressed key, both running
-  as batched job kinds. Also: About now reports the real build version via an
-  anonymous `/build-info`, help became explicitly public to read-only
-  operators (ADR 0061), and CI stopped starving itself on dependabot batches
-  and stale git locks. Destructive orphan cleanup deliberately deferred —
-  findings are advisory and must be re-verified at delete time.
-- **v0.3.1 (2026-07-17).** Admin UI for read-only capability holders (the
-  frontend half of v0.3.0's read caps — the admin menu gates per-tile on the
-  cap each surface enforces, so read-only roles can browse admin), a
-  repo-wide `gofmt` gate, and a `make release` target.
-- **v0.3.0 (2026-07-17).** Media derivatives generated on seed/upload
-  (thumbnails + video sprites); read-only admin access via `*.read`
-  capabilities without the `system.admin` superuser cap; a fully
-  responsive + WCAG-2.2-AA browse/navbar surface (390px → 4k / 32:9)
-  with a single-column `feed` view; seeded featured content; and a
-  CI/nightly-stability arc that turned the federation nightly green for
-  the first time since 2026-06-21.
+Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is the index.
+
+| Version | Date | Headline |
+|---|---|---|
+| **v0.5.0** | 2026-07-20 | Public mode — anonymous browsing behind an operator toggle (off by default); single visibility enforcement point (ADR 0063); sensitivity gates content not rows (ADR 0064); featured rail on the placement model (ADR 0065); audit-IP PII gating |
+| **v0.4.0** | 2026-07-18 | Operator visibility — jobs admin (queue / workers / failed / concurrency), storage usage + variant inventory, and integrity sweeps (orphan scan + checksum verify) as batched job kinds |
+| **v0.3.1** | 2026-07-17 | Admin UI for read-only capability holders; repo-wide `gofmt` gate; `make release` |
+| **v0.3.0** | 2026-07-17 | Media derivatives on seed/upload; read-only admin via `*.read` caps; responsive + WCAG-2.2-AA surface (390px → 4k) |
+| **v0.2.0** | 2026-07-16 | Admin tile unlock (Tier 1–3); public read-only demo; native `aa seed`; CI across three runners |
+| **v0.1.1** | 2026-07-13 | Worker-pool claim fix restoring media processing; dependency cleanup |
+| **v0.1.0** | 2026-07-11 | First public tag — AGPL-3.0-only + commercial dual licensing, org move, single baseline migration (ADR 0057), Docker-only distribution |
+
+> Pre-1.0 means schemas can still break across minor versions.
+
+### Foundational capabilities
+
 - **Single binary deploy.** Go server with the SvelteKit SPA
   embedded via `go:embed`. Multi-arch Docker images (amd64 + arm64),
   every image Sigstore-signed. Docker is the sole distribution
@@ -169,424 +167,451 @@ The current release stream covers the foundations:
   test vectors locked at rc1; the 7-day soak window closed
   2026-06-22 clean and v1.0-final was stamped 2026-07-13 as a
   spec-only change.
-- **v0.1.0 release readiness** (Phase 1.55). The meta-arc getting
-  from current-dev to the v0.1.0 tag — the first-ever tagged release
-  (see [docs/v0_1_readiness.md §0](./v0_1_readiness.md) for the
-  milestone model that separates v0.1.0 = first tag from v1.0.0 =
-  out of beta). 1.55.A shipped 2026-07-07 via PR #220 (squash
-  `9d14fc30`, closes #219): `docs/v0_1_readiness.md` is the master
-  audit — 9,907 words / 1,692 lines / 9 sections covering v0.1.0
-  exit criteria (7 ADR-anchored), arc-close velocity (25 PRs
-  2026-06-22 → 2026-07-07), 22 open gaps with mandatory substructure
-  (Status / Roadmap phase / RS blueprint capture / 2024-2026
-  gold-standard research citations / Caching strategy / Federation
-  implications / Target sketch / Effort / Sequencing), post-v0.1.0
-  deferrals, RS reference inventory with delete-safety verdict YES
-  on every row, sequencing proposal (base v0.1.0 scope ~9 days;
-  full menu ~17-22 days), 7-gate RS deletion readiness checklist,
-  post-milestone arc pointers (split v0.1.0 vs v1.0.0). **Unblocks two follow-up arcs:**
-  (a) physical deletion of the ~102 MB gitignored `/dbstruct/` +
-  `/include/` + `/plugins/` + `/pages/` ResourceSpace reference tree
-  (§6 confirms every pattern is captured internally); (b) the
-  AGPL + commercial relicense arc per ADR 0016 → 0017 direction,
-  gated on this audit + Phase 1.24. **Recommended next sub-phase**
-  per §7.1: **1.55.B hygiene bundle** (~1.5 days) — bundle #218
-  oapi-codegen version pin + #214 MDX braced-identifier CI gate +
-  §4.4 schema-mismatch boot detection + §4.21 baseline migration
-  squash verification into one PR. All sub-day, all pure release-
-  readiness hygiene.
-  **1.55.B shipped 2026-07-08** — release-readiness hygiene bundle
-  (§7.1 complete). Four sub-day items in one PR: oapi-codegen pinned
-  to v2.7.2 in scripts/generate.sh (no more silent @latest drift
-  breaking Codegen check); MDX braced-identifier hazard gate at
-  scripts/check-mdx-hazards.sh + a workflow that scans changed
-  synced-to-Astro docs on every PR (0 hazards on current dev tip;
-  no grandfather list needed); db.CheckSchemaFreshness wired
-  post-Migrate in app/cmd/aa/main.go — refuses to start on
-  SchemaUnappliedMigrations, warns on SchemaUnknownNewerSchema,
-  proceeds silently on SchemaOK; scripts/verify-baseline.sh runs
-  three checks (baseline present + ADR 0046 referenced; baseline
-  applies clean on a fresh pgvector/pgvector:pg16 scratch DB via
-  the real db.Migrate + goose.UpContext path; migration filename
-  sequence contiguous) and the current run reports "baseline
-  verified against 28 append migrations, head=00029, ready for
-  tag." Deferred: unified /admin/system/health surface for
-  the schema-freshness warning — no such endpoint exists today
-  (only per-subsystem shims); boot WARN log is enough pre-v0.1.0
-  per pre-release-practices.
-  **1.55.R shipped 2026-07-08** — v0.1.0 milestone rename pass. Pure
-  docs recalibration after the user clarified two milestones:
-  v0.1.0 = first tagged release (RS deleted + base feature set);
-  v1.0.0 = out of beta (real usage + soak + stable production).
-  `docs/v1_readiness.md` renamed to `docs/v0_1_readiness.md` via
-  `git mv`; new §0 Milestone model section added at top of doc;
-  every "v1.0.0" that meant "the release we're building toward"
-  retagged to "v0.1.0"; §9 split into post-v0.1.0 + post-v1.0.0
-  subsections; ADR 0046 grows a pending-review note pointing at
-  issue #228 (whether append-only kicks in at v0.1.0 vs v1.0.0);
-  issues #228 + #229 filed to track the ADR 0046 + 0016/0017
-  semantic decisions separately. Zero substance change; naming
-  recalibration only. Closes #227.
-  **1.55.S shipped 2026-07-08** — RS sanitization + physical
-  reference-tree deletion (§1.2 exit criterion). Three obsolete
-  `scripts/rs-*` pullers deleted; RS mentions scrubbed from 9
-  code/config files (`userstate.go`, admin About page, Dockerfile,
-  `.goreleaser.yaml`, `docker-compose.yml`, `.env.example`,
-  `.dockerignore`, `.gitignore` header, `README.md` untouched — zero
-  refs there); ADR 0001 flipped to `superseded-by: 0040`; the
-  `docs/v0_1_readiness.md` §1.2 exit criterion flipped to ✅ shipped
-  + §6 preamble annotated "physically deleted 2026-07-08" + §8
-  checklist all seven gates cleared. ADR 0002 skipped for a
-  pending-review pointer (already `superseded_by: 0016` from prior
-  lifecycle; redundant). Local `/dbstruct/` `/include/` `/plugins/`
-  `/pages/` physically removed from disk; `.gitignore` entries
-  retained as safety net. `grep -rn -iE "resourcespace|resource[-_]space"`
-  in application code + config now returns empty; deliberate
-  historical mentions retained in ADR bodies + `cleanup-audit-2026-06.md`
-  + this readiness doc's §6 inventory + memory files. Closes #231.
-  **1.55.U-1 shipped 2026-07-08** — schema + cache audit report for
-  the v0.1.0 baseline re-squash. Report-only; zero code changes.
-  Ships `docs/schema_audit_v0_1.md` — a 10-section inventory of the
-  29-file migration chain, 78 tables, 30 named cache domains + 4
-  dedicated Cache types, FK cascade behaviour, and CHECK-constraint
-  density. Findings: **0 MUST / 23 SHOULD / 11 NICE** (deduplicated).
-  The SHOULD tier is dominated by 15 unindexed FK columns (partial
-  indexes with `WHERE <col> IS NOT NULL` predicates) plus 3 explicit
-  `NO ACTION` → `SET NULL` cascade promotions plus 4 cache-invalidator
-  verification gaps (asset PATCH → IIIF, collection POST/PATCH →
-  owner profile, per-user cache-key exhaustive sweep, ActorOutbox
-  federation-key shape). §10 sketches the 1.55.U-2 re-squash plan:
-  collapse 29 files into `00001_baseline_v0_1.sql` with SHOULD fixes
-  inlined; zero append migrations at v0.1.0 tag time. Q6 nullability
-  + defaults sweep clean; Q7 EXPLAIN spot-checks healthy on the two
-  representative queries. `pg_stat` verified index churn zero across
-  the chain (no index name recreated more than once in any Up
-  block). Closes #233.
-  **1.55.U-2 shipped 2026-07-09** — gold-standard baseline
-  re-squash. Ships `app/internal/db/migrations/00001_baseline_v0_1.sql`
-  (5,631 lines): the collapse of the 29-file chain into a single
-  file per §10 of the audit doc. **All 23 SHOULD + 11 NICE findings
-  dispositioned per docs/schema_audit_v0_1.md §11.** Applied inline:
-  15 partial FK-covering indexes + 3 explicit `NO ACTION` → `SET NULL`
-  cascade promotions. Cache-invalidator fixes (§7.1–§7.4) shipped
-  as distinct commits: targeted IIIF invalidation on asset + collection
-  writes (replaces bulk `InvalidateAll` with `InvalidateAsset(id)`/
-  `InvalidateCollection(id)`); owner-profile invalidation on collection
-  Create/Delete/Restore (mirrors the posts-side pattern); per-user
-  cache-key exhaustive audit + ActorOutbox federation-key shape
-  audit-verified. `apiServer` grew `pool` + `cacheReg` fields for the
-  cross-domain invalidators. ADR 0057 (v0.1.0 baseline schema shape)
-  shipped + synced to Astro — documents ownership model, federation
-  posture, soft-delete pattern, indexing strategy, cache invalidation
-  model, and data seeds. Old 29 migration files deleted;
-  `scripts/verify-baseline.sh` updated for the new filename and green
-  against a scratch `pgvector/pgvector:pg16` container. Fresh boot on
-  the compose stack applies cleanly; goose records `version_id=1`;
-  seed data populates correctly (57 capabilities, 13 asset_types,
-  10 roles, 43 role_capabilities, 42 system_config, 7 workflow_states,
-  11 workflow_transitions, 13 field_definition, 1
-  `federation_dispatch_state` singleton — the last-mile fix in
-  commit `7a44d86c` that unblocked CI Integration tests). Full
-  `./scripts/test.sh` green. `app/schema.sql` unchanged; sqlc
-  regen produces byte-identical Go output. pg_dump `--schema-only`
-  diff pre-vs-post shows only the 18 intended changes (15 indexes +
-  3 cascade promotions) — zero unintended drift. Closes #235.
-  **1.55.W shipped 2026-07-09** — reverse-image dropzone at
-  `/search/advanced` (closes §4.16). Frontend for the visual-search
-  backend that's been feature-complete since #199 + #205 + #206 with no
-  UI to drive it. New `ReverseImageDropzone.svelte` mounts above the DSL
-  builder: drag+drop / file-picker + preview + submit + states. POSTs
-  multipart (`file` field) to the existing `POST /search/by-image` via
-  raw `fetch` (the endpoint isn't in openapi). The thin
-  `{asset_id, similarity}` response is hydrated top-30 via
-  `GET /assets/{id}` and rendered as an `AssetCard` thumbnail grid with
-  cosine-similarity badges (Milvus/Weaviate pattern). Results render
-  **inline** — the advanced page previously only redirected to `/search`,
-  so this is its first inline results surface. Disabled/not-configured
-  is attempt-and-handle (no client-readable `search.visual.enabled`
-  flag): a 501 `sidecar_not_installed` flips to an explanatory state;
-  413 / 429 / 503 / generic each surface a user-facing message. All
-  strings i18n-keyed under `search.by_image.*` (en-only per #247) +
-  added to the coverage-guard tracked list. **Zero backend / openapi /
-  migration changes.** Browser-verified end-to-end (render → select →
-  preview → submit → handled response); Playwright spec `ui-31` covers
-  render + interaction + handled-state (the standalone CI stack lacks
-  the CLIP sidecar, so by-image returns 501/404 → the spec asserts the
-  handled path per the audit's Q10). svelte-check 0 errors; i18n guard
-  green (49 tests). The reverse-image feature is now end-to-end complete
-  (backend 4 PRs + this frontend). Closes #251.
-  **1.55.X shipped 2026-07-09** — @-mention notifications wired to
-  notify (closes §4.5). New `app/internal/social/mention/` package:
-  `ParseMentions` extracts `@username` from post title+description +
-  comment bodies (charset `[a-zA-Z0-9_-]{1,32}` matching the
-  registration pattern — hyphens are valid usernames) excluding code
-  fences / inline code / links (standard chat-app behaviour); `Resolver.ResolveLocal`
-  maps usernames → local refs via a 5-min cache (null-cached to shrug
-  off `@here`/`@channel`; usernames are API-immutable so no invalidator).
-  Both `posts.CreatePost` + `social.CreatePostComment` fire the hook
-  **after** the insert commits (best-effort — a notify failure never
-  rolls back the content), targeting the containing post so the bell
-  deep-links to `/posts/{id}`. Reuses the **pre-existing** `mention_of_me`
-  verb (already in `KnownEventTypes`) + `notifications.Writer`, which
-  already gates self-mentions (actor==recipient), blocks, and per-verb
-  prefs — **so self-mentions are de-duped by the substrate, no resolver
-  filter**. Parser returns `Mention{Username, InstanceHost}` — the
-  federation seam (`InstanceHost` always empty in v0.1.0; post-Phase-1.30
-  `@user@peer.com` is a resolver-side addition via WebFinger, not a
-  rewrite). Unknown usernames drop silently; no un-mention audit
-  (deliberate). **Frontend needed zero changes** — the bell already
-  renders `notifications.verb_mention_of_me` + deep-links post targets,
-  so this arc was backend-only. **Zero migrations** (verb + prefs
-  pre-existed). 18 tests: parse (code-fence/link/email exclusion,
-  hyphenated + case-insensitive usernames, length cap, federation-seam),
-  DB-backed resolve (known/unknown/federated/cache-hit), service fire,
-  and handler-level end-to-end (comment mention lands a notification row
-  with target=post + actor threaded; plain comment fires nothing;
-  self-mention doesn't notify self). Closes #253.
-  **1.55.AA shipped 2026-07-11** — execute the AGPL + commercial
-  relicense (closes #229). Flips the OSS repo from BSD-3 to
-  **AGPL-3.0-only** (dual-licensed with a separate commercial license)
-  per ADR 0016/0017 — before the v0.1.0 first-public-release, so the
-  first public commit ships under the intended long-term license. Root
-  `LICENSE` replaced with the verbatim canonical AGPL-3.0 text (diff vs
-  gnu.org = only the two "How to Apply" template lines: program name +
-  `Copyright (C) 2026 Kenneth Blossom`). New `LICENSING.md` documents the
-  dual model — AGPL-3.0-only for open-source use (§13 network copyleft),
-  or a paid commercial license for embedding/SaaS without the copyleft,
-  contact `licensing@artist-alley.org` (placeholder until the Cloudflare
-  portal lands). **SPDX one-liner headers** (`SPDX-License-Identifier:
-  AGPL-3.0-only` + `Copyright (C) 2026 Kenneth Blossom`) scripted onto
-  **876 non-generated source files** (638 `.go` + 170 `.svelte` + 67
-  `.ts` + the goose migration), correct comment syntax per language
-  (HTML comment for svelte). **Generated files deliberately NOT stamped**
-  — sqlc `*.gen.go`/`models.go`/`db.go`/`queries.sql`, `openapi.gen.go`,
-  `panicshim_gen.go`, `schema.d.ts`, and pg_dump `schema.sql` are
-  excluded so regen doesn't strip headers → zero codegen drift (verified;
-  a first pass wrongly stamped the sqlc-input `queries.sql` and leaked
-  the header into generated `.go` — caught + reverted). `web/package.json`
-  `license` → `AGPL-3.0-only`; README badge + license section updated to
-  the dual model; ADR 0016 gets an "executed" note. Attribution audit
-  was already clean (1.55.S: no RS-derived shipped code, single
-  copyright holder). `go build` + `svelte-check` + i18n guard green;
-  full Go suite green except the pre-existing env freshness test; zero
-  behavior change (headers are comments). SPDX identifier + copyright
-  line + commercial contact were user-confirmed before commit.
-  Closes #261.
-  **1.55.Z shipped 2026-07-11** — remove `site/` from the OSS repo +
-  rewire OSS CI (site-split OSS-side cleanup). The public docs +
-  marketing site now lives + serves from the private repo
-  `mscrnt/artist-alley-site` (www.artist-alley.org), pulling this repo's
-  docs from `dev` at build — so the OSS `site/` tree (48 files) + its
-  build/deploy workflows were dead weight. `git rm -r site/`; deleted
-  `docs.yml` (Astro build verification) + `site-github-snapshot.yml`
-  (GitHub-stats refresher that wrote into `site/`). **Kept
-  `mdx-hazard-check.yml`** — it guards the OSS doc SOURCE (braced-
-  identifier scan over `docs/adr/**` / `docs/install/**` /
-  `docs/roadmap.md`) that the private site still renders, so an OSS ADR
-  can't break the site build. Stripped the now-dead `site/**`
-  `paths-ignore` entries from `ci.yml` + `ui-pr.yml` (app CI untouched).
-  Added `site-rebuild-trigger.yml`: on push to `dev` touching
-  `docs/adr/**` / `docs/roadmap.md` / `docs/install/**` /
-  `app/api/openapi.yaml` / `app/schema.sql`, POSTs the Cloudflare Pages
-  deploy hook (`SITE_DEPLOY_HOOK` secret) so the private site rebuilds +
-  pulls the latest docs — secret-gated (no-op + logged if unset, never
-  fails CI), self-hosted runner (zero hosted minutes). Updated README's
-  project-structure tree + roadmap link (no more `site/` paths). `docs/`
-  source untouched — this removes the renderer, not the source. Clean
-  break, no shims. Closes #259.
-  **1.55.U-3 shipped 2026-07-10** — fold `00002_digest_queue` into the
-  v0.1.0 baseline (squash point #1 per ADR 0046). Inlined the single
-  post-baseline append (1.55.Y's `digest_queue` table + partial index +
-  FKs + `user_preferences.email_cadence` column) into
-  `00001_baseline_v0_1.sql` and deleted `00002` — the migrations dir is
-  single-file again, so **v0.1.0 ships with exactly one migration**.
-  DDL copied verbatim from `app/schema.sql` (the pg_dump parity target,
-  untouched). **pg_dump `--schema-only` parity: folded baseline ≡ (old
-  baseline + 00002) — schema-identical, zero drift.** `verify-baseline.sh`
-  green (`head=00001`, contiguous, 0 append migrations); sqlc regen
-  byte-identical (schema.sql unchanged); digest tests green against the
-  folded schema. After this the dir stays single-file until the next
-  feature appends `00002`, `00003`… through beta; the v1.0.0 fold is
-  squash point #2 (future repeat). Closes #257.
-  **1.55.Y shipped 2026-07-10** — email digest preferences + one-click
-  unsubscribe (closes §4.9). Per-topic email cadence (immediate /
-  hourly / daily / weekly / off) in a new
-  `user_preferences.email_cadence` JSONB column (additive; unset =
-  immediate so no existing user is surprised). The `notifications.Writer`
-  forks at its email-enqueue point: immediate → enqueue now; digest
-  cadences → insert a `digest_queue` row; off = "email" absent from
-  channels. **In-app notifications always fire independently** of email
-  cadence. One hour-ticking `digest.Coordinator` (cadence-gated by the
-  clock, mirroring the softdelete gc — cleaner than three job types)
-  batches each user's due rows into one `notification_digest` email,
-  marks them sent, self-re-enqueues. **RFC 8058 one-click unsubscribe**:
-  every notification email (immediate + digest) carries
-  `List-Unsubscribe` + `List-Unsubscribe-Post: One-Click` with a
-  stateless HMAC-signed token (scramble key); `GET/POST
-  /api/v1/unsubscribe` verifies + drops the email channel (per-topic, or
-  `__all__` for the digest token) — no login, the token is the auth.
-  Three range-clamped sysconfig timing knobs (`digest` section). Prefs
-  (incl. cadence) ride the existing 5-min `userprefs.by_user` cache.
-  Frontend: per-topic cadence `<select>` on the preferences page +
-  i18n keys. **First post-baseline migration** (`00002_digest_queue.sql`)
-  — folds back into `00001_baseline_v0_1.sql` at the pre-tag re-squash
-  so **v0.1.0 ships zero append migrations** (per the owner directive +
-  ADR 0046). ~30 tests (signer round-trip/expiry/tamper, DueCadences,
-  coordinator batch/empty/idempotent, Writer fork immediate/digest/off,
-  UnsubscribeEmail per-topic + all, cadence validation) all green. Zero
-  changes to in-app delivery or the bell. Closes #255.
-  **1.55.T shipped 2026-07-09** — v0.1.0 release-pipeline dry-run.
-  Fired three `v0.0.99-rc*` tags against `.github/workflows/release.yml`
-  end-to-end to verify the signed-release matrix (goreleaser → binaries
-  / .deb / .rpm / Homebrew; docker buildx → GHCR + Docker Hub multi-arch;
-  Sigstore keyless cosign signing) BEFORE cutting v0.1.0. Three real
-  defects caught:
-  (1) **rc1**: `npm ci` on the runner tripped npm/cli#4828 — rolldown
-  native binding missing → **fixed** in workflow with `npm ci` → clean
-  `npm install` fallback;
-  (2) **rc2**: goreleaser dirty-check tripped because `Stage bundle into
-  Go embed dir` step `rm -rf`'d the tracked nested `.gitignore` +
-  `npm ci` sporadically rewrites `package-lock.json` → **fixed** by
-  preserving tracked embed-dir files (`find … ! -name .gitignore
-  ! -name .embed-placeholder -exec rm -rf`) + resetting lockfile churn
-  via `git checkout` post-build + printing `git status --short` as a
-  diagnostic;
-  (3) **rc3**: `.goreleaser.yaml` sets `CGO_ENABLED=0` but the `aa`
-  binary now depends on `mscrnt/webp` (cgo binding around `libwebp`) —
-  arm64 tarball cross-compile impossible without cgo cross-toolchain →
-  **NOT fixed**, escalated as **#238** (release-blocker) with 4 candidate
-  resolutions (Docker-only distribution / docker-in-goreleaser /
-  cgo cross-toolchain on runner / pure-Go webp fallback). Runner
-  parallel-fork-exec limits also surfaced as followup **#239**.
-  All three `v0.0.99-rc*` tags deleted; zero GitHub Releases/GHCR/
-  Docker Hub artifacts published (goreleaser failed before push on
-  all three runs). §1.6 of `docs/v0_1_readiness.md` flipped to 🟡 —
-  pipeline audit complete + fixes 1+2 landed, but #238 gates a green
-  rc4 dry-run. Closes #237.
-  **1.55.T-2 shipped 2026-07-09** — Docker-only distribution + all-green
-  rc9 dry-run + §1.6 close. Resolves #238 via **Option A** (planner
-  decision: drop binary/deb/rpm/brew from the v0.1.0 release matrix
-  since Docker is the documented channel and the Dockerfile already
-  handles cgo correctly per-arch). Six more `v0.0.99-rc*` tags fired
-  (rc4→rc9) — every RC surfaced a real defect the pipeline would have
-  hit at v0.1.0:
-  (4) **rc4**: goreleaser's metadata pipe unconditionally invokes `go`
-  (not skippable) → added `Set up Go` + `workdir=app` back to the
-  release-notes job;
-  (5) **rc5**: goreleaser synthesizes a default `builds:` when config
-  omits one → added `--skip=build,archive` — which then exposed that…
-  (6) **rc6**: `--skip=build` isn't a valid goreleaser v2 pipe (only
-  22 specific pipes are skippable; `build` is not among them) →
-  deleted `.goreleaser.yaml` entirely, replaced with `gh release
-  create --generate-notes` (fully automated on tag push, one fewer
-  dep, cleaner fit for Docker-only). Filed **#242** to track full
-  binary + package + Homebrew restoration as a **hard v1.0.0
-  prerequisite** so the debt is visible;
-  (7) **rc7**: docker job broke at Go build inside the Dockerfile —
-  `--platform=$BUILDPLATFORM` pins the go-build stage to amd64 for
-  speed, but only host `gcc` was installed; when TARGETARCH=arm64,
-  cgo shelled to host gcc which couldn't assemble arm64 mnemonics
-  from `mscrnt/webp`'s .S files → added `dpkg --add-architecture
-  arm64` + `gcc-aarch64-linux-gnu` + `libwebp-dev:arm64` +
-  per-TARGETARCH CC/PKG_CONFIG_PATH selection to the Dockerfile;
-  (8) **rc8**: build + push + Sigstore cosign sign all green
-  end-to-end; only the cosmetic Summary step failed on bash
-  interpolation of multi-line `${{ steps.meta.outputs.tags }}` into
-  a for-loop → switched to env-var passthrough + `while IFS= read -r`
-  line iteration; **cosign verify green** against
-  `mscrnt/artist-alley:0.0.99-rc8` (Sigstore transparency-log entry
-  confirmed offline);
-  (9) **rc9**: all 15 workflow steps green — release-notes ✓, docker
-  buildx multi-arch (amd64 + arm64) ✓, cosign sign ✓, Summary ✓.
-  Duration ~15 min. Verified cosign green against
-  `mscrnt/artist-alley:0.0.99-rc9`; Docker Hub manifest confirms
-  both arches + SBOM + provenance attestations.
-  All 6 rc tags + GH Releases deleted; GHCR + Docker Hub images from
-  rc8/rc9 stay published (cleanup requires `delete:packages` scope
-  not on the coding-agent's local token; noted as user-cleanup task).
-  §1.6 of `docs/v0_1_readiness.md` flipped ✅. Closes #238 + #241.
-  **1.55.V-1 shipped 2026-07-09** — i18n coverage audit for v0.1.0.
-  Report-only arc. Produces `docs/i18n_audit_v0_1.md` (10 sections):
-  system architecture + coverage-guard analysis + dictionary coverage
-  matrix (en 1608 keys / es 52 keys / fr 37 keys — **3.2% and 2.3%
-  coverage** vs the `completionPct: 5` claim in `locales.ts`) +
-  ~275 route findings (~87 MUST / ~37 SHOULD / ~150 NICE) +
-  ~340 shared-component findings (79 MUST / 141 SHOULD / 120 NICE) +
-  Playwright locale-switch coverage assessment (**zero specs switch
-  locale + assert translations**; MUST-tier gap for 1.55.V-2) +
-  backend user-facing-string audit (**214 unique English error
-  strings** across 699 hits in `app/internal/**` returned raw as
-  `openapi.*JSONResponse{Error: "..."}`; frontend `apiErr.error ??
-  t('…')` idiom short-circuits translation — flagged as **v1.0.0
-  prerequisite** parallel to #242 since the shape is a backend refactor
-  + frontend mapper, not a straight-line V-2 fix) + fallback-behavior
-  documentation (3-tier: active locale → en → raw key; silent English
-  fallback masks the ~3% catalogue coverage with no runtime
-  observability) + coverage-guard extension plan (~10 actionable
-  items for 1.55.V-2 to execute against, including expanding
-  `TRACKED_FILES` from 24 → all MUST+SHOULD files, adding
-  attribute coverage for `label=` / `aria-labelledby` / template
-  literals, a locale-parity check with warn-only budget, dev-mode
-  observability instrumentation). Zero code changes; audit doc is the
-  durable artifact + 1.55.V-2 executes against §9 fix recommendations
-  and §10 guard extensions. Closes #244.
-  **1.55.V-2 shipped 2026-07-09** — i18n MUST-tier fix + locale-switch
-  test + guard extension. Executes the MUST scope from
-  `docs/i18n_audit_v0_1.md` §9. Extends `common.*` from 16 → 40 shared
-  keys (close/search/clear/load_more/download_original/untitled/saving/
-  relative-time dur_*/etc.) and adds **211 scoped keys** across
-  browse/setup/search/upload/comments/post_host/whiteboard/collections/
-  federation/viewer_playlist/auth/playlist — en.json 1608 → 1843 leaf
-  keys, **zero existing values changed**. 23 source files wrapped (20
-  `.svelte` + 3 `.svelte.ts` state files); **es.json/fr.json untouched**
-  — new keys are en-only and es/fr fall through to English per the owner
-  decision (#247 tracks actual translation). New Playwright spec
-  `ui-30-i18n-locale-switch` closes the audit's zero-test MUST gap:
-  asserts the navbar search placeholder flips en→es on switching to
-  Español + persists across reload via the `aa_lang` cookie (asserts on
-  the existing-Spanish `nav.search_placeholder` — proves the mechanism,
-  not es/fr coverage). Coverage guard extended per §10: `TRACKED_FILES`
-  24 → 44 (all now-clean MUST files; `AssetPlaylist` held back for its
-  deferred viewer-hotkey SHOULD strings), added `label=`/
-  `aria-description=` attribute coverage, strips HTML comments + `<code>`
-  + `<style>` before scanning (kills 2 false positives), and a
-  **warn-only locale-parity check** reporting es 3% / fr 2% without
-  failing CI (orphan-key half stays blocking as a schema-drift guard).
-  `locales.ts` `completionPct` now **computed** from the bundled
-  catalogues (was a stale hardcoded 5). svelte-check 0 errors; 283
-  vitest tests green. SHOULD (~178) + NICE (~270) tiers deferred to
-  **#249**; backend error strings remain **#246** (v1.0.0 prereq); es/fr
-  translation remains **#247**. Audit §11 tracks every MUST finding to
-  disposition. Closes #248.
-  **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
-  (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
-  posts + collections and adds `deleted_at` to collections;
-  `app/internal/softdelete/` package ships the Restore + HardDeletePast
-  primitives per entity plus the nightly gc CoordinatorJob wired at
-  boot; `sysconfig.SoftDeleteConfig` exposes 4 retention knobs +
-  gc-hour-utc (range-validated); 10 new audit event constants +
-  Recorder methods; user hard-delete-by-gc anchors off the existing
-  `admin.users.archived` audit event rather than adding a competing
-  `deleted_at` column (hybrid scope per pre-audit). GC coordinator
-  reads sysconfig every tick so operator retention changes take effect
-  on the next nightly pass.
-  **1.55.C-1b shipped 2026-07-08** — soft-delete surface layer
-  (§4.6 complete). DELETE handlers on assets + posts + collections
-  accept an optional `SoftDeleteRequest` body carrying an operator
-  reason string (max 500 chars); collections DELETE flips from HARD
-  to SOFT delete on the same code path (clean break per pre-release
-  practices); 3 new admin restore endpoints at
-  `POST /admin/{entity}/{id}/restore` delegating to
-  `softdelete.Service` from the foundation with a CTE-based snapshot
-  of the pre-restore state so the audit event carries `prior_reason`
-  + age-at-restore; `?include_deleted=true` admin-only query param
-  on the 3 list handlers (non-admin toggles ignored); `GetCollection`
-  grows a fallback branch that surfaces soft-deleted rows to admins
-  so the Restore button on `/collections/[id]` has something to
-  render; admin UI ships the include-deleted toggle on `/collections`
-  list + Restore action on collection detail; posts/assets admin
-  detail-page Restore UI deferred (no admin detail page exists;
-  assets viewer-based). Live smoke green end-to-end.
+#### v0.1.0 release readiness (Phase 1.55)
+
+The meta-arc that took the project from current-`dev` to the v0.1.0 tag — the
+first-ever tagged release. Seventeen sub-phases, 2026-07-07 → 2026-07-11.
+
+| Sub-phase | Date | What it did |
+|---|---|---|
+| **1.55.A** | 07-07 | Master release-readiness audit (`docs/v0_1_readiness.md`) — exit criteria, gap inventory, sequencing |
+| **1.55.B** | 07-08 | Hygiene bundle — oapi-codegen pinned, MDX hazard gate, schema-freshness boot detection, baseline verification |
+| **1.55.R** | 07-08 | v0.1.0 milestone rename pass — recalibrated "v1.0.0" language to "v0.1.0" |
+| **1.55.S** | 07-08 | ResourceSpace sanitization + physical reference-tree deletion |
+| **1.55.T** | 07-09 | Release-candidate dry runs |
+| **1.55.T-2** | 07-09 | Docker-only distribution + all-green rc9 dry-run |
+| **1.55.U-1** | 07-08 | Schema + cache audit report (0 MUST / 23 SHOULD / 11 NICE) |
+| **1.55.U-2** | 07-09 | Gold-standard baseline re-squash — 29 migrations collapsed to one |
+| **1.55.U-3** | 07-10 | Folded `00002_digest_queue` into the baseline |
+| **1.55.V-1** | 07-09 | i18n coverage audit |
+| **1.55.V-2** | 07-09 | i18n MUST-tier fixes + locale-switch test |
+| **1.55.W** | 07-09 | Reverse-image dropzone at `/search/advanced` |
+| **1.55.X** | 07-09 | @-mention notifications wired to notify |
+| **1.55.Y** | 07-10 | Email digest preferences + one-click unsubscribe |
+| **1.55.Z** | 07-11 | Removed `site/` from the OSS repo, rewired CI (site split) |
+| **1.55.AA** | 07-11 | Executed the AGPL + commercial relicense |
+
+**Full phase-close log** — PR numbers, squash SHAs, gate checklists, audit findings:
+
+
+The meta-arc getting
+from current-dev to the v0.1.0 tag — the first-ever tagged release
+(see [docs/v0_1_readiness.md §0](./v0_1_readiness.md) for the
+milestone model that separates v0.1.0 = first tag from v1.0.0 =
+out of beta). 1.55.A shipped 2026-07-07 via PR #220 (squash
+`9d14fc30`, closes #219): `docs/v0_1_readiness.md` is the master
+audit — 9,907 words / 1,692 lines / 9 sections covering v0.1.0
+exit criteria (7 ADR-anchored), arc-close velocity (25 PRs
+2026-06-22 → 2026-07-07), 22 open gaps with mandatory substructure
+(Status / Roadmap phase / RS blueprint capture / 2024-2026
+gold-standard research citations / Caching strategy / Federation
+implications / Target sketch / Effort / Sequencing), post-v0.1.0
+deferrals, RS reference inventory with delete-safety verdict YES
+on every row, sequencing proposal (base v0.1.0 scope ~9 days;
+full menu ~17-22 days), 7-gate RS deletion readiness checklist,
+post-milestone arc pointers (split v0.1.0 vs v1.0.0). **Unblocks two follow-up arcs:**
+(a) physical deletion of the ~102 MB gitignored `/dbstruct/` +
+`/include/` + `/plugins/` + `/pages/` ResourceSpace reference tree
+(§6 confirms every pattern is captured internally); (b) the
+AGPL + commercial relicense arc per ADR 0016 → 0017 direction,
+gated on this audit + Phase 1.24. **Recommended next sub-phase**
+per §7.1: **1.55.B hygiene bundle** (~1.5 days) — bundle #218
+oapi-codegen version pin + #214 MDX braced-identifier CI gate +
+§4.4 schema-mismatch boot detection + §4.21 baseline migration
+squash verification into one PR. All sub-day, all pure release-
+readiness hygiene.
+**1.55.B shipped 2026-07-08** — release-readiness hygiene bundle
+(§7.1 complete). Four sub-day items in one PR: oapi-codegen pinned
+to v2.7.2 in scripts/generate.sh (no more silent @latest drift
+breaking Codegen check); MDX braced-identifier hazard gate at
+scripts/check-mdx-hazards.sh + a workflow that scans changed
+synced-to-Astro docs on every PR (0 hazards on current dev tip;
+no grandfather list needed); db.CheckSchemaFreshness wired
+post-Migrate in app/cmd/aa/main.go — refuses to start on
+SchemaUnappliedMigrations, warns on SchemaUnknownNewerSchema,
+proceeds silently on SchemaOK; scripts/verify-baseline.sh runs
+three checks (baseline present + ADR 0046 referenced; baseline
+applies clean on a fresh pgvector/pgvector:pg16 scratch DB via
+the real db.Migrate + goose.UpContext path; migration filename
+sequence contiguous) and the current run reports "baseline
+verified against 28 append migrations, head=00029, ready for
+tag." Deferred: unified /admin/system/health surface for
+the schema-freshness warning — no such endpoint exists today
+(only per-subsystem shims); boot WARN log is enough pre-v0.1.0
+per pre-release-practices.
+**1.55.R shipped 2026-07-08** — v0.1.0 milestone rename pass. Pure
+docs recalibration after the user clarified two milestones:
+v0.1.0 = first tagged release (RS deleted + base feature set);
+v1.0.0 = out of beta (real usage + soak + stable production).
+`docs/v1_readiness.md` renamed to `docs/v0_1_readiness.md` via
+`git mv`; new §0 Milestone model section added at top of doc;
+every "v1.0.0" that meant "the release we're building toward"
+retagged to "v0.1.0"; §9 split into post-v0.1.0 + post-v1.0.0
+subsections; ADR 0046 grows a pending-review note pointing at
+issue #228 (whether append-only kicks in at v0.1.0 vs v1.0.0);
+issues #228 + #229 filed to track the ADR 0046 + 0016/0017
+semantic decisions separately. Zero substance change; naming
+recalibration only. Closes #227.
+**1.55.S shipped 2026-07-08** — RS sanitization + physical
+reference-tree deletion (§1.2 exit criterion). Three obsolete
+`scripts/rs-*` pullers deleted; RS mentions scrubbed from 9
+code/config files (`userstate.go`, admin About page, Dockerfile,
+`.goreleaser.yaml`, `docker-compose.yml`, `.env.example`,
+`.dockerignore`, `.gitignore` header, `README.md` untouched — zero
+refs there); ADR 0001 flipped to `superseded-by: 0040`; the
+`docs/v0_1_readiness.md` §1.2 exit criterion flipped to ✅ shipped
++ §6 preamble annotated "physically deleted 2026-07-08" + §8
+checklist all seven gates cleared. ADR 0002 skipped for a
+pending-review pointer (already `superseded_by: 0016` from prior
+lifecycle; redundant). Local `/dbstruct/` `/include/` `/plugins/`
+`/pages/` physically removed from disk; `.gitignore` entries
+retained as safety net. `grep -rn -iE "resourcespace|resource[-_]space"`
+in application code + config now returns empty; deliberate
+historical mentions retained in ADR bodies + `cleanup-audit-2026-06.md`
++ this readiness doc's §6 inventory + memory files. Closes #231.
+**1.55.U-1 shipped 2026-07-08** — schema + cache audit report for
+the v0.1.0 baseline re-squash. Report-only; zero code changes.
+Ships `docs/schema_audit_v0_1.md` — a 10-section inventory of the
+29-file migration chain, 78 tables, 30 named cache domains + 4
+dedicated Cache types, FK cascade behaviour, and CHECK-constraint
+density. Findings: **0 MUST / 23 SHOULD / 11 NICE** (deduplicated).
+The SHOULD tier is dominated by 15 unindexed FK columns (partial
+indexes with `WHERE <col> IS NOT NULL` predicates) plus 3 explicit
+`NO ACTION` → `SET NULL` cascade promotions plus 4 cache-invalidator
+verification gaps (asset PATCH → IIIF, collection POST/PATCH →
+owner profile, per-user cache-key exhaustive sweep, ActorOutbox
+federation-key shape). §10 sketches the 1.55.U-2 re-squash plan:
+collapse 29 files into `00001_baseline_v0_1.sql` with SHOULD fixes
+inlined; zero append migrations at v0.1.0 tag time. Q6 nullability
++ defaults sweep clean; Q7 EXPLAIN spot-checks healthy on the two
+representative queries. `pg_stat` verified index churn zero across
+the chain (no index name recreated more than once in any Up
+block). Closes #233.
+**1.55.U-2 shipped 2026-07-09** — gold-standard baseline
+re-squash. Ships `app/internal/db/migrations/00001_baseline_v0_1.sql`
+(5,631 lines): the collapse of the 29-file chain into a single
+file per §10 of the audit doc. **All 23 SHOULD + 11 NICE findings
+dispositioned per docs/schema_audit_v0_1.md §11.** Applied inline:
+15 partial FK-covering indexes + 3 explicit `NO ACTION` → `SET NULL`
+cascade promotions. Cache-invalidator fixes (§7.1–§7.4) shipped
+as distinct commits: targeted IIIF invalidation on asset + collection
+writes (replaces bulk `InvalidateAll` with `InvalidateAsset(id)`/
+`InvalidateCollection(id)`); owner-profile invalidation on collection
+Create/Delete/Restore (mirrors the posts-side pattern); per-user
+cache-key exhaustive audit + ActorOutbox federation-key shape
+audit-verified. `apiServer` grew `pool` + `cacheReg` fields for the
+cross-domain invalidators. ADR 0057 (v0.1.0 baseline schema shape)
+shipped + synced to Astro — documents ownership model, federation
+posture, soft-delete pattern, indexing strategy, cache invalidation
+model, and data seeds. Old 29 migration files deleted;
+`scripts/verify-baseline.sh` updated for the new filename and green
+against a scratch `pgvector/pgvector:pg16` container. Fresh boot on
+the compose stack applies cleanly; goose records `version_id=1`;
+seed data populates correctly (57 capabilities, 13 asset_types,
+10 roles, 43 role_capabilities, 42 system_config, 7 workflow_states,
+11 workflow_transitions, 13 field_definition, 1
+`federation_dispatch_state` singleton — the last-mile fix in
+commit `7a44d86c` that unblocked CI Integration tests). Full
+`./scripts/test.sh` green. `app/schema.sql` unchanged; sqlc
+regen produces byte-identical Go output. pg_dump `--schema-only`
+diff pre-vs-post shows only the 18 intended changes (15 indexes +
+3 cascade promotions) — zero unintended drift. Closes #235.
+**1.55.W shipped 2026-07-09** — reverse-image dropzone at
+`/search/advanced` (closes §4.16). Frontend for the visual-search
+backend that's been feature-complete since #199 + #205 + #206 with no
+UI to drive it. New `ReverseImageDropzone.svelte` mounts above the DSL
+builder: drag+drop / file-picker + preview + submit + states. POSTs
+multipart (`file` field) to the existing `POST /search/by-image` via
+raw `fetch` (the endpoint isn't in openapi). The thin
+`{asset_id, similarity}` response is hydrated top-30 via
+`GET /assets/{id}` and rendered as an `AssetCard` thumbnail grid with
+cosine-similarity badges (Milvus/Weaviate pattern). Results render
+**inline** — the advanced page previously only redirected to `/search`,
+so this is its first inline results surface. Disabled/not-configured
+is attempt-and-handle (no client-readable `search.visual.enabled`
+flag): a 501 `sidecar_not_installed` flips to an explanatory state;
+413 / 429 / 503 / generic each surface a user-facing message. All
+strings i18n-keyed under `search.by_image.*` (en-only per #247) +
+added to the coverage-guard tracked list. **Zero backend / openapi /
+migration changes.** Browser-verified end-to-end (render → select →
+preview → submit → handled response); Playwright spec `ui-31` covers
+render + interaction + handled-state (the standalone CI stack lacks
+the CLIP sidecar, so by-image returns 501/404 → the spec asserts the
+handled path per the audit's Q10). svelte-check 0 errors; i18n guard
+green (49 tests). The reverse-image feature is now end-to-end complete
+(backend 4 PRs + this frontend). Closes #251.
+**1.55.X shipped 2026-07-09** — @-mention notifications wired to
+notify (closes §4.5). New `app/internal/social/mention/` package:
+`ParseMentions` extracts `@username` from post title+description +
+comment bodies (charset `[a-zA-Z0-9_-]{1,32}` matching the
+registration pattern — hyphens are valid usernames) excluding code
+fences / inline code / links (standard chat-app behaviour); `Resolver.ResolveLocal`
+maps usernames → local refs via a 5-min cache (null-cached to shrug
+off `@here`/`@channel`; usernames are API-immutable so no invalidator).
+Both `posts.CreatePost` + `social.CreatePostComment` fire the hook
+**after** the insert commits (best-effort — a notify failure never
+rolls back the content), targeting the containing post so the bell
+deep-links to `/posts/{id}`. Reuses the **pre-existing** `mention_of_me`
+verb (already in `KnownEventTypes`) + `notifications.Writer`, which
+already gates self-mentions (actor==recipient), blocks, and per-verb
+prefs — **so self-mentions are de-duped by the substrate, no resolver
+filter**. Parser returns `Mention{Username, InstanceHost}` — the
+federation seam (`InstanceHost` always empty in v0.1.0; post-Phase-1.30
+`@user@peer.com` is a resolver-side addition via WebFinger, not a
+rewrite). Unknown usernames drop silently; no un-mention audit
+(deliberate). **Frontend needed zero changes** — the bell already
+renders `notifications.verb_mention_of_me` + deep-links post targets,
+so this arc was backend-only. **Zero migrations** (verb + prefs
+pre-existed). 18 tests: parse (code-fence/link/email exclusion,
+hyphenated + case-insensitive usernames, length cap, federation-seam),
+DB-backed resolve (known/unknown/federated/cache-hit), service fire,
+and handler-level end-to-end (comment mention lands a notification row
+with target=post + actor threaded; plain comment fires nothing;
+self-mention doesn't notify self). Closes #253.
+**1.55.AA shipped 2026-07-11** — execute the AGPL + commercial
+relicense (closes #229). Flips the OSS repo from BSD-3 to
+**AGPL-3.0-only** (dual-licensed with a separate commercial license)
+per ADR 0016/0017 — before the v0.1.0 first-public-release, so the
+first public commit ships under the intended long-term license. Root
+`LICENSE` replaced with the verbatim canonical AGPL-3.0 text (diff vs
+gnu.org = only the two "How to Apply" template lines: program name +
+`Copyright (C) 2026 Kenneth Blossom`). New `LICENSING.md` documents the
+dual model — AGPL-3.0-only for open-source use (§13 network copyleft),
+or a paid commercial license for embedding/SaaS without the copyleft,
+contact `licensing@artist-alley.org` (placeholder until the Cloudflare
+portal lands). **SPDX one-liner headers** (`SPDX-License-Identifier:
+AGPL-3.0-only` + `Copyright (C) 2026 Kenneth Blossom`) scripted onto
+**876 non-generated source files** (638 `.go` + 170 `.svelte` + 67
+`.ts` + the goose migration), correct comment syntax per language
+(HTML comment for svelte). **Generated files deliberately NOT stamped**
+— sqlc `*.gen.go`/`models.go`/`db.go`/`queries.sql`, `openapi.gen.go`,
+`panicshim_gen.go`, `schema.d.ts`, and pg_dump `schema.sql` are
+excluded so regen doesn't strip headers → zero codegen drift (verified;
+a first pass wrongly stamped the sqlc-input `queries.sql` and leaked
+the header into generated `.go` — caught + reverted). `web/package.json`
+`license` → `AGPL-3.0-only`; README badge + license section updated to
+the dual model; ADR 0016 gets an "executed" note. Attribution audit
+was already clean (1.55.S: no RS-derived shipped code, single
+copyright holder). `go build` + `svelte-check` + i18n guard green;
+full Go suite green except the pre-existing env freshness test; zero
+behavior change (headers are comments). SPDX identifier + copyright
+line + commercial contact were user-confirmed before commit.
+Closes #261.
+**1.55.Z shipped 2026-07-11** — remove `site/` from the OSS repo +
+rewire OSS CI (site-split OSS-side cleanup). The public docs +
+marketing site now lives + serves from the private repo
+`mscrnt/artist-alley-site` (www.artist-alley.org), pulling this repo's
+docs from `dev` at build — so the OSS `site/` tree (48 files) + its
+build/deploy workflows were dead weight. `git rm -r site/`; deleted
+`docs.yml` (Astro build verification) + `site-github-snapshot.yml`
+(GitHub-stats refresher that wrote into `site/`). **Kept
+`mdx-hazard-check.yml`** — it guards the OSS doc SOURCE (braced-
+identifier scan over `docs/adr/**` / `docs/install/**` /
+`docs/roadmap.md`) that the private site still renders, so an OSS ADR
+can't break the site build. Stripped the now-dead `site/**`
+`paths-ignore` entries from `ci.yml` + `ui-pr.yml` (app CI untouched).
+Added `site-rebuild-trigger.yml`: on push to `dev` touching
+`docs/adr/**` / `docs/roadmap.md` / `docs/install/**` /
+`app/api/openapi.yaml` / `app/schema.sql`, POSTs the Cloudflare Pages
+deploy hook (`SITE_DEPLOY_HOOK` secret) so the private site rebuilds +
+pulls the latest docs — secret-gated (no-op + logged if unset, never
+fails CI), self-hosted runner (zero hosted minutes). Updated README's
+project-structure tree + roadmap link (no more `site/` paths). `docs/`
+source untouched — this removes the renderer, not the source. Clean
+break, no shims. Closes #259.
+**1.55.U-3 shipped 2026-07-10** — fold `00002_digest_queue` into the
+v0.1.0 baseline (squash point #1 per ADR 0046). Inlined the single
+post-baseline append (1.55.Y's `digest_queue` table + partial index +
+FKs + `user_preferences.email_cadence` column) into
+`00001_baseline_v0_1.sql` and deleted `00002` — the migrations dir is
+single-file again, so **v0.1.0 ships with exactly one migration**.
+DDL copied verbatim from `app/schema.sql` (the pg_dump parity target,
+untouched). **pg_dump `--schema-only` parity: folded baseline ≡ (old
+baseline + 00002) — schema-identical, zero drift.** `verify-baseline.sh`
+green (`head=00001`, contiguous, 0 append migrations); sqlc regen
+byte-identical (schema.sql unchanged); digest tests green against the
+folded schema. After this the dir stays single-file until the next
+feature appends `00002`, `00003`… through beta; the v1.0.0 fold is
+squash point #2 (future repeat). Closes #257.
+**1.55.Y shipped 2026-07-10** — email digest preferences + one-click
+unsubscribe (closes §4.9). Per-topic email cadence (immediate /
+hourly / daily / weekly / off) in a new
+`user_preferences.email_cadence` JSONB column (additive; unset =
+immediate so no existing user is surprised). The `notifications.Writer`
+forks at its email-enqueue point: immediate → enqueue now; digest
+cadences → insert a `digest_queue` row; off = "email" absent from
+channels. **In-app notifications always fire independently** of email
+cadence. One hour-ticking `digest.Coordinator` (cadence-gated by the
+clock, mirroring the softdelete gc — cleaner than three job types)
+batches each user's due rows into one `notification_digest` email,
+marks them sent, self-re-enqueues. **RFC 8058 one-click unsubscribe**:
+every notification email (immediate + digest) carries
+`List-Unsubscribe` + `List-Unsubscribe-Post: One-Click` with a
+stateless HMAC-signed token (scramble key); `GET/POST
+/api/v1/unsubscribe` verifies + drops the email channel (per-topic, or
+`__all__` for the digest token) — no login, the token is the auth.
+Three range-clamped sysconfig timing knobs (`digest` section). Prefs
+(incl. cadence) ride the existing 5-min `userprefs.by_user` cache.
+Frontend: per-topic cadence `<select>` on the preferences page +
+i18n keys. **First post-baseline migration** (`00002_digest_queue.sql`)
+— folds back into `00001_baseline_v0_1.sql` at the pre-tag re-squash
+so **v0.1.0 ships zero append migrations** (per the owner directive +
+ADR 0046). ~30 tests (signer round-trip/expiry/tamper, DueCadences,
+coordinator batch/empty/idempotent, Writer fork immediate/digest/off,
+UnsubscribeEmail per-topic + all, cadence validation) all green. Zero
+changes to in-app delivery or the bell. Closes #255.
+**1.55.T shipped 2026-07-09** — v0.1.0 release-pipeline dry-run.
+Fired three `v0.0.99-rc*` tags against `.github/workflows/release.yml`
+end-to-end to verify the signed-release matrix (goreleaser → binaries
+/ .deb / .rpm / Homebrew; docker buildx → GHCR + Docker Hub multi-arch;
+Sigstore keyless cosign signing) BEFORE cutting v0.1.0. Three real
+defects caught:
+(1) **rc1**: `npm ci` on the runner tripped npm/cli#4828 — rolldown
+native binding missing → **fixed** in workflow with `npm ci` → clean
+`npm install` fallback;
+(2) **rc2**: goreleaser dirty-check tripped because `Stage bundle into
+Go embed dir` step `rm -rf`'d the tracked nested `.gitignore` +
+`npm ci` sporadically rewrites `package-lock.json` → **fixed** by
+preserving tracked embed-dir files (`find … ! -name .gitignore
+! -name .embed-placeholder -exec rm -rf`) + resetting lockfile churn
+via `git checkout` post-build + printing `git status --short` as a
+diagnostic;
+(3) **rc3**: `.goreleaser.yaml` sets `CGO_ENABLED=0` but the `aa`
+binary now depends on `mscrnt/webp` (cgo binding around `libwebp`) —
+arm64 tarball cross-compile impossible without cgo cross-toolchain →
+**NOT fixed**, escalated as **#238** (release-blocker) with 4 candidate
+resolutions (Docker-only distribution / docker-in-goreleaser /
+cgo cross-toolchain on runner / pure-Go webp fallback). Runner
+parallel-fork-exec limits also surfaced as followup **#239**.
+All three `v0.0.99-rc*` tags deleted; zero GitHub Releases/GHCR/
+Docker Hub artifacts published (goreleaser failed before push on
+all three runs). §1.6 of `docs/v0_1_readiness.md` flipped to 🟡 —
+pipeline audit complete + fixes 1+2 landed, but #238 gates a green
+rc4 dry-run. Closes #237.
+**1.55.T-2 shipped 2026-07-09** — Docker-only distribution + all-green
+rc9 dry-run + §1.6 close. Resolves #238 via **Option A** (planner
+decision: drop binary/deb/rpm/brew from the v0.1.0 release matrix
+since Docker is the documented channel and the Dockerfile already
+handles cgo correctly per-arch). Six more `v0.0.99-rc*` tags fired
+(rc4→rc9) — every RC surfaced a real defect the pipeline would have
+hit at v0.1.0:
+(4) **rc4**: goreleaser's metadata pipe unconditionally invokes `go`
+(not skippable) → added `Set up Go` + `workdir=app` back to the
+release-notes job;
+(5) **rc5**: goreleaser synthesizes a default `builds:` when config
+omits one → added `--skip=build,archive` — which then exposed that…
+(6) **rc6**: `--skip=build` isn't a valid goreleaser v2 pipe (only
+22 specific pipes are skippable; `build` is not among them) →
+deleted `.goreleaser.yaml` entirely, replaced with `gh release
+create --generate-notes` (fully automated on tag push, one fewer
+dep, cleaner fit for Docker-only). Filed **#242** to track full
+binary + package + Homebrew restoration as a **hard v1.0.0
+prerequisite** so the debt is visible;
+(7) **rc7**: docker job broke at Go build inside the Dockerfile —
+`--platform=$BUILDPLATFORM` pins the go-build stage to amd64 for
+speed, but only host `gcc` was installed; when TARGETARCH=arm64,
+cgo shelled to host gcc which couldn't assemble arm64 mnemonics
+from `mscrnt/webp`'s .S files → added `dpkg --add-architecture
+arm64` + `gcc-aarch64-linux-gnu` + `libwebp-dev:arm64` +
+per-TARGETARCH CC/PKG_CONFIG_PATH selection to the Dockerfile;
+(8) **rc8**: build + push + Sigstore cosign sign all green
+end-to-end; only the cosmetic Summary step failed on bash
+interpolation of multi-line `${{ steps.meta.outputs.tags }}` into
+a for-loop → switched to env-var passthrough + `while IFS= read -r`
+line iteration; **cosign verify green** against
+`mscrnt/artist-alley:0.0.99-rc8` (Sigstore transparency-log entry
+confirmed offline);
+(9) **rc9**: all 15 workflow steps green — release-notes ✓, docker
+buildx multi-arch (amd64 + arm64) ✓, cosign sign ✓, Summary ✓.
+Duration ~15 min. Verified cosign green against
+`mscrnt/artist-alley:0.0.99-rc9`; Docker Hub manifest confirms
+both arches + SBOM + provenance attestations.
+All 6 rc tags + GH Releases deleted; GHCR + Docker Hub images from
+rc8/rc9 stay published (cleanup requires `delete:packages` scope
+not on the coding-agent's local token; noted as user-cleanup task).
+§1.6 of `docs/v0_1_readiness.md` flipped ✅. Closes #238 + #241.
+**1.55.V-1 shipped 2026-07-09** — i18n coverage audit for v0.1.0.
+Report-only arc. Produces `docs/i18n_audit_v0_1.md` (10 sections):
+system architecture + coverage-guard analysis + dictionary coverage
+matrix (en 1608 keys / es 52 keys / fr 37 keys — **3.2% and 2.3%
+coverage** vs the `completionPct: 5` claim in `locales.ts`) +
+~275 route findings (~87 MUST / ~37 SHOULD / ~150 NICE) +
+~340 shared-component findings (79 MUST / 141 SHOULD / 120 NICE) +
+Playwright locale-switch coverage assessment (**zero specs switch
+locale + assert translations**; MUST-tier gap for 1.55.V-2) +
+backend user-facing-string audit (**214 unique English error
+strings** across 699 hits in `app/internal/**` returned raw as
+`openapi.*JSONResponse{Error: "..."}`; frontend `apiErr.error ??
+t('…')` idiom short-circuits translation — flagged as **v1.0.0
+prerequisite** parallel to #242 since the shape is a backend refactor
++ frontend mapper, not a straight-line V-2 fix) + fallback-behavior
+documentation (3-tier: active locale → en → raw key; silent English
+fallback masks the ~3% catalogue coverage with no runtime
+observability) + coverage-guard extension plan (~10 actionable
+items for 1.55.V-2 to execute against, including expanding
+`TRACKED_FILES` from 24 → all MUST+SHOULD files, adding
+attribute coverage for `label=` / `aria-labelledby` / template
+literals, a locale-parity check with warn-only budget, dev-mode
+observability instrumentation). Zero code changes; audit doc is the
+durable artifact + 1.55.V-2 executes against §9 fix recommendations
+and §10 guard extensions. Closes #244.
+**1.55.V-2 shipped 2026-07-09** — i18n MUST-tier fix + locale-switch
+test + guard extension. Executes the MUST scope from
+`docs/i18n_audit_v0_1.md` §9. Extends `common.*` from 16 → 40 shared
+keys (close/search/clear/load_more/download_original/untitled/saving/
+relative-time dur_*/etc.) and adds **211 scoped keys** across
+browse/setup/search/upload/comments/post_host/whiteboard/collections/
+federation/viewer_playlist/auth/playlist — en.json 1608 → 1843 leaf
+keys, **zero existing values changed**. 23 source files wrapped (20
+`.svelte` + 3 `.svelte.ts` state files); **es.json/fr.json untouched**
+— new keys are en-only and es/fr fall through to English per the owner
+decision (#247 tracks actual translation). New Playwright spec
+`ui-30-i18n-locale-switch` closes the audit's zero-test MUST gap:
+asserts the navbar search placeholder flips en→es on switching to
+Español + persists across reload via the `aa_lang` cookie (asserts on
+the existing-Spanish `nav.search_placeholder` — proves the mechanism,
+not es/fr coverage). Coverage guard extended per §10: `TRACKED_FILES`
+24 → 44 (all now-clean MUST files; `AssetPlaylist` held back for its
+deferred viewer-hotkey SHOULD strings), added `label=`/
+`aria-description=` attribute coverage, strips HTML comments + `<code>`
++ `<style>` before scanning (kills 2 false positives), and a
+**warn-only locale-parity check** reporting es 3% / fr 2% without
+failing CI (orphan-key half stays blocking as a schema-drift guard).
+`locales.ts` `completionPct` now **computed** from the bundled
+catalogues (was a stale hardcoded 5). svelte-check 0 errors; 283
+vitest tests green. SHOULD (~178) + NICE (~270) tiers deferred to
+**#249**; backend error strings remain **#246** (v1.0.0 prereq); es/fr
+translation remains **#247**. Audit §11 tracks every MUST finding to
+disposition. Closes #248.
+**1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
+(§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
+posts + collections and adds `deleted_at` to collections;
+`app/internal/softdelete/` package ships the Restore + HardDeletePast
+primitives per entity plus the nightly gc CoordinatorJob wired at
+boot; `sysconfig.SoftDeleteConfig` exposes 4 retention knobs +
+gc-hour-utc (range-validated); 10 new audit event constants +
+Recorder methods; user hard-delete-by-gc anchors off the existing
+`admin.users.archived` audit event rather than adding a competing
+`deleted_at` column (hybrid scope per pre-audit). GC coordinator
+reads sysconfig every tick so operator retention changes take effect
+on the next nightly pass.
+**1.55.C-1b shipped 2026-07-08** — soft-delete surface layer
+(§4.6 complete). DELETE handlers on assets + posts + collections
+accept an optional `SoftDeleteRequest` body carrying an operator
+reason string (max 500 chars); collections DELETE flips from HARD
+to SOFT delete on the same code path (clean break per pre-release
+practices); 3 new admin restore endpoints at
+`POST /admin/{entity}/{id}/restore` delegating to
+`softdelete.Service` from the foundation with a CTE-based snapshot
+of the pre-restore state so the audit event carries `prior_reason`
++ age-at-restore; `?include_deleted=true` admin-only query param
+on the 3 list handlers (non-admin toggles ignored); `GetCollection`
+grows a fallback branch that surfaces soft-deleted rows to admins
+so the Restore button on `/collections/[id]` has something to
+render; admin UI ships the include-deleted toggle on `/collections`
+list + Restore action on collection detail; posts/assets admin
+detail-page Restore UI deferred (no admin detail page exists;
+assets viewer-based). Live smoke green end-to-end.
 
 ## Release roadmap
 
@@ -594,6 +619,8 @@ The near-term release train is an **admin-completion spine** — GitHub
 milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
+
+
 
 - **v0.3.1 — foundation cleanup** (shipped 2026-07-17): admin read-cap UI
   (#385), `gofmt` CI gate, `make release`, dependabot split, steel token.
@@ -603,22 +630,24 @@ map to the milestones below.
   edits behind `system.admin`), storage usage + variants
   (`system.storage.read`), and integrity sweeps — orphan scan + checksum
   verification as batched job kinds (ADR 0062).
-- **v0.4.1 — storage remainder** (#22): destructive orphan cleanup (#419,
-  must re-verify at delete time), the `schema.sql` drift (#420), per-asset
-  variant drill-down (#412), jobs live concurrency reload (#408), plus
-  duplicates / reimport / backends config and the RS-parity extensions
-  (scheduled integrity windows, tiered storage, bandwidth attribution).
-- **v0.5.0 — public mode: anonymous browsing** (epic #413). Content is
-  currently unreachable without an account: only four endpoints are
-  unauthenticated, `collections` and `posts` have no `public` value in their
-  visibility constraints, and the visibility predicate is not wired into the
-  main read paths — so asset sensitivity is unenforced even for signed-in
-  callers. The arc introduces a real public tier, enforces one predicate
-  everywhere (P0 #414), opens an anonymous API surface (P1 #415), ships a
-  logged-out frontend with operator controls (P2 #416), and finally the
-  public featured rail (P3 #417, closing #382).
-- **v0.6.0 — Reports & Moderation** (#23 + #24).
-- **v0.7.0 — Content config & Integrations** (#21).
+- **v0.4.1 — dissolved** (2026-07-19). It was overtaken: `dev` already carried
+  v0.5.0 feature work, so a "patch" tag containing a new authorization model
+  was incoherent, and there is no hotfix-branch practice to cut one from the
+  v0.4.0 tag. The `schema.sql` drift (#420) shipped; the storage remainder
+  (#419 destructive orphan cleanup, #412 variant drill-down, #408 jobs live
+  concurrency reload, plus duplicates / reimport / backends config and the
+  RS-parity extensions) moved to **v0.6.0** under #22.
+- **v0.5.0 — public mode: anonymous browsing** (epic #413) — **shipped
+  2026-07-20.** Content is reachable without an account, behind an operator
+  toggle that defaults off. Visibility has one enforcement point (ADR 0063);
+  sensitivity gates content, not rows (ADR 0064); the featured rail runs on a
+  placement model (ADR 0065); audit IPs are gated behind a dedicated
+  capability. Opening the surface exposed and closed three pre-existing access
+  holes (#447, #449, #438). Deferred, tracked: #458, #460, #462.
+- **v0.6.0 — Reports & Moderation, plus the storage remainder** (#23 + #24 +
+  #22, with #419 / #412 / #408 / #431 and the personal-data anonymisation
+  switch #426).
+- **v0.7.0 — Content config & Integrations** (#21 + external imports #55).
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
   static binaries, Homebrew (#286).
 

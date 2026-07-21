@@ -84,9 +84,32 @@ func (h *Handler) GetSetupStatus(
 	if err != nil {
 		return nil, err
 	}
+	// Public mode rides along here (#416) because the frontend's root
+	// layout calls this endpoint FIRST on every navigation, before it
+	// knows whether a session exists — so the flag is in hand at the
+	// moment the routing decision is made, with no second request on
+	// the hot path.
+	//
+	// Fails to false on a read error, matching the middleware's own
+	// posture: a transient blip should read as "not public" and send a
+	// signed-out visitor to the sign-in page, never the reverse. This
+	// is a rendering hint regardless — auth/middleware.go enforces the
+	// same setting independently, so a stale or wrong value here
+	// cannot grant access, only misdraw a page.
+	publicMode := false
+	if h.SysConfig != nil {
+		if pm, pmErr := h.SysConfig.GetPublicMode(ctx); pmErr != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "setup.status.public_mode_read_failed",
+				slog.String("err", pmErr.Error()))
+		} else {
+			publicMode = pm.Enabled
+		}
+	}
+
 	d := h.Cfg.SetupDefaults
 	return openapi.GetSetupStatus200JSONResponse{
 		NeedsSetup: needs,
+		PublicMode: publicMode,
 		Deployment: openapi.SetupDeploymentInfo{
 			DbHost:         h.Cfg.DBHost,
 			DbPort:         h.Cfg.DBPort,

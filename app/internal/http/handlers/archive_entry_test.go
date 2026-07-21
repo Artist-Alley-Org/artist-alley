@@ -32,16 +32,15 @@ func chiCtxRequest(method, target, idParam string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-func TestArchiveEntry_Unauthenticated(t *testing.T) {
-	h := &ArchiveEntryHandler{}
-	req := chiCtxRequest(http.MethodGet, "/assets/x/archive/entry?path=a.txt", "x")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
-	}
-}
-
+// The malformed id is deliberate: it returns before the DB call, so
+// this handler test needs no pool.
+//
+// Do NOT add an authorization assertion here. Since #415 removed the
+// per-handler 401, uuid.Parse is the FIRST statement, so a request
+// with a bad id never reaches requireContentAccess — any "anonymous
+// is denied" check placed here would pass even with the content gate
+// deleted. The authorization contract is covered in
+// visibility/content_test.go, against real rows.
 func TestArchiveEntry_BadUUID(t *testing.T) {
 	h := &ArchiveEntryHandler{}
 	req := withTestIdentity(chiCtxRequest(http.MethodGet, "/assets/x/archive/entry?path=a.txt", "not-a-uuid"))
