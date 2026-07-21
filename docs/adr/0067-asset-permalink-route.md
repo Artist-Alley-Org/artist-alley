@@ -12,7 +12,7 @@ tags:
   - routing
   - viewer
 excerpt: >-
-  Every asset tile links to /assets/{id}, but no such route ever existed —
+  Every asset tile links to a per-asset URL, but no such route ever existed —
   clicking an asset inside a collection 404s (#475). Assets get a standalone
   route, symmetric with /posts/[id], rendering the source-agnostic
   AssetPlaylist with a single-asset source. The modal playlist stays for
