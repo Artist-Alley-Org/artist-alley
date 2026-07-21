@@ -3,7 +3,7 @@ id: "0068"
 title: Testing strategy — catch the class, not the instance
 status: accepted
 date: 2026-07-21
-area: quality
+area: process
 supersedes: []
 related:
   - "0058"

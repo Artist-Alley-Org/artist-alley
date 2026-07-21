@@ -3,7 +3,7 @@ id: "0067"
 title: Assets are first-class linkable entities — a standalone /assets/[id] route
 status: accepted
 date: 2026-07-21
-area: frontend
+area: architecture
 supersedes: []
 related:
   - "0053"
