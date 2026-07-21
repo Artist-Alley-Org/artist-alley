@@ -9,6 +9,20 @@ where applicable, otherwise note "no-spec-impact."
 
 _Nothing yet._
 
+## [v0.5.2] — 2026-07-21
+
+A content-visibility capability so read-only viewers (the public demo) can see
+their whole catalogue.
+
+- **`content.read.all` capability (#474).** A content-plane-only read cap,
+  honored solely in `visibility.CanReadContent` alongside the `system.admin`
+  wildcard — it grants asset-byte reads at every sensitivity tier and nothing
+  else (no admin surfaces, no writes; it is not a wildcard). This lets a
+  read-only role (e.g. the demo viewer) see `team`/`restricted` content that
+  would otherwise return blank "Preview unavailable" tiles, without exposing
+  any administrative surface. Migration `00014` defines the cap; granting it to
+  a role is a deploy-side provisioning step (ADR 0060).
+
 ## [v0.5.1] — 2026-07-21
 
 Promoted all of `dev` since v0.5.0 — the foundation work below (audit
