@@ -30,6 +30,15 @@ excerpt: >-
 > **Status note (2026-07-13):** the canonical GitHub org is now
 > **Artist-Alley-Org** (v0.1.0 org move, 2026-07-11) — repo links in
 > this ADR have been host-swapped.
+>
+> **Amended 2026-07-20 ([ADR 0066](0066-generic-sso-ldap-not-license-gated.md)):** generic
+> self-hosted SSO/LDAP is **no longer license-gated** — the `sso_ldap` / `sso_saml` / `sso_oidc`
+> features are retired for the generic providers, which now declare `RequiredLicenseFeature() == ""`
+> and register unconditionally like password. This applies the "Federation is explicitly NOT gated"
+> reasoning below (near-zero enforcement value; OSS positioning worth more) to auth. **The registry
+> architecture in this ADR is unchanged** — it still gates multi-tenant and the managed hosted-IdP
+> bridge add-on (`aa-sso-premium`, ADR 0038); only the *scope* of what it gates narrows. Read the
+> Enterprise-gating framing below as applying to multi-tenant + managed bridges, not generic SSO.
 
 ## Context
 
