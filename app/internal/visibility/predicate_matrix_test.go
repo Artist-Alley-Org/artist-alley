@@ -94,6 +94,36 @@ func visibleIDs(t *testing.T, pool *pgxpool.Pool, entity EntityType, caller Call
 	return out
 }
 
+// visibleIDsOpts is visibleIDs with predicate options (e.g. the
+// superadmin IncludeSoftDeleted escape hatch).
+func visibleIDsOpts(t *testing.T, pool *pgxpool.Pool, entity EntityType, caller Caller, table string, ids []uuid.UUID, opts ...Option) map[uuid.UUID]bool {
+	t.Helper()
+	pred, err := Filter(context.Background(), entity, caller, opts...)
+	if err != nil {
+		t.Fatalf("Filter(%v): %v", entity, err)
+	}
+	frag, args := pred.ToSQL("", 1)
+	sql := fmt.Sprintf(`SELECT id FROM %s WHERE id = ANY($1::uuid[])%s`, table, frag)
+	all := append([]any{ids}, args...)
+	rows, err := pool.Query(context.Background(), sql, all...)
+	if err != nil {
+		t.Fatalf("query %s: %v\nSQL: %s", table, err, sql)
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
+}
+
 func anonCaller() Caller { return NewCaller(nil) }
 func userCaller(ref int64) Caller {
 	return NewCaller(&ref)
@@ -240,11 +270,17 @@ func TestMatrix_Collections(t *testing.T) {
 		}
 	})
 
-	t.Run("owner sees own collections regardless of visibility (unchanged)", func(t *testing.T) {
+	t.Run("owner sees own live collections at every visibility, but NOT their soft-deleted ones", func(t *testing.T) {
 		got := visibleIDs(t, pool, EntityCollection, userCaller(owner), "collections", ids)
 		for i, s := range seeds {
-			if !got[ids[i]] {
-				t.Errorf("owner: %q not visible; the owner branch must be unchanged", s.name)
+			// #451: soft-delete now conjoins the whole predicate, so the
+			// owner no longer sees their own soft-deleted collection in a
+			// browse list — it lives in the trash view. Every live one is
+			// visible regardless of visibility tier.
+			want := !s.deleted
+			if got[ids[i]] != want {
+				t.Errorf("owner: %q visible=%v, want %v — owner sees live collections but not "+
+					"soft-deleted ones (matching asset/post)", s.name, got[ids[i]], want)
 			}
 		}
 	})
@@ -299,16 +335,54 @@ func TestMatrix_Collections(t *testing.T) {
 		}
 	})
 
-	// The soft-delete conjunct is scoped to the public disjunct, not
-	// hoisted. If somebody later hoists it, the owner subtest above
-	// goes red — and if somebody drops it, this goes red.
 	t.Run("a soft-deleted public collection is hidden from a non-owner", func(t *testing.T) {
 		got := visibleIDs(t, pool, EntityCollection, userCaller(other), "collections", ids)
 		for i, s := range seeds {
 			if s.visibility == "public" && s.deleted && got[ids[i]] {
-				t.Errorf("non-owner: %q is soft-deleted but visible; the public disjunct "+
-					"carries its own deleted_at conjunct", s.name)
+				t.Errorf("non-owner: %q is soft-deleted but visible; deleted_at conjoins "+
+					"the whole predicate", s.name)
 			}
+		}
+	})
+
+	// #451 — the symmetry fix, both halves: the owner AND an ACL-grantee
+	// are excluded from a soft-deleted collection by default, and the
+	// superadmin IncludeSoftDeleted escape hatch brings it back. Mirrors
+	// TestListAssetsPage_IncludeDeleted.
+	t.Run("soft-deleted collection: owner and ACL-grantee excluded, superadmin sees it", func(t *testing.T) {
+		const grantee int64 = 4140013
+		delID := uuid.New()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO collections (id, name, owner_user_ref, visibility, membership, deleted_at)
+			VALUES ($1,$2,$3,'private','manual', NOW())`,
+			delID, "vis-matrix-softdel-acl", owner); err != nil {
+			t.Fatalf("seed soft-deleted collection: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO collection_acls (collection_id, principal_type, principal_id, permission)
+			VALUES ($1,'user',$2,'read')`, delID, fmt.Sprint(grantee)); err != nil {
+			t.Fatalf("seed ACL grant: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM collection_acls WHERE collection_id=$1`, delID)
+			_, _ = pool.Exec(context.Background(), `DELETE FROM collections WHERE id=$1`, delID)
+		})
+		set := []uuid.UUID{delID}
+
+		// Default predicate: neither owner nor grantee sees the trashed row.
+		if visibleIDsOpts(t, pool, EntityCollection, userCaller(owner), "collections", set)[delID] {
+			t.Error("owner sees their own soft-deleted collection in a browse list; it belongs in trash")
+		}
+		if visibleIDsOpts(t, pool, EntityCollection, userCaller(grantee), "collections", set)[delID] {
+			t.Error("ACL-grantee sees a soft-deleted collection in a browse list")
+		}
+
+		// Superadmin escape hatch: the row comes back for both.
+		if !visibleIDsOpts(t, pool, EntityCollection, userCaller(owner), "collections", set, IncludeSoftDeleted())[delID] {
+			t.Error("IncludeSoftDeleted did not restore the owner's soft-deleted collection")
+		}
+		if !visibleIDsOpts(t, pool, EntityCollection, userCaller(grantee), "collections", set, IncludeSoftDeleted())[delID] {
+			t.Error("IncludeSoftDeleted did not restore the ACL-grantee's soft-deleted collection")
 		}
 	})
 }

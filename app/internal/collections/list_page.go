@@ -40,35 +40,16 @@ import (
 // conflating them is how a "shared with me" tab quietly becomes an
 // authorization decision.
 //
-// THE INLINE SOFT-DELETE CLAUSE STAYS, and that is a deliberate
-// departure from #429 and #438, which both deleted theirs.
-//
-// Those two could delete it because the predicate expresses soft-delete
-// on their branches. It does NOT here. The authenticated
-// EntityCollection branch is `owner OR ACL grant` with no deleted_at
-// conjunct at all — it is the only authenticated branch in the
-// predicate without one (asset and post both assert it). Dropping the
-// inline clause on that basis was tried first and the parity test
-// caught it immediately: every authenticated caller started seeing
-// soft-deleted collections in their browse list, and `include_deleted`
-// became meaningless because deleted rows were returned unconditionally.
-//
-// So this is not a second expression of a rule the predicate already
-// states — it is the ONLY expression of a rule the predicate does not
-// state for this caller class. The duplication for ANONYMOUS callers
-// (whose branch does assert deleted_at IS NULL) is accepted as the
-// cheaper half of the trade: a redundant conjunct costs nothing, and
-// the alternative is leaking deleted rows to everyone signed in.
-//
-// The real fix is to give the authenticated collection branch a
-// soft-delete conjunct like every other branch has, at which point this
-// clause can go. That is a change at the enforcement point affecting
-// twelve splice sites, so it belongs in its own PR, not this one.
-//
-// IncludeDeleted therefore drives BOTH: it waives the inline clause and
-// maps onto visibility.IncludeSoftDeleted so the anonymous branch
-// agrees. The caller (Handler.ListCollections) has already checked it
-// is superadmin-only.
+// NO inline soft-delete clause — the predicate owns it, like #429 and
+// #438. #449 kept an inline `deleted_at IS NULL` here because the
+// authenticated EntityCollection branch lacked a soft-delete conjunct
+// and this was the only expression of that rule for signed-in callers.
+// #451 gave that branch the conjunct (matching asset and post), so the
+// inline clause became a genuine second expression of a rule the
+// predicate now states everywhere — exactly the ADR 0063 defect — and
+// is removed. IncludeDeleted now drives ONLY the predicate's
+// IncludeSoftDeleted option; the caller (Handler.ListCollections) has
+// already checked it is superadmin-only.
 //
 // Placeholder discipline (ADR 0063): every placeholder this builder
 // emits is <= argOffset, the predicate's fragment owns everything above
@@ -112,16 +93,15 @@ func ListCollectionsPageGated(
 	// Bind the caller-supplied filters first, so their indexes are
 	// stable and the predicate's fragment can start above them.
 	args := []any{
-		p.IncludeDeleted,  // $1
-		p.OwnerUserRef,    // $2
-		p.ExcludeOwner,    // $3
-		p.Visibility,      // $4
-		p.Featured,        // $5
-		p.QName,           // $6
-		p.SharedWithUser,  // $7
-		p.CursorCreatedAt, // $8
-		p.CursorID,        // $9
-		p.RowLimit,        // $10
+		p.OwnerUserRef,    // $1
+		p.ExcludeOwner,    // $2
+		p.Visibility,      // $3
+		p.Featured,        // $4
+		p.QName,           // $5
+		p.SharedWithUser,  // $6
+		p.CursorCreatedAt, // $7
+		p.CursorID,        // $8
+		p.RowLimit,        // $9
 	}
 
 	var opts []visibility.Option
@@ -138,31 +118,30 @@ func ListCollectionsPageGated(
 	var b strings.Builder
 	b.WriteString(`SELECT ` + listCollectionsPageColumns + `
 FROM collections c
-WHERE ($1::BOOLEAN IS TRUE OR c.deleted_at IS NULL)
-  AND ($2::BIGINT IS NULL OR c.owner_user_ref = $2::BIGINT)
-  AND ($3::BIGINT IS NULL OR c.owner_user_ref <> $3::BIGINT)
-  AND ($4::TEXT IS NULL OR c.visibility = $4::TEXT)
-  AND ($5::BOOLEAN IS NULL OR $5::BOOLEAN = EXISTS (
+WHERE ($1::BIGINT IS NULL OR c.owner_user_ref = $1::BIGINT)
+  AND ($2::BIGINT IS NULL OR c.owner_user_ref <> $2::BIGINT)
+  AND ($3::TEXT IS NULL OR c.visibility = $3::TEXT)
+  AND ($4::BOOLEAN IS NULL OR $4::BOOLEAN = EXISTS (
          SELECT 1 FROM featured_items fi
           WHERE fi.subject_kind = 'collection'
             AND fi.subject_id   = c.id
             AND fi.scope        = 'org'
        ))
-  AND ($6::TEXT IS NULL OR c.name ILIKE '%' || $6::TEXT || '%')
-  AND ($7::BIGINT IS NULL OR EXISTS (
+  AND ($5::TEXT IS NULL OR c.name ILIKE '%' || $5::TEXT || '%')
+  AND ($6::BIGINT IS NULL OR EXISTS (
          SELECT 1 FROM collection_acls a
           WHERE a.collection_id = c.id
             AND a.principal_type = 'user'
-            AND a.principal_id   = $7::BIGINT::TEXT
+            AND a.principal_id   = $6::BIGINT::TEXT
             AND (a.expires_at IS NULL OR a.expires_at > NOW())
        ))
-  AND ($8::TIMESTAMPTZ IS NULL
-       OR c.created_at < $8::TIMESTAMPTZ
-       OR (c.created_at = $8::TIMESTAMPTZ AND c.id < $9::UUID))`)
+  AND ($7::TIMESTAMPTZ IS NULL
+       OR c.created_at < $7::TIMESTAMPTZ
+       OR (c.created_at = $7::TIMESTAMPTZ AND c.id < $8::UUID))`)
 	b.WriteString(visFrag)
 	b.WriteString(`
 ORDER BY c.created_at DESC, c.id DESC
-LIMIT $10::INTEGER`)
+LIMIT $9::INTEGER`)
 
 	rows, err := pool.Query(ctx, b.String(), args...)
 	if err != nil {
