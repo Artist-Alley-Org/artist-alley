@@ -925,7 +925,22 @@ CREATE TABLE public.audit_events (
     actor_user_ref bigint,
     ip inet,
     user_agent text,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    legal_hold boolean DEFAULT false NOT NULL,
+    category text GENERATED ALWAYS AS (split_part(event_type, '.'::text, 1)) STORED
+);
+
+
+--
+-- Name: audit_retention_policy; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_retention_policy (
+    category text NOT NULL,
+    retention interval NOT NULL,
+    updated_by bigint,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_retention_policy_positive CHECK ((retention > '00:00:00'::interval))
 );
 
 
@@ -2565,6 +2580,14 @@ ALTER TABLE ONLY public.audit_events
 
 
 --
+-- Name: audit_retention_policy audit_retention_policy_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_retention_policy
+    ADD CONSTRAINT audit_retention_policy_pkey PRIMARY KEY (category);
+
+
+--
 -- Name: brush_pack_stamps brush_pack_stamps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3533,6 +3556,13 @@ CREATE INDEX audit_events__subject_time_idx ON public.audit_events USING btree (
 --
 
 CREATE INDEX audit_events__type_time_idx ON public.audit_events USING btree (event_type, occurred_at DESC);
+
+
+--
+-- Name: audit_events_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_events_retention_idx ON public.audit_events USING btree (category, occurred_at) WHERE (legal_hold = false);
 
 
 --

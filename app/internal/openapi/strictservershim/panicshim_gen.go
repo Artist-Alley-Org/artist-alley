@@ -215,6 +215,11 @@ func (*PanicShim) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAud
 	panic("PanicShim: ListAdminAuditEventTypes called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ExportAuditEvents panics by default; test shims override.
+func (*PanicShim) ExportAuditEvents(context.Context, openapi.ExportAuditEventsRequestObject) (openapi.ExportAuditEventsResponseObject, error) {
+	panic("PanicShim: ExportAuditEvents called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RestoreCollection panics by default; test shims override.
 func (*PanicShim) RestoreCollection(context.Context, openapi.RestoreCollectionRequestObject) (openapi.RestoreCollectionResponseObject, error) {
 	panic("PanicShim: RestoreCollection called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

@@ -187,7 +187,7 @@ func (h *HTTPHandler) ListAdminAuditEventTypes(
 //
 // The parameter's zero value is the SAFE one on purpose: a caller who
 // gets this wrong omits the IP rather than leaking it.
-func toOpenAPI(r AuditEvent, includeIP bool) openapi.AuditEvent {
+func toOpenAPI(r ListAuditEventsRow, includeIP bool) openapi.AuditEvent {
 	out := openapi.AuditEvent{
 		Id:             openapi_types.UUID(r.ID.Bytes),
 		EventType:      r.EventType,
@@ -264,4 +264,80 @@ func strPtrOrNil(s *string) *string {
 	}
 	v := *s
 	return &v
+}
+
+// ExportAuditEvents — GET /admin/audit/export.
+//
+// Streams the log as CSV or NDJSON from a keyset cursor (ADR 0032).
+// Gated on system.audit.read; IP redacted for callers without
+// system.audit.pii.read, the same rule as the list view (#425). The
+// response Body is a lazy pipe reader — the strict-server io.Copy's it,
+// so nothing buffers.
+func (h *HTTPHandler) ExportAuditEvents(
+	ctx context.Context,
+	req openapi.ExportAuditEventsRequestObject,
+) (openapi.ExportAuditEventsResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ExportAuditEvents401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAuditRead) {
+		return openapi.ExportAuditEvents403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capAuditRead + " capability required"},
+		}, nil
+	}
+	includeIP := id.Can(capAuditPIIRead)
+
+	var since, until pgtype.Timestamptz
+	if req.Params.Since != nil {
+		since = pgtype.Timestamptz{Time: *req.Params.Since, Valid: true}
+	}
+	if req.Params.Until != nil {
+		until = pgtype.Timestamptz{Time: *req.Params.Until, Valid: true}
+	}
+	var cols string
+	if req.Params.Columns != nil {
+		cols = *req.Params.Columns
+	}
+	columns := SelectColumns(cols)
+
+	// The fetch closure is the only DB-touching part; StreamExport
+	// drives it page by page.
+	fetch := func(fctx context.Context, cur ExportCursor, limit int) ([]ExportAuditEventsPageRow, error) {
+		p := ExportAuditEventsPageParams{Since: nullTS(since), Until: nullTS(until), Lim: int32(limit)}
+		if cur != (ExportCursor{}) && !cur.At.IsZero() {
+			p.CursorAt = pgtype.Timestamptz{Time: cur.At, Valid: true}
+			p.CursorID = pgtype.UUID{Bytes: cur.ID, Valid: true}
+		}
+		return h.queries.ExportAuditEventsPage(fctx, p)
+	}
+
+	body := StreamExport(ctx, exportFormat(req.Params.Format), columns, includeIP, fetch)
+	if exportFormat(req.Params.Format) == FormatNDJSON {
+		return openapi.ExportAuditEvents200ApplicationxNdjsonResponse{Body: body}, nil
+	}
+	return openapi.ExportAuditEvents200TextcsvResponse{Body: body}, nil
+}
+
+func exportFormat(f *openapi.ExportAuditEventsParamsFormat) ExportFormat {
+	if f != nil && ExportFormat(*f) == FormatJSONParam {
+		return FormatNDJSON
+	}
+	return FormatCSV
+}
+
+// FormatJSONParam is the wire value of the `format` query param that
+// selects NDJSON output ("json"; the body is NDJSON, ADR 0032's .jsonl
+// shape).
+const FormatJSONParam ExportFormat = "json"
+
+// nullTS passes a Timestamptz through only when valid, so an absent
+// bound stays a SQL NULL (no constraint) rather than the zero time.
+func nullTS(t pgtype.Timestamptz) pgtype.Timestamptz {
+	if !t.Valid {
+		return pgtype.Timestamptz{}
+	}
+	return t
 }

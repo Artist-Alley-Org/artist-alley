@@ -224,6 +224,15 @@ type AuditEvent struct {
 	Ip             *netip.Addr        `json:"ip"`
 	UserAgent      *string            `json:"user_agent"`
 	Metadata       []byte             `json:"metadata"`
+	LegalHold      bool               `json:"legal_hold"`
+	Category       *string            `json:"category"`
+}
+
+type AuditRetentionPolicy struct {
+	Category  string             `json:"category"`
+	Retention pgtype.Interval    `json:"retention"`
+	UpdatedBy *int64             `json:"updated_by"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type BrushPack struct {
