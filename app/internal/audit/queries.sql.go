@@ -371,7 +371,6 @@ SELECT id,
        occurred_at,
        subject_user_ref,
        actor_user_ref,
-       ip,
        user_agent,
        metadata
 FROM audit_events
@@ -391,13 +390,19 @@ type RecentAuditEventsForUserRow struct {
 	OccurredAt     pgtype.Timestamptz
 	SubjectUserRef *int64
 	ActorUserRef   *int64
-	Ip             *netip.Addr
 	UserAgent      *string
 	Metadata       []byte
 }
 
 // Powers "your recent activity" surfaces. The partial index on
 // (subject_user_ref, occurred_at DESC) keeps this fast.
+//
+// `ip` is deliberately NOT selected (#458). Actor IP is personal data
+// gated behind system.audit.pii.read (#425), and this query has no
+// caller today — so leaving ip in the SELECT was a latent trap: a
+// future caller would render it un-gated. When per-user activity does
+// need IP, it wires through the same includeIP gate as the export path
+// (audit/export.go) rather than pulling the raw column here.
 func (q *Queries) RecentAuditEventsForUser(ctx context.Context, arg RecentAuditEventsForUserParams) ([]RecentAuditEventsForUserRow, error) {
 	rows, err := q.db.Query(ctx, recentAuditEventsForUser, arg.SubjectUserRef, arg.Limit)
 	if err != nil {
@@ -413,7 +418,6 @@ func (q *Queries) RecentAuditEventsForUser(ctx context.Context, arg RecentAuditE
 			&i.OccurredAt,
 			&i.SubjectUserRef,
 			&i.ActorUserRef,
-			&i.Ip,
 			&i.UserAgent,
 			&i.Metadata,
 		); err != nil {
