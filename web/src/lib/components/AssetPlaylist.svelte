@@ -446,6 +446,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <dialog
   bind:this={dialogEl}
+  data-testid="asset-playlist"
   onclose={handleDialogClose}
   onclick={handleBackdropClick}
   class="asset-playlist m-0 bg-transparent p-0 outline-none"
