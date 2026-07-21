@@ -52,6 +52,7 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
 
 | Version | Date | Headline |
 |---|---|---|
+| **v0.5.1** | 2026-07-21 | Shareable asset pages (`/assets/[id]`, fixing dead-end collection clicks) + 3D previews restored to published images (Blender was missing from the release build); also promoted the accumulated foundation work — scheduled-action engine (ADR 0020), audit retention/export (ADR 0032), and a visibility-consolidation batch |
 | **v0.5.0** | 2026-07-20 | Public mode — anonymous browsing behind an operator toggle (off by default); single visibility enforcement point (ADR 0063); sensitivity gates content not rows (ADR 0064); featured rail on the placement model (ADR 0065); audit-IP PII gating |
 | **v0.4.0** | 2026-07-18 | Operator visibility — jobs admin (queue / workers / failed / concurrency), storage usage + variant inventory, and integrity sweeps (orphan scan + checksum verify) as batched job kinds |
 | **v0.3.1** | 2026-07-17 | Admin UI for read-only capability holders; repo-wide `gofmt` gate; `make release` |

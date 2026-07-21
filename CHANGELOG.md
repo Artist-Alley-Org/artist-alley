@@ -7,7 +7,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-Work on `dev` since v0.5.0.
+_Nothing yet._
+
+## [v0.5.1] — 2026-07-21
+
+Promoted all of `dev` since v0.5.0 — the foundation work below (audit
+retention/export, scheduled actions) plus two demo-surfaced fixes and a
+visibility-consolidation batch. A patch version number, a substantial release.
 
 ### Operator-facing changes
 
@@ -30,6 +36,28 @@ Work on `dev` since v0.5.0.
   does not; a failure is recorded rather than half-applied. This is the
   generic engine (ADR 0020); the asset-gating features that use it —
   blur, reveal, timed embargo lift — land in later sprints.
+
+### User-facing changes
+
+- **Shareable, reloadable asset pages.** Assets now have a real
+  `/assets/[id]` page, so a link to an asset opens, reloads, and shares
+  correctly. Before this, clicking an asset inside a collection
+  dead-ended on a "Not found" page — the tile linked to a route that
+  never existed (#475). A build-time link-integrity check now guards
+  against dead internal links (ADR 0068).
+
+- **3D previews work on published builds again.** Turntable thumbnails
+  for 3D models (glTF / OBJ / FBX and more) had silently stopped
+  generating on released images — the published image shipped without
+  the renderer — so every 3D asset showed no preview (#470). Fixed for
+  amd64, with a build-and-render smoke so it can't regress unnoticed.
+
+### Fixes
+
+- Content-visibility hardening: soft-deleted collections no longer
+  appear to signed-in non-owners, and the IIIF image path enforces the
+  same visibility rule as the browse grid (#451, #460), plus audit and
+  admin-gating cleanups (#458, #431).
 
 ## [v0.5.0] — 2026-07-20 — Public mode: anonymous browsing
 
