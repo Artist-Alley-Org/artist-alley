@@ -75,6 +75,10 @@ ARG GID
 # Blender 4.2 LTS build that bundles its own Python + numpy, so the
 # add-ons match the runtime they were written against. LTS line is
 # supported through July 2027.
+# MUST stay identical to the root Dockerfile's BLENDER_VERSION /
+# BLENDER_SHA256 (the multi-arch release image). The two diverging is
+# what shipped a release with no Blender (#470); CI's "Blender pins in
+# sync across Dockerfiles" step fails if they drift. Bump both together.
 ARG BLENDER_VERSION=4.2.9
 ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
 

@@ -224,6 +224,15 @@ type AuditEvent struct {
 	Ip             *netip.Addr
 	UserAgent      *string
 	Metadata       []byte
+	LegalHold      bool
+	Category       *string
+}
+
+type AuditRetentionPolicy struct {
+	Category  string
+	Retention pgtype.Interval
+	UpdatedBy *int64
+	UpdatedAt pgtype.Timestamptz
 }
 
 type BrushPack struct {
@@ -813,6 +822,20 @@ type SavedSearch struct {
 	OriginServerID        pgtype.UUID
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+}
+
+type ScheduledAction struct {
+	ID           pgtype.UUID
+	Action       string
+	TargetKind   string
+	TargetID     string
+	Params       []byte
+	ScheduledFor pgtype.Timestamptz
+	State        string
+	Error        *string
+	CreatedBy    *int64
+	CreatedAt    pgtype.Timestamptz
+	ExecutedAt   pgtype.Timestamptz
 }
 
 type SearchFeedback struct {

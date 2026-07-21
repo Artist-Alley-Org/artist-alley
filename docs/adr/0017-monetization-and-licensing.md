@@ -56,7 +56,13 @@ scale. Enterprise adds procurement-friendly differentiators.
 |---|---|---|---|
 | **Community** | 15 | 50,000 | Full feature set. Free. |
 | **Pro** | 50 | 500,000 | Full feature set. Paid. |
-| **Enterprise** | unlimited | unlimited | + SAML / OIDC SSO, audit log export, multi-tenant, federation, HA / clustering, priority support |
+| **Enterprise** | unlimited | unlimited | + audit log export, multi-tenant, HA / clustering, priority support |
+
+> **Amended 2026-07-20 ([ADR 0066](0066-generic-sso-ldap-not-license-gated.md)):** generic
+> SAML / OIDC / LDAP SSO moved **out** of Enterprise to the free tier — auth is security
+> hygiene, not a paywall. The managed hosted-IdP bridges + SCIM (`aa-sso-premium`, ADR 0038)
+> remain paid. Federation was likewise never gated (ADR 0041); it was listed here in error and
+> has been dropped from the row.
 
 **Active seats** are defined as `users with last_active_at within the
 last 30 days`, not registered users. Studios cycle contractors heavily;
@@ -142,7 +148,7 @@ realistic deterrent against casual license stripping is layered:
 2. **Multiple check points across the request lifecycle.** Verification
    is invoked on app startup, on upload acceptance, on admin route entry,
    on a background heartbeat (every 15 minutes), and on selected paid
-   feature use (e.g., enabling SSO in admin). Removing one trigger
+   feature use (e.g., enabling multi-tenant in admin). Removing one trigger
    leaves others firing.
 
 3. **Legal / commercial license terms** (the actual deterrent). The

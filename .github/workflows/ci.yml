@@ -182,6 +182,31 @@ jobs:
           fi
           echo "gofmt: all files formatted"
 
+      # Blender pin drift gate (#470). The release image (root
+      # Dockerfile) and the local-compose image (infra/docker/app/
+      # Dockerfile) each declare BLENDER_VERSION + BLENDER_SHA256
+      # independently. They MUST agree — when they silently diverged the
+      # release shipped with no Blender at all and every 3D preview
+      # failed in production while local compose worked. This static grep
+      # fails the moment a Blender bump lands in one file but not the
+      # other. Cheap, no build, runs on every PR incl. forks.
+      - name: Blender pins in sync across Dockerfiles
+        run: |
+          pin() { sed -n "s/^ARG $2=//p" "$1" | head -n1; }
+          rv=$(pin Dockerfile BLENDER_VERSION)
+          rs=$(pin Dockerfile BLENDER_SHA256)
+          cv=$(pin infra/docker/app/Dockerfile BLENDER_VERSION)
+          cs=$(pin infra/docker/app/Dockerfile BLENDER_SHA256)
+          if [ -z "$rv" ] || [ -z "$rs" ] || [ -z "$cv" ] || [ -z "$cs" ]; then
+            echo "::error::Blender pin not found — release(v=$rv sha=$rs) compose(v=$cv sha=$cs). Did the ARGs move?"
+            exit 1
+          fi
+          if [ "$rv" != "$cv" ] || [ "$rs" != "$cs" ]; then
+            echo "::error::Blender pin drift — release(v=$rv sha=$rs) vs compose(v=$cv sha=$cs). Bump both Dockerfiles together."
+            exit 1
+          fi
+          echo "Blender pins in sync: $rv ($rs)"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -460,3 +485,49 @@ jobs:
         run: |
           docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} --version || \
           docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} -h || true
+
+      # Regression net for #470: the release image (root Dockerfile) once
+      # shipped with no Blender because its runtime stage diverged from
+      # infra/docker/app/Dockerfile — every 3D preview failed in prod
+      # while local compose worked. This asserts the amd64 release image
+      # actually carries a working Blender AND can drive the exact
+      # turntable.py + poster path preview.model uses (so it also covers
+      # the glTF importer add-on + the GL libs Blender dlopens, not just
+      # "the binary is on disk"). Red on the pre-fix Dockerfile.
+      - name: Assert Blender + 3D preview smoke (amd64 release image)
+        run: |
+          set -euo pipefail
+          IMG=artist-alley:ci-${{ github.sha }}
+
+          echo "::group::blender --version"
+          docker run --rm --entrypoint blender "$IMG" --version
+          echo "::endgroup::"
+
+          # Self-contained fixture: have Blender export a cube .glb, then
+          # feed it back through the exact turntable.py + poster path the
+          # ModelHandler.renderPoster method invokes. This exercises the
+          # bundled glTF add-on (export AND import) + the GL libs Blender
+          # dlopens — the whole preview.model chain, not just that the
+          # binary is on disk. No committed model fixture needed (the
+          # seed/ .glb models are gitignored fetched artifacts). Mount an
+          # output dir the non-root `app` user can write.
+          work="$(mktemp -d)"
+          chmod 777 "$work"
+
+          docker run --rm -v "$work":/work --entrypoint blender "$IMG" \
+            --background --factory-startup --disable-autoexec --python-exit-code 1 \
+            --python-expr "import bpy; bpy.ops.mesh.primitive_cube_add(); bpy.ops.export_scene.gltf(filepath='/work/cube.glb')"
+          if [ ! -s "$work/cube.glb" ]; then
+            echo "smoke FAILED: Blender did not export the glTF fixture" >&2
+            exit 1
+          fi
+
+          docker run --rm -v "$work":/work --entrypoint blender "$IMG" \
+            --background --factory-startup --disable-autoexec --python-exit-code 1 \
+            --python /app/blender/turntable.py -- \
+            --input /work/cube.glb --poster-output /work/poster.png
+          if [ ! -s "$work/poster.png" ]; then
+            echo "preview.model smoke FAILED: no poster produced" >&2
+            exit 1
+          fi
+          echo "3D preview smoke OK: poster $(stat -c%s "$work/poster.png") bytes"

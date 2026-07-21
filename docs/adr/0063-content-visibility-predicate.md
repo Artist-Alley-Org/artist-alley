@@ -8,6 +8,7 @@ phases: []
 supersedes: []
 related:
   - "0061"
+  - "0043"
 tags:
   - security
   - authorization
@@ -100,8 +101,12 @@ pattern for any read path the predicate cannot reach:
   per branch, do not assume it.** The authenticated `EntityCollection` branch is `owner OR ACL`
   with **no `deleted_at` conjunct** — the only authenticated branch without one. Dropping the
   inline soft-delete clause there made every signed-in caller see soft-deleted collections and
-  rendered `include_deleted` meaningless (#450 caught it with a parity test). That clause stays
-  until the branch gains its own conjunct — tracked as **#451**.
+  rendered `include_deleted` meaningless (#450 caught it with a parity test). ~~That clause stays
+  until the branch gains its own conjunct — tracked as **#451**.~~ **Resolved 2026-07-21 (#451,
+  PR #469):** the `deleted_at IS NULL` conjunct was hoisted to conjoin the whole authenticated
+  `EntityCollection` predicate (`soft-delete + (public OR owner OR ACL)`), matching `EntityPost`
+  exactly, and the now-subsumed inline clause in `ListCollectionsPageGated` was removed. All
+  authenticated branches now carry the soft-delete conjunct uniformly.
 - **Delete the inline visibility clauses the predicate now subsumes.** `ListAssetsPage` shed its
   `deleted_at IS NULL`; the resources query shed `a.deleted_at IS NULL`. Leaving one behind
   recreates the two-expressions-of-one-rule defect this ADR exists to prevent — the same class
@@ -151,6 +156,46 @@ data leak. Neither is a good way to discover the intended semantics.
 So the authenticated asset case remains `deleted_at IS NULL` — byte-for-byte what it was —
 asserted by test so that an accidental tightening fails as loudly as an accidental loosening.
 The plumbing now exists to close the gap in a single branch once the rule is decided.
+
+## Deliberately deferred: authenticated visibility tiers (`followers` / `org-only` / `explicit-share`)
+
+**Update 2026-07-20.** A second deferred gap, on a different column from the sensitivity one
+above and easy to conflate with it. `posts.visibility` and `collections.visibility` range over
+`private | org-only | followers | explicit-share | public`, but the authenticated read branches
+collapse *everything non-public* to a single `author_user_ref = $N` disjunct (`EntityPost`,
+`EntityCollection` in `predicate.go`). On read, a `followers`-visibility post is therefore
+treated as author-only — a follower cannot see it through any gated read path — even though the
+activity emitter (`activities/emit/post.go`) and the federation outbox
+(`federation/outbox/resolver.go`) already treat `followers` as a first-class audience and
+*deliver* it. Write, emit and federate know the tier; local read does not.
+
+Same shape as the sensitivity deferral — an under-modelled tier the predicate must grow a branch
+for — but here the **federated** half is already decided, and decided in another ADR, so it is
+worth separating what is open from what is not:
+
+- **The audience set is origin-canonical — decided, [ADR 0043](0043-federation-walled-garden-protocol.md).**
+  "The originating instance maintains the canonical truth of who has access"; a peer holds a
+  `followers`-scoped object only because the origin *delivered* it onto that peer's share list,
+  and inbound activities are filtered against that list. **A peer never independently resolves
+  another instance's follow graph** — "the follow graph is a special case of sharing." So growing
+  a `followers` read branch needs *no* new federated mechanism: on the origin node the branch is a
+  local join against the follow relationship; on a remote peer the row's mere presence already
+  means delivery gated it.
+- **The local read semantics are the open part.** What `org-only` resolves to (same
+  workspace/org membership?), what `explicit-share` resolves to (an ACL grant table, as
+  collections already carry?), and the exact follow-relationship join for `followers` are the
+  unmade product calls — the visibility analogue of "what do team/restricted/embargo mean for
+  reads." The predicate is the single place each becomes a branch once decided; guessing breaks
+  all thirteen splice sites at once or leaks a tier.
+
+Until then the authenticated post/collection branch stays `public OR author` — byte-for-byte —
+asserted by test so an accidental widening fails as loudly as a tightening. **The decision is
+tracked as #462; the mechanical consolidation that waits on it (routing `ListPostsPage` through
+the predicate) is #212, which is therefore gated on #462, not shippable ahead of it.** One
+distinction keeps the two straight: the post-feed *filter* `FeedFollowerRef` ("posts from accounts
+I follow") is *curation*, not authorization, and correctly stays **out** of the predicate — a peer
+cannot be trusted to run another user's feed query. The `followers` *visibility tier* is
+authorization and belongs *in* the predicate. They share a word and nothing else.
 
 ## Consequences
 
