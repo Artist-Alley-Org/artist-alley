@@ -644,9 +644,20 @@ map to the milestones below.
   placement model (ADR 0065); audit IPs are gated behind a dedicated
   capability. Opening the surface exposed and closed three pre-existing access
   holes (#447, #449, #438). Deferred, tracked: #458, #460, #462.
-- **v0.6.0 — Reports & Moderation, plus the storage remainder** (#23 + #24 +
-  #22, with #419 / #412 / #408 / #431 and the personal-data anonymisation
-  switch #426).
+"> **On the milestones past v0.6.0:** every open issue is assigned to a version in
+> **dependency order** — nothing sits in a milestone that depends on a later one. The
+> *sizes* are provisional: several later milestones currently hold more epics than a
+> single release has ever shipped, and each gets a scope-cut when it is actually planned
+> (grounded in the code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered
+> backlog, not a promise of one release each.
+
+- **v0.6.0 — scheduled-action engine + audit completion** (foundation slice,
+  scope-cut 2026-07-21). The greenfield **scheduled-action engine** (#40 — embargo
+  auto-lift, reveal-with-logging, the executor #44/#51/#52-retention all depend on),
+  **audit-log completion** (#52 — retention + signed export; the core shipped with
+  #425), and the visibility-cleanup tail (#451, #458, #460, #212) plus #431. Licensing
+  (#27), observability (#53), storage tooling (#22) and the privacy switch (#426)
+  deferred to v0.7.0 — each is its own large build.
 - **v0.7.0 — Content config & Integrations** (#21 + external imports #55).
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
   static binaries, Homebrew (#286).
