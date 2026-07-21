@@ -7,7 +7,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-Nothing here yet — v0.5.0 was just cut.
+Work on `dev` since v0.5.0.
+
+### Operator-facing changes
+
+- **Scheduled actions.** Operators (and, later, the privacy, commerce and
+  audit-retention features) can now schedule a change to run at a future
+  time — change an asset's sensitivity, soft-delete, change state, or
+  notify — and cancel it before it fires. Each action executes atomically
+  with its audit entry, so it either fully happens and is logged or fully
+  does not; a failure is recorded rather than half-applied. This is the
+  generic engine (ADR 0020); the asset-gating features that use it —
+  blur, reveal, timed embargo lift — land in later sprints.
 
 ## [v0.5.0] — 2026-07-20 — Public mode: anonymous browsing
 
