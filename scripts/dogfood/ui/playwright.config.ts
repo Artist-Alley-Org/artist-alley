@@ -41,6 +41,15 @@ export default defineConfig({
     {
       name: 'standalone',
       testDir: './tests/standalone',
+      // Retry transient infra blips on CI: the mid-suite ECONNREFUSED
+      // when the Vite dev server hiccups under load, and hydration races
+      // that clear on a second attempt. CI-only (0 locally) so a flake
+      // still fails immediately for whoever is fixing it, rather than
+      // being silently papered over during development. This does NOT
+      // hide a real failure — a test that fails all 3 attempts still
+      // reds the run; retries tolerate the transient, not the persistent
+      // (#485, ADR 0068). Persistent flakes are still tracked in #481.
+      retries: process.env.CI ? 2 : 0,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: STUDIO_A_HOST,
