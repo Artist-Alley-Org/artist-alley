@@ -56,10 +56,19 @@ on:
       - 'LICENSE'
   workflow_dispatch:
 
-# Cancel superseded runs on the same ref so a force-push doesn't burn
-# minutes on the previous commit.
+# Cancel superseded runs on the same SOURCE BRANCH so a force-push
+# doesn't burn minutes on the previous commit — and so the push event
+# and the pull_request event for the same tip collapse into ONE run
+# (#491). Keying on github.ref split them: a push to dev is
+# ref=refs/heads/dev while its open dev->main promotion PR is
+# ref=refs/pull/N/merge, so the two ran in different groups and neither
+# cancelled the other. github.head_ref is the PR's source branch (set
+# only on pull_request); github.ref_name is the plain branch name on a
+# push. So a push to dev (head_ref empty -> ref_name=dev) and the PR
+# from dev (head_ref=dev) share one group, while a push to dev and an
+# unrelated feat->dev PR stay distinct (dev vs the feature branch).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
