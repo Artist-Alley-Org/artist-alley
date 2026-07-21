@@ -101,8 +101,12 @@ pattern for any read path the predicate cannot reach:
   per branch, do not assume it.** The authenticated `EntityCollection` branch is `owner OR ACL`
   with **no `deleted_at` conjunct** — the only authenticated branch without one. Dropping the
   inline soft-delete clause there made every signed-in caller see soft-deleted collections and
-  rendered `include_deleted` meaningless (#450 caught it with a parity test). That clause stays
-  until the branch gains its own conjunct — tracked as **#451**.
+  rendered `include_deleted` meaningless (#450 caught it with a parity test). ~~That clause stays
+  until the branch gains its own conjunct — tracked as **#451**.~~ **Resolved 2026-07-21 (#451,
+  PR #469):** the `deleted_at IS NULL` conjunct was hoisted to conjoin the whole authenticated
+  `EntityCollection` predicate (`soft-delete + (public OR owner OR ACL)`), matching `EntityPost`
+  exactly, and the now-subsumed inline clause in `ListCollectionsPageGated` was removed. All
+  authenticated branches now carry the soft-delete conjunct uniformly.
 - **Delete the inline visibility clauses the predicate now subsumes.** `ListAssetsPage` shed its
   `deleted_at IS NULL`; the resources query shed `a.deleted_at IS NULL`. Leaving one behind
   recreates the two-expressions-of-one-rule defect this ADR exists to prevent — the same class
