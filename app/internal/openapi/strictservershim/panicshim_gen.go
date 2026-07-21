@@ -475,6 +475,16 @@ func (*PanicShim) DecideAdminRequest(context.Context, openapi.DecideAdminRequest
 	panic("PanicShim: DecideAdminRequest called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListScheduledActions panics by default; test shims override.
+func (*PanicShim) ListScheduledActions(context.Context, openapi.ListScheduledActionsRequestObject) (openapi.ListScheduledActionsResponseObject, error) {
+	panic("PanicShim: ListScheduledActions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// CancelScheduledAction panics by default; test shims override.
+func (*PanicShim) CancelScheduledAction(context.Context, openapi.CancelScheduledActionRequestObject) (openapi.CancelScheduledActionResponseObject, error) {
+	panic("PanicShim: CancelScheduledAction called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // SeedCreateComment panics by default; test shims override.
 func (*PanicShim) SeedCreateComment(context.Context, openapi.SeedCreateCommentRequestObject) (openapi.SeedCreateCommentResponseObject, error) {
 	panic("PanicShim: SeedCreateComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
