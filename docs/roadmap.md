@@ -191,8 +191,8 @@ first-ever tagged release. Seventeen sub-phases, 2026-07-07 → 2026-07-11.
 | **1.55.Z** | 07-11 | Removed `site/` from the OSS repo, rewired CI (site split) |
 | **1.55.AA** | 07-11 | Executed the AGPL + commercial relicense |
 
-<details>
-<summary><strong>Full phase-close log</strong> — PR numbers, squash SHAs, gate checklists, audit findings</summary>
+**Full phase-close log** — PR numbers, squash SHAs, gate checklists, audit findings:
+
 
 The meta-arc getting
 from current-dev to the v0.1.0 tag — the first-ever tagged release
@@ -620,7 +620,7 @@ milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
 
-</details>
+
 
 - **v0.3.1 — foundation cleanup** (shipped 2026-07-17): admin read-cap UI
   (#385), `gofmt` CI gate, `make release`, dependabot split, steel token.
