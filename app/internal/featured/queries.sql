@@ -24,18 +24,22 @@ ORDER BY f.position ASC, f.created_at ASC;
 
 -- name: InsertFeaturedItem :one
 -- Adds one subject to the curation list. When position is NULL the
--- row appends to the end (max existing position + 1). The
--- (subject_kind, subject_id) unique constraint makes a duplicate add
--- a 23505 the handler maps to 409.
-INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref)
+-- row appends to the end (max existing position + 1). Scope defaults
+-- to 'org' — the admin surface curates the internal list, and a
+-- public placement is a deliberate act (ADR 0065). The
+-- (subject_kind, subject_id, scope, team_id) unique constraint makes
+-- a duplicate add WITHIN ONE AUDIENCE a 23505 the handler maps to
+-- 409, while still allowing the same subject at another scope.
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope)
 VALUES (
     $1,
     $2,
     COALESCE(sqlc.narg('position')::integer,
              (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items)),
-    sqlc.narg('created_by_user_ref')::bigint
+    sqlc.narg('created_by_user_ref')::bigint,
+    COALESCE(sqlc.narg('scope')::text, 'org')
 )
-RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref;
+RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref, scope, team_id;
 
 -- name: DeleteFeaturedItem :execrows
 -- Removes one entry by id. Returns rows-affected so the handler can

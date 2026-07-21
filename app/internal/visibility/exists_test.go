@@ -72,13 +72,19 @@ func TestCanSee_Asset_ComposesExpectedSQL(t *testing.T) {
 	}
 }
 
-// TestCanSee_Anonymous_Asset_SameSQL — anonymous caller doesn't add
-// any args for EntityAsset (predicate is just deleted_at).
-func TestCanSee_Anonymous_Asset_SameSQL(t *testing.T) {
+// TestCanSee_Anonymous_Asset_PublishedOnly — an anonymous caller sees
+// an asset only if it is published, public, and finished processing
+// (#414). Before that, this asserted the predicate was soft-delete only,
+// which was the toothless behaviour P0a exists to replace.
+//
+// Still binds no extra args: every splice site appends predicate args
+// last, so a zero-arg anonymous fragment composes without shifting any
+// caller's placeholder numbering.
+func TestCanSee_Anonymous_Asset_PublishedOnly(t *testing.T) {
 	pool := &capturingPool{scanValue: true}
 	_, _ = CanSee(context.Background(), pool, EntityAsset,
 		Caller{UserRef: AnonymousCaller, IsAnonymous: true}, uuid.New())
-	want := `SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1 AND (deleted_at IS NULL))`
+	want := `SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1 AND (deleted_at IS NULL AND status = 'active' AND sensitivity = 'public' AND processing_status = 'ready'))`
 	if strings.TrimSpace(pool.sql) != want {
 		t.Fatalf("SQL mismatch:\nwant %q\n got %q", want, pool.sql)
 	}
@@ -87,22 +93,26 @@ func TestCanSee_Anonymous_Asset_SameSQL(t *testing.T) {
 	}
 }
 
-// TestCanSee_Collection_AnonymousShortCircuits_ReturnsFalse — the
-// EntityCollection predicate for anonymous callers is "AND (FALSE)".
-// The composed EXISTS query still runs but always yields FALSE,
-// which matches the row-level collections handler behaviour.
-func TestCanSee_Collection_AnonymousShortCircuits_ReturnsFalse(t *testing.T) {
+// TestCanSee_Collection_AnonymousSeesPublicOnly — anonymous callers are
+// now filtered to public, non-deleted collections (#414). This replaced
+// an unconditional "AND (FALSE)" short-circuit, which existed only
+// because no collection COULD be public before migration 00008 added
+// the tier — not because anonymous access was meant to be impossible.
+func TestCanSee_Collection_AnonymousSeesPublicOnly(t *testing.T) {
 	pool := &capturingPool{scanValue: false}
-	ok, err := CanSee(context.Background(), pool, EntityCollection,
+	_, err := CanSee(context.Background(), pool, EntityCollection,
 		Caller{UserRef: AnonymousCaller, IsAnonymous: true}, uuid.New())
 	if err != nil {
 		t.Fatalf("CanSee: %v", err)
 	}
-	if ok {
-		t.Fatal("anonymous EntityCollection must return false")
+	if !strings.Contains(pool.sql, "visibility = 'public'") {
+		t.Fatalf("anonymous collections must be gated to public rows, got %q", pool.sql)
 	}
-	if !strings.Contains(pool.sql, "AND (FALSE)") {
-		t.Fatalf("expected FALSE short-circuit fragment, got %q", pool.sql)
+	if strings.Contains(pool.sql, "AND (FALSE)") {
+		t.Fatalf("the FALSE short-circuit should be gone now that a public tier exists, got %q", pool.sql)
+	}
+	if len(pool.args) != 1 {
+		t.Fatalf("anonymous EntityCollection must not bind any extra args, got %v", pool.args)
 	}
 }
 

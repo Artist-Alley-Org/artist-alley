@@ -12,16 +12,15 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestArchiveBundle_Unauthenticated(t *testing.T) {
-	h := &ArchiveBundleHandler{}
-	req := chiCtxRequest(http.MethodGet, "/assets/x/archive/bundle.zip", "x")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
-	}
-}
-
+// The malformed id is deliberate: it returns before the DB call, so
+// this handler test needs no pool.
+//
+// Do NOT add an authorization assertion here. Since #415 removed the
+// per-handler 401, uuid.Parse is the FIRST statement, so a request
+// with a bad id never reaches requireContentAccess — any "anonymous
+// is denied" check placed here would pass even with the content gate
+// deleted. The authorization contract is covered in
+// visibility/content_test.go, against real rows.
 func TestArchiveBundle_BadUUID(t *testing.T) {
 	h := &ArchiveBundleHandler{}
 	req := withTestIdentity(chiCtxRequest(http.MethodGet, "/assets/x/archive/bundle.zip", "not-a-uuid"))

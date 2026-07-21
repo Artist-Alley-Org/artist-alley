@@ -16,22 +16,55 @@
 //      login form posts back and routes the user where they meant
 //      to go.
 //
-// Public routes (/login, /setup) skip the auth requirement; the
-// gate only applies to everything else.
+// Public routes skip the auth requirement; the gate applies to
+// everything else.
 
 import { redirect } from '@sveltejs/kit';
 import { api } from '$api/client';
 import { auth } from '$stores/auth.svelte';
 import { browser } from '$app/environment';
 
-// Routes that are reachable without a session.
-const PUBLIC_ROUTES = new Set(['/login', '/setup']);
+// Always reachable without a session, in BOTH public-mode states.
+// These are the routes an operator needs before they can possibly
+// have one.
+const ALWAYS_PUBLIC_ROUTE_IDS = new Set(['/login', '/setup']);
+
+// Reachable without a session ONLY when the install has public mode
+// turned on (#416, #445).
+//
+// Matched against `route.id`, not `url.pathname`. That is what lets an
+// EXACT-MATCH set express a parameterised route: SvelteKit hands the
+// load function the route id (`/collections/[id]`), while the pathname
+// is the concrete URL (`/collections/9f3c…`). Prefix matching on the
+// pathname was the alternative and is worse in the way that matters —
+// a `/collections` prefix silently grandfathers every route somebody
+// mounts underneath it later, which is precisely how a route gets
+// published by accident. With exact route ids a new route is
+// authenticated until someone adds a line here, so the failure mode
+// is a route that should be public not being public: visible, and
+// harmless. Same reasoning as the backend deny-list in
+// auth/publicmode.go.
+//
+// DELIBERATELY ABSENT: `/posts/[id]`. The post visibility rule has a
+// followers tier that the predicate does not model, so posts stay
+// authenticated until it does. Do not add it here to "finish the
+// set".
+//
+// Asset detail has no entry because assets have no standalone route —
+// they render inside the viewer/modal on the routes above.
+const PUBLIC_MODE_ROUTE_IDS = new Set([
+  '/',
+  '/collections',
+  '/collections/[id]',
+  '/search',
+  '/search/advanced',
+]);
 
 export const ssr = false;
 export const prerender = true;
 export const trailingSlash = 'never';
 
-export async function load({ url, fetch }) {
+export async function load({ url, route, fetch }) {
   if (!browser) {
     return { needsSetup: false, authed: false };
   }
@@ -44,6 +77,13 @@ export async function load({ url, fetch }) {
   const setupRes = await fetch('/api/v1/setup/status').catch(() => null);
   const setup = setupRes && setupRes.ok ? await setupRes.json() : null;
   const needsSetup = !!setup?.needs_setup;
+  // Public mode rides on the setup payload (#416) — this call already
+  // happens first on every navigation, so the flag is available before
+  // the gate below runs without adding a request to the hot path.
+  // Absent or unreadable reads as OFF: the server enforces the setting
+  // itself, so the worst a false here can do is send a visitor to the
+  // sign-in page on an install that would have let them browse.
+  const publicMode = !!setup?.public_mode;
 
   if (needsSetup && url.pathname !== '/setup') {
     throw redirect(302, '/setup');
@@ -68,7 +108,9 @@ export async function load({ url, fetch }) {
     auth.markReady();
   }
 
-  const isPublic = PUBLIC_ROUTES.has(url.pathname);
+  const isPublic =
+    ALWAYS_PUBLIC_ROUTE_IDS.has(route.id ?? '') ||
+    (publicMode && PUBLIC_MODE_ROUTE_IDS.has(route.id ?? ''));
   if (!isPublic && !auth.user) {
     const next = url.pathname + url.search;
     const dest = next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`;
@@ -80,6 +122,7 @@ export async function load({ url, fetch }) {
 
   return {
     needsSetup,
+    publicMode,
     authed: !!auth.user,
   };
 }

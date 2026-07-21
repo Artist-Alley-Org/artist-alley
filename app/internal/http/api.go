@@ -290,7 +290,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		social:       social.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
-		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cfg.DemoMode),
+		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode),
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		jobsSvc:      jobSvc,
@@ -2015,9 +2015,13 @@ func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *ca
 // sysconfigHandlerWithAudit mirrors usersHandlerWithAudit — wires
 // the audit recorder so Phase 1.17.D's RecordChange call sites in
 // the Update* config handlers have somewhere to emit to.
-func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, demoMode bool) *sysconfig.Handler {
+func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, cacheReg *cache.Registry, demoMode bool) *sysconfig.Handler {
 	h := sysconfig.NewHTTPHandler(pool, store, logger)
 	h.SetAuditRecorder(auditRec)
+	// #445 — the public-mode write invalidates the auth middleware's
+	// cached read of the flag. Without this the toggle appears inert
+	// until the cache entry ages out.
+	h.CacheReg = cacheReg
 	h.DemoMode = demoMode
 	return h
 }
@@ -2948,6 +2952,9 @@ func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAd
 
 // --- featured content (GitHub #341) ---------------------------------------
 
+func (s *apiServer) GetPublicFeaturedRail(ctx context.Context, req openapi.GetPublicFeaturedRailRequestObject) (openapi.GetPublicFeaturedRailResponseObject, error) {
+	return s.featuredHTTP.GetPublicFeaturedRail(ctx, req)
+}
 func (s *apiServer) ListFeaturedItems(ctx context.Context, req openapi.ListFeaturedItemsRequestObject) (openapi.ListFeaturedItemsResponseObject, error) {
 	return s.featuredHTTP.ListFeaturedItems(ctx, req)
 }
@@ -3057,6 +3064,12 @@ func (s *apiServer) UpdateAppearanceConfig(ctx context.Context, req openapi.Upda
 }
 func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	return s.sysconfigH.GetPublicAppearance(ctx, req)
+}
+func (s *apiServer) GetPublicMode(ctx context.Context, req openapi.GetPublicModeRequestObject) (openapi.GetPublicModeResponseObject, error) {
+	return s.sysconfigH.GetPublicMode(ctx, req)
+}
+func (s *apiServer) UpdatePublicMode(ctx context.Context, req openapi.UpdatePublicModeRequestObject) (openapi.UpdatePublicModeResponseObject, error) {
+	return s.sysconfigH.UpdatePublicMode(ctx, req)
 }
 
 // --- i18n ------------------------------------------------------------------

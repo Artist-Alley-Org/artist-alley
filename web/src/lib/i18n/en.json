@@ -175,7 +175,13 @@
     "theme_system": "System",
     "language": "Language",
     "api_tokens": "API tokens",
-    "sign_out": "Sign out"
+    "sign_out": "Sign out",
+    "sign_in": "Sign in",
+    "browsing_as_guest": "You're browsing as a guest",
+    "guest_feed_title": "The feed is for members",
+    "guest_feed_hint": "Posts are only visible to signed-in members. You can still browse collections and search.",
+    "guest_browse_collections": "Browse collections",
+    "sign_in_hint": "Sign in to upload, collect and comment."
   },
   "admin_menu": {
     "title": "Admin",
@@ -1345,7 +1351,14 @@
         "base_url": "Base URL",
         "base_url_help": "Absolute URL the site is reachable at; used in outgoing emails.",
         "save": "Save site",
-        "saved": "Site saved."
+        "saved": "Site saved.",
+        "public_title": "Public access",
+        "public_help": "When on, anyone can browse assets, collections and search without signing in. They still only ever see public-tier items \u2014 team, restricted and embargoed content stays hidden, and downloads follow the same rule. When off, every one of those pages asks visitors to sign in first.",
+        "public_toggle": "Let visitors browse without signing in",
+        "public_on": "This install is public.",
+        "public_off": "This install is private.",
+        "public_saved": "Public access updated.",
+        "public_readonly": "You do not have permission to change this."
       },
       "smtp": {
         "title": "SMTP",
@@ -1862,7 +1875,8 @@
       "vis_shared": "Shared",
       "vis_public": "Public",
       "featured": "Featured",
-      "featured_flag": "Feature this collection on the hub",
+      "rail_title": "Featured",
+    "featured_flag": "Feature this collection on the hub",
       "untitled": "Untitled collection",
       "create": "Create",
       "creating": "Creating…",
@@ -1906,6 +1920,9 @@
       "error_create": "Couldn't create the collection.",
       "error_save": "Couldn't save the collection.",
       "error_not_found": "Collection not found.",
+      "not_found_or_private": "This collection isn't available.",
+      "not_found_or_private_hint": "It may have been removed, or it isn't public.",
+      "not_found_sign_in_hint": "If you have access to it, sign in to view it.",
       "conflict_heading": "Someone else edited this collection",
       "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
       "conflict_overwrite": "Overwrite their changes with mine",

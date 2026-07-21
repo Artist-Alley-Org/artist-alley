@@ -92,17 +92,19 @@ func TestCollectionLifecycle(t *testing.T) {
 	}
 
 	// Patch (rename + feature)
+	// `featured` is no longer a field on the collection (ADR 0065) —
+	// featuring is a placement in featured_items, set through the
+	// /admin/featured surface, so a PATCH here cannot express it.
 	pRR := patchJSON(t, ownerRouter, "/collections/"+id, map[string]any{
-		"name":     "ct_renamed",
-		"featured": true,
+		"name": "ct_renamed",
 	})
 	if pRR.Code != http.StatusOK {
 		t.Fatalf("patch: %d body=%s", pRR.Code, pRR.Body.String())
 	}
 	var patched openapi.Collection
 	mustDecode(t, pRR.Body.Bytes(), &patched)
-	if patched.Name != "ct_renamed" || !patched.Featured {
-		t.Errorf("patch didn't take: name=%q featured=%v", patched.Name, patched.Featured)
+	if patched.Name != "ct_renamed" {
+		t.Errorf("patch didn't take: name=%q", patched.Name)
 	}
 
 	// Intruder cannot patch
@@ -289,16 +291,35 @@ func TestListCollectionsFilters(t *testing.T) {
 
 	// Make three with deterministic created_at spacing so the
 	// cursor pagination has stable ordering.
+	var firstID string
 	for i := 0; i < 3; i++ {
-		body := map[string]any{"name": fmt.Sprintf("ct_list_%d", i)}
-		if i == 0 {
-			body["featured"] = true
-		}
-		rr := postJSON(t, router, "/collections", body)
+		rr := postJSON(t, router, "/collections", map[string]any{
+			"name": fmt.Sprintf("ct_list_%d", i),
+		})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("seed %d: %d", i, rr.Code)
 		}
+		if i == 0 {
+			var c openapi.Collection
+			mustDecode(t, rr.Body.Bytes(), &c)
+			firstID = c.Id.String()
+		}
 	}
+
+	// Featuring is a PLACEMENT now (ADR 0065), not a field on the
+	// collection — so the fixture inserts one instead of setting a
+	// flag at create time. The ?featured= filter's meaning is
+	// unchanged from a caller's point of view: "is this featured
+	// internally", which is scope='org'.
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO featured_items (subject_kind, subject_id, position, scope)
+		VALUES ('collection',$1,0,'org') ON CONFLICT DO NOTHING`, firstID); err != nil {
+		t.Fatalf("seed org placement: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM featured_items WHERE subject_id=$1`, firstID)
+	})
 
 	// owner_ref filter
 	mineRR := httptest.NewRecorder()
@@ -504,4 +525,188 @@ func (s collShim) AddCollectionResource(ctx context.Context, req openapi.AddColl
 }
 func (s collShim) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.h.RemoveCollectionResource(ctx, req)
+}
+
+// TestGetCollection_NonOwnerDenied is the regression test for the hole
+// #439 closed: before visibility.CanSee was added to GetCollection, the
+// handler checked only that an identity existed and then fetched by id,
+// so ANY authenticated caller could read ANY collection — including
+// another user's private one.
+//
+// Both legs are load-bearing. The 404 proves a stranger is refused; the
+// 200 proves CanSee did not simply deny everyone, which is how a broken
+// gate would otherwise look identical to a working one.
+//
+// If the CanSee call is removed from GetCollection, the non-owner leg
+// returns 200 and this test fails. That was verified by deleting the
+// call and watching it go red.
+func TestGetCollection_NonOwnerDenied(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	const ownerRef, strangerRef int64 = 720051, 720052
+	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
+	strangerRouter, _ := makeRouter(t, pool, strangerRef /*admin=*/, false)
+
+	id := mustCreate(t, ownerRouter, map[string]any{
+		"name":       "ct_private_regression",
+		"visibility": "private",
+	})
+
+	// The owner must still be able to read it — otherwise a gate that
+	// denies everybody would pass the assertion below.
+	ownRR := httptest.NewRecorder()
+	ownerRouter.ServeHTTP(ownRR, httptest.NewRequest(http.MethodGet, "/collections/"+id, nil))
+	if ownRR.Code != http.StatusOK {
+		t.Fatalf("owner GET: status=%d want 200 body=%s", ownRR.Code, ownRR.Body.String())
+	}
+
+	// A different authenticated user, with no ACL grant, must not.
+	strRR := httptest.NewRecorder()
+	strangerRouter.ServeHTTP(strRR, httptest.NewRequest(http.MethodGet, "/collections/"+id, nil))
+	if strRR.Code != http.StatusNotFound {
+		t.Errorf("non-owner GET: status=%d want 404 — an authenticated stranger "+
+			"must not read another user's private collection (visibility.CanSee in GetCollection)",
+			strRR.Code)
+	}
+}
+
+// anonRouter builds a router with NO identity in context, so handlers
+// see an anonymous caller (#438).
+func anonRouter(t *testing.T, pool *pgxpool.Pool) chi.Router {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := collections.NewHandler(pool, logger, nil)
+	h.SetActivitiesWriter(activities.NewWriter(pool, logger, nil),
+		func(ctx context.Context) string { return "https://test.example" })
+	router := chi.NewRouter()
+	openapi.HandlerFromMux(openapi.NewStrictHandler(
+		collShim{PanicShim: &strictservershim.PanicShim{}, h: h}, nil), router)
+	return router
+}
+
+// setAssetTier forces an asset's publication/sensitivity so the row
+// predicate has something to discriminate on.
+func setAssetTier(t *testing.T, pool *pgxpool.Pool, assetID, status, sensitivity string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET status=$2, sensitivity=$3, processing_status='ready' WHERE id=$1`,
+		assetID, status, sensitivity); err != nil {
+		t.Fatalf("set asset tier: %v", err)
+	}
+}
+
+// TestListCollectionResources_ParentGate covers the PARENT half of #438:
+// before this, any authenticated caller could enumerate any collection's
+// contents. Removing the CanSee call from ListCollectionResources fails
+// this test and only this one.
+func TestListCollectionResources_ParentGate(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	const ownerRef, strangerRef int64 = 720081, 720082
+	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
+	strangerRouter, _ := makeRouter(t, pool, strangerRef /*admin=*/, false)
+
+	id := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_private_contents", "visibility": "private",
+	})
+
+	// Owner can list — otherwise a gate denying everyone would pass below.
+	ownRR := httptest.NewRecorder()
+	ownerRouter.ServeHTTP(ownRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
+	if ownRR.Code != http.StatusOK {
+		t.Fatalf("owner list: status=%d want 200 body=%s", ownRR.Code, ownRR.Body.String())
+	}
+
+	// An authenticated stranger with no ACL must not.
+	strRR := httptest.NewRecorder()
+	strangerRouter.ServeHTTP(strRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
+	if strRR.Code != http.StatusNotFound {
+		t.Errorf("stranger list: status=%d want 404 — an authenticated caller must not "+
+			"enumerate a private collection's contents (visibility.CanSee on the parent)", strRR.Code)
+	}
+
+	// Anonymous likewise.
+	anonRR := httptest.NewRecorder()
+	anonRouter(t, pool).ServeHTTP(anonRR, httptest.NewRequest(http.MethodGet, "/collections/"+id+"/resources", nil))
+	if anonRR.Code != http.StatusNotFound {
+		t.Errorf("anonymous list on a private collection: status=%d want 404", anonRR.Code)
+	}
+}
+
+// TestListCollectionResources_RowFiltering covers the ROW half, which the
+// parent gate cannot: a PUBLIC collection may contain non-public assets.
+// Removing the predicate splice from the query fails this test and not
+// the parent-gate one — that separation is the point.
+func TestListCollectionResources_RowFiltering(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	const ownerRef int64 = 720091
+	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
+
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_public_mixed", "visibility": "public",
+	})
+
+	pubAsset := mustInsertAsset(t, pool, ownerRef, "ct_public_asset")
+	draftAsset := mustInsertAsset(t, pool, ownerRef, "ct_draft_asset")
+	setAssetTier(t, pool, pubAsset, "active", "public")
+	setAssetTier(t, pool, draftAsset, "draft", "public")
+
+	for _, a := range []string{pubAsset, draftAsset} {
+		rr := postJSON(t, ownerRouter, "/collections/"+colID+"/resources", map[string]any{"asset_id": a})
+		if rr.Code >= 300 {
+			t.Fatalf("pin %s: status=%d body=%s", a, rr.Code, rr.Body.String())
+		}
+	}
+
+	count := func(t *testing.T, r chi.Router) int {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/collections/"+colID+"/resources", nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("list: status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		var page struct {
+			Items []struct {
+				AssetID string `json:"asset_id"`
+			} `json:"items"`
+		}
+		mustDecode(t, rr.Body.Bytes(), &page)
+		return len(page.Items)
+	}
+
+	// The owner sees both — proves the pins landed and the query works.
+	if got := count(t, ownerRouter); got != 2 {
+		t.Fatalf("owner sees %d rows, want 2 (both pinned assets)", got)
+	}
+
+	// An anonymous caller sees ONLY the published-public one. Without the
+	// predicate splice this returns 2 and leaks the draft's title,
+	// status and file_hash.
+	if got := count(t, anonRouter(t, pool)); got != 1 {
+		t.Errorf("anonymous sees %d rows, want 1 — a public collection's DRAFT contents "+
+			"must not be enumerable (asset predicate spliced into the resources query)", got)
+	}
 }

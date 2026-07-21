@@ -17,6 +17,12 @@ tags:
 excerpt: >-
   The current homepage and account dashboards show "recent uploads" / "unreviewed" / "team feed" as flat lists. Nested featured collection trees — "Concept Art > Characters > 2026 Pitches > Hero Shots" — are a standard front-page curation primitive, with each node having its own thumbnail + description + access scope.
 ---
+> **Superseded in part by [ADR 0065](0065-featuring-is-a-placement-not-a-property.md) (2026-07-20).**
+> The `featured` boolean + `featured_scope` enum on `collections`, and cascade-publish
+> as a property of that boolean, are superseded — featuring moved to the
+> `featured_items` placement table. **The `collection_parent_id` tree edge, the
+> depth-5 cap, and the nested-curation rationale below all stand.**
+
 ## Context
 
 The current homepage and account dashboards show "recent uploads" /

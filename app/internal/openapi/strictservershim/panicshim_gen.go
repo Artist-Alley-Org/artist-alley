@@ -555,6 +555,16 @@ func (*PanicShim) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequ
 	panic("PanicShim: UpdateAuthConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetPublicMode panics by default; test shims override.
+func (*PanicShim) GetPublicMode(context.Context, openapi.GetPublicModeRequestObject) (openapi.GetPublicModeResponseObject, error) {
+	panic("PanicShim: GetPublicMode called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdatePublicMode panics by default; test shims override.
+func (*PanicShim) UpdatePublicMode(context.Context, openapi.UpdatePublicModeRequestObject) (openapi.UpdatePublicModeResponseObject, error) {
+	panic("PanicShim: UpdatePublicMode called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetSiteConfig panics by default; test shims override.
 func (*PanicShim) GetSiteConfig(context.Context, openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
 	panic("PanicShim: GetSiteConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1043,6 +1053,11 @@ func (*PanicShim) RemoveCollectionResource(context.Context, openapi.RemoveCollec
 // DeleteComment panics by default; test shims override.
 func (*PanicShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	panic("PanicShim: DeleteComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetPublicFeaturedRail panics by default; test shims override.
+func (*PanicShim) GetPublicFeaturedRail(context.Context, openapi.GetPublicFeaturedRailRequestObject) (openapi.GetPublicFeaturedRailResponseObject, error) {
+	panic("PanicShim: GetPublicFeaturedRail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // GetFederationInstance panics by default; test shims override.

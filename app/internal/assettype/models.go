@@ -84,7 +84,6 @@ type Asset struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
-	DeletedReason        *string            `json:"deleted_reason"`
 	SearchText           interface{}        `json:"search_text"`
 	StateID              pgtype.UUID        `json:"state_id"`
 	TeamID               pgtype.UUID        `json:"team_id"`
@@ -97,7 +96,8 @@ type Asset struct {
 	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
 	Sensitivity string `json:"sensitivity"`
 	// For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.
-	PageCount *int32 `json:"page_count"`
+	PageCount     *int32  `json:"page_count"`
+	DeletedReason *string `json:"deleted_reason"`
 }
 
 type AssetAlternate struct {
@@ -266,16 +266,15 @@ type Collection struct {
 	Visibility     string             `json:"visibility"`
 	Membership     string             `json:"membership"`
 	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
-	Featured       bool               `json:"featured"`
 	Purpose        *string            `json:"purpose"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
-	DeletedReason  *string            `json:"deleted_reason"`
 	SearchText     interface{}        `json:"search_text"`
 	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
-	SmartQuery *string `json:"smart_query"`
+	SmartQuery    *string            `json:"smart_query"`
+	DeletedAt     pgtype.Timestamptz `json:"deleted_at"`
+	DeletedReason *string            `json:"deleted_reason"`
 }
 
 type CollectionAcl struct {
@@ -409,6 +408,8 @@ type FeaturedItem struct {
 	Position         int32              `json:"position"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	CreatedByUserRef *int64             `json:"created_by_user_ref"`
+	Scope            string             `json:"scope"`
+	TeamID           pgtype.UUID        `json:"team_id"`
 }
 
 type FederationDirectory struct {
@@ -736,14 +737,14 @@ type Post struct {
 	SearchText            interface{}        `json:"search_text"`
 	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
-	DeletedReason         *string            `json:"deleted_reason"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 	StateID               pgtype.UUID        `json:"state_id"`
 	TeamID                pgtype.UUID        `json:"team_id"`
 	CoverThumbnailAssetID pgtype.UUID        `json:"cover_thumbnail_asset_id"`
 	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
-	SubtitleTrackOverride []byte `json:"subtitle_track_override"`
+	SubtitleTrackOverride []byte  `json:"subtitle_track_override"`
+	DeletedReason         *string `json:"deleted_reason"`
 }
 
 type PostAcl struct {

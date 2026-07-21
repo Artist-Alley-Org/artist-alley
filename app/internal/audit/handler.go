@@ -51,6 +51,18 @@ const (
 	maxListLimit     = 500
 )
 
+// Capabilities for the audit surface.
+//
+// The split is the point (#425): capAuditRead admits a caller to the
+// log, capAuditPIIRead additionally admits them to the personal data
+// in it. An auditor role holds the first; a compliance or
+// incident-response role holds both. system.admin satisfies either as
+// a wildcard in Identity.Can, so it needs no grant.
+const (
+	capAuditRead    = "system.audit.read"
+	capAuditPIIRead = "system.audit.pii.read"
+)
+
 // ListAdminAuditEvents — GET /admin/audit.
 func (h *HTTPHandler) ListAdminAuditEvents(
 	ctx context.Context,
@@ -62,9 +74,9 @@ func (h *HTTPHandler) ListAdminAuditEvents(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can("system.audit.read") {
+	if !id.Can(capAuditRead) {
 		return openapi.ListAdminAuditEvents403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.audit.read capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capAuditRead + " capability required"},
 		}, nil
 	}
 
@@ -128,8 +140,13 @@ func (h *HTTPHandler) ListAdminAuditEvents(
 		Total:      total,
 		NextCursor: nextCursor,
 	}
+	// #425 — actor IPs are personal data and need their own capability
+	// on top of system.audit.read. Resolved once for the page rather
+	// than per row: the answer cannot change mid-response, and
+	// per-row evaluation would invite a future caller to vary it.
+	includeIP := id.Can(capAuditPIIRead)
 	for _, r := range rows {
-		out.Items = append(out.Items, toOpenAPI(r))
+		out.Items = append(out.Items, toOpenAPI(r, includeIP))
 	}
 	return openapi.ListAdminAuditEvents200JSONResponse(out), nil
 }
@@ -145,9 +162,9 @@ func (h *HTTPHandler) ListAdminAuditEventTypes(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can("system.audit.read") {
+	if !id.Can(capAuditRead) {
 		return openapi.ListAdminAuditEventTypes403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.audit.read capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capAuditRead + " capability required"},
 		}, nil
 	}
 	items, err := h.queries.ListAuditEventTypes(ctx)
@@ -161,7 +178,16 @@ func (h *HTTPHandler) ListAdminAuditEventTypes(
 }
 
 // toOpenAPI converts the sqlc row to the wire-shape AuditEvent.
-func toOpenAPI(r AuditEvent) openapi.AuditEvent {
+//
+// includeIP carries the system.audit.pii.read decision (#425). The
+// redaction lives HERE, in the one function that knows how to build
+// this wire shape, rather than in the handler after the fact — a
+// mapper that can emit a field is the right place to decide whether it
+// should. Any future caller has to answer the question to compile.
+//
+// The parameter's zero value is the SAFE one on purpose: a caller who
+// gets this wrong omits the IP rather than leaking it.
+func toOpenAPI(r AuditEvent, includeIP bool) openapi.AuditEvent {
 	out := openapi.AuditEvent{
 		Id:             openapi_types.UUID(r.ID.Bytes),
 		EventType:      r.EventType,
@@ -171,7 +197,10 @@ func toOpenAPI(r AuditEvent) openapi.AuditEvent {
 		UserAgent:      r.UserAgent,
 		Metadata:       map[string]any{},
 	}
-	if r.Ip != nil {
+	// Omitted, not blanked: the field is absent from the JSON entirely
+	// for a caller without the capability, so there is no empty column
+	// implying "no IP recorded" when one exists.
+	if includeIP && r.Ip != nil {
 		s := r.Ip.String()
 		out.Ip = &s
 	}

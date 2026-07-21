@@ -84,7 +84,6 @@ type Asset struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	DeletedAt            pgtype.Timestamptz
-	DeletedReason        *string
 	SearchText           interface{}
 	StateID              pgtype.UUID
 	TeamID               pgtype.UUID
@@ -97,7 +96,8 @@ type Asset struct {
 	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
 	Sensitivity string
 	// For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.
-	PageCount *int32
+	PageCount     *int32
+	DeletedReason *string
 }
 
 type AssetAlternate struct {
@@ -266,16 +266,15 @@ type Collection struct {
 	Visibility     string
 	Membership     string
 	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
 	Purpose        *string
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
-	DeletedAt      pgtype.Timestamptz
-	DeletedReason  *string
 	SearchText     interface{}
 	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
-	SmartQuery *string
+	SmartQuery    *string
+	DeletedAt     pgtype.Timestamptz
+	DeletedReason *string
 }
 
 type CollectionAcl struct {
@@ -409,6 +408,8 @@ type FeaturedItem struct {
 	Position         int32
 	CreatedAt        pgtype.Timestamptz
 	CreatedByUserRef *int64
+	Scope            string
+	TeamID           pgtype.UUID
 }
 
 type FederationDirectory struct {
@@ -736,7 +737,6 @@ type Post struct {
 	SearchText            interface{}
 	OriginServerID        pgtype.UUID
 	DeletedAt             pgtype.Timestamptz
-	DeletedReason         *string
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
 	StateID               pgtype.UUID
@@ -744,6 +744,7 @@ type Post struct {
 	CoverThumbnailAssetID pgtype.UUID
 	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
 	SubtitleTrackOverride []byte
+	DeletedReason         *string
 }
 
 type PostAcl struct {

@@ -13,7 +13,6 @@
     name: string;
     description: string;
     visibility: string;
-    featured: boolean;
     owner_user_ref: number;
     created_at: string;
   }
@@ -50,7 +49,6 @@
           description: description.trim(),
           visibility,
           membership: 'manual',
-          featured: false,
         },
       });
       if (apiErr || !data) {

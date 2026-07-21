@@ -26,15 +26,16 @@ func (q *Queries) DeleteFeaturedItem(ctx context.Context, id pgtype.UUID) (int64
 }
 
 const insertFeaturedItem = `-- name: InsertFeaturedItem :one
-INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref)
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope)
 VALUES (
     $1,
     $2,
     COALESCE($3::integer,
              (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items)),
-    $4::bigint
+    $4::bigint,
+    COALESCE($5::text, 'org')
 )
-RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref
+RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref, scope, team_id
 `
 
 type InsertFeaturedItemParams struct {
@@ -42,18 +43,23 @@ type InsertFeaturedItemParams struct {
 	SubjectID        pgtype.UUID
 	Position         *int32
 	CreatedByUserRef *int64
+	Scope            *string
 }
 
 // Adds one subject to the curation list. When position is NULL the
-// row appends to the end (max existing position + 1). The
-// (subject_kind, subject_id) unique constraint makes a duplicate add
-// a 23505 the handler maps to 409.
+// row appends to the end (max existing position + 1). Scope defaults
+// to 'org' — the admin surface curates the internal list, and a
+// public placement is a deliberate act (ADR 0065). The
+// (subject_kind, subject_id, scope, team_id) unique constraint makes
+// a duplicate add WITHIN ONE AUDIENCE a 23505 the handler maps to
+// 409, while still allowing the same subject at another scope.
 func (q *Queries) InsertFeaturedItem(ctx context.Context, arg InsertFeaturedItemParams) (FeaturedItem, error) {
 	row := q.db.QueryRow(ctx, insertFeaturedItem,
 		arg.SubjectKind,
 		arg.SubjectID,
 		arg.Position,
 		arg.CreatedByUserRef,
+		arg.Scope,
 	)
 	var i FeaturedItem
 	err := row.Scan(
@@ -63,6 +69,8 @@ func (q *Queries) InsertFeaturedItem(ctx context.Context, arg InsertFeaturedItem
 		&i.Position,
 		&i.CreatedAt,
 		&i.CreatedByUserRef,
+		&i.Scope,
+		&i.TeamID,
 	)
 	return i, err
 }
