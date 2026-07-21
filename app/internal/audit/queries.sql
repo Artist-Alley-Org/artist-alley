@@ -13,12 +13,18 @@ INSERT INTO audit_events (
 -- name: RecentAuditEventsForUser :many
 -- Powers "your recent activity" surfaces. The partial index on
 -- (subject_user_ref, occurred_at DESC) keeps this fast.
+--
+-- `ip` is deliberately NOT selected (#458). Actor IP is personal data
+-- gated behind system.audit.pii.read (#425), and this query has no
+-- caller today — so leaving ip in the SELECT was a latent trap: a
+-- future caller would render it un-gated. When per-user activity does
+-- need IP, it wires through the same includeIP gate as the export path
+-- (audit/export.go) rather than pulling the raw column here.
 SELECT id,
        event_type,
        occurred_at,
        subject_user_ref,
        actor_user_ref,
-       ip,
        user_agent,
        metadata
 FROM audit_events
