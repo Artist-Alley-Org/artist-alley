@@ -72,6 +72,15 @@ updates:
       majors:
         patterns: ["*"]
         update-types: [major]
+    ignore:
+      # TypeScript 7 (the new native/Go compiler) is ahead of the toolchain:
+      # SvelteKit 2.70's peer range is `^5.3.3 || ^6.0.0`, so a TS-major bump
+      # fails `npm ci` (ERESOLVE) and fast-fails every build/test check
+      # deterministically (#454, closed). Hold TS at 5.x until SvelteKit (and
+      # @scalar/* / svelte-check) widen their peer ranges to `^7`; remove this
+      # entry then. Non-major TS + all other majors (e.g. @types/node) still flow.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions — pin updates land alongside the workflows.
   - package-ecosystem: github-actions
