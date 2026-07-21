@@ -651,6 +651,13 @@ map to the milestones below.
 > (grounded in the code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered
 > backlog, not a promise of one release each.
 
+> **On the milestones past v0.6.0:** every open issue is assigned to a version in
+> **dependency order** — nothing sits in a milestone that depends on a later one. The
+> *sizes* are provisional: several later milestones hold more epics than a single release
+> has ever shipped, and each gets a scope-cut when it is actually planned (grounded in the
+> code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered backlog, not a
+> promise of one release each.
+
 - **v0.6.0 — scheduled-action engine + audit completion** (foundation slice,
   scope-cut 2026-07-21). The greenfield **scheduled-action engine** (#40 — embargo
   auto-lift, reveal-with-logging, the executor #44/#51/#52-retention all depend on),
