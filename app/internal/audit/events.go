@@ -115,6 +115,15 @@ const (
 	// without diffing changesets on an unrelated event.
 	EventAdminPublicModeUpdated = "admin.system.public_mode_updated"
 
+	// #40 — the scheduled-action engine (ADR 0020). Each execution
+	// writes one of these, tx-bound with the domain change, so the
+	// audit log IS the "trail" ADR 0020's action shape refers to and
+	// what makes scheduled-action history Enterprise-exportable. The
+	// executed event's metadata carries the before/after of the change
+	// (old->new sensitivity, etc.); the failed event carries the error.
+	EventScheduledActionExecuted = "scheduled_action.executed"
+	EventScheduledActionFailed   = "scheduled_action.failed"
+
 	// Phase 1.16.B-5-followup — search feedback abuse-review event.
 	// Fires whenever an admin opens the per-user feedback log page
 	// so we have an audit trail for who's browsing which user's

@@ -497,3 +497,16 @@ sql:
         emit_interface: false
         emit_prepared_queries: false
         emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/scheduledactions/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: scheduledactions
+        out: internal/scheduledactions
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false

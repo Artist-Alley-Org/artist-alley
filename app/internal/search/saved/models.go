@@ -815,6 +815,20 @@ type SavedSearch struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type ScheduledAction struct {
+	ID           pgtype.UUID
+	Action       string
+	TargetKind   string
+	TargetID     string
+	Params       []byte
+	ScheduledFor pgtype.Timestamptz
+	State        string
+	Error        *string
+	CreatedBy    *int64
+	CreatedAt    pgtype.Timestamptz
+	ExecutedAt   pgtype.Timestamptz
+}
+
 type SearchFeedback struct {
 	ID          pgtype.UUID
 	QueryHash   string
