@@ -224,6 +224,15 @@ type AuditEvent struct {
 	Ip             *netip.Addr
 	UserAgent      *string
 	Metadata       []byte
+	LegalHold      bool
+	Category       *string
+}
+
+type AuditRetentionPolicy struct {
+	Category  string
+	Retention pgtype.Interval
+	UpdatedBy *int64
+	UpdatedAt pgtype.Timestamptz
 }
 
 type BrushPack struct {
