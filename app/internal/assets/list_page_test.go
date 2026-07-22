@@ -388,9 +388,9 @@ func TestListAssetsPage_PreviewAvailable(t *testing.T) {
 	pool := listPagePool(t)
 	ctx := context.Background()
 
-	pub := seedAssetWithCol(t, pool, "public", listPageOwner, true)         // readable + col
+	pub := seedAssetWithCol(t, pool, "public", listPageOwner, true)            // readable + col
 	restricted := seedAssetWithCol(t, pool, "restricted", listPageOwner, true) // owner-only + col
-	pubNoCol := seedAssetWithCol(t, pool, "public", listPageOwner, false)   // readable, NO col
+	pubNoCol := seedAssetWithCol(t, pool, "public", listPageOwner, false)      // readable, NO col
 
 	find := func(rows []ListAssetsPageGatedRow, id uuid.UUID) (ListAssetsPageGatedRow, bool) {
 		for _, r := range rows {
