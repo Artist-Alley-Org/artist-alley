@@ -5221,6 +5221,34 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /posts/by-asset/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPostsByAsset
+      summary: Posts that feature an asset (post-by-asset lookup)
+      description: |
+        The visibility-filtered list of posts whose members include the
+        given asset (#478 slice-2, ADR 0070). An asset is a many-to-many
+        member of ≥0 posts, so this returns 0..N. Anonymous-visible under
+        public mode (ADR 0063), returning only public posts; authenticated
+        callers see the walled-garden tier — the SAME gating as the feed,
+        no new enforcement plane. The client redirects when exactly one
+        post is visible and lists when several.
+      tags: [posts]
+      security: []
+      responses:
+        "200":
+          description: Visible posts featuring the asset (possibly empty)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /posts/{id}:
     parameters:
       - name: id

@@ -836,6 +836,63 @@ func (h *Handler) ListPosts(
 	return openapi.ListPosts200JSONResponse(resp), nil
 }
 
+// GetPostsByAsset returns the visibility-filtered posts whose members
+// include the given asset (#478 slice-2, ADR 0070). An asset is a
+// many-to-many member of ≥0 posts, so this is a slice of the same feed
+// keyed on the asset — no new enforcement plane.
+//
+// Anonymous admission is decided upstream by the public-mode gate
+// (auth.PublicSurfaceRoutes): with public mode off an anonymous request
+// never reaches here. Visibility mirrors the feed — anonymous sees only
+// 'public' posts, an authenticated caller sees the walled-garden
+// 'org-only' tier. Bounded result (no cursor); the client redirects when
+// exactly one post is visible and lists when several.
+func (h *Handler) GetPostsByAsset(
+	ctx context.Context,
+	req openapi.GetPostsByAssetRequestObject,
+) (openapi.GetPostsByAssetResponseObject, error) {
+	// Anonymous → public tier only. Authenticated → the walled-garden
+	// view (public + org-only), the same tiers the feed shows. The
+	// relationship tiers (private / followers / explicit-share) need
+	// ownership/relationship checks and are out of scope for this lookup.
+	visibilities := []string{"public"}
+	if auth.IdentityFromContext(ctx) != nil {
+		visibilities = append(visibilities, "org-only")
+	}
+
+	ids, err := New(h.Pool).ListPostsByAsset(ctx, ListPostsByAssetParams{
+		AssetID:      pgtype.UUID{Bytes: req.Id, Valid: true},
+		Visibilities: visibilities,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("posts: by asset: %w", err)
+	}
+
+	items := make([]openapi.Post, 0, len(ids))
+	for _, id := range ids {
+		full, err := h.fetchFullPost(ctx, id)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue // raced deletion between the list and the fetch
+			}
+			return nil, err
+		}
+		items = append(items, *full)
+	}
+
+	// preview_available (#471) is per-caller — derive it from the
+	// request identity, same as ListPosts.
+	ptrs := make([]*openapi.Post, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+
+	return openapi.GetPostsByAsset200JSONResponse(openapi.PostList{Items: items}), nil
+}
+
 // ---------------------------------------------------------------------------
 // AddPostAsset / RemovePostAsset
 // ---------------------------------------------------------------------------

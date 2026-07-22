@@ -480,6 +480,52 @@ func (q *Queries) ListPostTags(ctx context.Context, postID pgtype.UUID) ([]strin
 	return items, nil
 }
 
+const listPostsByAsset = `-- name: ListPostsByAsset :many
+SELECT id
+FROM posts p
+WHERE p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM post_assets pa
+                WHERE pa.post_id = p.id
+                  AND pa.asset_id = $1::UUID)
+  AND p.visibility = ANY($2::TEXT[])
+ORDER BY p.posted_at DESC, p.id DESC
+LIMIT 200
+`
+
+type ListPostsByAssetParams struct {
+	AssetID      pgtype.UUID
+	Visibilities []string
+}
+
+// Posts whose members include a given asset (#478 slice-2, post-by-asset
+// lookup). An asset is a many-to-many member of ≥0 posts via post_assets,
+// so this returns the visibility-filtered set. `visibilities` is the set
+// of tiers the caller may see — the handler passes {'public'} for an
+// anonymous caller and {'public','org-only'} for an authenticated one
+// (the same walled-garden view as the feed; the relationship tiers
+// private/followers/explicit-share are out of scope here). Bounded (no
+// cursor) — an asset lands in few posts, and the client only needs
+// "redirect if one, list if several". Newest first.
+func (q *Queries) ListPostsByAsset(ctx context.Context, arg ListPostsByAssetParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPostsByAsset, arg.AssetID, arg.Visibilities)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPostsPage = `-- name: ListPostsPage :many
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, posted_at, like_count, comment_count,

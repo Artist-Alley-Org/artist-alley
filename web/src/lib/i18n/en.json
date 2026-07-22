@@ -2562,5 +2562,10 @@
       "collections": "Collections",
       "assets": "Assets"
     }
+  },
+  "post_by_asset": {
+    "title": "Posts featuring this asset",
+    "heading": "Posts featuring this asset",
+    "none": "No posts feature this asset, or none are visible to you."
   }
 }
