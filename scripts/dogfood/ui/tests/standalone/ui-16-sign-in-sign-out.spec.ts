@@ -13,9 +13,15 @@
 
 import { test, expect } from '../../helpers/test';
 import { tid } from '../../helpers/testids';
+import { LOGGED_OUT } from '../../helpers/auth';
 
 const ADMIN_USER = process.env.AA_DOGFOOD_ADMIN_USER ?? 'admin';
 const ADMIN_PASS = process.env.AA_DOGFOOD_ADMIN_PASS ?? 'ArtistAlleyMogul';
+
+// This spec's SUBJECT is the login flow, so it must start LOGGED OUT —
+// opt out of the shared admin session (#481) that the rest of the
+// standalone suite reuses, and drive the real /login form + sign-out.
+test.use({ storageState: LOGGED_OUT });
 
 test.describe('UI-16 sign-in + sign-out round-trip', () => {
   test('happy-path login lands at /', async ({ page }) => {
