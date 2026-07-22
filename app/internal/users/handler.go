@@ -279,6 +279,7 @@ type publicRow struct {
 	SocialLinks           []byte // raw JSONB
 	Language              string
 	Theme                 string
+	HideFromAnonymous     bool
 	ProfileOriginServerID pgtype.UUID
 }
 
@@ -288,6 +289,7 @@ func fromByRef(r GetUserPublicByRefRow) publicRow {
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
 		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
+		HideFromAnonymous:     r.HideFromAnonymous,
 		ProfileOriginServerID: r.ProfileOriginServerID,
 	}
 }
@@ -298,6 +300,7 @@ func fromByUsername(r GetUserPublicByUsernameRow) publicRow {
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
 		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
+		HideFromAnonymous:     r.HideFromAnonymous,
 		ProfileOriginServerID: r.ProfileOriginServerID,
 	}
 }
@@ -332,7 +335,7 @@ func (h *Handler) GetUserPublicByRef(
 		}
 		return nil, fmt.Errorf("users: get by ref: %w", err)
 	}
-	out, err := h.rowToAPI(ctx, q, fromByRef(row))
+	out, err := h.rowToAPI(ctx, q, fromByRef(row), false)
 	if err != nil {
 		return nil, err
 	}
@@ -343,19 +346,22 @@ func (h *Handler) GetUserPublicByRef(
 }
 
 // ---------------------------------------------------------------------------
-// GetUserPublicByUsername
+// GetUserPublicByUsername / GetUserPublicByRefPath — the public profile
+// pages (#478, ADR 0070). Anonymous admission is decided upstream by the
+// public-mode gate (auth.PublicSurfaceRoutes): with public mode off an
+// anonymous request never reaches here (middleware 401s); with it on the
+// caller arrives as anonymous. So there's no 401 here — instead the
+// anonymous path (a) 404s when the owner opted out of anonymous exposure
+// (ADR 0024, don't confirm existence) and (b) strips personal data beyond
+// the display layer (no real name — ADR 0070 §3). The content lists are a
+// separate owner-scoped browse (/assets, /collections, /posts).
 // ---------------------------------------------------------------------------
 
 func (h *Handler) GetUserPublicByUsername(
 	ctx context.Context,
 	req openapi.GetUserPublicByUsernameRequestObject,
 ) (openapi.GetUserPublicByUsernameResponseObject, error) {
-	caller := auth.IdentityFromContext(ctx)
-	if caller == nil {
-		return openapi.GetUserPublicByUsername401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
+	anonymous := auth.IdentityFromContext(ctx) == nil
 	q := New(h.Pool)
 	username := req.Username
 	row, err := q.GetUserPublicByUsername(ctx, &username)
@@ -367,11 +373,45 @@ func (h *Handler) GetUserPublicByUsername(
 		}
 		return nil, fmt.Errorf("users: get by username: %w", err)
 	}
-	out, err := h.rowToAPI(ctx, q, fromByUsername(row))
+	pr := fromByUsername(row)
+	if anonymous && pr.HideFromAnonymous {
+		return openapi.GetUserPublicByUsername404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "user not found"},
+		}, nil
+	}
+	out, err := h.rowToAPI(ctx, q, pr, anonymous)
 	if err != nil {
 		return nil, err
 	}
 	return openapi.GetUserPublicByUsername200JSONResponse(*out), nil
+}
+
+func (h *Handler) GetUserPublicByRefPath(
+	ctx context.Context,
+	req openapi.GetUserPublicByRefPathRequestObject,
+) (openapi.GetUserPublicByRefPathResponseObject, error) {
+	anonymous := auth.IdentityFromContext(ctx) == nil
+	q := New(h.Pool)
+	row, err := q.GetUserPublicByRef(ctx, req.Ref)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.GetUserPublicByRefPath404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "user not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("users: get public by ref: %w", err)
+	}
+	pr := fromByRef(row)
+	if anonymous && pr.HideFromAnonymous {
+		return openapi.GetUserPublicByRefPath404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "user not found"},
+		}, nil
+	}
+	out, err := h.rowToAPI(ctx, q, pr, anonymous)
+	if err != nil {
+		return nil, err
+	}
+	return openapi.GetUserPublicByRefPath200JSONResponse(*out), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +532,13 @@ func (h *Handler) UpdateUserProfile(
 			}, nil
 		}
 	}
+	// Opt-out from anonymous exposure (#478). PATCH: absent keeps the
+	// existing value — otherwise an unrelated edit would silently reset
+	// a user's opt-out to false.
+	hideFromAnon := existing.HideFromAnonymous
+	if req.Body.HideFromAnonymous != nil {
+		hideFromAnon = *req.Body.HideFromAnonymous
+	}
 
 	// Gold-standard path: UpsertUserProfile + Update(Actor)
 	// activity in one tx per AP §6.3 / §7.3. Only fires when the
@@ -517,15 +564,16 @@ func (h *Handler) UpdateUserProfile(
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
 			_, err := New(tx).UpsertUserProfile(ctx, UpsertUserProfileParams{
-				UserRef:     req.Ref,
-				DisplayName: &displayName,
-				Bio:         bio,
-				AvatarUrl:   avatarURL,
-				Location:    location,
-				WebsiteUrl:  websiteURL,
-				SocialLinks: socialLinks,
-				Language:    language,
-				Theme:       theme,
+				UserRef:           req.Ref,
+				DisplayName:       &displayName,
+				Bio:               bio,
+				AvatarUrl:         avatarURL,
+				Location:          location,
+				WebsiteUrl:        websiteURL,
+				SocialLinks:       socialLinks,
+				Language:          language,
+				Theme:             theme,
+				HideFromAnonymous: hideFromAnon,
 			})
 			return err
 		})
@@ -536,15 +584,16 @@ func (h *Handler) UpdateUserProfile(
 		// Legacy fallback: admin-edits-other (no activity) + the
 		// test path (no activities writer wired).
 		if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
-			UserRef:     req.Ref,
-			DisplayName: &displayName,
-			Bio:         bio,
-			AvatarUrl:   avatarURL,
-			Location:    location,
-			WebsiteUrl:  websiteURL,
-			SocialLinks: socialLinks,
-			Language:    language,
-			Theme:       theme,
+			UserRef:           req.Ref,
+			DisplayName:       &displayName,
+			Bio:               bio,
+			AvatarUrl:         avatarURL,
+			Location:          location,
+			WebsiteUrl:        websiteURL,
+			SocialLinks:       socialLinks,
+			Language:          language,
+			Theme:             theme,
+			HideFromAnonymous: hideFromAnon,
 		}); err != nil {
 			return nil, fmt.Errorf("users: upsert profile: %w", err)
 		}
@@ -592,7 +641,7 @@ func (h *Handler) UpdateUserProfile(
 	if err != nil {
 		return nil, fmt.Errorf("users: refetch: %w", err)
 	}
-	out, err := h.rowToAPI(ctx, q, fromByRef(row))
+	out, err := h.rowToAPI(ctx, q, fromByRef(row), false)
 	if err != nil {
 		return nil, err
 	}
@@ -631,9 +680,12 @@ type profileSnapshot struct {
 //  3. user.username
 //
 // The frontend never has to do this resolution itself.
-func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*openapi.UserPublic, error) {
+func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow, anonymous bool) (*openapi.UserPublic, error) {
 	display := r.DisplayName
-	if display == "" && r.Fullname != nil && *r.Fullname != "" {
+	// An anonymous viewer must never see the real name (ADR 0070 §3) —
+	// not directly, and not smuggled through the display_name fallback.
+	// So skip the fullname rung for anonymous: display_name → username.
+	if display == "" && !anonymous && r.Fullname != nil && *r.Fullname != "" {
 		display = *r.Fullname
 	}
 	if display == "" && r.Username != nil {
@@ -671,7 +723,8 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 	if r.Username != nil {
 		out.Username = *r.Username
 	}
-	if r.Fullname != nil && *r.Fullname != "" {
+	// Real name is authenticated-only (ADR 0070 §3).
+	if !anonymous && r.Fullname != nil && *r.Fullname != "" {
 		out.Fullname = r.Fullname
 	}
 	if len(socialMap) > 0 {
@@ -696,6 +749,7 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 // Compile-time strict-server interface assertion.
 var _ interface {
 	GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error)
+	GetUserPublicByRefPath(context.Context, openapi.GetUserPublicByRefPathRequestObject) (openapi.GetUserPublicByRefPathResponseObject, error)
 	GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error)
 	UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error)
 } = (*Handler)(nil)

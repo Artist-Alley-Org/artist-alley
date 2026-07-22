@@ -1320,6 +1320,11 @@ func (*PanicShim) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnota
 	panic("PanicShim: UpdateTextAnnotation called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetUserPublicByRefPath panics by default; test shims override.
+func (*PanicShim) GetUserPublicByRefPath(context.Context, openapi.GetUserPublicByRefPathRequestObject) (openapi.GetUserPublicByRefPathResponseObject, error) {
+	panic("PanicShim: GetUserPublicByRefPath called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetUserPublicByUsername panics by default; test shims override.
 func (*PanicShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
 	panic("PanicShim: GetUserPublicByUsername called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

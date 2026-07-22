@@ -1,103 +1,103 @@
 {
-    "nav": {
-      "upload": "Upload",
-      "search_placeholder": "Search assets…",
-      "messages": "Messages",
-      "notifications": "Notifications",
-      "notifications_coming_soon": "Notifications — coming soon",
-      "open_user_menu": "Open user menu",
-      "open_admin_menu": "Open admin menu",
-      "explore": "Explore",
-      "gallery": "Gallery",
-      "menu": "Menu",
-      "blogs": "Blogs",
-      "collections": "Collections",
-      "review": "Review",
-      "advanced_search": "Advanced search",
-      "upload_button_title": "Upload (or drop files anywhere)"
+  "nav": {
+    "upload": "Upload",
+    "search_placeholder": "Search assets…",
+    "messages": "Messages",
+    "notifications": "Notifications",
+    "notifications_coming_soon": "Notifications — coming soon",
+    "open_user_menu": "Open user menu",
+    "open_admin_menu": "Open admin menu",
+    "explore": "Explore",
+    "gallery": "Gallery",
+    "menu": "Menu",
+    "blogs": "Blogs",
+    "collections": "Collections",
+    "review": "Review",
+    "advanced_search": "Advanced search",
+    "upload_button_title": "Upload (or drop files anywhere)"
+  },
+  "search": {
+    "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
+    "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search.",
+    "facets_heading": "Facets",
+    "advanced_builder": "Advanced builder",
+    "save_search_button": "Save search",
+    "save_as_collection": "Save as collection",
+    "query_placeholder": "Type a query…",
+    "counter": "Showing {n} of {total} results",
+    "searching": "Searching…",
+    "no_matches": "No matches. Try a different query.",
+    "federated_badge": "Federated",
+    "err_generic": "Search failed: {status}",
+    "clear": "Clear search",
+    "suggestions_heading": "Suggestions",
+    "recent_heading": "Recent searches",
+    "clear_history": "Clear",
+    "save_collection": {
+      "dialog_label": "Save search as collection",
+      "heading": "Save these results as a collection",
+      "name_label": "Collection name",
+      "submit": "Save collection",
+      "save_failed": "Save failed: {status} {err}",
+      "saved": "Saved {n} results.",
+      "saved_truncated": "Saved {n} results (truncated to first 100)."
     },
-    "search": {
-      "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
-      "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search.",
-      "facets_heading": "Facets",
-      "advanced_builder": "Advanced builder",
-      "save_search_button": "Save search",
-      "save_as_collection": "Save as collection",
-      "query_placeholder": "Type a query…",
-      "counter": "Showing {n} of {total} results",
-      "searching": "Searching…",
-      "no_matches": "No matches. Try a different query.",
-      "federated_badge": "Federated",
-      "err_generic": "Search failed: {status}",
-      "clear": "Clear search",
-      "suggestions_heading": "Suggestions",
-      "recent_heading": "Recent searches",
-      "clear_history": "Clear",
-      "save_collection": {
-        "dialog_label": "Save search as collection",
-        "heading": "Save these results as a collection",
-        "name_label": "Collection name",
-        "submit": "Save collection",
-        "save_failed": "Save failed: {status} {err}",
-        "saved": "Saved {n} results.",
-        "saved_truncated": "Saved {n} results (truncated to first 100)."
-      },
-      "save_search": {
-        "dialog_label": "Save search",
-        "heading": "Save this search for updates",
-        "body": "We'll re-run this query on your interval and email you when new matches appear.",
-        "name_label": "Name",
-        "interval_label": "Notify every (minutes)",
-        "channel_label": "Notification channel",
-        "channel_email": "Email digest",
-        "channel_none": "Track only (no email)",
-        "submit": "Save search",
-        "save_failed": "Save failed: {status} {err}",
-        "saved": "Saved. Runs every {minutes} minutes."
-      },
-      "advanced": {
-        "title": "Advanced search",
-        "heading": "Advanced search",
-        "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
-        "freetext_label": "Free-text query (optional)",
-        "freetext_placeholder": "cat OR dog",
-        "not": "NOT",
-        "value_placeholder": "value",
-        "remove_row": "Remove row",
-        "add_row": "+ Add row",
-        "compiled_dsl": "Compiled DSL",
-        "compiled_empty": "(empty)",
-        "field": {
-          "title": "Title",
-          "description": "Description / body",
-          "tag": "Tag",
-          "owner": "Owner (username or ref)",
-          "type": "Asset type",
-          "sensitivity": "Sensitivity",
-          "extension": "File extension",
-          "similar_to": "Similar to asset (UUID)"
-        }
-      },
-      "by_image": {
-        "heading": "Search by image",
-        "hint": "Find assets that look like your image — drop one below.",
-        "drop_prompt": "Drop an image here, or click to choose",
-        "drag_active": "Drop to search",
-        "preview_alt": "Selected image preview",
-        "submit": "Search by image",
-        "searching": "Searching by image…",
-        "results_heading": "Visually-similar results",
-        "results_count": "{n} visually-similar results",
-        "no_results": "No visually-similar assets found.",
-        "similarity_badge": "{pct}% match",
-        "err_too_large": "Image exceeds the maximum size ({mb} MB).",
-        "err_not_image": "That file isn't a supported image.",
-        "err_rate_limited": "Too many searches — try again shortly.",
-        "err_not_configured": "Visual search isn't configured on this instance.",
-        "err_unavailable": "The visual-search service is temporarily unavailable. Try again shortly.",
-        "err_generic": "Reverse-image search failed. Try again."
+    "save_search": {
+      "dialog_label": "Save search",
+      "heading": "Save this search for updates",
+      "body": "We'll re-run this query on your interval and email you when new matches appear.",
+      "name_label": "Name",
+      "interval_label": "Notify every (minutes)",
+      "channel_label": "Notification channel",
+      "channel_email": "Email digest",
+      "channel_none": "Track only (no email)",
+      "submit": "Save search",
+      "save_failed": "Save failed: {status} {err}",
+      "saved": "Saved. Runs every {minutes} minutes."
+    },
+    "advanced": {
+      "title": "Advanced search",
+      "heading": "Advanced search",
+      "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
+      "freetext_label": "Free-text query (optional)",
+      "freetext_placeholder": "cat OR dog",
+      "not": "NOT",
+      "value_placeholder": "value",
+      "remove_row": "Remove row",
+      "add_row": "+ Add row",
+      "compiled_dsl": "Compiled DSL",
+      "compiled_empty": "(empty)",
+      "field": {
+        "title": "Title",
+        "description": "Description / body",
+        "tag": "Tag",
+        "owner": "Owner (username or ref)",
+        "type": "Asset type",
+        "sensitivity": "Sensitivity",
+        "extension": "File extension",
+        "similar_to": "Similar to asset (UUID)"
       }
     },
+    "by_image": {
+      "heading": "Search by image",
+      "hint": "Find assets that look like your image — drop one below.",
+      "drop_prompt": "Drop an image here, or click to choose",
+      "drag_active": "Drop to search",
+      "preview_alt": "Selected image preview",
+      "submit": "Search by image",
+      "searching": "Searching by image…",
+      "results_heading": "Visually-similar results",
+      "results_count": "{n} visually-similar results",
+      "no_results": "No visually-similar assets found.",
+      "similarity_badge": "{pct}% match",
+      "err_too_large": "Image exceeds the maximum size ({mb} MB).",
+      "err_not_image": "That file isn't a supported image.",
+      "err_rate_limited": "Too many searches — try again shortly.",
+      "err_not_configured": "Visual search isn't configured on this instance.",
+      "err_unavailable": "The visual-search service is temporarily unavailable. Try again shortly.",
+      "err_generic": "Reverse-image search failed. Try again."
+    }
+  },
   "blogs": {
     "intro": "Long-form writing from artists and curators.",
     "coming_soon": "The blogs surface lands in a follow-up phase. The route is here now so navbar links don't 404."
@@ -106,65 +106,65 @@
     "intro": "Critique requests, approval queues, and per-asset annotations.",
     "coming_soon": "The review surface lands in a follow-up phase."
   },
-    "browse": {
-      "footer": {
-        "label": "Browse controls",
-        "toggle": "Change view",
-        "dec_size": "Smaller cards",
-        "inc_size": "Larger cards",
-        "back_to_top": "Back to top"
-      },
-      "view": {
-        "grid": "Grid",
-        "masonry": "Masonry",
-        "feed": "Feed",
-        "thumbnail": "Thumbnail",
-        "list": "List"
-      },
-      "filter": {
-        "label": "Feed filter",
-        "team": "Team",
-        "trending": "Trending",
-        "latest": "Latest",
-        "following": "Following"
-      },
-      "sort": {
-        "toggle": "Toggle sort direction",
-        "newest_first": "Newest first",
-        "oldest_first": "Oldest first",
-        "newest": "Newest",
-        "oldest": "Oldest"
-      },
-      "columns": "Columns",
-      "reset_columns": "Reset to default columns",
-      "list": {
-        "post_singular": "post",
-        "post_plural": "posts",
-        "untitled": "Untitled"
-      },
-      "col": {
-        "thumbnail": "",
-        "title": "Title",
-        "author": "Author",
-        "visibility": "Visibility",
-        "tags": "Tags",
-        "members": "Assets",
-        "likes": "Likes",
-        "comments": "Comments",
-        "posted_at": "Posted",
-        "description": "Description"
-      },
-      "title": "Browse",
-      "title_search": "{query}",
-      "results_for": "Results for {query}",
-      "empty": {
-        "no_matches": "No matches",
-        "no_posts_yet": "No posts yet",
-        "try_different": "Try a different search term.",
-        "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first."
-      },
-      "end_of_feed": "— end of feed —"
+  "browse": {
+    "footer": {
+      "label": "Browse controls",
+      "toggle": "Change view",
+      "dec_size": "Smaller cards",
+      "inc_size": "Larger cards",
+      "back_to_top": "Back to top"
     },
+    "view": {
+      "grid": "Grid",
+      "masonry": "Masonry",
+      "feed": "Feed",
+      "thumbnail": "Thumbnail",
+      "list": "List"
+    },
+    "filter": {
+      "label": "Feed filter",
+      "team": "Team",
+      "trending": "Trending",
+      "latest": "Latest",
+      "following": "Following"
+    },
+    "sort": {
+      "toggle": "Toggle sort direction",
+      "newest_first": "Newest first",
+      "oldest_first": "Oldest first",
+      "newest": "Newest",
+      "oldest": "Oldest"
+    },
+    "columns": "Columns",
+    "reset_columns": "Reset to default columns",
+    "list": {
+      "post_singular": "post",
+      "post_plural": "posts",
+      "untitled": "Untitled"
+    },
+    "col": {
+      "thumbnail": "",
+      "title": "Title",
+      "author": "Author",
+      "visibility": "Visibility",
+      "tags": "Tags",
+      "members": "Assets",
+      "likes": "Likes",
+      "comments": "Comments",
+      "posted_at": "Posted",
+      "description": "Description"
+    },
+    "title": "Browse",
+    "title_search": "{query}",
+    "results_for": "Results for {query}",
+    "empty": {
+      "no_matches": "No matches",
+      "no_posts_yet": "No posts yet",
+      "try_different": "Try a different search term.",
+      "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first."
+    },
+    "end_of_feed": "— end of feed —"
+  },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
     "profile": "Profile",
@@ -832,178 +832,478 @@
         "title": "Identity & access",
         "intro": "Users, roles, groups, sessions, and the audit trail.",
         "tiles": {
-          "users":              { "title": "Users",                "blurb": "List, search, suspend, and assign roles." },
-          "roles":              { "title": "Roles & capabilities", "blurb": "Roles and the capabilities each one grants." },
-          "groups":             { "title": "Groups & teams",       "blurb": "Group analogues and the team hierarchy." },
-          "sessions":           { "title": "Sessions",             "blurb": "Per-user active sessions; revoke any device." },
-          "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." },
-          "requests":           { "title": "Resource requests",    "blurb": "Approve or deny pending access requests." }
+          "users": {
+            "title": "Users",
+            "blurb": "List, search, suspend, and assign roles."
+          },
+          "roles": {
+            "title": "Roles & capabilities",
+            "blurb": "Roles and the capabilities each one grants."
+          },
+          "groups": {
+            "title": "Groups & teams",
+            "blurb": "Group analogues and the team hierarchy."
+          },
+          "sessions": {
+            "title": "Sessions",
+            "blurb": "Per-user active sessions; revoke any device."
+          },
+          "capability_grants": {
+            "title": "Capability grants",
+            "blurb": "Per-user explicit grants and revokes."
+          },
+          "requests": {
+            "title": "Resource requests",
+            "blurb": "Approve or deny pending access requests."
+          }
         }
       },
       "content": {
         "title": "Content & metadata",
         "intro": "Asset types, fields, taxonomies, and the text that wraps them.",
         "tiles": {
-          "asset_types":  { "title": "Asset types",   "blurb": "Asset type registry and the fields each applies." },
-          "fields":          { "title": "Field definitions","blurb": "Metadata schema across every domain." },
-          "metadata_extraction": { "title": "Extraction failures", "blurb": "Per-asset EXIF/IPTC/XMP extraction failures the upload + backfill jobs recorded." },
-          "field_options":   { "title": "Field options",   "blurb": "Controlled vocabularies for select / multiselect fields." },
-          "field_sets":      { "title": "Field sets",      "blurb": "Bundle related fields for reuse across types." },
-          "taxonomy":        { "title": "Tag taxonomy",    "blurb": "Tag hierarchy, aliases, and merge tools." },
-          "site_text":       { "title": "Site text",       "blurb": "Override built-in strings without forking the catalogue." },
-          "email_templates": { "title": "Email templates", "blurb": "Customize outbound mail bodies per event." },
-          "featured":        { "title": "Featured content","blurb": "Curate the assets and collections a home or browse surface spotlights." },
-          "defaults":        { "title": "Group defaults",  "blurb": "Resource defaults applied when a group uploads." }
+          "asset_types": {
+            "title": "Asset types",
+            "blurb": "Asset type registry and the fields each applies."
+          },
+          "fields": {
+            "title": "Field definitions",
+            "blurb": "Metadata schema across every domain."
+          },
+          "metadata_extraction": {
+            "title": "Extraction failures",
+            "blurb": "Per-asset EXIF/IPTC/XMP extraction failures the upload + backfill jobs recorded."
+          },
+          "field_options": {
+            "title": "Field options",
+            "blurb": "Controlled vocabularies for select / multiselect fields."
+          },
+          "field_sets": {
+            "title": "Field sets",
+            "blurb": "Bundle related fields for reuse across types."
+          },
+          "taxonomy": {
+            "title": "Tag taxonomy",
+            "blurb": "Tag hierarchy, aliases, and merge tools."
+          },
+          "site_text": {
+            "title": "Site text",
+            "blurb": "Override built-in strings without forking the catalogue."
+          },
+          "email_templates": {
+            "title": "Email templates",
+            "blurb": "Customize outbound mail bodies per event."
+          },
+          "featured": {
+            "title": "Featured content",
+            "blurb": "Curate the assets and collections a home or browse surface spotlights."
+          },
+          "defaults": {
+            "title": "Group defaults",
+            "blurb": "Resource defaults applied when a group uploads."
+          }
         }
       },
       "storage": {
         "title": "Storage & assets",
         "intro": "Backends, usage, dedupe, and the byte-level cleanup tools.",
         "tiles": {
-          "backends":   { "title": "Storage backends", "blurb": "Filesystem or S3 config and active backend selection." },
-          "usage":      { "title": "Storage usage",   "blurb": "Deduplicated bytes on disk, originals vs derivatives, by type and backend." },
-          "variants":   { "title": "Variants & previews", "blurb": "Derivative families — counts and size share of each." },
-          "orphans":    { "title": "Orphan bytes",    "blurb": "Storage entries no live asset references." },
-          "duplicates": { "title": "Duplicate detection", "blurb": "Phash-based clustering and merge tools." },
-          "checksums":  { "title": "Checksum verification", "blurb": "Re-hash stored bytes and report drift." },
-          "reimport":   { "title": "Bulk re-import",  "blurb": "Re-scan and re-process from source." },
-          "trash":      { "title": "Trash",           "blurb": "Soft-deleted assets, posts, and collections — restore or purge." }
+          "backends": {
+            "title": "Storage backends",
+            "blurb": "Filesystem or S3 config and active backend selection."
+          },
+          "usage": {
+            "title": "Storage usage",
+            "blurb": "Deduplicated bytes on disk, originals vs derivatives, by type and backend."
+          },
+          "variants": {
+            "title": "Variants & previews",
+            "blurb": "Derivative families — counts and size share of each."
+          },
+          "orphans": {
+            "title": "Orphan bytes",
+            "blurb": "Storage entries no live asset references."
+          },
+          "duplicates": {
+            "title": "Duplicate detection",
+            "blurb": "Phash-based clustering and merge tools."
+          },
+          "checksums": {
+            "title": "Checksum verification",
+            "blurb": "Re-hash stored bytes and report drift."
+          },
+          "reimport": {
+            "title": "Bulk re-import",
+            "blurb": "Re-scan and re-process from source."
+          },
+          "trash": {
+            "title": "Trash",
+            "blurb": "Soft-deleted assets, posts, and collections — restore or purge."
+          }
         }
       },
       "jobs": {
         "title": "Processing pipeline",
         "intro": "Background jobs, workers, and the render farm bridge.",
         "tiles": {
-          "queue":       { "title": "Job queue",     "blurb": "Live queue dashboard and depth per kind." },
-          "workers":     { "title": "Workers",       "blurb": "Active workers, capabilities, and last-heartbeat." },
-          "kinds":       { "title": "Job kinds",     "blurb": "Registered job types and their per-type concurrency cap." },
-          "failed":      { "title": "Failed jobs",   "blurb": "Inspect, requeue, or cancel failed jobs." },
-          "schedules":   { "title": "Schedules",     "blurb": "Pending work dated to run in the future." },
-          "live":        { "title": "Live progress", "blurb": "SSE stream of running jobs and progress." },
-          "render_farm": { "title": "Render farm",   "blurb": "Tractor / external render-farm adapter status." }
+          "queue": {
+            "title": "Job queue",
+            "blurb": "Live queue dashboard and depth per kind."
+          },
+          "workers": {
+            "title": "Workers",
+            "blurb": "Active workers, capabilities, and last-heartbeat."
+          },
+          "kinds": {
+            "title": "Job kinds",
+            "blurb": "Registered job types and their per-type concurrency cap."
+          },
+          "failed": {
+            "title": "Failed jobs",
+            "blurb": "Inspect, requeue, or cancel failed jobs."
+          },
+          "schedules": {
+            "title": "Schedules",
+            "blurb": "Pending work dated to run in the future."
+          },
+          "live": {
+            "title": "Live progress",
+            "blurb": "SSE stream of running jobs and progress."
+          },
+          "render_farm": {
+            "title": "Render farm",
+            "blurb": "Tractor / external render-farm adapter status."
+          }
         }
       },
       "search": {
         "title": "Search & discovery",
         "intro": "Index health, analytics, and the saved / smart query surfaces.",
         "tiles": {
-          "index":     { "title": "Search index",   "blurb": "TSVECTOR health and per-domain coverage." },
-          "reindex":   { "title": "Reindex",         "blurb": "Rebuild the search index for any domain." },
-          "analytics": { "title": "Search analytics","blurb": "Top queries, no-result queries, click-through." },
-          "synonyms":  { "title": "Synonyms & boosts","blurb": "Stem expansions and per-term boosts." },
-          "saved":     { "title": "Saved searches",  "blurb": "Admin view of every user's saved searches." },
-          "smart":     { "title": "Smart collections","blurb": "Query-driven membership editor." }
+          "index": {
+            "title": "Search index",
+            "blurb": "TSVECTOR health and per-domain coverage."
+          },
+          "reindex": {
+            "title": "Reindex",
+            "blurb": "Rebuild the search index for any domain."
+          },
+          "analytics": {
+            "title": "Search analytics",
+            "blurb": "Top queries, no-result queries, click-through."
+          },
+          "synonyms": {
+            "title": "Synonyms & boosts",
+            "blurb": "Stem expansions and per-term boosts."
+          },
+          "saved": {
+            "title": "Saved searches",
+            "blurb": "Admin view of every user's saved searches."
+          },
+          "smart": {
+            "title": "Smart collections",
+            "blurb": "Query-driven membership editor."
+          }
         }
       },
       "automation": {
         "title": "Workflow & automation",
         "intro": "State machines, triggers, webhooks, and the audit they emit.",
         "tiles": {
-          "workflow":          { "title": "Workflow states", "blurb": "Per-domain state machines and transitions." },
-          "audit":             { "title": "Audit log",  "blurb": "System-wide trail of security- and policy-relevant events." },
-          "triggers":          { "title": "Triggers",        "blurb": "Event → action rules across the install." },
-          "webhooks":          { "title": "Webhooks",        "blurb": "Outbound HTTP calls on selected events." },
-          "notifications":     { "title": "Notification rules","blurb": "Who gets pinged for what event." },
-          "scheduled_exports": { "title": "Scheduled exports","blurb": "Recurring dumps to S3 or filesystem." }
+          "workflow": {
+            "title": "Workflow states",
+            "blurb": "Per-domain state machines and transitions."
+          },
+          "audit": {
+            "title": "Audit log",
+            "blurb": "System-wide trail of security- and policy-relevant events."
+          },
+          "triggers": {
+            "title": "Triggers",
+            "blurb": "Event → action rules across the install."
+          },
+          "webhooks": {
+            "title": "Webhooks",
+            "blurb": "Outbound HTTP calls on selected events."
+          },
+          "notifications": {
+            "title": "Notification rules",
+            "blurb": "Who gets pinged for what event."
+          },
+          "scheduled_exports": {
+            "title": "Scheduled exports",
+            "blurb": "Recurring dumps to S3 or filesystem."
+          }
         }
       },
       "moderation": {
         "title": "Community & moderation",
         "intro": "Reports, the moderation queue, and the safety knobs around them.",
         "tiles": {
-          "reports":        { "title": "Reports",         "blurb": "User-submitted reports awaiting review." },
-          "queue":          { "title": "Moderation queue","blurb": "Pending posts and comments under review." },
-          "comments":       { "title": "Comment moderation","blurb": "Per-post comment moderation tools." },
-          "banned":         { "title": "Banned users & IPs","blurb": "Block list across user / IP / range." },
-          "flagging_rules": { "title": "Flagging rules",  "blurb": "Auto-flag triggers and the rules behind them." },
-          "anonymous":      { "title": "Anonymous browse","blurb": "Whether non-signed-in visitors can browse." },
-          "rate_limits":    { "title": "Rate limiting",   "blurb": "Per-user and per-IP rate-limit policy." }
+          "reports": {
+            "title": "Reports",
+            "blurb": "User-submitted reports awaiting review."
+          },
+          "queue": {
+            "title": "Moderation queue",
+            "blurb": "Pending posts and comments under review."
+          },
+          "comments": {
+            "title": "Comment moderation",
+            "blurb": "Per-post comment moderation tools."
+          },
+          "banned": {
+            "title": "Banned users & IPs",
+            "blurb": "Block list across user / IP / range."
+          },
+          "flagging_rules": {
+            "title": "Flagging rules",
+            "blurb": "Auto-flag triggers and the rules behind them."
+          },
+          "anonymous": {
+            "title": "Anonymous browse",
+            "blurb": "Whether non-signed-in visitors can browse."
+          },
+          "rate_limits": {
+            "title": "Rate limiting",
+            "blurb": "Per-user and per-IP rate-limit policy."
+          }
         }
       },
       "federation": {
         "title": "Federation",
         "intro": "Paired instances, the activities they exchange, and the policy that governs both.",
         "tiles": {
-          "peers":       { "title": "Peers",          "blurb": "Paired instances + handshake state. Pairing alone shares no content (1.22.C aa:Share is the access-control layer)." },
-          "directories": { "title": "Directories",    "blurb": "Subscribed federation directories used for peer discovery. Discovery only; pairing still goes through the handshake." },
-          "shares":      { "title": "Shares",         "blurb": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views." },
-          "outbox":      { "title": "Outbox",         "blurb": "Per-recipient delivery queue. Re-queue failed rows; LISTEN/NOTIFY drives sub-1s p99 latency." },
-          "inbox":       { "title": "Inbox",          "blurb": "Inbound activities from paired peers + their dispatch state. Read-only." },
-          "blocklist":   { "title": "Block list",     "blurb": "Peers this instance refuses to federate with. Lands with the moderation hooks in Phase 1.22.G." },
-          "activitypub": { "title": "Public fediverse compatibility", "blurb": "webfinger + nodeinfo + per-user inbox URLs so ActivityPub clients can discover this instance. Opt-in; walled-garden installs stay instance-level." }
+          "peers": {
+            "title": "Peers",
+            "blurb": "Paired instances + handshake state. Pairing alone shares no content (1.22.C aa:Share is the access-control layer)."
+          },
+          "directories": {
+            "title": "Directories",
+            "blurb": "Subscribed federation directories used for peer discovery. Discovery only; pairing still goes through the handshake."
+          },
+          "shares": {
+            "title": "Shares",
+            "blurb": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views."
+          },
+          "outbox": {
+            "title": "Outbox",
+            "blurb": "Per-recipient delivery queue. Re-queue failed rows; LISTEN/NOTIFY drives sub-1s p99 latency."
+          },
+          "inbox": {
+            "title": "Inbox",
+            "blurb": "Inbound activities from paired peers + their dispatch state. Read-only."
+          },
+          "blocklist": {
+            "title": "Block list",
+            "blurb": "Peers this instance refuses to federate with. Lands with the moderation hooks in Phase 1.22.G."
+          },
+          "activitypub": {
+            "title": "Public fediverse compatibility",
+            "blurb": "webfinger + nodeinfo + per-user inbox URLs so ActivityPub clients can discover this instance. Opt-in; walled-garden installs stay instance-level."
+          }
         }
       },
       "integrations": {
         "title": "Integrations",
         "intro": "APIs, OAuth apps, webhooks, and the plugin registry.",
         "tiles": {
-          "api_explorer": { "title": "API Explorer",  "blurb": "Interactive browser for every endpoint." },
-          "api_tokens":   { "title": "API tokens",    "blurb": "Admin view of every user's personal tokens." },
-          "oauth_apps":   { "title": "OAuth applications","blurb": "Third-party apps registered with this install." },
-          "webhooks":     { "title": "Outbound webhooks","blurb": "Cross-listed from automation; managed here." },
-          "plugins":      { "title": "Plugins",       "blurb": "Enable, disable, and configure per-plugin settings." },
-          "outbound":     { "title": "Outbound services","blurb": "CDN, AI providers, and mail relay status." }
+          "api_explorer": {
+            "title": "API Explorer",
+            "blurb": "Interactive browser for every endpoint."
+          },
+          "api_tokens": {
+            "title": "API tokens",
+            "blurb": "Admin view of every user's personal tokens."
+          },
+          "oauth_apps": {
+            "title": "OAuth applications",
+            "blurb": "Third-party apps registered with this install."
+          },
+          "webhooks": {
+            "title": "Outbound webhooks",
+            "blurb": "Cross-listed from automation; managed here."
+          },
+          "plugins": {
+            "title": "Plugins",
+            "blurb": "Enable, disable, and configure per-plugin settings."
+          },
+          "outbound": {
+            "title": "Outbound services",
+            "blurb": "CDN, AI providers, and mail relay status."
+          }
         }
       },
       "system": {
         "title": "System",
         "intro": "Per-install settings. Persisted in the system_config table.",
         "tiles": {
-          "site":         { "title": "Site",          "blurb": "Display name and base URL." },
-          "smtp":         { "title": "SMTP",          "blurb": "Outbound email server." },
-          "auth":         { "title": "Authentication","blurb": "Password policy and SSO providers." },
-          "self_edit_gates": { "title": "User self-edit", "blurb": "Per-field locks for what users can edit on their own profile." },
-          "license":      { "title": "License",       "blurb": "Installation license status, tier, and upload." },
-          "ai":           { "title": "AI",            "blurb": "Provider credentials, inference routing, cost dashboard, and tag provenance — one hub." },
-          "log":          { "title": "System log",    "blurb": "Audit trail of admin actions." },
-          "activities":   { "title": "Activity ledger","blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received (per ADR 0044)." },
-          "themes":       { "title": "Themes & branding","blurb": "Brand colors and custom CSS hooks." },
-          "maintenance":  { "title": "Maintenance mode","blurb": "Read-only mode and the banner shown to users." },
-          "feature_flags":{ "title": "Feature flags", "blurb": "Per-flag rollout toggles." },
-          "backup":       { "title": "Backup & restore","blurb": "Snapshot and restore the install." },
-          "dbtools":      { "title": "Database tools","blurb": "Vacuum, reindex, and migration status." },
-          "performance":  { "title": "Performance",   "blurb": "Request throughput, p95 latency, query times." },
-          "health":       { "title": "Health",        "blurb": "DB, storage, and queue connectivity probes." }
+          "site": {
+            "title": "Site",
+            "blurb": "Display name and base URL."
+          },
+          "smtp": {
+            "title": "SMTP",
+            "blurb": "Outbound email server."
+          },
+          "auth": {
+            "title": "Authentication",
+            "blurb": "Password policy and SSO providers."
+          },
+          "self_edit_gates": {
+            "title": "User self-edit",
+            "blurb": "Per-field locks for what users can edit on their own profile."
+          },
+          "license": {
+            "title": "License",
+            "blurb": "Installation license status, tier, and upload."
+          },
+          "ai": {
+            "title": "AI",
+            "blurb": "Provider credentials, inference routing, cost dashboard, and tag provenance — one hub."
+          },
+          "log": {
+            "title": "System log",
+            "blurb": "Audit trail of admin actions."
+          },
+          "activities": {
+            "title": "Activity ledger",
+            "blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received (per ADR 0044)."
+          },
+          "themes": {
+            "title": "Themes & branding",
+            "blurb": "Brand colors and custom CSS hooks."
+          },
+          "maintenance": {
+            "title": "Maintenance mode",
+            "blurb": "Read-only mode and the banner shown to users."
+          },
+          "feature_flags": {
+            "title": "Feature flags",
+            "blurb": "Per-flag rollout toggles."
+          },
+          "backup": {
+            "title": "Backup & restore",
+            "blurb": "Snapshot and restore the install."
+          },
+          "dbtools": {
+            "title": "Database tools",
+            "blurb": "Vacuum, reindex, and migration status."
+          },
+          "performance": {
+            "title": "Performance",
+            "blurb": "Request throughput, p95 latency, query times."
+          },
+          "health": {
+            "title": "Health",
+            "blurb": "DB, storage, and queue connectivity probes."
+          }
         }
       },
       "reports": {
         "title": "Reports & analytics",
         "intro": "Usage, activity, performance, and the dashboards that surface them.",
         "tiles": {
-          "asset_usage":    { "title": "Asset usage",  "blurb": "Views, downloads, and the hot-asset list." },
-          "user_activity":  { "title": "User activity","blurb": "Uploads, comments, last-active per user." },
-          "storage_trends": { "title": "Storage trends","blurb": "Disk growth over time and per backend." },
-          "job_perf":       { "title": "Job performance","blurb": "Throughput and failure rate per job kind." },
-          "dashboards":     { "title": "Custom dashboards","blurb": "Drag-drop tiles with saved layouts." },
-          "scheduled":      { "title": "Scheduled reports","blurb": "Emailed digests on a cron." },
-          "export":         { "title": "Export",        "blurb": "CSV and S3 destinations for any report." }
+          "asset_usage": {
+            "title": "Asset usage",
+            "blurb": "Views, downloads, and the hot-asset list."
+          },
+          "user_activity": {
+            "title": "User activity",
+            "blurb": "Uploads, comments, last-active per user."
+          },
+          "storage_trends": {
+            "title": "Storage trends",
+            "blurb": "Disk growth over time and per backend."
+          },
+          "job_perf": {
+            "title": "Job performance",
+            "blurb": "Throughput and failure rate per job kind."
+          },
+          "dashboards": {
+            "title": "Custom dashboards",
+            "blurb": "Drag-drop tiles with saved layouts."
+          },
+          "scheduled": {
+            "title": "Scheduled reports",
+            "blurb": "Emailed digests on a cron."
+          },
+          "export": {
+            "title": "Export",
+            "blurb": "CSV and S3 destinations for any report."
+          }
         }
       },
       "tools": {
         "title": "Maintenance tools",
         "intro": "One-shot operations against the install — use with care.",
         "tiles": {
-          "reindex":         { "title": "Reindex search",    "blurb": "Rebuild TSVECTOR coverage for any domain." },
-          "regen_previews":  { "title": "Regenerate previews","blurb": "Re-render every variant for selected assets." },
-          "re_exif":         { "title": "Re-extract EXIF",   "blurb": "Pull metadata out of stored bytes again." },
-          "checksum_verify": { "title": "Verify checksums",  "blurb": "Hash stored bytes and report drift." },
-          "find_orphans":    { "title": "Find orphan bytes", "blurb": "Storage with no live asset reference." },
-          "find_missing":    { "title": "Find missing files","blurb": "Asset rows whose bytes vanished." },
-          "dummy_data":      { "title": "Dummy data",        "blurb": "Generator for dev / test scenarios." },
-          "bulk_import":     { "title": "Bulk import",       "blurb": "CSV or folder-tree ingest pipeline." },
-          "bulk_export":     { "title": "Bulk export",       "blurb": "Dump selected assets to filesystem or S3." },
-          "migrate":         { "title": "Migration helpers", "blurb": "DB / filestore migration utilities." }
+          "reindex": {
+            "title": "Reindex search",
+            "blurb": "Rebuild TSVECTOR coverage for any domain."
+          },
+          "regen_previews": {
+            "title": "Regenerate previews",
+            "blurb": "Re-render every variant for selected assets."
+          },
+          "re_exif": {
+            "title": "Re-extract EXIF",
+            "blurb": "Pull metadata out of stored bytes again."
+          },
+          "checksum_verify": {
+            "title": "Verify checksums",
+            "blurb": "Hash stored bytes and report drift."
+          },
+          "find_orphans": {
+            "title": "Find orphan bytes",
+            "blurb": "Storage with no live asset reference."
+          },
+          "find_missing": {
+            "title": "Find missing files",
+            "blurb": "Asset rows whose bytes vanished."
+          },
+          "dummy_data": {
+            "title": "Dummy data",
+            "blurb": "Generator for dev / test scenarios."
+          },
+          "bulk_import": {
+            "title": "Bulk import",
+            "blurb": "CSV or folder-tree ingest pipeline."
+          },
+          "bulk_export": {
+            "title": "Bulk export",
+            "blurb": "Dump selected assets to filesystem or S3."
+          },
+          "migrate": {
+            "title": "Migration helpers",
+            "blurb": "DB / filestore migration utilities."
+          }
         }
       },
       "help": {
         "title": "Help & about",
         "intro": "Documentation, shortcuts, release notes, and how to reach support.",
         "tiles": {
-          "docs":          { "title": "Documentation",   "blurb": "Per-feature documentation index." },
-          "shortcuts":     { "title": "Keyboard shortcuts","blurb": "Cheatsheet for every keyboard shortcut." },
-          "about":         { "title": "About",           "blurb": "Version, build, and license info." },
-          "release_notes": { "title": "Release notes",   "blurb": "Changelog across published versions." },
-          "support":       { "title": "Support",         "blurb": "How to reach us and where to file issues." }
+          "docs": {
+            "title": "Documentation",
+            "blurb": "Per-feature documentation index."
+          },
+          "shortcuts": {
+            "title": "Keyboard shortcuts",
+            "blurb": "Cheatsheet for every keyboard shortcut."
+          },
+          "about": {
+            "title": "About",
+            "blurb": "Version, build, and license info."
+          },
+          "release_notes": {
+            "title": "Release notes",
+            "blurb": "Changelog across published versions."
+          },
+          "support": {
+            "title": "Support",
+            "blurb": "How to reach us and where to file issues."
+          }
         }
       }
     },
@@ -1039,7 +1339,7 @@
       "joined": "Joined",
       "actions": "Actions",
       "load_more": "Load more",
-      "loading": "Loading users\u2026",
+      "loading": "Loading users…",
       "auth_origin_native": "Native",
       "never_active": "Never",
       "no_role": "—",
@@ -1064,13 +1364,13 @@
       "transition_archive": "Archive",
       "transition_restore": "Restore",
       "status_terminal": "No transitions available for this state.",
-      "status_no_change": "No change \u2014 user is already in that state.",
+      "status_no_change": "No change — user is already in that state.",
       "status_updated": "Status updated to {status}.",
       "reset_section": "Password reset",
       "reset_intro": "Generate a one-shot password for this user. Share it with them over a trusted channel; they'll be signed out of every device and must use this password on their next sign-in.",
       "reset_reason": "Reason (optional)",
       "reset_button": "Generate temporary password",
-      "resetting": "Generating\u2026",
+      "resetting": "Generating…",
       "reset_result_label": "Temporary password — copy now; this won't be shown again:",
       "reset_copy": "Copy",
       "reset_copied": "Copied.",
@@ -1140,10 +1440,10 @@
       "create_name_placeholder": "Design / VFX",
       "create_description": "Description",
       "create_submit": "Create team",
-      "creating": "Creating\u2026",
+      "creating": "Creating…",
       "list_section": "All teams",
-      "loading": "Loading teams\u2026",
-      "no_teams": "No teams yet \u2014 create one above.",
+      "loading": "Loading teams…",
+      "no_teams": "No teams yet — create one above.",
       "team_count": "{count} teams",
       "open_team": "Open {name}",
       "col_name": "Name",
@@ -1153,24 +1453,24 @@
     },
     "team_detail": {
       "title": "Team: {name}",
-      "back": "\u2190 All teams",
+      "back": "← All teams",
       "edit_section": "Details",
       "edit_name": "Name",
       "edit_description": "Description",
       "edit_save": "Save changes",
-      "edit_saving": "Saving\u2026",
+      "edit_saving": "Saving…",
       "edit_saved": "Saved.",
       "delete_button": "Delete team",
       "delete_confirm": "Delete this team? Membership rows and any team-scoped capability grants will be removed. Continue?",
-      "deleting": "Deleting\u2026",
+      "deleting": "Deleting…",
       "parents_section": "Parents",
       "parents_intro": "Add a parent and this team automatically inherits team-scoped grants targeting it. Cycles are rejected by the database.",
-      "no_parents": "No parents \u2014 this team is a root.",
+      "no_parents": "No parents — this team is a root.",
       "add_parent_label": "Add parent (team UUID)",
       "add_parent_button": "Add parent",
       "remove_parent_button": "Remove",
       "members_section": "Members",
-      "members_intro": "Membership is explicit per-team \u2014 descendants do not auto-include. Add by user ref.",
+      "members_intro": "Membership is explicit per-team — descendants do not auto-include. Add by user ref.",
       "no_members": "No members yet.",
       "add_member_label": "Add member (user ref)",
       "add_member_button": "Add member",
@@ -1353,7 +1653,7 @@
         "save": "Save site",
         "saved": "Site saved.",
         "public_title": "Public access",
-        "public_help": "When on, anyone can browse assets, collections and search without signing in. They still only ever see public-tier items \u2014 team, restricted and embargoed content stays hidden, and downloads follow the same rule. When off, every one of those pages asks visitors to sign in first.",
+        "public_help": "When on, anyone can browse assets, collections and search without signing in. They still only ever see public-tier items — team, restricted and embargoed content stays hidden, and downloads follow the same rule. When off, every one of those pages asks visitors to sign in first.",
         "public_toggle": "Let visitors browse without signing in",
         "public_on": "This install is public.",
         "public_off": "This install is private.",
@@ -1687,23 +1987,23 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
-    "messages": {
-      "title": "Messages",
-      "empty": "No conversations yet.",
-      "empty_full": "You haven't exchanged any direct messages yet.",
-      "all_caught_up": "You're all caught up.",
-      "unread_count": "{count} unread",
-      "from_me_prefix": "You: ",
-      "see_all": "See all messages",
-      "thread": "Conversation",
-      "thread_empty": "No messages yet — say hi.",
-      "back_to_inbox": "Back to inbox",
-      "compose_placeholder": "Write a message…",
-      "send": "Send",
-      "load_error": "Couldn't load messages.",
-      "send_error": "Couldn't send.",
-      "you_prefix": "You: "
-    },
+  "messages": {
+    "title": "Messages",
+    "empty": "No conversations yet.",
+    "empty_full": "You haven't exchanged any direct messages yet.",
+    "all_caught_up": "You're all caught up.",
+    "unread_count": "{count} unread",
+    "from_me_prefix": "You: ",
+    "see_all": "See all messages",
+    "thread": "Conversation",
+    "thread_empty": "No messages yet — say hi.",
+    "back_to_inbox": "Back to inbox",
+    "compose_placeholder": "Write a message…",
+    "send": "Send",
+    "load_error": "Couldn't load messages.",
+    "send_error": "Couldn't send.",
+    "you_prefix": "You: "
+  },
   "notifications": {
     "title": "Notifications",
     "empty": "No notifications yet.",
@@ -1857,85 +2157,85 @@
     "resend_button": "Send a new link",
     "resend_sent": "Sent — check your inbox."
   },
-    "collections": {
-      "title": "Collections",
-      "tagline": "Group posts and assets together — share, organise, or stage for review.",
-      "new": "New collection",
-      "new_first": "Create your first collection",
-      "new_title": "New collection",
-      "edit_title": "Edit collection",
-      "share_title": "Share collection",
-      "name": "Name",
-      "description": "Description",
-      "visibility": "Visibility",
-      "vis_private": "Private",
-      "vis_org_only": "Org-only",
-      "vis_followers": "Followers",
-      "vis_explicit_share": "Explicit share",
-      "vis_shared": "Shared",
-      "vis_public": "Public",
-      "featured": "Featured",
-      "rail_title": "Featured",
+  "collections": {
+    "title": "Collections",
+    "tagline": "Group posts and assets together — share, organise, or stage for review.",
+    "new": "New collection",
+    "new_first": "Create your first collection",
+    "new_title": "New collection",
+    "edit_title": "Edit collection",
+    "share_title": "Share collection",
+    "name": "Name",
+    "description": "Description",
+    "visibility": "Visibility",
+    "vis_private": "Private",
+    "vis_org_only": "Org-only",
+    "vis_followers": "Followers",
+    "vis_explicit_share": "Explicit share",
+    "vis_shared": "Shared",
+    "vis_public": "Public",
+    "featured": "Featured",
+    "rail_title": "Featured",
     "featured_flag": "Feature this collection on the hub",
-      "untitled": "Untitled collection",
-      "create": "Create",
-      "creating": "Creating…",
-      "saving": "Saving…",
-      "search_placeholder": "Search collections…",
-      "tab_mine": "Mine",
-      "tab_featured": "Featured",
-      "tab_public": "Public",
-      "tab_shared": "Shared with me",
-      "tab_all": "All",
-      "empty_mine": "You haven't created any collections yet.",
-      "empty_featured": "No featured collections yet.",
-      "empty_public": "No public collections yet.",
-      "empty_shared": "No collections have been shared with you yet.",
-      "empty_all": "No collections match your filter.",
-      "detail_empty": "No assets in this collection yet.",
-      "upload_here": "Upload here",
-      "upload_first": "Upload first asset",
-      "add_posts": "Add posts",
-      "add_posts_soon": "Post-level membership lands in a follow-up commit.",
-      "share": "Share",
-      "more": "More actions",
-      "edit": "Edit details",
-      "manage_members": "Manage members",
-      "manage_members_soon": "Drag-reorder + bulk remove coming soon.",
-      "set_cover": "Set cover",
-      "set_cover_soon": "Custom cover picker coming soon.",
-      "delete": "Delete collection",
-      "delete_soon": "Delete confirmation flow coming soon.",
-      "share_add_heading": "Grant access",
-      "share_existing_heading": "Current grants",
-      "share_empty": "No one else has access yet.",
-      "principal_user": "User",
-      "principal_role": "Role",
-      "principal_team": "Team",
-      "principal_id_placeholder": "id or username",
-      "perm_read": "Read",
-      "perm_write": "Write",
-      "perm_admin": "Admin",
-      "error_load": "Couldn't load collections.",
-      "error_create": "Couldn't create the collection.",
-      "error_save": "Couldn't save the collection.",
-      "error_not_found": "Collection not found.",
-      "not_found_or_private": "This collection isn't available.",
-      "not_found_or_private_hint": "It may have been removed, or it isn't public.",
-      "not_found_sign_in_hint": "If you have access to it, sign in to view it.",
-      "conflict_heading": "Someone else edited this collection",
-      "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
-      "conflict_overwrite": "Overwrite their changes with mine",
-      "error_load_share": "Couldn't load sharing settings.",
-      "error_add_share": "Couldn't add the grant.",
-      "error_remove_share": "Couldn't revoke the grant.",
-      "include_deleted": "Include deleted",
-      "restore_failed": "restore failed",
-      "deleted_at_banner": "Deleted {date}",
-      "deleted_reason": "— {reason}",
-      "restoring": "Restoring…",
-      "restore": "Restore"
-    },
+    "untitled": "Untitled collection",
+    "create": "Create",
+    "creating": "Creating…",
+    "saving": "Saving…",
+    "search_placeholder": "Search collections…",
+    "tab_mine": "Mine",
+    "tab_featured": "Featured",
+    "tab_public": "Public",
+    "tab_shared": "Shared with me",
+    "tab_all": "All",
+    "empty_mine": "You haven't created any collections yet.",
+    "empty_featured": "No featured collections yet.",
+    "empty_public": "No public collections yet.",
+    "empty_shared": "No collections have been shared with you yet.",
+    "empty_all": "No collections match your filter.",
+    "detail_empty": "No assets in this collection yet.",
+    "upload_here": "Upload here",
+    "upload_first": "Upload first asset",
+    "add_posts": "Add posts",
+    "add_posts_soon": "Post-level membership lands in a follow-up commit.",
+    "share": "Share",
+    "more": "More actions",
+    "edit": "Edit details",
+    "manage_members": "Manage members",
+    "manage_members_soon": "Drag-reorder + bulk remove coming soon.",
+    "set_cover": "Set cover",
+    "set_cover_soon": "Custom cover picker coming soon.",
+    "delete": "Delete collection",
+    "delete_soon": "Delete confirmation flow coming soon.",
+    "share_add_heading": "Grant access",
+    "share_existing_heading": "Current grants",
+    "share_empty": "No one else has access yet.",
+    "principal_user": "User",
+    "principal_role": "Role",
+    "principal_team": "Team",
+    "principal_id_placeholder": "id or username",
+    "perm_read": "Read",
+    "perm_write": "Write",
+    "perm_admin": "Admin",
+    "error_load": "Couldn't load collections.",
+    "error_create": "Couldn't create the collection.",
+    "error_save": "Couldn't save the collection.",
+    "error_not_found": "Collection not found.",
+    "not_found_or_private": "This collection isn't available.",
+    "not_found_or_private_hint": "It may have been removed, or it isn't public.",
+    "not_found_sign_in_hint": "If you have access to it, sign in to view it.",
+    "conflict_heading": "Someone else edited this collection",
+    "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
+    "conflict_overwrite": "Overwrite their changes with mine",
+    "error_load_share": "Couldn't load sharing settings.",
+    "error_add_share": "Couldn't add the grant.",
+    "error_remove_share": "Couldn't revoke the grant.",
+    "include_deleted": "Include deleted",
+    "restore_failed": "restore failed",
+    "deleted_at_banner": "Deleted {date}",
+    "deleted_reason": "— {reason}",
+    "restoring": "Restoring…",
+    "restore": "Restore"
+  },
   "errors": {
     "save_failed": "Couldn't save changes."
   },
@@ -1997,11 +2297,11 @@
     "bulk_tag": "Tag all",
     "share_playlist": "Share playlist"
   },
-    "post_menu": {
-      "edit_post": "Edit post…",
-      "delete_post": "Delete post…",
-      "actions_button": "Post actions"
-    },
+  "post_menu": {
+    "edit_post": "Edit post…",
+    "delete_post": "Delete post…",
+    "actions_button": "Post actions"
+  },
   "viewer_hotkeys": {
     "title": "Shortcuts",
     "title_tips": "Tips",
@@ -2062,193 +2362,205 @@
     "by_extension": "By extension",
     "filter_to_ext": "Filter the tree to .{ext} entries"
   },
-    "post": {
-      "detail": {
-        "title": "Post"
-      }
-    },
-    "comments": {
-      "err_load": "Failed to load comments",
-      "err_post": "Failed to post",
-      "err_delete": "Failed to delete",
-      "compose_placeholder": "Add a comment…",
-      "submit_label": "Comment",
-      "empty": "No comments yet — be the first.",
-      "edited_at_title": "Edited {when}",
-      "edited_marker": "(edited)",
-      "reply": "Reply",
-      "reply_placeholder": "Reply…",
-      "user_ref_fallback": "user {ref}"
-    },
-    "federation": {
-      "banner_aria_label": "Encrypted federation status",
-      "not_supported_headline": "Encrypted federation is not yet supported.",
-      "page_body": "Activities that target restricted or embargo sensitivity objects will not federate to peers until Phase 1.22.I lands encrypted delivery. The share records you grant today are persisted, so when encrypted federation ships those backlogged activities will federate automatically — but until then, expect zero outbound federation for sensitive objects.",
-      "grant_headline": "This object is marked {sensitivity} — encrypted federation is not yet supported.",
-      "grant_body": "Sharing now will create the share record but no activities will federate until Phase 1.22.I ships encrypted delivery. You can:",
-      "opt_share_anyway": "Share anyway, knowing activity federation is paused for this object until 1.22.I; or",
-      "opt_cancel": "Cancel and downgrade the object’s sensitivity to a non-restricted tier first."
-    },
-    "post_host": {
-      "asset_details_heading": "Asset Details",
-      "whiteboards_heading": "Whiteboards",
-      "whiteboards_empty": "No whiteboards yet — click Tools → Whiteboard to sketch.",
-      "metadata_heading": "Metadata",
-      "like_button": "Like",
-      "unlike_button": "Unlike"
-    },
-    "whiteboard": {
-      "preview_dialog_label": "Whiteboard preview",
-      "untitled_sketch": "Untitled sketch",
-      "close_esc_title": "Close (Esc)",
-      "close_preview": "Close preview",
-      "title_slot_label": "Whiteboard",
-      "preview_button_title": "Preview whiteboard",
-      "delete_button": "Delete whiteboard"
-    },
-    "post_badges": {
-      "team": "team"
-    },
-    "user_meta": {
-      "post_count": "{n} posts"
-    },
-    "viewer_playlist": {
-      "prev_asset": "Previous asset",
-      "next_asset": "Next asset",
-      "resize_strip": "Resize playlist strip",
-      "show_strip": "Show asset strip",
-      "hide_strip": "Hide asset strip",
-      "show_asset_n": "Show asset {n}",
-      "empty": "No assets in this playlist."
-    },
-    "setup": {
-      "title": "First-run setup",
-      "heading": "First-run setup",
-      "body": "Create the first administrator and configure your site. You can change any of this later.",
-      "section": {
-        "administrator": "Administrator",
-        "site": "Site"
-      },
-      "admin": {
-        "username": "Username",
-        "email": "Email",
-        "fullname": "Full name",
-        "password": "Password",
-        "password_confirm": "Confirm password",
-        "password_hint": "At least 8 characters."
-      },
-      "site": {
-        "name": "Site name",
-        "base_url": "Base URL",
-        "base_url_placeholder": "https://art.example.com",
-        "base_url_helper": "Used in outgoing links (e.g. password reset). May be left blank now."
-      },
-      "smtp": {
-        "configure_now": "Configure now",
-        "host": "Host",
-        "port": "Port",
-        "encryption": "Encryption",
-        "encryption_none": "None",
-        "from_address": "From address",
-        "from_placeholder": "Site <noreply@example.com>",
-        "username": "Username",
-        "password": "Password",
-        "body": "Email features (password reset, notifications) stay disabled until SMTP is configured. You can fill this in later from the admin settings."
-      },
-      "err": {
-        "password_mismatch": "Passwords do not match.",
-        "password_too_short": "Password must be at least 8 characters.",
-        "failed": "Setup failed"
-      },
-      "submit": "Create admin & finish setup"
-    },
-    "playlist": {
-      "err_load_post": "Failed to load post"
-    },
-    "upload": {
-      "err_wait_finish": "Wait for all uploads to finish.",
-      "err_no_files": "No files uploaded.",
-      "err_create_post": "Failed to create post.",
-      "err_create_asset": "Failed to create asset.",
-      "err_upload_failed": "Upload failed.",
-      "err_network": "Network error.",
-      "err_aborted": "Upload aborted.",
-      "err_companion_failed": "Companion upload failed.",
-      "err_load_fields": "Failed to load fields.",
-      "modal": {
-        "submit_save_one": "Save 1 asset",
-        "submit_save_many": "Save {n} assets",
-        "submit_create_posts_one": "Create 1 post",
-        "submit_create_posts_many": "Create {n} posts",
-        "submit_create_post": "Create post",
-        "dropzone_prompt": "Drop files anywhere, or click to choose",
-        "empty_state": "No files yet — drop them on the page or click above.",
-        "status_uploading": "{ready} of {total} ready · still uploading…",
-        "status_ready": "{ready} of {total} ready"
-      },
-      "compose": {
-        "toggle": "Create a post from these assets",
-        "title_placeholder": "Post title (optional)",
-        "title_aria": "Post title",
-        "description_placeholder": "Describe your post (optional)",
-        "description_aria": "Post description",
-        "visibility_label": "Visibility",
-        "visibility_public": "Public",
-        "visibility_followers": "Followers",
-        "visibility_private": "Private",
-        "post_mode_label": "Post mode",
-        "mode_one_post": "One post with all files",
-        "mode_one_per_file": "One post per file",
-        "workflow_state_label": "Workflow state",
-        "workflow_state_default": "Default",
-        "tags_label": "Tags",
-        "remove_tag_aria": "Remove tag {tag}",
-        "tag_placeholder": "press Enter to add",
-        "collection_prefill_note": "Will be added to the current collection."
-      },
-      "dropzone": {
-        "title": "Drop to upload",
-        "subtitle": "Anywhere on the page works."
-      },
-      "file_row": {
-        "fields_load_error": "Failed to load fields.",
-        "state_queued": "Queued",
-        "state_uploading": "Uploading {pct}%",
-        "state_finalizing": "Finalizing",
-        "state_deduped": "Already uploaded",
-        "state_ready": "Ready",
-        "state_failed": "Failed",
-        "title_aria": "Asset title",
-        "remove_title": "Remove from queue",
-        "deduped_note": "Dedup'd from existing bytes",
-        "tag_placeholder": "Add tag…",
-        "remove_tag_aria": "Remove tag {tag}",
-        "metadata_summary": "Metadata",
-        "loading_fields": "Loading fields…",
-        "no_fields": "No fields configured for this resource type.",
-        "field_type_not_editable": "{type} fields aren't editable here yet — edit after upload.",
-        "companions_summary": "Companions",
-        "companions_help": "Drop MTL, texture (.png / .jpg), glTF .bin, or any sibling files the model references by relative path. Edit each row's path to match what the model file expects (e.g. ",
-        "remove_companion_aria": "Remove companion",
-        "add_companion": "+ Add companion files…"
-      },
-      "thumbnail": {
-        "create_cover_error": "Failed to create cover asset.",
-        "upload_error": "Upload failed.",
-        "network_error": "Network error.",
-        "heading": "Post cover thumbnail",
-        "mode_member": "Use a post asset",
-        "mode_crop": "Crop a post asset (soon)",
-        "mode_upload": "Upload a custom cover",
-        "awaiting": "Waiting for uploads to finish — then you can pick which one is the cover.",
-        "default_note": "Defaults to the first asset when nothing is picked.",
-        "hint": "Click \"Upload a custom cover\" above to pick an image.",
-        "uploading": "Uploading {name}… {pct}%",
-        "ready": "Cover ready: {name}",
-        "error_prefix": "Failed: {error}"
-      }
-    },
-    "auth": {
-      "err_invalid_credentials": "Invalid credentials"
+  "post": {
+    "detail": {
+      "title": "Post"
     }
+  },
+  "comments": {
+    "err_load": "Failed to load comments",
+    "err_post": "Failed to post",
+    "err_delete": "Failed to delete",
+    "compose_placeholder": "Add a comment…",
+    "submit_label": "Comment",
+    "empty": "No comments yet — be the first.",
+    "edited_at_title": "Edited {when}",
+    "edited_marker": "(edited)",
+    "reply": "Reply",
+    "reply_placeholder": "Reply…",
+    "user_ref_fallback": "user {ref}"
+  },
+  "federation": {
+    "banner_aria_label": "Encrypted federation status",
+    "not_supported_headline": "Encrypted federation is not yet supported.",
+    "page_body": "Activities that target restricted or embargo sensitivity objects will not federate to peers until Phase 1.22.I lands encrypted delivery. The share records you grant today are persisted, so when encrypted federation ships those backlogged activities will federate automatically — but until then, expect zero outbound federation for sensitive objects.",
+    "grant_headline": "This object is marked {sensitivity} — encrypted federation is not yet supported.",
+    "grant_body": "Sharing now will create the share record but no activities will federate until Phase 1.22.I ships encrypted delivery. You can:",
+    "opt_share_anyway": "Share anyway, knowing activity federation is paused for this object until 1.22.I; or",
+    "opt_cancel": "Cancel and downgrade the object’s sensitivity to a non-restricted tier first."
+  },
+  "post_host": {
+    "asset_details_heading": "Asset Details",
+    "whiteboards_heading": "Whiteboards",
+    "whiteboards_empty": "No whiteboards yet — click Tools → Whiteboard to sketch.",
+    "metadata_heading": "Metadata",
+    "like_button": "Like",
+    "unlike_button": "Unlike"
+  },
+  "whiteboard": {
+    "preview_dialog_label": "Whiteboard preview",
+    "untitled_sketch": "Untitled sketch",
+    "close_esc_title": "Close (Esc)",
+    "close_preview": "Close preview",
+    "title_slot_label": "Whiteboard",
+    "preview_button_title": "Preview whiteboard",
+    "delete_button": "Delete whiteboard"
+  },
+  "post_badges": {
+    "team": "team"
+  },
+  "user_meta": {
+    "post_count": "{n} posts"
+  },
+  "viewer_playlist": {
+    "prev_asset": "Previous asset",
+    "next_asset": "Next asset",
+    "resize_strip": "Resize playlist strip",
+    "show_strip": "Show asset strip",
+    "hide_strip": "Hide asset strip",
+    "show_asset_n": "Show asset {n}",
+    "empty": "No assets in this playlist."
+  },
+  "setup": {
+    "title": "First-run setup",
+    "heading": "First-run setup",
+    "body": "Create the first administrator and configure your site. You can change any of this later.",
+    "section": {
+      "administrator": "Administrator",
+      "site": "Site"
+    },
+    "admin": {
+      "username": "Username",
+      "email": "Email",
+      "fullname": "Full name",
+      "password": "Password",
+      "password_confirm": "Confirm password",
+      "password_hint": "At least 8 characters."
+    },
+    "site": {
+      "name": "Site name",
+      "base_url": "Base URL",
+      "base_url_placeholder": "https://art.example.com",
+      "base_url_helper": "Used in outgoing links (e.g. password reset). May be left blank now."
+    },
+    "smtp": {
+      "configure_now": "Configure now",
+      "host": "Host",
+      "port": "Port",
+      "encryption": "Encryption",
+      "encryption_none": "None",
+      "from_address": "From address",
+      "from_placeholder": "Site <noreply@example.com>",
+      "username": "Username",
+      "password": "Password",
+      "body": "Email features (password reset, notifications) stay disabled until SMTP is configured. You can fill this in later from the admin settings."
+    },
+    "err": {
+      "password_mismatch": "Passwords do not match.",
+      "password_too_short": "Password must be at least 8 characters.",
+      "failed": "Setup failed"
+    },
+    "submit": "Create admin & finish setup"
+  },
+  "playlist": {
+    "err_load_post": "Failed to load post"
+  },
+  "upload": {
+    "err_wait_finish": "Wait for all uploads to finish.",
+    "err_no_files": "No files uploaded.",
+    "err_create_post": "Failed to create post.",
+    "err_create_asset": "Failed to create asset.",
+    "err_upload_failed": "Upload failed.",
+    "err_network": "Network error.",
+    "err_aborted": "Upload aborted.",
+    "err_companion_failed": "Companion upload failed.",
+    "err_load_fields": "Failed to load fields.",
+    "modal": {
+      "submit_save_one": "Save 1 asset",
+      "submit_save_many": "Save {n} assets",
+      "submit_create_posts_one": "Create 1 post",
+      "submit_create_posts_many": "Create {n} posts",
+      "submit_create_post": "Create post",
+      "dropzone_prompt": "Drop files anywhere, or click to choose",
+      "empty_state": "No files yet — drop them on the page or click above.",
+      "status_uploading": "{ready} of {total} ready · still uploading…",
+      "status_ready": "{ready} of {total} ready"
+    },
+    "compose": {
+      "toggle": "Create a post from these assets",
+      "title_placeholder": "Post title (optional)",
+      "title_aria": "Post title",
+      "description_placeholder": "Describe your post (optional)",
+      "description_aria": "Post description",
+      "visibility_label": "Visibility",
+      "visibility_public": "Public",
+      "visibility_followers": "Followers",
+      "visibility_private": "Private",
+      "post_mode_label": "Post mode",
+      "mode_one_post": "One post with all files",
+      "mode_one_per_file": "One post per file",
+      "workflow_state_label": "Workflow state",
+      "workflow_state_default": "Default",
+      "tags_label": "Tags",
+      "remove_tag_aria": "Remove tag {tag}",
+      "tag_placeholder": "press Enter to add",
+      "collection_prefill_note": "Will be added to the current collection."
+    },
+    "dropzone": {
+      "title": "Drop to upload",
+      "subtitle": "Anywhere on the page works."
+    },
+    "file_row": {
+      "fields_load_error": "Failed to load fields.",
+      "state_queued": "Queued",
+      "state_uploading": "Uploading {pct}%",
+      "state_finalizing": "Finalizing",
+      "state_deduped": "Already uploaded",
+      "state_ready": "Ready",
+      "state_failed": "Failed",
+      "title_aria": "Asset title",
+      "remove_title": "Remove from queue",
+      "deduped_note": "Dedup'd from existing bytes",
+      "tag_placeholder": "Add tag…",
+      "remove_tag_aria": "Remove tag {tag}",
+      "metadata_summary": "Metadata",
+      "loading_fields": "Loading fields…",
+      "no_fields": "No fields configured for this resource type.",
+      "field_type_not_editable": "{type} fields aren't editable here yet — edit after upload.",
+      "companions_summary": "Companions",
+      "companions_help": "Drop MTL, texture (.png / .jpg), glTF .bin, or any sibling files the model references by relative path. Edit each row's path to match what the model file expects (e.g. ",
+      "remove_companion_aria": "Remove companion",
+      "add_companion": "+ Add companion files…"
+    },
+    "thumbnail": {
+      "create_cover_error": "Failed to create cover asset.",
+      "upload_error": "Upload failed.",
+      "network_error": "Network error.",
+      "heading": "Post cover thumbnail",
+      "mode_member": "Use a post asset",
+      "mode_crop": "Crop a post asset (soon)",
+      "mode_upload": "Upload a custom cover",
+      "awaiting": "Waiting for uploads to finish — then you can pick which one is the cover.",
+      "default_note": "Defaults to the first asset when nothing is picked.",
+      "hint": "Click \"Upload a custom cover\" above to pick an image.",
+      "uploading": "Uploading {name}… {pct}%",
+      "ready": "Cover ready: {name}",
+      "error_prefix": "Failed: {error}"
+    }
+  },
+  "auth": {
+    "err_invalid_credentials": "Invalid credentials"
+  },
+  "profile": {
+    "not_found": "Profile not found",
+    "not_found_body": "This user does not exist or is not publicly visible.",
+    "member_since": "Member since",
+    "posts": "posts",
+    "no_content": "No public work to show yet.",
+    "section": {
+      "posts": "Posts",
+      "collections": "Collections",
+      "assets": "Assets"
+    }
+  }
 }
