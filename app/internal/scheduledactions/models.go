@@ -1060,18 +1060,19 @@ type UserPreference struct {
 }
 
 type UserProfile struct {
-	UserRef        int64              `json:"user_ref"`
-	DisplayName    *string            `json:"display_name"`
-	Bio            string             `json:"bio"`
-	AvatarUrl      *string            `json:"avatar_url"`
-	Location       string             `json:"location"`
-	WebsiteUrl     *string            `json:"website_url"`
-	SocialLinks    []byte             `json:"social_links"`
-	OriginServerID pgtype.UUID        `json:"origin_server_id"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	Language       string             `json:"language"`
-	Theme          string             `json:"theme"`
+	UserRef           int64              `json:"user_ref"`
+	DisplayName       *string            `json:"display_name"`
+	Bio               string             `json:"bio"`
+	AvatarUrl         *string            `json:"avatar_url"`
+	Location          string             `json:"location"`
+	WebsiteUrl        *string            `json:"website_url"`
+	SocialLinks       []byte             `json:"social_links"`
+	OriginServerID    pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	Language          string             `json:"language"`
+	Theme             string             `json:"theme"`
+	HideFromAnonymous bool               `json:"hide_from_anonymous"`
 }
 
 type UserRole struct {

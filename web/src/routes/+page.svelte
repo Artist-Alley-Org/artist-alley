@@ -12,6 +12,7 @@
   import PostHost from '$components/PostHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
+  import TileGrid from '$components/TileGrid.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
 
@@ -320,7 +321,7 @@
         {/if}
       </div>
     {:else}
-      <div class="posts-grid gap-2" style="--tile-min: {browseView.tileMin}">
+      <TileGrid tileMin={browseView.tileMin}>
         {#each items as post (post.id)}
           <PostCard {post} tileSizesLen={browseView.tileSizesLen} />
         {/each}
@@ -330,7 +331,7 @@
             <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
           {/each}
         {/if}
-      </div>
+      </TileGrid>
     {/if}
 
     {#if hasMore}
@@ -357,35 +358,11 @@
 <BrowseFooter />
 
 <style>
-  /* The whole responsive story for the feed, in two declarations.
-   *
-   * `--tile-min` is a SIZE the user picked; the column count is
-   * whatever fits. 390px → 1 column, 1920px → 5, 3840px → 10, 32:9 →
-   * however many, with no breakpoint, no resize listener, and no
-   * width written down anywhere. Nothing enumerates aspect ratios, so
-   * no aspect ratio can be missed.
-   *
-   * auto-fill, NOT auto-fit: WebKit bug 256047 collapses auto-fit
-   * tracks under inline-size containment, and this grid is exactly
-   * the shape that triggers it. The two differ only when a row is
-   * underfull — auto-fit collapses the empty tracks, so a lone card
-   * would stretch across the whole 3840px row. auto-fill keeps them,
-   * which is both the behaviour we want and the one Safari renders.
-   */
-  :global(.posts-grid) {
-    display: grid;
-    /* `--tile-min` is already a viewport-aware clamp (see
-     * browseView.svelte.ts). Here we only guard overflow: a grid track
-     * can't shrink below its minmax() floor, so at the largest rungs the
-     * floor can exceed a phone's column width — min(…, 100%) degrades
-     * that to a single full-width column instead of scrolling sideways.
-     *
-     * An earlier version capped at a flat 40vw here instead. That pinned
-     * every rung to 2 columns at 390px — the stepper still did nothing,
-     * just at a different count. The fix belonged in the value, not a
-     * cap on it. */
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min, 22rem), 100%), 1fr));
-  }
+  /* The auto-fill tile grid (grid / thumbnail mode) now lives in the
+   * shared TileGrid component — same `--tile-min` responsive story, one
+   * copy, reused by the profile pages. Masonry + feed stay here because
+   * they're post-feed-specific layouts, not the general card grid. */
+
   /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
      the browser fits as many columns as it can. Same lever, same
      token, no `column-count` to guess. */

@@ -103,6 +103,7 @@ SELECT u.ref                                            AS user_ref,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
        COALESCE(p.language, '')                         AS language,
        COALESCE(p.theme, '')                            AS theme,
+       COALESCE(p.hide_from_anonymous, false)           AS hide_from_anonymous,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.user_ref = u.ref
@@ -122,6 +123,7 @@ type GetUserPublicByRefRow struct {
 	SocialLinks           []byte
 	Language              string
 	Theme                 string
+	HideFromAnonymous     bool
 	ProfileOriginServerID pgtype.UUID
 }
 
@@ -154,6 +156,7 @@ func (q *Queries) GetUserPublicByRef(ctx context.Context, ref int64) (GetUserPub
 		&i.SocialLinks,
 		&i.Language,
 		&i.Theme,
+		&i.HideFromAnonymous,
 		&i.ProfileOriginServerID,
 	)
 	return i, err
@@ -172,6 +175,7 @@ SELECT u.ref                                            AS user_ref,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
        COALESCE(p.language, '')                         AS language,
        COALESCE(p.theme, '')                            AS theme,
+       COALESCE(p.hide_from_anonymous, false)           AS hide_from_anonymous,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.user_ref = u.ref
@@ -191,6 +195,7 @@ type GetUserPublicByUsernameRow struct {
 	SocialLinks           []byte
 	Language              string
 	Theme                 string
+	HideFromAnonymous     bool
 	ProfileOriginServerID pgtype.UUID
 }
 
@@ -211,6 +216,7 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 		&i.SocialLinks,
 		&i.Language,
 		&i.Theme,
+		&i.HideFromAnonymous,
 		&i.ProfileOriginServerID,
 	)
 	return i, err
@@ -457,49 +463,52 @@ func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusPara
 const upsertUserProfile = `-- name: UpsertUserProfile :one
 INSERT INTO user_profiles (
     user_ref, display_name, bio, avatar_url, location, website_url,
-    social_links, language, theme
+    social_links, language, theme, hide_from_anonymous
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (user_ref) DO UPDATE SET
-    display_name = EXCLUDED.display_name,
-    bio          = EXCLUDED.bio,
-    avatar_url   = EXCLUDED.avatar_url,
-    location     = EXCLUDED.location,
-    website_url  = EXCLUDED.website_url,
-    social_links = EXCLUDED.social_links,
-    language     = EXCLUDED.language,
-    theme        = EXCLUDED.theme,
-    updated_at   = NOW()
+    display_name        = EXCLUDED.display_name,
+    bio                 = EXCLUDED.bio,
+    avatar_url          = EXCLUDED.avatar_url,
+    location            = EXCLUDED.location,
+    website_url         = EXCLUDED.website_url,
+    social_links        = EXCLUDED.social_links,
+    language            = EXCLUDED.language,
+    theme               = EXCLUDED.theme,
+    hide_from_anonymous = EXCLUDED.hide_from_anonymous,
+    updated_at          = NOW()
 RETURNING user_ref, display_name, bio, avatar_url, location,
           website_url, social_links, language, theme,
-          origin_server_id, created_at, updated_at
+          hide_from_anonymous, origin_server_id, created_at, updated_at
 `
 
 type UpsertUserProfileParams struct {
-	UserRef     int64
-	DisplayName *string
-	Bio         string
-	AvatarUrl   *string
-	Location    string
-	WebsiteUrl  *string
-	SocialLinks []byte
-	Language    string
-	Theme       string
+	UserRef           int64
+	DisplayName       *string
+	Bio               string
+	AvatarUrl         *string
+	Location          string
+	WebsiteUrl        *string
+	SocialLinks       []byte
+	Language          string
+	Theme             string
+	HideFromAnonymous bool
 }
 
 type UpsertUserProfileRow struct {
-	UserRef        int64
-	DisplayName    *string
-	Bio            string
-	AvatarUrl      *string
-	Location       string
-	WebsiteUrl     *string
-	SocialLinks    []byte
-	Language       string
-	Theme          string
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	UserRef           int64
+	DisplayName       *string
+	Bio               string
+	AvatarUrl         *string
+	Location          string
+	WebsiteUrl        *string
+	SocialLinks       []byte
+	Language          string
+	Theme             string
+	HideFromAnonymous bool
+	OriginServerID    pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 // Caller's own profile edit. Idempotent — overwrites existing fields.
@@ -516,6 +525,7 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		arg.SocialLinks,
 		arg.Language,
 		arg.Theme,
+		arg.HideFromAnonymous,
 	)
 	var i UpsertUserProfileRow
 	err := row.Scan(
@@ -528,6 +538,7 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		&i.SocialLinks,
 		&i.Language,
 		&i.Theme,
+		&i.HideFromAnonymous,
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
