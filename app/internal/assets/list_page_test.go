@@ -19,6 +19,8 @@ package assets
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"testing"
 	"time"
@@ -138,7 +140,7 @@ func TestListAssetsPage_AuthenticatedParity(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := ListAssetsPageGated(ctx, pool, caller, c.p)
+			got, err := ListAssetsPageGated(ctx, pool, caller, nil, c.p)
 			if err != nil {
 				t.Fatalf("gated: %v", err)
 			}
@@ -168,7 +170,7 @@ func TestListAssetsPage_AuthenticatedParity(t *testing.T) {
 			id pgtype.UUID
 		}
 		for page := 0; page < 5; page++ {
-			got, err := ListAssetsPageGated(ctx, pool, caller, ListAssetsPageGatedParams{
+			got, err := ListAssetsPageGated(ctx, pool, caller, nil, ListAssetsPageGatedParams{
 				OwnerUserRef: ownerRefPtr(), RowLimit: 2,
 				CursorCreatedAt: gotCursor.ts, CursorID: gotCursor.id,
 			})
@@ -193,7 +195,7 @@ func TestListAssetsPage_AuthenticatedParity(t *testing.T) {
 	})
 }
 
-func assertSameRows(t *testing.T, want, got []ListAssetsPageRow) {
+func assertSameRows(t *testing.T, want []ListAssetsPageRow, got []ListAssetsPageGatedRow) {
 	t.Helper()
 	if len(want) != len(got) {
 		t.Fatalf("row count: sqlc oracle returned %d, gated returned %d", len(want), len(got))
@@ -217,7 +219,7 @@ func TestListAssetsPage_AnonymousGated(t *testing.T) {
 	seedBrowseAssets(t, pool)
 	ctx := context.Background()
 
-	rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(nil), ListAssetsPageGatedParams{
+	rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(nil), nil, ListAssetsPageGatedParams{
 		OwnerUserRef: ownerRefPtr(), RowLimit: 50,
 	})
 	if err != nil {
@@ -247,7 +249,7 @@ func TestListAssetsPage_IncludeDeleted(t *testing.T) {
 	yes := true
 
 	t.Run("authenticated caller sees soft-deleted rows", func(t *testing.T) {
-		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(ownerRefPtr()),
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(ownerRefPtr()), nil,
 			ListAssetsPageGatedParams{OwnerUserRef: ownerRefPtr(), IncludeDeleted: &yes, RowLimit: 50})
 		if err != nil {
 			t.Fatalf("include_deleted: %v", err)
@@ -264,7 +266,7 @@ func TestListAssetsPage_IncludeDeleted(t *testing.T) {
 	})
 
 	t.Run("without the flag, soft-deleted rows stay hidden", func(t *testing.T) {
-		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(ownerRefPtr()),
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(ownerRefPtr()), nil,
 			ListAssetsPageGatedParams{OwnerUserRef: ownerRefPtr(), RowLimit: 50})
 		if err != nil {
 			t.Fatalf("list: %v", err)
@@ -281,7 +283,7 @@ func TestListAssetsPage_IncludeDeleted(t *testing.T) {
 	// anonymous caller reaching this flag still cannot see unpublished
 	// or non-public content — only soft-deleted PUBLIC content.
 	t.Run("the flag never waives publication or sensitivity", func(t *testing.T) {
-		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(nil),
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(nil), nil,
 			ListAssetsPageGatedParams{OwnerUserRef: ownerRefPtr(), IncludeDeleted: &yes, RowLimit: 50})
 		if err != nil {
 			t.Fatalf("anonymous + include_deleted: %v", err)
@@ -338,4 +340,127 @@ func TestGetAsset_AnonymousDenied(t *testing.T) {
 	if err != nil || okDraft {
 		t.Errorf("anonymous admitted a DRAFT asset (ok=%v err=%v)", okDraft, err)
 	}
+}
+
+// hashForAsset derives a unique 64-hex storage hash from an asset id.
+func hashForAsset(id uuid.UUID) string {
+	sum := sha256.Sum256(id[:])
+	return hex.EncodeToString(sum[:])
+}
+
+// seedAssetWithCol plants one asset at a sensitivity/owner, with a
+// storage object and (optionally) a `col` variant, so
+// preview_available's two inputs — variant existence and content
+// readability — can be exercised independently (#471).
+func seedAssetWithCol(t *testing.T, pool *pgxpool.Pool, sensitivity string, owner int64, withCol bool) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	id := uuid.New()
+	hash := hashForAsset(id)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO storage_objects (hash, size_bytes, backend) VALUES ($1, 1, 'fs')
+		 ON CONFLICT (hash) DO NOTHING`, hash); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	if withCol {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO storage_variants (object_hash, variant_key, size_bytes) VALUES ($1, 'col', 1)
+			 ON CONFLICT (object_hash, variant_key) DO NOTHING`, hash); err != nil {
+			t.Fatalf("seed col variant: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, has_image, file_hash)
+		 VALUES ($1, $2, $3, (SELECT MIN(ref) FROM asset_types), 'active', $4, 'ready', true, $5)`,
+		id, "pa-"+sensitivity, owner, sensitivity, hash); err != nil {
+		t.Fatalf("seed asset: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id) })
+	return id
+}
+
+// TestListAssetsPage_PreviewAvailable pins the #471 flag: preview_available
+// is true iff a servable `col` variant exists AND the caller passes the
+// content plane (ADR 0064). A restricted asset the caller cannot read is
+// false — identical to "no preview", so the flag never confirms
+// 'restricted'.
+func TestListAssetsPage_PreviewAvailable(t *testing.T) {
+	pool := listPagePool(t)
+	ctx := context.Background()
+
+	pub := seedAssetWithCol(t, pool, "public", listPageOwner, true)         // readable + col
+	restricted := seedAssetWithCol(t, pool, "restricted", listPageOwner, true) // owner-only + col
+	pubNoCol := seedAssetWithCol(t, pool, "public", listPageOwner, false)   // readable, NO col
+
+	find := func(rows []ListAssetsPageGatedRow, id uuid.UUID) (ListAssetsPageGatedRow, bool) {
+		for _, r := range rows {
+			if uuid.UUID(r.ID.Bytes) == id {
+				return r, true
+			}
+		}
+		return ListAssetsPageGatedRow{}, false
+	}
+	mustFlag := func(t *testing.T, rows []ListAssetsPageGatedRow, id uuid.UUID, want bool) {
+		t.Helper()
+		r, ok := find(rows, id)
+		if !ok {
+			t.Fatalf("asset %v not listed (row plane hid it — different contract)", id)
+		}
+		if r.PreviewAvailable != want {
+			t.Errorf("asset %v: preview_available=%v, want %v", id, r.PreviewAvailable, want)
+		}
+	}
+
+	stranger := int64(4290999)
+	readAll := func(code string) bool { return code == visibility.ContentReadAll }
+	params := ListAssetsPageGatedParams{RowLimit: 500}
+
+	// Authenticated non-owner: restricted is LISTED (deferred sensitivity
+	// rule) but its bytes are gated → preview_available false. This is the
+	// core #471 assertion.
+	t.Run("authenticated non-owner", func(t *testing.T) {
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(&stranger), nil, params)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		mustFlag(t, rows, pub, true)
+		mustFlag(t, rows, restricted, false)
+		mustFlag(t, rows, pubNoCol, false) // readable but no col
+	})
+
+	// Owner reads their own bytes at any tier → restricted true.
+	t.Run("owner", func(t *testing.T) {
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(ownerRefPtr()), nil, params)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		mustFlag(t, rows, pub, true)
+		mustFlag(t, rows, restricted, true)
+		mustFlag(t, rows, pubNoCol, false)
+	})
+
+	// content.read.all reads every tier's bytes → restricted true, still
+	// gated on col existence.
+	t.Run("content.read.all", func(t *testing.T) {
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(&stranger), readAll, params)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		mustFlag(t, rows, restricted, true)
+		mustFlag(t, rows, pubNoCol, false)
+	})
+
+	// Anonymous: public with col is true; the restricted row is not even
+	// listed to anonymous, so only assert the public ones.
+	t.Run("anonymous", func(t *testing.T) {
+		rows, err := ListAssetsPageGated(ctx, pool, visibility.NewCaller(nil), nil, params)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		mustFlag(t, rows, pub, true)
+		mustFlag(t, rows, pubNoCol, false)
+		if _, ok := find(rows, restricted); ok {
+			t.Error("anonymous listed a restricted asset (row-plane leak)")
+		}
+	})
 }

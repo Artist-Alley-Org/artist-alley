@@ -627,19 +627,12 @@
                   aria-label={t('viewer_playlist.show_asset_n', { n: i + 1 })}
                   aria-current={i === source.cursor ? 'true' : undefined}
                 >
-                  {#if item.asset.file_hash}
+                  {#if item.asset.file_hash && item.asset.preview_available}
                     <img
                       src={colVariantUrl(item.asset.id)}
                       alt=""
                       loading="lazy"
                       class="h-full w-full object-cover"
-                      onerror={(e) => {
-                        const img = e.currentTarget as HTMLImageElement;
-                        if (!img.dataset.fallback) {
-                          img.dataset.fallback = '1';
-                          img.src = `/api/v1/assets/${item.asset.id}/file`;
-                        }
-                      }}
                     />
                   {:else}
                     <div class="flex h-full w-full items-center justify-center bg-surface text-fg-muted/40">

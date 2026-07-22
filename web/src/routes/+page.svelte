@@ -32,6 +32,7 @@
   interface AssetSummary {
     id: string;
     file_hash?: string | null;
+    preview_available?: boolean;
   }
   interface PostMember {
     asset_id: string;

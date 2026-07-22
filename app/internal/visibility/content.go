@@ -100,40 +100,14 @@ func CanReadContent(
 		return false, fmt.Errorf("visibility.CanReadContent: load asset: %w", err)
 	}
 
-	// Owner always reaches their own bytes, at any tier.
-	//
-	// Two guards, both load-bearing:
-	//   - owner_user_ref is nullable; a NULL owner must never match.
-	//   - the caller must not be anonymous. AnonymousCaller is the
-	//     sentinel int64(0), so an anonymous caller carries UserRef 0.
-	//     Without this check, an asset with owner_user_ref = 0 would
-	//     match an anonymous caller AS ITS OWNER — at every tier,
-	//     including embargo. No user has ref 0 on any install today,
-	//     but that is data, not a structural guarantee, and #415 will
-	//     relax the anonymous short-circuit above so that the public
-	//     tier can serve bytes. When that happens this comparison
-	//     becomes reachable by anonymous callers, and this guard is
-	//     what keeps the sentinel from being an ownership claim.
-	if !caller.IsAnonymous && owner != nil && *owner == caller.UserRef {
-		return true, nil
-	}
-
-	switch sensitivity {
-	case "public":
-		return true, nil
-
-	case "team":
-		// Anonymous callers hold no team membership by definition, and
-		// we must not run a membership lookup for the sentinel ref.
-		if caller.IsAnonymous {
-			return false, nil
-		}
-		// team_id is nullable. A team-tier asset with no team has no
-		// members, so there is nobody to admit.
-		if !teamID.Valid {
-			return false, nil
-		}
-		var member bool
+	// Team-tier assets need a membership lookup; every other tier is
+	// decided from the row fields alone. Resolve membership here — the
+	// one place holding the pool — then hand the boolean to
+	// ContentReadable, the SINGLE expression of the rule. The browse
+	// list-query path (#471) shares that same core, joining membership
+	// into its query instead of a per-asset lookup.
+	member := false
+	if sensitivity == "team" && !caller.IsAnonymous && teamID.Valid {
 		if err := pool.QueryRow(ctx,
 			`SELECT EXISTS (
 			     SELECT 1 FROM team_memberships
@@ -143,31 +117,54 @@ func CanReadContent(
 		).Scan(&member); err != nil {
 			return false, fmt.Errorf("visibility.CanReadContent: team membership: %w", err)
 		}
-		return member, nil
+	}
+	return ContentReadable(sensitivity, owner, caller, caps, member), nil
+}
 
-	case "restricted":
-		// Owner and system.admin already returned above; nobody else.
-		//
-		// Access grants are NOT honoured here, deliberately (#434).
-		// resource_request.requested_capability is free text with no
-		// enum, no pattern and no validation, and it is chosen by the
-		// REQUESTER — so honouring a granted value would turn an
-		// attacker-supplied string into a privilege token. Do not
-		// "complete" this branch by inventing a capability vocabulary;
-		// #434 has to constrain the column first.
-		return false, nil
-
-	case "embargo":
-		// Same as restricted for now. ADR 0020's embargo machinery
-		// (release dates, per-asset allowlists) is Phase 1.28 and does
-		// not exist, so there is no condition under which a non-owner
-		// is admitted — deny rather than approximate it.
-		return false, nil
-
+// ContentReadable is the query-free core of the binary-plane rule (ADR
+// 0064): given a row's already-resolved sensitivity + owner + a
+// pre-computed team-membership answer, decide whether the caller may
+// receive the bytes. CanReadContent (which loads the row + membership
+// itself) and the browse list query (which joins them) both call this,
+// so the rule has exactly one home — the same argument as ADR 0063's
+// predicate. isTeamMember MUST already fold in "the asset is team-tier
+// AND the caller is a member of THIS asset's team"; it is consulted only
+// for the team tier.
+//
+// Guards, both load-bearing:
+//   - owner_user_ref is nullable; a NULL owner must never match.
+//   - the caller must not be anonymous. AnonymousCaller is the sentinel
+//     int64(0), so an anonymous caller carries UserRef 0. Without the
+//     !IsAnonymous guard, an asset with owner_user_ref = 0 would match an
+//     anonymous caller AS ITS OWNER at every tier. No user has ref 0
+//     today, but that is data, not a structural guarantee.
+//
+// restricted / embargo / any unrecognised tier deny: a new sensitivity
+// value must be an explicit decision here, never a silent inherit of
+// public. Access grants are deliberately NOT honoured (#434): the
+// requested_capability column is unvalidated requester-supplied text.
+func ContentReadable(
+	sensitivity string,
+	owner *int64,
+	caller Caller,
+	caps CapabilityChecker,
+	isTeamMember bool,
+) bool {
+	// SystemAdmin (wildcard) OR ContentReadAll (binary-plane-only, #474)
+	// admits the bytes at every tier.
+	if caps != nil && (caps(SystemAdmin) || caps(ContentReadAll)) {
+		return true
+	}
+	// Owner always reaches their own bytes, at any tier.
+	if !caller.IsAnonymous && owner != nil && *owner == caller.UserRef {
+		return true
+	}
+	switch sensitivity {
+	case "public":
+		return true
+	case "team":
+		return isTeamMember
 	default:
-		// Unrecognised tier: deny. A new sensitivity value must be an
-		// explicit decision here, not something that silently inherits
-		// public behaviour.
-		return false, nil
+		return false
 	}
 }

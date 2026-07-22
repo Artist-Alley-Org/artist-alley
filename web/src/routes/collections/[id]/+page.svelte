@@ -45,6 +45,7 @@
     sort_order: number;
     added_at: string;
     asset_created_at?: string | null;
+    preview_available?: boolean;
   }
 
   let collection = $state<Collection | null>(null);
@@ -383,6 +384,7 @@
               file_hash: m.file_hash,
               asset_type: m.asset_type,
               created_at: m.asset_created_at ?? m.added_at,
+              preview_available: m.preview_available,
             }}
           />
         {/each}

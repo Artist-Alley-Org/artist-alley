@@ -26,6 +26,7 @@
     asset_type: number;
     created_at: string;
     thumbhash?: string | null;
+    preview_available?: boolean;
   }
 
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
@@ -39,11 +40,8 @@
 
   let { asset }: Props = $props();
 
-  // The col variant is the canonical grid thumbnail. /file is the
-  // last-resort fallback when no variant exists yet (or never will,
-  // for non-raster originals).
-  const colUrl = $derived(asset.file_hash ? `/api/v1/assets/${asset.id}/variants/col` : '');
-  const fullUrl = $derived(asset.file_hash ? `/api/v1/assets/${asset.id}/file` : '');
+  // The col variant is the canonical grid thumbnail.
+  const colUrl = $derived(`/api/v1/assets/${asset.id}/variants/col`);
 
   // Decoded thumbhash → CSS background. Computed lazily once mounted
   // so the SSR snapshot stays light.
@@ -52,30 +50,20 @@
     placeholder = decodeThumbhash(asset.thumbhash);
   });
 
-  // Current variant URL we're trying. Starts at col, falls back to
-  // /file after backoff exhaustion.
-  let imgSrc = $state('');
+  // The server tells us whether a servable `col` exists for THIS caller
+  // (preview_available, #471). We render the <img> only when it does, so
+  // a content-gated / not-yet-generated / preview-less asset shows the
+  // thumbhash-or-icon placeholder and fires NO byte request that would
+  // 404 + spam the console. Doc assets render a typed card regardless.
+  const showImage = $derived(
+    !isDoc(asset.file_extension) && !!asset.file_hash && !!asset.preview_available,
+  );
   let imgLoaded = $state(false);
-  let attempt = $state(0);
   let imgError = $state(false);
-  let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Exponential backoff capped at 30s. The worker pool is fast
-  // (~50ms per raster) so most retries succeed on the first or
-  // second attempt; longer backoffs only matter for the trailing
-  // edge of a big backfill.
-  const BACKOFF_MS = [800, 1500, 3000, 6000, 12000, 30000];
-
   $effect(() => {
-    // Doc assets render a typed card (see template) so we skip the
-    // col fetch entirely — no thumbnail variant exists for text.
-    if (!colUrl || assetIsDoc) {
-      imgSrc = '';
-      return;
-    }
-    imgSrc = colUrl;
+    // Reset the fade-in whenever the target asset changes.
+    void asset.id;
     imgLoaded = false;
-    attempt = 0;
     imgError = false;
   });
 
@@ -83,26 +71,9 @@
     imgLoaded = true;
   }
 
+  // Defensive only: preview_available guarantees a servable col, so this
+  // fires only on undecodable bytes — degrade to the icon placeholder.
   function onError() {
-    if (retryTimer) clearTimeout(retryTimer);
-    // First-line fallback: maybe the worker hasn't generated col
-    // yet. Try again with backoff.
-    if (attempt < BACKOFF_MS.length && imgSrc === colUrl) {
-      const wait = BACKOFF_MS[attempt];
-      attempt += 1;
-      retryTimer = setTimeout(() => {
-        // Cache-bust so the browser doesn't serve the cached 404.
-        imgSrc = `${colUrl}?r=${attempt}`;
-      }, wait);
-      return;
-    }
-    // Second-line fallback: the original /file (may be huge for some
-    // formats but at least renders something).
-    if (imgSrc !== fullUrl && fullUrl) {
-      imgSrc = fullUrl;
-      return;
-    }
-    // Out of options — show the icon placeholder.
     imgError = true;
   }
 
@@ -171,9 +142,9 @@
           </span>
         {/if}
       </div>
-    {:else if asset.file_hash && !imgError}
+    {:else if showImage && !imgError}
       <img
-        src={imgSrc}
+        src={colUrl}
         alt={asset.title}
         loading="lazy"
         decoding="async"

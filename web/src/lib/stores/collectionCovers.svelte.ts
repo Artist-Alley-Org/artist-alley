@@ -21,6 +21,7 @@ import { api } from '$api/client';
 interface CoverAsset {
   id: string;
   file_hash: string | null;
+  preview_available: boolean;
 }
 
 interface Entry {
@@ -56,6 +57,7 @@ export async function fetchCovers(id: string): Promise<CoverAsset[]> {
     const items = (data.items ?? []).slice(0, MAX_COVERS).map((r) => ({
       id: r.asset_id,
       file_hash: r.file_hash ?? null,
+      preview_available: !!r.preview_available,
     }));
     store.set(id, { assets: items, fetchedAt: Date.now() });
     return items;

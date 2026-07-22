@@ -805,7 +805,26 @@ func (h *Handler) GetAsset(
 	if err != nil {
 		return nil, fmt.Errorf("assets: list tag details: %w", err)
 	}
-	return openapi.GetAsset200JSONResponse(rowToAssetWithDetails(row, tags, details)), nil
+	out := rowToAssetWithDetails(row, tags, details)
+	// preview_available (#471): a servable `col` exists AND the caller
+	// passes the content plane. Detail is not a hot loop, so an EXISTS +
+	// CanReadContent here is fine (the list path joins both in one pass).
+	detCaller, detCaps := contentCaller(ctx)
+	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, uuid.UUID(req.Id))
+	if err != nil {
+		return nil, fmt.Errorf("assets: content check: %w", err)
+	}
+	if readable && row.FileHash != nil && *row.FileHash != "" {
+		var hasCol bool
+		if err := h.Pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col')`,
+			*row.FileHash,
+		).Scan(&hasCol); err != nil {
+			return nil, fmt.Errorf("assets: col variant check: %w", err)
+		}
+		out.PreviewAvailable = hasCol
+	}
+	return openapi.GetAsset200JSONResponse(out), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,7 +1181,8 @@ func (h *Handler) ListAssets(
 	} else {
 		// Hand-built so the visibility predicate can be spliced in
 		// (#429) — sqlc's static SQL cannot take a runtime fragment.
-		rows, err := ListAssetsPageGated(ctx, h.Pool, callerFromContext(ctx), ListAssetsPageGatedParams{
+		listCaller, listCaps := contentCaller(ctx)
+		rows, err := ListAssetsPageGated(ctx, h.Pool, listCaller, listCaps, ListAssetsPageGatedParams{
 			IncludeDeleted:  includeDeletedArg,
 			OwnerUserRef:    ownerRef,
 			AssetType:       resType,
@@ -1183,7 +1203,8 @@ func (h *Handler) ListAssets(
 			if err != nil {
 				return nil, fmt.Errorf("assets: list tags: %w", err)
 			}
-			a := rowToAsset(listRowToGetRow(r), tags)
+			a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
+			a.PreviewAvailable = r.PreviewAvailable
 			// Surface soft-delete state so the admin trash view
 			// (include_deleted=true) can identify + label deleted rows.
 			if r.DeletedAt.Valid {
