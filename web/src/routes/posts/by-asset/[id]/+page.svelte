@@ -19,8 +19,9 @@
 
   onMount(async () => {
     browseView.init(); // inherit the user's tile-size preference
+    const id = page.params.id ?? '';
     const { data } = await api.GET('/posts/by-asset/{id}', {
-      params: { path: { id: page.params.id } },
+      params: { path: { id } },
     });
     const items = (data?.items ?? []) as any[];
     if (items.length === 1) {
