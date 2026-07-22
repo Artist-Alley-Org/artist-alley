@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { ADMIN_STATE_PATH } from './helpers/auth';
 
 // Default to the dev stack as configured by `scripts/dogfood/up.sh`.
 // Override via env when running against a different setup.
@@ -39,21 +40,52 @@ export default defineConfig({
   ],
   projects: [
     {
+      // Shared-session setup (#481): logs in once and writes
+      // storageState, so the standalone project below skips ~130
+      // per-test logins — the auth-race + mid-suite-ECONNREFUSED source.
+      name: 'setup',
+      testDir: './tests/setup',
+      testMatch: /.*\.setup\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: STUDIO_A_HOST,
+        ignoreHTTPSErrors: true,
+      },
+    },
+    {
       name: 'standalone',
       testDir: './tests/standalone',
-      // Retry transient infra blips on CI: the mid-suite ECONNREFUSED
-      // when the Vite dev server hiccups under load, and hydration races
-      // that clear on a second attempt. CI-only (0 locally) so a flake
-      // still fails immediately for whoever is fixing it, rather than
-      // being silently papered over during development. This does NOT
-      // hide a real failure — a test that fails all 3 attempts still
-      // reds the run; retries tolerate the transient, not the persistent
-      // (#485, ADR 0068). Persistent flakes are still tracked in #481.
+      // Run the setup project first + reuse its authenticated session for
+      // every test (#481). Tests whose subject IS the login flow opt out
+      // per-file with `test.use({ storageState: undefined })` (ui-16), so
+      // the real form stays covered.
+      dependencies: ['setup'],
+      // Retry transient infra blips on CI as a backstop (#485/#481). The
+      // dominant cause — ~130 per-test login round-trips saturating the
+      // runner→app connection, surfacing as mid-suite ECONNREFUSED — is
+      // removed by the shared session above; retries stay for whatever
+      // residual runner-under-load blip slips through. (NOT a Vite issue:
+      // CI runs the embedded prod build at app.aa:8080, never Vite —
+      // ui-pr.yml.) CI-only (0 locally) so a flake still fails
+      // immediately for whoever is fixing it; a test that fails all 3
+      // attempts still reds the run (retries tolerate the transient, not
+      // the persistent — ADR 0068).
       retries: process.env.CI ? 2 : 0,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: STUDIO_A_HOST,
         ignoreHTTPSErrors: true,
+        // Reuse the admin session written by the `setup` project (#481).
+        storageState: ADMIN_STATE_PATH,
+        // Pin the browser locale so the app renders English and the
+        // title/copy assertions are deterministic regardless of the
+        // runner's system locale (#481). Without this, a context with no
+        // explicit language signal falls back to navigator.language — an
+        // es-locale runner then renders "Administración" and reds the
+        // English title assertions (ui-01). The app's language precedence
+        // is profile → navigator.language → default, so en-US here yields
+        // English for logged-out AND freshly-logged-in contexts alike.
+        locale: 'en-US',
       },
     },
     {

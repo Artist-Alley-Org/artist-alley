@@ -9,7 +9,11 @@
 // breakage that 401s every API call silently.
 
 import { test, expect } from '../../helpers/test';
-import { loginAsAdminViaUI } from '../../helpers/auth';
+import { loginAsAdminViaUI, LOGGED_OUT } from '../../helpers/auth';
+
+// Login/overview subject — starts LOGGED OUT (opts out of the shared
+// admin session, #481) so its tests drive the real login form.
+test.use({ storageState: LOGGED_OUT });
 
 test.describe('UI-01 login + overview', () => {
   test('login form accepts admin / ArtistAlleyMogul and lands on Browse', async ({ page }) => {

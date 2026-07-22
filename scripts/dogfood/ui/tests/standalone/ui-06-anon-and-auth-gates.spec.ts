@@ -7,8 +7,13 @@
 //     redirect)
 
 import { test, expect } from '../../helpers/test';
-import { loginAsAdminViaUI } from '../../helpers/auth';
+import { loginAsAdminViaUI, LOGGED_OUT } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
+
+// Auth-gate subject — the anonymous cases need a LOGGED-OUT context
+// (opts out of the shared admin session, #481). The one authenticated
+// case logs in explicitly.
+test.use({ storageState: LOGGED_OUT });
 
 test.describe('UI-06 auth gates', () => {
   test('anonymous can reach /login', async ({ page }) => {
