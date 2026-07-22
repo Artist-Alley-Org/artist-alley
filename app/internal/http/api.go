@@ -2862,6 +2862,9 @@ func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.Update
 func (s *apiServer) ListPosts(ctx context.Context, req openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
 	return s.posts.ListPosts(ctx, req)
 }
+func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
+	return s.posts.GetPostsByAsset(ctx, req)
+}
 func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
 	resp, err := s.posts.CreatePost(ctx, req)
 	s.invalidateSearchOnPostWrite(ctx, err)

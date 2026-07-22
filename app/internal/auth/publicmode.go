@@ -100,6 +100,12 @@ var PublicSurfaceRoutes = []publicRoute{
 	{path: "/assets", prefix: true, why: "asset list, item, bytes, variants and archive entries"},
 	{path: "/collections", prefix: true, why: "collection list, item and contents"},
 
+	// Post-by-asset lookup (#478 slice-2, ADR 0070). Anonymous sees the
+	// public posts featuring an asset; the handler filters to visibility
+	// 'public' for anonymous callers. Scoped to /posts/by-asset only — the
+	// rest of /posts stays members-only (not a public surface).
+	{path: "/posts/by-asset", prefix: true, why: "public post-by-asset lookup"},
+
 	// The featured rail (#417). This is the landing page for a public
 	// install — with posts members-only, it is the only content an
 	// anonymous visitor sees at `/`. Its own query composes the
