@@ -61,7 +61,14 @@ test.describe('UI-18 collection custom fields', () => {
     // click a label-obscured input.
     await page.locator('label:has([data-testid="admin-fields-create-subject-collection"])').click();
     await page.getByTestId('admin-fields-create-submit').click();
-    await expect(page.getByTestId(`admin-fields-row-${TEST_FIELD_CODE}`)).toBeVisible({ timeout: 5_000 });
+    // #505: inherit the config's global expect.timeout (15s), set for
+    // CI-hydration-under-load (#481/#490). The explicit 5s cap here (and
+    // on the two assertions below) undercut it — after the create POST the
+    // fields list refetches + re-renders, and the new row's hydration can
+    // exceed 5s under CI load. The assertions are unchanged, so a row that
+    // genuinely never renders still fails (at 15s) — timing weakened, the
+    // create+edit round-trip still genuinely verified.
+    await expect(page.getByTestId(`admin-fields-row-${TEST_FIELD_CODE}`)).toBeVisible();
 
     // 2. Create a collection, then open its edit modal — the new
     //    custom field section should surface with our field row.
@@ -82,13 +89,13 @@ test.describe('UI-18 collection custom fields', () => {
     await page.getByTestId('collection-detail-edit-menuitem').click();
 
     // Custom-fields section is in the modal.
-    await expect(page.getByTestId('collection-fields-section')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId('collection-fields-section')).toBeVisible();
     // Field input renders for our test field.
     const input = page.getByTestId(`field-input-${TEST_FIELD_CODE}`);
     await expect(input).toBeVisible();
     await input.fill('hello from ui-18');
     await page.getByTestId('collection-fields-save').click();
-    await expect(page.getByTestId('collection-fields-saved')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId('collection-fields-saved')).toBeVisible();
 
     // 3. Cleanup — delete the collection so the run is idempotent.
     await page.request.delete(`/api/v1/collections/${collection.id}?hard=true`);
