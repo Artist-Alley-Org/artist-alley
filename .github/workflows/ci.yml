@@ -512,31 +512,30 @@ jobs:
           docker run --rm --entrypoint blender "$IMG" --version
           echo "::endgroup::"
 
-          # Self-contained fixture: have Blender export a cube .glb, then
-          # feed it back through the exact turntable.py + poster path the
-          # ModelHandler.renderPoster method invokes. This exercises the
-          # bundled glTF add-on (export AND import) + the GL libs Blender
-          # dlopens — the whole preview.model chain, not just that the
-          # binary is on disk. No committed model fixture needed (the
-          # seed/ .glb models are gitignored fetched artifacts). Mount an
-          # output dir the non-root `app` user can write.
-          work="$(mktemp -d)"
-          chmod 777 "$work"
+          # Exercise the real preview.model chain: Blender exports a cube
+          # .glb, then re-imports it through the exact turntable.py + poster
+          # path ModelHandler.renderPoster uses (the bundled glTF add-on —
+          # export AND import — plus the GL libs Blender dlopens). No
+          # committed fixture (the seed/ .glb models are gitignored).
+          #
+          # Everything runs in ONE docker exec, as the image's DEFAULT
+          # (non-root) user, writing to a container-internal path (/tmp)
+          # that user owns — NOT a host bind-mount. On the self-hosted
+          # runner the container uid can't write a bind-mounted dir even at
+          # chmod 777 (#494), and the whole point of this smoke is the
+          # non-root render path, so we do NOT add --user root. Keeping the
+          # export→import chain + the existence checks inside the container
+          # means no output ever crosses the mount boundary. `\"` escapes
+          # the Python path quotes for the inner sh.
+          docker run --rm --entrypoint sh "$IMG" -euc '
+            blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+              --python-expr "import bpy; bpy.ops.mesh.primitive_cube_add(); bpy.ops.export_scene.gltf(filepath=\"/tmp/cube.glb\")"
+            [ -s /tmp/cube.glb ] || { echo "smoke FAILED: Blender did not export the glTF fixture" >&2; exit 1; }
 
-          docker run --rm -v "$work":/work --entrypoint blender "$IMG" \
-            --background --factory-startup --disable-autoexec --python-exit-code 1 \
-            --python-expr "import bpy; bpy.ops.mesh.primitive_cube_add(); bpy.ops.export_scene.gltf(filepath='/work/cube.glb')"
-          if [ ! -s "$work/cube.glb" ]; then
-            echo "smoke FAILED: Blender did not export the glTF fixture" >&2
-            exit 1
-          fi
+            blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+              --python /app/blender/turntable.py -- \
+              --input /tmp/cube.glb --poster-output /tmp/poster.png
+            [ -s /tmp/poster.png ] || { echo "preview.model smoke FAILED: no poster produced" >&2; exit 1; }
 
-          docker run --rm -v "$work":/work --entrypoint blender "$IMG" \
-            --background --factory-startup --disable-autoexec --python-exit-code 1 \
-            --python /app/blender/turntable.py -- \
-            --input /work/cube.glb --poster-output /work/poster.png
-          if [ ! -s "$work/poster.png" ]; then
-            echo "preview.model smoke FAILED: no poster produced" >&2
-            exit 1
-          fi
-          echo "3D preview smoke OK: poster $(stat -c%s "$work/poster.png") bytes"
+            echo "3D preview smoke OK: poster $(stat -c%s /tmp/poster.png) bytes"
+          '
