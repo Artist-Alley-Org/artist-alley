@@ -77,6 +77,91 @@ def safe_mkdir(path: Path, max_retries: int = 3) -> None:
     raise RuntimeError(f"could not create directory after {max_retries} attempts: {path}")
 
 
+def _clean_companion_uri(uri: str) -> str | None:
+    """Normalise a declared URI to a safe relative companion path, or
+    None when it needs no companion (embedded data:, remote, absolute)
+    or would escape the model directory. Mirrors the Go
+    format3d.cleanCompanionURI used by the seed runner (#486)."""
+    from urllib.parse import unquote
+
+    uri = (uri or "").strip()
+    if not uri:
+        return None
+    low = uri.lower()
+    if low.startswith("data:") or "://" in uri:
+        return None
+    uri = unquote(uri).replace("\\", "/")
+    if uri.startswith("/"):
+        return None
+    cleaned = os.path.normpath(uri).replace("\\", "/")
+    if cleaned in (".", "..") or cleaned.startswith("../"):
+        return None
+    return cleaned
+
+
+def resolve_model_companions(model_path: Path) -> list[str]:
+    """Return the on-disk sibling files a multi-file model declares,
+    relative to the model's directory (#486). glTF → buffers[].uri +
+    images[].uri; OBJ → mtllib .mtl files and, recursively, the textures
+    each .mtl references. GLB/FBX are self-contained → []. Only siblings
+    that exist next to the model are returned. This is the Python twin of
+    app/internal/preview/format3d.ResolveCompanions so the seed pipeline
+    stages exactly what the Go runner will register + the loaders resolve."""
+    ext = model_path.suffix.lower().lstrip(".")
+    base = model_path.parent
+    declared: list[str] = []
+    seen: set[str] = set()
+
+    def add(rel: str | None) -> None:
+        if rel and rel not in seen:
+            seen.add(rel)
+            declared.append(rel)
+
+    if ext == "gltf":
+        try:
+            doc = json.loads(model_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        for b in doc.get("buffers", []):
+            add(_clean_companion_uri(b.get("uri", "")))
+        for im in doc.get("images", []):
+            add(_clean_companion_uri(im.get("uri", "")))
+    elif ext == "obj":
+        try:
+            text = model_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []
+        map_kw = {
+            "map_ka", "map_kd", "map_ks", "map_ke", "map_ns", "map_d",
+            "map_bump", "bump", "disp", "decal", "refl", "norm",
+            "map_pr", "map_pm", "map_ps",
+        }
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].lower() == "mtllib":
+                for lib in parts[1:]:
+                    rel = _clean_companion_uri(lib)
+                    add(rel)
+                    if not rel:
+                        continue
+                    mtl_path = base / rel
+                    try:
+                        mtl_text = mtl_path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    mtl_dir = os.path.dirname(rel)
+                    for mline in mtl_text.splitlines():
+                        mparts = mline.split()
+                        if len(mparts) >= 2 and mparts[0].lower() in map_kw:
+                            tex = _clean_companion_uri(mparts[-1])
+                            if tex:
+                                add(os.path.join(mtl_dir, tex).replace("\\", "/") if mtl_dir else tex)
+    else:
+        return []
+
+    return [rel for rel in declared if (base / rel).is_file()]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-source", required=True, type=Path,
@@ -194,6 +279,7 @@ def main() -> int:
 
     print(f"copying {len(path_map):,} asset files", file=sys.stderr)
     copied = 0
+    companions_copied = 0
     skipped = 0
     missing = 0
     bytes_copied = 0
@@ -235,6 +321,27 @@ def main() -> int:
         shutil.copyfile(src_file, dest_file)
         copied += 1
         bytes_copied += src_file.stat().st_size
+
+        # Multi-file models (#486): copy the .gltf/.obj siblings the model
+        # declares (buffer, textures, .mtl) next to the destination so the
+        # asset resolves at render + view time. The Go seed runner then
+        # auto-registers whatever landed next to the model as companions.
+        for rel in resolve_model_companions(src_file):
+            comp_src = src_file.parent / rel
+            comp_dest = dest_file.parent / rel
+            comp_rel = (Path(dest_rel).parent / rel).as_posix()
+            wanted_dest_paths.add(comp_rel)  # survive --prune
+            if comp_dest.is_file() and comp_dest.stat().st_size == comp_src.stat().st_size:
+                continue
+            if args.dry_run:
+                companions_copied += 1
+                bytes_copied += comp_src.stat().st_size
+                continue
+            safe_mkdir(comp_dest.parent)
+            shutil.copyfile(comp_src, comp_dest)
+            companions_copied += 1
+            bytes_copied += comp_src.stat().st_size
+
         if (i + 1) % progress_every == 0:
             print(f"  ... {i+1:,}/{len(path_map):,} "
                   f"({bytes_copied / 2**20:.1f} MB)", file=sys.stderr)
@@ -263,6 +370,7 @@ def main() -> int:
 
     print(f"\n=== Summary ===", file=sys.stderr)
     print(f"  copied:      {copied:,} files ({bytes_copied / 2**30:.2f} GB)", file=sys.stderr)
+    print(f"  companions:  {companions_copied:,} multi-file model siblings (#486)", file=sys.stderr)
     print(f"  skipped:     {skipped:,} (already present, same size)", file=sys.stderr)
     print(f"  preexisting: {preexisting:,} (torrent_import — bytes already in place)",
           file=sys.stderr)
