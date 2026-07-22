@@ -25,6 +25,7 @@ SELECT u.ref                                            AS user_ref,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
        COALESCE(p.language, '')                         AS language,
        COALESCE(p.theme, '')                            AS theme,
+       COALESCE(p.hide_from_anonymous, false)           AS hide_from_anonymous,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.user_ref = u.ref
@@ -44,6 +45,7 @@ SELECT u.ref                                            AS user_ref,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
        COALESCE(p.language, '')                         AS language,
        COALESCE(p.theme, '')                            AS theme,
+       COALESCE(p.hide_from_anonymous, false)           AS hide_from_anonymous,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.user_ref = u.ref
@@ -169,22 +171,23 @@ WHERE ref = $1;
 -- semantics apply; the query accepts the values to write.
 INSERT INTO user_profiles (
     user_ref, display_name, bio, avatar_url, location, website_url,
-    social_links, language, theme
+    social_links, language, theme, hide_from_anonymous
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (user_ref) DO UPDATE SET
-    display_name = EXCLUDED.display_name,
-    bio          = EXCLUDED.bio,
-    avatar_url   = EXCLUDED.avatar_url,
-    location     = EXCLUDED.location,
-    website_url  = EXCLUDED.website_url,
-    social_links = EXCLUDED.social_links,
-    language     = EXCLUDED.language,
-    theme        = EXCLUDED.theme,
-    updated_at   = NOW()
+    display_name        = EXCLUDED.display_name,
+    bio                 = EXCLUDED.bio,
+    avatar_url          = EXCLUDED.avatar_url,
+    location            = EXCLUDED.location,
+    website_url         = EXCLUDED.website_url,
+    social_links        = EXCLUDED.social_links,
+    language            = EXCLUDED.language,
+    theme               = EXCLUDED.theme,
+    hide_from_anonymous = EXCLUDED.hide_from_anonymous,
+    updated_at          = NOW()
 RETURNING user_ref, display_name, bio, avatar_url, location,
           website_url, social_links, language, theme,
-          origin_server_id, created_at, updated_at;
+          hide_from_anonymous, origin_server_id, created_at, updated_at;
 
 -- name: GetActorKeyMaterial :one
 -- Phase 1.22.A — federation actor keypair fetch. Returns the
