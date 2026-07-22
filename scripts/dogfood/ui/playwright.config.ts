@@ -77,6 +77,15 @@ export default defineConfig({
         ignoreHTTPSErrors: true,
         // Reuse the admin session written by the `setup` project (#481).
         storageState: ADMIN_STATE_PATH,
+        // Pin the browser locale so the app renders English and the
+        // title/copy assertions are deterministic regardless of the
+        // runner's system locale (#481). Without this, a context with no
+        // explicit language signal falls back to navigator.language — an
+        // es-locale runner then renders "Administración" and reds the
+        // English title assertions (ui-01). The app's language precedence
+        // is profile → navigator.language → default, so en-US here yields
+        // English for logged-out AND freshly-logged-in contexts alike.
+        locale: 'en-US',
       },
     },
     {

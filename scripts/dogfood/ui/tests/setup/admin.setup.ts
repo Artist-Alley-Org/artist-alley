@@ -35,5 +35,21 @@ setup('authenticate admin + pin site name once', async ({ request }) => {
   });
   expect(patched.ok(), `set site name failed: HTTP ${patched.status()}`).toBeTruthy();
 
+  // Pin the admin's UI language to English so the copy/title assertions
+  // are deterministic regardless of what language the account was left
+  // in (the dogfood admin is 'es' → "Administración …"). The en-US
+  // browser locale (config) covers logged-out contexts; a signed-in
+  // profile pref wins over the locale, so the admin needs this too.
+  const me = await request.get('/api/v1/auth/me');
+  if (me.ok()) {
+    const ref = (await me.json())?.ref;
+    if (ref != null) {
+      await request.patch(`/api/v1/users/${ref}`, {
+        data: { language: 'en' },
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   await request.storageState({ path: ADMIN_STATE_PATH });
 });
