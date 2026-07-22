@@ -844,8 +844,14 @@ func (h *Handler) ListCollectionResources(
 		cursorAdded = pgtype.Timestamptz{Time: ts, Valid: true}
 	}
 
+	// caps only short-circuits preview_available for SystemAdmin /
+	// content.read.all (#471); it does not affect row visibility.
+	var caps visibility.CapabilityChecker
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		caps = func(code string) bool { return id.Can(code) }
+	}
 	fetch := limit + 1
-	rows, err := ListCollectionResourcesPageGated(ctx, h.Pool, caller,
+	rows, err := ListCollectionResourcesPageGated(ctx, h.Pool, caller, caps,
 		ListCollectionResourcesPageGatedParams{
 			CollectionID:    pgID,
 			CursorSortOrder: cursorSort,
@@ -863,7 +869,9 @@ func (h *Handler) ListCollectionResources(
 		if i >= int(limit) {
 			break
 		}
-		items = append(items, resourceRowToAPI(r))
+		item := resourceRowToAPI(r.ListCollectionResourcesPageRow)
+		item.PreviewAvailable = r.PreviewAvailable
+		items = append(items, item)
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
 	}

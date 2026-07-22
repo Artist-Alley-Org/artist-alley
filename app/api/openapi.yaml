@@ -10570,7 +10570,7 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status]
+         title, asset_type, status, preview_available]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -10587,6 +10587,14 @@ components:
         file_hash:
           type: string
           nullable: true
+        preview_available:
+          type: boolean
+          description: |
+            True iff a servable `col` variant exists for this asset AND
+            the caller passes the content plane (ADR 0064). Same contract
+            + 0064-safety as Asset.preview_available — the tile renders a
+            thumbnail only when true, else a placeholder with no byte
+            request (#471).
         asset_created_at: { type: string, format: date-time }
     CollectionResourceWrite:
       type: object
@@ -10611,7 +10619,7 @@ components:
           nullable: true
     Asset:
       type: object
-      required: [id, title, asset_type, status, processing_status, created_at, updated_at, tags]
+      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -10658,6 +10666,19 @@ components:
             is always available, but `/variants/{key}` URLs may
             404 until processing completes. `ready` is the steady
             state. `failed` surfaces in the UI as a retry affordance.
+        preview_available:
+          type: boolean
+          description: |
+            True iff a servable `col` thumbnail variant exists for this
+            asset AND the caller passes the content plane
+            (visibility.CanReadContent, ADR 0064). The client renders the
+            thumbnail only when this is true and otherwise shows a
+            placeholder WITHOUT requesting bytes — so a content-gated or
+            preview-less asset never fires a `/variants/col` (or `/file`)
+            request that would 404 and spam the console (#471). A
+            restricted asset the caller may not read reads identically to
+            "no preview" (false), so this never confirms `restricted`
+            (0064-safe).
         thumbhash:
           type: string
           nullable: true
@@ -10697,7 +10718,7 @@ components:
         asset or collection, with an explicit ordering position and
         the resolved subject title. Asset subjects also carry
         thumbnail hints so the admin list can render a preview.
-      required: [id, subject_kind, subject_id, position, title, created_at]
+      required: [id, subject_kind, subject_id, position, title, preview_available, created_at]
       properties:
         id:
           type: string
@@ -10724,6 +10745,15 @@ components:
         asset_has_image:
           type: boolean
           description: Asset subjects only — whether a raster thumbnail exists.
+        preview_available:
+          type: boolean
+          description: |
+            Asset subjects only (false for collections) — true iff a
+            servable `col` variant exists AND the caller passes the
+            content plane (ADR 0064). The rail renders a thumbnail only
+            when true, else a title-only tile with no byte request (#471).
+            Unlike `asset_has_image` (unreliable — false for pre-ingest
+            assets), this is computed from live variant existence.
         created_at:
           type: string
           format: date-time

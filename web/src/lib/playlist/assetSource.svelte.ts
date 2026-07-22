@@ -28,6 +28,7 @@ export interface AssetForPlaylist {
   file_hash?: string | null;
   asset_type?: number | null;
   metadata?: Record<string, unknown> | null;
+  preview_available?: boolean;
 }
 
 function toItem(a: AssetForPlaylist): PlaylistItem {
@@ -38,6 +39,7 @@ function toItem(a: AssetForPlaylist): PlaylistItem {
     file_hash: a.file_hash ?? null,
     asset_type: a.asset_type ?? null,
     metadata: a.metadata ?? null,
+    preview_available: a.preview_available ?? false,
   };
   return { id: a.id, asset };
 }

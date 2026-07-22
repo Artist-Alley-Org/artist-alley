@@ -55,6 +55,10 @@ export interface ViewAsset {
   title?: string | null;
   file_extension?: string | null;
   file_hash?: string | null;
+  /** Server-computed: a servable `col` variant exists for this caller
+   *  (ADR 0064). Views gate byte requests on it so a gated / preview-less
+   *  asset shows a placeholder rather than 404-ing (#471). */
+  preview_available?: boolean;
   /** Numeric ref into the asset_types table. Overrides the
       extension-based kind detection when set — important for
       kinds whose extensions overlap with another bucket (a
