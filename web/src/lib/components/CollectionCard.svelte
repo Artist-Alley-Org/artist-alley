@@ -30,6 +30,7 @@
   interface CoverAsset {
     id: string;
     file_hash: string | null;
+    preview_available?: boolean;
   }
 
   let covers = $state<CoverAsset[]>([]);
@@ -43,19 +44,6 @@
   function colUrl(a: CoverAsset): string {
     return `/api/v1/assets/${a.id}/variants/col`;
   }
-  function fullUrl(a: CoverAsset): string {
-    return `/api/v1/assets/${a.id}/file`;
-  }
-
-  function handleImgError(e: Event, a: CoverAsset) {
-    const img = e.currentTarget as HTMLImageElement;
-    if (!img.dataset.fallback) {
-      img.dataset.fallback = '1';
-      img.src = fullUrl(a);
-      return;
-    }
-    img.style.visibility = 'hidden';
-  }
 
   const visibilityLabel = $derived(
     collection.visibility === 'public'
@@ -65,6 +53,16 @@
         : t('collections.vis_private'),
   );
 </script>
+
+<!-- One mosaic cover: the confirmed-available image, or a neutral tile
+     while probing / when unavailable (keeps the mosaic grid intact). -->
+{#snippet cover(a: CoverAsset, cls: string)}
+  {#if a.preview_available}
+    <img src={colUrl(a)} alt="" class={cls} loading="lazy" />
+  {:else}
+    <div class="{cls} bg-surface"></div>
+  {/if}
+{/snippet}
 
 <a
   href="/collections/{collection.id}"
@@ -80,23 +78,23 @@
         </svg>
       </div>
     {:else if covers.length === 1}
-      <img src={colUrl(covers[0])} alt="" class="absolute inset-0 h-full w-full object-cover" loading="lazy" onerror={(e) => handleImgError(e, covers[0])} />
+      {@render cover(covers[0], 'absolute inset-0 h-full w-full object-cover')}
     {:else if covers.length === 2}
       <div class="absolute inset-0 grid grid-cols-2 gap-0.5">
         {#each covers as a (a.id)}
-          <img src={colUrl(a)} alt="" class="h-full w-full object-cover" loading="lazy" onerror={(e) => handleImgError(e, a)} />
+          {@render cover(a, 'h-full w-full object-cover')}
         {/each}
       </div>
     {:else if covers.length === 3}
       <div class="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-0.5">
-        <img src={colUrl(covers[0])} alt="" class="row-span-2 h-full w-full object-cover" loading="lazy" onerror={(e) => handleImgError(e, covers[0])} />
-        <img src={colUrl(covers[1])} alt="" class="h-full w-full object-cover" loading="lazy" onerror={(e) => handleImgError(e, covers[1])} />
-        <img src={colUrl(covers[2])} alt="" class="h-full w-full object-cover" loading="lazy" onerror={(e) => handleImgError(e, covers[2])} />
+        {@render cover(covers[0], 'row-span-2 h-full w-full object-cover')}
+        {@render cover(covers[1], 'h-full w-full object-cover')}
+        {@render cover(covers[2], 'h-full w-full object-cover')}
       </div>
     {:else}
       <div class="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-0.5">
         {#each covers.slice(0, 4) as a (a.id)}
-          <img src={colUrl(a)} alt="" class="h-full w-full object-cover" loading="lazy" onerror={(e) => handleImgError(e, a)} />
+          {@render cover(a, 'h-full w-full object-cover')}
         {/each}
       </div>
     {/if}
