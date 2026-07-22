@@ -89,6 +89,18 @@ type ModelHandler struct {
 	Frames  int
 	Res     int
 	Samples int
+
+	// three.js worker (#498, ADR 0069). glTF/GLB/FBX/OBJ render through a
+	// headless Chromium + SwiftShader + three.js worker instead of Blender
+	// — ~20-30× faster, correct PBR first-pass. NodePath / ThreeJSScript
+	// override the executable + script lookups (empty = `node` from PATH /
+	// /app/threejs/worker.mjs, the container layout). Blender stays as the
+	// transitional fallback for anything the worker rejects (#500 removes
+	// it). DisableThreeJS forces the Blender path (ops escape hatch).
+	NodePath       string
+	ThreeJSScript  string
+	PosterRes      int
+	DisableThreeJS bool
 }
 
 // NewModelHandler — recommended constructor with sensible defaults.
@@ -100,6 +112,7 @@ func NewModelHandler(pool *pgxpool.Pool, st *storage.Service, sc *sysconfig.Stor
 		Frames:         36,
 		Res:            512,
 		Samples:        32,
+		PosterRes:      2048,
 	}
 }
 
@@ -243,36 +256,72 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		return json.Marshal(result)
 	}
 
-	// Fast poster: render a single workbench frame in ~1s and fan it
-	// through the raster ladder before launching the slow Cycles
-	// turntable. Lets the browse card show a real thumbnail while the
-	// 22-second turntable render is still in flight. Best-effort: any
-	// failure logs and falls through — the Cycles path below will fill
-	// col from frame 0 once it finishes.
-	if !posterDone {
-		posterPath := filepath.Join(work.dir, "poster.png")
-		if err := h.renderPoster(jobCtx, work.sourcePath, posterPath); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_render_failed",
+	// Both renderers write <out>/turntable/*.png + <out>/views/*.png + a
+	// poster.png so the Go side reads one layout regardless of engine.
+	renderOut := work.dir
+	framesDir := filepath.Join(renderOut, "turntable")
+	viewsDir := filepath.Join(renderOut, "views")
+	// After any format3d/mview conversion above, sourcePath is the .glb —
+	// so those formats route to three.js too.
+	renderExt := strings.ToLower(strings.TrimPrefix(filepath.Ext(work.sourcePath), "."))
+
+	// three.js render step (#498). glTF/GLB/FBX/OBJ go through the headless
+	// worker: one pass yields a correctly-textured turntable + a hi-res
+	// poster + reference views, ~20-30× faster than Blender Cycles. Because
+	// three.js binds textures the same way the live viewer does, there's no
+	// workbench-magenta quirk — so the raster ladder fans straight off the
+	// poster and the Blender iso re-fan below is skipped. Any failure falls
+	// back to the Blender path (transitional until #500).
+	usedThreeJS := false
+	if isThreeJSExt(renderExt) && h.threeJSAvailable() {
+		if err := h.renderThreeJS(jobCtx, work.sourcePath, work.dir, renderOut); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.threejs_failed_fallback_blender",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-		} else if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
-				slog.String("err", err.Error()))
 		} else {
-			result.Variants = append(result.Variants, "poster")
-			posterDone = true // skip the Cycles-frame-0 ladder below
+			usedThreeJS = true
+			posterPath := filepath.Join(renderOut, "poster.png")
+			if !posterDone {
+				if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
+					h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.threejs_poster_fan_failed",
+						slog.String("err", err.Error()))
+				} else {
+					result.Variants = append(result.Variants, "poster")
+					posterDone = true
+				}
+			}
+			// The poster IS the textured ladder source; persist it under the
+			// iso sentinel so a re-enqueue can early-exit without re-rendering.
+			if !isoDone {
+				if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err == nil {
+					isoDone = true
+				}
+			}
 		}
 	}
 
-	// Blender writes to <out>/turntable/*.png + <out>/views/*.png so
-	// the Go side and the script speak the same layout.
-	renderOut := work.dir
-	if err := h.renderTurntable(jobCtx, work.sourcePath, renderOut); err != nil {
-		h.markFailed(jobCtx, p.AssetID, err.Error())
-		return nil, fmt.Errorf("preview.model: render: %w", err)
+	if !usedThreeJS {
+		// Blender path. Fast workbench poster (~1s) fans the ladder while
+		// the slow Cycles turntable renders, then the turntable itself.
+		if !posterDone {
+			posterPath := filepath.Join(work.dir, "poster.png")
+			if err := h.renderPoster(jobCtx, work.sourcePath, posterPath); err != nil {
+				h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_render_failed",
+					slog.String("asset_id", p.AssetID.String()),
+					slog.String("err", err.Error()))
+			} else if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
+				h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
+					slog.String("err", err.Error()))
+			} else {
+				result.Variants = append(result.Variants, "poster")
+				posterDone = true // skip the Cycles-frame-0 ladder below
+			}
+		}
+		if err := h.renderTurntable(jobCtx, work.sourcePath, renderOut); err != nil {
+			h.markFailed(jobCtx, p.AssetID, err.Error())
+			return nil, fmt.Errorf("preview.model: render: %w", err)
+		}
 	}
-	framesDir := filepath.Join(renderOut, "turntable")
-	viewsDir := filepath.Join(renderOut, "views")
 
 	// --- raster ladder: fan frame 0 into col / preview / screen / hires ---
 	if posterDone {
@@ -335,7 +384,10 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// Also persists the iso shot itself as the `iso/source.png` variant
 	// so the early-exit guard above can skip rerunning the iso pass
 	// on a re-enqueue.
-	if isoDone {
+	if usedThreeJS || isoDone {
+		// three.js already produced a correctly-textured poster/ladder, so
+		// the Blender iso re-fan (which fixes workbench's magenta textures)
+		// is unnecessary.
 		result.Skipped = append(result.Skipped, "iso")
 	} else {
 		isoPath := filepath.Join(work.dir, "iso.png")
@@ -818,6 +870,92 @@ func engineForExt(ext string) string {
 	default:
 		return "workbench"
 	}
+}
+
+// ---------------------------------------------------------------------------
+// three.js worker invocation (#498)
+// ---------------------------------------------------------------------------
+
+// threeJSExts is the set of open formats the headless three.js worker
+// renders directly (the same loaders ModelView.svelte uses). Formats the
+// in-tree importers convert to .glb first (md2/md3/mview/…) also land
+// here because the render decision reads the post-conversion extension.
+var threeJSExts = map[string]struct{}{
+	"glb": {}, "gltf": {}, "fbx": {}, "obj": {},
+}
+
+func isThreeJSExt(ext string) bool {
+	_, ok := threeJSExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	return ok
+}
+
+func (h *ModelHandler) nodeBin() string {
+	if h.NodePath != "" {
+		return h.NodePath
+	}
+	return "node"
+}
+
+func (h *ModelHandler) threeJSScriptPath() string {
+	if h.ThreeJSScript != "" {
+		return h.ThreeJSScript
+	}
+	return "/app/threejs/worker.mjs"
+}
+
+func (h *ModelHandler) posterRes() int {
+	if h.PosterRes > 0 {
+		return h.PosterRes
+	}
+	return 2048
+}
+
+// threeJSAvailable reports whether the headless worker can run: enabled,
+// script present, node on PATH, and the worker's node_modules installed.
+// A missing piece (e.g. arm64 image without the worker, or the ops
+// escape hatch) cleanly falls back to Blender rather than failing jobs.
+func (h *ModelHandler) threeJSAvailable() bool {
+	if h.DisableThreeJS {
+		return false
+	}
+	script := h.threeJSScriptPath()
+	if _, err := os.Stat(script); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(script), "node_modules", "three")); err != nil {
+		return false
+	}
+	if _, err := exec.LookPath(h.nodeBin()); err != nil {
+		return false
+	}
+	return true
+}
+
+// renderThreeJS shells out to the headless three.js worker, which writes
+// the same on-disk layout as the Blender turntable (turntable/*.png +
+// views/*.png + poster.png) so the fanning below is engine-agnostic. The
+// model + its staged companions both live under workDir so the loaders
+// resolve sibling .bin/textures by relative URL.
+func (h *ModelHandler) renderThreeJS(ctx context.Context, src, workDir, outDir string) error {
+	cmd := exec.CommandContext(ctx, h.nodeBin(), h.threeJSScriptPath(),
+		"--input", src,
+		"--workdir", workDir,
+		"--output", outDir,
+		"--frames", strconv.Itoa(h.Frames),
+		"--res", strconv.Itoa(h.Res),
+		"--poster-res", strconv.Itoa(h.posterRes()),
+	)
+	var stderr, stdout bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		tail := strings.TrimSpace(stderr.String())
+		if len(tail) > 800 {
+			tail = "..." + tail[len(tail)-800:]
+		}
+		return fmt.Errorf("threejs worker exit: %w: %s", err, tail)
+	}
+	return nil
 }
 
 func (h *ModelHandler) blenderBin() string {

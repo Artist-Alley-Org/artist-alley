@@ -1,0 +1,12 @@
+{
+  "name": "aa-threejs-preview-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless three.js preview renderer for artist-alley preview.model (#498, ADR 0069)",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "puppeteer": "^23.11.1",
+    "three": "^0.169.0"
+  }
+}

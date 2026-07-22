@@ -27,6 +27,12 @@ coverage.*
 # Node + Go build outputs that the multi-stage rebuilds anyway
 web/node_modules
 web/build
+# three.js preview worker (#498): node_modules is rebuilt via npm ci in the
+# image; the spike dir is dev-only scratch. Keep both out of the context.
+scripts/threejs/node_modules
+scripts/spike/threejs-preview/node_modules
+scripts/spike/threejs-preview/out
+scripts/spike/threejs-preview/samples
 app/internal/http/static_assets/*
 !app/internal/http/static_assets/.embed-placeholder
 !app/internal/http/static_assets/.gitignore
