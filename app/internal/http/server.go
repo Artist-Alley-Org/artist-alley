@@ -560,6 +560,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			Variants: iiifVariantLister{store: sysCfg},
 			Streamer: iiifStreamer{storage: storageSvc},
 			Logger:   logger,
+			// Content-plane gate for the tile bytes (#476, ADR 0064):
+			// PoolLookup gates row existence; this gates the bytes.
+			Content: pool,
 			// No RequireID gate (#460): anonymous admission is the
 			// public-mode middleware's job (this group runs
 			// resolver.ResolveIdentity), and the visibility predicate

@@ -62,18 +62,26 @@ type Handler struct {
 	Variants VariantLister
 	Streamer VariantStreamer
 	Logger   *slog.Logger
+	// Content gates the tile BYTES on visibility.CanReadContent (ADR
+	// 0064, #476). The Lookup predicate gates row EXISTENCE; this gates
+	// the bytes, which is a separate grant — a restricted/team/embargo
+	// asset a caller may list must still 404 its tiles. A *pgxpool.Pool
+	// satisfies this in production; DB-backed tests pass the real pool.
+	Content visibility.ContentPool
 }
 
 // NewHandler wires the handler with sensible defaults. Anonymous
 // admission is the mounting middleware's job (the public-mode gate,
 // #445) — the handler no longer runs its own identity check; the
 // visibility predicate inside GetIIIFAsset decides which rows a caller,
-// anonymous or not, may resolve (#460).
-func NewHandler(lookup AssetLookup, variants VariantLister, streamer VariantStreamer, logger *slog.Logger) *Handler {
+// anonymous or not, may resolve (#460). The content pool gates the tile
+// bytes (#476).
+func NewHandler(lookup AssetLookup, variants VariantLister, streamer VariantStreamer, content visibility.ContentPool, logger *slog.Logger) *Handler {
 	return &Handler{
 		Lookup:   lookup,
 		Variants: variants,
 		Streamer: streamer,
+		Content:  content,
 		Logger:   logger,
 	}
 }
@@ -161,14 +169,8 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	// Row plane only. GetIIIFAsset gates EXISTENCE via the visibility
-	// predicate. It does NOT gate the tile BYTES via
-	// visibility.CanReadContent (ADR 0064) — so an authenticated
-	// non-owner who can resolve a restricted asset (the deferred
-	// authenticated-sensitivity rule) can still fetch its tiles here.
-	// That content-plane gap is PRE-EXISTING, not introduced by #460,
-	// and wiring CanReadContent needs the pool + a capability checker
-	// into this handler; flagged as a follow-up rather than half-wired.
+	// Row plane: GetIIIFAsset gates EXISTENCE via the visibility
+	// predicate (an unreadable row 404s here).
 	asset, err := h.Lookup.GetIIIFAsset(ctx, id, callerFrom(r))
 	if errors.Is(err, ErrAssetNotFound) {
 		writeJSONError(w, http.StatusNotFound, "asset not found")
@@ -177,6 +179,20 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.warn(ctx, "iiif.image.lookup_error", "id", idStr, "err", err.Error())
 		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	// Content plane (ADR 0064, #476): resolving the row only proves the
+	// caller may SEE the asset. Streaming its tiles is a separate grant —
+	// a restricted/team/embargo asset the caller can list must still 404
+	// its bytes. 404 not 403, same shape as the row-plane miss, so this
+	// plane never confirms a restricted asset exists. Mirrors
+	// handlers.requireContentAccess / assets.contentCaller.
+	caller, caps := contentCaller(r)
+	if allowed, cerr := visibility.CanReadContent(ctx, h.Content, caller, caps, id); cerr != nil || !allowed {
+		if cerr != nil {
+			h.warn(ctx, "iiif.image.content_gate_error", "id", idStr, "err", cerr.Error())
+		}
+		writeJSONError(w, http.StatusNotFound, "asset not found")
 		return
 	}
 	if !asset.HasImage || asset.FileHash == "" {
@@ -224,15 +240,25 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
-// callerFrom builds the visibility caller for the request. Anonymous
-// (nil identity) resolves against the anonymous predicate; an
+// contentCaller builds the (caller, caps) pair CanReadContent needs from
+// the request identity — the same derivation handlers.requireContentAccess
+// and assets.contentCaller use. Anonymous carries a nil capability
+// checker (it holds no capabilities and is never admin), which
+// CanReadContent handles.
+func contentCaller(r *http.Request) (visibility.Caller, visibility.CapabilityChecker) {
+	if id := auth.IdentityFromContext(r.Context()); id != nil {
+		return visibility.NewCaller(&id.UserRef), func(code string) bool { return id.Can(code) }
+	}
+	return visibility.NewCaller(nil), nil
+}
+
+// callerFrom builds the visibility caller for the request (row plane).
+// Anonymous (nil identity) resolves against the anonymous predicate; an
 // authenticated request carries its user ref. The predicate, not this
 // helper, decides row visibility.
 func callerFrom(r *http.Request) visibility.Caller {
-	if id := auth.IdentityFromContext(r.Context()); id != nil {
-		return visibility.NewCaller(&id.UserRef)
-	}
-	return visibility.NewCaller(nil)
+	caller, _ := contentCaller(r)
+	return caller
 }
 
 func (h *Handler) warn(ctx context.Context, msg string, args ...any) {
