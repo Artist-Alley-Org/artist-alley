@@ -100,6 +100,15 @@ var PublicSurfaceRoutes = []publicRoute{
 	{path: "/assets", prefix: true, why: "asset list, item, bytes, variants and archive entries"},
 	{path: "/collections", prefix: true, why: "collection list, item and contents"},
 
+	// Public user-profile pages (#478 slice-1, ADR 0070). Only the by-*
+	// read paths are opened — deliberately NOT the /users/{ref} prefix,
+	// which would drag in the follow/followers/relationship/block
+	// sub-routes (#462, out of scope). A profile is a display header plus
+	// an owner-scoped browse of the (already-public) /assets + /collections
+	// above; posts stay members-only, so an anonymous profile shows none.
+	{path: "/users/by-username", prefix: true, why: "public profile page by username"},
+	{path: "/users/by-ref", prefix: true, why: "public profile page by stable ref"},
+
 	// Post-by-asset lookup (#478 slice-2, ADR 0070). Anonymous sees the
 	// public posts featuring an asset; the handler filters to visibility
 	// 'public' for anonymous callers. Scoped to /posts/by-asset only — the

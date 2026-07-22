@@ -2953,6 +2953,9 @@ func (s *apiServer) GetUserPublicByRef(ctx context.Context, req openapi.GetUserP
 func (s *apiServer) GetUserPublicByUsername(ctx context.Context, req openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
 	return s.users.GetUserPublicByUsername(ctx, req)
 }
+func (s *apiServer) GetUserPublicByRefPath(ctx context.Context, req openapi.GetUserPublicByRefPathRequestObject) (openapi.GetUserPublicByRefPathResponseObject, error) {
+	return s.users.GetUserPublicByRefPath(ctx, req)
+}
 func (s *apiServer) UpdateUserProfile(ctx context.Context, req openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	return s.users.UpdateUserProfile(ctx, req)
 }

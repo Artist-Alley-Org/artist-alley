@@ -6990,11 +6990,46 @@ paths:
         schema: { type: string, maxLength: 64 }
     get:
       operationId: getUserPublicByUsername
-      summary: Public profile by username (used by /@username URLs)
+      summary: Public profile by username (the human-facing permalink)
+      description: |
+        Public user-profile page (#478, ADR 0070). Anonymous-visible
+        when public mode is on (ADR 0063 — gated centrally); requires
+        auth when public mode is off. Anonymous viewers get only the
+        display-layer fields (no real name), and a 404 when the owner
+        has opted out of anonymous exposure (ADR 0024). The profile's
+        content lists are fetched separately through the standard gated
+        browse endpoints (/assets, /collections, /posts) filtered by
+        owner_ref, so there is no new enforcement plane here.
       tags: [users]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      security: []
+      responses:
+        "200":
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPublic" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/by-ref/{ref}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: getUserPublicByRefPath
+      summary: Public profile by stable ref (used by notifications + cross-refs)
+      description: |
+        Same public profile as /users/by-username, resolved by the
+        stable user ref (#478, ADR 0070). Distinct from GET /users/{ref}
+        (authenticated internal read) so the anonymous public surface is
+        a separate, narrowly-scoped path. Public-mode + opt-out semantics
+        identical to the by-username variant.
+      tags: [users]
+      security: []
       responses:
         "200":
           description: Public profile
@@ -12598,6 +12633,14 @@ components:
           enum: ['', 'light', 'dark']
           description: |
             Empty string resets the pref to "follow system".
+        hide_from_anonymous:
+          type: boolean
+          description: |
+            Owner opt-out from anonymous profile exposure (ADR 0070 →
+            ADR 0024). Default false. When true, the owner's public
+            profile page (/users/by-username, /users/by-ref) returns 404
+            to anonymous viewers even with public mode on. Authenticated
+            viewers and the content-visibility gating are unaffected.
 
     PostLikeState:
       type: object
