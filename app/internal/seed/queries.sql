@@ -223,6 +223,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 ON CONFLICT DO NOTHING
 RETURNING id;
 
+-- name: SeedInsertAssetCompanion :exec
+-- Attach a companion blob (bin buffer / texture / .mtl) to a seeded
+-- asset under its declared relative path so multi-file glTF/OBJ models
+-- resolve their siblings at render + view time (#486). Companion bytes
+-- live in storage_objects (deduped by hash); this row is the
+-- asset+path→blob mapping. Idempotent for resumed seeds.
+INSERT INTO asset_companions (
+    asset_id, companion_path, object_hash, content_type, size_bytes
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (asset_id, companion_path) DO NOTHING;
+
 -- name: SeedInsertAssetTag :exec
 INSERT INTO asset_tag (asset_id, tag, source)
 VALUES ($1, $2, 'import')
