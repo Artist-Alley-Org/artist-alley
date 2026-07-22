@@ -1,0 +1,12 @@
+{
+  "name": "threejs-preview-spike",
+  "private": true,
+  "type": "module",
+  "description": "#497 spike — headless three.js (Puppeteer + SwiftShader) as a Blender replacement for open-format 3D previews (ADR 0069 / epic #496). EXPERIMENTAL.",
+  "scripts": { "render": "node worker.mjs" },
+  "dependencies": {
+    "puppeteer": "^23.0.0",
+    "sharp": "^0.33.0",
+    "three": "^0.169.0"
+  }
+}
