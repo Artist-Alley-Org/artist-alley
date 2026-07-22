@@ -1,0 +1,200 @@
+<!doctype html>
+<!-- Production headless three.js preview renderer (#498, ADR 0069).      -->
+<!-- Loaded by worker.mjs in a headless Chromium (SwiftShader software     -->
+<!-- WebGL). Renders a turntable + poster + reference views that match     -->
+<!-- scripts/blender/turntable.py's output geometry, so the Go            -->
+<!-- ModelHandler's existing sprite/ladder fanning consumes them as-is.    -->
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; background: transparent; }
+  #stage { position: fixed; inset: 0; }
+</style>
+<div id="stage"></div>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "/three/build/three.module.js",
+      "three/addons/": "/three/examples/jsm/"
+    }
+  }
+</script>
+
+<script type="module">
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+  import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+  import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+  // Report the actual WebGL backend so the worker log can confirm we ran
+  // on SwiftShader (software) vs a real GL.
+  function glInfo() {
+    try {
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl2') || c.getContext('webgl');
+      if (!gl) return { ok: false, renderer: 'NO_WEBGL' };
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      return {
+        ok: true,
+        version: gl.getParameter(gl.VERSION),
+        renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+        vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+      };
+    } catch (e) {
+      return { ok: false, renderer: 'ERR:' + e.message };
+    }
+  }
+  window.__glInfo = glInfo;
+
+  // Companion resolution: the model is served alongside its staged
+  // companions (the Go ModelHandler.stageCompanions writes .bin/textures
+  // next to it), so the loaders' default relative-URL resolution against
+  // the model URL just works — same as the interactive viewer.
+  async function loadModel(url, ext) {
+    const e = ext.toLowerCase().replace(/^\./, '');
+    if (e === 'glb' || e === 'gltf') {
+      const g = await new Promise((res, rej) => new GLTFLoader().load(url, res, undefined, rej));
+      return g.scene;
+    }
+    if (e === 'fbx') {
+      return await new Promise((res, rej) => new FBXLoader().load(url, res, undefined, rej));
+    }
+    if (e === 'obj') {
+      return await new Promise((res, rej) => new OBJLoader().load(url, res, undefined, rej));
+    }
+    throw new Error('unsupported ext: ' + e);
+  }
+
+  function countTris(obj) {
+    let t = 0;
+    obj.traverse((n) => {
+      if (n.isMesh && n.geometry) {
+        const g = n.geometry;
+        t += g.index ? g.index.count / 3 : (g.attributes.position ? g.attributes.position.count / 3 : 0);
+      }
+    });
+    return Math.round(t);
+  }
+
+  const FOV_V = 2 * Math.atan(18 / 35) * 180 / Math.PI; // 35mm lens / 36mm sensor ≈ 54.43°
+  const FOV_RAD = FOV_V * Math.PI / 180;
+  const TILT = 20 * Math.PI / 180;
+  const PADDING = 1.2;
+
+  // fit-to-frame ground distance for a square frame given a vertical +
+  // horizontal extent (mirrors turntable.py fit_distance / initial_distance).
+  function fitDistance(vExt, hExt) {
+    const dV = (vExt * PADDING) / (2 * Math.tan(FOV_RAD / 2));
+    const dH = (hExt * PADDING) / (2 * Math.tan(FOV_RAD / 2));
+    return Math.max(dV, dH, 0.1);
+  }
+
+  // __renderAll loads the model ONCE and produces every output the
+  // preview.model pipeline needs, matching Blender's framing:
+  //   turntable: `frames` PNG data URLs at res×res, 20° tilt, 360/frames°
+  //   poster:    one PNG at posterRes (frame-0 angle) — the raster-ladder
+  //              source; three.js renders it textured first-pass so no
+  //              workbench-magenta / iso re-fan dance is needed
+  //   top/bottom: orthographic-style reference views at res×res
+  // All transparent RGBA, like Blender's PNG frames.
+  window.__renderAll = async function (url, ext, opts) {
+    const frames = opts.frames ?? 36;
+    const res = opts.res ?? 512;
+    const posterRes = opts.posterRes ?? 2048;
+    const t0 = performance.now();
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(res, res, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.setClearColor(0x000000, 0);
+    document.getElementById('stage').appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+    // Three-point rig mirroring ModelView's key/fill/rim.
+    const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 4, 5); scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.8); fill.position.set(-4, 1, 2); scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffffff, 1.0); rim.position.set(0, 3, -5); scene.add(rim);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+
+    const model = await loadModel(url, ext);
+    const loadedAt = performance.now();
+
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.sub(center);
+    const pivot = new THREE.Group();
+    pivot.add(model);
+    scene.add(pivot);
+
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+    // Turntable camera: 20° tilt, fit-to-frame. three is Y-up (vertical =
+    // size.y, depth-toward-camera = size.z, width = size.x).
+    const cam = new THREE.PerspectiveCamera(FOV_V, 1, maxDim / 1000, maxDim * 100);
+    const vExt = size.y * Math.cos(TILT) + size.z * Math.sin(TILT);
+    const hExt = Math.max(size.x, size.z);
+    const dist = fitDistance(vExt, hExt);
+    cam.position.set(0, dist * Math.tan(TILT), dist);
+    cam.lookAt(0, 0, 0);
+
+    const render = () => {
+      renderer.render(scene, cam);
+      return renderer.domElement.toDataURL('image/png');
+    };
+
+    // Turntable frames.
+    const turntable = [];
+    for (let i = 0; i < frames; i++) {
+      pivot.rotation.y = (i / frames) * Math.PI * 2;
+      turntable.push(render());
+    }
+
+    // Poster: frame-0 angle at posterRes (bigger canvas, same square
+    // camera → identical framing, more pixels for the upper ladder rungs).
+    pivot.rotation.y = 0;
+    renderer.setSize(posterRes, posterRes, false);
+    const poster = render();
+    renderer.setSize(res, res, false); // back to turntable res for the views
+
+    // Top + bottom reference views. Footprint is the X-Z extent; add half
+    // the height as clearance so the camera clears a tall model (mirrors
+    // turntable.py fit_distance("top")).
+    const footprint = Math.max(size.x, size.z);
+    const viewDist = fitDistance(footprint, footprint) + size.y / 2;
+    const vcam = new THREE.PerspectiveCamera(FOV_V, 1, maxDim / 1000, maxDim * 100);
+    pivot.rotation.y = 0;
+
+    vcam.up.set(0, 0, -1);
+    vcam.position.set(0, viewDist, 0);
+    vcam.lookAt(0, 0, 0);
+    renderer.render(scene, vcam);
+    const top = renderer.domElement.toDataURL('image/png');
+
+    vcam.up.set(0, 0, 1);
+    vcam.position.set(0, -viewDist, 0);
+    vcam.lookAt(0, 0, 0);
+    renderer.render(scene, vcam);
+    const bottom = renderer.domElement.toDataURL('image/png');
+
+    const doneAt = performance.now();
+    return {
+      turntable, poster, top, bottom,
+      timings: {
+        load_ms: Math.round(loadedAt - t0),
+        render_ms: Math.round(doneAt - loadedAt),
+        total_ms: Math.round(doneAt - t0),
+      },
+      meta: { maxDim, frames, res, posterRes, triangles: countTris(model) },
+    };
+  };
+
+  window.__ready = true;
+</script>
