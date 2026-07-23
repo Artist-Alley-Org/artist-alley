@@ -9,6 +9,7 @@
   // hover title overlay.
 
   import CardThumb from './CardThumb.svelte';
+  import CardToolRow from './CardToolRow.svelte';
 
   interface Asset {
     id: string;
@@ -37,11 +38,15 @@
   );
 </script>
 
-<a
-  href="/assets/{asset.id}"
-  onmouseenter={() => (hovering = true)}
-  onmouseleave={() => (hovering = false)}
-  class="group block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
+<!--
+  Stretched-link pattern (#515 slice 2): the card is a container, not an
+  <a>, so the tool row's <button>s aren't illegally nested in an anchor.
+  A whole-card <a> covers the thumb for navigation (z-[1]); the title
+  overlay is pointer-events-none; the tool row (z-20) captures its own
+  clicks above the link.
+-->
+<div
+  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
 >
   <CardThumb
     assetId={asset.id}
@@ -52,13 +57,26 @@
     previewAvailable={asset.preview_available}
     {hovering}
   >
-    <!-- Hover overlay with title -->
+    <!-- Whole-card navigation target. Hover here drives CardThumb's
+         sprite-scrub (an interactive element, so no a11y warning). -->
+    <a
+      href="/assets/{asset.id}"
+      onmouseenter={() => (hovering = true)}
+      onmouseleave={() => (hovering = false)}
+      class="absolute inset-0 z-[1]"
+      aria-label={asset.title}
+    ></a>
+
+    <!-- Hover overlay with title (non-interactive — clicks fall to the link). -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/50 to-transparent
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
              p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
     >
       <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
       <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
     </div>
+
+    <!-- Quick-action tool row (info / share / add-to-collection). -->
+    <CardToolRow assetId={asset.id} detailPath="/assets/{asset.id}" />
   </CardThumb>
-</a>
+</div>

@@ -18,6 +18,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import CardThumb from './CardThumb.svelte';
+  import CardToolRow from './CardToolRow.svelte';
 
   interface AssetSummary {
     id: string;
@@ -99,12 +100,14 @@
   }
 </script>
 
-<a
-  href="/posts/{post.id}"
-  onclick={handleClick}
-  onmouseenter={() => (hovering = true)}
-  onmouseleave={() => (hovering = false)}
-  class="group block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
+<!--
+  Stretched-link pattern (#515 slice 2): container div (not an <a>) so the
+  tool row's <button>s aren't nested in an anchor. The whole-card <a>
+  keeps the /?post={id} modal intercept (handleClick) with /posts/{id} as
+  the modifier-click / new-tab fallback.
+-->
+<div
+  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
 >
   <CardThumb
     assetId={coverAssetId}
@@ -115,10 +118,23 @@
     previewAvailable={coverPreviewAvailable}
     {hovering}
   >
-    <!-- Multi-asset indicator badge (top-right). -->
+    <!-- Whole-card navigation target (modal intercept + permalink
+         fallback). Hover here drives CardThumb's sprite-scrub. -->
+    <a
+      href="/posts/{post.id}"
+      onclick={handleClick}
+      onmouseenter={() => (hovering = true)}
+      onmouseleave={() => (hovering = false)}
+      class="absolute inset-0 z-[1]"
+      aria-label={post.title || 'Untitled'}
+    ></a>
+
+    <!-- Multi-asset indicator badge (top-right). Fades out when the tool
+         row takes the same corner on hover / touch. -->
     {#if memberCount > 1}
       <div
-        class="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm"
+        class="pointer-events-none absolute top-2 right-2 z-[2] inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm
+               transition-opacity duration-150 group-hover:opacity-0 [@media(hover:none)]:opacity-0"
         title="{memberCount} assets"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -129,9 +145,9 @@
       </div>
     {/if}
 
-    <!-- Hover overlay -->
+    <!-- Hover overlay (non-interactive — clicks fall to the link). -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/50 to-transparent
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
              p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
     >
       <p class="text-sm font-medium text-white line-clamp-2">{post.title || 'Untitled'}</p>
@@ -139,5 +155,8 @@
         {createdShort}{post.like_count > 0 ? ` · ♥ ${post.like_count}` : ''}
       </p>
     </div>
+
+    <!-- Quick-action tool row. add-to-collection targets the cover asset. -->
+    <CardToolRow assetId={coverAssetId} detailPath="/posts/{post.id}" />
   </CardThumb>
-</a>
+</div>
