@@ -4684,10 +4684,14 @@ paths:
       operationId: listFields
       summary: List field definitions (the metadata schema)
       description: |
-        Returns all field definitions, ordered by display group and
-        display order. Filter by status to see active / deprecated /
-        archived only. The result is the schema admins build through
-        the field-management UI.
+        Returns field definitions, ordered by display group and display
+        order. The result is the schema admins build through the
+        field-management UI.
+
+        By default, archived (soft-deleted) fields are excluded — the
+        list is the live schema. Pass an explicit `status` to filter to
+        exactly one status; `status=archived` surfaces the tombstones
+        for anyone who needs them.
       tags: [metadata]
       security:
         - cookieAuth: []

@@ -128,6 +128,18 @@ func TestFieldDefinitionLifecycle(t *testing.T) {
 		t.Fatalf("archive: %d", delRR.Code)
 	}
 
+	// #528 — the DEFAULT listing (no status param) must exclude archived
+	// fields. They're tombstones; editors like the collection edit modal
+	// call GET /fields without a status and must never render them.
+	defaultRR := httptest.NewRecorder()
+	router.ServeHTTP(defaultRR, httptest.NewRequest(http.MethodGet, "/fields", nil))
+	mustDecode(t, defaultRR.Body.Bytes(), &defs)
+	for _, d := range defs {
+		if d.Id.String() == fieldID {
+			t.Errorf("archived field %s leaked into the default (no-status) listing", fieldID)
+		}
+	}
+
 	// Status query for archived should include it
 	archivedRR := httptest.NewRecorder()
 	router.ServeHTTP(archivedRR, httptest.NewRequest(http.MethodGet, "/fields?status=archived", nil))
