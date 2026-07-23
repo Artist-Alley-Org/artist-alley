@@ -7,6 +7,10 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [v0.6.0] — 2026-07-23 — Public read surface + demo hardening
+
 ### User-facing changes
 
 - **Public user-profile pages.** Every user now has a profile page, reachable by
@@ -28,6 +32,18 @@ where applicable, otherwise note "no-spec-impact."
   time** (the Blender path was amd64-only). Multi-file glTF (a `.gltf` plus its
   external `.bin`/textures) now renders correctly, where before it failed
   silently (#497/#498/#507/#508, #486). Blender stays as an automatic fallback.
+
+### Fixes
+
+- **Federation-path query bug.** A metadata-adapter query referenced a
+  nonexistent column (`owning_team_id` instead of the real `team_id`), so that
+  path errored on every call. Pre-existing since ≤v0.5.2 and invisible to
+  standard CI (which doesn't run federation); caught by the federation nightly
+  and fixed before this release (#538).
+
+- **CI reliability.** A large hardening pass on the test suite — shared-auth
+  setup resilience, worker-isolation races, and timeout tuning — so a green run
+  genuinely means green, not retry-masked (#485, #481, #505, #527, #535).
 
 ## [v0.5.2] — 2026-07-21
 
