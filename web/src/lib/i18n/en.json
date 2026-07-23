@@ -1238,10 +1238,6 @@
         "title": "Maintenance tools",
         "intro": "One-shot operations against the install — use with care.",
         "tiles": {
-          "reindex": {
-            "title": "Reindex search",
-            "blurb": "Rebuild TSVECTOR coverage for any domain."
-          },
           "regen_previews": {
             "title": "Regenerate previews",
             "blurb": "Re-render every variant for selected assets."
@@ -1249,14 +1245,6 @@
           "re_exif": {
             "title": "Re-extract EXIF",
             "blurb": "Pull metadata out of stored bytes again."
-          },
-          "checksum_verify": {
-            "title": "Verify checksums",
-            "blurb": "Hash stored bytes and report drift."
-          },
-          "find_orphans": {
-            "title": "Find orphan bytes",
-            "blurb": "Storage with no live asset reference."
           },
           "find_missing": {
             "title": "Find missing files",
