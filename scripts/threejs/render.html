@@ -117,7 +117,13 @@
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-    // Three-point rig mirroring ModelView's key/fill/rim.
+    // Three-point rig mirroring ModelView's key/fill/rim. These
+    // intensities + the ambient floor + ACESFilmic/exposure above are
+    // the WYSIWYG reference the interactive viewer's default matches
+    // (#509, ADR 0069). KEEP IN SYNC with the viewer's source of truth:
+    // web/src/lib/3d/defaultLighting.ts (which the viewer's session
+    // DEFAULTS + ModelView ambient import). Change a number here → change
+    // it there, or the thumbnail and the viewer default drift apart.
     const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 4, 5); scene.add(key);
     const fill = new THREE.DirectionalLight(0xffffff, 0.8); fill.position.set(-4, 1, 2); scene.add(fill);
     const rim = new THREE.DirectionalLight(0xffffff, 1.0); rim.position.set(0, 3, -5); scene.add(rim);

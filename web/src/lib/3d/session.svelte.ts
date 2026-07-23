@@ -29,6 +29,13 @@
 // / viewer-fill) and update read+write helpers below.
 
 import type { EnvPresetId, ToneMappingId } from './environments';
+import {
+  DEFAULT_KEY_INTENSITY,
+  DEFAULT_FILL_INTENSITY,
+  DEFAULT_RIM_INTENSITY,
+  DEFAULT_TONE_MAPPING,
+  DEFAULT_EXPOSURE,
+} from './defaultLighting';
 
 export type LightingPresetId =
   | 'three-point' | 'studio' | 'outdoor' | 'showroom' | 'custom';
@@ -290,18 +297,21 @@ const DEFAULTS = {
   envPreset: 'studio' as EnvPresetId,
   envIntensity: 1.0,
   backgroundVisible: false,
-  toneMapping: 'aces' as ToneMappingId,
-  exposure: 1.0,
+  toneMapping: DEFAULT_TONE_MAPPING,
+  exposure: DEFAULT_EXPOSURE,
   lightingPreset: 'three-point' as LightingPresetId,
   keyEnabled: true,
-  keyIntensity: 1.5,
+  // Intensities come from the shared default rig so a freshly-opened
+  // model reads like its browse-grid thumbnail (#509). See
+  // defaultLighting.ts — keep in sync with scripts/threejs/render.html.
+  keyIntensity: DEFAULT_KEY_INTENSITY,
   keyAzimuth: 45,
   keyElevation: 55,
   keyColor: '#ffffff',
   fillEnabled: true,
-  fillIntensity: 0.5,
+  fillIntensity: DEFAULT_FILL_INTENSITY,
   rimEnabled: true,
-  rimIntensity: 0.8,
+  rimIntensity: DEFAULT_RIM_INTENSITY,
   shadows: true,
   shadowSoftness: 0.5,
   groundPlane: false,
@@ -454,9 +464,13 @@ export function createModelSession(opts: ModelSessionOpts): ModelSessionInstance
     // user doesn't have to flip 6 controls one-by-one. Switching
     // back to 'custom' preserves their tweaks.
     if (p === 'three-point') {
-      state.keyEnabled = true;  state.keyIntensity = 1.6;
-      state.fillEnabled = true; state.fillIntensity = 0.5;
-      state.rimEnabled = true;  state.rimIntensity = 0.8;
+      // The canonical three-point rig — the same look as the fresh
+      // default, which IS 'three-point' (#509). Sourced from the shared
+      // default-lighting constants so selecting the preset reproduces
+      // the thumbnail-matching default and can't drift from it.
+      state.keyEnabled = true;  state.keyIntensity = DEFAULT_KEY_INTENSITY;
+      state.fillEnabled = true; state.fillIntensity = DEFAULT_FILL_INTENSITY;
+      state.rimEnabled = true;  state.rimIntensity = DEFAULT_RIM_INTENSITY;
       state.shadows = true;
     } else if (p === 'studio') {
       state.keyEnabled = true;  state.keyIntensity = 1.4;
