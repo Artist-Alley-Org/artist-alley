@@ -12,7 +12,7 @@
   import PostHost from '$components/PostHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
-  import TileGrid from '$components/TileGrid.svelte';
+  import ContentGrid from '$components/ContentGrid.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
 
@@ -294,45 +294,15 @@
       token — it changes per interaction, so it can't be a class.
       Column COUNT is never computed: see browseView.svelte.ts.
     -->
-    {#if browseView.mode === 'list'}
-      <PostListTable {items} {loading} />
-    {:else if browseView.mode === 'masonry'}
-      <div class="posts-masonry" style="--tile-min: {browseView.tileMin}">
-        {#each items as post (post.id)}
-          <div class="mb-2 break-inside-avoid">
-            <PostCard {post} tileSizesLen={browseView.tileSizesLen} />
-          </div>
-        {/each}
-        {#if loading}
-          {#each Array(8) as _, i (i)}
-            <div class="mb-2 break-inside-avoid aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
-          {/each}
-        {/if}
-      </div>
-    {:else if browseView.mode === 'feed'}
-      <div class="posts-feed gap-4">
-        {#each items as post (post.id)}
-          <PostCard {post} feed />
-        {/each}
-        {#if loading}
-          {#each Array(3) as _, i (i)}
-            <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
-          {/each}
-        {/if}
-      </div>
-    {:else}
-      <TileGrid tileMin={browseView.tileMin}>
-        {#each items as post (post.id)}
-          <PostCard {post} tileSizesLen={browseView.tileSizesLen} />
-        {/each}
-
-        {#if loading}
-          {#each Array(8) as _, i (i)}
-            <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
-          {/each}
-        {/if}
-      </TileGrid>
-    {/if}
+    <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
+      {#snippet card(item, mode)}
+        {@const post = item as Post}
+        <PostCard {post} feed={mode === 'feed'} tileSizesLen={browseView.tileSizesLen} />
+      {/snippet}
+      {#snippet list()}
+        <PostListTable {items} {loading} />
+      {/snippet}
+    </ContentGrid>
 
     {#if hasMore}
       <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
@@ -357,38 +327,6 @@
      losing scroll position. -->
 <BrowseFooter />
 
-<style>
-  /* The auto-fill tile grid (grid / thumbnail mode) now lives in the
-   * shared TileGrid component — same `--tile-min` responsive story, one
-   * copy, reused by the profile pages. Masonry + feed stay here because
-   * they're post-feed-specific layouts, not the general card grid. */
-
-  /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
-     the browser fits as many columns as it can. Same lever, same
-     token, no `column-count` to guess. */
-  :global(.posts-masonry) {
-    column-width: min(var(--tile-min, 22rem), 100%);
-    column-gap: 0.5rem;
-  }
-  /* feed is the honest floor of the same scale rather than a special
-     case: one column at every width, image at full column width.
-   *
-   * The max-width is a MEASURE, and it's the same argument as prose's
-   * 65ch rather than an exception to the full-bleed rule. Measured at
-   * 3840x1080: an uncapped feed column is 3762px wide, so its square
-   * media box is 3760px TALL — 3.5x the 1080px viewport. You'd see a
-   * slice of one image and scroll four screens to reach the next. The
-   * cap is what makes "one column" mean something at 32:9.
-   *
-   * 46rem (736px) stays under a 1080px-tall viewport with room for
-   * chrome, and phones never reach it — 390px < 736px, so `min()`
-   * resolves to 100% and the image is genuinely full-bleed there.
-   * Layout is still full-bleed; it's the single-column CONTENT that
-   * gets a measure. */
-  :global(.posts-feed) {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    max-width: min(100%, 46rem);
-    margin-inline: auto;
-  }
-</style>
+<!-- The grid / masonry / feed / list layouts moved to the shared
+     ContentGrid component (#511) so the profile + post-by-asset pages
+     render modes identically. No page-local layout CSS remains here. -->

@@ -40,6 +40,22 @@ test.describe('UI-33 post-by-asset', () => {
     }
   });
 
+  test('mounts the shared view controls (#511)', async ({ page }) => {
+    // Find an asset that features in >1 post so the page lists (not redirects).
+    const res = await page.request.get('/api/v1/posts?limit=40');
+    const { items } = await res.json();
+    const counts = new Map<string, number>();
+    for (const p of items ?? []) {
+      for (const m of p.members ?? []) counts.set(m.asset_id, (counts.get(m.asset_id) ?? 0) + 1);
+    }
+    const multi = [...counts.entries()].find(([, n]) => n > 1)?.[0];
+    test.skip(!multi, 'no asset featured in >1 post');
+
+    await page.goto(`/posts/by-asset/${multi}`);
+    // Same shared control bar as browse + profile.
+    await expect(page.getByTestId('view-controls')).toBeVisible();
+  });
+
   test('the SimilarAssetsPanel link target renders (KNOWN_GAPS cleared)', async ({ page }) => {
     // Direct-navigate the route shape the panel links to; a random asset
     // with no posts is a valid empty result, not a 404.

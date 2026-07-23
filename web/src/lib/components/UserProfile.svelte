@@ -16,7 +16,9 @@
   import AssetCard from '$components/AssetCard.svelte';
   import CollectionCard from '$components/CollectionCard.svelte';
   import PostCard from '$components/PostCard.svelte';
-  import TileGrid from '$components/TileGrid.svelte';
+  import ContentGrid from '$components/ContentGrid.svelte';
+  import PostListTable from '$components/PostListTable.svelte';
+  import ViewControls from '$components/ViewControls.svelte';
 
   interface Props {
     ref?: number;
@@ -82,6 +84,17 @@
   const memberSince = $derived(
     profile?.member_since ? new Date(profile.member_since).getFullYear() : null,
   );
+
+  // Mode + sort come from the GLOBAL browseView store (localStorage), so
+  // the profile shares the view preference with browse. SEAM: per-surface
+  // view state is probably reworked in the future; the coupling to the one
+  // store is the simplest-correct option for now. Sort is honored
+  // client-side by reversing the (bounded, first-page) result each section
+  // fetched newest-first.
+  const rev = <T,>(xs: T[]): T[] => (browseView.feedDir === 'asc' ? [...xs].reverse() : xs);
+  const sortedPosts = $derived(rev(posts));
+  const sortedCollections = $derived(rev(collections));
+  const sortedAssets = $derived(rev(assets));
 </script>
 
 <svelte:head>
@@ -139,34 +152,43 @@
     {#if loading}
       <p class="mt-10 text-center text-fg-muted">{t('common.loading')}</p>
     {:else}
-      <!-- All three sections render through the shared browse TileGrid,
-           so tile size / columns / spacing / responsive behaviour are
-           identical to the home browse and inherit the user's tile-size
-           preference. -->
+      <!-- All three sections render through the shared ContentGrid, so
+           mode (grid/masonry/feed/thumbnail/list) + tile size + sort match
+           the home browse. Posts carry a list table; assets/collections
+           have none, so list mode falls back to the grid for them. -->
       {#if posts.length}
         <section class="mt-10">
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.posts')}</h2>
-          <TileGrid tileMin={browseView.tileMin}>
-            {#each posts as post (post.id)}<PostCard {post} tileSizesLen={browseView.tileSizesLen} />{/each}
-          </TileGrid>
+          <ContentGrid mode={browseView.mode} items={sortedPosts} tileMin={browseView.tileMin}>
+            {#snippet card(item, mode)}
+              <PostCard post={item} feed={mode === 'feed'} tileSizesLen={browseView.tileSizesLen} />
+            {/snippet}
+            {#snippet list()}
+              <PostListTable items={sortedPosts} loading={false} />
+            {/snippet}
+          </ContentGrid>
         </section>
       {/if}
 
       {#if collections.length}
         <section class="mt-10">
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.collections')}</h2>
-          <TileGrid tileMin={browseView.tileMin}>
-            {#each collections as collection (collection.id)}<CollectionCard {collection} />{/each}
-          </TileGrid>
+          <ContentGrid mode={browseView.mode} items={sortedCollections} tileMin={browseView.tileMin}>
+            {#snippet card(item)}
+              <CollectionCard collection={item} />
+            {/snippet}
+          </ContentGrid>
         </section>
       {/if}
 
       {#if assets.length}
         <section class="mt-10">
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.assets')}</h2>
-          <TileGrid tileMin={browseView.tileMin}>
-            {#each assets as asset (asset.id)}<AssetCard {asset} />{/each}
-          </TileGrid>
+          <ContentGrid mode={browseView.mode} items={sortedAssets} tileMin={browseView.tileMin}>
+            {#snippet card(item)}
+              <AssetCard asset={item} />
+            {/snippet}
+          </ContentGrid>
         </section>
       {/if}
 
@@ -175,4 +197,8 @@
       {/if}
     {/if}
   </div>
+
+  <!-- The shared floating view controls (mode switcher + sort), same bar
+       as browse (#511). No feed-filter middle — that's browse-only. -->
+  <ViewControls />
 {/if}

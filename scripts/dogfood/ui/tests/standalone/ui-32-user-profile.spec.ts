@@ -34,6 +34,22 @@ test.describe('UI-32 public user profile', () => {
     await expect(page.getByText('@seed.bot')).toBeVisible();
   });
 
+  test('mounts the shared view controls and honors the mode switch (#511)', async ({ page }) => {
+    await page.goto('/users/by-username/seed.bot');
+    // The same floating control bar as browse (mode switcher + sort).
+    await expect(page.getByTestId('view-controls')).toBeVisible();
+
+    // Switching to list mode re-renders the posts section as a table —
+    // the browseView mode is honored here exactly as on browse. The mode
+    // is the global browseView preference (localStorage); set it + reload.
+    await page.evaluate(() => localStorage.setItem('aa_browse_mode', 'list'));
+    await page.reload();
+    await expect(page.getByRole('columnheader', { name: 'Title' })).toBeVisible();
+
+    // Reset so the shared preference doesn't leak into other specs.
+    await page.evaluate(() => localStorage.setItem('aa_browse_mode', 'grid'));
+  });
+
   test('a previously-dead profile link now opens a real page', async ({ page }) => {
     // The user menu (top-right) links to the signed-in user's own profile
     // via /users/by-username/{username} — one of the links parked in
