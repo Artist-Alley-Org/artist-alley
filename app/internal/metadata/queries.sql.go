@@ -599,7 +599,12 @@ SELECT id, code, label, description, type, options, required, searchable,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode
 FROM field_definition
-WHERE ($1::TEXT IS NULL OR status = $1::TEXT)
+WHERE (
+        CASE WHEN $1::TEXT IS NULL
+             THEN status <> 'archived'
+             ELSE status = $1::TEXT
+        END
+      )
   AND ($2::TEXT IS NULL OR subject_kind = $2::TEXT)
 ORDER BY display_group, display_order, code
 `
@@ -612,9 +617,17 @@ type ListFieldDefinitionsParams struct {
 // ---------------------------------------------------------------------------
 // field_definition — admin-managed schema for what fields exist
 // ---------------------------------------------------------------------------
-// Returns active field defs ordered by group + display_order. Caller
-// can post-filter by applies_to in the handler since GIN array
-// membership doesn't compose well with our other filters.
+// Returns field defs ordered by group + display_order. Caller can
+// post-filter by applies_to in the handler since GIN array membership
+// doesn't compose well with our other filters.
+//
+// Status semantics (#528): an explicit `status` is an equality filter
+// (so `status=archived` still surfaces soft-deleted fields for anyone
+// who opts in). With no `status`, archived fields are EXCLUDED — they're
+// tombstones, and editors that just want "the live schema" (e.g. the
+// collection edit modal) must not render them. Active + deprecated stay
+// visible by default; deprecated fields can still hold values on
+// existing rows, so hiding them would drop live data from the editor.
 func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinitionsParams) ([]FieldDefinition, error) {
 	rows, err := q.db.Query(ctx, listFieldDefinitions, arg.Status, arg.SubjectKind)
 	if err != nil {
