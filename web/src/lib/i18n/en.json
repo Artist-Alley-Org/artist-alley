@@ -165,6 +165,15 @@
     },
     "end_of_feed": "— end of feed —"
   },
+  "card": {
+    "tools": {
+      "row_label": "Quick actions",
+      "info": "View details",
+      "share": "Copy link",
+      "copied": "Link copied",
+      "add_to_collection": "Add to collection…"
+    }
+  },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
     "profile": "Profile",
