@@ -143,7 +143,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'comments',        status: 'future', phase: '1.21' },
       { key: 'banned',          status: 'future', phase: '1.21' },
       { key: 'flagging_rules',  status: 'future', phase: '1.21' },
-      { key: 'anonymous',       status: 'future', phase: '1.13' },
+      // Anonymous/public browsing shipped in v0.5.0 as the `public_mode`
+      // operator toggle, which lives on the site-settings page. The tile
+      // is a front door to that existing switch (no dedicated page of its
+      // own), so it points there and carries the same read cap the site
+      // page enforces.
+      { key: 'anonymous',       status: 'live',   href: '/admin/system/site', cap: 'system.config.read' },
       { key: 'rate_limits',     status: 'future', phase: '1.21' },
     ],
   },
@@ -222,11 +227,14 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'tools',
     iconKey: 'tools',
     tiles: [
-      { key: 'reindex',         status: 'future', phase: '1.12' },
+      // reindex / checksum_verify / find_orphans were placeholder
+      // duplicates: each shipped as a real page elsewhere — search
+      // reindex at /admin/search/reindex, and the storage integrity
+      // sweeps at /admin/storage/checksums + /admin/storage/orphans
+      // (v0.4.0, #421). Removed here so there's one canonical home per
+      // operation rather than a live page plus a dead "future" tile.
       { key: 'regen_previews',  status: 'future', phase: '1.15' },
       { key: 're_exif',         status: 'future', phase: '1.15' },
-      { key: 'checksum_verify', status: 'future', phase: '1.19' },
-      { key: 'find_orphans',    status: 'future', phase: '1.19' },
       { key: 'find_missing',    status: 'future', phase: '1.19' },
       { key: 'dummy_data',      status: 'future', phase: '1.16' },
       { key: 'bulk_import',     status: 'future', phase: '1.15' },
