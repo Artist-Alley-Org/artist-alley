@@ -23,6 +23,7 @@
     file_hash?: string | null;
     file_extension?: string | null;
     thumbhash?: string | null;
+    preview_available?: boolean;
   }
   interface PostMemberSummary {
     asset_id: string;
@@ -78,11 +79,16 @@
       ),
   );
 
+  // Whether the server says a servable `col` exists for the cover asset
+  // for THIS caller (preview_available, #471). We render the cover <img>
+  // only when true, so a gated / preview-less cover shows the
+  // placeholder and fires no byte request that would 404.
+  const coverPreviewAvailable = $derived(
+    !!post.members.find((m) => m.asset_id === coverAssetId)?.asset?.preview_available,
+  );
+
   const colUrl = $derived(
     coverAssetId ? `/api/v1/assets/${coverAssetId}/variants/col` : '',
-  );
-  const fullUrl = $derived(
-    coverAssetId ? `/api/v1/assets/${coverAssetId}/file` : '',
   );
 
   let placeholder = $state<string | null>(null);
@@ -93,23 +99,21 @@
     placeholder = decodeThumbhash(coverThumbhash);
   });
 
-  let imgSrc = $state('');
+  // Render the cover only when the server confirms a servable col for
+  // this caller (#471). No srcset: preview_available guarantees only the
+  // `col` derivative — a small or non-raster cover need not have the
+  // wider preview/screen/hires rungs, and requesting one that doesn't
+  // exist is exactly the 404 this change removes.
+  const showImage = $derived(
+    hasFile &&
+      coverPreviewAvailable &&
+      !isDocExt(post.members.find((m) => m.asset_id === coverAssetId)?.asset?.file_extension),
+  );
   let imgLoaded = $state(false);
-  let attempt = $state(0);
   let imgError = $state(false);
-  let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  const BACKOFF_MS = [800, 1500, 3000, 6000, 12000, 30000];
-
   $effect(() => {
-    // Doc covers render a typed card (see template) — don't waste a
-    // network round-trip on the col variant that doesn't exist yet.
-    if (!colUrl || !hasFile || coverIsDoc) {
-      imgSrc = '';
-      return;
-    }
-    imgSrc = colUrl;
+    void coverAssetId;
     imgLoaded = false;
-    attempt = 0;
     imgError = false;
   });
 
@@ -117,83 +121,21 @@
     imgLoaded = true;
   }
 
+  // Defensive only: preview_available guarantees a servable col, so this
+  // fires only on undecodable bytes — degrade to the placeholder.
   function onError() {
-    if (retryTimer) clearTimeout(retryTimer);
-    if (attempt < BACKOFF_MS.length && imgSrc === colUrl) {
-      const wait = BACKOFF_MS[attempt];
-      attempt += 1;
-      retryTimer = setTimeout(() => {
-        imgSrc = `${colUrl}?r=${attempt}`;
-      }, wait);
-      return;
-    }
-    if (imgSrc !== fullUrl && fullUrl) {
-      imgSrc = fullUrl;
-      return;
-    }
     imgError = true;
   }
 
-  // ── Resolution ladder.
-  //
-  // `col` is a 320² cover derivative (sysconfig/previews.go). That's
-  // right for a dense thumbnail wall and visibly mushy anywhere else:
-  // at a 58rem tile on a 4k panel it's a 320px image upscaled ~3x. The
-  // phone's problem (fetching too much) and the 4k panel's problem
-  // (upscaling too little) are the same problem — a single fixed
-  // derivative — so `srcset` fixes both ends with one mechanism.
-  //
-  // Widths are the variants' real MaxDim, not guesses:
-  //   col 320² cover · preview 1024 · screen 1920 · hires 4096
-  //
-  // Only offered while the `col` fetch is on its happy path. onError
-  // falls back to the original file by clearing srcset — without that
-  // the candidate list would keep overriding `src` and the fallback
-  // would never take. The variants are produced by the same preview
-  // job, so if `col` is servable the rest are too.
-  const VARIANT_WIDTHS: ReadonlyArray<[string, number]> = [
-    ['col', 320],
-    ['preview', 1024],
-    ['screen', 1920],
-    ['hires', 4096],
-  ];
-  const imgSrcset = $derived(
-    coverAssetId && imgSrc === colUrl
-      ? VARIANT_WIDTHS.map(
-          ([k, w]) => `/api/v1/assets/${coverAssetId}/variants/${k} ${w}w`,
-        ).join(', ')
-      : undefined,
-  );
-
-  // `sizes` describes the RENDERED width so the browser can pick before
-  // layout. Feed cards span the column; grid tiles are `1fr` tracks
-  // that stretch between --tile-min and just under 2x it, so the tile
-  // floor is the honest lower bound and the browser's DPR multiplier
-  // covers the stretch.
-  //
-  // The length comes in as a prop (tileSizesLen), NOT from the CSS var
-  // that drives the grid: `sizes` is not CSS and drops var()/clamp()/
-  // min() for the 100vw default — the worst guess for a thumbnail wall.
-  // Also not `sizes="auto"`: it needs loading=lazy and isn't in Safari.
-  //
-  // Feed mirrors .posts-feed's capped column (min(100%, 46rem)) as a
-  // MEDIA-CONDITION LIST, not a min() expression. `sizes` is not CSS:
-  // `min(100vw, 46rem)` was measured picking `hires` (4096px) for a
-  // 734px box on a 3840px display — the browser dropped the value it
-  // couldn't parse and fell back to the 100vw default, which is the
-  // same trap as var() in sizes, one layer down. The two-clause form
-  // is plain <source-size-value> and universally understood.
-  const imgSizes = $derived(
-    imgSrcset
-      ? feed
-        ? '(max-width: 46rem) 100vw, 46rem'
-        // Grid: the tile is ~half the viewport on a phone (the clamp
-        // floor) and the rung's rem on desktop. Two clauses beat the
-        // bare rem, which over-hinted on mobile and pulled a larger
-        // variant than a ~150px box needs.
-        : `(max-width: 640px) 50vw, ${tileSizesLen}`
-      : undefined,
-  );
+  // A responsive `srcset` (col/preview/screen/hires) once fixed the 4k
+  // upscaling of the 320² `col`, but preview_available only guarantees
+  // `col` — the wider rungs need not exist for a small or non-raster
+  // cover, and requesting a missing one is exactly the 404 #471 removes.
+  // So the cover renders `col` alone; a `ladder_available` signal could
+  // bring the responsive set back safely later. `feed` / `tileSizesLen`
+  // stay in the API for that.
+  void feed;
+  void tileSizesLen;
 
   // Hover scrub preview. Video covers animate frames from preview.video's
   // 10×10 sprite sheet (~100 frames over the timeline); 3D covers
@@ -286,11 +228,9 @@
           </span>
         {/if}
       </div>
-    {:else if hasFile && !imgError}
+    {:else if showImage && !imgError}
       <img
-        src={imgSrc}
-        srcset={imgSrcset}
-        sizes={imgSizes}
+        src={colUrl}
         alt={post.title}
         loading="lazy"
         decoding="async"

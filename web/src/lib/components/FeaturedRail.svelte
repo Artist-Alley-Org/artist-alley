@@ -32,6 +32,7 @@
     title: string;
     asset_file_hash?: string | null;
     asset_has_image?: boolean;
+    preview_available?: boolean;
   }
 
   let items = $state<FeaturedItem[]>([]);
@@ -77,7 +78,14 @@
   // every item, which duplicated it for screen readers and made
   // innerText-based assertions read it twice. Rendering one or the
   // other means the tile has exactly one title, always.
-  let failed = $state<Record<string, boolean>>({});
+  //
+  // The server tells us whether a servable col exists for this caller
+  // (preview_available, #471), so we render the image only when true and
+  // otherwise the title-only tile — with no probe and no byte request
+  // that could 404.
+  function showThumb(it: FeaturedItem): boolean {
+    return !!thumbUrl(it) && !!it.preview_available;
+  }
 
   // Only collections have a destination. Assets have no standalone
   // route — they render inside the viewer/modal on other surfaces —
@@ -110,12 +118,11 @@
           <div
             class="relative aspect-square overflow-hidden rounded-lg border border-border bg-surface-elevated"
           >
-            {#if thumb && !failed[it.id]}
+            {#if showThumb(it)}
               <img
                 src={thumb}
                 alt=""
                 loading="lazy"
-                onerror={() => (failed[it.id] = true)}
                 class="h-full w-full object-cover transition group-hover:scale-[1.02]"
               />
             {:else}
@@ -133,7 +140,7 @@
                already displays the name inside the square, so a caption
                would print it twice — visibly, not just to a screen
                reader. -->
-          {#if thumb && !failed[it.id]}
+          {#if showThumb(it)}
             <p class="mt-1.5 line-clamp-2 text-sm text-fg">{it.title}</p>
           {/if}
         </svelte:element>

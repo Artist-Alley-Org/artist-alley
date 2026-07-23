@@ -306,6 +306,37 @@ func (q *Queries) SeedInsertAsset(ctx context.Context, arg SeedInsertAssetParams
 	return id, err
 }
 
+const seedInsertAssetCompanion = `-- name: SeedInsertAssetCompanion :exec
+INSERT INTO asset_companions (
+    asset_id, companion_path, object_hash, content_type, size_bytes
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (asset_id, companion_path) DO NOTHING
+`
+
+type SeedInsertAssetCompanionParams struct {
+	AssetID       pgtype.UUID
+	CompanionPath string
+	ObjectHash    string
+	ContentType   string
+	SizeBytes     int64
+}
+
+// Attach a companion blob (bin buffer / texture / .mtl) to a seeded
+// asset under its declared relative path so multi-file glTF/OBJ models
+// resolve their siblings at render + view time (#486). Companion bytes
+// live in storage_objects (deduped by hash); this row is the
+// asset+path→blob mapping. Idempotent for resumed seeds.
+func (q *Queries) SeedInsertAssetCompanion(ctx context.Context, arg SeedInsertAssetCompanionParams) error {
+	_, err := q.db.Exec(ctx, seedInsertAssetCompanion,
+		arg.AssetID,
+		arg.CompanionPath,
+		arg.ObjectHash,
+		arg.ContentType,
+		arg.SizeBytes,
+	)
+	return err
+}
+
 const seedInsertAssetFieldValue = `-- name: SeedInsertAssetFieldValue :exec
 INSERT INTO asset_field_value (
     asset_id, field_id, value_text, value_num, value_date, value_options, value_ref, set_by

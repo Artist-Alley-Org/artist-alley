@@ -27,6 +27,7 @@
     toneMappingValue,
     type EnvPresetId,
   } from '$lib/3d/environments';
+  import { DEFAULT_AMBIENT_INTENSITY } from '$lib/3d/defaultLighting';
 
   type Asset = import('./controller').ViewAsset;
 
@@ -488,6 +489,14 @@
     scene.add(fillLight);
     const rimLight = new THREE.DirectionalLight(0xffffff, session.rimIntensity);
     scene.add(rimLight);
+    // Ambient floor matching the thumbnail rig (#509). The three-point
+    // directionals + IBL leave the faces turned away from every light
+    // crushing to black; the thumbnail (scripts/threejs/render.html)
+    // adds a low ambient so they still read, and the viewer's default
+    // must match. Not a user control — it's part of the baseline look,
+    // same as in the thumbnail. See defaultLighting.ts.
+    const ambientLight = new THREE.AmbientLight(0xffffff, DEFAULT_AMBIENT_INTENSITY);
+    scene.add(ambientLight);
 
     function applyLightingFromSession() {
       const r = Math.max(maxDim * 3, 1);

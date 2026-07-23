@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.5.2
+  version: 0.6.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -4684,10 +4684,14 @@ paths:
       operationId: listFields
       summary: List field definitions (the metadata schema)
       description: |
-        Returns all field definitions, ordered by display group and
-        display order. Filter by status to see active / deprecated /
-        archived only. The result is the schema admins build through
-        the field-management UI.
+        Returns field definitions, ordered by display group and display
+        order. The result is the schema admins build through the
+        field-management UI.
+
+        By default, archived (soft-deleted) fields are excluded — the
+        list is the live schema. Pass an explicit `status` to filter to
+        exactly one status; `status=archived` surfaces the tombstones
+        for anyone who needs them.
       tags: [metadata]
       security:
         - cookieAuth: []
@@ -5220,6 +5224,34 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /posts/by-asset/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPostsByAsset
+      summary: Posts that feature an asset (post-by-asset lookup)
+      description: |
+        The visibility-filtered list of posts whose members include the
+        given asset (#478 slice-2, ADR 0070). An asset is a many-to-many
+        member of ≥0 posts, so this returns 0..N. Anonymous-visible under
+        public mode (ADR 0063), returning only public posts; authenticated
+        callers see the walled-garden tier — the SAME gating as the feed,
+        no new enforcement plane. The client redirects when exactly one
+        post is visible and lists when several.
+      tags: [posts]
+      security: []
+      responses:
+        "200":
+          description: Visible posts featuring the asset (possibly empty)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /posts/{id}:
     parameters:
@@ -6962,11 +6994,46 @@ paths:
         schema: { type: string, maxLength: 64 }
     get:
       operationId: getUserPublicByUsername
-      summary: Public profile by username (used by /@username URLs)
+      summary: Public profile by username (the human-facing permalink)
+      description: |
+        Public user-profile page (#478, ADR 0070). Anonymous-visible
+        when public mode is on (ADR 0063 — gated centrally); requires
+        auth when public mode is off. Anonymous viewers get only the
+        display-layer fields (no real name), and a 404 when the owner
+        has opted out of anonymous exposure (ADR 0024). The profile's
+        content lists are fetched separately through the standard gated
+        browse endpoints (/assets, /collections, /posts) filtered by
+        owner_ref, so there is no new enforcement plane here.
       tags: [users]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      security: []
+      responses:
+        "200":
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPublic" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/by-ref/{ref}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: getUserPublicByRefPath
+      summary: Public profile by stable ref (used by notifications + cross-refs)
+      description: |
+        Same public profile as /users/by-username, resolved by the
+        stable user ref (#478, ADR 0070). Distinct from GET /users/{ref}
+        (authenticated internal read) so the anonymous public surface is
+        a separate, narrowly-scoped path. Public-mode + opt-out semantics
+        identical to the by-username variant.
+      tags: [users]
+      security: []
       responses:
         "200":
           description: Public profile
@@ -10570,7 +10637,7 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status]
+         title, asset_type, status, preview_available]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -10587,6 +10654,14 @@ components:
         file_hash:
           type: string
           nullable: true
+        preview_available:
+          type: boolean
+          description: |
+            True iff a servable `col` variant exists for this asset AND
+            the caller passes the content plane (ADR 0064). Same contract
+            + 0064-safety as Asset.preview_available — the tile renders a
+            thumbnail only when true, else a placeholder with no byte
+            request (#471).
         asset_created_at: { type: string, format: date-time }
     CollectionResourceWrite:
       type: object
@@ -10611,7 +10686,7 @@ components:
           nullable: true
     Asset:
       type: object
-      required: [id, title, asset_type, status, processing_status, created_at, updated_at, tags]
+      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -10658,6 +10733,19 @@ components:
             is always available, but `/variants/{key}` URLs may
             404 until processing completes. `ready` is the steady
             state. `failed` surfaces in the UI as a retry affordance.
+        preview_available:
+          type: boolean
+          description: |
+            True iff a servable `col` thumbnail variant exists for this
+            asset AND the caller passes the content plane
+            (visibility.CanReadContent, ADR 0064). The client renders the
+            thumbnail only when this is true and otherwise shows a
+            placeholder WITHOUT requesting bytes — so a content-gated or
+            preview-less asset never fires a `/variants/col` (or `/file`)
+            request that would 404 and spam the console (#471). A
+            restricted asset the caller may not read reads identically to
+            "no preview" (false), so this never confirms `restricted`
+            (0064-safe).
         thumbhash:
           type: string
           nullable: true
@@ -10697,7 +10785,7 @@ components:
         asset or collection, with an explicit ordering position and
         the resolved subject title. Asset subjects also carry
         thumbnail hints so the admin list can render a preview.
-      required: [id, subject_kind, subject_id, position, title, created_at]
+      required: [id, subject_kind, subject_id, position, title, preview_available, created_at]
       properties:
         id:
           type: string
@@ -10724,6 +10812,15 @@ components:
         asset_has_image:
           type: boolean
           description: Asset subjects only — whether a raster thumbnail exists.
+        preview_available:
+          type: boolean
+          description: |
+            Asset subjects only (false for collections) — true iff a
+            servable `col` variant exists AND the caller passes the
+            content plane (ADR 0064). The rail renders a thumbnail only
+            when true, else a title-only tile with no byte request (#471).
+            Unlike `asset_has_image` (unreliable — false for pre-ingest
+            assets), this is computed from live variant existence.
         created_at:
           type: string
           format: date-time
@@ -12540,6 +12637,14 @@ components:
           enum: ['', 'light', 'dark']
           description: |
             Empty string resets the pref to "follow system".
+        hide_from_anonymous:
+          type: boolean
+          description: |
+            Owner opt-out from anonymous profile exposure (ADR 0070 →
+            ADR 0024). Default false. When true, the owner's public
+            profile page (/users/by-username, /users/by-ref) returns 404
+            to anonymous viewers even with public mode on. Authenticated
+            viewers and the content-visibility gating are unaffected.
 
     PostLikeState:
       type: object

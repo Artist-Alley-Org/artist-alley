@@ -67,8 +67,14 @@ on:
       - 'LICENSE'
   workflow_dispatch:
 
+# Key on the SOURCE BRANCH, not the raw ref, so a dev/main tip's push
+# event and its open promotion PR collapse into one run instead of two
+# (#491). A push to dev has head_ref empty -> ref_name=dev; a PR from
+# dev has head_ref=dev -> same group. A push to dev and an unrelated
+# feat->dev PR still differ (dev vs the feature branch), so they don't
+# cancel each other. cancel-in-progress stays on.
 concurrency:
-  group: ui-pr-${{ github.workflow }}-${{ github.ref }}
+  group: ui-pr-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:

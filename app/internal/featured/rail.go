@@ -15,13 +15,14 @@ import (
 
 // RailRow is one rendered placement.
 type RailRow struct {
-	ID            pgtype.UUID
-	SubjectKind   string
-	SubjectID     pgtype.UUID
-	Position      int32
-	Title         string
-	AssetFileHash *string
-	AssetHasImage bool
+	ID                    pgtype.UUID
+	SubjectKind           string
+	SubjectID             pgtype.UUID
+	Position              int32
+	Title                 string
+	AssetFileHash         *string
+	AssetHasImage         bool
+	AssetPreviewAvailable bool
 }
 
 // ListPublicRail returns the public featured rail for one caller
@@ -88,7 +89,14 @@ func ListPublicRail(
 	sql := `SELECT f.id, f.subject_kind, f.subject_id, f.position,
        COALESCE(a.title, c.name, '')::text AS title,
        CASE WHEN a.sensitivity = 'public' THEN a.file_hash ELSE NULL END AS asset_file_hash,
-       COALESCE(a.sensitivity = 'public' AND a.has_image, false)::boolean AS asset_has_image
+       COALESCE(a.sensitivity = 'public' AND a.has_image, false)::boolean AS asset_has_image,
+       -- preview_available (#471): public-tier AND a servable col exists.
+       -- Gated on public exactly like the file_hash hint above, so it is
+       -- suppressed for non-public assets (0064-safe) and the rail fires
+       -- no /variants/col request for them.
+       COALESCE(a.sensitivity = 'public' AND EXISTS (
+            SELECT 1 FROM storage_variants sv
+             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available
 FROM featured_items f
 LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id` + assetFrag + `
@@ -110,7 +118,7 @@ LIMIT $1::INTEGER`
 		var r RailRow
 		if err := rows.Scan(
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
-			&r.Title, &r.AssetFileHash, &r.AssetHasImage,
+			&r.Title, &r.AssetFileHash, &r.AssetHasImage, &r.AssetPreviewAvailable,
 		); err != nil {
 			return nil, fmt.Errorf("featured: rail scan: %w", err)
 		}

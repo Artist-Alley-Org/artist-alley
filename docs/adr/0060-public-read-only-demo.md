@@ -46,6 +46,20 @@ deploy bundle; this ADR records the architecture, not the app code.
    `system.admin`. So even if a write slipped past nginx, the app's own
    per-capability guards still refuse it — two layers, not one.
 
+   **Amended 2026-07-21 (v0.5.2 / #474).** The `.read` caps gate *rows*, not
+   the *content plane* — so the demo-viewer could list `team`/`restricted`
+   assets but not read their bytes (`visibility.CanReadContent`, ADR 0064),
+   leaving ~85% of the seeded catalogue as blank "Preview unavailable" tiles.
+   The fix stays true to this principle: the role now also holds
+   **`content.read.all`** (migration `00014`) — a content-plane-only read cap
+   honoured solely in `CanReadContent`, granting asset-byte reads at every
+   sensitivity tier and **nothing else**. `system.admin` was the wrong lever
+   precisely because it *is* the superuser wildcard this point rejects: on a
+   public login it would expose every admin surface, not just content. The
+   grant lives in the demo deploy bundle's `provision-demo.sql`, not in the
+   migration (the cap is *defined* in core; granting it to a role is a
+   deploy-side provisioning step).
+
 3. **Secure bootstrap — no default admin.** `AA_BOOTSTRAP_DEFAULT_ADMIN` is
    **off**, so the app creates the first admin with a random password (never
    the documented `ArtistAlleyMogul`). The deploy script recovers that

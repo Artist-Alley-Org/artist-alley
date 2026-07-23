@@ -108,14 +108,29 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       -o /out/aa \
       ./cmd/aa
 
+# ---- threejs-deps ---------------------------------------------------------
+#
+# The headless three.js preview worker's node_modules (puppeteer + three)
+# for preview.model's 3D renderer (#498, ADR 0069). Multi-arch: buildx
+# resolves node:22-bookworm-slim per TARGETPLATFORM, so the node binary +
+# modules copied into the runtime below match the target arch. Puppeteer's
+# bundled Chromium download is skipped — the runtime uses the apt
+# `chromium` package (available on amd64 AND arm64, unlike Blender, so
+# arm64 gains 3D previews here).
+
+FROM node:${NODE_VERSION}-bookworm-slim AS threejs-deps
+WORKDIR /app/threejs
+ENV PUPPETEER_SKIP_DOWNLOAD=1
+COPY scripts/threejs/package.json scripts/threejs/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+
 # ---- runtime --------------------------------------------------------------
 #
 # Debian-slim instead of Alpine: the binary is cgo'd against libwebp
-# so it dynamically links libwebp.so.7 at runtime. Final image lands
-# around ~80 MB — bigger than the prior pure-Go Alpine cut (~25 MB)
-# but gains lossy + lossless WebP encoding for the variant ladder
-# (~25-35% smaller variants than JPEG at perceptually equivalent
-# quality). Curl stays for the HEALTHCHECK below.
+# so it dynamically links libwebp.so.7 at runtime. Final image is
+# larger with the 3D preview stack (Chromium + Node) baked in, but
+# still one artifact that renders every preview kind. Curl stays for
+# the HEALTHCHECK below.
 
 FROM debian:bookworm-slim AS runtime
 
@@ -136,9 +151,14 @@ ARG TARGETARCH
 ARG BLENDER_VERSION=4.2.9
 ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
 
+# chromium: headless renderer for the three.js preview worker (#498). The
+# apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm, …)
+# so puppeteer launches it on SwiftShader software WebGL — no GPU. Present
+# on amd64 AND arm64, so 3D previews work on both (Blender is amd64-only).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl libwebp7 \
         ffmpeg librsvg2-bin poppler-utils ghostscript imagemagick unar \
+        chromium \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system app && useradd --system --gid app --no-create-home app \
  && mkdir -p /var/lib/aa-storage \
@@ -170,6 +190,15 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
      && apt-get autoremove -y \
      && rm -rf /var/lib/apt/lists/* ; \
     fi
+
+# three.js preview worker (#498): Node runtime + node_modules + script.
+# The Go ModelHandler defaults ThreeJSScript to /app/threejs/worker.mjs
+# and falls back to Blender if any piece is missing (threeJSAvailable).
+COPY --from=threejs-deps /usr/local/bin/node /usr/local/bin/node
+COPY --from=threejs-deps --chown=app:app /app/threejs/node_modules /app/threejs/node_modules
+COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html scripts/threejs/package.json /app/threejs/
+ENV PUPPETEER_SKIP_DOWNLOAD=1 \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 USER app
 WORKDIR /app

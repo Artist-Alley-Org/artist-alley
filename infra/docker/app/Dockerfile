@@ -47,10 +47,23 @@ RUN CGO_ENABLED=1 GOOS=linux GOFLAGS="${GOFLAGS}" GOMAXPROCS="${GOMAXPROCS}" go 
     -o /out/aa \
     ./cmd/aa
 
+# ---- threejs-deps stage ---------------------------------------------------
+# Install the headless three.js preview worker's node_modules (puppeteer
+# + three) for the preview.model 3D renderer (#498, ADR 0069). Skip
+# puppeteer's bundled Chromium download — the runtime uses the apt
+# `chromium` package instead (one Chromium for the image, kept current by
+# Debian security updates). node_modules + the node binary are copied
+# into the runtime below.
+FROM node:22-bookworm-slim AS threejs-deps
+WORKDIR /app/threejs
+ENV PUPPETEER_SKIP_DOWNLOAD=1
+COPY scripts/threejs/package.json scripts/threejs/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+
 # ---- runtime stage --------------------------------------------------------
 # debian-slim instead of alpine because the official Blender tarball
 # (preview.model worker) is built against glibc. Final image lands
-# around ~1.4 GB; the cost buys one container that handles every
+# around ~1.9 GB; the cost buys one container that handles every
 # preview job kind (image / video / 3D) under a shared queue.
 FROM debian:bookworm-slim AS runtime
 
@@ -85,11 +98,15 @@ ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572
 # Runtime libs blender dlopens on startup even in --background mode
 # (libgl, libxrender, etc.); ffmpeg drives preview.video. xz-utils +
 # curl are only needed for the extraction step.
+# chromium: the headless renderer for the three.js preview worker (#498).
+# The apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm,
+# …) so puppeteer can launch it on SwiftShader software WebGL — no GPU.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl xz-utils ffmpeg \
         librsvg2-bin libwebp7 poppler-utils ghostscript imagemagick unar \
         libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
         libxkbcommon0 libxext6 libsm6 libice6 \
+        chromium \
  && rm -rf /var/lib/apt/lists/* \
  && curl -fL -o /tmp/blender.tar.xz \
         "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
@@ -104,6 +121,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && useradd --uid "${UID}" --gid app --no-create-home app \
  && mkdir -p /var/lib/aa-storage \
  && chown app:app /var/lib/aa-storage
+
+# three.js preview worker (#498): Node runtime + its node_modules + the
+# worker script. The Go handler defaults ThreeJSScript to
+# /app/threejs/worker.mjs and falls back to Blender if any piece is
+# absent (threeJSAvailable). PUPPETEER_EXECUTABLE_PATH points puppeteer at
+# the apt Chromium instead of a bundled download.
+COPY --from=threejs-deps /usr/local/bin/node /usr/local/bin/node
+COPY --from=threejs-deps --chown=app:app /app/threejs/node_modules /app/threejs/node_modules
+COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html scripts/threejs/package.json /app/threejs/
+ENV PUPPETEER_SKIP_DOWNLOAD=1 \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 USER app
 WORKDIR /app

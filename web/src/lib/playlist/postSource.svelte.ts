@@ -43,6 +43,7 @@ export interface PostForPlaylist {
       file_extension?: string | null;
       asset_type?: number | null;
       metadata?: Record<string, unknown> | null;
+      preview_available?: boolean;
     };
   }>;
   team_id?: string | null;
@@ -135,6 +136,7 @@ export function createPostPlaylistSource(postId: string) {
             file_hash: m.asset?.file_hash ?? null,
             asset_type: m.asset?.asset_type ?? null,
             metadata: m.asset?.metadata ?? null,
+            preview_available: m.asset?.preview_available ?? false,
           },
         }),
       );

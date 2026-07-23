@@ -1060,18 +1060,19 @@ type UserPreference struct {
 }
 
 type UserProfile struct {
-	UserRef        int64
-	DisplayName    *string
-	Bio            string
-	AvatarUrl      *string
-	Location       string
-	WebsiteUrl     *string
-	SocialLinks    []byte
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	Language       string
-	Theme          string
+	UserRef           int64
+	DisplayName       *string
+	Bio               string
+	AvatarUrl         *string
+	Location          string
+	WebsiteUrl        *string
+	SocialLinks       []byte
+	OriginServerID    pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	Language          string
+	Theme             string
+	HideFromAnonymous bool
 }
 
 type UserRole struct {

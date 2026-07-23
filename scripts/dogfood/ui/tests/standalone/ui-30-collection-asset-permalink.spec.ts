@@ -11,34 +11,108 @@
 // exist, so clicking any asset inside a collection dead-ended on 404.
 //
 // Structural, not seed-id-bound: it PROVISIONS its own fixture — a
-// collection with one pinned asset, built from whatever asset the API
-// hands back — then drives the UI through it and cleans up. That keeps
-// it deterministic across any seeded stack (the demo dataset does not
-// always pin assets into collections).
+// collection with one pinned asset — then drives the UI through it and
+// cleans up. That keeps it independent of any seeded collection (the
+// demo dataset does not always pin assets into collections).
+//
+// Determinism (#488): the pinned asset is not "whatever ?limit=1
+// returns" (arbitrary Postgres order — often a 3D/failed/non-preview
+// asset, which flaked this spec). It is a stable, preview-friendly
+// pick: ready + raster image, sorted by id. And byte sub-resource 404s
+// (/variants/*, /file) are treated as content-availability facts, not
+// navigation errors — see isBenignApiFailure.
 
 import { test, expect, type Page } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 const TEST_COLLECTION_NAME = 'UI-30 permalink smoke';
 
-// API failures that are benign background noise and must not fail the
-// golden-path assertion. Kept tight so a REAL navigation error (a 404
-// for the asset we opened) still fails the test.
-function isBenignApiFailure(url: string): boolean {
-  return /\/api\/v1\/(account\/messages\/unread-count|notifications)/.test(url);
+// Raster-image extensions whose assets get the full preview/variant
+// ladder. We deliberately steer away from 3D (.glb/.obj/.fbx), audio,
+// documents, and anything still processing — those either lack a
+// standard preview variant or 404 their byte sub-resources, which is
+// exactly the noise this test was drowning in (#488).
+const RASTER_IMAGE_EXTENSIONS = new Set([
+  'jpg',
+  'jpeg',
+  'png',
+  'gif',
+  'webp',
+  'bmp',
+  'tif',
+  'tiff',
+  'avif',
+]);
+
+interface AssetListItem {
+  id: string;
+  file_extension?: string | null;
+  processing_status?: string | null;
 }
 
-// provisionCollectionWithAsset creates a collection and pins one real
-// asset into it, returning both ids. Uses page.request so it runs with
-// the logged-in admin's cookies.
+function isRasterImage(ext: string | null | undefined): boolean {
+  return RASTER_IMAGE_EXTENSIONS.has((ext ?? '').toLowerCase().replace(/^\./, ''));
+}
+
+// API failures that are benign background noise and must not fail the
+// golden-path assertion. Kept tight so a REAL navigation error still
+// fails the test.
+//
+// Two classes are exempt:
+//   1. background polls (unread-count / notifications) fired by the shell
+//      on every page, unrelated to the asset we opened.
+//   2. asset BYTE sub-resources — /variants/* and /file. A 404 here means
+//      "this asset has no such derivative / no bytes to serve", which is
+//      a content-availability fact, NOT a navigation failure. On a
+//      demo-shaped seed most assets legitimately lack some variant, and
+//      treating those 404s as errors is what made this spec flap (#488).
+//
+// A 404 on the asset RECORD itself — /api/v1/assets/{uuid} with no
+// sub-path — is NOT exempt: that is the #475 regression this test
+// guards, so it must still fail the run.
+function isBenignApiFailure(url: string): boolean {
+  if (/\/api\/v1\/(account\/messages\/unread-count|notifications)/.test(url)) {
+    return true;
+  }
+  // Byte/variant sub-resources of an asset: /assets/{id}/variants/... or
+  // /assets/{id}/file. The trailing sub-path is what distinguishes these
+  // from the bare asset-record fetch, which stays a hard failure.
+  return /\/api\/v1\/assets\/[^/]+\/(variants\/|file\b)/.test(url);
+}
+
+// pickDeterministicImageAsset returns a stable, preview-friendly asset:
+// public/ready is not filterable server-side (the list DTO omits
+// sensitivity, and `status` is the workflow lifecycle, not
+// processing_status), so we page a chunk and filter client-side to
+// processing_status==='ready' + a raster-image extension, then sort by
+// id so the SAME asset is chosen on every run regardless of Postgres's
+// arbitrary default order — the root of the flake (#488). The test pins
+// it as admin, who reads content at any sensitivity, so sensitivity does
+// not affect fixture stability here.
+async function pickDeterministicImageAsset(page: Page): Promise<string> {
+  const res = await page.request.get('/api/v1/assets?limit=200');
+  expect(res.ok(), 'GET /assets should succeed').toBeTruthy();
+  const { items } = (await res.json()) as { items: AssetListItem[] };
+
+  const candidates = (items ?? [])
+    .filter((a) => a.processing_status === 'ready' && isRasterImage(a.file_extension))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  expect(
+    candidates.length,
+    'the seeded stack must have at least one ready raster-image asset for the permalink smoke',
+  ).toBeGreaterThan(0);
+
+  return candidates[0].id;
+}
+
+// provisionCollectionWithAsset creates a collection and pins one
+// deterministic, preview-friendly asset into it, returning both ids.
+// Uses page.request so it runs with the logged-in admin's cookies.
 async function provisionCollectionWithAsset(
   page: Page,
 ): Promise<{ collectionId: string; assetId: string }> {
-  const assetsRes = await page.request.get('/api/v1/assets?limit=1');
-  expect(assetsRes.ok(), 'GET /assets should succeed').toBeTruthy();
-  const assets = (await assetsRes.json()) as { items: Array<{ id: string }> };
-  const assetId = assets.items?.[0]?.id;
-  expect(assetId, 'the seeded stack should have at least one asset').toBeTruthy();
+  const assetId = await pickDeterministicImageAsset(page);
 
   const createRes = await page.request.post('/api/v1/collections', {
     data: { name: TEST_COLLECTION_NAME },

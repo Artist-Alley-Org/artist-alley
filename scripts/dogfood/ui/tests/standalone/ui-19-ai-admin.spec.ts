@@ -46,6 +46,17 @@ const DEFAULT_CONFIG = {
 };
 
 test.describe('UI-19 AI inference admin surface', () => {
+  // #535: run serially. Every test here mutates the SAME singleton
+  // /admin/ai/config row — and the afterEach restore PUTs it back. Under
+  // parallel workers (local `workers: 2`) those writes race: one test's
+  // afterEach reset (or another test's save) clobbers the enabled=true
+  // this test just saved, so the reload-and-verify below reads back
+  // `unchecked` and fails. The round-trip is real; the flake was
+  // cross-test interference on shared global state. Serial keeps the
+  // config mutations from overlapping. (CI runs workers=1, so it never
+  // hit this — but the suite must be green locally at retries: 0 too.)
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeEach(async ({ page }) => {
     await loginAsAdminViaUI(page);
   });
@@ -79,7 +90,12 @@ test.describe('UI-19 AI inference admin surface', () => {
       await enabled.check();
     }
     await page.getByTestId('ai-config-save').click();
-    await expect(page.getByTestId('ai-config-saved')).toBeVisible({ timeout: 5_000 });
+    // #535 (same class as #505): inherit the config's global 15s
+    // expect.timeout instead of an explicit 5s cap. The save PATCH +
+    // re-fetch + banner render can exceed 5s under CI load, flaking the
+    // run; the assertion is unchanged, so a save that never confirms
+    // still fails (at 15s).
+    await expect(page.getByTestId('ai-config-saved')).toBeVisible();
 
     // Reload + verify the value persisted across the round trip.
     await page.goto('/admin/ai/config');
@@ -94,7 +110,9 @@ test.describe('UI-19 AI inference admin surface', () => {
     await localInput.fill('');
     await page.getByTestId('ai-config-save').click();
     // The 422 response is rendered inline as the findings banner.
-    await expect(page.getByTestId('ai-config-findings')).toBeVisible({ timeout: 5_000 });
+    // #535: inherit the global 15s expect.timeout (the validate round-trip
+    // can exceed an explicit 5s under load); assertion unchanged.
+    await expect(page.getByTestId('ai-config-findings')).toBeVisible();
     await expect(page.getByTestId('ai-config-findings')).toContainText('privacy_lock_with_empty_local_list');
   });
 

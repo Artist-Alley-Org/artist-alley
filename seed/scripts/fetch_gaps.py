@@ -34,6 +34,7 @@ import argparse
 import hashlib
 import json
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -966,7 +967,8 @@ def fetch(gap: GapAsset, out_root: Path, force: bool = False) -> dict | None:
     if target.exists() and not force:
         size = target.stat().st_size
         print(f"  [cached] {gap.name} ({size:,} B)", file=sys.stderr)
-        return _record(gap, target, out_root)
+        companions = _fetch_gltf_companions(gap, target, force)
+        return _record(gap, target, out_root, companions)
 
     print(f"  [fetch ] {gap.name}", file=sys.stderr)
     print(f"           ← {gap.url}", file=sys.stderr)
@@ -983,11 +985,62 @@ def fetch(gap: GapAsset, out_root: Path, force: bool = False) -> dict | None:
     target.write_bytes(data)
     size = target.stat().st_size
     print(f"           -> {size:,} B written", file=sys.stderr)
-    return _record(gap, target, out_root)
+    companions = _fetch_gltf_companions(gap, target, force)
+    return _record(gap, target, out_root, companions)
 
 
-def _record(gap: GapAsset, target: Path, out_root: Path) -> dict:
-    return {
+def _fetch_gltf_companions(gap: GapAsset, target: Path, force: bool) -> list[str]:
+    """Multi-file glTF (#486): a .gltf declares its geometry buffer +
+    textures as sibling URIs. Parse the just-fetched .gltf and download
+    each declared sibling from the same URL directory into out_dir next
+    to the model, so the seed pipeline can stage them as companions. No
+    hardcoded file lists — the .gltf is the source of truth. Best-effort:
+    a failed sibling logs + is skipped (the model still renders, just
+    untextured). GLB and other formats are self-contained → []."""
+    if target.suffix.lower() != ".gltf":
+        return []
+    try:
+        doc = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"    companion parse skipped: {e}", file=sys.stderr)
+        return []
+
+    uris: list[str] = []
+    seen: set[str] = set()
+    for coll in ("buffers", "images"):
+        for item in doc.get(coll, []):
+            uri = (item.get("uri") or "").strip()
+            if not uri or uri.lower().startswith("data:") or "://" in uri:
+                continue
+            uri = urllib.parse.unquote(uri)
+            if uri.startswith("/") or ".." in uri or uri in seen:
+                continue
+            seen.add(uri)
+            uris.append(uri)
+
+    base_url = gap.url.rsplit("/", 1)[0]
+    got: list[str] = []
+    for uri in uris:
+        dest = target.parent / uri
+        if dest.exists() and not force:
+            got.append(uri)
+            continue
+        curl = f"{base_url}/{urllib.parse.quote(uri)}"
+        req = urllib.request.Request(curl, headers={"User-Agent": "artist-alley-seed-fetcher/2.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(resp.read())
+            got.append(uri)
+        except Exception as e:
+            print(f"    companion error {uri}: {e}", file=sys.stderr)
+    if got:
+        print(f"           +{len(got)} companions", file=sys.stderr)
+    return got
+
+
+def _record(gap: GapAsset, target: Path, out_root: Path, companions: list[str] | None = None) -> dict:
+    rec = {
         "name": gap.name,
         "path": str(target.relative_to(out_root)),
         "size_bytes": target.stat().st_size,
@@ -999,6 +1052,12 @@ def _record(gap: GapAsset, target: Path, out_root: Path) -> dict:
         "notes": gap.notes,
         "fetched_from": gap.url,
     }
+    # Record the multi-file siblings for provenance/visibility. The seed
+    # pipeline (populate_archive.py + the Go runner) resolves + stages
+    # them from disk, so this list is informational, not load-bearing.
+    if companions:
+        rec["companions"] = companions
+    return rec
 
 
 def main() -> int:

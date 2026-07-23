@@ -82,6 +82,26 @@ WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
 ORDER BY posted_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::INTEGER;
 
+-- name: ListPostsByAsset :many
+-- Posts whose members include a given asset (#478 slice-2, post-by-asset
+-- lookup). An asset is a many-to-many member of ≥0 posts via post_assets,
+-- so this returns the visibility-filtered set. `visibilities` is the set
+-- of tiers the caller may see — the handler passes {'public'} for an
+-- anonymous caller and {'public','org-only'} for an authenticated one
+-- (the same walled-garden view as the feed; the relationship tiers
+-- private/followers/explicit-share are out of scope here). Bounded (no
+-- cursor) — an asset lands in few posts, and the client only needs
+-- "redirect if one, list if several". Newest first.
+SELECT id
+FROM posts p
+WHERE p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM post_assets pa
+                WHERE pa.post_id = p.id
+                  AND pa.asset_id = sqlc.arg('asset_id')::UUID)
+  AND p.visibility = ANY(sqlc.arg('visibilities')::TEXT[])
+ORDER BY p.posted_at DESC, p.id DESC
+LIMIT 200;
+
 -- ---------------------------------------------------------------------------
 -- post_assets (members)
 -- ---------------------------------------------------------------------------

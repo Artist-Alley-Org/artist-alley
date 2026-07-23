@@ -14,10 +14,33 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
+
+// allowAllContent is a visibility.ContentPool that reports every asset
+// as public, so the serveImage MECHANICS tests here (resolution, size
+// negotiation, streaming) run without a DB. The content-plane gate
+// itself — restricted/team/embargo denial, owner/cap allowance — is
+// covered against a REAL pool in content_gate_test.go (#476).
+type allowAllContent struct{}
+
+func (allowAllContent) QueryRow(context.Context, string, ...any) pgx.Row { return publicRow{} }
+
+type publicRow struct{}
+
+func (publicRow) Scan(dest ...any) error {
+	// CanReadContent selects (sensitivity, owner_user_ref, team_id);
+	// "public" short-circuits to allow before owner/team are read.
+	if len(dest) > 0 {
+		if p, ok := dest[0].(*string); ok {
+			*p = "public"
+		}
+	}
+	return nil
+}
 
 // stubLookup serves a fixed asset row. The test stamps in the
 // pixel dimensions + file hash; missing IDs fall through to
@@ -69,6 +92,7 @@ func defaultIIIFHandler(t *testing.T, asset iiif.IIIFAsset) *iiif.Handler {
 		Lookup:   stubLookup{byID: map[uuid.UUID]iiif.IIIFAsset{id: asset}},
 		Variants: stubVariants{list: defaultVariants()},
 		Streamer: stubStreamer{hash: asset.FileHash, key: "hires", body: "WEBPBYTES", mimeType: "image/webp"},
+		Content:  allowAllContent{},
 	}
 }
 

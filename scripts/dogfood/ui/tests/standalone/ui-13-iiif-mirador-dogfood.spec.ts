@@ -86,7 +86,61 @@ async function loadMiradorAtAAOrigin(
   await page.setContent(embedWithManifest, { waitUntil: 'domcontentloaded' });
 }
 
+/**
+ * Load Mirador and wait for it to render the manifest label, RETRYING the
+ * whole load if the label stalls (#535).
+ *
+ * Mirador renders the label ~15ms after its window mounts once the app is
+ * responsive — measured in isolation, every time. The residual flake was
+ * NOT slowness in this test: it was a transient stall of Mirador's
+ * client-side manifest/window step while a heavy upload/transcode spec on
+ * the OTHER worker (local `workers: 2`) saturated the app. A stall is
+ * transient — a fresh load once the saturation passes renders instantly —
+ * so a longer single timeout only masks it, while a reload actually clears
+ * it. We reload up to `attempts` times, each polling `perAttemptMs`, then
+ * fail loudly with the last headings for diagnosis.
+ */
+async function loadMiradorRenderingLabel(
+  page: import('@playwright/test').Page,
+  baseURL: string,
+  manifestURL: string,
+  label: string,
+  { attempts = 3, perAttemptMs = 20_000 }: { attempts?: number; perAttemptMs?: number } = {},
+) {
+  let headings: string[] = [];
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    await loadMiradorAtAAOrigin(page, baseURL, manifestURL);
+    // Root mount — non-fatal on a slow attempt; the label poll below is
+    // the real gate and a reload follows if it stalls.
+    await page.waitForSelector('.mirador-viewer', { timeout: 20_000 }).catch(() => undefined);
+    const start = Date.now();
+    while (Date.now() - start < perAttemptMs) {
+      headings = await page.locator('h1, h2, h3').allTextContents();
+      if (headings.some((s) => s.includes(label))) return; // rendered — done
+      await page.waitForTimeout(500);
+    }
+    // Stalled this attempt — fall through and reload Mirador fresh.
+  }
+  expect(
+    headings.some((s) => s.includes(label)),
+    `Mirador did not render label "${label}" after ${attempts} loads (last headings=${JSON.stringify(headings)})`,
+  ).toBe(true);
+}
+
 test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
+  // #535: run serially. Each test seeds its own fixture from the SAME
+  // bytes as the same admin — and `POST /assets` dedups per
+  // (owner_user_ref, file_hash) (Phase 1.18.A-2). Under parallel workers
+  // (local `workers: 2`), two of these tests seeding at once dedup to the
+  // SAME asset rows, so when the first finishes and its afterEach
+  // soft-deletes them, the other's manifest 404s mid-render ("Not Found"
+  // window, asset gone though the session is still valid). Serial keeps
+  // the seeds from overlapping; the dedup lookup is `deleted_at IS NULL`,
+  // so each test's re-seed after the prior teardown creates fresh rows.
+  // (CI runs workers=1, so it never overlapped — but the suite must be
+  // green locally at retries: 0 too.)
+  test.describe.configure({ mode: 'serial' });
+
   // Per-test seed + teardown. Sharing a beforeAll would leak state
   // across tests when one fails mid-run; per-test keeps each case
   // isolated + idempotent. Cost is ~4 uploads × 3 tests = 12
@@ -107,32 +161,26 @@ test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
 
   test('Mirador loads asset manifest + renders canvas', async ({ page, baseURL }, testInfo) => {
     // Extend the default 30s test timeout — Mirador cold-boot + CDN
-    // fetch + manifest download + first tile paint can hit 25s on
-    // a runner with a cold browser cache.
-    test.setTimeout(60_000);
+    // fetch + manifest download + first tile paint, plus the #535 load
+    // retry (up to 3 fresh loads on a transient stall). Happy path is
+    // ~2s; the budget only matters when a reload is needed.
+    test.setTimeout(180_000);
 
     // Point Mirador at the FIRST asset's manifest. Mirador renders
     // Collection URLs as a browse panel (Add-resource workspace)
     // rather than opening canvases directly; the seeded collection
     // is the fixture vehicle, but the canvas-render proof lives at
     // the asset-manifest level.
-    await loadMiradorAtAAOrigin(page, baseURL!, `${baseURL}/iiif/3/asset/${fixture.assetIds[0]}/manifest.json`);
-
-    // Mirador's root ready-signal is the .mirador-viewer element
-    // appearing under our #mirador root. Bootup takes a moment
-    // after the CDN JS parses.
-    await page.waitForSelector('.mirador-viewer', { timeout: 30_000 });
-
-    // Mirador surfaces the manifest label as the window title (h3).
-    // Successful load = the seeded asset's title appears in a
-    // heading. Failed load = "TypeError: Failed to fetch" heading.
-    // Loose match on our RUN_TAG substring to survive minor
-    // Mirador-version DOM drift.
-    const headings = page.locator('h3, h2, h1');
-    await expect.poll(async () => {
-      const texts = await headings.allTextContents();
-      return texts.some((t) => t.includes('Dogfood'));
-    }, { timeout: 20_000, message: 'Mirador did not render the seeded manifest label' }).toBe(true);
+    // Load Mirador + wait for the manifest label to render. Mirador
+    // surfaces the label as the window title (h3); a successful load =
+    // the seeded asset's title ('Dogfood' substring) appears. Retries
+    // the load on a transient stall (#535, see helper).
+    await loadMiradorRenderingLabel(
+      page,
+      baseURL!,
+      `${baseURL}/iiif/3/asset/${fixture.assetIds[0]}/manifest.json`,
+      'Dogfood',
+    );
 
     // Canvas image element paints once tiles resolve. Loose
     // selector — Mirador renders the image inside an OpenSeadragon
@@ -145,7 +193,7 @@ test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
         );
         return canvases.length > 0 || imgs.length > 0;
       });
-    }, { timeout: 20_000, message: 'Mirador did not paint the canvas image' }).toBe(true);
+    }, { timeout: 30_000, message: 'Mirador did not paint the canvas image' }).toBe(true);
 
     // Post-hoc review artifact — retained by ui-nightly's
     // upload-artifact step under .pw-results/{test-title}/.
@@ -156,7 +204,8 @@ test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
   });
 
   test('Manifest metadata block populates + Mirador sidebar opens', async ({ page, baseURL }, testInfo) => {
-    test.setTimeout(60_000);
+    // #535: budget covers the load-retry path (see loadMiradorRenderingLabel).
+    test.setTimeout(180_000);
 
     // First: verify the manifest ITSELF carries a metadata block
     // (this proves 1.54.B's `f.label` metadata query fix from the
@@ -180,17 +229,15 @@ test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
     // sidebar opens (structural — a companionWindow element
     // appears) without depending on specific button aria-labels
     // which drift across Mirador versions.
-    await loadMiradorAtAAOrigin(page, baseURL!, `${baseURL}/iiif/3/asset/${fixture.assetIds[0]}/manifest.json`);
-    await page.waitForSelector('.mirador-viewer', { timeout: 30_000 });
-    await expect
-      .poll(
-        async () => {
-          const t = await page.locator('h1, h2, h3').allTextContents();
-          return t.some((s) => s.includes('Dogfood'));
-        },
-        { timeout: 20_000 },
-      )
-      .toBe(true);
+    // The manifest DATA is already proven above (the direct fetch asserts
+    // 200 + shape). This step verifies Mirador renders it — with a load
+    // retry on a transient stall (#535, see helper).
+    await loadMiradorRenderingLabel(
+      page,
+      baseURL!,
+      `${baseURL}/iiif/3/asset/${fixture.assetIds[0]}/manifest.json`,
+      'Dogfood',
+    );
 
     // Sidebar-toggle button is stable across Mirador 3.x versions
     // as 'Toggle sidebar' aria-label. Try clicking; non-fatal if
@@ -218,7 +265,7 @@ test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
     // minor versions and the endpoint contract is what
     // third-party viewers depend on. Screenshot captures whatever
     // Mirador shows for the same query so operators can see it.
-    test.setTimeout(60_000);
+    test.setTimeout(120_000);
 
     const searchURL = `${baseURL}/iiif/3/collection/${fixture.id}/search?q=Dogfood`;
     const res = await page.request.get(searchURL);

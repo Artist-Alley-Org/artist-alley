@@ -2862,6 +2862,9 @@ func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.Update
 func (s *apiServer) ListPosts(ctx context.Context, req openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
 	return s.posts.ListPosts(ctx, req)
 }
+func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
+	return s.posts.GetPostsByAsset(ctx, req)
+}
 func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
 	resp, err := s.posts.CreatePost(ctx, req)
 	s.invalidateSearchOnPostWrite(ctx, err)
@@ -2949,6 +2952,9 @@ func (s *apiServer) GetUserPublicByRef(ctx context.Context, req openapi.GetUserP
 }
 func (s *apiServer) GetUserPublicByUsername(ctx context.Context, req openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
 	return s.users.GetUserPublicByUsername(ctx, req)
+}
+func (s *apiServer) GetUserPublicByRefPath(ctx context.Context, req openapi.GetUserPublicByRefPathRequestObject) (openapi.GetUserPublicByRefPathResponseObject, error) {
+	return s.users.GetUserPublicByRefPath(ctx, req)
 }
 func (s *apiServer) UpdateUserProfile(ctx context.Context, req openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	return s.users.UpdateUserProfile(ctx, req)
@@ -4638,7 +4644,7 @@ func (a metaAssetAdapter) GetAssetRef(ctx context.Context, id uuid.UUID) (assetm
 		fileExt  *string
 	)
 	err := a.pool.QueryRow(ctx, `
-		SELECT owner_user_ref, owning_team_id, file_hash, file_extension
+		SELECT owner_user_ref, team_id, file_hash, file_extension
 		  FROM assets WHERE id = $1
 	`, id).Scan(&ownerRef, &teamID, &fileHash, &fileExt)
 	if err != nil {
