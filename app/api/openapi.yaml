@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.5.2
+  version: 0.6.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
