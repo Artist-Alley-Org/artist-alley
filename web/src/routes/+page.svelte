@@ -13,6 +13,7 @@
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import ContentGrid from '$components/ContentGrid.svelte';
+  import SelectionBar from '$components/SelectionBar.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
 
@@ -236,6 +237,13 @@
       {t('browse.results_for', { query })}
     </p>
   {/if}
+
+  <!-- Multi-select indicator (#515 slice 3). Sticky under the navbar so
+       the count stays visible while scrolling a long feed; the full
+       bulk-action bar is #39. Renders only while a selection is active. -->
+  <div class="sticky top-2 z-30 empty:hidden">
+    <SelectionBar />
+  </div>
 
   <!-- #417 — the curated rail sits ABOVE both branches below. For a
        guest it is the entire landing page (posts are members-only);

@@ -172,7 +172,15 @@
       "share": "Copy link",
       "copied": "Link copied",
       "add_to_collection": "Add to collection…"
+    },
+    "select": {
+      "label": "Select",
+      "deselect": "Deselect"
     }
+  },
+  "selection": {
+    "count": "{count} selected",
+    "clear": "Clear"
   },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
