@@ -17,9 +17,19 @@
 
 import { test as setup, expect } from '@playwright/test';
 import { loginAsAdminViaAPI, ADMIN_STATE_PATH } from '../../helpers/auth';
+import { waitForAppReady, withTransientRetry } from '../../helpers/ready';
 
 setup('authenticate admin + pin site name once', async ({ request }) => {
-  await loginAsAdminViaAPI(request);
+  // This step gates the ENTIRE standalone suite (dependencies: ['setup']),
+  // so a single startup blip here cascades into ~130 failures. Give it
+  // headroom over the global 30s test timeout for the readiness poll +
+  // retries, then (1) wait for the app to actually answer before the
+  // first call and (2) wrap each raw API call so one transient
+  // ECONNRESET / "context disposed" retries instead of reding the suite.
+  setup.setTimeout(90_000);
+  await waitForAppReady(request);
+
+  await withTransientRetry('admin login', () => loginAsAdminViaAPI(request));
 
   // Pin the display name to "Artist Alley" (the frontend default the
   // brand assertions in ui-07 / ui-29 expect). A stack seeded with any
@@ -27,12 +37,16 @@ setup('authenticate admin + pin site name once', async ({ request }) => {
   // specs. The name rides the public /appearance boot fetch, sourced
   // from this admin config, so setting it here makes every subsequent
   // page render "Artist Alley". Read-modify-write to preserve base_url.
-  const cur = await request.get('/api/v1/admin/system/site');
+  const cur = await withTransientRetry('get site config', () =>
+    request.get('/api/v1/admin/system/site'),
+  );
   const body = cur.ok() ? await cur.json() : {};
-  const patched = await request.patch('/api/v1/admin/system/site', {
-    data: { ...body, name: 'Artist Alley' },
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const patched = await withTransientRetry('set site name', () =>
+    request.patch('/api/v1/admin/system/site', {
+      data: { ...body, name: 'Artist Alley' },
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  );
   expect(patched.ok(), `set site name failed: HTTP ${patched.status()}`).toBeTruthy();
 
   // Pin the admin's UI language to English so the copy/title assertions
@@ -40,14 +54,16 @@ setup('authenticate admin + pin site name once', async ({ request }) => {
   // in (the dogfood admin is 'es' → "Administración …"). The en-US
   // browser locale (config) covers logged-out contexts; a signed-in
   // profile pref wins over the locale, so the admin needs this too.
-  const me = await request.get('/api/v1/auth/me');
+  const me = await withTransientRetry('get me', () => request.get('/api/v1/auth/me'));
   if (me.ok()) {
     const ref = (await me.json())?.ref;
     if (ref != null) {
-      await request.patch(`/api/v1/users/${ref}`, {
-        data: { language: 'en' },
-        headers: { 'Content-Type': 'application/json' },
-      });
+      await withTransientRetry('set admin language', () =>
+        request.patch(`/api/v1/users/${ref}`, {
+          data: { language: 'en' },
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
     }
   }
 
