@@ -49,6 +49,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
+	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -532,6 +533,15 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 		r.assets[a.ID] = id
 
+		// Register multi-file companions (#486). A .gltf/.obj declares its
+		// buffer/textures/.mtl as sibling files; without companion rows the
+		// Blender render stages nothing and the interactive viewer's
+		// GLTFLoader 404s on the .bin, so the model renders blank. Do this
+		// BEFORE the preview enqueue below so the worker finds them staged.
+		// Best-effort: a companion hiccup shouldn't fail an otherwise-good
+		// seed.
+		r.applyAssetCompanions(ctx, id, a.ID, abs, a.FileExtension)
+
 		// Dispatch the preview job (#355). Enqueued AFTER the asset row
 		// exists — the handler resolves the asset by id — and using the
 		// same dispatch map + payload shape as the upload path, so the
@@ -585,6 +595,75 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 	r.log.Info("seed.assets", "inserted", inserted,
 		"deduped", deduped, "missing", missing, "previews_queued", queued)
 	return nil
+}
+
+// applyAssetCompanions parses a seeded model's declared external
+// resources (glTF buffers[].uri / images[].uri; OBJ mtllib → MTL
+// map_*) and registers each sibling that exists on disk as a companion
+// (#486). Mirrors what the HTTP AddAssetCompanion handler does — upload
+// bytes content-addressed, pin them, insert the asset+path→blob row —
+// but drives it straight off the parsed model instead of per-file API
+// calls, so the seed self-wires any complete multi-file model dropped
+// into its source tree.
+//
+// Every step is soft-fail: GLB/FBX and single-file models resolve to
+// no companions and return immediately; a missing or unreadable sibling
+// logs and is skipped so the asset still seeds (it just renders
+// untextured, which beats failing the whole seed).
+func (r *Runner) applyAssetCompanions(ctx context.Context, assetID pgtype.UUID, manifestID, mainPath, ext string) {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "gltf", "obj":
+	default:
+		return // GLB / FBX / everything else — self-contained
+	}
+
+	found, missing, err := format3d.ResolveCompanions(mainPath)
+	if err != nil {
+		r.log.Warn("seed.companion.resolve", "id", manifestID, "err", err.Error())
+		return
+	}
+	for _, m := range missing {
+		r.log.Warn("seed.companion.missing", "id", manifestID, "path", m)
+	}
+
+	dir := filepath.Dir(mainPath)
+	registered := 0
+	for _, rel := range found {
+		abs := filepath.Join(dir, filepath.FromSlash(rel))
+		f, oErr := os.Open(abs)
+		if oErr != nil {
+			r.log.Warn("seed.companion.open", "id", manifestID, "path", rel, "err", oErr.Error())
+			continue
+		}
+		up, uErr := r.storage.UploadOriginal(ctx, f, guessContentType(companionExt(rel)),
+			storage.PinRef{SubjectType: "asset_companion", SubjectID: manifestID + "/" + rel})
+		f.Close()
+		if uErr != nil {
+			r.log.Warn("seed.companion.upload", "id", manifestID, "path", rel, "err", uErr.Error())
+			continue
+		}
+		if err := r.q.SeedInsertAssetCompanion(ctx, SeedInsertAssetCompanionParams{
+			AssetID:       assetID,
+			CompanionPath: rel,
+			ObjectHash:    up.Hash,
+			ContentType:   guessContentType(companionExt(rel)),
+			SizeBytes:     up.Size,
+		}); err != nil {
+			r.log.Warn("seed.companion.insert", "id", manifestID, "path", rel, "err", err.Error())
+			continue
+		}
+		registered++
+	}
+	if registered > 0 {
+		r.log.Info("seed.companion", "id", manifestID, "registered", registered)
+	}
+}
+
+// companionExt pulls the extension (no dot) from a relative companion
+// path for MIME guessing — path.Ext keeps this working for the
+// forward-slash relative paths the parser emits.
+func companionExt(rel string) string {
+	return strings.TrimPrefix(filepath.Ext(rel), ".")
 }
 
 func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals map[string]any) error {

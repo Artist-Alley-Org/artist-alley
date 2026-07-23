@@ -1160,6 +1160,11 @@ func (*PanicShim) CreatePost(context.Context, openapi.CreatePostRequestObject) (
 	panic("PanicShim: CreatePost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetPostsByAsset panics by default; test shims override.
+func (*PanicShim) GetPostsByAsset(context.Context, openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
+	panic("PanicShim: GetPostsByAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // DeletePost panics by default; test shims override.
 func (*PanicShim) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
 	panic("PanicShim: DeletePost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1318,6 +1323,11 @@ func (*PanicShim) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequ
 // UpdateTextAnnotation panics by default; test shims override.
 func (*PanicShim) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
 	panic("PanicShim: UpdateTextAnnotation called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetUserPublicByRefPath panics by default; test shims override.
+func (*PanicShim) GetUserPublicByRefPath(context.Context, openapi.GetUserPublicByRefPathRequestObject) (openapi.GetUserPublicByRefPathResponseObject, error) {
+	panic("PanicShim: GetUserPublicByRefPath called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // GetUserPublicByUsername panics by default; test shims override.

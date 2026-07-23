@@ -50,13 +50,22 @@
   );
   const sourceIsRenderable = $derived(NATIVE_BROWSER_EXTS.has(sourceExt));
 
-  let imgSrc = $state('');
   let imgError = $state(false);
   let naturalW = $state(0);
   let naturalH = $state(0);
 
+  // The server tells us whether the caller has a servable preview
+  // (preview_available, #471). For a renderable image that resolves
+  // true, the original `/file` is guaranteed served (same content gate),
+  // so we render it directly — no probe, no `hires`/`/file` 404 race.
+  // We use `/file` rather than `hires` because preview_available only
+  // guarantees `col`; `hires` need not exist for a small image, and
+  // requesting a missing one is the 404 this removes. A non-renderable
+  // source, or one with no preview, shows the friendly placeholder.
+  const showImage = $derived(sourceIsRenderable && !!asset.preview_available);
+  const imgSrc = $derived(fileUrl);
   $effect(() => {
-    imgSrc = hiresUrl;
+    void asset.id;
     imgError = false;
   });
 
@@ -69,13 +78,10 @@
       naturalW > 0 && naturalH > 0 ? `${naturalW}×${naturalH}` : '';
   }
 
+  // Defensive only: preview_available guarantees a servable /file for a
+  // readable image, so this fires only on undecodable bytes — degrade to
+  // the placeholder.
   function onError() {
-    if (imgSrc !== fileUrl && sourceIsRenderable) {
-      // Hires variant missing but the source IS a format the
-      // browser can render. Try /file before giving up.
-      imgSrc = fileUrl;
-      return;
-    }
     imgError = true;
   }
 
@@ -101,7 +107,7 @@
   });
 </script>
 
-{#if imgError}
+{#if imgError || !showImage}
   <!-- Friendly placeholder when no preview exists. Covers two
        cases: a true raster that failed to load (broken upload,
        backend variant missing) and a non-browser-renderable source

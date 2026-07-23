@@ -7,7 +7,41 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-_Nothing yet._
+### User-facing changes
+
+- **Public user-profile pages.** Every user now has a profile page, reachable by
+  username (`/users/by-username/{name}`) or stable ref, showing their display
+  name, avatar, and the assets/posts/collections a viewer is allowed to see. It
+  reuses the existing visibility rules — anonymous visitors see only public work
+  (and only when public mode is on), and an owner can opt out of anonymous
+  exposure. This also cleared the last of the dead author/similar-asset links
+  (#478).
+
+- **Shared view controls across every asset surface.** The browse view switcher
+  (grid / masonry / thumbnail / list) and sort direction now appear on the
+  profile and post-by-asset pages too, not just the main browse — one consistent
+  control bar everywhere assets are shown (#511).
+
+- **Faster 3D previews, and multi-file models fixed.** Open-format 3D previews
+  (glTF/GLB, FBX, OBJ) now render through a headless three.js worker instead of
+  Blender — much faster, and **arm64 deployments get 3D previews for the first
+  time** (the Blender path was amd64-only). Multi-file glTF (a `.gltf` plus its
+  external `.bin`/textures) now renders correctly, where before it failed
+  silently (#497/#498/#507/#508, #486). Blender stays as an automatic fallback.
+
+## [v0.5.2] — 2026-07-21
+
+A content-visibility capability so read-only viewers (the public demo) can see
+their whole catalogue.
+
+- **`content.read.all` capability (#474).** A content-plane-only read cap,
+  honored solely in `visibility.CanReadContent` alongside the `system.admin`
+  wildcard — it grants asset-byte reads at every sensitivity tier and nothing
+  else (no admin surfaces, no writes; it is not a wildcard). This lets a
+  read-only role (e.g. the demo viewer) see `team`/`restricted` content that
+  would otherwise return blank "Preview unavailable" tiles, without exposing
+  any administrative surface. Migration `00014` defines the cap; granting it to
+  a role is a deploy-side provisioning step (ADR 0060).
 
 ## [v0.5.1] — 2026-07-21
 

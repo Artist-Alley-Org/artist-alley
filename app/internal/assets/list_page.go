@@ -57,15 +57,34 @@ const listAssetsPageColumns = `id, title, description, asset_type, owner_user_re
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at, deleted_at, deleted_reason`
 
-// ListAssetsPageGated runs the browse query for one caller.
+// ListAssetsPageGatedRow is a browse row plus the derived
+// preview_available flag (#471). Embeds the sqlc row so callers keep
+// scanning the same columns positionally via .ListAssetsPageRow.
+type ListAssetsPageGatedRow struct {
+	ListAssetsPageRow
+	// PreviewAvailable: a servable `col` variant exists AND the caller
+	// passes the content plane — computed here so the client renders a
+	// thumbnail only when true, never firing a byte request that 404s.
+	PreviewAvailable bool
+}
+
+// ListAssetsPageGated runs the browse query for one caller. `caps` is
+// the caller's capability checker (nil for anonymous), consulted only to
+// short-circuit preview_available for SystemAdmin / content.read.all —
+// it does NOT affect which rows are returned (that stays the predicate's
+// job).
 func ListAssetsPageGated(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	caller visibility.Caller,
+	caps visibility.CapabilityChecker,
 	p ListAssetsPageGatedParams,
-) ([]ListAssetsPageRow, error) {
+) ([]ListAssetsPageGatedRow, error) {
 	// Bind the caller-supplied filters first, so their indexes are
-	// stable and the predicate's fragment can start above them.
+	// stable and the predicate's fragment can start above them. $8 is the
+	// caller ref, used only by the team-membership EXISTS in the SELECT
+	// (below) — it must sit within the builder's own placeholders so the
+	// predicate fragment starts above it (ADR 0063 discipline).
 	args := []any{
 		p.OwnerUserRef,    // $1
 		p.AssetType,       // $2
@@ -74,6 +93,7 @@ func ListAssetsPageGated(
 		p.CursorCreatedAt, // $5
 		p.CursorID,        // $6
 		p.RowLimit,        // $7
+		caller.UserRef,    // $8 — anonymous carries ref 0, matching no membership
 	}
 
 	var opts []visibility.Option
@@ -94,7 +114,20 @@ func ListAssetsPageGated(
 	// there is deliberately no inline soft-delete clause here, so the
 	// rule has exactly one expression on this path.
 	var b strings.Builder
-	b.WriteString(`SELECT ` + listAssetsPageColumns + `
+	// Two derived columns join preview_available's inputs in the SAME
+	// pass — no per-asset round-trips on this browse hot path (#471):
+	//   has_col_variant     — a servable `col` thumbnail exists
+	//   caller_is_team_member — caller belongs to a team-tier asset's team
+	// Readability is then decided in-Go per row (visibility.ContentReadable)
+	// from sensitivity + owner + that membership boolean + caps.
+	b.WriteString(`SELECT ` + listAssetsPageColumns + `,
+       sensitivity,
+       (file_hash IS NOT NULL AND EXISTS (
+            SELECT 1 FROM storage_variants sv
+             WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
+       (team_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM team_memberships tm
+             WHERE tm.team_id = assets.team_id AND tm.user_ref = $8::BIGINT)) AS caller_is_team_member
 FROM assets
 WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
@@ -114,18 +147,28 @@ LIMIT $7::INTEGER`)
 	}
 	defer rows.Close()
 
-	var out []ListAssetsPageRow
+	var out []ListAssetsPageGatedRow
 	for rows.Next() {
 		var i ListAssetsPageRow
+		var (
+			sensitivity        string
+			hasColVariant      bool
+			callerIsTeamMember bool
+		)
 		if err := rows.Scan(
 			&i.ID, &i.Title, &i.Description, &i.AssetType, &i.OwnerUserRef, &i.Status,
 			&i.FileHash, &i.FileExtension, &i.FileSizeBytes, &i.Metadata,
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
+			&sensitivity, &hasColVariant, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
-		out = append(out, i)
+		readable := visibility.ContentReadable(sensitivity, i.OwnerUserRef, caller, caps, callerIsTeamMember)
+		out = append(out, ListAssetsPageGatedRow{
+			ListAssetsPageRow: i,
+			PreviewAvailable:  hasColVariant && readable,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("assets: list page rows: %w", err)

@@ -54,6 +54,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/users"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // Cache domain name. Stable string used as NOTIFY target — peer
@@ -401,6 +402,9 @@ func (h *Handler) GetPost(
 		return openapi.GetPost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
+	}
+	if err := h.enrichPreview(ctx, full); err != nil {
+		return nil, err
 	}
 	return openapi.GetPost200JSONResponse(*full), nil
 }
@@ -812,12 +816,81 @@ func (h *Handler) ListPosts(
 		lastID = uuid.UUID(r.ID.Bytes)
 	}
 
+	// preview_available (#471) is per-caller, so it's derived here from
+	// the per-request identity — never baked into the cross-caller Post
+	// cache. Pointers into `items` so enrichPreview can replace each
+	// post's Members slice in place.
+	ptrs := make([]*openapi.Post, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+
 	resp := openapi.PostList{Items: items}
 	if len(rows) > int(limit) {
 		next := encodeCursor(lastPostedAt, lastID)
 		resp.NextCursor = &next
 	}
 	return openapi.ListPosts200JSONResponse(resp), nil
+}
+
+// GetPostsByAsset returns the visibility-filtered posts whose members
+// include the given asset (#478 slice-2, ADR 0070). An asset is a
+// many-to-many member of ≥0 posts, so this is a slice of the same feed
+// keyed on the asset — no new enforcement plane.
+//
+// Anonymous admission is decided upstream by the public-mode gate
+// (auth.PublicSurfaceRoutes): with public mode off an anonymous request
+// never reaches here. Visibility mirrors the feed — anonymous sees only
+// 'public' posts, an authenticated caller sees the walled-garden
+// 'org-only' tier. Bounded result (no cursor); the client redirects when
+// exactly one post is visible and lists when several.
+func (h *Handler) GetPostsByAsset(
+	ctx context.Context,
+	req openapi.GetPostsByAssetRequestObject,
+) (openapi.GetPostsByAssetResponseObject, error) {
+	// Anonymous → public tier only. Authenticated → the walled-garden
+	// view (public + org-only), the same tiers the feed shows. The
+	// relationship tiers (private / followers / explicit-share) need
+	// ownership/relationship checks and are out of scope for this lookup.
+	visibilities := []string{"public"}
+	if auth.IdentityFromContext(ctx) != nil {
+		visibilities = append(visibilities, "org-only")
+	}
+
+	ids, err := New(h.Pool).ListPostsByAsset(ctx, ListPostsByAssetParams{
+		AssetID:      pgtype.UUID{Bytes: req.Id, Valid: true},
+		Visibilities: visibilities,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("posts: by asset: %w", err)
+	}
+
+	items := make([]openapi.Post, 0, len(ids))
+	for _, id := range ids {
+		full, err := h.fetchFullPost(ctx, id)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue // raced deletion between the list and the fetch
+			}
+			return nil, err
+		}
+		items = append(items, *full)
+	}
+
+	// preview_available (#471) is per-caller — derive it from the
+	// request identity, same as ListPosts.
+	ptrs := make([]*openapi.Post, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+
+	return openapi.GetPostsByAsset200JSONResponse(openapi.PostList{Items: items}), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1270,6 +1343,93 @@ func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
 		out.OriginServerId = &v
 	}
 	return out
+}
+
+// enrichPreview sets member.asset.preview_available on the given posts
+// for the request's caller (#471). It runs ONE batched query over every
+// member asset id across all posts — no per-asset, no per-post round
+// trips — joining `col` variant existence + the caller's team membership,
+// then decides readability in-Go via visibility.ContentReadable.
+//
+// CACHE SAFETY (the reason the posts path was deferred): the full Post is
+// cached by id in h.byID, and its Members slice header aliases the cached
+// backing array. preview_available is PER-CALLER, so writing it into that
+// shared array would leak one caller's readability to the next. This
+// therefore replaces each post's Members with a FRESH slice (PostMember —
+// including its Asset — is a value, so copy() detaches it) and mutates
+// only the copy; the cached array is never touched. The cache keeps the
+// baked-in false, and every request re-derives the flag for its caller.
+func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) error {
+	caller := visibility.NewCaller(nil)
+	var caps visibility.CapabilityChecker
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		caller = visibility.NewCaller(&id.UserRef)
+		caps = func(code string) bool { return id.Can(code) }
+	}
+
+	idSet := make(map[uuid.UUID]struct{})
+	for _, p := range posts {
+		if p == nil {
+			continue
+		}
+		for _, m := range p.Members {
+			idSet[uuid.UUID(m.Asset.Id)] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id.String())
+	}
+
+	rows, err := h.Pool.Query(ctx, `
+		SELECT a.id, a.sensitivity, a.owner_user_ref,
+		       (a.file_hash IS NOT NULL AND EXISTS (
+		            SELECT 1 FROM storage_variants sv
+		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
+		       (a.team_id IS NOT NULL AND EXISTS (
+		            SELECT 1 FROM team_memberships tm
+		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member
+		FROM assets a
+		WHERE a.id = ANY($1::uuid[])`,
+		ids, caller.UserRef)
+	if err != nil {
+		return fmt.Errorf("posts: preview enrich: %w", err)
+	}
+	defer rows.Close()
+
+	avail := make(map[uuid.UUID]bool, len(idSet))
+	for rows.Next() {
+		var (
+			id       pgtype.UUID
+			sens     string
+			owner    *int64
+			hasCol   bool
+			isMember bool
+		)
+		if err := rows.Scan(&id, &sens, &owner, &hasCol, &isMember); err != nil {
+			return fmt.Errorf("posts: preview enrich scan: %w", err)
+		}
+		avail[uuid.UUID(id.Bytes)] = hasCol && visibility.ContentReadable(sens, owner, caller, caps, isMember)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("posts: preview enrich rows: %w", err)
+	}
+
+	for _, p := range posts {
+		if p == nil {
+			continue
+		}
+		fresh := make([]openapi.PostMember, len(p.Members))
+		copy(fresh, p.Members) // detaches from the cached backing array
+		for i := range fresh {
+			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
+		}
+		p.Members = fresh
+	}
+	return nil
 }
 
 func memberToAsset(m ListPostAssetsRow) openapi.Asset {

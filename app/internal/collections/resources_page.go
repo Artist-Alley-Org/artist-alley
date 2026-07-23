@@ -46,18 +46,29 @@ type ListCollectionResourcesPageGatedParams struct {
 	RowLimit        int32
 }
 
+// ListCollectionResourcesPageGatedRow is a contents row plus the derived
+// preview_available flag (#471).
+type ListCollectionResourcesPageGatedRow struct {
+	ListCollectionResourcesPageRow
+	PreviewAvailable bool
+}
+
 // ListCollectionResourcesPageGated runs the contents query for one caller.
+// `caps` (nil for anonymous) only short-circuits preview_available for
+// SystemAdmin / content.read.all; it never affects which rows return.
 func ListCollectionResourcesPageGated(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	caller visibility.Caller,
+	caps visibility.CapabilityChecker,
 	p ListCollectionResourcesPageGatedParams,
-) ([]ListCollectionResourcesPageRow, error) {
+) ([]ListCollectionResourcesPageGatedRow, error) {
 	args := []any{
 		p.CollectionID,    // $1
 		p.CursorSortOrder, // $2
 		p.CursorAddedAt,   // $3
 		p.RowLimit,        // $4
+		caller.UserRef,    // $5 — team-membership probe; anon = ref 0, no match
 	}
 
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
@@ -67,9 +78,20 @@ func ListCollectionResourcesPageGated(
 	visFrag, visArgs := pred.ToSQL("a", len(args))
 	args = append(args, visArgs...) // predicate args LAST
 
+	// Derived columns join preview_available's inputs in the same pass —
+	// no per-asset round-trips (#471). Readability is decided in-Go per
+	// row (visibility.ContentReadable) from a.sensitivity + a.owner +
+	// membership + caps.
 	sql := `SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at
+       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at,
+       a.sensitivity, a.owner_user_ref,
+       (a.file_hash IS NOT NULL AND EXISTS (
+            SELECT 1 FROM storage_variants sv
+             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
+       (a.team_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM team_memberships tm
+             WHERE tm.team_id = a.team_id AND tm.user_ref = $5::BIGINT)) AS caller_is_team_member
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 WHERE cr.collection_id = $1
@@ -88,17 +110,28 @@ LIMIT $4::INTEGER`
 	}
 	defer rows.Close()
 
-	var out []ListCollectionResourcesPageRow
+	var out []ListCollectionResourcesPageGatedRow
 	for rows.Next() {
 		var i ListCollectionResourcesPageRow
+		var (
+			sensitivity        string
+			ownerUserRef       *int64
+			hasColVariant      bool
+			callerIsTeamMember bool
+		)
 		if err := rows.Scan(
 			&i.CollectionID, &i.AssetID, &i.SortOrder, &i.Pinned,
 			&i.ExpiresAt, &i.AddedAt,
 			&i.Title, &i.AssetType, &i.Status, &i.FileHash, &i.AssetCreatedAt,
+			&sensitivity, &ownerUserRef, &hasColVariant, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
-		out = append(out, i)
+		readable := visibility.ContentReadable(sensitivity, ownerUserRef, caller, caps, callerIsTeamMember)
+		out = append(out, ListCollectionResourcesPageGatedRow{
+			ListCollectionResourcesPageRow: i,
+			PreviewAvailable:               hasColVariant && readable,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("collections: list resources rows: %w", err)

@@ -202,6 +202,7 @@ func listRowToAPI(r ListFeaturedItemsRow) openapi.FeaturedItem {
 		out.AssetFileHash = r.AssetFileHash
 		hasImg := r.AssetHasImage
 		out.AssetHasImage = &hasImg
+		out.PreviewAvailable = r.AssetPreviewAvailable
 	}
 	return out
 }
@@ -277,6 +278,7 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 		out.AssetFileHash = r.AssetFileHash
 		hasImg := r.AssetHasImage
 		out.AssetHasImage = &hasImg
+		out.PreviewAvailable = r.AssetPreviewAvailable
 	}
 	return out
 }

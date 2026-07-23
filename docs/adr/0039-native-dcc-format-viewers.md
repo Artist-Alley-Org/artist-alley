@@ -15,6 +15,7 @@ related:
   - "0036"
   - "0038"
   - "0040"
+  - "0069"
 tags:
   - architecture
   - 3d
@@ -187,6 +188,17 @@ included — a real answer at upload time:
   the V-Ray add-on for full preview fidelity") become possible.
 
 ### Layer 2 (free, in-tree): Blender worker extension for thumbnails + conversion
+
+> **Amended 2026-07-21 by ADR 0069.** Layer 2's Blender worker is a
+> *converter to glTF*, not the thumbnail *renderer*. When this ADR was
+> written the Phase 1.18 Blender worker rendered every 3D turntable;
+> ADR 0069 moves rendering to a headless-three.js (Puppeteer) preview
+> worker that reuses the interactive viewer's code, and scopes Blender
+> to converting the proprietary formats three.js cannot parse. Read
+> every "Blender renders the thumbnail" statement below as "Blender
+> converts to glTF, which the three.js preview worker then renders."
+> The Blender worker also moves behind an optional profile / separate
+> image so the base image no longer carries it.
 
 The existing thumbnail-worker pattern from Phase 1.18 (Blender
 container behind `--profile workers`) extends to handle `.max` and

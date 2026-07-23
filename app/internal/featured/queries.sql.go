@@ -81,7 +81,14 @@ SELECT f.id, f.subject_kind, f.subject_id, f.position,
        f.created_at, f.created_by_user_ref,
        COALESCE(a.title, c.name, '')::text AS title,
        a.file_hash AS asset_file_hash,
-       COALESCE(a.has_image, false)::boolean AS asset_has_image
+       COALESCE(a.has_image, false)::boolean AS asset_has_image,
+       -- preview_available (#471): a servable col variant exists. This is
+       -- the admin curation list, served to operators who read every
+       -- tier, so variant existence alone decides it (no per-caller
+       -- readability needed here).
+       COALESCE(EXISTS (
+            SELECT 1 FROM storage_variants sv
+             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available
 FROM featured_items f
 LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id
@@ -91,15 +98,16 @@ ORDER BY f.position ASC, f.created_at ASC
 `
 
 type ListFeaturedItemsRow struct {
-	ID               pgtype.UUID
-	SubjectKind      string
-	SubjectID        pgtype.UUID
-	Position         int32
-	CreatedAt        pgtype.Timestamptz
-	CreatedByUserRef *int64
-	Title            string
-	AssetFileHash    *string
-	AssetHasImage    bool
+	ID                    pgtype.UUID
+	SubjectKind           string
+	SubjectID             pgtype.UUID
+	Position              int32
+	CreatedAt             pgtype.Timestamptz
+	CreatedByUserRef      *int64
+	Title                 string
+	AssetFileHash         *string
+	AssetHasImage         bool
+	AssetPreviewAvailable bool
 }
 
 // GitHub #341 — admin-curated featured_items queries.
@@ -131,6 +139,7 @@ func (q *Queries) ListFeaturedItems(ctx context.Context) ([]ListFeaturedItemsRow
 			&i.Title,
 			&i.AssetFileHash,
 			&i.AssetHasImage,
+			&i.AssetPreviewAvailable,
 		); err != nil {
 			return nil, err
 		}

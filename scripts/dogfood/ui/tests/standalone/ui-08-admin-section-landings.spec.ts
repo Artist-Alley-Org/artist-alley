@@ -54,6 +54,34 @@ test.describe('UI-08 admin section landings', () => {
     });
   }
 
+  // #525 — the "Anonymous browse" tile (moderation) shipped drift: its
+  // backend (public_mode) landed in v0.5.0 but the tile stayed future.
+  // It's now a live front door to the toggle on the site-settings page.
+  // Guard both facts so it can't silently regress to a disabled badge.
+  test('anonymous-browse tile is live and links to the public-mode toggle (#525)', async ({ page }) => {
+    await page.goto('/admin/moderation');
+    const tile = page.getByRole('link', { name: /Anonymous browse/i });
+    await expect(tile).toBeVisible();
+    await expect(tile).toHaveAttribute('href', '/admin/system/site');
+    await tile.click();
+    await expect(page).toHaveURL(/\/admin\/system\/site$/);
+    // The public-access section (housing the toggle) is the reason the
+    // tile exists.
+    await expect(page.getByRole('heading', { name: /Public access/i })).toBeVisible();
+  });
+
+  // #525 — reindex / checksum_verify / find_orphans were placeholder
+  // duplicates of pages that shipped elsewhere; they were removed from
+  // the Maintenance-tools section. Assert they're gone (the canonical
+  // live routes are exercised by their own storage/search specs).
+  test('duplicate maintenance-tools tiles are removed (#525)', async ({ page }) => {
+    await page.goto('/admin/tools');
+    await expect(page.locator('main')).toBeVisible();
+    for (const gone of ['Reindex search', 'Verify checksums', 'Find orphan bytes']) {
+      await expect(page.getByRole('heading', { name: gone, level: 3, exact: true })).toHaveCount(0);
+    }
+  });
+
   // Sanity: catch the federation menu bug specifically — if a real
   // tile gets demoted back to disabled (status=future), the test
   // fails because aria-disabled would be true. The ui-02 spec
