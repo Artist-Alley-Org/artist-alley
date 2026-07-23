@@ -10,6 +10,8 @@
 
   import CardThumb from './CardThumb.svelte';
   import CardToolRow from './CardToolRow.svelte';
+  import CardCheckbox from './CardCheckbox.svelte';
+  import { selection } from '$stores/selection.svelte';
 
   interface Asset {
     id: string;
@@ -32,6 +34,10 @@
   // sprite-scrub (keeps hover listeners off the presentation frame).
   let hovering = $state(false);
 
+  // Selected state (#515 slice 3) — the card gets a ring, the checkbox a
+  // check. Read from the shared selection singleton.
+  const selected = $derived(selection.has(asset.id));
+
   const created = $derived(new Date(asset.created_at));
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -46,7 +52,8 @@
   clicks above the link.
 -->
 <div
-  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
+  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border transition-colors
+         {selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}"
 >
   <CardThumb
     assetId={asset.id}
@@ -66,6 +73,9 @@
       class="absolute inset-0 z-[1]"
       aria-label={asset.title}
     ></a>
+
+    <!-- Multi-select checkbox (top-left). -->
+    <CardCheckbox id={asset.id} />
 
     <!-- Hover overlay with title (non-interactive — clicks fall to the link). -->
     <div
