@@ -623,6 +623,27 @@ milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
 
+> **⚠️ Release train rebalanced 2026-07-23 — authoritative summary. The detailed per-version prose further down predates this and is being reconciled; where they disagree, this table + the GitHub milestones win.**
+>
+> | Milestone | Theme |
+> |---|---|
+> | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
+> | **v0.7.0** *(current)* | Operator config + browse polish |
+> | v0.8.0 | Review & collaboration arc (Phase 1.18.B) |
+> | v0.9.0 | Community, moderation & engagement |
+> | v0.10.0 | Sharing, bulk-ops & asset workflow |
+> | v0.11.0 | Privacy, audit, observability & reporting |
+> | v0.12.0 | Platform & extensibility (plugins / add-ons / MCP / imports) |
+> | v0.13.0 | Monetization & premium DCC *(gated on v0.12 add-ons registry)* |
+> | v0.14.0 | AI & creative tooling |
+> | v0.15.0 | RS migration tool |
+> | v0.16.0 | Physical archive mode |
+> | v0.17.0 | Distribution & packaging |
+> | v0.18.0 | Federation / multi-site / fediverse |
+> | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) |
+>
+> Locked sequencing: platform (v0.12) **before** monetization/premium (v0.13). Each GitHub milestone's issue list is authoritative.
+
 
 
 - **v0.3.1 — foundation cleanup** (shipped 2026-07-17): admin read-cap UI
