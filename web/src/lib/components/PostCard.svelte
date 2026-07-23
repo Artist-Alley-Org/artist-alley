@@ -19,6 +19,8 @@
   import { goto } from '$app/navigation';
   import CardThumb from './CardThumb.svelte';
   import CardToolRow from './CardToolRow.svelte';
+  import CardCheckbox from './CardCheckbox.svelte';
+  import { selection } from '$stores/selection.svelte';
 
   interface AssetSummary {
     id: string;
@@ -77,6 +79,10 @@
   // sprite-scrub animation.
   let hovering = $state(false);
 
+  // Selected state (#515 slice 3). A browse card contributes its POST id
+  // to the shared selection.
+  const selected = $derived(selection.has(post.id));
+
   const memberCount = $derived(post.members.length);
   const created = $derived(new Date(post.created_at));
   const createdShort = $derived(
@@ -107,7 +113,8 @@
   the modifier-click / new-tab fallback.
 -->
 <div
-  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
+  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border transition-colors
+         {selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}"
 >
   <CardThumb
     assetId={coverAssetId}
@@ -128,6 +135,9 @@
       class="absolute inset-0 z-[1]"
       aria-label={post.title || 'Untitled'}
     ></a>
+
+    <!-- Multi-select checkbox (top-left). -->
+    <CardCheckbox id={post.id} />
 
     <!-- Multi-asset indicator badge (top-right). Fades out when the tool
          row takes the same corner on hover / touch. -->
