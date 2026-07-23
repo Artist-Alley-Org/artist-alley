@@ -17,8 +17,15 @@
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
-const TEST_FIELD_CODE = 'ui18_test_notes';
 const TEST_COLLECTION_NAME = 'UI-18 Smoke Collection';
+
+// The field code is generated PER TEST ATTEMPT (see the round-trip
+// test) rather than fixed. DELETE /fields soft-archives + `code` is
+// UNIQUE, so a fixed code collides on a retry: the first attempt's
+// archived row still holds the code, and creating it again 23505s
+// (#527). A per-attempt code means a retry starts clean. The code the
+// current attempt created is stashed here so afterEach can clean it.
+let createdFieldCode: string | undefined;
 
 test.describe('UI-18 collection custom fields', () => {
   test.beforeEach(async ({ page }) => {
@@ -26,12 +33,22 @@ test.describe('UI-18 collection custom fields', () => {
   });
 
   test.afterEach(async ({ request }) => {
+    const code = createdFieldCode;
+    createdFieldCode = undefined;
+    if (!code) return;
     // Best-effort cleanup. We don't fail the test on cleanup errors.
-    const fieldsRes = await request.get('/api/v1/fields?subject_kind=collection');
-    if (fieldsRes.ok()) {
-      const fields = (await fieldsRes.json()) as Array<{ id: string; code: string }>;
-      const f = fields.find((x) => x.code === TEST_FIELD_CODE);
-      if (f) await request.delete(`/api/v1/fields/${f.id}`).catch(() => undefined);
+    // Check the default (active) list AND status=archived: since #532
+    // the default excludes archived, so a field a failed attempt already
+    // soft-archived wouldn't be found by the default query alone.
+    for (const q of ['subject_kind=collection', 'subject_kind=collection&status=archived']) {
+      const res = await request.get(`/api/v1/fields?${q}`).catch(() => null);
+      if (!res || !res.ok()) continue;
+      const fields = (await res.json()) as Array<{ id: string; code: string }>;
+      const f = fields.find((x) => x.code === code);
+      if (f) {
+        await request.delete(`/api/v1/fields/${f.id}`).catch(() => undefined);
+        break;
+      }
     }
   });
 
@@ -47,12 +64,20 @@ test.describe('UI-18 collection custom fields', () => {
     await expect(page.getByTestId('admin-fields-filter-collection')).toBeVisible();
   });
 
-  test('create + edit round-trip: define collection field, set value on a collection', async ({ page }) => {
+  test('create + edit round-trip: define collection field, set value on a collection', async ({ page }, testInfo) => {
+    // Per-attempt-unique code: DELETE soft-archives + `code` is UNIQUE,
+    // so reusing a fixed code across a retry 23505s on the second create
+    // (the archived row still owns it). workerIndex + retry + a clock
+    // stamp make it unique across retries, parallel workers, and reruns.
+    // Must satisfy the server's ^[a-z][a-z0-9_]*$ code rule (#527).
+    const fieldCode = `ui18_notes_${testInfo.workerIndex}_${testInfo.retry}_${Date.now()}`;
+    createdFieldCode = fieldCode;
+
     // 1. Open the create form on /admin/fields, pick subject_kind=collection,
     //    submit. The field should appear in the filtered list.
     await page.goto('/admin/fields');
     await page.getByTestId('admin-fields-create-button').click();
-    await page.getByTestId('admin-fields-create-code').fill(TEST_FIELD_CODE);
+    await page.getByTestId('admin-fields-create-code').fill(fieldCode);
     await page.getByTestId('admin-fields-create-label').fill('UI-18 Notes');
     await page.getByTestId('admin-fields-create-type').selectOption('text');
     // The radio is sr-only so the styled label captures pointer
@@ -68,7 +93,7 @@ test.describe('UI-18 collection custom fields', () => {
     // exceed 5s under CI load. The assertions are unchanged, so a row that
     // genuinely never renders still fails (at 15s) — timing weakened, the
     // create+edit round-trip still genuinely verified.
-    await expect(page.getByTestId(`admin-fields-row-${TEST_FIELD_CODE}`)).toBeVisible();
+    await expect(page.getByTestId(`admin-fields-row-${fieldCode}`)).toBeVisible();
 
     // 2. Create a collection, then open its edit modal — the new
     //    custom field section should surface with our field row.
@@ -91,7 +116,7 @@ test.describe('UI-18 collection custom fields', () => {
     // Custom-fields section is in the modal.
     await expect(page.getByTestId('collection-fields-section')).toBeVisible();
     // Field input renders for our test field.
-    const input = page.getByTestId(`field-input-${TEST_FIELD_CODE}`);
+    const input = page.getByTestId(`field-input-${fieldCode}`);
     await expect(input).toBeVisible();
     await input.fill('hello from ui-18');
     await page.getByTestId('collection-fields-save').click();
