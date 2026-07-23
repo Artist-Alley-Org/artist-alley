@@ -27,6 +27,14 @@ const EN_SEARCH_PLACEHOLDER = 'Search assets…';
 const ES_SEARCH_PLACEHOLDER = 'Buscar recursos…';
 
 test.describe('UI-30 i18n locale switch', () => {
+  // #535: run serially. `lang.set()` PATCHes the shared admin PROFILE
+  // language, a global. The first test asserts the English default at its
+  // start; under parallel workers (local `workers: 2`) the sibling test's
+  // flip-to-Spanish PATCH lands first and that opening assertion reads
+  // "Buscar recursos…" instead of "Search assets…". Serial keeps the
+  // locale mutations from overlapping. (CI runs workers=1 — never hit it.)
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeEach(async ({ page }) => {
     await loginAsAdminViaUI(page);
   });
