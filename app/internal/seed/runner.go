@@ -384,7 +384,30 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 // --- phase: collections ----------------------------------------------
 
 func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
+	// The catalogue lists every collection across BOTH studios, but each
+	// site ships only its own studio's assets (plus shared) — so creating
+	// all of them left site_a with 11 of 18 collections holding zero
+	// assets, and any `featured` flag on one of those put an empty
+	// collection on the front rail (#565).
+	//
+	// Skip the ones with no content HERE. This is not "the studio split is
+	// wrong" — Project Toybox is empty on site_a and 516 assets deep on
+	// site_b, which is the split working. It is that an empty shell should
+	// not be created at all. applyFeatured then drops the corresponding
+	// featured entry on its own, since it only features collections that
+	// made it into r.collections.
+	withContent := make(map[string]struct{}, len(cat.Assets))
+	for _, a := range cat.Assets {
+		if a.CollectionName != "" {
+			withContent[a.CollectionName] = struct{}{}
+		}
+	}
+	skipped := 0
 	for _, c := range cat.Collections {
+		if _, ok := withContent[c.Name]; !ok {
+			skipped++
+			continue
+		}
 		cid := parseUUID(c.ID)
 		// org-only unless the catalogue says otherwise. That default is
 		// the restrictive one on purpose: a demo dataset should not
@@ -410,7 +433,7 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 		}
 		r.collections[c.Name] = id
 	}
-	r.log.Info("seed.collections", "count", len(r.collections))
+	r.log.Info("seed.collections", "count", len(r.collections), "skipped_empty", skipped)
 	return nil
 }
 

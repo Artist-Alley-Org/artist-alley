@@ -29,7 +29,7 @@
     "full_name": "Bea Marquez",
     "email": "bea.marquez@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Props"
   },
   {
     "id": "c47ff44f-38a0-0aef-d779-7f17556f2184",
@@ -61,7 +61,7 @@
     "full_name": "Emma Andersen",
     "email": "emma.andersen@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Textures"
   },
   {
     "id": "231a3b19-ed83-880e-03af-a73a9d5d536d",
@@ -69,7 +69,7 @@
     "full_name": "Esther Adeyemi",
     "email": "esther.adeyemi@studio.local",
     "role": "artist",
-    "primary_team": "Environment"
+    "primary_team": "Textures"
   },
   {
     "id": "8b390270-9183-5d14-355e-e15a268d8e9d",
@@ -109,7 +109,7 @@
     "full_name": "Kai Nakamura",
     "email": "kai.nakamura@studio.local",
     "role": "artist",
-    "primary_team": "Environment"
+    "primary_team": "Animation"
   },
   {
     "id": "a407071d-d676-8267-44b5-30dadd12b106",
@@ -133,7 +133,7 @@
     "full_name": "Maja Novak",
     "email": "maja.novak@studio.local",
     "role": "artist",
-    "primary_team": "Environment"
+    "primary_team": "Props"
   },
   {
     "id": "3428b354-fc83-5133-403a-84660ec7cbf9",
@@ -157,7 +157,7 @@
     "full_name": "Mira Patel",
     "email": "mira.patel@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Tech Art"
   },
   {
     "id": "73c820a6-0cdc-9d77-5205-fbc65c78ea8a",
@@ -237,7 +237,7 @@
     "full_name": "Wren Carter",
     "email": "wren.carter@studio.local",
     "role": "artist",
-    "primary_team": "Environment"
+    "primary_team": "Tech Art"
   },
   {
     "id": "401c9f3f-dd85-5fb2-0fce-0b0e0779888c",
@@ -245,6 +245,6 @@
     "full_name": "Yuki Sato",
     "email": "yuki.sato@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Animation"
   }
 ]
