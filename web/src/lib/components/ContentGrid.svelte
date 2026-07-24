@@ -62,12 +62,18 @@
     {/if}
   </div>
 {:else}
-  <!-- grid / thumbnail — and list with no table falls through here. -->
-  <TileGrid {tileMin}>
+  <!-- grid / thumbnail — and list with no table falls through here.
+       Grid is a zero-gap contact sheet (#555): tiles butt edge-to-edge
+       into one unbroken wall. Thumbnail keeps its gutter — it's a
+       "details" view, not a contact sheet. -->
+  <TileGrid {tileMin} class={mode === 'grid' ? 'gap-0' : 'gap-2'}>
     {#each items as item (item.id)}{@render card(item, mode)}{/each}
     {#if loading}
       {#each Array(8) as _, i (i)}
-        <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+        <div
+          class="aspect-square bg-surface-elevated animate-pulse
+                 {mode === 'grid' ? '' : 'rounded-lg border border-border'}"
+        ></div>
       {/each}
     {/if}
   </TileGrid>
