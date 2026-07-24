@@ -88,11 +88,59 @@ func runSeed(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	// Own the schema prerequisite (#574). `aa seed` is specified to
+	// write straight to postgres + storage with NO running server, so
+	// it cannot assume something else has migrated — but until now only
+	// run() (the serve path) called Migrate. The seeder's first phase,
+	// resolveLookups, reads user / workflow_states / asset_types, so
+	// against an unmigrated database it died on
+	// `relation "user" does not exist`.
+	//
+	// In the nightly that showed up as a RACE rather than a hard
+	// failure: `docker compose up -d` returns before the app finishes
+	// migrating, and the seed runs via `run --rm --no-deps` which
+	// explicitly skips dependency waiting. Whichever site lost the race
+	// seeded nothing and every UI spec then asserted against an empty
+	// instance.
+	//
+	// Migrate is idempotent (goose version table) and now takes an
+	// advisory lock, so this is safe whether the server already
+	// migrated, is migrating right now, or was never started. Must come
+	// before db.Open + resetSeedTables, both of which assume tables.
+	if err := db.Migrate(ctx, cfg); err != nil {
+		return fmt.Errorf("seed: migrate: %w", err)
+	}
+	logger.Info("seed.migrate.done")
+
 	pool, err := db.Open(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
+
+	// The OTHER half of the same prerequisite (#574). Migrating alone
+	// only moves the failure: resolveLookups' very first statement
+	// resolves the bootstrap admin (the seed's collections are owned by
+	// it), and the admin is created by bootstrap.Run — which, like
+	// Migrate, only ever ran on the serve path. A seed that won the
+	// schema race but lost the bootstrap race would swap
+	// `relation "user" does not exist` for `resolve admin: no rows` and
+	// still leave an empty instance.
+	//
+	// Same call the server makes, same config. Idempotent (no-ops when
+	// an admin already exists) and explicitly race-safe — it re-checks
+	// inside its transaction precisely so two processes can't both
+	// create the admin.
+	//
+	// nil recorder: the seed has no audit recorder wired, which just
+	// skips the key_generated audit row. The keypair is still minted.
+	if err := bootstrap.Run(ctx, pool, bootstrap.Config{
+		ScrambleKey:         cfg.ScrambleKey,
+		AdminPath:           cfg.BootstrapAdminPath,
+		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
+	}, logger, nil); err != nil {
+		return fmt.Errorf("seed: bootstrap admin: %w", err)
+	}
 
 	if *reset {
 		if err := resetSeedTables(ctx, pool, bootstrap.DefaultUsername); err != nil {
