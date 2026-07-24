@@ -58,7 +58,9 @@
     "name": "Project Adventure",
     "studio_membership": [
       "b"
-    ]
+    ],
+    "featured": true,
+    "visibility": "public"
   },
   {
     "id": "aa3e1915-6df0-b636-22d0-0c34b836e1af",
@@ -135,6 +137,8 @@
     "name": "Studio Library",
     "studio_membership": [
       "b"
-    ]
+    ],
+    "featured": true,
+    "visibility": "public"
   }
 ]
