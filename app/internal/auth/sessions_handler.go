@@ -36,7 +36,17 @@ import (
 // rowsToAPI builds the openapi.SessionRow slice from the sqlc rows.
 // `currentID` marks one row as current; pass uuid.Nil to omit the
 // flag entirely (admin path).
-func rowsToAPI(rows []ListSessionsForUserRow, currentID uuid.UUID) []openapi.SessionRow {
+//
+// includeIP gates the raw client IP — PERSONAL DATA (#567). It is
+// false on the self-service path and true only for the admin view,
+// which is already behind users.read.
+//
+// Omitted, not blanked, matching the convention audit/handler.go
+// settled on for actor IPs (#425): a field that is absent means "you
+// may not see it" can never be confused with a recorded-but-empty
+// value, and consumers already tolerate absence because `ip` is
+// nullable.
+func rowsToAPI(rows []ListSessionsForUserRow, currentID uuid.UUID, includeIP bool) []openapi.SessionRow {
 	out := make([]openapi.SessionRow, 0, len(rows))
 	mark := currentID != uuid.Nil
 	for _, r := range rows {
@@ -49,7 +59,7 @@ func rowsToAPI(rows []ListSessionsForUserRow, currentID uuid.UUID) []openapi.Ses
 			t := r.ExpiresAt.Time
 			row.ExpiresAt = &t
 		}
-		if r.Ip != nil {
+		if includeIP && r.Ip != nil {
 			s := r.Ip.String()
 			row.Ip = &s
 		}
@@ -86,7 +96,44 @@ func (h *Handler) ListMySessions(
 	if id.SessionID != nil {
 		currentID = *id.SessionID
 	}
-	return openapi.ListMySessions200JSONResponse{Items: rowsToAPI(rows, currentID)}, nil
+	// Demo mode: the install runs on ONE shared account, so "the
+	// caller's own sessions" is really every visitor's sessions —
+	// their device labels and login times, readable by the next
+	// visitor (#567). Scope the list to the session actually making
+	// this request.
+	//
+	// This is a self-scoped GET on the account's own data, so neither
+	// ADR 0060 layer catches it: the edge allows reads, and the role
+	// legitimately permits an account to read itself. The gap is that
+	// "itself" stopped meaning one person.
+	//
+	// Forward-compatible with ADR 0045: a per-visitor ephemeral
+	// sandbox is single-user by construction and would show exactly
+	// one session anyway, so this narrows to the same answer 0045
+	// arrives at rather than encoding a demo-only special case.
+	if h.DemoMode {
+		rows = filterToSession(rows, currentID)
+	}
+	// includeIP=false: never expose the raw client IP on the
+	// self-service path (#567).
+	return openapi.ListMySessions200JSONResponse{Items: rowsToAPI(rows, currentID, false)}, nil
+}
+
+// filterToSession narrows rows to the single session matching id.
+// Returns an empty (non-nil) slice when id is uuid.Nil or absent, so
+// the response is always a well-formed empty list rather than a leak
+// by fallthrough.
+func filterToSession(rows []ListSessionsForUserRow, id uuid.UUID) []ListSessionsForUserRow {
+	out := make([]ListSessionsForUserRow, 0, 1)
+	if id == uuid.Nil {
+		return out
+	}
+	for _, r := range rows {
+		if uuid.UUID(r.ID.Bytes) == id {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // RevokeMySession revokes one of the caller's own sessions.
@@ -102,8 +149,28 @@ func (h *Handler) RevokeMySession(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	q := New(h.Pool)
 	sessUUID := uuid.UUID(req.Id)
+	// Demo mode: on a shared account every OTHER session belongs to a
+	// different visitor, so self-service revoke is a "sign everyone
+	// else out" button (#567). Allow only the session authenticating
+	// this request — i.e. logging yourself out, which is harmless.
+	//
+	// Enforced in the app on purpose. The demo's edge block is
+	// TEMPORARY-567 and comes off at the v0.7.0 tag; more importantly
+	// this is a self-service gap the edge was never meant to cover.
+	// ADR 0060 keeps write-blocking at the edge as layer 1 and that
+	// stays exactly as decided — this is the app-side authorization
+	// layer answering a question the edge cannot see.
+	if h.DemoMode {
+		if caller.SessionID == nil || *caller.SessionID != sessUUID {
+			return openapi.RevokeMySession403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+					Error: "demo mode: only the current session may be revoked",
+				},
+			}, nil
+		}
+	}
+	q := New(h.Pool)
 	n, err := q.RevokeSessionForUser(ctx, RevokeSessionForUserParams{
 		ID:      pgtype.UUID{Bytes: sessUUID, Valid: true},
 		UserRef: caller.UserRef,
@@ -145,7 +212,14 @@ func (h *Handler) ListAdminUserSessions(
 	}
 	// Admin path: never set the current-marker (admin is looking at
 	// someone else's sessions).
-	return openapi.ListAdminUserSessions200JSONResponse{Items: rowsToAPI(rows, uuid.Nil)}, nil
+	//
+	// includeIP=true — deliberately unchanged by #567. Locating the
+	// source of a suspicious session is the point of this view, and it
+	// is already behind users.read. Worth noting the asymmetry for a
+	// follow-up: audit's actor IPs need system.audit.pii.read ON TOP
+	// of system.audit.read (#425), whereas session IPs here ride on
+	// users.read alone.
+	return openapi.ListAdminUserSessions200JSONResponse{Items: rowsToAPI(rows, uuid.Nil, true)}, nil
 }
 
 // RevokeAdminUserSession revokes a specific user's session (admin).
