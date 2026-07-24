@@ -10797,8 +10797,9 @@ components:
       description: |
         GitHub #341 — one admin-curated featured entry pointing at an
         asset or collection, with an explicit ordering position and
-        the resolved subject title. Asset subjects also carry
-        thumbnail hints so the admin list can render a preview.
+        the resolved subject title. Both subject kinds carry thumbnail
+        hints so a tile can render a cover: assets from themselves,
+        collections via ADR 0027's hero-card fallback (#559).
       required: [id, subject_kind, subject_id, position, title, preview_available, created_at]
       properties:
         id:
@@ -10819,22 +10820,49 @@ components:
           description: |
             Resolved subject title (asset title or collection name).
             Empty when the subject was deleted out from under the row.
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The asset whose `col` variant renders this tile (#559).
+
+            For an asset subject this is the subject itself. For a
+            COLLECTION it is the hero-card fallback of ADR 0027 — the
+            most-recent post's cover asset — which is why the id is
+            needed separately: `subject_id` is the collection, and the
+            variant endpoint is keyed by asset.
+
+            Null when nothing is servable to this caller, in which case
+            the tile is title-only. Subject to the same gating as
+            `asset_file_hash`, so it never names an asset the caller
+            cannot see.
         asset_file_hash:
           type: string
           nullable: true
-          description: Asset subjects only — thumbnail hint; null otherwise.
+          description: |
+            Thumbnail hint for the tile's cover asset; null when there
+            is nothing servable for this caller. Populated for
+            collection subjects too since #559.
         asset_has_image:
           type: boolean
-          description: Asset subjects only — whether a raster thumbnail exists.
+          description: |
+            Whether a raster thumbnail exists for the cover asset.
+
+            Unreliable for asset subjects — the underlying `has_image`
+            column has no writer, so it is false across the board;
+            clients key on `preview_available` instead. Retained because
+            removing a response field is a breaking change.
         preview_available:
           type: boolean
           description: |
-            Asset subjects only (false for collections) — true iff a
-            servable `col` variant exists AND the caller passes the
-            content plane (ADR 0064). The rail renders a thumbnail only
-            when true, else a title-only tile with no byte request (#471).
-            Unlike `asset_has_image` (unreliable — false for pre-ingest
-            assets), this is computed from live variant existence.
+            True iff a servable `col` variant exists for the tile's
+            cover asset AND the caller passes the content plane (ADR
+            0064). The rail renders a thumbnail only when true, else a
+            title-only tile with no byte request (#471). Computed from
+            live variant existence, so unlike `asset_has_image` it is
+            trustworthy. Populated for collection subjects too since
+            #559.
         created_at:
           type: string
           format: date-time

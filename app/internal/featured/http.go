@@ -266,6 +266,13 @@ func (h *HTTPHandler) GetPublicFeaturedRail(
 // railRowToAPI mirrors listRowToAPI. The thumbnail hints are already
 // suppressed in SQL for non-public assets (ADR 0020), so this copies
 // what it is given rather than re-deciding.
+//
+// Copied for BOTH subject kinds (#559). This used to be gated on
+// `== "asset"`, which discarded a collection's cover even once the
+// query produced one — the hints are populated per subject kind in SQL,
+// and re-deciding here is exactly the duplicated rule the comment above
+// warns against. A collection with no eligible cover arrives with a nil
+// hash and false flags, so the gate bought nothing.
 func railRowToAPI(r RailRow) openapi.FeaturedItem {
 	out := openapi.FeaturedItem{
 		Id:          uuid.UUID(r.ID.Bytes),
@@ -274,11 +281,13 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 		Position:    int(r.Position),
 		Title:       r.Title,
 	}
-	if r.SubjectKind == "asset" {
-		out.AssetFileHash = r.AssetFileHash
-		hasImg := r.AssetHasImage
-		out.AssetHasImage = &hasImg
-		out.PreviewAvailable = r.AssetPreviewAvailable
+	if r.CoverAssetID.Valid {
+		id := uuid.UUID(r.CoverAssetID.Bytes)
+		out.CoverAssetId = &id
 	}
+	out.AssetFileHash = r.AssetFileHash
+	hasImg := r.AssetHasImage
+	out.AssetHasImage = &hasImg
+	out.PreviewAvailable = r.AssetPreviewAvailable
 	return out
 }
