@@ -49,6 +49,18 @@
   // check. Read from the shared selection singleton.
   const selected = $derived(selection.has(asset.id));
 
+  // #555 — grid is a zero-gap CONTACT SHEET: drop the card chrome
+  // (rounded / border / elevated bg) so tiles butt into one unbroken
+  // wall, and let hover lift + enlarge the tile. The z-lift matters at
+  // zero gap: without it a scaling tile slides under its neighbours.
+  // Selection uses an INSET ring here so it reads inside the tile
+  // instead of bleeding over the adjacent one.
+  const wrapperClass = $derived(
+    framed
+      ? `rounded-lg bg-surface-elevated border ${selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}`
+      : `hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
+  );
+
   const created = $derived(new Date(asset.created_at));
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -63,8 +75,7 @@
   clicks above the link.
 -->
 <div
-  class="group relative block overflow-hidden rounded-lg bg-surface-elevated border transition-colors
-         {selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}"
+  class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   <CardThumb
     assetId={asset.id}
