@@ -147,8 +147,29 @@ func resetSeedTables(ctx context.Context, pool *pgxpool.Pool, adminUsername stri
 	// Leaving them alone is also idempotent: the seed's asset ids are
 	// stable (from MANIFEST.json), so a re-seed re-uploads the same
 	// hashes, dedups onto the existing objects, and re-pins identically.
+	// likes is named EXPLICITLY (#566). It is polymorphic — (target_kind,
+	// target_id) with NO foreign key to posts/assets/comments — so
+	// TRUNCATE ... CASCADE never reaches it, and the row-level
+	// social_sweep_after_post_delete trigger that normally sweeps a
+	// deleted post's likes does NOT fire for TRUNCATE (statement-level
+	// only). Every like therefore SURVIVED the reset while its target was
+	// wiped, which produced two bugs:
+	//
+	//   1. Orphans: likes pointing at posts that no longer exist (82 on
+	//      site_a — the admin's own likes on API-created posts), which
+	//      surface in any who-liked / activity / federation view.
+	//   2. Wrong counts: on the next reset the seeded likes would survive
+	//      too, posts would be recreated with like_count = 0, and the
+	//      re-insert would hit ON CONFLICT DO NOTHING — so the trigger
+	//      never fires and like_count silently undercounts by ~3.5k.
+	//
+	// Truncating it alongside the content it describes fixes both.
+	// notifications + scheduled_actions are polymorphic the same way and
+	// are NOT listed here: both are empty today and scheduled_actions can
+	// hold operator config, so they are tracked separately rather than
+	// wiped on a content reset.
 	const truncate = `TRUNCATE
-	    assets, posts, comments, collections, field_definition
+	    assets, posts, comments, collections, field_definition, likes
 	    RESTART IDENTITY CASCADE`
 	if _, err := pool.Exec(ctx, truncate); err != nil {
 		return err
