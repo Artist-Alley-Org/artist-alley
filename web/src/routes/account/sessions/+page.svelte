@@ -15,12 +15,16 @@
   import { t } from '$stores/lang.svelte';
   import { relativeAgo } from '$lib/admin/users';
 
+  // No `ip` field: /account/sessions never returns the client IP
+  // (#567). It is personal data, and on a shared-account install
+  // "your sessions" is every visitor's — so the address is omitted
+  // server-side, not merely hidden here. Devices are identified by
+  // user-agent. The admin view (/admin/users/{ref}) still shows IPs.
   interface SessionRow {
     id: string;
     created_at: string;
     last_used_at: string;
     expires_at?: string | null;
-    ip?: string | null;
     user_agent?: string | null;
     current?: boolean;
   }
@@ -105,9 +109,6 @@
             {/if}
           </div>
           <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-muted">
-            {#if s.ip}
-              <span>{t('account.sessions.ip_label')}: {s.ip}</span>
-            {/if}
             <span>{t('account.sessions.last_used')}: {relativeAgo(s.last_used_at)}</span>
             <span>{t('account.sessions.created')}: {relativeAgo(s.created_at)}</span>
             <span title={s.expires_at ?? ''}>

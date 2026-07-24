@@ -2706,6 +2706,13 @@ paths:
         the /account/sessions self-service page. The row that's
         authenticating this request carries `current: true` so the
         UI can hide its own revoke button.
+
+        Never returns `ip` — see SessionRow.ip (#567). Devices are
+        identified by user-agent.
+
+        In demo mode (`AA_DEMO_MODE=1`) every visitor shares one
+        account, so this returns ONLY the session authenticating the
+        request rather than every visitor's.
       tags: [auth]
       security:
         - cookieAuth: []
@@ -2733,6 +2740,11 @@ paths:
         Ownership-checked: revokes only when the session id belongs
         to the caller. 404 covers both "wrong owner" and "no such
         session" so existence can't be probed.
+
+        In demo mode (`AA_DEMO_MODE=1`) every visitor shares one
+        account, so the caller's "other" sessions belong to other
+        people. Only the session authenticating the request may be
+        revoked; anything else is 403 (#567).
       tags: [auth]
       security:
         - cookieAuth: []
@@ -2742,6 +2754,8 @@ paths:
           description: Session revoked.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -12048,11 +12062,11 @@ components:
     SessionRow:
       type: object
       description: |
-        One active session. The IP + user-agent are
-        best-effort observability captured at login; both can be null
-        when behind a proxy that strips them. `current` is true only
-        on the self-service endpoint for the row that's authenticating
-        the request — the UI uses it to hide its own revoke button.
+        One active session. The user-agent is best-effort
+        observability captured at login and can be null behind a proxy
+        that strips it. `current` is true only on the self-service
+        endpoint for the row that's authenticating the request — the
+        UI uses it to hide its own revoke button.
       required: [id, created_at, last_used_at]
       properties:
         id: { type: string, format: uuid }
@@ -12069,6 +12083,22 @@ components:
         ip:
           type: string
           nullable: true
+          description: |
+            Client IP recorded at login — PERSONAL DATA, and returned
+            ONLY on the admin view (`GET /admin/users/{ref}/sessions`,
+            behind `users.read`), where locating a suspicious session
+            is the point.
+
+            Never returned by `GET /account/sessions` (#567). That
+            endpoint is self-scoped, and on a shared-account install
+            "self" is every visitor — so the raw address is omitted
+            unconditionally rather than gated, per the data-
+            minimisation posture of ADR 0024.
+
+            Omitted from the JSON entirely, not blanked — the same
+            convention AuditRow.ip uses (#425) — so an absent value
+            always means "not returned to you" and never "no IP
+            recorded".
         user_agent:
           type: string
           nullable: true
