@@ -49,6 +49,11 @@
      *  hover listeners on an interactive element, not this presentation
      *  frame). Drives the video/3D sprite-scrub animation. */
     hovering?: boolean;
+    /** Draw the gallery-mount frame ring (#515 slice 4). ON in the
+     *  "details" modes (thumbnail / masonry / feed); OFF in grid, which
+     *  reads as a clean dense wall. The bg-surface matte stays either way
+     *  so art always letterboxes and never crops (slice 1's value). */
+    framed?: boolean;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -63,6 +68,7 @@
     hasFileHash = false,
     previewAvailable = false,
     hovering = false,
+    framed = true,
     children,
   }: Props = $props();
 
@@ -129,15 +135,17 @@
 </script>
 
 <!--
-  RS framed matte. The `after:` inset ring is the frame edge that reads
-  as a gallery mount; `bg-surface` is the neutral matte (page bg, one
-  step darker than the card's bg-surface-elevated). Mixed-aspect art
-  letterboxes cleanly against it instead of a blurred self-crop.
+  RS matte. `bg-surface` is the neutral matte (page bg, one step darker
+  than the card's bg-surface-elevated) — always on, so mixed-aspect art
+  letterboxes cleanly instead of a blurred self-crop. The `after:` inset
+  ring is the gallery-mount frame edge, drawn only when `framed` (details
+  modes); grid drops it for a clean dense wall (#515 slice 4).
 -->
 <div
   class="relative aspect-square overflow-hidden bg-surface
-         after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset after:ring-black/[0.07]
-         dark:after:ring-white/[0.06]"
+         {framed
+           ? 'after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset after:ring-black/[0.07] dark:after:ring-white/[0.06]'
+           : ''}"
 >
   {#if isDoc}
     <!-- Typed doc card — text/code don't get a rasterised preview

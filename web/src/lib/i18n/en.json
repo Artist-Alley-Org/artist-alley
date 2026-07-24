@@ -176,6 +176,10 @@
     "select": {
       "label": "Select",
       "deselect": "Deselect"
+    },
+    "footer": {
+      "likes": "{count} likes",
+      "comments": "{count} comments"
     }
   },
   "selection": {
