@@ -504,7 +504,6 @@
       "loading": "Loading sessions…",
       "none": "No active sessions besides this one.",
       "current_badge": "This device",
-      "ip_label": "IP",
       "ua_label": "Device",
       "last_used": "Last used",
       "created": "Signed in",

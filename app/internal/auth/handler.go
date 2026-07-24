@@ -94,6 +94,18 @@ type Handler struct {
 	// disables the hash (audit still fires with empty ip_subnet_hash).
 	LockoutIPSalt string
 
+	// DemoMode mirrors config.Config.DemoMode (env AA_DEMO_MODE). The
+	// public demo runs every visitor on ONE shared account, so any
+	// "your own data" surface is really "everyone's data" (#567).
+	// Session listing narrows to the requesting session and
+	// self-service revoke is limited to that same session.
+	//
+	// Presentational demo affordances stay where they were; this is
+	// the first place the flag changes an authorization answer, and it
+	// does so only to make "self" mean one person again. Off = zero
+	// behavioural change.
+	DemoMode bool
+
 	tokenPrefix string // overridable in tests
 }
 

@@ -2082,6 +2082,9 @@ func authHandlerWithPolicy(pool *pgxpool.Pool, logger *slog.Logger, cfg config.C
 	lockoutMgr.Policy = lockoutPolicyAdapter{store: sysCfg}.Get
 	lockoutMgr.Auditor = lockoutAuditAdapter{rec: auditRec}
 	h.SetLockoutManager(lockoutMgr, cfg.ScrambleKey)
+	// #567 — shared-account demo installs scope session reads/revokes
+	// to the requesting session.
+	h.DemoMode = cfg.DemoMode
 	return h
 }
 
