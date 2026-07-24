@@ -595,6 +595,56 @@ func (q *Queries) SeedInsertField(ctx context.Context, arg SeedInsertFieldParams
 	return id, err
 }
 
+const seedInsertFollow = `-- name: SeedInsertFollow :exec
+INSERT INTO user_follows (follower_user_ref, followee_user_ref, created_at, origin_server_id)
+VALUES ($1, $2, $3, NULL)
+ON CONFLICT DO NOTHING
+`
+
+type SeedInsertFollowParams struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+	CreatedAt       pgtype.Timestamptz
+}
+
+// Local-origin follow edge for the seeded social graph (#563).
+// origin_server_id is NULL — the seed graph is local, never federated
+// (ADR 0007). Idempotent on the (follower, followee) primary key so
+// re-seeds are byte-stable.
+func (q *Queries) SeedInsertFollow(ctx context.Context, arg SeedInsertFollowParams) error {
+	_, err := q.db.Exec(ctx, seedInsertFollow, arg.FollowerUserRef, arg.FolloweeUserRef, arg.CreatedAt)
+	return err
+}
+
+const seedInsertLike = `-- name: SeedInsertLike :exec
+INSERT INTO likes (target_kind, target_id, user_ref, liked_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+`
+
+type SeedInsertLikeParams struct {
+	TargetKind string
+	TargetID   pgtype.UUID
+	UserRef    *int64
+	LikedAt    pgtype.Timestamptz
+}
+
+// Local-origin like for the seeded like history (#563). user_ref is set;
+// peer_id/actor_uri stay NULL (the likes_origin_check enforces exactly
+// one origin). target_kind is 'post' here. The likes_after_insert
+// trigger maintains posts.like_count, so the count always equals the
+// row set — no separate like_count write. Idempotent (the local unique
+// index (target_kind, target_id, user_ref)) so re-seeds are stable.
+func (q *Queries) SeedInsertLike(ctx context.Context, arg SeedInsertLikeParams) error {
+	_, err := q.db.Exec(ctx, seedInsertLike,
+		arg.TargetKind,
+		arg.TargetID,
+		arg.UserRef,
+		arg.LikedAt,
+	)
+	return err
+}
+
 const seedInsertPost = `-- name: SeedInsertPost :one
 INSERT INTO posts (
     id, author_user_ref, title, description, visibility,
