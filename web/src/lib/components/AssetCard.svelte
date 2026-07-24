@@ -12,6 +12,7 @@
   import CardToolRow from './CardToolRow.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
+  import type { ViewMode } from '$stores/browseView.svelte';
 
   interface Asset {
     id: string;
@@ -26,9 +27,19 @@
 
   interface Props {
     asset: Asset;
+    /** Active view mode (#515 slice 4). Grid = clean dense wall (no frame,
+     *  hover-only title); thumbnail = framed "details" tile with a
+     *  persistent metadata footer. */
+    mode?: ViewMode;
   }
 
-  let { asset }: Props = $props();
+  let { asset, mode = 'grid' }: Props = $props();
+
+  // Grid reads as a clean dense wall (no frame, hover-only title). The
+  // other modes keep the gallery frame + a persistent footer in
+  // thumbnail. See CardThumb `framed`.
+  const framed = $derived(mode !== 'grid');
+  const detailed = $derived(mode === 'thumbnail');
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub (keeps hover listeners off the presentation frame).
@@ -63,6 +74,7 @@
     hasFileHash={!!asset.file_hash}
     previewAvailable={asset.preview_available}
     {hovering}
+    {framed}
   >
     <!-- Whole-card navigation target. Hover here drives CardThumb's
          sprite-scrub (an interactive element, so no a11y warning). -->
@@ -77,16 +89,29 @@
     <!-- Multi-select checkbox (top-left). -->
     <CardCheckbox id={asset.id} />
 
-    <!-- Hover overlay with title (non-interactive — clicks fall to the link). -->
-    <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
-             p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-    >
-      <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
-      <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
-    </div>
+    {#if !detailed}
+      <!-- Grid/masonry/feed: hover-only title overlay (clicks fall to
+           the link). Thumbnail shows a persistent footer below instead. -->
+      <div
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
+               p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      >
+        <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
+        <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
+      </div>
+    {/if}
 
     <!-- Quick-action tool row (info / share / add-to-collection). -->
     <CardToolRow assetId={asset.id} detailPath="/assets/{asset.id}" />
   </CardThumb>
+
+  {#if detailed}
+    <!-- Thumbnail ("details") footer: the default at-a-glance field set.
+         #552 will make this operator-configurable; the block is kept
+         self-contained so that swap is local. -->
+    <a href="/assets/{asset.id}" class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
+      <p class="mt-0.5 text-xs text-fg-muted">{createdShort}</p>
+    </a>
+  {/if}
 </div>

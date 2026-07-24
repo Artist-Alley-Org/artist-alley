@@ -305,7 +305,7 @@
     <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
       {#snippet card(item, mode)}
         {@const post = item as Post}
-        <PostCard {post} feed={mode === 'feed'} tileSizesLen={browseView.tileSizesLen} />
+        <PostCard {post} {mode} feed={mode === 'feed'} tileSizesLen={browseView.tileSizesLen} />
       {/snippet}
       {#snippet list()}
         <PostListTable {items} {loading} />

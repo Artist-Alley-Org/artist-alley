@@ -21,6 +21,8 @@
   import CardToolRow from './CardToolRow.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
+  import { t } from '$stores/lang.svelte';
+  import type { ViewMode } from '$stores/browseView.svelte';
 
   interface AssetSummary {
     id: string;
@@ -52,9 +54,18 @@
     /** The active rung as a plain `${R}rem`, for `sizes` (not the
      *  clamp — `sizes` rejects clamp()). */
     tileSizesLen?: string;
+    /** Active view mode (#515 slice 4). Grid = clean dense wall (no frame,
+     *  hover-only title); thumbnail = framed "details" tile with a
+     *  persistent metadata footer. */
+    mode?: ViewMode;
   }
 
-  let { post, feed = false, tileSizesLen = '22rem' }: Props = $props();
+  let { post, feed = false, tileSizesLen = '22rem', mode = 'grid' }: Props = $props();
+
+  // Grid reads clean/dense (no frame, hover-only title); the other modes
+  // keep the gallery frame + a persistent footer in thumbnail.
+  const framed = $derived(mode !== 'grid');
+  const detailed = $derived(mode === 'thumbnail');
 
   // Pick the cover asset id (explicit cover → first member → nothing),
   // then resolve its summary from members. CardThumb turns these into
@@ -124,6 +135,7 @@
     hasFileHash={coverHasFile}
     previewAvailable={coverPreviewAvailable}
     {hovering}
+    {framed}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
          fallback). Hover here drives CardThumb's sprite-scrub. -->
@@ -155,18 +167,46 @@
       </div>
     {/if}
 
-    <!-- Hover overlay (non-interactive — clicks fall to the link). -->
-    <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
-             p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-    >
-      <p class="text-sm font-medium text-white line-clamp-2">{post.title || 'Untitled'}</p>
-      <p class="text-xs text-white/70 mt-0.5">
-        {createdShort}{post.like_count > 0 ? ` · ♥ ${post.like_count}` : ''}
-      </p>
-    </div>
+    {#if !detailed}
+      <!-- Grid/masonry/feed: hover-only title overlay (clicks fall to the
+           link). Thumbnail shows a persistent footer below instead. -->
+      <div
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
+               p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      >
+        <p class="text-sm font-medium text-white line-clamp-2">{post.title || 'Untitled'}</p>
+        <p class="text-xs text-white/70 mt-0.5">
+          {createdShort}{post.like_count > 0 ? ` · ♥ ${post.like_count}` : ''}
+        </p>
+      </div>
+    {/if}
 
     <!-- Quick-action tool row. add-to-collection targets the cover asset. -->
     <CardToolRow assetId={coverAssetId} detailPath="/posts/{post.id}" />
   </CardThumb>
+
+  {#if detailed}
+    <!-- Thumbnail ("details") footer: the default at-a-glance field set —
+         title + date + like/comment counts (all already on the post).
+         #552 will make this operator-configurable; kept self-contained so
+         that swap is local. -->
+    <a href="/posts/{post.id}" onclick={handleClick} class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>{post.title || 'Untitled'}</p>
+      <p class="mt-0.5 flex items-center gap-2 text-xs text-fg-muted">
+        <span>{createdShort}</span>
+        {#if post.like_count > 0}
+          <span class="inline-flex items-center gap-1" title={t('card.footer.likes', { count: String(post.like_count) })}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-6.7-4.35-9.33-8.24C.9 10.06 1.6 6.5 4.6 5.4c2-.73 3.9.2 4.9 1.7l.5.75.5-.75c1-1.5 2.9-2.43 4.9-1.7 3 1.1 3.7 4.66 1.93 7.36C18.7 16.65 12 21 12 21z"/></svg>
+            {post.like_count}
+          </span>
+        {/if}
+        {#if post.comment_count > 0}
+          <span class="inline-flex items-center gap-1" title={t('card.footer.comments', { count: String(post.comment_count) })}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            {post.comment_count}
+          </span>
+        {/if}
+      </p>
+    </a>
+  {/if}
 </div>
