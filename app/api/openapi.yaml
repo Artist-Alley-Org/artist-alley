@@ -10651,7 +10651,8 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status, preview_available]
+         title, asset_type, status, preview_available,
+         file_hash, file_extension, thumbhash]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -10668,6 +10669,23 @@ components:
         file_hash:
           type: string
           nullable: true
+        file_extension:
+          type: string
+          nullable: true
+          description: |
+            REQUIRED (nullable), same as Asset.file_extension. A member
+            tile is rendered by the same CardThumb as every other
+            surface, and CardThumb derives the media TYPE from this
+            field alone — video / 3D badge and the sprite-scrub hover
+            preview both key off it. Omitting it renders a collection
+            member as an untyped still (#595).
+        thumbhash:
+          type: string
+          nullable: true
+          description: |
+            REQUIRED (nullable), same as Asset.thumbhash — the member
+            tile's blur-up placeholder. See file_extension above for why
+            the card-critical fields are required rather than optional.
         preview_available:
           type: boolean
           description: |
@@ -10700,7 +10718,16 @@ components:
           nullable: true
     Asset:
       type: object
-      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags]
+      # file_hash / file_extension / thumbhash are REQUIRED-but-nullable
+      # on purpose (#595). They are the three fields CardThumb needs to
+      # decide what a tile IS — has bytes, what media type, what blur-up
+      # — so every asset-shaped payload must carry them even when null.
+      # As OPTIONAL fields they generated `field?: T` in the frontend
+      # types, which let a surface hand-map a narrower object and drop
+      # them with no type error; that is exactly how the collection page
+      # silently lost its video/3D badges and sprite-scrub previews.
+      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
+                 file_hash, file_extension, thumbhash]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }

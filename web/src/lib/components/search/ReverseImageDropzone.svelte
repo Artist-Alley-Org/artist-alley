@@ -22,22 +22,22 @@
   import { t } from '$stores/lang.svelte';
   import { api } from '$api/client';
   import AssetCard from '$components/AssetCard.svelte';
+  import type { CardAsset } from '$components/cardAsset';
 
   // Cap the hydrate fan-out — reverse-image is a deliberate action, so
   // a top-30 grid is plenty and bounds the per-hit GET /assets/{id}.
   const TOP_K = 30;
 
+  // The hit's asset is the shared card feed contract (#595) rather than
+  // a local narrower copy. The local copy had drifted: it declared
+  // neither `preview_available` nor a required `thumbhash`, so every
+  // result tile got `previewAvailable === undefined` and CardThumb's
+  // `showImage` gate never opened — the whole similarity grid rendered
+  // as placeholders even though GET /assets/{id} had returned the flag
+  // all along. Typing the field is what makes that impossible.
   interface HydratedHit {
     similarity: number;
-    asset: {
-      id: string;
-      title: string;
-      asset_type: number;
-      file_hash?: string | null;
-      file_extension?: string | null;
-      created_at: string;
-      thumbhash?: string | null;
-    };
+    asset: CardAsset;
   }
 
   let file = $state<File | null>(null);
