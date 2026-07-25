@@ -82,6 +82,17 @@
   --color-surface-elevated: oklch(21% 0.022 250);   /* cards, popovers, nav */
   --color-surface-overlay:  oklch(26% 0.022 250);   /* modals, dialogs */
 
+  /* ── Hover fill for controls that already carry a SOLID background
+       (the footer pills, the filter segments). Not a tier of the
+       elevation ladder — a state.
+       Controls used to hover to `surface-overlay`, which is wrong twice
+       over: the delta is 5 L points here and only 1.5 in light, and in
+       light `overlay` is LIGHTER than `elevated`, so hovering a
+       near-white pill pushed it further toward white. This token moves
+       AWAY from the surface in whichever direction is visible — lighter
+       against dark, darker against light — with ~9 L points of travel. */
+  --color-surface-hover: oklch(30% 0.024 250);
+
   /* ── Thumbnail matte — the backdrop artwork sits on in a card.
        DELIBERATELY NOT `surface` (#590 amendment). It used to be the
        page colour, so in light mode a tile full of white-ish artwork —
@@ -140,8 +151,11 @@
   --color-danger-container:     oklch(28% 0.10 25);
   --color-on-danger-container:  oklch(88% 0.08 25);
 
-  /* ── Interaction-state overlays — WHITE in dark, not black */
-  --color-state-hover:    oklch(100% 0 0 / 0.05);
+  /* ── Interaction-state overlays — WHITE in dark, not black.
+       hover raised 0.05 -> 0.09: at 5% over an elevated surface the
+       change was ~2 L points, i.e. not perceptible, which is half of
+       why the footer controls felt dead (#590 amendment 3). */
+  --color-state-hover:    oklch(100% 0 0 / 0.09);
   --color-state-pressed:  oklch(100% 0 0 / 0.10);
   --color-state-selected: oklch(70% 0.167 43 / 0.14);
 
@@ -165,6 +179,11 @@
     --color-surface:          oklch(95%   0.008 250);  /* page bg */
     --color-surface-elevated: oklch(98.5% 0.005 250);  /* cards, popovers, nav */
     --color-surface-overlay:  oklch(100%  0.003 250);  /* modals, dialogs */
+
+    /* ── Hover fill — see the dark block. DARKER than elevated here,
+         because the surface is light; hovering toward white (which is
+         what `surface-overlay` did) is invisible on a 98.5% pill. */
+    --color-surface-hover: oklch(92% 0.010 250);
 
     /* ── Thumbnail matte — see the dark block. Darker than the page
          here (the page is light), so a white-artwork tile still reads
@@ -225,8 +244,10 @@
     --color-danger-container:     oklch(94% 0.05 15);
     --color-on-danger-container:  oklch(30% 0.15 15);
 
-    /* ── State overlays — BLACK in light, white in dark */
-    --color-state-hover:    oklch(0% 0 0 / 0.05);
+    /* ── State overlays — BLACK in light, white in dark.
+         Same 0.05 -> 0.08 bump as dark; over a near-white surface 5%
+         black is barely a tint. */
+    --color-state-hover:    oklch(0% 0 0 / 0.08);
     --color-state-pressed:  oklch(0% 0 0 / 0.10);
     --color-state-selected: oklch(57% 0.161 41 / 0.10);
 
