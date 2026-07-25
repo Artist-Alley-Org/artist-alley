@@ -100,10 +100,15 @@
   // zero gap: without it a scaling tile slides under its neighbours.
   // Selection uses an INSET ring here so it reads inside the tile
   // instead of bleeding over the adjacent one.
+  //
+  // #596 — per-tile 2px inset + 4px radius, filled with the matte, so
+  // neighbours put 4px between their images while the GRID stays flush.
+  // See the twin in AssetCard for the full reasoning (and why these are
+  // literal px rather than Tailwind's rem scale).
   const wrapperClass = $derived(
     framed
       ? `rounded-lg bg-surface-elevated border ${selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}`
-      : `hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
+      : `p-[2px] rounded-[4px] bg-thumb-matte hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
   );
 
   const memberCount = $derived(post.members.length);

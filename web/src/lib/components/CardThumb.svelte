@@ -173,9 +173,20 @@
   line disappears against one of them. (`dark:` now follows our theme
   class, not the OS — see @custom-variant in app.css.)
 -->
+<!--
+  The inner radius is CONCENTRIC with the tile's outer one (#596): the
+  grid tile is 4px rounded with a 2px inset, so the image inside wants
+  4 - 2 = 2px to curve on the same centre. Square corners inside a
+  rounded box read as a mistake at this size. `rounded-[2px]` and not
+  `rounded-sm`, because the reference works in px and Tailwind's scale
+  is rem — see AssetCard's wrapperClass. Applied with `fill`, which is
+  set exactly in grid mode by both cards; the framed modes keep square
+  corners inside their own rounded card.
+-->
 <div
   class="relative aspect-square overflow-hidden bg-thumb-matte
          after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
+         {fill ? 'rounded-[2px] after:rounded-[2px]' : ''}
          {framed
            ? 'after:ring-black/[0.07] dark:after:ring-white/[0.06]'
            : 'after:ring-black/[0.12] dark:after:ring-white/[0.10]'}"
