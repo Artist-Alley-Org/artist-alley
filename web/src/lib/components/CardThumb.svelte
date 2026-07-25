@@ -54,6 +54,18 @@
      *  reads as a clean dense wall. The bg-surface matte stays either way
      *  so art always letterboxes and never crops (slice 1's value). */
     framed?: boolean;
+    /** Fill the tile edge-to-edge instead of letterboxing (#561). ON in
+     *  grid only — a contact sheet fills, a details view shows the whole
+     *  work. This DELIBERATELY reverses slice 1's "letterbox, never crop"
+     *  for that one mode: the inset matte ring left visible whitespace
+     *  inside every tile, which is what the ArtStation reference does not
+     *  have.
+     *
+     *  Applies to the real image variant ONLY. The typed-doc card, icon
+     *  placeholder and thumbhash placeholder are GENERATED, not artwork —
+     *  cropping them would clip a glyph or a file extension for no gain,
+     *  so they stay centred on the matte in every mode. */
+    fill?: boolean;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -69,6 +81,7 @@
     previewAvailable = false,
     hovering = false,
     framed = true,
+    fill = false,
     children,
   }: Props = $props();
 
@@ -176,12 +189,25 @@
         aria-hidden="true"
       ></div>
     {/if}
+    <!--
+      grid (fill): object-cover with NO padding, so the tile is filled
+      edge-to-edge. The `col` variant is itself a 320×320 centre-cropped
+      square (sysconfig DefaultPreviewConfig: Fit=cover, MaxDim=320 —
+      verified against the stored bytes), and the tile is square, so
+      "cover" here is a 1:1 display of the variant: no second crop, no
+      upscale beyond what `contain` was already doing. It just removes the
+      6px matte ring that `p-1.5` drew inside every tile.
+
+      everything else (contain + p-1.5): letterbox on the matte, so a
+      details view still shows the whole work (#515 slice 1).
+    -->
     <img
       src={colUrl}
       alt={title}
       loading="lazy"
       decoding="async"
-      class="absolute inset-0 h-full w-full object-contain p-1.5 transition-opacity duration-200 group-hover:scale-[1.02]"
+      class="absolute inset-0 h-full w-full transition-opacity duration-200 group-hover:scale-[1.02]
+             {fill ? 'object-cover' : 'object-contain p-1.5'}"
       class:opacity-0={!imgLoaded}
       class:opacity-100={imgLoaded}
       onload={onLoad}

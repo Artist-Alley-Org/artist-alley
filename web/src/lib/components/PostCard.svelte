@@ -156,6 +156,7 @@
     previewAvailable={coverPreviewAvailable}
     {hovering}
     {framed}
+    fill={mode === 'grid'}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
          fallback). Hover here drives CardThumb's sprite-scrub. -->

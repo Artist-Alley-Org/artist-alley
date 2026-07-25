@@ -86,6 +86,7 @@
     previewAvailable={asset.preview_available}
     {hovering}
     {framed}
+    fill={mode === 'grid'}
   >
     <!-- Whole-card navigation target. Hover here drives CardThumb's
          sprite-scrub (an interactive element, so no a11y warning). -->
