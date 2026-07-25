@@ -55,10 +55,29 @@
   // zero gap: without it a scaling tile slides under its neighbours.
   // Selection uses an INSET ring here so it reads inside the tile
   // instead of bleeding over the adjacent one.
+  //
+  // #596 — the separation between grid tiles is PER-TILE, not a grid
+  // gap, matching the reference: its artwork grid declares no gap at all
+  // and each tile link carries `padding:2px; border-radius:4px`. Two
+  // neighbours therefore put 4px between their images (2px each) with
+  // rounded corners, which is the "almost 1px" softness the owner was
+  // describing. The grid itself stays flush (ContentGrid keeps gap-0).
+  //
+  // Literal px, not Tailwind's rem-based scale: the reference stylesheet
+  // uses px throughout and our previous `gap-2` was 0.5rem, so it
+  // rescaled with the user's font size — a gutter that grows when
+  // someone bumps their browser text is not the same design.
+  //
+  // The 2px ring is filled with `bg-thumb-matte` rather than left to
+  // show the page. The matte is deliberately offset from the page
+  // (#590), so it separates light artwork on a light page — which the
+  // page colour itself would not: at 95% against near-white art there
+  // are ~3 L points, and that near-invisibility is the whole reason the
+  // matte token exists.
   const wrapperClass = $derived(
     framed
       ? `rounded-lg bg-surface-elevated border ${selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}`
-      : `hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
+      : `p-[2px] rounded-[4px] bg-thumb-matte hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
   );
 
   const created = $derived(new Date(asset.created_at));
