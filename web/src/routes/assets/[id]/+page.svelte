@@ -13,11 +13,11 @@
   // seed the source from it so first paint pays no extra round-trip.
 
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
   import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
   import AssetPlaylist from '$components/AssetPlaylist.svelte';
   import { createAssetPlaylistSource } from '$lib/playlist/assetSource.svelte';
+  import { createCloseToOrigin } from '$lib/util/closeToOrigin.svelte';
 
   let { data } = $props();
 
@@ -28,15 +28,10 @@
   // the viewer re-targets.
   let src = $derived.by(() => createAssetPlaylistSource(data.asset.id, data.asset));
 
-  async function handleClose() {
-    // Same close policy as posts/[id]: return to where the user came
-    // from if it was in-app, else the browse feed.
-    if (window.history.length > 1 && document.referrer.startsWith(window.location.origin)) {
-      window.history.back();
-    } else {
-      await goto('/');
-    }
-  }
+  // Close policy shared with posts/[id] (#581): back to wherever the
+  // user came from in-app, else the browse feed for a cold entry
+  // (ADR 0067). One implementation so the two routes can't drift.
+  const close = createCloseToOrigin();
 </script>
 
 <svelte:head>
@@ -44,5 +39,5 @@
 </svelte:head>
 
 {#key assetId}
-  <AssetPlaylist source={src.source} onClose={handleClose} standalone />
+  <AssetPlaylist source={src.source} onClose={close.handleClose} standalone />
 {/key}

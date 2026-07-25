@@ -267,12 +267,20 @@
     window.removeEventListener('aa-audiobook-advance', onAudiobookAdvance as EventListener);
   });
 
+  // Once-per-close guard — see fireClose() below (#581). Declared here
+  // because openDialog() re-arms it.
+  let closing = false;
+
   // Open the dialog in the right mode. showModal() blocks page
   // interaction (correct for maximized = "this is the world now");
   // show() doesn't (correct for windowed = "I'm sitting on top, but
   // the navbar behind me is still clickable").
   function openDialog() {
     if (!dialogEl) return;
+    // Re-arm the once-per-close guard (#581) so a playlist that is
+    // closed and shown again — the maximize toggle below does exactly
+    // that — can still close.
+    closing = false;
     if (maximized) {
       dialogEl.showModal();
     } else {
@@ -326,17 +334,40 @@
 
   // ---- Handlers ------------------------------------------------------------
 
+  // onClose must fire EXACTLY ONCE per close (#581). Three paths can
+  // reach it — the close button, a backdrop click, and the <dialog>'s
+  // native close event (Esc) — and the button path hit two of them:
+  // handleClose() called dialogEl.close(), which fires the dialog's
+  // `close` event → handleDialogClose → onClose(), and then called
+  // onClose() itself.
+  //
+  // That double-fire was invisible while the standalone routes closed
+  // with goto('/'), because navigating to the same URL twice is
+  // idempotent. Once close became history.back() it stopped being
+  // harmless: two backs skip past the page the user came from and land
+  // an entry too far (measured — profile → post → close landed on the
+  // collection BEFORE the profile).
+  //
+  // The guard is per-close rather than per-instance: openDialog()
+  // re-arms it, so a playlist that is closed and shown again still
+  // closes correctly.
+  function fireClose() {
+    if (closing) return;
+    closing = true;
+    onClose();
+  }
+
   function handleDialogClose() {
-    if (dialogEl?.open === false) onClose();
+    if (dialogEl?.open === false) fireClose();
   }
 
   function handleBackdropClick(e: MouseEvent) {
-    if (e.target === dialogEl) onClose();
+    if (e.target === dialogEl) fireClose();
   }
 
   function handleClose() {
     dialogEl?.close();
-    onClose();
+    fireClose();
   }
 
   /** Jump to a cursor position. Clamps to [0, items.length-1]; just
