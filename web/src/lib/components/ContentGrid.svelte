@@ -63,10 +63,14 @@
   </div>
 {:else}
   <!-- grid / thumbnail — and list with no table falls through here.
-       Grid is a zero-gap contact sheet (#555): tiles butt edge-to-edge
-       into one unbroken wall. Thumbnail keeps its gutter — it's a
-       "details" view, not a contact sheet. -->
-  <TileGrid {tileMin} class={mode === 'grid' ? 'gap-0' : 'gap-2'}>
+       ONE uniform gutter for both (#561). This partially reverses #555's
+       zero-gap contact sheet, deliberately and per the ArtStation
+       reference: that grid is not literally gapless, it is a thin even
+       gutter between FILLED tiles. Zero gap only read well while the
+       tiles were letterboxed and half empty — now that grid tiles fill
+       edge-to-edge (CardThumb `fill`), butting them together merges
+       adjacent artwork into one indistinct sheet. -->
+  <TileGrid {tileMin} class="gap-2">
     {#each items as item (item.id)}{@render card(item, mode)}{/each}
     {#if loading}
       {#each Array(8) as _, i (i)}
