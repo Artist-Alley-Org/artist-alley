@@ -9,6 +9,13 @@
   // the asset-level membership table (`collection_resources`) since
   // post-level membership lands in a follow-up commit.
   //
+  // The member grid renders through the shared ContentGrid + the
+  // floating ViewControls bar (#582), the same chrome browse and the
+  // profile pages use — a collection is an asset-showing surface, so it
+  // gets the mode switcher, tile size and sort like every other one.
+  // Previously this route hand-rolled its own responsive grid and had no
+  // controls at all.
+  //
   // Modals for Edit and Share live inline so closing them doesn't
   // unmount the page.
 
@@ -19,8 +26,11 @@
   import { auth } from '$stores/auth.svelte';
   import { upload } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
+  import { browseView } from '$stores/browseView.svelte';
   import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
   import AssetCard from '$components/AssetCard.svelte';
+  import ContentGrid from '$components/ContentGrid.svelte';
+  import ViewControls from '$components/ViewControls.svelte';
   import Menu from '$components/Menu.svelte';
   import EditCollectionModal from '$components/EditCollectionModal.svelte';
   import ShareCollectionModal from '$components/ShareCollectionModal.svelte';
@@ -64,7 +74,36 @@
   const id = $derived(page.params.id ?? '');
   const isOwner = $derived(!!collection && !!auth.user && collection.owner_user_ref === auth.user.ref);
 
+  // Mode + sort come from the GLOBAL browseView store (localStorage), so
+  // a collection shares the view preference with browse and the profile
+  // pages. SEAM: per-surface view state is probably reworked in the
+  // future; the coupling to the one store is the simplest-correct option
+  // for now — same call UserProfile documents.
+  //
+  // The BASE order is the curator's `sort_order` (ADR 0009 — a collection
+  // is "an ordered, optionally-shared" set, and the server already
+  // returns `ORDER BY cr.sort_order ASC, cr.added_at ASC`). The sort
+  // toggle REVERSES that order; it deliberately does not re-sort by date,
+  // which would throw away the curation.
+  const sortedMembers = $derived(
+    browseView.feedDir === 'asc' ? [...members].reverse() : members,
+  );
+
+  // ContentGrid keys rows by `id`; a member row is keyed by asset_id, so
+  // map once here rather than teaching the grid about two shapes.
+  const memberItems = $derived(
+    sortedMembers.map((m) => ({
+      id: m.asset_id,
+      title: m.title,
+      file_hash: m.file_hash,
+      asset_type: m.asset_type,
+      created_at: m.asset_created_at ?? m.added_at,
+      preview_available: m.preview_available,
+    })),
+  );
+
   onMount(() => {
+    browseView.init(); // pick up the user's tile-size + mode preference
     void load();
   });
 
@@ -375,25 +414,29 @@
         {/if}
       </section>
     {:else}
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
-        {#each members as m (m.asset_id)}
-          <AssetCard
-            asset={{
-              id: m.asset_id,
-              title: m.title,
-              file_hash: m.file_hash,
-              asset_type: m.asset_type,
-              created_at: m.asset_created_at ?? m.added_at,
-              preview_available: m.preview_available,
-            }}
-          />
-        {/each}
-      </div>
+      <!-- Shared grid (#511/#582), so mode + tile size + sort match
+           browse. Assets carry no list table, so `list` falls back to the
+           grid here exactly as it does in UserProfile's asset section. -->
+      <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
+        {#snippet card(item, mode)}
+          <AssetCard asset={item} {mode} />
+        {/snippet}
+      </ContentGrid>
     {/if}
   {/if}
 </div>
 
 {#if collection}
+  <!-- The shared floating view controls (mode switcher + tile size +
+       sort), same bar as browse and the profile pages (#511/#582). No
+       feed-filter `middle` snippet — Team/Trending/Latest/Following is
+       meaningless for a fixed curated set.
+       Mounted whenever the collection loaded, including when it is
+       EMPTY: the controls carry no per-member state, and hiding them on
+       an empty collection would make the chrome flicker in and out as
+       the owner adds the first asset. -->
+  <ViewControls />
+
   <EditCollectionModal
     open={editOpen}
     collection={collection}
