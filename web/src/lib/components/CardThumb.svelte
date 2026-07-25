@@ -148,17 +148,37 @@
 </script>
 
 <!--
-  RS matte. `bg-surface` is the neutral matte (page bg, one step darker
-  than the card's bg-surface-elevated) — always on, so mixed-aspect art
-  letterboxes cleanly instead of a blurred self-crop. The `after:` inset
-  ring is the gallery-mount frame edge, drawn only when `framed` (details
-  modes); grid drops it for a clean dense wall (#515 slice 4).
+  RS matte — `bg-thumb-matte`, a dedicated token offset a few L points
+  from the PAGE in both themes (#590 amendment). It used to be
+  `bg-surface`, i.e. the page colour itself, which meant a light-artwork
+  tile in light mode had nothing separating it from the page. Always on,
+  so mixed-aspect art letterboxes cleanly instead of a blurred self-crop.
+
+  The `after:` inset ring is now drawn in EVERY mode, not just `framed`.
+  Two different bleeds needed covering:
+
+    * grid — since #588 the art is object-cover with no padding, so it
+      reaches the tile edge and the matte is never visible. Only a
+      boundary line can delimit a white-artwork tile against a near-white
+      page. #515 slice 4 dropped this ring from grid for a "clean dense
+      wall"; that read fine while tiles were letterboxed, and stopped
+      reading once they filled.
+    * contain modes — the matte offset above does most of the work; the
+      ring finishes the edge.
+
+  The ring is TRANSLUCENT and theme-directional — black in light, white
+  in dark — so it always contrasts with the page while staying invisible
+  over artwork that already contrasts. A solid colour cannot do this:
+  the library holds both near-white and near-black assets, so any fixed
+  line disappears against one of them. (`dark:` now follows our theme
+  class, not the OS — see @custom-variant in app.css.)
 -->
 <div
-  class="relative aspect-square overflow-hidden bg-surface
+  class="relative aspect-square overflow-hidden bg-thumb-matte
+         after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
          {framed
-           ? 'after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset after:ring-black/[0.07] dark:after:ring-white/[0.06]'
-           : ''}"
+           ? 'after:ring-black/[0.07] dark:after:ring-white/[0.06]'
+           : 'after:ring-black/[0.12] dark:after:ring-white/[0.10]'}"
 >
   {#if isDoc}
     <!-- Typed doc card — text/code don't get a rasterised preview
