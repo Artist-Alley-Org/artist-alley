@@ -168,6 +168,7 @@
   "card": {
     "tools": {
       "row_label": "Quick actions",
+      "menu_label": "More actions",
       "info": "View details",
       "share": "Copy link",
       "copied": "Link copied",
@@ -176,6 +177,9 @@
     "select": {
       "label": "Select",
       "deselect": "Deselect"
+    },
+    "multi": {
+      "badge_label": "{count} assets in this post"
     },
     "footer": {
       "likes": "{count} likes",
