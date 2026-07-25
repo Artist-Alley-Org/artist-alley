@@ -100,14 +100,13 @@
   style="padding-bottom: env(safe-area-inset-bottom, 0px)"
   aria-label={t('browse.footer.label')}
 >
-  <!-- Surface-specific row (browse injects its feed filter). Stacked
-       ABOVE the controls and centred on the same axis, so the whole
-       thing reads as one stack rather than a separate island. -->
-  {#if middle}
-    <div class="flex justify-center">{@render middle()}</div>
-  {/if}
-
-  <!-- The expanded view choices, centred over the control row. -->
+  <!-- ONE row (#590 amendment). The filter and the controls used to be
+       two independently-centred rows stacked on each other; because they
+       are different widths, nothing lined up and the cluster read as
+       bunched and ragged. They now share a single horizontal row, so
+       there is one alignment for the whole thing and the surfaces that
+       pass no `middle` (UserProfile, posts/by-asset, the collection
+       page) simply get a shorter version of the same row. -->
   <div class="pointer-events-auto flex flex-col items-center gap-1.5">
     {#if expanded}
       <div class="flex items-center gap-1.5">
@@ -166,6 +165,10 @@
     {/if}
 
     <div class="flex items-center gap-1.5">
+      <!-- Surface-specific content leads the row (browse's feed filter);
+           absent on every other surface, which just shortens the row. -->
+      {#if middle}{@render middle()}{/if}
+
       {#if expanded}
         <button
           type="button"

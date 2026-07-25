@@ -55,6 +55,21 @@
  * automatically when the light class is set.
  */
 
+/* `dark:` must follow OUR theme, not the OS.
+ *
+ * Tailwind v4's stock `dark:` variant is `@media (prefers-color-scheme:
+ * dark)`, and nothing here overrode it — so every `dark:` utility was
+ * keyed to the operating system while the app's actual theme is a class
+ * on <html>. That was survivable while the default tracked the OS; it is
+ * not now that dark is the default regardless of OS (#590), because a
+ * user in our dark theme on a light-mode machine would get the LIGHT
+ * branch of every `dark:` utility.
+ *
+ * Binding it to the class makes the two agree. Only a handful of call
+ * sites use `dark:` (the card boundary ring below, a banner) — the rest
+ * of the app flips via the token re-bind, which is the preferred route. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* ══ DARK — the default (#590) ══════════════════════════════════════
        Everything below is the brand theme. `html.light` overrides it. */
@@ -66,6 +81,17 @@
   --color-surface:          oklch(13% 0.015 250);   /* page bg */
   --color-surface-elevated: oklch(21% 0.022 250);   /* cards, popovers, nav */
   --color-surface-overlay:  oklch(26% 0.022 250);   /* modals, dialogs */
+
+  /* ── Thumbnail matte — the backdrop artwork sits on in a card.
+       DELIBERATELY NOT `surface` (#590 amendment). It used to be the
+       page colour, so in light mode a tile full of white-ish artwork —
+       and a large share of this library is exactly that (waveforms,
+       white 3D renders, gradient blurs) — met a near-white page and the
+       tile boundary vanished. Offsetting the matte from the page by a
+       few L points means the TILE is visible whatever tone the art is.
+       Offset direction follows the theme: lighter than the page here,
+       darker than it in light. */
+  --color-thumb-matte: oklch(17% 0.015 250);
 
   /* ── Foreground
        fg-muted at oklch(78% / chroma 0.008) so secondary text on
@@ -139,6 +165,13 @@
     --color-surface:          oklch(95%   0.008 250);  /* page bg */
     --color-surface-elevated: oklch(98.5% 0.005 250);  /* cards, popovers, nav */
     --color-surface-overlay:  oklch(100%  0.003 250);  /* modals, dialogs */
+
+    /* ── Thumbnail matte — see the dark block. Darker than the page
+         here (the page is light), so a white-artwork tile still reads
+         as a tile. A MID neutral rather than something near-black on
+         purpose: the library also holds near-black assets, and a dark
+         matte would just trade a light-art bleed for a dark-art one. */
+    --color-thumb-matte: oklch(90% 0.008 250);
 
     /* ── Foreground — cool near-black, same family as the surfaces. */
     --color-fg:          oklch(22% 0.020 250);
