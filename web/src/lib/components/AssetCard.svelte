@@ -77,6 +77,25 @@
 <div
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
+  {#if detailed}
+    <!-- Details HEADER (#556). The owner's ask was "there should be a
+         top to the thumbnail cards … title near the top": the title now
+         LEADS the card instead of trailing it as a caption strip.
+         Actions are NOT duplicated here — per the owner's 2026-07-25
+         amendment the ⋮ CardMenu is the one action affordance in every
+         mode, so it stays in its overlay position over the thumb.
+         Kept self-contained: #552 swaps this field set for an
+         operator-configured one, and wants that swap local. -->
+    <div class="border-b border-border px-3 py-2">
+      <a
+        href="/assets/{asset.id}"
+        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
+      </a>
+    </div>
+  {/if}
+
   <CardThumb
     assetId={asset.id}
     title={asset.title}
@@ -113,17 +132,18 @@
       </div>
     {/if}
 
-    <!-- Overflow menu (info / share / add-to-collection). -->
+    <!-- Overflow menu (info / share / add-to-collection). ONE affordance
+         in every mode, including thumbnail — owner amendment 2026-07-25
+         to #556, superseding "actions visible in the details tile". -->
     <CardMenu assetId={asset.id} detailPath="/assets/{asset.id}" />
   </CardThumb>
 
   {#if detailed}
-    <!-- Thumbnail ("details") footer: the default at-a-glance field set.
-         #552 will make this operator-configurable; the block is kept
-         self-contained so that swap is local. -->
+    <!-- Details FOOTER: the secondary at-a-glance metadata. The title
+         moved to the header (#556); this keeps the supporting fields
+         below the image where they don't compete with it. -->
     <a href="/assets/{asset.id}" class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
-      <p class="mt-0.5 text-xs text-fg-muted">{createdShort}</p>
+      <p class="text-xs text-fg-muted">{createdShort}</p>
     </a>
   {/if}
 </div>

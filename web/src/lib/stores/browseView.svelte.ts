@@ -77,12 +77,18 @@ const TILE_MAX_IDX = TILE_STEPS_REM.length - 1;
  *  is written down as a rule — they're consequences. */
 const DEFAULT_TILE_IDX = 5;
 
-/** thumbnail is the same ladder, two rungs denser. That's the old
- *  `size + 3` column bump re-expressed as a size: at the default it
- *  lands on 16rem → 7 columns at 1920px, which is exactly what
- *  `resolveCols('thumbnail', 4)` used to return. Product intent (a
- *  dense preview wall), not layout guesswork. */
-const THUMBNAIL_RUNG_OFFSET = -2;
+/** thumbnail is the same ladder, one rung ROOMIER than grid — at the
+ *  default that is 28rem → 4 columns at 1920px, against grid's 22rem → 5.
+ *
+ *  This inverts the previous -2 ("a dense preview wall", 16rem → 7
+ *  columns), and the inversion is the point (#556). thumbnail is the
+ *  DETAILS view: it carries a title header, the thumb, and a metadata
+ *  footer, and the owner's ask is "info at a glance". A details tile
+ *  that is denser than the plain grid tile is a contradiction — it was
+ *  why the metadata read as a cramped caption strip. Roomier than grid
+ *  is the product intent now; do not "restore" the dense wall without
+ *  re-reading #556. */
+const THUMBNAIL_RUNG_OFFSET = 1;
 
 const DEFAULT_MODE: ViewMode = 'grid';
 /** Phones default to `feed` — but only when nothing is stored, and only
