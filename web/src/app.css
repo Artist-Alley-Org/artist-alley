@@ -3,16 +3,44 @@
 /*
  * artist-alley color tokens.
  *
- * Vibe target:
- *   Light = energetic / upbeat (warm cream paper + burnt-orange accent)
- *   Dark  = cool / calm        (off-black blue-grey + burnt-orange accent)
+ * DARK IS THE BRAND (#590). It lives in @theme as the default set;
+ * `html.light` below overrides it. That ordering is deliberate — the
+ * default theme should be the one you read first in this file, and it
+ * matches what a visitor with no stored preference actually gets
+ * (app.html's pre-paint script + theme.svelte.ts both default to dark).
  *
- * The brand accent is burnt orange (hue ~41 light / ~43 dark) in both
- * modes, paired with a cool steel secondary (hue ~234). The dark accent
- * is a LIGHT tone, so its on-accent text is near-black, not white.
- * Surfaces carry the temperature difference: light has a hint of warmth
- * (hue 80, very low chroma → reads "paper"), dark sits at oklch(13%) not
- * pure black so OLED preserves breathing room and thumbnails read.
+ * ONE PALETTE, TWO EXPOSURES
+ *
+ * Light and dark used to be different palettes wearing the same accent:
+ * dark sat on a cool blue-grey (hue 250) while light sat on a warm cream
+ * (hue 80), and light's cards were pure white. Two unrelated hue
+ * families read as two unrelated products, and the pure-white cards on
+ * cream are what made light feel flat and clinical next to dark.
+ *
+ * Both now share the hue-250 cool-neutral family and differ only in
+ * LIGHTNESS — dark is the low exposure of the same film, light is the
+ * high one. Concretely:
+ *
+ *   role              dark            light
+ *   surface           13%             95%      page
+ *   surface-elevated  21%             98.5%    cards, nav, popovers
+ *   surface-overlay   26%             100%     modals
+ *
+ * Elevation runs the same direction in both (elevated is LIGHTER than
+ * the page), so a card lifts identically whichever exposure you are in.
+ * Light's page is a toned 95%, not white, and its cards are 98.5%, not
+ * pure white: the tint is what keeps it reading as paper rather than a
+ * blank document, and it gives the elevated step somewhere to go.
+ *
+ * The burnt-orange accent (hue ~41 light / ~43 dark) is the one warm
+ * element in both, which is the point — it is the brand, and it now
+ * reads as the accent ON a neutral rather than one warm among many.
+ * The dark accent is a LIGHT tone, so its on-accent text is near-black,
+ * not white.
+ *
+ * If you are tempted to warm light back up: that was tried, and the two
+ * themes stopped looking like one product. Change both exposures
+ * together or neither.
  *
  * Token shape borrows the M3 role naming (`--color-*` + `--color-on-*`
  * pairs, `--color-*-container` for soft variants, ladder of surface
@@ -22,72 +50,114 @@
  * 3:1 UI) at minimum.
  *
  * Tailwind v4 reads tokens out of @theme and emits utilities
- * (bg-surface, text-fg, border-border, ring-ring, etc). The .dark
+ * (bg-surface, text-fg, border-border, ring-ring, etc). The html.light
  * override block re-binds the same names so any utility flips
- * automatically when html.dark is set.
+ * automatically when the light class is set.
  */
 
-@theme {
-  /* ── Surfaces (3-tier ladder; M3 rule: elevation by surface swap, not shadow)
-       Light mode: page sits slightly darker than pure white so the
-       elevated cards stand out against it. Dark mode: deeper page +
-       higher elevated step (see html.dark block). */
-  --color-surface:          oklch(96%  0.012  80);   /* page bg — warm cream */
-  --color-surface-elevated: oklch(100% 0      0);    /* cards, popovers, nav */
-  --color-surface-overlay:  oklch(100% 0      0);    /* modals, dialogs */
+/* `dark:` must follow OUR theme, not the OS.
+ *
+ * Tailwind v4's stock `dark:` variant is `@media (prefers-color-scheme:
+ * dark)`, and nothing here overrode it — so every `dark:` utility was
+ * keyed to the operating system while the app's actual theme is a class
+ * on <html>. That was survivable while the default tracked the OS; it is
+ * not now that dark is the default regardless of OS (#590), because a
+ * user in our dark theme on a light-mode machine would get the LIGHT
+ * branch of every `dark:` utility.
+ *
+ * Binding it to the class makes the two agree. Only a handful of call
+ * sites use `dark:` (the card boundary ring below, a banner) — the rest
+ * of the app flips via the token re-bind, which is the preferred route. */
+@custom-variant dark (&:where(.dark, .dark *));
 
-  /* ── Foreground tiers (paired with surfaces; AA verified)
-       Light fg-muted slightly darkened to oklch(42%) so secondary
-       text on the warm-cream surface clears AA body comfortably. */
-  --color-fg:          oklch(20% 0.015 80);          /* high-emphasis text */
-  --color-fg-muted:    oklch(42% 0.012 80);          /* secondary copy, captions */
-  --color-fg-disabled: oklch(70% 0.010 80);          /* disabled controls (M2: 38% emphasis) */
-  --color-on-accent:   oklch(98% 0.005 80);          /* fg on accent fills */
+@theme {
+  /* ══ DARK — the default (#590) ══════════════════════════════════════
+       Everything below is the brand theme. `html.light` overrides it. */
+
+  /* ── Surfaces (3-tier ladder; M3 rule: elevation by surface swap, not
+       shadow). Cool blue-grey off-black; oklch(13%) rather than pure
+       black so OLED keeps breathing room and thumbnails read. Elevated
+       bumps to 21% so cards stand ~8 L points off the page. */
+  --color-surface:          oklch(13% 0.015 250);   /* page bg */
+  --color-surface-elevated: oklch(21% 0.022 250);   /* cards, popovers, nav */
+  --color-surface-overlay:  oklch(26% 0.022 250);   /* modals, dialogs */
+
+  /* ── Hover fill for controls that already carry a SOLID background
+       (the footer pills, the filter segments). Not a tier of the
+       elevation ladder — a state.
+       Controls used to hover to `surface-overlay`, which is wrong twice
+       over: the delta is 5 L points here and only 1.5 in light, and in
+       light `overlay` is LIGHTER than `elevated`, so hovering a
+       near-white pill pushed it further toward white. This token moves
+       AWAY from the surface in whichever direction is visible — lighter
+       against dark, darker against light — with ~9 L points of travel. */
+  --color-surface-hover: oklch(30% 0.024 250);
+
+  /* ── Thumbnail matte — the backdrop artwork sits on in a card.
+       DELIBERATELY NOT `surface` (#590 amendment). It used to be the
+       page colour, so in light mode a tile full of white-ish artwork —
+       and a large share of this library is exactly that (waveforms,
+       white 3D renders, gradient blurs) — met a near-white page and the
+       tile boundary vanished. Offsetting the matte from the page by a
+       few L points means the TILE is visible whatever tone the art is.
+       Offset direction follows the theme: lighter than the page here,
+       darker than it in light. */
+  --color-thumb-matte: oklch(17% 0.015 250);
+
+  /* ── Foreground
+       fg-muted at oklch(78% / chroma 0.008) so secondary text on
+       surface-elevated hits APCA Lc ≈ 80 (AA body comfort + AAA UI).
+       The low chroma keeps it neutral grey, not dim blue. */
+  --color-fg:          oklch(96% 0.005 250);        /* high-emphasis text */
+  --color-fg-muted:    oklch(78% 0.008 250);        /* secondary copy, captions */
+  --color-fg-disabled: oklch(55% 0.010 250);        /* disabled controls */
+  --color-on-accent:   oklch(17% 0.025 64);         /* CRITICAL: near-black — the dark accent is LIGHT, white text fails (~2:1) */
 
   /* ── Structural (3:1 against surface — WCAG 1.4.11) */
-  --color-border:        oklch(88% 0.010 80);        /* default input/card borders */
-  --color-border-strong: oklch(70% 0.015 80);        /* focused inputs, primary dividers */
-  --color-border-subtle: oklch(93% 0.008 80);        /* non-interactive dividers */
-  --color-scrim:         oklch(20% 0.015 80 / 0.6);  /* modal backdrop */
+  --color-border:        oklch(28% 0.020 250);
+  --color-border-strong: oklch(45% 0.020 250);
+  --color-border-subtle: oklch(22% 0.020 250);
+  --color-scrim:         oklch( 8% 0.010 250 / 0.7);
 
-  /* ── Accent (burnt orange — energetic art-tool feel) */
-  --color-accent:               oklch(57% 0.161 41);
-  --color-accent-container:     oklch(95% 0.023 53);  /* soft tinted bg for alerts/badges */
-  --color-on-accent-container:  oklch(40% 0.140 41);  /* text on the soft tint */
+  /* ── Accent (burnt orange). A LIGHT tone here, so on-accent text is
+       near-black (see --color-on-accent), not white. */
+  --color-accent:               oklch(70% 0.167 43);
+  --color-accent-container:     oklch(28% 0.050 45);
+  --color-on-accent-container:  oklch(85% 0.100 47);
 
   /* ── Secondary (steel — cool complement to the burnt accent).
-       Token values only for now; wiring into secondary buttons /
-       info states / data-viz is a follow-up. */
-  --color-secondary:              oklch(56% 0.098 234);
-  --color-on-secondary:           oklch(99% 0 0);
-  --color-secondary-container:    oklch(93% 0.017 231);
-  --color-on-secondary-container: oklch(40% 0.090 235);
+       Token values only for now; component wiring is a follow-up. */
+  --color-secondary:              oklch(68% 0.090 234);
+  --color-on-secondary:           oklch(12% 0.02  240);
+  --color-secondary-container:    oklch(24% 0.028 239);
+  --color-on-secondary-container: oklch(85% 0.08  233);
 
-  /* ── Focus ring (brand-burnt hue, brighter for a visible ring; 3:1 against any surface) */
-  --color-ring: oklch(66% 0.179 40);
+  /* ── Focus ring */
+  --color-ring: oklch(70% 0.167 43);
 
-  /* ── Semantic — success (green hue 150) */
-  --color-success:              oklch(55% 0.15 150);
-  --color-on-success:           oklch(98% 0    0);
-  --color-success-container:    oklch(94% 0.06 150);
-  --color-on-success-container: oklch(30% 0.12 150);
+  /* ── Semantic (desaturated for dark; on-* pairs stay legible) */
+  --color-success:              oklch(70% 0.12 150);
+  --color-on-success:           oklch(15% 0.03 150);
+  --color-success-container:    oklch(28% 0.08 150);
+  --color-on-success-container: oklch(85% 0.10 150);
 
-  /* ── Semantic — warning (amber hue 75) */
-  --color-warning:              oklch(72% 0.16 75);
+  --color-warning:              oklch(78% 0.12 75);
   --color-on-warning:           oklch(20% 0.05 75);
-  --color-warning-container:    oklch(94% 0.06 75);
-  --color-on-warning-container: oklch(35% 0.12 75);
+  --color-warning-container:    oklch(28% 0.08 75);
+  --color-on-warning-container: oklch(85% 0.10 75);
 
-  /* ── Semantic — danger (red hue 15, distinct from accent's hue 30) */
-  --color-danger:               oklch(55% 0.20 15);
-  --color-on-danger:            oklch(98% 0    0);
-  --color-danger-container:     oklch(94% 0.05 15);
-  --color-on-danger-container:  oklch(30% 0.15 15);
+  --color-danger:               oklch(70% 0.16 25);
+  --color-on-danger:            oklch(15% 0.05 25);
+  --color-danger-container:     oklch(28% 0.10 25);
+  --color-on-danger-container:  oklch(88% 0.08 25);
 
-  /* ── Interaction-state overlays (apply on top of base via bg utility) */
-  --color-state-hover:    oklch(0% 0 0 / 0.05);
-  --color-state-pressed:  oklch(0% 0 0 / 0.10);
-  --color-state-selected: oklch(57% 0.161 41 / 0.10);
+  /* ── Interaction-state overlays — WHITE in dark, not black.
+       hover raised 0.05 -> 0.09: at 5% over an elevated surface the
+       change was ~2 L points, i.e. not perceptible, which is half of
+       why the footer controls felt dead (#590 amendment 3). */
+  --color-state-hover:    oklch(100% 0 0 / 0.09);
+  --color-state-pressed:  oklch(100% 0 0 / 0.10);
+  --color-state-selected: oklch(70% 0.167 43 / 0.14);
 
   /* ── Legacy compatibility — alias old name to new one so existing
        components that still say `bg-surface-elevated` etc. keep
@@ -96,74 +166,100 @@
 }
 
 @layer base {
-  html.dark {
-    /* ── Surfaces (cool blue-grey, off-black; preserves OLED breathing)
-         Surface-elevated bumped to oklch(21%) so cards stand off the
-         page bg (13%) with ~8 L points of visible separation. */
-    --color-surface:          oklch(13% 0.015 250);
-    --color-surface-elevated: oklch(21% 0.022 250);
-    --color-surface-overlay:  oklch(26% 0.022 250);
+  /* ══ LIGHT — the override ═══════════════════════════════════════════
+       The same palette at a high exposure: hue 250 throughout, so light
+       is dark's sibling rather than a second product. See the file
+       header for why this is no longer warm cream. */
+  html.light {
+    /* ── Surfaces. The page is a TONED 95%, not white, and cards are
+         98.5%, not pure white — the tint is what keeps this reading as
+         paper instead of a blank document, and it gives the elevated
+         step somewhere to go. Elevation runs the same direction as dark
+         (elevated is lighter than the page). */
+    --color-surface:          oklch(95%   0.008 250);  /* page bg */
+    --color-surface-elevated: oklch(98.5% 0.005 250);  /* cards, popovers, nav */
+    --color-surface-overlay:  oklch(100%  0.003 250);  /* modals, dialogs */
 
-    /* ── Foreground
-         fg-muted bumped to oklch(78% / chroma 0.008) so secondary
-         text on surface-elevated hits APCA Lc ≈ 80 (AA body comfort
-         + AAA UI). The lower chroma keeps it reading as neutral grey
-         instead of dim blue. */
-    --color-fg:          oklch(96% 0.005 250);
-    --color-fg-muted:    oklch(78% 0.008 250);
-    --color-fg-disabled: oklch(55% 0.010 250);
-    --color-on-accent:   oklch(17% 0.025 64);          /* CRITICAL: near-black — the dark accent is LIGHT, white text fails (~2:1) */
+    /* ── Hover fill — see the dark block. DARKER than elevated here,
+         because the surface is light; hovering toward white (which is
+         what `surface-overlay` did) is invisible on a 98.5% pill. */
+    --color-surface-hover: oklch(92% 0.010 250);
 
-    /* ── Structural */
-    --color-border:        oklch(28% 0.020 250);
-    --color-border-strong: oklch(45% 0.020 250);
-    --color-border-subtle: oklch(22% 0.020 250);
-    --color-scrim:         oklch( 8% 0.010 250 / 0.7);
+    /* ── Thumbnail matte — see the dark block. Darker than the page
+         here (the page is light), so a white-artwork tile still reads
+         as a tile. A MID neutral rather than something near-black on
+         purpose: the library also holds near-black assets, and a dark
+         matte would just trade a light-art bleed for a dark-art one. */
+    --color-thumb-matte: oklch(90% 0.008 250);
 
-    /* ── Accent (burnt orange). The dark accent is LIGHT, so on-accent
-         text is near-black (see --color-on-accent), not white. */
-    --color-accent:               oklch(70% 0.167 43);
-    --color-accent-container:     oklch(28% 0.050 45);
-    --color-on-accent-container:  oklch(85% 0.100 47);
+    /* ── Foreground — cool near-black, same family as the surfaces. */
+    --color-fg:          oklch(22% 0.020 250);
+    --color-fg-muted:    oklch(45% 0.015 250);
+    --color-fg-disabled: oklch(68% 0.012 250);
+    --color-on-accent:   oklch(98% 0.005 250);         /* the light accent is a MID tone — white text clears AA */
 
-    /* ── Secondary (steel — cool complement to the burnt accent).
-         Token values only for now; component wiring is a follow-up. */
-    --color-secondary:              oklch(68% 0.090 234);
-    --color-on-secondary:           oklch(12% 0.02 240);
-    --color-secondary-container:    oklch(24% 0.028 239);
-    --color-on-secondary-container: oklch(85% 0.08 233);
+    /* ── Structural (3:1 against surface — WCAG 1.4.11) */
+    --color-border:        oklch(87% 0.012 250);
+    --color-border-strong: oklch(68% 0.018 250);
+    --color-border-subtle: oklch(92% 0.008 250);
+    --color-scrim:         oklch(22% 0.020 250 / 0.6);
 
-    --color-ring: oklch(70% 0.167 43);
+    /* ── Accent (burnt orange — the one warm element, and the brand).
+         Darker than the dark-theme accent because it sits on a light
+         surface; on-accent is white here, near-black there. */
+    --color-accent:               oklch(57% 0.161 41);
+    --color-accent-container:     oklch(94% 0.030 45);  /* soft tinted bg for alerts/badges */
+    --color-on-accent-container:  oklch(40% 0.140 41);  /* text on the soft tint */
 
-    /* ── Semantic (all desaturated for dark; on-* pairs stay legible) */
-    --color-success:              oklch(70% 0.12 150);
-    --color-on-success:           oklch(15% 0.03 150);
-    --color-success-container:    oklch(28% 0.08 150);
-    --color-on-success-container: oklch(85% 0.10 150);
+    /* ── Secondary (steel). Hue 234 sits beside the 250 neutral, so it
+         reads as a cousin of the surface rather than a third family. */
+    --color-secondary:              oklch(56% 0.098 234);
+    --color-on-secondary:           oklch(99% 0     0);
+    --color-secondary-container:    oklch(93% 0.017 240);
+    --color-on-secondary-container: oklch(40% 0.090 235);
 
-    --color-warning:              oklch(78% 0.12 75);
+    /* ── Focus ring. Darkened from 66% to 62%: at 66% it scored 2.89:1
+         against the page, under the 3:1 WCAG 2.2 focus-appearance floor
+         (it was 2.97 on the old cream surface — under either way). The
+         ring is the one element that MUST be visible, so it clears the
+         bar rather than sitting a hair below it. */
+    --color-ring: oklch(62% 0.179 40);
+
+    /* ── Semantic
+         success darkened from 55% to 52% so white on-success clears AA
+         body (4.25:1 before — a real miss, carried over from the old
+         palette rather than introduced here). */
+    --color-success:              oklch(52% 0.15 150);
+    --color-on-success:           oklch(98% 0    0);
+    --color-success-container:    oklch(94% 0.06 150);
+    --color-on-success-container: oklch(30% 0.12 150);
+
+    --color-warning:              oklch(72% 0.16 75);
     --color-on-warning:           oklch(20% 0.05 75);
-    --color-warning-container:    oklch(28% 0.08 75);
-    --color-on-warning-container: oklch(85% 0.10 75);
+    --color-warning-container:    oklch(94% 0.06 75);
+    --color-on-warning-container: oklch(35% 0.12 75);
 
-    --color-danger:               oklch(70% 0.16 25);
-    --color-on-danger:            oklch(15% 0.05 25);
-    --color-danger-container:     oklch(28% 0.10 25);
-    --color-on-danger-container:  oklch(88% 0.08 25);
+    --color-danger:               oklch(55% 0.20 15);
+    --color-on-danger:            oklch(98% 0    0);
+    --color-danger-container:     oklch(94% 0.05 15);
+    --color-on-danger-container:  oklch(30% 0.15 15);
 
-    /* ── State overlays (white in dark, not black) */
-    --color-state-hover:    oklch(100% 0 0 / 0.05);
-    --color-state-pressed:  oklch(100% 0 0 / 0.10);
-    --color-state-selected: oklch(70% 0.167 43 / 0.14);
+    /* ── State overlays — BLACK in light, white in dark.
+         Same 0.05 -> 0.08 bump as dark; over a near-white surface 5%
+         black is barely a tint. */
+    --color-state-hover:    oklch(0% 0 0 / 0.08);
+    --color-state-pressed:  oklch(0% 0 0 / 0.10);
+    --color-state-selected: oklch(57% 0.161 41 / 0.10);
 
     --color-accent-fg: var(--color-on-accent);
   }
 
+  /* Native form controls / scrollbars follow the same default. */
   html {
-    color-scheme: light;
-  }
-  html.dark {
     color-scheme: dark;
+  }
+  html.light {
+    color-scheme: light;
   }
 
   body {

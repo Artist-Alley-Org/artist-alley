@@ -2,27 +2,31 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // The shared floating view-control bar (#511): the mode switcher
-  // (grid / masonry / feed / thumbnail / list + size ±), the
-  // sort-direction toggle and back-to-top, all driven by the global
+  // (grid / masonry / feed / thumbnail / list + size ±) on the left and
+  // the sort-direction toggle on the right, both driven by the global
   // browseView store. Extracted from BrowseFooter so every asset-showing
   // surface — browse, the profile pages, post-by-asset — mounts the SAME
   // controls instead of forking them.
   //
-  // LAYOUT (#554): these used to be three clusters pinned across a
-  // full-width `inset-x-4` bar — switcher + back-to-top hard left, the
-  // filter centred, sort hard right — so the two controls you actually
-  // use together sat a whole viewport apart and read as unrelated
-  // floating islands. They are now ONE centred cluster: a single row of
-  // adjacent controls, with the optional `middle` snippet stacked
-  // directly above it and the expanded view choices above that. Same
-  // components, same 44px targets — just gathered, so the pointer
-  // travel between "change the view" and "flip the sort" is one button
-  // instead of ~1900px on a wide screen.
-  //
   // Browse-only chrome (the feed filter: team / trending / latest /
   // following) is NOT here — it's injected by BrowseFooter through the
-  // optional `middle` snippet. Surfaces without a feed filter (profile,
-  // post-by-asset) simply omit it and the row collapses to the controls.
+  // optional `middle` snippet, which sits centred between the two
+  // clusters. Surfaces without a feed filter (profile, post-by-asset,
+  // the collection page) simply omit it, and the left and right clusters
+  // stay anchored to their edges — the row just has no centre item.
+  //
+  // LAYOUT — SPREAD, NOT CENTRED. This is deliberate and has been
+  // relitigated twice (#554, then #590 amendment 1), so before you
+  // gather these into one cluster again: that was tried and the owner
+  // rejected it both times. The reference product (ArtStation) puts the
+  // view controls bottom-left, the feed filter centred and sort
+  // bottom-right, and the spread is the thing being matched. The
+  // "three unrelated floating islands" reading that motivated the
+  // consolidation was a planning misjudgement, not a user complaint.
+  //
+  // Kept from the consolidation attempt because neither was the problem:
+  // the lucide gallery-thumbnails glyph, and chromeScroll.reveal() in
+  // pick() so the bar survives choosing a view.
   import type { Snippet } from 'svelte';
   import { browseView, type ViewMode } from '$stores/browseView.svelte';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
@@ -95,19 +99,13 @@
 
 <div
   data-testid="view-controls"
-  class="chrome-slide pointer-events-none fixed inset-x-4 bottom-4 z-20 flex flex-col items-center gap-2 transition-transform duration-200 ease-out"
+  class="chrome-slide pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3 transition-transform duration-200 ease-out"
   class:chrome-hidden-bottom={hidden}
   style="padding-bottom: env(safe-area-inset-bottom, 0px)"
   aria-label={t('browse.footer.label')}
 >
-  <!-- Surface-specific row (browse injects its feed filter). Stacked
-       ABOVE the controls and centred on the same axis, so the whole
-       thing reads as one stack rather than a separate island. -->
-  {#if middle}
-    <div class="flex justify-center">{@render middle()}</div>
-  {/if}
-
-  <!-- The expanded view choices, centred over the control row. -->
+  <!-- LEFT cluster: view switcher + back-to-top -->
+  <div class="flex items-end gap-3">
   <div class="pointer-events-auto flex flex-col items-center gap-1.5">
     {#if expanded}
       <div class="flex items-center gap-1.5">
@@ -117,7 +115,7 @@
           onclick={() => pick(v.id)}
           title={t(v.labelKey)}
           aria-label={t(v.labelKey)}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {#if v.icon === 'grid'}
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -136,7 +134,7 @@
           {:else if v.icon === 'thumbnail'}
             <!-- lucide `gallery-thumbnails` (#554): a large preview over a
                  strip of thumbs, which is what this view actually is. The
-                 old glyph was a 3×3 of equal squares — indistinguishable
+                 old glyph was a 3x3 of equal squares — indistinguishable
                  from the grid icon two buttons away. -->
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect width="18" height="14" x="3" y="3" rx="2" />
@@ -173,7 +171,7 @@
           disabled={!browseView.canDec}
           title={t('browse.footer.dec_size')}
           aria-label={t('browse.footer.dec_size')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="5" y1="12" x2="19" y2="12" />
@@ -236,7 +234,7 @@
           disabled={!browseView.canInc}
           title={t('browse.footer.inc_size')}
           aria-label={t('browse.footer.inc_size')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
@@ -244,17 +242,38 @@
           </svg>
         </button>
       {/if}
+    </div>
+  </div>
 
-      <!-- Sort sits in the SAME row as the switcher (#554) — these are
-           the two controls used together, so they are now neighbours
-           rather than opposite edges of the viewport. -->
-      <button
-        type="button"
-        onclick={() => browseView.toggleFeedDir()}
-        title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
-        aria-label={t('browse.sort.toggle')}
-        class="inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
+  {#if scrolled}
+  <button
+    type="button"
+    onclick={backToTop}
+    title={t('browse.footer.back_to_top')}
+    aria-label={t('browse.footer.back_to_top')}
+    class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </svg>
+  </button>
+  {/if}
+  </div>
+
+  <!-- MIDDLE cluster: surface-specific (browse injects its feed filter). -->
+  <div class="flex flex-1 justify-center">
+    {#if middle}{@render middle()}{/if}
+  </div>
+
+  <!-- RIGHT cluster: sort direction toggle. -->
+  <button
+    type="button"
+    onclick={() => browseView.toggleFeedDir()}
+    title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
+    aria-label={t('browse.sort.toggle')}
+    class="pointer-events-auto ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       {#if browseView.feedDir === 'desc'}
         <path d="M3 6h13" />
@@ -270,29 +289,10 @@
         <path d="M21 12H12" />
       {/if}
     </svg>
-        <span class="hidden sm:inline">
-          {browseView.feedDir === 'desc' ? t('browse.sort.newest') : t('browse.sort.oldest')}
-        </span>
-      </button>
-
-      <!-- Back-to-top joins the same row instead of floating alone
-           (#554). Only present once there's somewhere to go back to. -->
-      {#if scrolled}
-        <button
-          type="button"
-          onclick={backToTop}
-          title={t('browse.footer.back_to_top')}
-          aria-label={t('browse.footer.back_to_top')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="19" x2="12" y2="5" />
-            <polyline points="5 12 12 5 19 12" />
-          </svg>
-        </button>
-      {/if}
-    </div>
-  </div>
+    <span class="hidden sm:inline">
+      {browseView.feedDir === 'desc' ? t('browse.sort.newest') : t('browse.sort.oldest')}
+    </span>
+  </button>
 </div>
 
 <style>
