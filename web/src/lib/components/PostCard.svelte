@@ -18,7 +18,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import CardThumb from './CardThumb.svelte';
-  import CardToolRow from './CardToolRow.svelte';
+  import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
   import { t } from '$stores/lang.svelte';
@@ -107,6 +107,15 @@
   );
 
   const memberCount = $derived(post.members.length);
+
+  // The corner conflict was a THREE-way fight, not the two the brief
+  // described (#578). Top-left already hosts the select checkbox AND
+  // CardThumb's persistent video/3D media-type badge; top-right now hosts
+  // the ⋮ menu. Putting the multi-asset indicator top-left too overlapped
+  // the type badge on every video/3D multi-asset tile (measured). So it
+  // goes BOTTOM-left — the one persistently-clear corner — still always
+  // visible, still the single piece of resting chrome.
+
   const created = $derived(new Date(post.created_at));
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -162,17 +171,22 @@
     <!-- Multi-select checkbox (top-left). -->
     <CardCheckbox id={post.id} />
 
-    <!-- Multi-asset indicator badge (top-right). Fades out when the tool
-         row takes the same corner on hover / touch. -->
+    <!-- Multi-asset "stacked" indicator (#578). BOTTOM-right, PERSISTENT —
+         the one piece of chrome that stays at rest, so a wall of art
+         still signals which posts hold a set. Every other corner is
+         claimed: checkbox + CardThumb's video/3D type badge top-left, ⋮
+         menu top-right. Bottom-right is also clear of the hover title
+         overlay, which is bottom-LEFT-aligned. Only shown when the post
+         bundles more than one asset. -->
     {#if memberCount > 1}
       <div
-        class="pointer-events-none absolute top-2 right-2 z-[2] inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm
-               transition-opacity duration-150 group-hover:opacity-0 [@media(hover:none)]:opacity-0"
-        title="{memberCount} assets"
+        class="pointer-events-none absolute bottom-2 right-2 z-[2] inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm"
+        aria-label={t('card.multi.badge_label', { count: String(memberCount) })}
+        title={t('card.multi.badge_label', { count: String(memberCount) })}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="14" height="14" rx="2" />
-          <path d="M7 21h14a2 2 0 0 0 2-2V8" />
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="8" y="8" width="12" height="12" rx="2" />
+          <path d="M4 16V6a2 2 0 0 1 2-2h10" />
         </svg>
         {memberCount}
       </div>
@@ -192,8 +206,8 @@
       </div>
     {/if}
 
-    <!-- Quick-action tool row. add-to-collection targets the cover asset. -->
-    <CardToolRow assetId={coverAssetId} detailPath="/posts/{post.id}" />
+    <!-- Overflow menu. add-to-collection targets the cover asset. -->
+    <CardMenu assetId={coverAssetId} detailPath="/posts/{post.id}" />
   </CardThumb>
 
   {#if detailed}

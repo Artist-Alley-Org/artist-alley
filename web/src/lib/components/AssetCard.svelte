@@ -9,7 +9,7 @@
   // hover title overlay.
 
   import CardThumb from './CardThumb.svelte';
-  import CardToolRow from './CardToolRow.svelte';
+  import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
@@ -112,8 +112,8 @@
       </div>
     {/if}
 
-    <!-- Quick-action tool row (info / share / add-to-collection). -->
-    <CardToolRow assetId={asset.id} detailPath="/assets/{asset.id}" />
+    <!-- Overflow menu (info / share / add-to-collection). -->
+    <CardMenu assetId={asset.id} detailPath="/assets/{asset.id}" />
   </CardThumb>
 
   {#if detailed}
