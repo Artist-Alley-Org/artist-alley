@@ -9,9 +9,24 @@
 
     <!--
       Theme is set as early as possible to prevent flash-of-wrong-theme.
-      Reads the aa_theme cookie (light/dark/system) and applies a class
-      to <html> before any stylesheet loads. Order: explicit cookie ->
-      system preference -> dark default (the app's identity).
+      Reads the aa_theme cookie and applies a class to <html> before any
+      stylesheet loads.
+
+      Resolution order (#590):
+        1. explicit cookie 'light' | 'dark'  — always wins
+        2. explicit cookie 'system'          — follow the OS
+        3. no cookie                         — DARK, the app's identity
+
+      Step 3 is the change. This comment always claimed dark was the
+      default, but the code defaulted `pref` to 'system', so a visitor on
+      a light-mode OS got light and dark only happened in the catch. Dark
+      is the brand now, so a first-time visitor sees it regardless of
+      their OS; `system` stays available as a deliberate choice for
+      people who want OS-following.
+
+      MUST stay in lockstep with theme.svelte.ts (readCookie + init) — if
+      the two disagree the page repaints after hydration, which is the
+      flash this script exists to prevent.
     -->
     <script>
       (function () {
@@ -19,13 +34,15 @@
           var cookie = document.cookie.split('; ').find(function (c) {
             return c.indexOf('aa_theme=') === 0;
           });
-          var pref = cookie ? cookie.split('=')[1] : 'system';
+          var pref = cookie ? cookie.split('=')[1] : 'dark';
           var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
           var resolved = pref === 'system' ? (prefersDark ? 'dark' : 'light') : pref;
+          if (resolved !== 'light' && resolved !== 'dark') resolved = 'dark';
           document.documentElement.classList.add(resolved);
           document.documentElement.setAttribute('data-theme', resolved);
         } catch (e) {
           document.documentElement.classList.add('dark');
+          document.documentElement.setAttribute('data-theme', 'dark');
         }
       })();
     </script>
