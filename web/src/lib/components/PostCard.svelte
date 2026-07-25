@@ -147,6 +147,22 @@
 <div
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
+  {#if detailed}
+    <!-- Details HEADER (#556) — the title leads the card. See the twin in
+         AssetCard for the reasoning; actions stay in the overlay ⋮ menu. -->
+    <div class="border-b border-border px-3 py-2">
+      <a
+        href="/posts/{post.id}"
+        onclick={handleClick}
+        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>
+          {post.title || 'Untitled'}
+        </p>
+      </a>
+    </div>
+  {/if}
+
   <CardThumb
     assetId={coverAssetId}
     title={post.title || 'Untitled'}
@@ -207,18 +223,19 @@
       </div>
     {/if}
 
-    <!-- Overflow menu. add-to-collection targets the cover asset. -->
+    <!-- Overflow menu. ONE affordance in every mode, including thumbnail
+         — owner amendment 2026-07-25 to #556. add-to-collection targets
+         the cover asset. -->
     <CardMenu assetId={coverAssetId} detailPath="/posts/{post.id}" />
   </CardThumb>
 
   {#if detailed}
-    <!-- Thumbnail ("details") footer: the default at-a-glance field set —
-         title + date + like/comment counts (all already on the post).
-         #552 will make this operator-configurable; kept self-contained so
-         that swap is local. -->
+    <!-- Details FOOTER: the secondary at-a-glance fields — date +
+         like/comment counts. The title moved to the header (#556).
+         #552 will make this field set operator-configurable; kept
+         self-contained so that swap is local. -->
     <a href="/posts/{post.id}" onclick={handleClick} class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>{post.title || 'Untitled'}</p>
-      <p class="mt-0.5 flex items-center gap-2 text-xs text-fg-muted">
+      <p class="flex items-center gap-2 text-xs text-fg-muted">
         <span>{createdShort}</span>
         {#if post.like_count > 0}
           <span class="inline-flex items-center gap-1" title={t('card.footer.likes', { count: String(post.like_count) })}>
