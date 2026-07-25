@@ -69,6 +69,23 @@ class ChromeScrollState {
     };
   }
 
+  /** Force the chrome back on screen and let normal scroll behaviour
+   *  resume from there (#554).
+   *
+   *  Picking a view collapses the switcher, and if the user had scrolled
+   *  down while it was open the bar used to vanish the instant they
+   *  chose — the selection was masking `hidden`, not clearing it. This
+   *  clears it, so the bar stays put until the NEXT scroll-down runs the
+   *  handler below and hides it again.
+   *
+   *  Deliberately a plain state reset rather than a sticky flag with its
+   *  own listener: the direction logic, the epsilon and the
+   *  reduced-motion branch all stay in one place. In reduced-motion the
+   *  handler pins `hidden` false anyway, so this is a no-op there. */
+  reveal(): void {
+    this.hidden = false;
+  }
+
   #install(): void {
     const main = document.querySelector('main');
     if (!main) return;
