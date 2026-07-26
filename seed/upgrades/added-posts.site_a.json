@@ -1,0 +1,974 @@
+[
+ {
+  "asset_ids": [
+   "f3ed130c-0e38-85f0-fbfe-bcd0f5c88611"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 38500911 Mytho Digital — open-licence video reference.",
+  "id": "02696cea-cd86-8500-1f3a-2a3d3cf55c2b",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 38500911 Mytho Digital",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "042bae39-7931-fedc-32f5-ea7c2e3201fb"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 5094475 Cherisha Norman — open-licence video reference.",
+  "id": "07d3c50c-3c2d-24a0-6656-8cebe20eb35f",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 5094475 Cherisha Norman",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "690ac330-2a5f-8d88-309e-faaf882ade83"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 6755158 Tima Miroshnichenko — open-licence video reference.",
+  "id": "0e1af576-ee1f-b104-11a8-abee39ab25dd",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 6755158 Tima Miroshnichenko",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "e4b6069b-f10b-0ff1-2ad2-e2f97ead542e"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Xonotic Gameplay — open-licence video reference.",
+  "id": "0e63a4ea-38b0-9a36-45a6-51739bc0d387",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Xonotic Gameplay",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "03657a84-0d0a-1013-39e1-d1a14674452b"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 7480487 Mart Production — open-licence video reference.",
+  "id": "1630e855-3968-2cf5-0b97-27105eb8dec7",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 7480487 Mart Production",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "ca8dcd76-b3a6-565c-cff1-7bf1bf3e28dd"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Snake Game — open-licence video reference.",
+  "id": "213eb890-58fa-1f0b-eaec-f5b3011311d2",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Snake Game",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "91143676-0dae-8c52-638b-db9882ae86cd"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 10161903 Carlos — open-licence video reference.",
+  "id": "2d0b9a13-7740-1608-8bf3-2e6d6ba9db0e",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 10161903 Carlos",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "c376c0fd-07c3-0f54-8033-22e8cfb7f40a"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 6396111 Pavel Danilyuk — open-licence video reference.",
+  "id": "359982ad-27ea-fee6-b8ff-00806421b48f",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 6396111 Pavel Danilyuk",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "9c144796-c0e3-96c3-6cdc-506669ec080f"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 36774101 Nicola Narracci — open-licence video reference.",
+  "id": "4672ba9b-763e-3825-45de-33a1b003a6bd",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 36774101 Nicola Narracci",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "52d65ad0-7e6c-7335-450f-42418cf34180"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 27980029 Nicola Narracci — open-licence video reference.",
+  "id": "52ac59f9-4c65-1974-ea99-896ab0bdaa9f",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 27980029 Nicola Narracci",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "fe96dad3-a7cc-99dc-d062-d7cd7decafa5"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 8064422 Ai25 Studio Studio — open-licence video reference.",
+  "id": "5773e923-b605-622f-7e71-829d8782bd94",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 8064422 Ai25 Studio Studio",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "c40b4e9e-bffe-b425-5ef8-7e619af40bc3"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 5386815 Katrin Bolovtsova — open-licence video reference.",
+  "id": "65794cb9-4b58-db43-6e17-3611ed417d4d",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 5386815 Katrin Bolovtsova",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "53d2f48e-6c0c-82c4-eaa9-d251a410a889"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Sintel 2010 1080p — open-licence video reference.",
+  "id": "694af102-78d3-6d24-08b1-6648a0e9fa90",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Sintel 2010 1080p",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "e9285d8e-3939-b1f3-a07a-332ce7c15105"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 1288012 Zuzanna Musial — open-licence video reference.",
+  "id": "6bb88140-e371-17ff-b94d-87d1afdc52c2",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 1288012 Zuzanna Musial",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "b5ae1184-e459-c40a-51f6-35103f2c8dbe"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 3866849 Steve B — open-licence video reference.",
+  "id": "6f22aa77-d046-d637-61aa-da5d8b99c923",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 3866849 Steve B",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "e74e87ac-2105-817e-4fe5-e84b0dd271e9"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 38173106 Dongsoo Yu — open-licence video reference.",
+  "id": "735b7bf8-d57d-1df6-d038-06cbd436be69",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 38173106 Dongsoo Yu",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "22047768-b3db-6d4c-85f1-798695ad94f6"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 6754820 Tima Miroshnichenko — open-licence video reference.",
+  "id": "7ab18367-6b95-06ab-dd60-de51862cef99",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 6754820 Tima Miroshnichenko",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "92bc21cd-6094-c3e1-715b-3d74fe2e2c83"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 38572488 Bibek Bohara — open-licence video reference.",
+  "id": "80ae8028-67c2-7965-a230-6788924039f4",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 38572488 Bibek Bohara",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "c3c1dcbc-b54c-c5dd-0256-ba4e482a9ccb"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 8037387 Kampus Production — open-licence video reference.",
+  "id": "901dc468-9c9d-0080-be90-02421102d6cd",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 8037387 Kampus Production",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "c84da9d4-51bb-c7b8-d75c-89585df354f6"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 11265968 Zg R S Rmeli — open-licence video reference.",
+  "id": "a1538bd8-ccd1-43a4-ea41-bafd986e5106",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 11265968 Zg R S Rmeli",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "2b4e108f-e3c3-681b-9ef8-e1235635518c"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 7271824 Mart Production — open-licence video reference.",
+  "id": "add45e8a-4fe6-582b-8c34-dd9f0615aec1",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 7271824 Mart Production",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "993a12f1-5a07-21f4-de47-94a4a095b820"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 27844618 Nam Phong B I — open-licence video reference.",
+  "id": "b78138b4-2a0b-5e3e-1097-066eed1cd47a",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 27844618 Nam Phong B I",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "ac604c4f-90bb-ed26-d877-bc37810bf0a7"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 18138660 Nasih Najim — open-licence video reference.",
+  "id": "b97e1a0f-c973-f481-961c-119fda6f445d",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 18138660 Nasih Najim",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "2e15c79c-8017-d645-bdcf-938594a28af7"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 8538614 Ron Lach — open-licence video reference.",
+  "id": "bf2179d4-45d2-40ec-d79b-d180b922701e",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 8538614 Ron Lach",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "fa097f6c-a3eb-3ae3-f719-e16beda843fc"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Mineclone2 Release — open-licence video reference.",
+  "id": "c320f37e-e981-b6f6-84c5-55253f7fe924",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Mineclone2 Release",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "0c3f29d9-da72-8308-6b1c-ae8052b6ac49"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 10444089 Timo Volz — open-licence video reference.",
+  "id": "c7cb7862-8439-afa0-abbe-1a871f1b99ad",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 10444089 Timo Volz",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "a41843ee-f397-ae37-c006-06851b99af7e"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 853996 Coverr — open-licence video reference.",
+  "id": "cd517fa2-eb90-41d2-c0f3-f46b1b6be17b",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 853996 Coverr",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "0e52f2ae-c5d1-d89d-b366-985ad669ebbc"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Tears Of Steel 720p — open-licence video reference.",
+  "id": "d57001ff-fd47-275c-bd6d-2f89021aaee0",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Tears Of Steel 720p",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "d2c4f3f5-a8b1-e99f-997b-54b81c8b56a4"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 10225518 Nikita Nikitin — open-licence video reference.",
+  "id": "db18fc00-63ec-330b-1fc4-6632895d9793",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 10225518 Nikita Nikitin",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "a2db3496-ce77-936b-2b0e-47df0daa9c3c"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Red Eclipse Gameplay — open-licence video reference.",
+  "id": "dc85d9e8-4ea0-10d4-61d1-c369509ba951",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Red Eclipse Gameplay",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "2876307a-f128-bfc9-a421-46cfe41c8951"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 33704412 Larkkid Dung — open-licence video reference.",
+  "id": "e03d0108-2724-b9d3-fd70-86c3b42f878f",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 33704412 Larkkid Dung",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "1ffb54ce-ce40-db9e-ce1a-20269304e161"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 32093955 Gera Cejas — open-licence video reference.",
+  "id": "e553994e-cf6a-ca5b-ddba-56a659a1d611",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 32093955 Gera Cejas",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "92dee126-df33-d35a-1d6a-351872ce3311"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 28570000 Hakan Kayahan — open-licence video reference.",
+  "id": "eb8252f4-3b2d-4723-48c0-fff4fa83a4eb",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 28570000 Hakan Kayahan",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "23773190-8e29-b5d0-28b2-4b19c44b81c5"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 3116760 Atakan Ozkan — open-licence video reference.",
+  "id": "f786c218-3228-fed3-8f77-d88f7df59792",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 3116760 Atakan Ozkan",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "e7d6daa2-2398-9d50-0984-21a018bee8e0"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 31590904 Altaf Shah — open-licence video reference.",
+  "id": "fd85f3c7-efbc-0b89-b35b-99c7dd1174ff",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 31590904 Altaf Shah",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ },
+ {
+  "asset_ids": [
+   "24cad9eb-6fe1-0835-4a02-f669c29a5496"
+  ],
+  "asset_types_in_post": [
+   "video"
+  ],
+  "author_username": "lucas.lefebvre",
+  "brand_workspace": "Echo",
+  "collection_name": "Project Echo",
+  "created_at": "2025-04-03T01:58:58Z",
+  "description": "Pexels 27580032 Dmitry Ovsyannikov — open-licence video reference.",
+  "id": "febe1cc4-b588-31dc-db1a-109282b45818",
+  "is_mixed_type": false,
+  "layer": "A",
+  "post_kind": "solo_showcase",
+  "sensitivity_tier": "team",
+  "studio": "shared",
+  "tags": [
+   "video",
+   "reference"
+  ],
+  "team_name": "Audio",
+  "title": "Pexels 27580032 Dmitry Ovsyannikov",
+  "updated_at": "2026-04-15T02:04:04Z",
+  "workflow_state": "draft"
+ }
+]

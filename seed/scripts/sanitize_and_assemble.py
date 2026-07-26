@@ -78,6 +78,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
@@ -1434,6 +1435,12 @@ def main() -> int:
     parser.add_argument("--site", type=Path, action="append", default=[],
                         help="Site root to also write posts.json into "
                              "(repeatable; used with --recompose-posts)")
+    parser.add_argument("--skip-upgrade", action="store_true",
+                        help="Do NOT apply the #604 dataset upgrade to the "
+                             "generated profiles. Produces the pre-upgrade "
+                             "library (916 sub-kilobyte images, no added "
+                             "videos) — for reproducing the original "
+                             "assembly only, never for a real site build.")
     args = parser.parse_args()
 
     if args.recompose_posts:
@@ -1636,7 +1643,48 @@ def main() -> int:
     print(f"posts per site: site_a={len(site_a_posts)}, site_b={len(site_b_posts)}",
           file=sys.stderr)
 
+    # The upgrade pass (#604). Everything above rebuilds the profiles from
+    # the SOURCE metadata.csv, which still describes the pre-upgrade
+    # library — 916 sub-kilobyte sprite tiles and no added videos. Without
+    # this step a re-run silently reverts the dataset: populate_archive
+    # copies the profile straight over MANIFEST.json, so the site would
+    # come back with the tiny images restored and the videos gone.
+    #
+    # Applied here rather than left as a manual follow-up because "you
+    # must remember to run a second script or you corrupt the dataset" is
+    # not a pipeline, it is a trap. The step is idempotent and asserts its
+    # own post-conditions, so a re-run that cannot satisfy them fails
+    # loudly instead of writing a half-upgraded profile.
+    if not args.skip_upgrade:
+        rc = apply_dataset_upgrade(out)
+        if rc != 0:
+            return rc
+
     print(f"\nwrote {len(list(out.glob('*.json')))} files to {out}", file=sys.stderr)
+    return 0
+
+
+def apply_dataset_upgrade(out: Path) -> int:
+    """Re-apply the #604 upgrade to the freshly-generated profiles."""
+    upgrades = Path(__file__).resolve().parents[1] / "upgrades"
+    if not upgrades.is_dir():
+        print(f"warning: {upgrades} not found — profiles left un-upgraded",
+              file=sys.stderr)
+        return 0
+    print("\napplying dataset upgrade (#604)", file=sys.stderr)
+    for site, stem in (("site_a", "studio-a"), ("site_b", "studio-b")):
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("apply_upgrade.py")),
+             "--site", site,
+             "--profile", str(out / f"{stem}.assets.json"),
+             "--posts", str(out / f"{stem}.posts.json"),
+             "--upgrades", str(upgrades)],
+            capture_output=True, text=True)
+        sys.stderr.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        if proc.returncode != 0:
+            print(f"error: upgrade pass failed for {site}", file=sys.stderr)
+            return proc.returncode
     return 0
 
 

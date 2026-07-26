@@ -1,0 +1,3943 @@
+{
+ "comment": "The exact kenney-hq pool: which source files were selected and what each renders to. Committed so re-assembly reproduces the upgraded library byte-for-byte instead of re-deriving a new sample. Regenerate/extend with `kenney_hq.py select`.",
+ "pack": "Kenney Game Assets All-in-1 3.6.0",
+ "render_px": 512,
+ "entries": [
+  {
+   "source": "2D assets/Abstract Platformer/Vector/abstractPlatformer_bg_vector.svg",
+   "name": "2d-assets-abstract-platformer-abstractplatformer-bg-vector-c785da2f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Abstract Platformer/Vector/abstractPlatformer_vector.svg",
+   "name": "2d-assets-abstract-platformer-abstractplatformer-vector-d062fb92-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Animal Pack Remastered/Vector/round_nodetailsOutline.svg",
+   "name": "2d-assets-animal-pack-remastered-round-nodetailsoutline-e72e980a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Animal Pack Remastered/Vector/square_nodetails.svg",
+   "name": "2d-assets-animal-pack-remastered-square-nodetails-a6f92ac1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Animal Pack/Vector/square.svg",
+   "name": "2d-assets-animal-pack-square-bdc031c2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Axonometric Blocks/Tilesheet/tilesheet_complete_2X.png",
+   "name": "2d-assets-axonometric-blocks-tilesheet-complete-2x-ec71f9ed.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Block Pack/Tilesheet/RPGblocks_tilesheet@2.png",
+   "name": "2d-assets-block-pack-rpgblocks-tilesheet-2-bb2abe3b.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesBlack.svg",
+   "name": "2d-assets-boardgame-pack-piecesblack-72375b4a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesBlue.svg",
+   "name": "2d-assets-boardgame-pack-piecesblue-5c5f2bb7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesGreen.svg",
+   "name": "2d-assets-boardgame-pack-piecesgreen-a32c8b30-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesPurple.svg",
+   "name": "2d-assets-boardgame-pack-piecespurple-68786e5c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesRed.svg",
+   "name": "2d-assets-boardgame-pack-piecesred-83f7ec31-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesWhite.svg",
+   "name": "2d-assets-boardgame-pack-pieceswhite-6c5350e3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Boardgame Pack/Vector/piecesYellow.svg",
+   "name": "2d-assets-boardgame-pack-piecesyellow-0c023ef2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_high_1.svg",
+   "name": "2d-assets-brick-pack-brick-high-1-842794d5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_high_6.svg",
+   "name": "2d-assets-brick-pack-brick-high-6-99ffbe81-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_high_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-4-69bdcbd0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_high_slope_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-left-4-f8e6543e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_high_slope_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-right-2-0d56a6aa-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_low_4.svg",
+   "name": "2d-assets-brick-pack-brick-low-4-ea2e98e2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_1.svg",
+   "name": "2d-assets-brick-pack-brick-medium-1-5f7c3d0f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-2-eb0e056c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_6.svg",
+   "name": "2d-assets-brick-pack-brick-medium-6-60b61e40-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-2-192b20bd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_slope_inverted_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-right-4-c1620998-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_slope_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-2-944b5c4a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Black/brick_medium_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-4-25cd2453-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_high_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-4-2326a1fb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_high_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-2-ac79578e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_high_slope_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-left-2-70ef1adf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_high_slope_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-left-4-8908e431-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_low_1.svg",
+   "name": "2d-assets-brick-pack-brick-low-1-495e2676-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_low_2.svg",
+   "name": "2d-assets-brick-pack-brick-low-2-c69689cc-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_low_4.svg",
+   "name": "2d-assets-brick-pack-brick-low-4-a908be5f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_low_6.svg",
+   "name": "2d-assets-brick-pack-brick-low-6-0cc7ddbf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_medium_1.svg",
+   "name": "2d-assets-brick-pack-brick-medium-1-1f24f112-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_medium_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-4-399c9943-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_medium_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-4-2ffd6f82-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Blue/brick_medium_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-4-2139c9b1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_high_1.svg",
+   "name": "2d-assets-brick-pack-brick-high-1-36a68e65-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_high_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-4-c362ea13-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_high_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-2-155e1ca0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_high_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-4-a43476f7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_high_slope_inverted_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-right-4-4e929b38-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_1.svg",
+   "name": "2d-assets-brick-pack-brick-medium-1-9789de53-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-2-b3a51c80-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-4-b1c7040d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_6.svg",
+   "name": "2d-assets-brick-pack-brick-medium-6-6aa331b4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-2-8bb7634e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-4-2c0e41c0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_slope_inverted_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-right-4-ff966852-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_slope_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-2-c9a91c74-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Green/brick_medium_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-4-5cd68a6a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_high_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-2-b7aa509d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_high_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-4-cc9956a4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_high_slope_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-left-4-06e08e19-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_high_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-right-4-70cb1fa5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_low_1.svg",
+   "name": "2d-assets-brick-pack-brick-low-1-c6ab0bb5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_low_2.svg",
+   "name": "2d-assets-brick-pack-brick-low-2-514e4501-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_low_4.svg",
+   "name": "2d-assets-brick-pack-brick-low-4-88bd9e1f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_1.svg",
+   "name": "2d-assets-brick-pack-brick-medium-1-8dd5b6ae-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-4-f11d6762-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_6.svg",
+   "name": "2d-assets-brick-pack-brick-medium-6-55c0671b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-4-219cd52b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_slope_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-left-2-f2607bd0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_slope_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-left-4-f7b4fadb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Red/brick_medium_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-4-92621ecf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Special/extra_box_exclamation.svg",
+   "name": "2d-assets-brick-pack-extra-box-exclamation-3cd2b158-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Special/extra_character_a.svg",
+   "name": "2d-assets-brick-pack-extra-character-a-9d5ef59e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Special/extra_character_e.svg",
+   "name": "2d-assets-brick-pack-extra-character-e-b8e20835-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Special/extra_crate_explosive.svg",
+   "name": "2d-assets-brick-pack-extra-crate-explosive-3715513f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Special/extra_dirt.svg",
+   "name": "2d-assets-brick-pack-extra-dirt-7c7c1e32-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Special/extra_stone_detail.svg",
+   "name": "2d-assets-brick-pack-extra-stone-detail-2e3b4d9f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_high_1.svg",
+   "name": "2d-assets-brick-pack-brick-high-1-3c4024da-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_high_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-2-3947a2ed-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_high_6.svg",
+   "name": "2d-assets-brick-pack-brick-high-6-951ae370-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_high_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-2-20227fe7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_high_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-left-4-7254fd92-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_high_slope_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-right-2-a22f5ba5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_low_6.svg",
+   "name": "2d-assets-brick-pack-brick-low-6-e9095902-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_medium_1.svg",
+   "name": "2d-assets-brick-pack-brick-medium-1-edc157fa-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_medium_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-2-0d4d8792-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_medium_slope_inverted_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-right-2-fb120043-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/White/brick_medium_slope_inverted_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-right-4-74eedae7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_1.svg",
+   "name": "2d-assets-brick-pack-brick-high-1-c9f3b7d0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-4-9b6057cc-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_slope_inverted_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-inverted-right-4-2e5014c0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_slope_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-left-2-2bb16c17-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_slope_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-left-4-48c89d4a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_slope_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-right-2-dfe503a7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_high_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-high-slope-right-4-8ae93dd9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_low_4.svg",
+   "name": "2d-assets-brick-pack-brick-low-4-6332fc6a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_low_6.svg",
+   "name": "2d-assets-brick-pack-brick-low-6-fb05e0f2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-2-8a62135e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-4-95cc742f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_slope_inverted_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-2-8ed9d37f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_slope_inverted_left_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-inverted-left-4-e32aaeac-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_slope_left_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-left-2-2271f0f4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_slope_right_2.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-2-9b8a9dce-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Brick Pack/Vector/Yellow/brick_medium_slope_right_4.svg",
+   "name": "2d-assets-brick-pack-brick-medium-slope-right-4-ae0c6d6b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Cartography Pack/Sample.png",
+   "name": "2d-assets-cartography-pack-sample-aadcd742.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Cartography Pack/Textures/parchmentAncient.png",
+   "name": "2d-assets-cartography-pack-parchmentancient-2cf43a70.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Cartography Pack/Textures/parchmentBasic.png",
+   "name": "2d-assets-cartography-pack-parchmentbasic-69f86443.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Cartography Pack/Textures/parchmentCrinkled.png",
+   "name": "2d-assets-cartography-pack-parchmentcrinkled-a6b633a3.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Cartography Pack/Textures/parchmentFolded.png",
+   "name": "2d-assets-cartography-pack-parchmentfolded-84a5ee27.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Cartography Pack/Textures/parchmentFoldedCrinkled.png",
+   "name": "2d-assets-cartography-pack-parchmentfoldedcrinkled-e0251cba.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Cartography Pack/Vector/cartographyPack_vector.svg",
+   "name": "2d-assets-cartography-pack-cartographypack-vector-d5334338-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Character Pack/Vector/vector_pants.svg",
+   "name": "2d-assets-character-pack-vector-pants-c414bef3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Character Pack/Vector/vector_shirts.svg",
+   "name": "2d-assets-character-pack-vector-shirts-4837a140-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Development Essentials/Noise/perlin-noise-small.png",
+   "name": "2d-assets-development-essentials-perlin-noise-small-46895524.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Development Essentials/Noise/perlin-noise.png",
+   "name": "2d-assets-development-essentials-perlin-noise-51b5cea1.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/background_rock_a.svg",
+   "name": "2d-assets-fish-pack-background-rock-a-a67fcb63-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/background_rock_b.svg",
+   "name": "2d-assets-fish-pack-background-rock-b-6df133d5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/background_seaweed_b.svg",
+   "name": "2d-assets-fish-pack-background-seaweed-b-59d58f28-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/background_terrain.svg",
+   "name": "2d-assets-fish-pack-background-terrain-28d6d9d3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/background_terrain_top.svg",
+   "name": "2d-assets-fish-pack-background-terrain-top-17de4350-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/bubble_a.svg",
+   "name": "2d-assets-fish-pack-bubble-a-68ddedef-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/bubble_c.svg",
+   "name": "2d-assets-fish-pack-bubble-c-c2fb1f09-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_blue_outline.svg",
+   "name": "2d-assets-fish-pack-fish-blue-outline-012f8b2e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_blue_skeleton.svg",
+   "name": "2d-assets-fish-pack-fish-blue-skeleton-efeed5cd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_grey_long_a.svg",
+   "name": "2d-assets-fish-pack-fish-grey-long-a-6eba36af-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_grey_long_a_outline.svg",
+   "name": "2d-assets-fish-pack-fish-grey-long-a-outline-218f8143-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_grey_long_b.svg",
+   "name": "2d-assets-fish-pack-fish-grey-long-b-28084497-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_grey_long_b_outline.svg",
+   "name": "2d-assets-fish-pack-fish-grey-long-b-outline-47d9cb5c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_orange_outline.svg",
+   "name": "2d-assets-fish-pack-fish-orange-outline-1de0d996-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_orange_skeleton.svg",
+   "name": "2d-assets-fish-pack-fish-orange-skeleton-42b2b215-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_orange_skeleton_outline.svg",
+   "name": "2d-assets-fish-pack-fish-orange-skeleton-outline-8f83f33b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_pink.svg",
+   "name": "2d-assets-fish-pack-fish-pink-1b147d91-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_pink_outline.svg",
+   "name": "2d-assets-fish-pack-fish-pink-outline-0ece1f65-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_pink_skeleton.svg",
+   "name": "2d-assets-fish-pack-fish-pink-skeleton-cf31efe5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/fish_pink_skeleton_outline.svg",
+   "name": "2d-assets-fish-pack-fish-pink-skeleton-outline-65c81618-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_colon.svg",
+   "name": "2d-assets-fish-pack-hud-colon-5ac07173-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_dot.svg",
+   "name": "2d-assets-fish-pack-hud-dot-2238d872-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_number_0.svg",
+   "name": "2d-assets-fish-pack-hud-number-0-43e569b8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_number_4.svg",
+   "name": "2d-assets-fish-pack-hud-number-4-7cadee0c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_number_5.svg",
+   "name": "2d-assets-fish-pack-hud-number-5-d2e7312c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_number_9.svg",
+   "name": "2d-assets-fish-pack-hud-number-9-52a7fe8c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/hud_percent.svg",
+   "name": "2d-assets-fish-pack-hud-percent-6d9f6eba-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/rock_a.svg",
+   "name": "2d-assets-fish-pack-rock-a-fdb31fcd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/rock_b.svg",
+   "name": "2d-assets-fish-pack-rock-b-2d5ef094-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/rock_b_outline.svg",
+   "name": "2d-assets-fish-pack-rock-b-outline-138e1934-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_grass_a.svg",
+   "name": "2d-assets-fish-pack-seaweed-grass-a-d063f8f6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_grass_a_outline.svg",
+   "name": "2d-assets-fish-pack-seaweed-grass-a-outline-bea9a461-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_grass_b.svg",
+   "name": "2d-assets-fish-pack-seaweed-grass-b-ea0b1740-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_green_a.svg",
+   "name": "2d-assets-fish-pack-seaweed-green-a-aadca90e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_green_a_outline.svg",
+   "name": "2d-assets-fish-pack-seaweed-green-a-outline-7e1ffd31-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_green_c_outline.svg",
+   "name": "2d-assets-fish-pack-seaweed-green-c-outline-355d862d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_green_d.svg",
+   "name": "2d-assets-fish-pack-seaweed-green-d-fa19aa51-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_orange_a_outline.svg",
+   "name": "2d-assets-fish-pack-seaweed-orange-a-outline-344891c9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_pink_a.svg",
+   "name": "2d-assets-fish-pack-seaweed-pink-a-02fc9409-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/seaweed_pink_c.svg",
+   "name": "2d-assets-fish-pack-seaweed-pink-c-93bce6b0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_b.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-b-398579d3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_c.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-c-f5f14bb1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_a_outline.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-a-outline-63eec22b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_b.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-b-15924d22-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_b_outline.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-b-outline-705b9172-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_c.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-c-a66ea4f1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_d.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-d-a0c259a2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_f.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-f-2491f871-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_g.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-g-f59609ff-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_dirt_top_h_outline.svg",
+   "name": "2d-assets-fish-pack-terrain-dirt-top-h-outline-6e022dec-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_b.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-b-0d80597a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_top_a.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-top-a-a4a0d1cf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_top_b_outline.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-top-b-outline-39ec15a8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_top_c.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-top-c-84ef82cf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_top_e_outline.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-top-e-outline-dc388b77-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_top_f.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-top-f-74667dce-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Fish Pack/Vector/terrain_sand_top_h_outline.svg",
+   "name": "2d-assets-fish-pack-terrain-sand-top-h-outline-7a12264e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/AF.svg",
+   "name": "2d-assets-flag-pack-af-1409cbf3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/AO.svg",
+   "name": "2d-assets-flag-pack-ao-12df8d59-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/AT.svg",
+   "name": "2d-assets-flag-pack-at-397510b3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/AU.svg",
+   "name": "2d-assets-flag-pack-au-2826ff90-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/BG.svg",
+   "name": "2d-assets-flag-pack-bg-67498a35-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/BM.svg",
+   "name": "2d-assets-flag-pack-bm-5ee15d00-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/BN.svg",
+   "name": "2d-assets-flag-pack-bn-8dc17a74-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/BO.svg",
+   "name": "2d-assets-flag-pack-bo-8d95ca3d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/BR.svg",
+   "name": "2d-assets-flag-pack-br-1c8461b8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/BZ.svg",
+   "name": "2d-assets-flag-pack-bz-ab318865-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CC.svg",
+   "name": "2d-assets-flag-pack-cc-511be7c7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CI.svg",
+   "name": "2d-assets-flag-pack-ci-deff6e3c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CL.svg",
+   "name": "2d-assets-flag-pack-cl-e03143a9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CN.svg",
+   "name": "2d-assets-flag-pack-cn-a6f8e403-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CR.svg",
+   "name": "2d-assets-flag-pack-cr-f8e58ec7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CU.svg",
+   "name": "2d-assets-flag-pack-cu-a9f9250f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CX.svg",
+   "name": "2d-assets-flag-pack-cx-87edf109-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/CZ.svg",
+   "name": "2d-assets-flag-pack-cz-569b7595-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/DZ.svg",
+   "name": "2d-assets-flag-pack-dz-63d73c72-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/EC.svg",
+   "name": "2d-assets-flag-pack-ec-1a2e6623-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/EG.svg",
+   "name": "2d-assets-flag-pack-eg-c4e6afd3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/FI.svg",
+   "name": "2d-assets-flag-pack-fi-21bb17e9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/FJ.svg",
+   "name": "2d-assets-flag-pack-fj-6c9312bb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/FM.svg",
+   "name": "2d-assets-flag-pack-fm-5867f4fc-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/FR.svg",
+   "name": "2d-assets-flag-pack-fr-7b7a3ce8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/GH.svg",
+   "name": "2d-assets-flag-pack-gh-217cb39e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/GI.svg",
+   "name": "2d-assets-flag-pack-gi-4111d7ff-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/GL.svg",
+   "name": "2d-assets-flag-pack-gl-da844630-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/GQ.svg",
+   "name": "2d-assets-flag-pack-gq-20675f51-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/HK.svg",
+   "name": "2d-assets-flag-pack-hk-9f53f47c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/HN.svg",
+   "name": "2d-assets-flag-pack-hn-c9d15485-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/HR.svg",
+   "name": "2d-assets-flag-pack-hr-6fdd4c33-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/HT.svg",
+   "name": "2d-assets-flag-pack-ht-6edcdb5d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/IL.svg",
+   "name": "2d-assets-flag-pack-il-0be99f7b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/IM.svg",
+   "name": "2d-assets-flag-pack-im-f464d58f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/IS.svg",
+   "name": "2d-assets-flag-pack-is-9a61d5c1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/IT.svg",
+   "name": "2d-assets-flag-pack-it-1140516f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/JM.svg",
+   "name": "2d-assets-flag-pack-jm-5ab01f83-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/JO.svg",
+   "name": "2d-assets-flag-pack-jo-f295f48d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/JP.svg",
+   "name": "2d-assets-flag-pack-jp-3c8bde65-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/KM.svg",
+   "name": "2d-assets-flag-pack-km-b992ed0b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/KP.svg",
+   "name": "2d-assets-flag-pack-kp-4fd89670-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/LB.svg",
+   "name": "2d-assets-flag-pack-lb-e77f7e99-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/LR.svg",
+   "name": "2d-assets-flag-pack-lr-4080ad49-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/LT.svg",
+   "name": "2d-assets-flag-pack-lt-779375bb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/LU.svg",
+   "name": "2d-assets-flag-pack-lu-f85541a2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/LV.svg",
+   "name": "2d-assets-flag-pack-lv-30803cab-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MC.svg",
+   "name": "2d-assets-flag-pack-mc-6df42310-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MD.svg",
+   "name": "2d-assets-flag-pack-md-2c7d1ebf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MG.svg",
+   "name": "2d-assets-flag-pack-mg-5dd314ed-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MH.svg",
+   "name": "2d-assets-flag-pack-mh-30b3d3aa-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MN.svg",
+   "name": "2d-assets-flag-pack-mn-aec8f103-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MO.svg",
+   "name": "2d-assets-flag-pack-mo-08b313f2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MV.svg",
+   "name": "2d-assets-flag-pack-mv-fcc6af21-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MX.svg",
+   "name": "2d-assets-flag-pack-mx-69821aa4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/MZ.svg",
+   "name": "2d-assets-flag-pack-mz-66a9b5e2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/NG.svg",
+   "name": "2d-assets-flag-pack-ng-5a2de7be-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/NO.svg",
+   "name": "2d-assets-flag-pack-no-01063727-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/NZ.svg",
+   "name": "2d-assets-flag-pack-nz-3c7d15a1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/OM.svg",
+   "name": "2d-assets-flag-pack-om-bb73294c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/PG.svg",
+   "name": "2d-assets-flag-pack-pg-7fdef96d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/PH.svg",
+   "name": "2d-assets-flag-pack-ph-70cfdc70-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/PK.svg",
+   "name": "2d-assets-flag-pack-pk-5ca884e8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/PR.svg",
+   "name": "2d-assets-flag-pack-pr-74c2ba96-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/PS.svg",
+   "name": "2d-assets-flag-pack-ps-0fd3a6e9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/QA.svg",
+   "name": "2d-assets-flag-pack-qa-3bd6dc35-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/RW.svg",
+   "name": "2d-assets-flag-pack-rw-8e55f6c0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SB.svg",
+   "name": "2d-assets-flag-pack-sb-6a309adf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SC.svg",
+   "name": "2d-assets-flag-pack-sc-05f5b401-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SD.svg",
+   "name": "2d-assets-flag-pack-sd-9fe3b791-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SG.svg",
+   "name": "2d-assets-flag-pack-sg-2bfa598e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SI.svg",
+   "name": "2d-assets-flag-pack-si-d1d1a47d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SM.svg",
+   "name": "2d-assets-flag-pack-sm-d6faf48e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SN.svg",
+   "name": "2d-assets-flag-pack-sn-1f684aa7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SX.svg",
+   "name": "2d-assets-flag-pack-sx-7babfb04-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SY.svg",
+   "name": "2d-assets-flag-pack-sy-c85dcc7a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/SZ.svg",
+   "name": "2d-assets-flag-pack-sz-04881004-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TC.svg",
+   "name": "2d-assets-flag-pack-tc-1b7988f6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TD.svg",
+   "name": "2d-assets-flag-pack-td-1589f41c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TG.svg",
+   "name": "2d-assets-flag-pack-tg-7f10ad13-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TH.svg",
+   "name": "2d-assets-flag-pack-th-64b3425e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TJ.svg",
+   "name": "2d-assets-flag-pack-tj-05d71199-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TL.svg",
+   "name": "2d-assets-flag-pack-tl-cf57af14-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TM.svg",
+   "name": "2d-assets-flag-pack-tm-aeb63a35-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TV.svg",
+   "name": "2d-assets-flag-pack-tv-2aeeb637-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/TZ.svg",
+   "name": "2d-assets-flag-pack-tz-a018ff67-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/UA.svg",
+   "name": "2d-assets-flag-pack-ua-9c10bc7a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/UY.svg",
+   "name": "2d-assets-flag-pack-uy-676d26cf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/VC.svg",
+   "name": "2d-assets-flag-pack-vc-c1b498f3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/VE.svg",
+   "name": "2d-assets-flag-pack-ve-40258031-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/VG.svg",
+   "name": "2d-assets-flag-pack-vg-b887ce77-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/VN.svg",
+   "name": "2d-assets-flag-pack-vn-4f603a1c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/WS.svg",
+   "name": "2d-assets-flag-pack-ws-a513abad-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/YE.svg",
+   "name": "2d-assets-flag-pack-ye-47b51ed7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/ZA.svg",
+   "name": "2d-assets-flag-pack-za-cc9fe95f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Flag Pack/Vector/special_unavailable.svg",
+   "name": "2d-assets-flag-pack-special-unavailable-f66fd419-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Foliage Pack/Vector/foliagePack_vector.svg",
+   "name": "2d-assets-foliage-pack-foliagepack-vector-c97b1274-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Generic Items/Vector/genericItems_vector_colored.svg",
+   "name": "2d-assets-generic-items-genericitems-vector-colored-d644114a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Hexagon Base Pack/Vector/hexagonTiles_vector.svg",
+   "name": "2d-assets-hexagon-base-pack-hexagontiles-vector-0be2c05e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Hexagon Pack/Spritesheets/hexagonAll_sheet.png",
+   "name": "2d-assets-hexagon-pack-hexagonall-sheet-1808e917.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Holiday Pack 2016/Vector/topdownPack_vector.svg",
+   "name": "2d-assets-holiday-pack-2016-topdownpack-vector-5f312e02-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Isometric Blocks/Spritesheet/allTiles_sheet.png",
+   "name": "2d-assets-isometric-blocks-alltiles-sheet-b096be74.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Blocks/Tilesheet/tilesheet_complete.png",
+   "name": "2d-assets-isometric-blocks-tilesheet-complete-2b4e96cc.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Blocks/Tilesheet/tilesheet_complete_2X.png",
+   "name": "2d-assets-isometric-blocks-tilesheet-complete-2x-1b1c40eb.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Miniature Dungeon/Sample.png",
+   "name": "2d-assets-isometric-miniature-dungeon-sample-1910206b.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Miniature Farm/Sample.png",
+   "name": "2d-assets-isometric-miniature-farm-sample-d6a76c8d.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Miniature Library/Sample.png",
+   "name": "2d-assets-isometric-miniature-library-sample-f699677f.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Minigolf/Spritesheet/isoMinigolf_sheet.png",
+   "name": "2d-assets-isometric-minigolf-isominigolf-sheet-945e497d.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Tiles Buildings/Spritesheet/buildingTiles_sheet.png",
+   "name": "2d-assets-isometric-tiles-buildings-buildingtiles-sheet-b30307b8.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Vector Buildings/Vector/vector_concrete.svg",
+   "name": "2d-assets-isometric-vector-buildings-vector-concrete-15568d63-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Isometric Vector Buildings/Vector/vector_wood.svg",
+   "name": "2d-assets-isometric-vector-buildings-vector-wood-6ab41e0b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Isometric Watercraft/Spritesheet/watercraftPack_003_7_sheet.png",
+   "name": "2d-assets-isometric-watercraft-watercraftpack-003-7-sheet-0297068c.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Isometric Watercraft/Spritesheet/watercraftPack_007_7_sheet.png",
+   "name": "2d-assets-isometric-watercraft-watercraftpack-007-7-sheet-cce6d8ef.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Letter Tiles/Spritesheet/marble_spritesheet.png",
+   "name": "2d-assets-letter-tiles-marble-spritesheet-a066dc05.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Letter Tiles/Spritesheet/metal_spritesheet.png",
+   "name": "2d-assets-letter-tiles-metal-spritesheet-7c71afec.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Letter Tiles/Spritesheet/wood_spritesheet.png",
+   "name": "2d-assets-letter-tiles-wood-spritesheet-0a76866b.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Monster Builder Pack/Spritesheet/spritesheet_double.png",
+   "name": "2d-assets-monster-builder-pack-spritesheet-double-6b162eaf.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Spritesheets/spritesheet-tiles-double.png",
+   "name": "2d-assets-new-platformer-pack-spritesheet-tiles-double-2cc6af09.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_clouds.svg",
+   "name": "2d-assets-new-platformer-pack-background-clouds-e907d971-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_color_desert.svg",
+   "name": "2d-assets-new-platformer-pack-background-color-desert-cb31e43a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_color_hills.svg",
+   "name": "2d-assets-new-platformer-pack-background-color-hills-f8fd96b7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_fade_desert.svg",
+   "name": "2d-assets-new-platformer-pack-background-fade-desert-2e7bf629-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_fade_mushrooms.svg",
+   "name": "2d-assets-new-platformer-pack-background-fade-mushrooms-0b96ae67-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_solid_grass.svg",
+   "name": "2d-assets-new-platformer-pack-background-solid-grass-14e10486-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_solid_sand.svg",
+   "name": "2d-assets-new-platformer-pack-background-solid-sand-4c7aafd5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Backgrounds/background_solid_sky.svg",
+   "name": "2d-assets-new-platformer-pack-background-solid-sky-fc11d9fc-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_beige_duck.svg",
+   "name": "2d-assets-new-platformer-pack-character-beige-duck-38c63f1b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_beige_front.svg",
+   "name": "2d-assets-new-platformer-pack-character-beige-front-6fbdf95f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_beige_hit.svg",
+   "name": "2d-assets-new-platformer-pack-character-beige-hit-9cea2220-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_green_climb_a.svg",
+   "name": "2d-assets-new-platformer-pack-character-green-climb-a-4ba390fe-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_green_climb_b.svg",
+   "name": "2d-assets-new-platformer-pack-character-green-climb-b-969d7b47-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_green_jump.svg",
+   "name": "2d-assets-new-platformer-pack-character-green-jump-8b6ba1ab-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_green_walk_a.svg",
+   "name": "2d-assets-new-platformer-pack-character-green-walk-a-42402f5f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_green_walk_b.svg",
+   "name": "2d-assets-new-platformer-pack-character-green-walk-b-3a5e7fdb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_pink_duck.svg",
+   "name": "2d-assets-new-platformer-pack-character-pink-duck-7660b58d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_pink_front.svg",
+   "name": "2d-assets-new-platformer-pack-character-pink-front-dcff012a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_pink_hit.svg",
+   "name": "2d-assets-new-platformer-pack-character-pink-hit-b0d5005b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_pink_idle.svg",
+   "name": "2d-assets-new-platformer-pack-character-pink-idle-7d8e540d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_pink_jump.svg",
+   "name": "2d-assets-new-platformer-pack-character-pink-jump-17862389-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_pink_walk_b.svg",
+   "name": "2d-assets-new-platformer-pack-character-pink-walk-b-b0dd7a60-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_purple_climb_b.svg",
+   "name": "2d-assets-new-platformer-pack-character-purple-climb-b-c021024f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_purple_front.svg",
+   "name": "2d-assets-new-platformer-pack-character-purple-front-937054c2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_purple_hit.svg",
+   "name": "2d-assets-new-platformer-pack-character-purple-hit-c57166a8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_purple_jump.svg",
+   "name": "2d-assets-new-platformer-pack-character-purple-jump-ea571a2c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_purple_walk_a.svg",
+   "name": "2d-assets-new-platformer-pack-character-purple-walk-a-39d6e2cf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_yellow_climb_b.svg",
+   "name": "2d-assets-new-platformer-pack-character-yellow-climb-b-cd9c0060-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Characters/character_yellow_duck.svg",
+   "name": "2d-assets-new-platformer-pack-character-yellow-duck-ba5e36ab-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/barnacle_attack_a.svg",
+   "name": "2d-assets-new-platformer-pack-barnacle-attack-a-81aa1788-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/bee_rest.svg",
+   "name": "2d-assets-new-platformer-pack-bee-rest-da28b00c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/block_fall.svg",
+   "name": "2d-assets-new-platformer-pack-block-fall-0d662e4d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/fish_blue_swim_b.svg",
+   "name": "2d-assets-new-platformer-pack-fish-blue-swim-b-a2be9dd2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/fish_purple_down.svg",
+   "name": "2d-assets-new-platformer-pack-fish-purple-down-8bfff3b5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/fish_purple_up.svg",
+   "name": "2d-assets-new-platformer-pack-fish-purple-up-1540ff55-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/fish_yellow_rest.svg",
+   "name": "2d-assets-new-platformer-pack-fish-yellow-rest-33d2a950-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/fly_a.svg",
+   "name": "2d-assets-new-platformer-pack-fly-a-3a227d89-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/frog_idle.svg",
+   "name": "2d-assets-new-platformer-pack-frog-idle-82a10228-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/ladybug_fly.svg",
+   "name": "2d-assets-new-platformer-pack-ladybug-fly-b5a4f092-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/ladybug_rest.svg",
+   "name": "2d-assets-new-platformer-pack-ladybug-rest-693dfde5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/mouse_rest.svg",
+   "name": "2d-assets-new-platformer-pack-mouse-rest-cacf57a0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/mouse_walk_a.svg",
+   "name": "2d-assets-new-platformer-pack-mouse-walk-a-eeaddc70-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/saw_a.svg",
+   "name": "2d-assets-new-platformer-pack-saw-a-26f4ee91-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/slime_fire_flat.svg",
+   "name": "2d-assets-new-platformer-pack-slime-fire-flat-7ac3b3c5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/slime_fire_rest.svg",
+   "name": "2d-assets-new-platformer-pack-slime-fire-rest-caa1a609-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/slime_fire_walk_a.svg",
+   "name": "2d-assets-new-platformer-pack-slime-fire-walk-a-6f5c1328-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/slime_normal_walk_b.svg",
+   "name": "2d-assets-new-platformer-pack-slime-normal-walk-b-abe2b30a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/slime_spike_flat.svg",
+   "name": "2d-assets-new-platformer-pack-slime-spike-flat-f588a4a8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/slime_spike_rest.svg",
+   "name": "2d-assets-new-platformer-pack-slime-spike-rest-a42d80a5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/snail_shell.svg",
+   "name": "2d-assets-new-platformer-pack-snail-shell-52cfc4a1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/snail_walk_a.svg",
+   "name": "2d-assets-new-platformer-pack-snail-walk-a-994214c1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/snail_walk_b.svg",
+   "name": "2d-assets-new-platformer-pack-snail-walk-b-ddb84940-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/worm_normal_move_b.svg",
+   "name": "2d-assets-new-platformer-pack-worm-normal-move-b-79e94dc6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/worm_normal_rest.svg",
+   "name": "2d-assets-new-platformer-pack-worm-normal-rest-07795479-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/worm_ring_move_a.svg",
+   "name": "2d-assets-new-platformer-pack-worm-ring-move-a-bc14261b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/worm_ring_move_b.svg",
+   "name": "2d-assets-new-platformer-pack-worm-ring-move-b-35ebe32b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Enemies/worm_ring_rest.svg",
+   "name": "2d-assets-new-platformer-pack-worm-ring-rest-1f7fd6d5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_blue.svg",
+   "name": "2d-assets-new-platformer-pack-block-blue-7efc7946-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_coin_active.svg",
+   "name": "2d-assets-new-platformer-pack-block-coin-active-f712a15f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_empty.svg",
+   "name": "2d-assets-new-platformer-pack-block-empty-aa0217c8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_green.svg",
+   "name": "2d-assets-new-platformer-pack-block-green-b29842fe-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_plank.svg",
+   "name": "2d-assets-new-platformer-pack-block-plank-1babd243-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_spikes.svg",
+   "name": "2d-assets-new-platformer-pack-block-spikes-6db834bd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_strong_coin.svg",
+   "name": "2d-assets-new-platformer-pack-block-strong-coin-05ace57c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_strong_danger.svg",
+   "name": "2d-assets-new-platformer-pack-block-strong-danger-0b28ca64-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_strong_exclamation.svg",
+   "name": "2d-assets-new-platformer-pack-block-strong-exclamation-fa9cb312-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/block_strong_exclamation_active.svg",
+   "name": "2d-assets-new-platformer-pack-block-strong-exclamation-active-8f48fa64-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/bomb_active.svg",
+   "name": "2d-assets-new-platformer-pack-bomb-active-5cdd4630-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/brick_brown.svg",
+   "name": "2d-assets-new-platformer-pack-brick-brown-c796087b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/brick_brown_diagonal.svg",
+   "name": "2d-assets-new-platformer-pack-brick-brown-diagonal-89e7404b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/brick_grey.svg",
+   "name": "2d-assets-new-platformer-pack-brick-grey-0172c1e8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/bricks_brown.svg",
+   "name": "2d-assets-new-platformer-pack-bricks-brown-5c15a558-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/bricks_grey.svg",
+   "name": "2d-assets-new-platformer-pack-bricks-grey-966325b2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/bridge.svg",
+   "name": "2d-assets-new-platformer-pack-bridge-bbf7bb08-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/bridge_logs.svg",
+   "name": "2d-assets-new-platformer-pack-bridge-logs-6f8b892f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/conveyor.svg",
+   "name": "2d-assets-new-platformer-pack-conveyor-f67b598e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/door_closed_top.svg",
+   "name": "2d-assets-new-platformer-pack-door-closed-top-73dd600b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/door_open.svg",
+   "name": "2d-assets-new-platformer-pack-door-open-3fe2e1d8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/door_open_top.svg",
+   "name": "2d-assets-new-platformer-pack-door-open-top-33c176b4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/fence_broken.svg",
+   "name": "2d-assets-new-platformer-pack-fence-broken-2bc729f2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/flag_blue_a.svg",
+   "name": "2d-assets-new-platformer-pack-flag-blue-a-8b759f60-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/flag_off.svg",
+   "name": "2d-assets-new-platformer-pack-flag-off-406453f7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/flag_red_a.svg",
+   "name": "2d-assets-new-platformer-pack-flag-red-a-1b9be402-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/gem_blue.svg",
+   "name": "2d-assets-new-platformer-pack-gem-blue-6696f116-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/gem_green.svg",
+   "name": "2d-assets-new-platformer-pack-gem-green-e70a2911-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/gem_yellow.svg",
+   "name": "2d-assets-new-platformer-pack-gem-yellow-53c32706-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/grass_purple.svg",
+   "name": "2d-assets-new-platformer-pack-grass-purple-df5aceb9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/heart.svg",
+   "name": "2d-assets-new-platformer-pack-heart-7b8b14a6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hill_top_smile.svg",
+   "name": "2d-assets-new-platformer-pack-hill-top-smile-8b63d5f8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_2.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-2-86fddca2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_4.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-4-1dfd6b9b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_5.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-5-2a3ac73a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_7.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-7-25e66d53-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_8.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-8-b8c3d3cd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_9.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-9-5b652730-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_character_multiply.svg",
+   "name": "2d-assets-new-platformer-pack-hud-character-multiply-0d339f1e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_heart.svg",
+   "name": "2d-assets-new-platformer-pack-hud-heart-aa5e0f99-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_heart_half.svg",
+   "name": "2d-assets-new-platformer-pack-hud-heart-half-3a7b10d5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_key_blue.svg",
+   "name": "2d-assets-new-platformer-pack-hud-key-blue-c908b77d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_key_red.svg",
+   "name": "2d-assets-new-platformer-pack-hud-key-red-bf0a3240-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_key_yellow.svg",
+   "name": "2d-assets-new-platformer-pack-hud-key-yellow-5ad3cbcb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_player_green.svg",
+   "name": "2d-assets-new-platformer-pack-hud-player-green-3d0933d0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_player_helmet_green.svg",
+   "name": "2d-assets-new-platformer-pack-hud-player-helmet-green-a62a7ff9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_player_helmet_yellow.svg",
+   "name": "2d-assets-new-platformer-pack-hud-player-helmet-yellow-264778dd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_player_purple.svg",
+   "name": "2d-assets-new-platformer-pack-hud-player-purple-ef00343b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/hud_player_yellow.svg",
+   "name": "2d-assets-new-platformer-pack-hud-player-yellow-a27f93df-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/ladder_middle.svg",
+   "name": "2d-assets-new-platformer-pack-ladder-middle-3b6601da-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/ladder_top.svg",
+   "name": "2d-assets-new-platformer-pack-ladder-top-e12a1671-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/lava.svg",
+   "name": "2d-assets-new-platformer-pack-lava-fa48493b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/lever.svg",
+   "name": "2d-assets-new-platformer-pack-lever-81fc93da-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/lock_green.svg",
+   "name": "2d-assets-new-platformer-pack-lock-green-bf9a5d7c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/lock_red.svg",
+   "name": "2d-assets-new-platformer-pack-lock-red-f28f3201-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/mushroom_brown.svg",
+   "name": "2d-assets-new-platformer-pack-mushroom-brown-cc1d29c4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/mushroom_red.svg",
+   "name": "2d-assets-new-platformer-pack-mushroom-red-f6657887-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/ramp.svg",
+   "name": "2d-assets-new-platformer-pack-ramp-8b2adac4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/rop_attached.svg",
+   "name": "2d-assets-new-platformer-pack-rop-attached-fa583e28-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/sign_exit.svg",
+   "name": "2d-assets-new-platformer-pack-sign-exit-410c13cf-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/snow.svg",
+   "name": "2d-assets-new-platformer-pack-snow-1a5ec117-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/spikes.svg",
+   "name": "2d-assets-new-platformer-pack-spikes-a594e967-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/spring_out.svg",
+   "name": "2d-assets-new-platformer-pack-spring-out-c39aae4b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/star.svg",
+   "name": "2d-assets-new-platformer-pack-star-a0fca068-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/switch_blue_pressed.svg",
+   "name": "2d-assets-new-platformer-pack-switch-blue-pressed-6bc45a8f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_block.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-block-00b9381f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_block_bottom_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-block-bottom-left-4892b430-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_block_top_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-block-top-right-36a81e1f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_cloud_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-cloud-right-332c7655-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_ramp_long_a.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-ramp-long-a-e51b7589-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_ramp_long_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-ramp-long-b-0424cd9c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_ramp_short_a.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-ramp-short-a-1efa0915-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_ramp_short_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-ramp-short-b-614b82c1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_dirt_vertical_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-dirt-vertical-middle-64ec4aa8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_block.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-block-82dad71c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_block_bottom_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-block-bottom-left-ad639f7e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_block_bottom_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-block-bottom-right-824d94d1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_cloud_background.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-cloud-background-5c9fb9d9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_cloud_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-cloud-left-eeb18154-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_cloud_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-cloud-middle-2216be39-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_ramp_long_a.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-ramp-long-a-99153a47-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_ramp_long_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-ramp-long-b-f68ebd5d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_grass_ramp_short_a.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-grass-ramp-short-a-bd843d9e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_block_bottom.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-block-bottom-f026dce1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_block_bottom_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-block-bottom-left-25d79897-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_block_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-block-right-fa4e831b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_cloud_background.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-cloud-background-4dcb977c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_cloud_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-cloud-middle-3c734dfc-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_cloud_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-cloud-right-360bd820-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_horizontal_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-horizontal-middle-64057106-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_horizontal_overhang_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-horizontal-overhang-left-95495d63-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_ramp_long_c.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-ramp-long-c-d22d28b2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_ramp_short_a.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-ramp-short-a-902be2f2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_purple_vertical_top.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-purple-vertical-top-23c5afe0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_block_bottom_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-block-bottom-left-99bb61d5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_block_bottom_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-block-bottom-right-c135ca90-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_block_center.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-block-center-0007789e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_block_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-block-left-0505b18d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_cloud_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-cloud-right-18da28f4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_horizontal_overhang_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-horizontal-overhang-left-a8c312bb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_ramp_long_c.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-ramp-long-c-328733c2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_sand_ramp_short_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-sand-ramp-short-b-79e2af27-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_block.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-block-6065b032-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_block_bottom_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-block-bottom-left-6f14f464-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_block_center.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-block-center-b5f6628d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_block_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-block-right-6b9be8d6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_block_top_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-block-top-left-35435abd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_cloud.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-cloud-6bb8fcc7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_horizontal_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-horizontal-left-b17e57cd-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_horizontal_overhang_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-horizontal-overhang-left-1ca396e5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_ramp_long_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-ramp-long-b-c152d40b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_ramp_short_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-ramp-short-b-66203b95-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_vertical_bottom.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-vertical-bottom-0dc413f8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_vertical_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-vertical-middle-b4e55722-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_snow_vertical_top.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-snow-vertical-top-a8418753-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_block_bottom.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-block-bottom-0d168888-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_block_center.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-block-center-9949daa0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_block_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-block-left-e965a1df-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_block_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-block-right-78b17479-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_block_top.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-block-top-63ebb9f2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_cloud_background.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-cloud-background-4ce2eb38-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_horizontal_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-horizontal-middle-5ce56092-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_horizontal_overhang_left.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-horizontal-overhang-left-380d0cec-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_horizontal_overhang_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-horizontal-overhang-right-99439d42-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_horizontal_right.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-horizontal-right-77ba57de-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_ramp_long_b.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-ramp-long-b-15c72223-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/terrain_stone_vertical_middle.svg",
+   "name": "2d-assets-new-platformer-pack-terrain-stone-vertical-middle-b821af57-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/torch_off.svg",
+   "name": "2d-assets-new-platformer-pack-torch-off-37eef08d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/torch_on_a.svg",
+   "name": "2d-assets-new-platformer-pack-torch-on-a-15b6be8c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/New Platformer Pack/Vector/Tiles/weight.svg",
+   "name": "2d-assets-new-platformer-pack-weight-55034c69-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0006.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0006-b814e437-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0007.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0007-90efc755-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0008.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0008-f15ad8e9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0009.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0009-774e7444-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0011.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0011-3b3507f1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0013.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0013-6491cc1e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0016.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0016-0dfb4c44-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0017.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0017-afe6df71-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0021.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0021-79d194ad-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0026.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0026-7d8e6ed7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0027.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0027-c2a623ac-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0028.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0028-360a2793-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thick/pattern_0029.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0029-7b24f0da-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0001.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0001-3734faa6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0002.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0002-8a524c34-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0006.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0006-fdddfa84-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0008.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0008-1bb38cb6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0011.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0011-ed6231ab-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0014.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0014-8bd8d721-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0015.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0015-af43ff28-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0019.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0019-e5a0f94c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0020.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0020-df64b4d6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0021.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0021-72bc5de0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0024.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0024-10b5d09a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0025.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0025-d9882d1c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0026.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0026-5e2e3161-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0027.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0027-a58ff164-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack Lines/Vector/Thin/pattern_0029.svg",
+   "name": "2d-assets-pattern-pack-lines-pattern-0029-8243a823-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Tilesheet/patternPack_tilesheet@2.png",
+   "name": "2d-assets-pattern-pack-patternpack-tilesheet-2-d8312345.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_01.svg",
+   "name": "2d-assets-pattern-pack-pattern-01-0c2a8602-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_02.svg",
+   "name": "2d-assets-pattern-pack-pattern-02-c5713ee6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_05.svg",
+   "name": "2d-assets-pattern-pack-pattern-05-c209e184-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_08.svg",
+   "name": "2d-assets-pattern-pack-pattern-08-39bb576f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_09.svg",
+   "name": "2d-assets-pattern-pack-pattern-09-514cbf6c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_12.svg",
+   "name": "2d-assets-pattern-pack-pattern-12-a3bfc6d3-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_13.svg",
+   "name": "2d-assets-pattern-pack-pattern-13-bf1e2dd6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_14.svg",
+   "name": "2d-assets-pattern-pack-pattern-14-13aadb13-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_17.svg",
+   "name": "2d-assets-pattern-pack-pattern-17-4b38e77a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_18.svg",
+   "name": "2d-assets-pattern-pack-pattern-18-11bc27f4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_21.svg",
+   "name": "2d-assets-pattern-pack-pattern-21-63014e61-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_30.svg",
+   "name": "2d-assets-pattern-pack-pattern-30-920399d0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_34.svg",
+   "name": "2d-assets-pattern-pack-pattern-34-34ad5958-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_35.svg",
+   "name": "2d-assets-pattern-pack-pattern-35-6fd34611-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_39.svg",
+   "name": "2d-assets-pattern-pack-pattern-39-ac5df58c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_48.svg",
+   "name": "2d-assets-pattern-pack-pattern-48-2193fb87-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_50.svg",
+   "name": "2d-assets-pattern-pack-pattern-50-e94545f7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_51.svg",
+   "name": "2d-assets-pattern-pack-pattern-51-16cd416b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_53.svg",
+   "name": "2d-assets-pattern-pack-pattern-53-1ebc732d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_54.svg",
+   "name": "2d-assets-pattern-pack-pattern-54-882db050-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_55.svg",
+   "name": "2d-assets-pattern-pack-pattern-55-c9a02e78-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_58.svg",
+   "name": "2d-assets-pattern-pack-pattern-58-a2c63623-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_63.svg",
+   "name": "2d-assets-pattern-pack-pattern-63-e445f8df-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_65.svg",
+   "name": "2d-assets-pattern-pack-pattern-65-7191e263-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_69.svg",
+   "name": "2d-assets-pattern-pack-pattern-69-edd84c79-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_72.svg",
+   "name": "2d-assets-pattern-pack-pattern-72-aa13545b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_73.svg",
+   "name": "2d-assets-pattern-pack-pattern-73-9c6397b0-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_75.svg",
+   "name": "2d-assets-pattern-pack-pattern-75-6d9c9629-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_79.svg",
+   "name": "2d-assets-pattern-pack-pattern-79-50df6a48-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_80.svg",
+   "name": "2d-assets-pattern-pack-pattern-80-0c68eaba-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_82.svg",
+   "name": "2d-assets-pattern-pack-pattern-82-8bbf5394-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_83.svg",
+   "name": "2d-assets-pattern-pack-pattern-83-a279b069-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Pattern Pack/Vector/pattern_84.svg",
+   "name": "2d-assets-pattern-pack-pattern-84-513dfa1c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Physics Assets/Spritesheet/spritesheet_elements.png",
+   "name": "2d-assets-physics-assets-spritesheet-elements-15c4c22b.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Physics Assets/Vector/vector_materialMetal.svg",
+   "name": "2d-assets-physics-assets-vector-materialmetal-9ad2d81b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Physics Assets/Vector/vector_materialStone.svg",
+   "name": "2d-assets-physics-assets-vector-materialstone-c6d4dca9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Physics Assets/Vector/vector_others.svg",
+   "name": "2d-assets-physics-assets-vector-others-9635506b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet00.png",
+   "name": "2d-assets-planets-planet00-e3351e95.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet01.png",
+   "name": "2d-assets-planets-planet01-b2894f3a.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet02.png",
+   "name": "2d-assets-planets-planet02-7760e787.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet03.png",
+   "name": "2d-assets-planets-planet03-54dcd295.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet04.png",
+   "name": "2d-assets-planets-planet04-747666d2.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet05.png",
+   "name": "2d-assets-planets-planet05-0b281a12.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet06.png",
+   "name": "2d-assets-planets-planet06-4a28adab.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet07.png",
+   "name": "2d-assets-planets-planet07-ddd50de7.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet08.png",
+   "name": "2d-assets-planets-planet08-86d14bc7.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Planets/Planets/planet09.png",
+   "name": "2d-assets-planets-planet09-c92e3799.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Platformer Assets Base/Vector/platformer_enemies_vector.svg",
+   "name": "2d-assets-platformer-assets-base-platformer-enemies-vector-82aea460-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Assets Base/Vector/platformer_tiles_vector.svg",
+   "name": "2d-assets-platformer-assets-base-platformer-tiles-vector-587bccf9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Assets Buildings/Vector/platformerBuildings_vector.svg",
+   "name": "2d-assets-platformer-assets-buildings-platformerbuildings-vector-16a6324d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Assets Candy/Vector/platformerCandy_vector.svg",
+   "name": "2d-assets-platformer-assets-candy-platformercandy-vector-2a152013-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Assets Extra Animations & Enemies/Vector/platformerExtra_enemies_vector.svg",
+   "name": "2d-assets-platformer-assets-extra-animations-enemies-platformerextra-enemies-vector-8836b97f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Assets Ice/Vector/platformerIce_vector.svg",
+   "name": "2d-assets-platformer-assets-ice-platformerice-vector-3b8a32aa-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Assets Tile Extensions/Vector/part2.svg",
+   "name": "2d-assets-platformer-assets-tile-extensions-part2-c95ed20e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Bricks/Vector/platformerBricks_vector.svg",
+   "name": "2d-assets-platformer-bricks-platformerbricks-vector-d5c43e77-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Pack Industrial/Vector/platformerPack_industrial_vector.svg",
+   "name": "2d-assets-platformer-pack-industrial-platformerpack-industrial-vector-2d405260-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Pack Remastered/Spritesheets/spritesheet_complete.png",
+   "name": "2d-assets-platformer-pack-remastered-spritesheet-complete-b7a5a0df.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Platformer Pack Remastered/Vector/vector_backgrounds.svg",
+   "name": "2d-assets-platformer-pack-remastered-vector-backgrounds-f5634263-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Pack Remastered/Vector/vector_hud.svg",
+   "name": "2d-assets-platformer-pack-remastered-vector-hud-64e5cf6b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Platformer Pack Remastered/Vector/vector_tiles.svg",
+   "name": "2d-assets-platformer-pack-remastered-vector-tiles-fbbebe89-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Prototype Textures/Vector/texture_01.svg",
+   "name": "2d-assets-prototype-textures-texture-01-799bad63-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Prototype Textures/Vector/texture_08.svg",
+   "name": "2d-assets-prototype-textures-texture-08-752b6c6d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Prototype Textures/Vector/texture_11.svg",
+   "name": "2d-assets-prototype-textures-texture-11-c9b61221-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/backtiles.svg",
+   "name": "2d-assets-puzzle-pack-2-backtiles-f5c3c1a2-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/balls.svg",
+   "name": "2d-assets-puzzle-pack-2-balls-3d52d2ee-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/coins.svg",
+   "name": "2d-assets-puzzle-pack-2-coins-d208c9d9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/paddles.svg",
+   "name": "2d-assets-puzzle-pack-2-paddles-0531333d-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/pipes_green.svg",
+   "name": "2d-assets-puzzle-pack-2-pipes-green-7df9476b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/tiles_black.svg",
+   "name": "2d-assets-puzzle-pack-2-tiles-black-91a93126-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/tiles_blue.svg",
+   "name": "2d-assets-puzzle-pack-2-tiles-blue-c544a97c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/tiles_green.svg",
+   "name": "2d-assets-puzzle-pack-2-tiles-green-508c7107-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/tiles_pink.svg",
+   "name": "2d-assets-puzzle-pack-2-tiles-pink-2d82983e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Puzzle Pack 2/Vector/tiles_red.svg",
+   "name": "2d-assets-puzzle-pack-2-tiles-red-b83ec606-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/RTS Sci-fi/Sample.png",
+   "name": "2d-assets-rts-sci-fi-sample-c97c8c92.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Racing Pack/Spritesheets/spritesheet_tiles.png",
+   "name": "2d-assets-racing-pack-spritesheet-tiles-12d666e0.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Ranks Pack/Vector/ranks_silver.svg",
+   "name": "2d-assets-ranks-pack-ranks-silver-ad702ecb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Retro Textures Fantasy/Sample.png",
+   "name": "2d-assets-retro-textures-fantasy-sample-692a4206.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Rune Pack/Vector/vector-rune-black.svg",
+   "name": "2d-assets-rune-pack-vector-rune-black-1764e6c8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Scribble Dungeons/Tilesheet/tilesheet@2.png",
+   "name": "2d-assets-scribble-dungeons-tilesheet-2-040e333c.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Simplified Platformer Pack/Vector/platformPack_character_vector.svg",
+   "name": "2d-assets-simplified-platformer-pack-platformpack-character-vector-bc5e8603-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Simplified Platformer Pack/Vector/platformPack_tile_vector.svg",
+   "name": "2d-assets-simplified-platformer-pack-platformpack-tile-vector-24511b39-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Skyboxes/Skyboxes/skybox-alien.png",
+   "name": "2d-assets-skyboxes-skybox-alien-c1edd84f.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Skyboxes/Skyboxes/skybox-day.png",
+   "name": "2d-assets-skyboxes-skybox-day-efbc84f8.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Skyboxes/Skyboxes/skybox-morning.png",
+   "name": "2d-assets-skyboxes-skybox-morning-e08e4c83.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Skyboxes/Skyboxes/skybox-night.png",
+   "name": "2d-assets-skyboxes-skybox-night-afd2524a.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Skyboxes/Skyboxes/skybox-space.png",
+   "name": "2d-assets-skyboxes-skybox-space-9c47dc12.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Space Shooter Extension/Spritesheet/spaceShooter2_spritesheet_2X.png",
+   "name": "2d-assets-space-shooter-extension-spaceshooter2-spritesheet-2x-609ea39c.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/overview.svg",
+   "name": "2d-assets-splat-pack-overview-6c3511bb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat02.svg",
+   "name": "2d-assets-splat-pack-splat02-44222538-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat08.svg",
+   "name": "2d-assets-splat-pack-splat08-4c642c6b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat09.svg",
+   "name": "2d-assets-splat-pack-splat09-0e33a73f-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat14.svg",
+   "name": "2d-assets-splat-pack-splat14-4cff6edb-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat15.svg",
+   "name": "2d-assets-splat-pack-splat15-8df20e68-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat16.svg",
+   "name": "2d-assets-splat-pack-splat16-f6d6df6c-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat19.svg",
+   "name": "2d-assets-splat-pack-splat19-2143fa90-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat23.svg",
+   "name": "2d-assets-splat-pack-splat23-8589c7ae-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat24.svg",
+   "name": "2d-assets-splat-pack-splat24-8dd6de91-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat25.svg",
+   "name": "2d-assets-splat-pack-splat25-532438d5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat29.svg",
+   "name": "2d-assets-splat-pack-splat29-8bb7786e-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat31.svg",
+   "name": "2d-assets-splat-pack-splat31-64002dea-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat32.svg",
+   "name": "2d-assets-splat-pack-splat32-62d2abb8-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat33.svg",
+   "name": "2d-assets-splat-pack-splat33-1f3f2880-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Splat Pack/Vector/splat35.svg",
+   "name": "2d-assets-splat-pack-splat35-90104dee-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundBeige_red.svg",
+   "name": "2d-assets-sports-pack-groundbeige-red-3d5d8c9a-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundGravel.svg",
+   "name": "2d-assets-sports-pack-groundgravel-7e0c4cb7-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundIce_blue.svg",
+   "name": "2d-assets-sports-pack-groundice-blue-52bf1c87-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundIce_red.svg",
+   "name": "2d-assets-sports-pack-groundice-red-981d79c9-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundTarmac.svg",
+   "name": "2d-assets-sports-pack-groundtarmac-1d412ab1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundTransparent_black.svg",
+   "name": "2d-assets-sports-pack-groundtransparent-black-050befe5-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Sports Pack/Vector/groundTransparent_white.svg",
+   "name": "2d-assets-sports-pack-groundtransparent-white-63094c81-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Toon Characters/Female adventurer/Tilesheet/character_femaleAdventurer_sheetHD.png",
+   "name": "2d-assets-toon-characters-character-femaleadventurer-sheethd-4147b926.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Toon Characters/Female person/Tilesheet/character_femalePerson_sheetHD.png",
+   "name": "2d-assets-toon-characters-character-femaleperson-sheethd-f9ff4536.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Toon Characters/Female person/Vector/character_femalePerson.svg",
+   "name": "2d-assets-toon-characters-character-femaleperson-ec9ae7b1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Toon Characters/Male adventurer/Tilesheet/character_maleAdventurer_sheetHD.png",
+   "name": "2d-assets-toon-characters-character-maleadventurer-sheethd-28f4d768.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Toon Characters/Male person/Tilesheet/character_malePerson_sheetHD.png",
+   "name": "2d-assets-toon-characters-character-maleperson-sheethd-7ae94108.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Toon Characters/Robot/Tilesheet/character_robot_sheetHD.png",
+   "name": "2d-assets-toon-characters-character-robot-sheethd-9fa686d2.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Toon Characters/Zombie/Tilesheet/character_zombie_sheetHD.png",
+   "name": "2d-assets-toon-characters-character-zombie-sheethd-3a5b577d.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "2D assets/Voxel Pack/Vector/vector_tiles_items.svg",
+   "name": "2d-assets-voxel-pack-vector-tiles-items-20c0e8b1-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Yellow Paint Pack/Vector/paint_arrow_up.svg",
+   "name": "2d-assets-yellow-paint-pack-paint-arrow-up-806f2bd6-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Yellow Paint Pack/Vector/paint_drips_c.svg",
+   "name": "2d-assets-yellow-paint-pack-paint-drips-c-bbf3fb7b-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "2D assets/Yellow Paint Pack/Vector/paint_splat_b.svg",
+   "name": "2d-assets-yellow-paint-pack-paint-splat-b-4ef51f24-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "3D assets/Animated Characters Bundle/Preview.png",
+   "name": "3d-assets-animated-characters-bundle-preview-0fbfb4b2.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Animated Characters Bundle/Skins/Source/UV.png",
+   "name": "3d-assets-animated-characters-bundle-uv-42016ab3.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Animated Characters Retro/Preview.png",
+   "name": "3d-assets-animated-characters-retro-preview-8f3a2568.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Blaster Kit/Preview (Variation A).png",
+   "name": "3d-assets-blaster-kit-preview-variation-a-aec83065.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Commercial/Preview (Variation A).png",
+   "name": "3d-assets-city-kit-commercial-preview-variation-a-2428ebac.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Commercial/Preview (Variation B).png",
+   "name": "3d-assets-city-kit-commercial-preview-variation-b-e58e3f0d.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Industrial/Preview (Variation A).png",
+   "name": "3d-assets-city-kit-industrial-preview-variation-a-020510b8.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Industrial/Preview (Variation B).png",
+   "name": "3d-assets-city-kit-industrial-preview-variation-b-33aef0b5.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Industrial/Preview (Variation C).png",
+   "name": "3d-assets-city-kit-industrial-preview-variation-c-2b8578ed.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Industrial/Sample.png",
+   "name": "3d-assets-city-kit-industrial-sample-aa85a338.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/City Kit - Suburban/Sample.png",
+   "name": "3d-assets-city-kit-suburban-sample-a07558c1.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Factory Kit/Preview (Variation A).png",
+   "name": "3d-assets-factory-kit-preview-variation-a-2063ada7.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Fantasy Town Kit/Preview (Variation A).png",
+   "name": "3d-assets-fantasy-town-kit-preview-variation-a-4ab3f9ae.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Furniture Kit/Sample.png",
+   "name": "3d-assets-furniture-kit-sample-98027f86.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Mini Dungeon/Preview (Variation A).png",
+   "name": "3d-assets-mini-dungeon-preview-variation-a-5478e1d9.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Cave Kit/Preview (Variation A).png",
+   "name": "3d-assets-modular-cave-kit-preview-variation-a-6028d49f.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Cave Kit/Preview (Variation B).png",
+   "name": "3d-assets-modular-cave-kit-preview-variation-b-03b9a7fd.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Cave Kit/Preview.png",
+   "name": "3d-assets-modular-cave-kit-preview-b07ad49b.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Cave Kit/Sample.png",
+   "name": "3d-assets-modular-cave-kit-sample-6a7f4142.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Dungeon Kit/Preview (Variation A).png",
+   "name": "3d-assets-modular-dungeon-kit-preview-variation-a-92eb3f45.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Dungeon Kit/Preview (Variation B).png",
+   "name": "3d-assets-modular-dungeon-kit-preview-variation-b-55945e7e.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Dungeon Kit/Preview.png",
+   "name": "3d-assets-modular-dungeon-kit-preview-8b3f1050.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Dungeon Kit/Sample.png",
+   "name": "3d-assets-modular-dungeon-kit-sample-5e856e3b.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Space Kit/Preview (Variation A).png",
+   "name": "3d-assets-modular-space-kit-preview-variation-a-907b0cfc.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Space Kit/Preview (Variation B).png",
+   "name": "3d-assets-modular-space-kit-preview-variation-b-44bf0e20.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Modular Space Kit/Sample.png",
+   "name": "3d-assets-modular-space-kit-sample-de0237f4.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Platformer Kit/Preview (Variation A).png",
+   "name": "3d-assets-platformer-kit-preview-variation-a-82ea44e5.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Retro Fantasy Kit/Preview.png",
+   "name": "3d-assets-retro-fantasy-kit-preview-1e5b8972.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Road Pack/Preview.png",
+   "name": "3d-assets-road-pack-preview-f2c40563.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "3D assets/Space Kit/Sample.png",
+   "name": "3d-assets-space-kit-sample-d1b94762.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "UI assets/Fantasy UI Borders/Sample.png",
+   "name": "ui-assets-fantasy-ui-borders-sample-32373e33.png",
+   "kind": "bitmap",
+   "render_px": null
+  },
+  {
+   "source": "UI assets/UI Pack - Adventure/Vector/pattern_diagonal_red_small.svg",
+   "name": "ui-assets-ui-pack-adventure-pattern-diagonal-red-small-ff0af166-512.png",
+   "kind": "vector",
+   "render_px": 512
+  },
+  {
+   "source": "UI assets/UI Pack - Adventure/Vector/pattern_diagonal_transparent_large.svg",
+   "name": "ui-assets-ui-pack-adventure-pattern-diagonal-transparent-large-b4f893f4-512.png",
+   "kind": "vector",
+   "render_px": 512
+  }
+ ]
+}
