@@ -20,7 +20,14 @@ Layout produced under <dest>:
     └── MANIFEST.json                 copy of studio-X.assets.json
 
 Each profile record carries:
-  - source_root: 'local' or 'internet' — which source root to copy from
+  - source_root: which source root to copy from —
+        'local'          the source dataset tree (--local-source)
+        'internet'       the fetched cache (--internet-source)
+        'hq'             the kenney-hq pool (--hq-source), built by
+                         kenney_hq.py from the CC0 Kenney pack (#604)
+        'torrent_import' / 'site'   pre-staged AT the destination; the
+                         copier verifies presence instead of copying,
+                         because there is no reachable source
   - source_path: relative path under that root
   - file_path:   destination path relative to <dest>
 
@@ -47,6 +54,11 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# Source roots whose bytes already sit at the destination. The copier
+# verifies these instead of copying them — there is no reachable source
+# to copy FROM. See the handling in the copy loop for what each means.
+PRESTAGED_ROOTS = frozenset({"torrent_import", "site"})
 
 
 def safe_mkdir(path: Path, max_retries: int = 3) -> None:
@@ -168,6 +180,10 @@ def main() -> int:
                         help="Local dataset root (where source_root='local' resolves)")
     parser.add_argument("--internet-source", required=True, type=Path,
                         help="Internet-fetched cache root (where source_root='internet' resolves)")
+    parser.add_argument("--hq-source", type=Path, default=None,
+                        help="kenney-hq pool root (where source_root='hq' resolves). "
+                             "Build it with kenney_hq.py build. Required only if "
+                             "the profile references HQ assets (#604).")
     parser.add_argument("--profile", required=True, type=Path,
                         help="Per-studio profile JSON (studio-a.assets.json etc.)")
     parser.add_argument("--dest", required=True, type=Path,
@@ -182,6 +198,8 @@ def main() -> int:
         "local": args.local_source,
         "internet": args.internet_source,
     }
+    if args.hq_source is not None:
+        sources["hq"] = args.hq_source
     if not sources["local"].is_dir():
         print(f"error: --local-source not a directory: {sources['local']}", file=sys.stderr)
         return 2
@@ -196,6 +214,25 @@ def main() -> int:
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
     if not isinstance(profile, list):
         print(f"error: profile root must be a list of assets", file=sys.stderr)
+        return 2
+
+    # Fail loudly and early rather than per-file. A profile that
+    # references the HQ pool without --hq-source would otherwise print a
+    # few MISSING lines, skip 916 assets, and still exit 0 — leaving a
+    # site whose manifest names files that were never copied. That is the
+    # silent-success shape this whole issue is about (#604).
+    hq_wanted = sum(1 for a in profile if a.get("source_root") == "hq")
+    if hq_wanted and "hq" not in sources:
+        print(f"error: profile references {hq_wanted} kenney-hq assets but "
+              "--hq-source was not given.\n"
+              "  Build the pool first:\n"
+              "    python3 seed/scripts/kenney_hq.py build "
+              "--pack <kenney-pack> --out <pool>", file=sys.stderr)
+        return 2
+    if hq_wanted and not sources["hq"].is_dir():
+        print(f"error: --hq-source not a directory: {sources['hq']}\n"
+              "  If it is on the archive share, the mount may have dropped — "
+              "that reads as 'No such file or directory'.", file=sys.stderr)
         return 2
 
     # Build the (source_root, source_path) → file_path mapping
@@ -236,11 +273,22 @@ def main() -> int:
     # so the seeded instance can resolve it under <dest>.
     print(f"filtering + rewriting metadata.csv → {args.dest / 'metadata.csv'}",
           file=sys.stderr)
+    # Rows are matched by the source path they ORIGINALLY had. An asset
+    # whose bytes were swapped for a kenney-hq render (#604) keeps its
+    # CSV row and gets the new path written into it — the record survives
+    # the file swap, which is the same "swap the file, keep the record"
+    # rule the upgrade itself follows. `replaced_source_path` is what
+    # remembers the original; without it these rows match nothing and
+    # drop out of the shipped CSV entirely.
     local_path_to_dest = {
         src_path: dest_path
         for (root, src_path), dest_path in path_map.items()
         if root == "local"
     }
+    for a in profile:
+        original = a.get("replaced_source_path")
+        if original and a.get("file_path"):
+            local_path_to_dest[original] = a["file_path"]
     kept_rows = 0
     with src_csv.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -287,19 +335,27 @@ def main() -> int:
     items = sorted(path_map.items(), key=lambda x: x[1])  # sort by dest path
     preexisting = 0
     for i, ((root, source_path), dest_rel) in enumerate(items):
-        # 'torrent_import' is a special source_root: the bytes were
-        # pre-copied on the destination (Synology-to-Synology copy from
-        # /volume1/torrents/). We don't have access to the source bytes
-        # from this side, so just verify the dest file exists with a
-        # reasonable size.
-        if root == "torrent_import":
+        # PRE-STAGED roots: the bytes already live at the destination and
+        # cannot be re-copied from this side, so verify rather than copy.
+        #
+        #   torrent_import — pre-copied on the destination NAS
+        #                    (Synology-to-Synology from /volume1/torrents/).
+        #   site           — added directly to the site and not re-fetchable
+        #                    from the recorded provenance (#604). The Pexels
+        #                    videos record a page URL, not a direct media
+        #                    URL, so there is nothing to GET.
+        #
+        # Verify-don't-copy is also what makes re-assembly SAFE for them:
+        # the alternative — treating an unreachable source as "drop the
+        # record" — is exactly how the added videos would disappear.
+        if root in PRESTAGED_ROOTS:
             dest_file = args.dest / dest_rel
             if dest_file.is_file() and dest_file.stat().st_size > 0:
                 preexisting += 1
             else:
                 missing += 1
                 if missing <= 5:
-                    print(f"  MISSING [torrent_import]: {dest_rel} — not pre-copied?",
+                    print(f"  MISSING [{root}]: {dest_rel} — not pre-staged?",
                           file=sys.stderr)
             continue
 

@@ -54,6 +54,53 @@ seed/internet-fetched/
 Running AA instance with seeded content
 ```
 
+### The image upgrade pass (#604)
+
+The source `metadata.csv` describes the ORIGINAL library, which was
+dominated by sprite-sheet tiles — 183 site_a images under 1 KB, 71% of a
+sample under 100px. That library was rebuilt from the CC0 Kenney pack,
+and the upgrade is now part of the pipeline rather than a manual step:
+
+```
+"Kenney Game Assets All-in-1 3.6.0"/          (read-only source pack)
+              │
+              │  kenney_hq.py build     ← rebuilds the pool from
+              ▼                            seed/upgrades/kenney-hq-pool.json
+<pool>/  656 images (86 large PNGs copied, 570 vectors rendered @512px)
+              │
+              │  apply_upgrade.py       ← run automatically at the end of
+              ▼                            sanitize_and_assemble.py
+seed/profiles/studio-{a,b}.assets.json    916 records repointed at the pool,
+                                          72 videos + their solo posts merged
+              │
+              │  populate_archive.py --hq-source <pool>
+              ▼
+<site>/  MANIFEST.json + metadata.csv now describe the UPGRADED library
+```
+
+**Why this is a pipeline stage and not a one-off script.** `populate_archive.py`
+copies the profile straight over `MANIFEST.json` and regenerates the
+per-site `metadata.csv` from the profile's path map. So the per-site files
+are OUTPUTS: editing them by hand is undone by the next run. The profile
+is the thing that has to be correct, which is what `apply_upgrade.py`
+fixes. `seed/scripts/test_dataset_upgrade.py` fails if the committed
+profiles ever drift back.
+
+Three rules are encoded in the tooling because each one already caused a
+silent data bug — see the module docstrings for the full story:
+
+| | rule | what breaks without it |
+|---|---|---|
+| 1 | Name pool files by an 8-char hash of the **source path**, never the basename | Packs ship identical basenames in sibling directories (four packs contain `Tilesheet/tilesheet_complete_2X.png`). Slugging by basename silently overwrote 48 assets, then 65. The manifest still validated; the bytes were wrong. |
+| 2 | Gate quality on **dimensions**, never on byte size | Flat-colour vector renders compress hard: 415 upgraded assets are under 10 KB *and* ≥512px. A byte threshold rejects exactly what the upgrade produces. |
+| 3 | **Weight the sample explicitly** (`PACK_WEIGHTS`) | `Icons/Input Prompts` alone is 1,504 near-identical button glyphs, ~29% of every vector in the pack. Sampled evenly, browse looks like a settings screen. |
+
+Rebuilding the pool needs the renderer installed once (no sudo):
+
+```bash
+cd seed/scripts && npm install sharp
+```
+
 ## Studio split
 
 Two studios with deliberately overlapping but distinct identities, so the
@@ -288,7 +335,42 @@ python3 seed/scripts/sanitize_and_assemble.py \
 ```
 
 Re-running with the same inputs produces the same outputs (deterministic
-UUIDs via stable hash; deterministic shuffle via fixed seed).
+UUIDs via stable hash; deterministic shuffle via fixed seed). The run ends
+with the #604 upgrade pass, so the regenerated profiles describe the
+upgraded library — `--skip-upgrade` reproduces the pre-upgrade assembly
+and should never be used for a real site build.
+
+Then publish to a site. Note `--hq-source`: without it the run refuses to
+start rather than skipping 916 assets and exiting 0.
+
+```bash
+# 1. rebuild the image pool (needs `npm install sharp` once)
+python3 seed/scripts/kenney_hq.py build \
+    --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0" \
+    --out  "$DATASETS/kenney-hq-pool"
+
+# 2. copy assets + regenerate MANIFEST.json / metadata.csv for a site
+python3 seed/scripts/populate_archive.py \
+    --local-source    /mnt/d/Projects/unraid_management/artist-alley_dataset \
+    --internet-source seed/internet-fetched \
+    --hq-source       "$DATASETS/kenney-hq-pool" \
+    --profile         seed/profiles/studio-a.assets.json \
+    --dest            "$DATASETS/site_a"
+```
+
+`$DATASETS` is wherever the dataset share is mounted — it differs between
+a workstation and a CI runner, so nothing in the tooling hardcodes it. If
+the path looks empty, the share dropped: check `mountpoint` and remount
+before concluding the data is gone.
+
+Verify without changing anything:
+
+```bash
+python3 seed/scripts/test_dataset_upgrade.py          # 31 tests, no share needed
+python3 seed/scripts/apply_upgrade.py --site site_a \
+    --profile seed/profiles/studio-a.assets.json \
+    --posts   seed/profiles/studio-a.posts.json --check
+```
 
 ## What's not in here yet
 
