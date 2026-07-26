@@ -1,0 +1,10 @@
+{
+  "name": "artist-alley-seed-scripts",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Image tooling for the seed dataset pipeline (#604). sharp/libvips drives SVG->PNG rasterisation for the kenney-hq pool.",
+  "type": "module",
+  "dependencies": {
+    "sharp": "^0.34.4"
+  }
+}
