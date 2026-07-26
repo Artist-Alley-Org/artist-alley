@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
+	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -107,9 +108,17 @@ func (h *AssetFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the Range branch below overrides with the slice size.
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", ct)
-	// Same Cache-Control + ETag as the openapi handler used.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	w.Header().Set("Etag", fmt.Sprintf(`"/api/v1/assets/%s/file"`, assetID.String()))
+	// Content-derived validator, NOT the URL path (#620). The old ETag
+	// here was `"/api/v1/assets/<id>/file"` — invariant by construction,
+	// so a client that had once fetched this URL could never be told the
+	// bytes had changed. `info` is already in hand from the Download
+	// above, so the honest value costs nothing extra.
+	//
+	// `immutable` is gone with it: a correct validator is inert if the
+	// client is told it never needs to revalidate.
+	w.Header().Set("Cache-Control", middleware.VariantCacheControl())
+	w.Header().Set("ETag", `"`+middleware.VariantETag(
+		hash, storage.VariantOriginal, info.Size, info.ModifiedAt.UnixNano())+`"`)
 
 	rng := r.Header.Get("Range")
 	if rng == "" || r.Method == http.MethodHead {

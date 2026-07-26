@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
@@ -88,7 +89,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.Recover(logger))
-	r.Use(middleware.VariantCache)
+	// Content-derived ETags for the asset-addressed byte routes (#620).
+	// The validator resolves the asset's file hash and stats the stored
+	// variant, so a re-render under a stable asset id changes the ETag
+	// and a conditional request correctly misses. See variant_cache.go
+	// for why the asset's file_hash alone is not sufficient.
+	r.Use(middleware.VariantCache(newVariantValidator(pool, storageSvc)))
 
 	health := &handlers.Health{
 		Pool:    pool,
@@ -1006,6 +1012,40 @@ func loadCapLicenseFeatures(ctx context.Context, pool *pgxpool.Pool) (map[string
 		out[r.Code] = *r.RequiredLicenseFeature
 	}
 	return out, nil
+}
+
+// newVariantValidator builds the middleware's content-validator: asset
+// id -> stored file hash -> the variant's size + modification time.
+//
+// Two cheap reads, one indexed PK lookup and one Stat. It returns
+// ok=false for anything it cannot resolve — a missing asset, an asset
+// with no file, a variant the preview worker has not written yet — and
+// the middleware then makes no caching claim at all rather than
+// inventing a weaker validator.
+//
+// Deliberately does NOT consult visibility: this resolves the identity
+// of bytes, not permission to see them. The handler behind it still
+// runs every content check it ran before, and a caller who fails those
+// gets a 404 with `no-store`. A validator that leaked existence would
+// be an ADR 0064 problem; one derived from storage layout, hashed, and
+// only ever returned alongside the handler's own answer is not.
+func newVariantValidator(pool *pgxpool.Pool, svc *storage.Service) middleware.VariantValidator {
+	return func(ctx context.Context, assetID uuid.UUID, variantKey string) (string, bool) {
+		var fileHash *string
+		err := pool.QueryRow(ctx,
+			`SELECT file_hash FROM assets WHERE id = $1 AND deleted_at IS NULL`,
+			assetID,
+		).Scan(&fileHash)
+		if err != nil || fileHash == nil || *fileHash == "" {
+			return "", false
+		}
+		info, err := svc.Stat(ctx, *fileHash, variantKey)
+		if err != nil || info == nil {
+			return "", false
+		}
+		return middleware.VariantETag(*fileHash, variantKey, info.Size,
+			info.ModifiedAt.UnixNano()), true
+	}
 }
 
 // iiifVariantLister adapts sysconfig.Store into the
