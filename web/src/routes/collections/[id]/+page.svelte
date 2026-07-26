@@ -29,6 +29,7 @@
   import { browseView } from '$stores/browseView.svelte';
   import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
   import AssetCard from '$components/AssetCard.svelte';
+  import type { CardAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import Menu from '$components/Menu.svelte';
@@ -52,6 +53,14 @@
     title: string;
     asset_type: number;
     file_hash: string | null;
+    // Media type + blur-up (#595). A member tile renders through the
+    // same CardThumb as a browse tile, which reads the media TYPE off
+    // the extension alone — that is what puts the video / 3D badge on
+    // the tile and what makes the hover sprite-scrub preview play.
+    // These were missing from both this row type and the API response,
+    // so every video and 3D member rendered as an untyped still.
+    file_extension: string | null;
+    thumbhash: string | null;
     sort_order: number;
     added_at: string;
     asset_created_at?: string | null;
@@ -91,14 +100,24 @@
 
   // ContentGrid keys rows by `id`; a member row is keyed by asset_id, so
   // map once here rather than teaching the grid about two shapes.
-  const memberItems = $derived(
+  //
+  // This literal is annotated `CardAsset[]` on purpose (#595). It is the
+  // one place on this page that RE-SHAPES an API row into card props,
+  // and it is exactly where the media-type + blur-up fields were lost:
+  // an un-annotated object literal is assignable to a card prop that
+  // only asks for optional fields, so dropping two of them raised
+  // nothing. With the annotation, forgetting a presentation field is a
+  // type error here rather than a missing badge in the browser.
+  const memberItems = $derived<CardAsset[]>(
     sortedMembers.map((m) => ({
       id: m.asset_id,
       title: m.title,
       file_hash: m.file_hash,
+      file_extension: m.file_extension,
+      thumbhash: m.thumbhash,
       asset_type: m.asset_type,
       created_at: m.asset_created_at ?? m.added_at,
-      preview_available: m.preview_available,
+      preview_available: !!m.preview_available,
     })),
   );
 

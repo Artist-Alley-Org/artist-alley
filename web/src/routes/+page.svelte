@@ -9,6 +9,7 @@
   import { auth } from '$stores/auth.svelte';
   import FeaturedRail from '$components/FeaturedRail.svelte';
   import PostCard from '$components/PostCard.svelte';
+  import type { CardCoverAsset } from '$components/cardAsset';
   import PostHost from '$components/PostHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
@@ -31,15 +32,17 @@
   // title + description + tags + member-asset search_text by the
   // 00014 migration trigger).
 
-  interface AssetSummary {
-    id: string;
-    file_hash?: string | null;
-    preview_available?: boolean;
-  }
+  // Member assets use the shared card feed contract (#595). The local
+  // type this replaces declared only `id`, `file_hash?` and
+  // `preview_available?` — it never mentioned file_extension or
+  // thumbhash at all, and browse rendered its video / 3D badges and
+  // sprite-scrub previews purely because the runtime objects carried
+  // fields the type had no opinion about. That is the same silence that
+  // let the collection page drop them for real.
   interface PostMember {
     asset_id: string;
     sort_order: number;
-    asset: AssetSummary;
+    asset: CardCoverAsset;
   }
   interface Post {
     id: string;

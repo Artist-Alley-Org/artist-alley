@@ -147,9 +147,14 @@ DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2;
 -- Returns pinned members, sorted by sort_order then added_at. Excludes
 -- expired-membership rows. Joined onto assets so the list can carry
 -- the title/thumb/type the front-end needs without an N+1.
+-- file_extension + thumbhash are part of that set (#595): a member tile
+-- renders through the same CardThumb as browse, which derives the media
+-- type (video / 3D badge + sprite-scrub hover) from the extension alone.
 SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at
+       a.title, a.asset_type, a.status, a.file_hash,
+       a.file_extension, a.thumbhash,
+       a.created_at AS asset_created_at
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 WHERE cr.collection_id = $1
