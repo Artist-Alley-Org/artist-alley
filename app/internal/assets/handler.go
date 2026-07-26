@@ -42,6 +42,7 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/imagefmt"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -644,15 +645,17 @@ const metadataExtractJobType jobs.JobType = "metadata.extract"
 // whether to enqueue a metadata.extract job. HEIC/AVIF/SVG/etc.
 // are images but we don't extract from them yet (HEIC needs the
 // future libheif add-on).
+//
+// Delegates rather than restating the set (#579). The backfill needs
+// the same answer and could not reach this unexported copy, so the list
+// was promoted to imagefmt.ExifExtractableExtensions; two copies of
+// "which formats can we extract from" is exactly the drift that leaves
+// the upload path and the backfill disagreeing about the same asset.
 func isExifExtractableImageExt(ext *string) bool {
 	if ext == nil {
 		return false
 	}
-	switch strings.ToLower(strings.TrimPrefix(*ext, ".")) {
-	case "jpg", "jpeg", "png", "tif", "tiff", "webp":
-		return true
-	}
-	return false
+	return imagefmt.IsExifExtractableExtension(*ext)
 }
 
 func aiTranscribeIdempotencyKey(assetID, model string) string {
