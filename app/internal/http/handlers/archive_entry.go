@@ -24,6 +24,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/archive"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
+
+	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 )
 
 // ArchiveEntryHandler serves a single entry out of a ZIP / TAR /
@@ -214,11 +216,20 @@ func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if size > 0 {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 	}
-	// Cache by archive hash + entry path — the archive's bytes are
-	// content-addressed so the same (hash, path) pair always yields
-	// the same bytes.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	w.Header().Set("Etag", fmt.Sprintf(`"/api/v1/assets/%s/archive/entry?%s"`, assetID.String(), entryPath))
+	// Cache by the ARCHIVE's stored identity + the entry path (#620).
+	//
+	// The comment here already described this design — "cache by archive
+	// hash + entry path" — while the code keyed on assetID and the URL,
+	// producing a validator that could not change. The archive's bytes
+	// really are content-addressed under `hash`, so including it makes
+	// the header honest: replace the archive attached to an asset and
+	// every entry's validator moves with it.
+	//
+	// `immutable` is gone for the same reason as the other two sites: it
+	// suppresses the revalidation that the validator exists to answer.
+	w.Header().Set("Cache-Control", middleware.VariantCacheControl())
+	w.Header().Set("ETag", `"`+middleware.VariantETag(
+		hash, "archive:"+entryPath, size, 0)+`"`)
 	if _, err := io.Copy(w, io.LimitReader(rc, h.MaxEntryBytes)); err != nil {
 		// Connection closed mid-stream — log + move on. Headers
 		// already flushed; not much else to do.
