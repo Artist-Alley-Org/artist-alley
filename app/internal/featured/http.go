@@ -203,6 +203,7 @@ func listRowToAPI(r ListFeaturedItemsRow) openapi.FeaturedItem {
 		hasImg := r.AssetHasImage
 		out.AssetHasImage = &hasImg
 		out.PreviewAvailable = r.AssetPreviewAvailable
+		out.LadderAvailable = r.AssetLadderAvailable
 	}
 	return out
 }
@@ -252,7 +253,7 @@ func (h *HTTPHandler) GetPublicFeaturedRail(
 		caller = visibility.NewCaller(&id.UserRef)
 	}
 
-	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, limit)
+	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, limit, h.domain.Ladder(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("featured: public rail: %w", err)
 	}
@@ -289,5 +290,6 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 	hasImg := r.AssetHasImage
 	out.AssetHasImage = &hasImg
 	out.PreviewAvailable = r.AssetPreviewAvailable
+	out.LadderAvailable = r.AssetLadderAvailable
 	return out
 }

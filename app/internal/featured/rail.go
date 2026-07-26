@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -29,6 +30,11 @@ type RailRow struct {
 	AssetFileHash         *string
 	AssetHasImage         bool
 	AssetPreviewAvailable bool
+	// AssetLadderAvailable: every CONFIGURED preview rung exists for the
+	// cover asset AND it clears the same public-tier gate as
+	// AssetPreviewAvailable (#591). Computed against sysconfig's ladder,
+	// never a hardcoded rung list.
+	AssetLadderAvailable bool
 }
 
 // ListPublicRail returns the public featured rail for one caller
@@ -80,8 +86,12 @@ func ListPublicRail(
 	pool *pgxpool.Pool,
 	caller visibility.Caller,
 	limit int32,
+	ladder []string,
 ) ([]RailRow, error) {
-	args := []any{limit} // $1
+	// $2 must be bound BEFORE the predicate fragments splice, so their
+	// placeholders start above it (the ADR 0063 discipline this file
+	// already follows for $1).
+	args := []any{limit, ladder} // $1, $2
 
 	assetPred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
@@ -134,7 +144,16 @@ func ListPublicRail(
                  SELECT 1 FROM storage_variants sv
                   WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')
             WHEN 'collection' THEN cover.file_hash IS NOT NULL
-       END, false)::boolean AS asset_preview_available
+       END, false)::boolean AS asset_preview_available,
+       -- ladder_available (#591): the same public-tier gate, but asking
+       -- whether EVERY configured rung exists rather than just col. The
+       -- rung list arrives as $2 from sysconfig — hardcoding the four
+       -- defaults here would make the flag lie on any install that
+       -- tuned its ladder.
+       COALESCE(CASE f.subject_kind
+            WHEN 'asset'      THEN a.sensitivity = 'public' AND ` + sysconfig.LadderSatisfiedSQL("a.file_hash", "$2") + `
+            WHEN 'collection' THEN ` + sysconfig.LadderSatisfiedSQL("cover.file_hash", "$2") + `
+       END, false)::boolean AS asset_ladder_available
 FROM featured_items f
 LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id` + assetFrag + `
@@ -190,6 +209,7 @@ LIMIT $1::INTEGER`
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
 			&r.Title, &r.CoverAssetID,
 			&r.AssetFileHash, &r.AssetHasImage, &r.AssetPreviewAvailable,
+			&r.AssetLadderAvailable,
 		); err != nil {
 			return nil, fmt.Errorf("featured: rail scan: %w", err)
 		}

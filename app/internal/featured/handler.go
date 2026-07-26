@@ -29,6 +29,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
 // Capabilities for the featured curation surface. Reads take the
@@ -53,6 +55,23 @@ var ErrNotFound = errors.New("featured: not found")
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). nil-safe: nil means no ladder, so
+	// ladder_available is false and the rail keeps using `col`.
+	previewLadder sysconfig.PreviewLadderReader
+}
+
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
+
+// Ladder returns the configured preview variant keys, or nil when the
+// reader is not wired — the conservative answer (ladder_available false).
+func (h *Handler) Ladder(ctx context.Context) []string {
+	if h.previewLadder == nil {
+		return nil
+	}
+	return h.previewLadder(ctx)
 }
 
 // NewHandler builds the Handler.
@@ -72,7 +91,7 @@ type AddInput struct {
 // created_at). Each row resolves its subject's display title plus, for
 // asset subjects, thumbnail hints.
 func (h *Handler) List(ctx context.Context) ([]ListFeaturedItemsRow, error) {
-	return New(h.Pool).ListFeaturedItems(ctx)
+	return New(h.Pool).ListFeaturedItems(ctx, h.Ladder(ctx))
 }
 
 // Add appends (or inserts at Position) a subject. A duplicate subject

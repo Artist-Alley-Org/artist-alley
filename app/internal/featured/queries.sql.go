@@ -88,7 +88,19 @@ SELECT f.id, f.subject_kind, f.subject_id, f.position,
        -- readability needed here).
        COALESCE(EXISTS (
             SELECT 1 FROM storage_variants sv
-             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available
+             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available,
+       -- ladder_available (#591): every CONFIGURED rung exists. The rung
+       -- list is a parameter, not a literal, because the ladder is
+       -- operator-tunable — a hardcoded four-key check would report
+       -- false forever on an install that dropped a rung. The
+       -- cardinality guard makes an empty (unknown) ladder resolve to
+       -- false rather than vacuously true.
+       COALESCE((COALESCE(cardinality($1::text[]), 0) > 0
+            AND a.file_hash IS NOT NULL
+            AND (SELECT COUNT(DISTINCT sv.variant_key) FROM storage_variants sv
+                  WHERE sv.object_hash = a.file_hash
+                    AND sv.variant_key = ANY($1::text[]))
+                = cardinality($1::text[])), false)::boolean AS asset_ladder_available
 FROM featured_items f
 LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id
@@ -108,6 +120,7 @@ type ListFeaturedItemsRow struct {
 	AssetFileHash         *string
 	AssetHasImage         bool
 	AssetPreviewAvailable bool
+	AssetLadderAvailable  bool
 }
 
 // GitHub #341 — admin-curated featured_items queries.
@@ -120,8 +133,8 @@ type ListFeaturedItemsRow struct {
 // per-row lookup. A dangling reference (subject hard-deleted) yields
 // an empty title rather than dropping the row — the operator prunes
 // stale entries by hand.
-func (q *Queries) ListFeaturedItems(ctx context.Context) ([]ListFeaturedItemsRow, error) {
-	rows, err := q.db.Query(ctx, listFeaturedItems)
+func (q *Queries) ListFeaturedItems(ctx context.Context, ladder []string) ([]ListFeaturedItemsRow, error) {
+	rows, err := q.db.Query(ctx, listFeaturedItems, ladder)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +153,7 @@ func (q *Queries) ListFeaturedItems(ctx context.Context) ([]ListFeaturedItemsRow
 			&i.AssetFileHash,
 			&i.AssetHasImage,
 			&i.AssetPreviewAvailable,
+			&i.AssetLadderAvailable,
 		); err != nil {
 			return nil, err
 		}
