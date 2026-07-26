@@ -6,9 +6,9 @@
   // The owner asked for the grid overlay to read artwork-first: instead
   // of a visible row of three action chips competing with the art, a
   // single ⋮ button (top-right, revealed on hover / focus; always shown
-  // on touch) opens a small ArtStation-style popover holding the same
-  // actions. Shared by AssetCard + PostCard, so browse / profile /
-  // collection grids all get the same affordance.
+  // on touch) opens a small popover holding the same actions. Shared by
+  // AssetCard + PostCard, so browse / profile / collection grids all get
+  // the same affordance.
   //
   // Actions (unchanged from the row):
   //   info  — link to the detail page. Read-only, always shown.

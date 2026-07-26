@@ -18,11 +18,12 @@
   // LAYOUT — SPREAD, NOT CENTRED. This is deliberate and has been
   // relitigated twice (#554, then #590 amendment 1), so before you
   // gather these into one cluster again: that was tried and the owner
-  // rejected it both times. The reference product (ArtStation) puts the
-  // view controls bottom-left, the feed filter centred and sort
-  // bottom-right, and the spread is the thing being matched. The
-  // "three unrelated floating islands" reading that motivated the
-  // consolidation was a planning misjudgement, not a user complaint.
+  // rejected it both times. The intended layout is view controls
+  // bottom-LEFT, feed filter CENTRED, sort bottom-RIGHT — three anchored
+  // positions, and the spread between them is the design, not an
+  // accident of extraction. The "three unrelated floating islands"
+  // reading that motivated the consolidation was a planning
+  // misjudgement, not a user complaint.
   //
   // Kept from the consolidation attempt because neither was the problem:
   // the lucide gallery-thumbnails glyph, and chromeScroll.reveal() in

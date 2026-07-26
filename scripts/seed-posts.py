@@ -4,7 +4,7 @@
 # Bulk-seed varied Posts from a local image dir, for browse-page testing.
 #
 # Produces a mix of:
-#   - single-asset posts (most common, like Behance/ArtStation portraits)
+#   - single-asset posts (most common — one finished piece per post)
 #   - multi-asset posts (carousels — testing the grouped-asset case)
 #   - posts in named collections (manual collections + "featured")
 #   - tags derived from filename tokens (set code prefix, "pokemon")

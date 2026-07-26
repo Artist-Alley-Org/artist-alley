@@ -69,7 +69,7 @@
   // The navbar search input is present on every authenticated page
   // — including /account/* and /admin/* — per memory
   // `feedback_navbar_search_always_visible`. Search is the primary
-  // discovery affordance in an ArtStation-shaped app; gating it to
+  // discovery affordance in a media library this size; gating it to
   // the browse page friction-trained users to leave settings/admin
   // just to look something up. Submitting from a non-browse page
   // navigates to `/?q=...` in handleSearch.
