@@ -56,6 +56,34 @@ GAPS: list[GapAsset] = [
     # =========================================================================
     # VIDEO — Blender Foundation open films (CC-BY) + early animation (PD)
     # =========================================================================
+    # ---- Blender open movies, fetched DIRECT from Blender ------------------
+    # archive.org mirrors 503 under rate-limiting (measured 2026-07-25: 10
+    # consecutive failures across two runs), which silently starved the
+    # catalogue of its best video. These come straight from the Foundation,
+    # so there is no longer a single point of failure for the content that
+    # matters most. Do not "simplify" these back to archive.org mirrors.
+    GapAsset(
+        name="Sintel (2010) — full film, 1080p",
+        url="https://download.blender.org/demo/movies/Sintel.2010.1080p.mkv",
+        target_dir="video",
+        target_filename="sintel-2010-1080p.mkv",
+        license="CC-BY 3.0",
+        attribution="(c) Blender Foundation | durian.blender.org",
+        source="Blender Foundation",
+        asset_type="video",
+        notes="Full 15-min film in MKV — long-form playback + a container the trailer doesn't exercise",
+    ),
+    GapAsset(
+        name="Tears of Steel — 720p",
+        url="https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov",
+        target_dir="video",
+        target_filename="tears-of-steel-720p.mov",
+        license="CC-BY 3.0",
+        attribution="(c) Blender Foundation | mango.blender.org",
+        source="Blender Foundation",
+        asset_type="video",
+        notes="Live-action/VFX short in QuickTime — direct Blender mirror",
+    ),
     GapAsset(
         name="Big Buck Bunny — 720p surround",
         url="https://www.archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_720p_surround.mp4",
