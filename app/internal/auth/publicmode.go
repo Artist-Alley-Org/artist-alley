@@ -143,6 +143,23 @@ var PublicSurfaceRoutes = []publicRoute{
 	// you do not want to discover was ungated after the fact.
 	{path: "/iiif/2", prefix: true, why: "IIIF Image API 2.x redirect surface"},
 	{path: "/iiif/3", prefix: true, why: "IIIF Image API 3 + Presentation manifests + content search"},
+
+	// The configured preview ladder (#591) — the rung keys and sizes a
+	// client needs to build a responsive srcset for the assets it can
+	// already see.
+	//
+	// GOVERNED, unlike /appearance, and the difference is what each one
+	// is FOR. Fonts render the login card, so an install that refused
+	// them anonymously could not draw its own sign-in page. Nothing
+	// before sign-in needs image rungs: the first consumer is the browse
+	// grid, which on a private install is already behind auth. So this
+	// follows the content it describes — anonymous on a public install,
+	// 401 on a private one — rather than being excused as boot-critical
+	// when it is not.
+	//
+	// It carries no asset, user or access decision, so the exposure on a
+	// public install is the install's own image-pipeline configuration.
+	{path: "/previews", why: "configured preview variant ladder (#591)"},
 }
 
 // NOT governed by this toggle, recorded so that "absent" and

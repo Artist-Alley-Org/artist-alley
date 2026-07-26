@@ -21,7 +21,19 @@ SELECT f.id, f.subject_kind, f.subject_id, f.position,
        -- readability needed here).
        COALESCE(EXISTS (
             SELECT 1 FROM storage_variants sv
-             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available
+             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available,
+       -- ladder_available (#591): every CONFIGURED rung exists. The rung
+       -- list is a parameter, not a literal, because the ladder is
+       -- operator-tunable — a hardcoded four-key check would report
+       -- false forever on an install that dropped a rung. The
+       -- cardinality guard makes an empty (unknown) ladder resolve to
+       -- false rather than vacuously true.
+       COALESCE((COALESCE(cardinality(sqlc.arg('ladder')::text[]), 0) > 0
+            AND a.file_hash IS NOT NULL
+            AND (SELECT COUNT(DISTINCT sv.variant_key) FROM storage_variants sv
+                  WHERE sv.object_hash = a.file_hash
+                    AND sv.variant_key = ANY(sqlc.arg('ladder')::text[]))
+                = cardinality(sqlc.arg('ladder')::text[])), false)::boolean AS asset_ladder_available
 FROM featured_items f
 LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id

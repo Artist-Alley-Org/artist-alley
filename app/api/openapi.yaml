@@ -8461,6 +8461,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AppearanceConfig" }
 
+  /previews:
+    get:
+      operationId: getPublicPreviewLadder
+      summary: Read the configured preview variant ladder
+      description: |
+        Unauthenticated read of the rungs the operator has configured —
+        the key, fit and longest-edge of every preview variant this
+        install generates.
+
+        This is the companion to `ladder_available` (#591). That flag
+        says a given asset HAS the whole ladder; this says what the
+        ladder IS. A client needs both to build a responsive `srcset`:
+        the keys become `/assets/{id}/variants/{key}` URLs and `max_dim`
+        becomes the `Nw` width descriptor. Without this endpoint a client
+        would have to hardcode the four default keys, which is exactly
+        the assumption the flag exists to remove — an install that tuned
+        its ladder would serve 404s.
+
+        Unauthenticated because it describes the install's image
+        pipeline, not its content: the same reasoning as `/appearance`.
+        It reveals no asset, no user and no access decision, and the
+        boot path needs it before sign-in.
+      tags: [system]
+      security: []
+      responses:
+        "200":
+          description: The configured ladder, in the operator's order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewLadder" }
+
   /brush-packs:
     get:
       operationId: listBrushPacks
@@ -10026,6 +10057,43 @@ components:
           description: |
             The asset the variation derives from. Echoed for
             caller-side correlation.
+    PreviewLadder:
+      type: object
+      description: |
+        The preview variants this install generates, in configured
+        order. See `getPublicPreviewLadder`.
+      required: [variants]
+      properties:
+        variants:
+          type: array
+          items: { $ref: "#/components/schemas/PreviewLadderRung" }
+    PreviewLadderRung:
+      type: object
+      required: [key, fit, max_dim]
+      properties:
+        key:
+          type: string
+          description: |
+            Variant key — the `{key}` in `/assets/{id}/variants/{key}`.
+            Operator-defined, so do NOT assume the default set
+            (col / preview / screen / hires).
+        fit:
+          type: string
+          enum: [cover, contain]
+          description: |
+            `cover` CROPS to a square of max_dim; `contain` preserves
+            aspect ratio within max_dim. The distinction is load-bearing
+            for layout: the default `col` rung is a 320x320 COVER crop,
+            so a client wanting the true aspect ratio must use a
+            `contain` rung, not `col`.
+        max_dim:
+          type: integer
+          description: |
+            Longest edge in pixels. Doubles as the `Nw` width descriptor
+            in a `srcset` for `contain` rungs.
+        format:
+          type: string
+          enum: [webp, jpeg, png]
     AppearanceConfig:
       type: object
       description: |
@@ -10651,7 +10719,7 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status, preview_available,
+         title, asset_type, status, preview_available, ladder_available,
          file_hash, file_extension, thumbhash]
       properties:
         collection_id: { type: string, format: uuid }
@@ -10694,6 +10762,14 @@ components:
             + 0064-safety as Asset.preview_available — the tile renders a
             thumbnail only when true, else a placeholder with no byte
             request (#471).
+        ladder_available:
+          type: boolean
+          description: |
+            True iff every variant in the operator's CONFIGURED preview
+            ladder exists for this member asset AND the caller passes the
+            content plane. Identical contract to Asset.ladder_available —
+            see there for why this is computed from config rather than
+            from the default rung list.
         asset_created_at: { type: string, format: date-time }
     CollectionResourceWrite:
       type: object
@@ -10727,7 +10803,7 @@ components:
       # them with no type error; that is exactly how the collection page
       # silently lost its video/3D badges and sprite-scrub previews.
       required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
-                 file_hash, file_extension, thumbhash]
+                 file_hash, file_extension, thumbhash, ladder_available]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -10787,6 +10863,37 @@ components:
             restricted asset the caller may not read reads identically to
             "no preview" (false), so this never confirms `restricted`
             (0064-safe).
+        ladder_available:
+          type: boolean
+          description: |
+            True iff EVERY variant in the operator's CONFIGURED preview
+            ladder exists for this asset AND the caller passes the
+            content plane. Same ADR 0064 contract as
+            `preview_available`: a restricted asset reports false rather
+            than 403, so the flag never confirms `restricted`.
+
+            This is the signal a responsive `srcset` needs.
+            `preview_available` promises only `col` — a 320x320 COVER
+            crop — so a client that inferred the wider `preview` /
+            `screen` / `hires` rungs from it would request bytes that may
+            not exist, which is exactly the 404 class #471 removed. With
+            no way to ask, the frontend disabled responsive images
+            entirely and every card serves a 320px square regardless of
+            viewport. This flag is how the client stops guessing.
+
+            THE LADDER IS OPERATOR-CONFIGURABLE, so this is NOT "the four
+            default rungs exist". It is computed against
+            `sysconfig.GetPreviews`, whose defaults (col/preview/screen/
+            hires) are a default and not the contract. An install that
+            drops or adds a rung changes what this flag means, which is
+            the intent — clients should read the ladder from
+            `GET /previews` rather than assuming the default keys.
+
+            Deliberately NOT an alias for `preview_available`. On a
+            healthy install the raster pass writes the whole ladder or
+            none of it, so today the two are nearly co-extensive; they
+            diverge exactly where it matters — assets whose raster pass
+            partly failed, and any future partial-ladder state.
         thumbhash:
           type: string
           nullable: true
@@ -10827,7 +10934,7 @@ components:
         the resolved subject title. Both subject kinds carry thumbnail
         hints so a tile can render a cover: assets from themselves,
         collections via ADR 0027's hero-card fallback (#559).
-      required: [id, subject_kind, subject_id, position, title, preview_available, created_at]
+      required: [id, subject_kind, subject_id, position, title, preview_available, created_at, ladder_available]
       properties:
         id:
           type: string
@@ -10890,6 +10997,14 @@ components:
             live variant existence, so unlike `asset_has_image` it is
             trustworthy. Populated for collection subjects too since
             #559.
+        ladder_available:
+          type: boolean
+          description: |
+            True iff every variant in the operator's CONFIGURED preview
+            ladder exists for the tile's cover asset AND the caller
+            passes the content plane. Identical contract to
+            Asset.ladder_available — see there for why this is computed
+            from config rather than from the default rung list.
         created_at:
           type: string
           format: date-time

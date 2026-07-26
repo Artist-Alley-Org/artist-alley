@@ -185,6 +185,7 @@ type apiServer struct {
 	requests          *requests.Handler
 	requestsHTTP      *requests.HTTPHandler
 	featuredHTTP      *featured.HTTPHandler
+	featuredDomain    *featured.Handler
 	subtitles         *subtitles.Handler
 	subtitlesHTTP     *subtitles.HTTPHandler
 	aieditHTTP        *aiedit.HTTPHandler
@@ -1261,7 +1262,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 
 	// Admin-curated featured-content list (GitHub #341). Thin,
 	// system.admin-gated CRUD over the featured_items table.
-	s.featuredHTTP = featured.NewHTTPHandler(featured.NewHandler(pool, logger), logger)
+	s.featuredDomain = featured.NewHandler(pool, logger)
+	s.featuredHTTP = featured.NewHTTPHandler(s.featuredDomain, logger)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -1399,6 +1401,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// Phase 1.9.B — let collections.Create probe required collection
 	// fields + seed initial values via the metadata package.
 	s.collections.SetMetadataGate(collectionsMetadataGateAdapter{md: s.metadata})
+
+	// #591 — one cached reader of the operator's CONFIGURED preview
+	// ladder, shared by every surface that reports ladder_available.
+	// Built once so all four agree on what the ladder is: four
+	// independently-constructed readers would be four caches that could
+	// disagree for a request or two after an operator edits the config,
+	// and a client that saw preview_available and ladder_available
+	// disagree across two endpoints would have no way to resolve it.
+	ladderReader := sysconfig.NewPreviewLadderReader(sysCfg, cacheReg, logger)
+	s.assets.SetPreviewLadder(ladderReader)
+	s.posts.SetPreviewLadder(ladderReader)
+	s.collections.SetPreviewLadder(ladderReader)
+	s.featuredDomain.SetPreviewLadder(ladderReader)
 	return s
 }
 
@@ -3108,6 +3123,10 @@ func (s *apiServer) GetAppearanceConfig(ctx context.Context, req openapi.GetAppe
 func (s *apiServer) UpdateAppearanceConfig(ctx context.Context, req openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
 	return s.sysconfigH.UpdateAppearanceConfig(ctx, req)
 }
+func (s *apiServer) GetPublicPreviewLadder(ctx context.Context, req openapi.GetPublicPreviewLadderRequestObject) (openapi.GetPublicPreviewLadderResponseObject, error) {
+	return s.sysconfigH.GetPublicPreviewLadder(ctx, req)
+}
+
 func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	return s.sysconfigH.GetPublicAppearance(ctx, req)
 }

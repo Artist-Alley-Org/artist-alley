@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -48,6 +49,11 @@ type ListAssetsPageGatedParams struct {
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
+	// Ladder is the operator's CONFIGURED preview variant keys (#591),
+	// supplied by the handler from the cached sysconfig reader. Empty
+	// means "unknown", which LadderSatisfiedSQL resolves to false — the
+	// client then falls back to the single `col` rung.
+	Ladder []string
 }
 
 // listAssetsPageColumns mirrors the sqlc query's SELECT list exactly.
@@ -66,6 +72,11 @@ type ListAssetsPageGatedRow struct {
 	// passes the content plane — computed here so the client renders a
 	// thumbnail only when true, never firing a byte request that 404s.
 	PreviewAvailable bool
+	// LadderAvailable: EVERY variant in the configured ladder exists AND
+	// the caller passes the content plane (#591). Same 0064 contract as
+	// PreviewAvailable and derived from the SAME readability decision,
+	// so the two can never disagree for a restricted asset.
+	LadderAvailable bool
 }
 
 // ListAssetsPageGated runs the browse query for one caller. `caps` is
@@ -94,6 +105,7 @@ func ListAssetsPageGated(
 		p.CursorID,        // $6
 		p.RowLimit,        // $7
 		caller.UserRef,    // $8 — anonymous carries ref 0, matching no membership
+		p.Ladder,          // $9 — configured preview ladder (#591)
 	}
 
 	var opts []visibility.Option
@@ -117,6 +129,7 @@ func ListAssetsPageGated(
 	// Two derived columns join preview_available's inputs in the SAME
 	// pass — no per-asset round-trips on this browse hot path (#471):
 	//   has_col_variant     — a servable `col` thumbnail exists
+	//   has_full_ladder     — every CONFIGURED rung exists (#591)
 	//   caller_is_team_member — caller belongs to a team-tier asset's team
 	// Readability is then decided in-Go per row (visibility.ContentReadable)
 	// from sensitivity + owner + that membership boolean + caps.
@@ -125,6 +138,7 @@ func ListAssetsPageGated(
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
+       ` + sysconfig.LadderSatisfiedSQL("assets.file_hash", "$9") + ` AS has_full_ladder,
        (team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
              WHERE tm.team_id = assets.team_id AND tm.user_ref = $8::BIGINT)) AS caller_is_team_member
@@ -153,6 +167,7 @@ LIMIT $7::INTEGER`)
 		var (
 			sensitivity        string
 			hasColVariant      bool
+			hasFullLadder      bool
 			callerIsTeamMember bool
 		)
 		if err := rows.Scan(
@@ -160,7 +175,7 @@ LIMIT $7::INTEGER`)
 			&i.FileHash, &i.FileExtension, &i.FileSizeBytes, &i.Metadata,
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
-			&sensitivity, &hasColVariant, &callerIsTeamMember,
+			&sensitivity, &hasColVariant, &hasFullLadder, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
@@ -168,6 +183,7 @@ LIMIT $7::INTEGER`)
 		out = append(out, ListAssetsPageGatedRow{
 			ListAssetsPageRow: i,
 			PreviewAvailable:  hasColVariant && readable,
+			LadderAvailable:   hasFullLadder && readable,
 		})
 	}
 	if err := rows.Err(); err != nil {

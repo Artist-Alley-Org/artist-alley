@@ -37,6 +37,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -74,6 +75,11 @@ type Handler struct {
 	// as if no required collection fields are configured (preserves
 	// pre-1.9.B behaviour for tests that don't wire metadata).
 	metadataGate MetadataGate
+
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). nil-safe: nil means no ladder, so
+	// ladder_available is false and clients stay on the `col` rung.
+	previewLadder sysconfig.PreviewLadderReader
 
 	// Audit records admin lifecycle events (soft_deleted; restore
 	// fires from softdelete.Service directly). Nil-safe.
@@ -151,6 +157,18 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 // and seed initial values inside the create tx.
 func (h *Handler) SetMetadataGate(g MetadataGate) {
 	h.metadataGate = g
+}
+
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
+
+// ladder returns the configured preview variant keys, or nil when the
+// reader is not wired — the conservative answer (ladder_available false).
+func (h *Handler) ladder(ctx context.Context) []string {
+	if h.previewLadder == nil {
+		return nil
+	}
+	return h.previewLadder(ctx)
 }
 
 // RequiredCollectionFieldMissingError signals that a required
@@ -857,6 +875,7 @@ func (h *Handler) ListCollectionResources(
 			CursorSortOrder: cursorSort,
 			CursorAddedAt:   cursorAdded,
 			RowLimit:        fetch,
+			Ladder:          h.ladder(ctx),
 		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)
@@ -871,6 +890,7 @@ func (h *Handler) ListCollectionResources(
 		}
 		item := resourceRowToAPI(r.ListCollectionResourcesPageRow)
 		item.PreviewAvailable = r.PreviewAvailable
+		item.LadderAvailable = r.LadderAvailable
 		items = append(items, item)
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
