@@ -7,7 +7,48 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixes
+
+- **The IIIF Image API returned 404 for every asset.** Both the image and
+  `info.json` endpoints gated on `assets.has_image`, a column nothing in the
+  codebase ever writes, so the condition was true for every asset and the whole
+  Image API had been dead since it shipped — with no error, because "404" is also
+  the correct answer for an asset that genuinely has no image. Image endpoints now
+  serve real bytes, gated on whether a configured IIIF variant is actually stored.
+  `info.json` still 404s on a second, unrelated cause (#618) (#614).
+
+- **Regenerated previews never reached the browser.** Asset byte routes shipped
+  `Cache-Control: immutable, max-age=31536000` with an ETag derived from the URL
+  path — a validator that cannot change — and answered conditional requests with
+  304 without ever consulting the stored bytes. Once a client had cached a
+  variant, no sequence of requests could return updated content, so an operator
+  who used "Recreate previews" after a renderer fix could never see the result.
+  Validators are now derived from the stored bytes, and revalidation is permitted
+  (#620).
+
+- **EXIF metadata extraction processed zero assets.** The backfill selected on the
+  same never-written `has_image` column, so a run would report success having
+  enqueued nothing. It now selects on file format — the formats the metadata
+  pipeline actually has an extractor for, EXIF plus camera raw. (Extracted values
+  still need field definitions with an extraction source configured before they
+  land anywhere; tracked in #618.) (#579)
+
+- **AI asset hints never identified images.** The AI bridge derived its MIME hint
+  from the same dead column, so it was never set. It now derives a real MIME from
+  the file extension (`image/png` rather than the `image/*` wildcard it aspired
+  to) (#579).
+
+### API
+
+- **`ladder_available` on asset payloads** — reports whether the *complete*
+  configured preview ladder exists for an asset, so clients can build a responsive
+  `srcset` instead of assuming a single thumbnail size. Computed against the
+  operator's configured rungs rather than a hardcoded list, so an install that
+  tunes its ladder is described accurately (#591).
+
+- **`GET /previews`** — the rung keys and dimensions this install generates, so a
+  client can build width descriptors without hardcoding defaults. Governed by
+  public mode: anonymous on a public install, 401 on a private one (#591).
 
 ## [v0.6.0] — 2026-07-23 — Public read surface + demo hardening
 
