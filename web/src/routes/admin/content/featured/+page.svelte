@@ -18,7 +18,20 @@
     position: number;
     title: string;
     asset_file_hash?: string | null;
+    /** Dead field — `assets.has_image` has no writer anywhere, so this is
+     *  false for every asset in every install. Kept declared only so the
+     *  shape still matches the API response; #579 step 4 removes it from
+     *  the API and it goes from here at the same time. Do NOT gate
+     *  anything on it (#619). */
     asset_has_image?: boolean;
+    /** A servable `col` variant exists. On THIS endpoint that is the
+     *  whole meaning: the admin curation query deliberately applies no
+     *  sensitivity gate ("served to operators who read every tier, so
+     *  variant existence alone decides it"), so unlike the public rail
+     *  there is no per-caller readability folded in — which is exactly
+     *  what a thumbnail needs to know. Populated for asset subjects
+     *  only; collection subjects always report false here. */
+    preview_available?: boolean;
     created_at: string;
   }
 
@@ -112,8 +125,28 @@
     flash('ok', t('admin.featured.reordered'));
   }
 
+  // #619 — keyed on preview_available, NOT asset_has_image.
+  //
+  // The old gate was `asset_has_image && asset_file_hash`, and the middle
+  // term is the projection of `assets.has_image` — a column with no
+  // writer anywhere in the codebase, false for all 1007 assets on the
+  // seeded stack. So the condition was unsatisfiable and every asset
+  // subject rendered the "A" placeholder no matter how good its
+  // thumbnail was.
+  //
+  // preview_available answers the question this line is actually asking
+  // — is there a servable `col` to point an <img> at — and it is
+  // computed from live variant existence rather than from a
+  // denormalised flag nothing maintains. It is also what keeps the
+  // no-404 property: false means no request is fired at all, so an
+  // asset whose preview has not been generated yet degrades to the
+  // placeholder silently instead of a red line in the console (#471).
+  //
+  // asset_file_hash stays in the conjunction as a cheap sanity check: an
+  // item with a servable variant but no hash would be an inconsistent
+  // row, and the URL we build would 404.
   function thumbUrl(it: FeaturedItem): string | null {
-    if (it.subject_kind === 'asset' && it.asset_has_image && it.asset_file_hash) {
+    if (it.subject_kind === 'asset' && it.preview_available && it.asset_file_hash) {
       return `/api/v1/assets/${it.subject_id}/variants/col`;
     }
     return null;
