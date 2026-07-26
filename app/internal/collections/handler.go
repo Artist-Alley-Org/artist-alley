@@ -1278,6 +1278,16 @@ func resourceRowToAPI(r ListCollectionResourcesPageRow) openapi.CollectionResour
 		AssetType:    r.AssetType,
 		Status:       openapi.CollectionResourceStatus(r.Status),
 		FileHash:     r.FileHash,
+		// #595 — the media-type + blur-up fields. A member tile renders
+		// through the same CardThumb as a browse tile, and CardThumb
+		// reads the media type off the extension alone (video / 3D badge
+		// + sprite-scrub hover preview). Without these the tile is an
+		// untyped still. Encoded exactly as assets.assetRowToAPI does.
+		FileExtension: r.FileExtension,
+	}
+	if len(r.Thumbhash) > 0 {
+		v := base64.StdEncoding.EncodeToString(r.Thumbhash)
+		out.Thumbhash = &v
 	}
 	if r.ExpiresAt.Valid {
 		t := r.ExpiresAt.Time

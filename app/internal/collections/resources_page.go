@@ -84,7 +84,9 @@ func ListCollectionResourcesPageGated(
 	// membership + caps.
 	sql := `SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at,
+       a.title, a.asset_type, a.status, a.file_hash,
+       a.file_extension, a.thumbhash,
+       a.created_at AS asset_created_at,
        a.sensitivity, a.owner_user_ref,
        (a.file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
@@ -122,7 +124,9 @@ LIMIT $4::INTEGER`
 		if err := rows.Scan(
 			&i.CollectionID, &i.AssetID, &i.SortOrder, &i.Pinned,
 			&i.ExpiresAt, &i.AddedAt,
-			&i.Title, &i.AssetType, &i.Status, &i.FileHash, &i.AssetCreatedAt,
+			&i.Title, &i.AssetType, &i.Status, &i.FileHash,
+			&i.FileExtension, &i.Thumbhash,
+			&i.AssetCreatedAt,
 			&sensitivity, &ownerUserRef, &hasColVariant, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)

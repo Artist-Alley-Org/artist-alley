@@ -23,17 +23,15 @@
   import { selection } from '$stores/selection.svelte';
   import { t } from '$stores/lang.svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
+  import type { CardCoverAsset } from '$components/cardAsset';
 
-  interface AssetSummary {
-    id: string;
-    file_hash?: string | null;
-    file_extension?: string | null;
-    thumbhash?: string | null;
-    preview_available?: boolean;
-  }
+  // Cover-asset shape is the shared card feed contract (#595) — its
+  // presentation fields are REQUIRED so a surface cannot hand-map a
+  // narrower object and silently lose the media-type badge + sprite
+  // scrub. See cardAsset.ts.
   interface PostMemberSummary {
     asset_id: string;
-    asset: AssetSummary;
+    asset: CardCoverAsset;
   }
   interface Post {
     id: string;

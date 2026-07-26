@@ -37,6 +37,16 @@ export default defineConfig({
       $api: fileURLToPath(new URL('./src/lib/api', import.meta.url)),
       $components: fileURLToPath(new URL('./src/lib/components', import.meta.url)),
       $stores: fileURLToPath(new URL('./src/lib/stores', import.meta.url)),
+      // SvelteKit's `$app/*` virtual modules don't exist without the
+      // kit plugin (see the header). Card component tests reach one
+      // through the site store, so it gets a hand-written stub rather
+      // than the whole kit. Add siblings here as more component tests
+      // land — one alias per module actually needed, not a blanket
+      // shim, so an unexpected `$app/*` dependency still surfaces as a
+      // resolve error instead of silently getting a fake.
+      '$app/environment': fileURLToPath(
+        new URL('./vitest-stubs/app-environment.ts', import.meta.url),
+      ),
     },
   },
   test: {

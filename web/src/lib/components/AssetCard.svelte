@@ -13,20 +13,16 @@
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
+  import type { CardAsset } from '$components/cardAsset';
 
-  interface Asset {
-    id: string;
-    title: string;
-    file_hash?: string | null;
-    file_extension?: string | null;
-    asset_type: number;
-    created_at: string;
-    thumbhash?: string | null;
-    preview_available?: boolean;
-  }
+  // The card feed contract lives in cardAsset.ts, not here, because it
+  // is shared with PostCard and because its fields are REQUIRED — the
+  // presentation-critical ones were optional until #595 and a surface
+  // dropped two of them with no type error. Read that file before
+  // widening this prop back out.
 
   interface Props {
-    asset: Asset;
+    asset: CardAsset;
     /** Active view mode (#515 slice 4). Grid = clean dense wall (no frame,
      *  hover-only title); thumbnail = framed "details" tile with a
      *  persistent metadata footer. */
