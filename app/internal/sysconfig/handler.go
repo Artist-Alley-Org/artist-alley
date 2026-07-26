@@ -598,14 +598,20 @@ func (h *Handler) UpdateAppearanceConfig(
 	return openapi.UpdateAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
 }
 
-// GetPublicPreviewLadder is the unauthenticated read of the configured
-// preview rungs (#591).
+// GetPublicPreviewLadder reads the configured preview rungs (#591).
 //
 // It is the companion to the per-asset `ladder_available` flag: that
 // says an asset HAS the whole ladder, this says what the ladder IS. A
 // client needs both to build a responsive srcset, and without this it
 // would have to hardcode the four default keys — the exact assumption
 // the flag exists to remove.
+//
+// "Public" here means PUBLIC-MODE GOVERNED, not unauthenticated: the
+// route is registered in auth.PublicSurfaceRoutes, so it serves
+// anonymous callers on a public install and 401s on a private one. The
+// handler itself performs no auth check because the middleware has
+// already decided — do not read the absence of one here as the endpoint
+// being open.
 func (h *Handler) GetPublicPreviewLadder(
 	ctx context.Context,
 	_ openapi.GetPublicPreviewLadderRequestObject,

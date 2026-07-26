@@ -32,10 +32,14 @@ import (
 // on browse's hot list paths — the posts feed, the assets list, the
 // collection contents — so a `system_config` SELECT per request is not
 // acceptable. This is the same problem PublicModeReader solves, and it
-// uses the same solution: a one-entry LRU on the shared NOTIFY registry,
-// invalidated by the admin write path, so an operator changing the
-// ladder takes effect on the next request across every node without a
-// restart. The read is an in-process map lookup after the first call.
+// uses the same solution: a one-entry LRU on the shared NOTIFY registry.
+// The read is an in-process map lookup after the first call.
+//
+// The invalidation half of that pattern is NOT wired, because there is
+// nothing to wire it to yet: no endpoint writes the preview config. See
+// InvalidatePreviewLadder below for where the call belongs when one
+// lands. Until then the ladder changes only by direct database edit,
+// after which a node serves its cached copy until the entry ages out.
 //
 // FAILS CLOSED, and the closed direction is "no ladder". A read error
 // yields an empty list, which makes `ladder_available` false, which
@@ -97,8 +101,31 @@ func NewPreviewLadderReader(s *Store, registry *cache.Registry, logger *slog.Log
 }
 
 // InvalidatePreviewLadder broadcasts a cache invalidation for the
-// configured ladder. Called after the admin preview-config write
-// commits, so a rung added or removed takes effect fleet-wide.
+// configured ladder.
+//
+// IT HAS NO CALLER TODAY, and that is not an oversight to be fixed by
+// wiring it somewhere plausible. There is no preview-config WRITE
+// endpoint yet — Store.SetPreviews exists but nothing outside tests
+// calls it — so there is no commit point for an invalidation to follow.
+// A call inserted now would either sit on a path nobody takes or, worse,
+// look like working invalidation while doing nothing.
+//
+// WHEN THAT ENDPOINT LANDS, call this from the HTTP handler that writes
+// the config, immediately after Store.SetPreviews returns and BEFORE the
+// response, exactly as UpdatePublicMode does:
+//
+//	if err := h.Store.SetPreviews(ctx, cfg); err != nil { ... }
+//	InvalidatePreviewLadder(ctx, h.CacheReg)
+//
+// Handler-level, not store-level: sysconfig.Store is {Pool, enc} and
+// deliberately holds no registry, while Handler already carries
+// CacheReg. Adding a registry to the Store to move this earlier would
+// widen the store's dependencies for one caller.
+//
+// Skipping the call does not corrupt anything — the cache is a one-entry
+// LRU and the stale ladder ages out — but until it aged out an operator
+// who added or removed a rung would watch their change appear to do
+// nothing, which is the same bug UpdatePublicMode's comment describes.
 func InvalidatePreviewLadder(ctx context.Context, registry *cache.Registry) {
 	if registry == nil {
 		return
