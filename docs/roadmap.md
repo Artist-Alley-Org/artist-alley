@@ -675,21 +675,22 @@ map to the milestones below.
 > (grounded in the code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered
 > backlog, not a promise of one release each.
 
-> **On the milestones past v0.6.0:** every open issue is assigned to a version in
-> **dependency order** — nothing sits in a milestone that depends on a later one. The
-> *sizes* are provisional: several later milestones hold more epics than a single release
-> has ever shipped, and each gets a scope-cut when it is actually planned (grounded in the
-> code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered backlog, not a
-> promise of one release each.
-
 - **v0.6.0 — scheduled-action engine + audit completion** (foundation slice,
   scope-cut 2026-07-21). The greenfield **scheduled-action engine** (#40 — embargo
   auto-lift, reveal-with-logging, the executor #44/#51/#52-retention all depend on),
   **audit-log completion** (#52 — retention + signed export; the core shipped with
   #425), and the visibility-cleanup tail (#451, #458, #460, #212) plus #431. Licensing
   (#27), observability (#53), storage tooling (#22) and the privacy switch (#426)
-  deferred to v0.7.0 — each is its own large build.
-- **v0.7.0 — Content config & Integrations** (#21 + external imports #55).
+  deferred out of v0.6.0 — each is its own large build. *(Their later homes have
+  since moved; see the release-train table above, which is authoritative.)*
+- **v0.7.0 — Operator config + browse polish.** *Corrected 2026-07-26.* This line
+  previously read "Content config & Integrations (#21 + external imports #55)",
+  which contradicted the rebalanced release train above and was the sole reason
+  **#21** (Phase 1.18 — Integrations) sat in v0.7.0 at all. **#21 moved to
+  v0.12.0** (Platform & extensibility — OAuth apps, webhooks and integrations are
+  extensibility surfaces) and **#22** (Phase 1.19 — Storage tooling) **to
+  v0.11.0**. Both are multi-release builds that were never sized for v0.7.0; they
+  inherited the milestone from this stale prose rather than from a decision.
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
   static binaries, Homebrew (#286).
 
