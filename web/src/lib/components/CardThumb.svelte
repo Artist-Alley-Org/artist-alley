@@ -58,8 +58,8 @@
      *  grid only — a contact sheet fills, a details view shows the whole
      *  work. This DELIBERATELY reverses slice 1's "letterbox, never crop"
      *  for that one mode: the inset matte ring left visible whitespace
-     *  inside every tile, which is what the ArtStation reference does not
-     *  have.
+     *  inside every tile, and a dense wall of art should butt edge to
+     *  edge rather than sit in a grid of individually-padded boxes.
      *
      *  Applies to the real image variant ONLY. The typed-doc card, icon
      *  placeholder and thumbhash placeholder are GENERATED, not artwork —
