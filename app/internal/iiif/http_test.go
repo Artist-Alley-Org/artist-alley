@@ -98,7 +98,7 @@ func defaultIIIFHandler(t *testing.T, asset iiif.IIIFAsset) *iiif.Handler {
 
 func TestInfoJSON_ServesExpectedShape(t *testing.T) {
 	h := defaultIIIFHandler(t, iiif.IIIFAsset{
-		FileHash: "abc", HasImage: true, PixelWidth: 6000, PixelHeight: 4000,
+		FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}, PixelWidth: 6000, PixelHeight: 4000,
 	})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
@@ -129,7 +129,7 @@ func TestInfoJSON_ServesExpectedShape(t *testing.T) {
 }
 
 func TestInfoJSON_404OnMissingAsset(t *testing.T) {
-	h := defaultIIIFHandler(t, iiif.IIIFAsset{FileHash: "abc", HasImage: true, PixelWidth: 100, PixelHeight: 100})
+	h := defaultIIIFHandler(t, iiif.IIIFAsset{FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}, PixelWidth: 100, PixelHeight: 100})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest("GET",
@@ -150,7 +150,7 @@ func TestInfoJSON_BadID_400(t *testing.T) {
 }
 
 func TestInfoJSON_AssetWithNoPixelInfo_404(t *testing.T) {
-	h := defaultIIIFHandler(t, iiif.IIIFAsset{FileHash: "abc", HasImage: true})
+	h := defaultIIIFHandler(t, iiif.IIIFAsset{FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest("GET",
@@ -162,7 +162,7 @@ func TestInfoJSON_AssetWithNoPixelInfo_404(t *testing.T) {
 
 func TestServeImage_HappyPath(t *testing.T) {
 	h := defaultIIIFHandler(t, iiif.IIIFAsset{
-		FileHash: "abc", HasImage: true, PixelWidth: 6000, PixelHeight: 4000,
+		FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}, PixelWidth: 6000, PixelHeight: 4000,
 	})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
@@ -181,7 +181,7 @@ func TestServeImage_HappyPath(t *testing.T) {
 
 func TestServeImage_SizeNotAdvertised_501(t *testing.T) {
 	h := defaultIIIFHandler(t, iiif.IIIFAsset{
-		FileHash: "abc", HasImage: true, PixelWidth: 6000, PixelHeight: 4000,
+		FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}, PixelWidth: 6000, PixelHeight: 4000,
 	})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
@@ -194,7 +194,7 @@ func TestServeImage_SizeNotAdvertised_501(t *testing.T) {
 
 func TestServeImage_BadRotation_400(t *testing.T) {
 	h := defaultIIIFHandler(t, iiif.IIIFAsset{
-		FileHash: "abc", HasImage: true, PixelWidth: 1000, PixelHeight: 1000,
+		FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}, PixelWidth: 1000, PixelHeight: 1000,
 	})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
@@ -207,7 +207,7 @@ func TestServeImage_BadRotation_400(t *testing.T) {
 
 func TestServeImage_ForwardedProtoHostHonored(t *testing.T) {
 	h := defaultIIIFHandler(t, iiif.IIIFAsset{
-		FileHash: "abc", HasImage: true, PixelWidth: 1000, PixelHeight: 1000,
+		FileHash: "abc", VariantKeys: []string{"col", "preview", "screen", "hires"}, PixelWidth: 1000, PixelHeight: 1000,
 	})
 	router := newRouterFor(t, h)
 	rr := httptest.NewRecorder()
