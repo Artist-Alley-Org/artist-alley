@@ -8466,9 +8466,8 @@ paths:
       operationId: getPublicPreviewLadder
       summary: Read the configured preview variant ladder
       description: |
-        Unauthenticated read of the rungs the operator has configured —
-        the key, fit and longest-edge of every preview variant this
-        install generates.
+        The rungs the operator has configured — the key, fit and
+        longest-edge of every preview variant this install generates.
 
         This is the companion to `ladder_available` (#591). That flag
         says a given asset HAS the whole ladder; this says what the
@@ -8479,11 +8478,30 @@ paths:
         the assumption the flag exists to remove — an install that tuned
         its ladder would serve 404s.
 
-        Unauthenticated because it describes the install's image
-        pipeline, not its content: the same reasoning as `/appearance`.
-        It reveals no asset, no user and no access decision, and the
-        boot path needs it before sign-in.
+        GOVERNED BY PUBLIC MODE (#445), like `/assets` and
+        `/collections`: anonymous on a public install, **401 on a private
+        one**. It is NOT open to anonymous callers unconditionally, and
+        it is deliberately NOT excused the way `/appearance` is. The
+        difference is what each endpoint is for — fonts render the login
+        card, so an install that refused them anonymously could not draw
+        its own sign-in page, whereas nothing before sign-in needs image
+        rungs. The first consumer is the browse grid, which on a private
+        install is already behind auth. So this endpoint follows the
+        content it describes rather than being treated as boot-critical
+        when it is not.
+
+        The registration and the full reasoning live in
+        `auth.PublicSurfaceRoutes` — that table, not this description, is
+        what the gate actually reads.
+
+        What it exposes on a PUBLIC install is the install's own
+        image-pipeline configuration: no asset, no user, no access
+        decision.
       tags: [system]
+      # Governed by public mode, exactly like listAssets / listCollections
+      # above. Documentary only — auth.PublicSurfaceRoutes enforces the
+      # gate, not this block, and on a private install this endpoint
+      # returns 401. Do not read `security: []` here as "ungated".
       security: []
       responses:
         "200":
