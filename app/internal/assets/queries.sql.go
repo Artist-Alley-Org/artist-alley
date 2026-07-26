@@ -508,7 +508,12 @@ SELECT
     a.team_id,
     a.title,
     a.file_hash,
-    a.has_image,
+    -- file_extension, not has_image (#579). has_image is DEFAULT false
+    -- with no writer, so the MimeType hint it fed was never set for any
+    -- asset and the AI handler never learned an asset was an image. The
+    -- extension is real data and yields a real MIME rather than a
+    -- wildcard.
+    a.file_extension,
     COALESCE(
         (SELECT json_agg(json_build_object('tag', t.tag, 'source', t.source))
            FROM asset_tag t
@@ -526,7 +531,7 @@ type GetAssetForAIBridgeRow struct {
 	TeamID           pgtype.UUID
 	Title            string
 	FileHash         *string
-	HasImage         bool
+	FileExtension    *string
 	ExistingTagsJson string
 }
 
@@ -556,7 +561,7 @@ func (q *Queries) GetAssetForAIBridge(ctx context.Context, id pgtype.UUID) (GetA
 		&i.TeamID,
 		&i.Title,
 		&i.FileHash,
-		&i.HasImage,
+		&i.FileExtension,
 		&i.ExistingTagsJson,
 	)
 	return i, err

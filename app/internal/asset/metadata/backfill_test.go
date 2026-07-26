@@ -290,15 +290,17 @@ func TestBackfillJob_IncludeNonImageOpensPDFs(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 
-	// Seed two assets, flip one to has_image=false (representing a
-	// PDF or other paginated non-image type).
-	a1 := seedAsset(t, pool) // stays has_image=true
-	a2 := seedAsset(t, pool) // becomes has_image=false
+	// Seed two assets and turn one into a PDF — a real paginated
+	// non-image type. Eligibility is decided by the file EXTENSION now
+	// (#579), so the population is widened by IncludeNonImage rather
+	// than by a column nothing writes.
+	a1 := seedAsset(t, pool) // jpg — EXIF-extractable, in by default
+	a2 := seedAsset(t, pool) // becomes pdf — out unless IncludeNonImage
 	if _, err := pool.Exec(ctx,
-		`UPDATE assets SET has_image = false, file_extension = 'pdf' WHERE id = $1`,
+		`UPDATE assets SET file_extension = 'pdf' WHERE id = $1`,
 		a2,
 	); err != nil {
-		t.Fatalf("flip has_image: %v", err)
+		t.Fatalf("make pdf: %v", err)
 	}
 
 	// Default scope (IncludeNonImage=false) excludes a2.
