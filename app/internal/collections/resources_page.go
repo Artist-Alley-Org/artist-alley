@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -44,6 +45,9 @@ type ListCollectionResourcesPageGatedParams struct {
 	CursorSortOrder *int32
 	CursorAddedAt   pgtype.Timestamptz
 	RowLimit        int32
+	// Ladder is the operator's CONFIGURED preview variant keys (#591).
+	// Empty means "unknown" and resolves to ladder_available = false.
+	Ladder []string
 }
 
 // ListCollectionResourcesPageGatedRow is a contents row plus the derived
@@ -51,6 +55,10 @@ type ListCollectionResourcesPageGatedParams struct {
 type ListCollectionResourcesPageGatedRow struct {
 	ListCollectionResourcesPageRow
 	PreviewAvailable bool
+	// LadderAvailable: every CONFIGURED rung exists AND the caller
+	// passes the content plane (#591). Same 0064 contract as
+	// PreviewAvailable, from the same readability decision.
+	LadderAvailable bool
 }
 
 // ListCollectionResourcesPageGated runs the contents query for one caller.
@@ -69,6 +77,7 @@ func ListCollectionResourcesPageGated(
 		p.CursorAddedAt,   // $3
 		p.RowLimit,        // $4
 		caller.UserRef,    // $5 — team-membership probe; anon = ref 0, no match
+		p.Ladder,          // $6 — configured preview ladder (#591)
 	}
 
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
@@ -91,6 +100,7 @@ func ListCollectionResourcesPageGated(
        (a.file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
+       ` + sysconfig.LadderSatisfiedSQL("a.file_hash", "$6") + ` AS has_full_ladder,
        (a.team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
              WHERE tm.team_id = a.team_id AND tm.user_ref = $5::BIGINT)) AS caller_is_team_member
@@ -119,6 +129,7 @@ LIMIT $4::INTEGER`
 			sensitivity        string
 			ownerUserRef       *int64
 			hasColVariant      bool
+			hasFullLadder      bool
 			callerIsTeamMember bool
 		)
 		if err := rows.Scan(
@@ -127,7 +138,7 @@ LIMIT $4::INTEGER`
 			&i.Title, &i.AssetType, &i.Status, &i.FileHash,
 			&i.FileExtension, &i.Thumbhash,
 			&i.AssetCreatedAt,
-			&sensitivity, &ownerUserRef, &hasColVariant, &callerIsTeamMember,
+			&sensitivity, &ownerUserRef, &hasColVariant, &hasFullLadder, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
@@ -135,6 +146,7 @@ LIMIT $4::INTEGER`
 		out = append(out, ListCollectionResourcesPageGatedRow{
 			ListCollectionResourcesPageRow: i,
 			PreviewAvailable:               hasColVariant && readable,
+			LadderAvailable:                hasFullLadder && readable,
 		})
 	}
 	if err := rows.Err(); err != nil {

@@ -598,6 +598,39 @@ func (h *Handler) UpdateAppearanceConfig(
 	return openapi.UpdateAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
 }
 
+// GetPublicPreviewLadder is the unauthenticated read of the configured
+// preview rungs (#591).
+//
+// It is the companion to the per-asset `ladder_available` flag: that
+// says an asset HAS the whole ladder, this says what the ladder IS. A
+// client needs both to build a responsive srcset, and without this it
+// would have to hardcode the four default keys — the exact assumption
+// the flag exists to remove.
+func (h *Handler) GetPublicPreviewLadder(
+	ctx context.Context,
+	_ openapi.GetPublicPreviewLadderRequestObject,
+) (openapi.GetPublicPreviewLadderResponseObject, error) {
+	cfg, err := h.Store.GetPreviews(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get preview ladder: %w", err)
+	}
+	rungs := make([]openapi.PreviewLadderRung, 0, len(cfg.Variants))
+	for _, v := range cfg.Variants {
+		r := openapi.PreviewLadderRung{
+			Key:    v.Key,
+			Fit:    openapi.PreviewLadderRungFit(v.Fit),
+			MaxDim: int(v.MaxDim),
+		}
+		// Quality is deliberately NOT exposed: it is an encoder knob with
+		// no client-side use, and every field published here becomes a
+		// contract to keep.
+		f := openapi.PreviewLadderRungFormat(v.Format)
+		r.Format = &f
+		rungs = append(rungs, r)
+	}
+	return openapi.GetPublicPreviewLadder200JSONResponse{Variants: rungs}, nil
+}
+
 // GetPublicAppearance is the unauthenticated read used by the frontend
 // to pick which fonts to load before the user has signed in.
 func (h *Handler) GetPublicAppearance(

@@ -129,6 +129,11 @@ type Handler struct {
 	// defaults.
 	SysConfig *sysconfig.Store
 
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). nil-safe: nil yields no ladder, so
+	// ladder_available is false and clients stay on the `col` rung.
+	previewLadder sysconfig.PreviewLadderReader
+
 	// Audit records admin lifecycle events (soft_deleted currently;
 	// restored fires from the softdelete.Service directly). Nil-safe.
 	Audit *audit.Recorder
@@ -215,6 +220,20 @@ func (h *Handler) SetVisualEmbedDispatcher(d VisualEmbedDispatcher) { h.visualEm
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
+
+// ladder returns the configured preview variant keys, or nil when the
+// reader is not wired. nil is the conservative answer: it makes
+// ladder_available false, so a client falls back to the single `col`
+// rung rather than requesting rungs whose existence nobody vouched for.
+func (h *Handler) ladder(ctx context.Context) []string {
+	if h.previewLadder == nil {
+		return nil
+	}
+	return h.previewLadder(ctx)
+}
+
 func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry, sysCfg *sysconfig.Store) *Handler {
 	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg}
 	if registry != nil {
@@ -815,14 +834,20 @@ func (h *Handler) GetAsset(
 		return nil, fmt.Errorf("assets: content check: %w", err)
 	}
 	if readable && row.FileHash != nil && *row.FileHash != "" {
-		var hasCol bool
+		// Both flags in one round trip. ladder_available is computed
+		// against the CONFIGURED ladder (#591), never a hardcoded rung
+		// list — an operator who drops a rung must move this flag, not
+		// silently invalidate it.
+		var hasCol, hasLadder bool
 		if err := h.Pool.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col')`,
-			*row.FileHash,
-		).Scan(&hasCol); err != nil {
-			return nil, fmt.Errorf("assets: col variant check: %w", err)
+			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col'),
+			        `+sysconfig.LadderSatisfiedSQL("$1", "$2"),
+			*row.FileHash, h.ladder(ctx),
+		).Scan(&hasCol, &hasLadder); err != nil {
+			return nil, fmt.Errorf("assets: variant check: %w", err)
 		}
 		out.PreviewAvailable = hasCol
+		out.LadderAvailable = hasLadder
 	}
 	return openapi.GetAsset200JSONResponse(out), nil
 }
@@ -1191,6 +1216,7 @@ func (h *Handler) ListAssets(
 			CursorCreatedAt: cursorTs,
 			CursorID:        cursorID,
 			RowLimit:        fetch,
+			Ladder:          h.ladder(ctx),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("assets: list: %w", err)
@@ -1205,6 +1231,7 @@ func (h *Handler) ListAssets(
 			}
 			a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
 			a.PreviewAvailable = r.PreviewAvailable
+			a.LadderAvailable = r.LadderAvailable
 			// Surface soft-delete state so the admin trash view
 			// (include_deleted=true) can identify + label deleted rows.
 			if r.DeletedAt.Valid {

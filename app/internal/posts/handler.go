@@ -53,6 +53,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -120,6 +121,17 @@ type Handler struct {
 	activities *activities.Writer
 	baseURLFn  func(ctx context.Context) string
 
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). Feeds member.asset.ladder_available so the
+	// browse grid can build a responsive srcset instead of serving one
+	// 320px square at every viewport.
+	//
+	// nil-safe, and nil means "no ladder" — ladder_available comes back
+	// false and the client keeps using the single `col` rung it already
+	// knows exists. Tests that don't wire it get the conservative
+	// answer rather than a panic or a wrong true.
+	previewLadder sysconfig.PreviewLadderReader
+
 	// Audit records admin lifecycle events (soft_deleted; restore
 	// fires from softdelete.Service directly). Nil-safe.
 	Audit *audit.Recorder
@@ -148,6 +160,9 @@ type followChecker interface {
 // construction (same pattern users.Handler uses for the audit
 // recorder + auth.Handler uses for the provider registry).
 func (h *Handler) SetFollowChecker(fc followChecker) { h.follows = fc }
+
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
 
 // SetActivitiesWriter installs the federation activity-ledger
 // writer + baseURL resolver per ADR 0044. Post-construction
@@ -1384,35 +1399,53 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		ids = append(ids, id.String())
 	}
 
+	// The configured ladder travels in as a PARAMETER rather than being
+	// baked into the SQL (#591). Read once for the whole batch — a cached
+	// in-process lookup, not a config round-trip per row.
+	var ladder []string
+	if h.previewLadder != nil {
+		ladder = h.previewLadder(ctx)
+	}
+
 	rows, err := h.Pool.Query(ctx, `
 		SELECT a.id, a.sensitivity, a.owner_user_ref,
 		       (a.file_hash IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
+		       `+sysconfig.LadderSatisfiedSQL("a.file_hash", "$3")+` AS has_ladder,
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
 		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member
 		FROM assets a
 		WHERE a.id = ANY($1::uuid[])`,
-		ids, caller.UserRef)
+		ids, caller.UserRef, ladder)
 	if err != nil {
 		return fmt.Errorf("posts: preview enrich: %w", err)
 	}
 	defer rows.Close()
 
 	avail := make(map[uuid.UUID]bool, len(idSet))
+	ladderOK := make(map[uuid.UUID]bool, len(idSet))
 	for rows.Next() {
 		var (
-			id       pgtype.UUID
-			sens     string
-			owner    *int64
-			hasCol   bool
-			isMember bool
+			id        pgtype.UUID
+			sens      string
+			owner     *int64
+			hasCol    bool
+			hasLadder bool
+			isMember  bool
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &isMember); err != nil {
+		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
-		avail[uuid.UUID(id.Bytes)] = hasCol && visibility.ContentReadable(sens, owner, caller, caps, isMember)
+		// ONE readability decision feeds BOTH flags. Deriving
+		// ladder_available from anything other than the same
+		// ContentReadable call that gates preview_available would let the
+		// two disagree on a restricted asset — and a true ladder flag on
+		// gated bytes is a 403 the client walks straight into.
+		readable := visibility.ContentReadable(sens, owner, caller, caps, isMember)
+		avail[uuid.UUID(id.Bytes)] = hasCol && readable
+		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && readable
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("posts: preview enrich rows: %w", err)
@@ -1426,6 +1459,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		copy(fresh, p.Members) // detaches from the cached backing array
 		for i := range fresh {
 			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
+			fresh[i].Asset.LadderAvailable = ladderOK[uuid.UUID(fresh[i].Asset.Id)]
 		}
 		p.Members = fresh
 	}

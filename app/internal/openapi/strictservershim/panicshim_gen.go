@@ -1240,6 +1240,11 @@ func (*PanicShim) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteb
 	panic("PanicShim: CreatePostWhiteboard called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetPublicPreviewLadder panics by default; test shims override.
+func (*PanicShim) GetPublicPreviewLadder(context.Context, openapi.GetPublicPreviewLadderRequestObject) (openapi.GetPublicPreviewLadderResponseObject, error) {
+	panic("PanicShim: GetPublicPreviewLadder called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // CompleteSetup panics by default; test shims override.
 func (*PanicShim) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("PanicShim: CompleteSetup called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

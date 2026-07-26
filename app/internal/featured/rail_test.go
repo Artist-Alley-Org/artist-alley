@@ -32,6 +32,11 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
+// defaultLadder is the stock preview ladder, passed explicitly by these
+// tests because ListPublicRail takes the CONFIGURED rungs as a
+// parameter rather than assuming them (#591).
+var defaultLadder = []string{"col", "preview", "screen", "hires"}
+
 func railPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	pwd := os.Getenv("AA_DB_PASSWORD")
@@ -116,7 +121,7 @@ func railCollection(t *testing.T, pool *pgxpool.Pool, name, vis string) uuid.UUI
 
 func railTitles(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller) map[string]bool {
 	t.Helper()
-	rows, err := ListPublicRail(context.Background(), pool, caller, 500)
+	rows, err := ListPublicRail(context.Background(), pool, caller, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -179,7 +184,7 @@ func TestRail_InvisibleSubjectProducesNoRowAtAll(t *testing.T) {
 	privateColl := railCollection(t, pool, "rail-only-private", "private")
 	place(t, pool, "collection", privateColl, "public", 0)
 
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), 500)
+	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -240,7 +245,7 @@ func TestRail_DanglingPlacementIsDropped(t *testing.T) {
 	orphan := uuid.New() // never inserted into either subject table
 	place(t, pool, "collection", orphan, "public", 0)
 
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), 500)
+	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -263,7 +268,7 @@ func TestRail_EmbargoAssetShowsTitleOnly(t *testing.T) {
 	place(t, pool, "asset", embargo, "public", 0)
 
 	stranger := int64(4170099)
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(&stranger), 500)
+	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(&stranger), 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -371,7 +376,7 @@ func railPostInCollection(t *testing.T, pool *pgxpool.Pool, coll, cover uuid.UUI
 // railRowFor finds the placement row for one subject.
 func railRowFor(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller, subject uuid.UUID) (RailRow, bool) {
 	t.Helper()
-	rows, err := ListPublicRail(context.Background(), pool, caller, 500)
+	rows, err := ListPublicRail(context.Background(), pool, caller, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
