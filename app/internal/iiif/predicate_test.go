@@ -101,6 +101,23 @@ func ensureStorageObject(t *testing.T, pool *pgxpool.Pool, hash string) {
 		 ON CONFLICT (hash) DO NOTHING`, hash); err != nil {
 		t.Fatalf("ensure storage object: %v", err)
 	}
+	// Stored variants are what makes an asset servable (#614). These
+	// fixtures used to assert `has_image = true` instead — a value the
+	// production upload path never writes, which is how the IIIF surface
+	// stayed green here while returning 404 for every real asset.
+	//
+	// The key MUST match what fixedVariants advertises: servability is
+	// the intersection of stored and CONFIGURED, so seeding rungs this
+	// install does not configure would leave the asset correctly
+	// unservable and the tests would fail for the right reason at the
+	// wrong time.
+	for _, key := range fixedVariantKeys {
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type)
+			 VALUES ($1,$2,1,'image/webp') ON CONFLICT DO NOTHING`, hash, key); err != nil {
+			t.Fatalf("ensure storage variant %q: %v", key, err)
+		}
+	}
 }
 
 func seedIIIFAsset(t *testing.T, pool *pgxpool.Pool, status, sensitivity, processing string, deleted bool) uuid.UUID {
@@ -114,8 +131,11 @@ func seedIIIFAsset(t *testing.T, pool *pgxpool.Pool, status, sensitivity, proces
 		del = "NOW()"
 	}
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, has_image, file_hash, deleted_at)
-		 VALUES ($1,$2,4600001,(SELECT MIN(ref) FROM asset_types),$3,$4,$5,true,$6, `+del+`)`,
+		// has_image is deliberately NOT set — it takes its DEFAULT false,
+		// exactly as every asset in production does. If IIIF ever gates on
+		// it again, these tests fail (#614).
+		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, file_hash, deleted_at)
+		 VALUES ($1,$2,4600001,(SELECT MIN(ref) FROM asset_types),$3,$4,$5,$6, `+del+`)`,
 		id, "iiif-vis", status, sensitivity, processing, hash)
 	if err != nil {
 		t.Fatalf("seed asset: %v", err)
@@ -159,8 +179,11 @@ func infoStatus(t *testing.T, pool *pgxpool.Pool, id uuid.UUID, identity *auth.I
 }
 
 // fixedVariants advertises one size so a resolvable asset yields 200
-// rather than a variant-related error.
+// rather than a variant-related error. fixedVariantKeys is the same set,
+// used by the seeder so stored and configured actually intersect (#614).
 type fixedVariants struct{}
+
+var fixedVariantKeys = []string{"full"}
 
 func (fixedVariants) ListIIIFVariants(context.Context) ([]iiif.VariantSize, error) {
 	return []iiif.VariantSize{{Key: "full", MaxDim: 1000}}, nil

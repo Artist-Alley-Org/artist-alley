@@ -23,7 +23,7 @@ import (
 )
 
 // AssetLookup resolves an asset id to the bits the IIIF surface
-// needs (file_hash + has_image + EXIF pixel dimensions). Tests
+// needs (file_hash + stored variant keys + EXIF pixel dimensions). Tests
 // inject in-memory stubs; boot wires against the live DB pool
 // via NewLookupFromPool.
 type AssetLookup interface {
@@ -45,11 +45,64 @@ type VariantStreamer interface {
 
 // IIIFAsset is the small projection of an asset row the IIIF
 // handler reads.
+//
+// HasImage IS DELIBERATELY ABSENT (#614). IIIF used to gate both
+// endpoints on assets.has_image, a column that is DEFAULT false NOT NULL
+// with no writer anywhere in the tree — so the gate was true for every
+// asset ever created and the whole Image API returned 404 for a full
+// release without one report, because nothing exercised it. Removing the
+// field from this projection is the fix AND the guard: a future change
+// cannot re-consult the column here without first re-adding it, which is
+// a visible edit rather than a silent condition.
+//
+// What replaces it is VariantKeys — what is actually on disk — because
+// "can IIIF serve this?" is a question about stored rasters, and that is
+// already computed correctly elsewhere (featured/rail.go, #610's
+// ladder_available). A denormalised boolean was the wrong shape for it
+// even when it had a writer.
 type IIIFAsset struct {
-	FileHash    string
-	HasImage    bool
+	FileHash string
+	// VariantKeys are the storage variant keys present for FileHash.
+	// The handler intersects these with the operator's CONFIGURED
+	// variants to decide servability — see servableVariant.
+	VariantKeys []string
 	PixelWidth  int
 	PixelHeight int
+}
+
+// servableVariant reports whether ANY configured IIIF variant is
+// actually stored for this asset.
+//
+// ANY, not ALL, and the difference matters. Resolve serves `region=full`
+// from the contain rungs and `region=square` from a cover rung, picking
+// per request — so an asset missing one rung is still servable at the
+// others, and requiring the complete ladder (#610's LadderSatisfiedSQL)
+// would 404 the whole asset over a single missing size. The per-request
+// misses are already handled downstream and more precisely: Resolve
+// returns 501 for a size this install cannot produce, and OpenVariant
+// 404s a variant that is configured but not yet written.
+//
+// Intersected with the CONFIGURED list rather than "any row exists"
+// because Resolve only ever picks from the configured variants — a
+// stale variant left behind by a config change is bytes on disk that no
+// request can reach, and must not make the asset look servable.
+func servableVariant(stored []string, configured []VariantSize) bool {
+	if len(stored) == 0 || len(configured) == 0 {
+		return false
+	}
+	have := make(map[string]struct{}, len(stored))
+	for _, k := range stored {
+		have[k] = struct{}{}
+	}
+	for _, v := range configured {
+		if v.MaxDim <= 0 {
+			continue
+		}
+		if _, ok := have[v.Key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrAssetNotFound is the typed not-found from AssetLookup. The
@@ -115,14 +168,17 @@ func (h *Handler) serveInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	if !asset.HasImage || asset.FileHash == "" {
-		writeJSONError(w, http.StatusNotFound, "asset has no image to serve")
-		return
-	}
+	// Variants are loaded BEFORE the servability gate, because the gate
+	// is now a question about them (#614): "is any configured variant
+	// stored for this asset?" rather than "is a column true?".
 	variants, err := h.Variants.ListIIIFVariants(ctx)
 	if err != nil {
 		h.warn(ctx, "iiif.info.variants_error", "err", err.Error())
 		writeJSONError(w, http.StatusInternalServerError, "variants unavailable")
+		return
+	}
+	if asset.FileHash == "" || !servableVariant(asset.VariantKeys, variants) {
+		writeJSONError(w, http.StatusNotFound, "asset has no image to serve")
 		return
 	}
 	infoURL := publicBaseURL(r) + "/iiif/3/" + idStr
@@ -195,14 +251,18 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "asset not found")
 		return
 	}
-	if !asset.HasImage || asset.FileHash == "" {
-		writeJSONError(w, http.StatusNotFound, "asset has no image to serve")
-		return
-	}
 	variants, err := h.Variants.ListIIIFVariants(ctx)
 	if err != nil {
 		h.warn(ctx, "iiif.image.variants_error", "err", err.Error())
 		writeJSONError(w, http.StatusInternalServerError, "variants unavailable")
+		return
+	}
+	// Servability gate (#614) — see servableVariant. Kept BELOW the
+	// content gate above so the ordering of the two planes is unchanged:
+	// a caller who may not read the content still gets the same 404 it
+	// always did, and never learns whether rasters exist.
+	if asset.FileHash == "" || !servableVariant(asset.VariantKeys, variants) {
+		writeJSONError(w, http.StatusNotFound, "asset has no image to serve")
 		return
 	}
 	match, err := Resolve(req, asset.PixelWidth, asset.PixelHeight, variants)
@@ -332,7 +392,13 @@ func (l PoolLookup) GetIIIFAsset(ctx context.Context, id uuid.UUID, caller visib
 	visFrag, visArgs := pred.ToSQL("a", 1)
 	q := `
 		SELECT a.file_hash,
-		       a.has_image,
+		       -- What is actually stored, not a column claiming what
+		       -- ought to be (#614). One subquery in the same round
+		       -- trip; the handler intersects it with the configured
+		       -- variant list.
+		       COALESCE(ARRAY(SELECT sv.variant_key
+		                        FROM storage_variants sv
+		                       WHERE sv.object_hash = a.file_hash), '{}')::text[] AS variant_keys,
 		       COALESCE(w.value_num, 0)::INT AS pixel_width,
 		       COALESCE(h.value_num, 0)::INT AS pixel_height
 		  FROM assets a
@@ -346,7 +412,7 @@ func (l PoolLookup) GetIIIFAsset(ctx context.Context, id uuid.UUID, caller visib
 	var out IIIFAsset
 	var fileHash *string
 	args := append([]any{id}, visArgs...)
-	err = l.Pool.QueryRow(ctx, q, args...).Scan(&fileHash, &out.HasImage, &out.PixelWidth, &out.PixelHeight)
+	err = l.Pool.QueryRow(ctx, q, args...).Scan(&fileHash, &out.VariantKeys, &out.PixelWidth, &out.PixelHeight)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return IIIFAsset{}, ErrAssetNotFound
