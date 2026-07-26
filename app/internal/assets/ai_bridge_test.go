@@ -73,7 +73,7 @@ func seedBridgeAsset(t *testing.T, pool *pgxpool.Pool, ownerRef int64, title, ha
 	}
 	// asset_type is a FK to asset_types(ref); ref=1 is the seeded
 	// "Image" type. has_image=true so the bridge's MimeType derivation
-	// returns "image/*".
+	// returns "image/png".
 	_, err = pool.Exec(ctx, `
 		INSERT INTO assets (
 			id, title, asset_type, owner_user_ref, status,
@@ -168,8 +168,8 @@ func TestGetAssetForAI_HappyPath(t *testing.T) {
 	if got.ContentHash != hash {
 		t.Errorf("content hash = %q, want %q", got.ContentHash, hash)
 	}
-	if got.MimeType != "image/*" {
-		t.Errorf("mime = %q, want image/*", got.MimeType)
+	if got.MimeType != "image/png" {
+		t.Errorf("mime = %q, want image/png", got.MimeType)
 	}
 
 	// Two tags total; both manual + import — no AI tags yet.

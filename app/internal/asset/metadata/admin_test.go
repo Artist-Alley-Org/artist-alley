@@ -73,12 +73,21 @@ func seedAsset(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	if err != nil {
 		t.Fatalf("seed storage_object: %v", err)
 	}
+	// has_image is deliberately NOT set — it takes its DEFAULT false,
+	// exactly as every asset the upload path creates does (#579).
+	//
+	// It used to be stamped `true` here, and that single word is why the
+	// EXIF backfill could ship processing zero assets with a green
+	// suite: every test in this package asserted a row state that no
+	// production code can produce. Eligibility is decided by
+	// file_extension now, which is real data, so leaving the column at
+	// its default costs nothing and keeps these tests honest.
 	_, err = pool.Exec(ctx, `
 		INSERT INTO assets (
 			id, title, asset_type, status,
 			file_hash, file_extension, file_size_bytes,
-			sensitivity, has_image
-		) VALUES ($1, $2, 1, 'active', $3, 'jpg', 1024, 'public', true)
+			sensitivity
+		) VALUES ($1, $2, 1, 'active', $3, 'jpg', 1024, 'public')
 	`, id, "metadata-admin-test-"+hash[:8], hash)
 	if err != nil {
 		t.Fatalf("seed asset: %v", err)
