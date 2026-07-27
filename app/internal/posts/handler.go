@@ -1417,6 +1417,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
 		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member,
+		       a.thumbhash,
 		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
 		WHERE a.id = ANY($1::uuid[])`,
@@ -1435,6 +1436,19 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// computed here. Unlike those, dimensions are not per-caller; they
 	// are just metadata about a row the caller can already see.
 	dims := make(map[uuid.UUID][2]int32, len(idSet))
+	// Blur-up placeholder per member asset (#648). Rides this pass for
+	// the SAME reason as dims, and one more: thumbhash is written
+	// ASYNCHRONOUSLY. It is computed synchronously at upload only when
+	// the image decodes there; every other case — a decode that failed,
+	// an asset that predates the column — is backfilled later by the
+	// raster worker (preview.backfillThumbhash → SetAssetThumbhashIfMissing),
+	// which has no reason to invalidate a post cache. On the cached
+	// ListPostAssets row a post read before its raster job finished would
+	// pin thumbhash=NULL until an unrelated post write evicted it, which
+	// is the same "server has it, client can't see it" failure this issue
+	// exists to close. Read per request instead; it costs one more column
+	// on a query that already runs.
+	hashes := make(map[uuid.UUID]string, len(idSet))
 	for rows.Next() {
 		var (
 			id        pgtype.UUID
@@ -1443,14 +1457,21 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			hasCol    bool
 			hasLadder bool
 			isMember  bool
+			thumb     []byte
 			pxW       *int32
 			pxH       *int32
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember, &pxW, &pxH); err != nil {
+		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember, &thumb, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
 		if pixeldims.Sane(pxW, pxH) {
 			dims[uuid.UUID(id.Bytes)] = [2]int32{*pxW, *pxH}
+		}
+		if len(thumb) > 0 {
+			// Base64 on the wire, matching assets.rowToAPI — the
+			// frontend decoder takes either form and this is the one
+			// every other surface already ships.
+			hashes[uuid.UUID(id.Bytes)] = base64.StdEncoding.EncodeToString(thumb)
 		}
 		// ONE readability decision feeds BOTH flags. Deriving
 		// ladder_available from anything other than the same
@@ -1478,6 +1499,11 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			if wh, ok := dims[uuid.UUID(fresh[i].Asset.Id)]; ok {
 				w, h := wh[0], wh[1]
 				fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = &w, &h
+			}
+			fresh[i].Asset.Thumbhash = nil
+			if th, ok := hashes[uuid.UUID(fresh[i].Asset.Id)]; ok {
+				v := th
+				fresh[i].Asset.Thumbhash = &v
 			}
 		}
 		p.Members = fresh
