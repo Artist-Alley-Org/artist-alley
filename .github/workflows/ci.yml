@@ -389,9 +389,12 @@ jobs:
         # `docker network prune -f` went with it: same race (a peer's
         # network is young and may momentarily have no running container
         # attached), and `down` already removes this run's own network.
-        run: |
-          docker compose down -v --remove-orphans || true
-          docker image prune -f || true  # dangling only (shared daemon: never -a)
+        #
+        # The teardown itself lives in the composite action so all six
+        # cleanup sites stay identical (#599); it also reclaims the images
+        # compose builds for this project, which a bare `down` +
+        # `image prune -f` never could.
+        uses: ./.github/actions/compose-cleanup
 
       - name: Build and start the stack
         # --scale web=0 because the Vite dev container fails with
@@ -452,10 +455,10 @@ jobs:
         run: docker compose logs --tail=200
 
       - name: Stop the stack
+        # always(): a red run leaks exactly as much as a green one — both
+        # built aa-ci-<run>-app and aa-ci-<run>-web.
         if: always()
-        run: |
-          docker compose down -v --remove-orphans || true
-          docker image prune -f || true  # dangling only (shared daemon: never -a)
+        uses: ./.github/actions/compose-cleanup
 
   # ── Build the production image to confirm the multi-stage Dockerfile
   # still produces a clean amd64 artifact. Doesn't push anything —
@@ -539,3 +542,23 @@ jobs:
 
             echo "3D preview smoke OK: poster $(stat -c%s /tmp/poster.png) bytes"
           '
+
+      - name: Reclaim the loaded production image
+        # `load: true` above puts artist-alley:ci-<sha> into the shared
+        # daemon's image store, and this job had NO cleanup at all — so
+        # every push leaked one full release image (Go binary + Blender +
+        # GL libs, the largest single artifact CI produces). It is never
+        # dangling (unique per-sha tag), so `docker image prune -f` in the
+        # OTHER job could never have collected it either.
+        #
+        # Scope: the tag embeds this run's commit sha and no other
+        # workflow builds that tag — edge.yml / release.yml push straight
+        # from buildx without `load`, so they put nothing in the local
+        # store. Removal is by tag and without -f: if a concurrent job
+        # somehow holds the same image id under a different tag, this only
+        # untags. always() so a failed Blender smoke doesn't leak it.
+        if: always()
+        run: |
+          docker image rm "artist-alley:ci-${{ github.sha }}" || true
+          docker image prune -f || true  # dangling only (shared daemon: never -a)
+          docker builder prune -f --filter until=48h || true
