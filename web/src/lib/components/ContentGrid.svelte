@@ -92,9 +92,27 @@
 <style>
   /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
      the browser fits as many columns as it can. Same lever, same
-     token, no `column-count` to guess. */
+     token, no `column-count` to guess.
+   *
+   * A PLAIN LENGTH, deliberately — no `min(…, 100%)` wrapper like the
+   * one TileGrid uses. `column-width` accepts `<length> | auto` only;
+   * a percentage anywhere in the expression makes the whole `min()`
+   * invalid at computed-value time, the declaration falls back to
+   * `auto`, and `auto` with no `column-count` is ONE full-width
+   * column. That is #637 — five days of single-column masonry. The
+   * identical-looking idiom in TileGrid:46 is correct because it sits
+   * inside `minmax()` in grid track sizing, where percentages are
+   * valid; the difference is the property, not the expression.
+   *
+   * The wrapper isn't needed here anyway: the used column count is
+   * `max(1, floor((available + gap) / (column-width + gap)))` and the
+   * used column width is then derived from the available width, so a
+   * `column-width` wider than the viewport degrades to one column that
+   * FITS rather than overflowing. Grid needs the guard because a track
+   * cannot shrink below its `minmax()` floor; multicol has no such
+   * floor. */
   :global(.posts-masonry) {
-    column-width: min(var(--tile-min, 22rem), 100%);
+    column-width: var(--tile-min, 22rem);
     column-gap: 0.5rem;
   }
   /* feed is the honest floor of the same scale rather than a special
