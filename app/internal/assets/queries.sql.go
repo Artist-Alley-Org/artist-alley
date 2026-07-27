@@ -298,6 +298,12 @@ type GetAssetRow struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+// Pixel dimensions are deliberately NOT selected here (#640). sqlc types
+// a scalar subquery as NOT NULL — it has no way to infer otherwise — so
+// an asset with no recorded dimensions would scan NULL into an int32 and
+// fail at runtime on the detail endpoint. The projection therefore lives
+// in pixeldims.SelectColumnsSQL, spliced into the hand-built queries that
+// need it, and the detail path fetches it alongside its variant probe.
 func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, error) {
 	row := q.db.QueryRow(ctx, getAsset, id)
 	var i GetAssetRow

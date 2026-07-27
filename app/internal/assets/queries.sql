@@ -13,6 +13,12 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
           created_at, updated_at;
 
 -- name: GetAsset :one
+-- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
+-- a scalar subquery as NOT NULL — it has no way to infer otherwise — so
+-- an asset with no recorded dimensions would scan NULL into an int32 and
+-- fail at runtime on the detail endpoint. The projection therefore lives
+-- in pixeldims.SelectColumnsSQL, spliced into the hand-built queries that
+-- need it, and the detail path fetches it alongside its variant probe.
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,

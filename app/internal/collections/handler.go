@@ -891,6 +891,11 @@ func (h *Handler) ListCollectionResources(
 		item := resourceRowToAPI(r.ListCollectionResourcesPageRow)
 		item.PreviewAvailable = r.PreviewAvailable
 		item.LadderAvailable = r.LadderAvailable
+		// #640 — the member tile's aspect ratio. Same pair-or-neither
+		// contract as everywhere else; the gated row already dropped a
+		// half-populated pair.
+		item.PixelWidth = r.PixelWidth
+		item.PixelHeight = r.PixelHeight
 		items = append(items, item)
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time

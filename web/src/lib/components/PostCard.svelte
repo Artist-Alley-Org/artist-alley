@@ -86,6 +86,13 @@
   // column capped at the `measure` (see ContentGrid); every other mode
   // is a tile at the user's chosen rung.
   const coverLadderAvailable = $derived(!!coverAsset?.ladder_available);
+
+  // The cover's recorded dimensions (#640) — what lets a masonry tile
+  // reserve its height before the image loads. `?? null` because a post
+  // whose cover member is missing has no asset at all, which is the same
+  // answer as "no dimensions recorded".
+  const coverPixelWidth = $derived(coverAsset?.pixel_width ?? null);
+  const coverPixelHeight = $derived(coverAsset?.pixel_height ?? null);
   const sizesHint = $derived(feed ? 'min(100vw, 46rem)' : tileSizesLen);
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
@@ -182,6 +189,9 @@
     {hovering}
     {framed}
     fill={mode === 'grid'}
+    variableAspect={mode === 'masonry'}
+    pixelWidth={coverPixelWidth}
+    pixelHeight={coverPixelHeight}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
          fallback). Hover here drives CardThumb's sprite-scrub. -->
