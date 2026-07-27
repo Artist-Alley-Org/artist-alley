@@ -95,7 +95,7 @@ CREATE TABLE assets (
     geo_lat            DOUBLE PRECISION NULL,
     geo_long           DOUBLE PRECISION NULL,
     country            TEXT         NULL,
-    has_image          BOOLEAN      NOT NULL DEFAULT FALSE,
+    has_image          BOOLEAN      NOT NULL DEFAULT FALSE,  -- DROPPED 2026-07-26, see amendment below
     is_transcoding     BOOLEAN      NOT NULL DEFAULT FALSE,
     -- artist-alley additions:
     metadata           JSONB        NOT NULL DEFAULT '{}'::jsonb,  -- EXIF / extracted / custom fields
@@ -111,6 +111,44 @@ CREATE INDEX assets_status_idx      ON assets (status)         WHERE deleted_at 
 CREATE INDEX assets_file_hash_idx   ON assets (file_hash)      WHERE file_hash IS NOT NULL;
 CREATE INDEX assets_created_at_idx  ON assets (created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX assets_metadata_gin    ON assets USING gin (metadata);
+```
+
+> **Amendment — 2026-07-26: `has_image` dropped (#579, migration `00016`).**
+>
+> The column above was inherited from the upstream schema and declared here
+> without a writer ever being specified. **Nothing in the codebase ever wrote
+> it**, so it was `false` for every asset in every install — live, 1007 of 1007.
+> Four subsystems nonetheless *gated* on it, and each failed silently in the
+> direction that hides itself:
+>
+> - **IIIF** returned **404 for every asset**, on both the image and `info.json`
+>   endpoints, for a full release (#614). A 404 is also the correct answer for an
+>   asset with no image, so nothing looked wrong.
+> - The **EXIF metadata backfill** selected zero assets and reported success (#621).
+> - The **CLIP visual-embedding** chain was dead at three levels, including an
+>   admin gauge that reported "0 backlog" — indistinguishable from full
+>   coverage (#615).
+> - **Admin featured thumbnails** never rendered for asset subjects (#619).
+>
+> **The lesson worth keeping, beyond this column:** `has_image` conflated two
+> different questions — *"is this asset an image?"* (a property of its format)
+> and *"does a servable raster exist?"* (a property of stored variants). Its
+> consumers wanted one or the other, never the same one. Denormalising both into
+> a single boolean guaranteed that any writer would have been wrong for half its
+> readers. The replacements answer the question each caller actually asks:
+> `imagefmt.ExtractableImageExtensions` for extraction, `visualembed.IsImageExtension`
+> for CLIP, and live variant existence (`preview_available` / `ladder_available`,
+> ADR 0008) for servability.
+>
+> Two tests now assert the column's **absence** via `information_schema`, so
+> reintroducing it fails loudly rather than quietly restoring the option to gate
+> on it again.
+>
+> `is_transcoding`, on the following line, is **also** writerless today but has no
+> readers either — it causes no bug and may be intended for the video pipeline.
+> Deliberately retained; removing it is a product decision, not cleanup.
+
+```sql
 
 -- Tags as a join table (indexable, queryable; jsonb tags can't be
 -- filtered as cheaply at our expected scale).
