@@ -164,7 +164,7 @@ func (h *PDFHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.pdf.render_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-		} else if err := h.fanPosterToLadder(jobCtx, p.FileHash, posterPath); err != nil {
+		} else if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.pdf.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -306,11 +306,7 @@ func (h *PDFHandler) renderFirstPage(ctx context.Context, src, outPath string) e
 	return os.Rename(actual, outPath)
 }
 
-func (h *PDFHandler) fanPosterToLadder(ctx context.Context, hash, posterPath string) error {
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load preview config: %w", err)
-	}
+func (h *PDFHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("open poster: %w", err)
@@ -320,37 +316,13 @@ func (h *PDFHandler) fanPosterToLadder(ctx context.Context, hash, posterPath str
 	if err != nil {
 		return fmt.Errorf("decode poster: %w", err)
 	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		ctype, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.pdf.encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			return fmt.Errorf("backend put pdf variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: ctype,
-			Metadata:    []byte("{}"),
-		})
-	}
 	// Compile-time poke at image to keep the import-or-warn dance
 	// honest for future edits that touch the decode path.
 	var _ image.Image = src
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "pdf",
+	})
 }
 
 func (h *PDFHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta PDFMetadata) error {

@@ -4,7 +4,6 @@
 package preview
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -152,7 +151,7 @@ func (h *FontHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 		h.variantExists(ctx, p.FileHash, "screen") &&
 		h.variantExists(ctx, p.FileHash, "hires") {
 		result.Skipped = append(result.Skipped, "raster")
-	} else if err := h.fanCardToLadder(ctx, p.FileHash, cardImg); err != nil {
+	} else if err := h.fanCardToLadder(ctx, p.AssetID, p.FileHash, cardImg); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.fan_failed",
 			slog.String("err", err.Error()))
 	} else {
@@ -302,41 +301,14 @@ func drawFallbackText(img *image.RGBA, s string, x, y int) {
 	// overlay a "couldn't parse" note. Keep the backdrop dark.
 }
 
-// fanCardToLadder writes the rendered image through the standard
-// raster ladder (col / preview / screen / hires).
-func (h *FontHandler) fanCardToLadder(ctx context.Context, hash string, src image.Image) error {
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load preview config: %w", err)
-	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		ctype, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			return fmt.Errorf("backend put font variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: ctype,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+// fanCardToLadder writes the rendered specimen through the standard
+// raster ladder (col / preview / screen / hires) and stamps the
+// asset's thumbhash from it.
+func (h *FontHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, hash string, src image.Image) error {
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "font",
+	})
 }
 
 func (h *FontHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta FontMetadata) error {

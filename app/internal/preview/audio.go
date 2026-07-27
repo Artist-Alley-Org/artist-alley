@@ -283,6 +283,13 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 
 	// Cheap re-queue path: if every variant already exists, skip
 	// the (cheap) waveform render.
+	//
+	// Note this is the one preview handler whose re-queue never
+	// reaches fanToLadder, so it is also the one whose re-queue does
+	// NOT heal a missing thumbhash (#645). Healing existing assets is
+	// the thumbhash-backfill job's remit, not this short-circuit's —
+	// re-rendering a waveform on every requeue to recover a 30-byte
+	// hash would be the wrong trade.
 	if h.variantExists(jobCtx, p.FileHash, "col") &&
 		h.variantExists(jobCtx, p.FileHash, "preview") &&
 		h.variantExists(jobCtx, p.FileHash, "screen") &&
@@ -294,7 +301,7 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.waveform_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-		} else if err := h.fanWaveformToLadder(jobCtx, p.FileHash, wavePath); err != nil {
+		} else if err := h.fanWaveformToLadder(jobCtx, p.AssetID, p.FileHash, wavePath); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -627,14 +634,11 @@ func (h *AudioHandler) extractCover(ctx context.Context, src, hash string) error
 	return nil
 }
 
-// fanWaveformToLadder decodes the PNG once, then writes each
-// configured variant through the shared encoder so transparent
-// waveforms preserve alpha automatically.
-func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, hash, wavePath string) error {
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load preview config: %w", err)
-	}
+// fanWaveformToLadder decodes the PNG once, then hands it to the shared
+// ladder step, which writes each configured variant (alpha preserved —
+// the waveform renders white-on-transparent) and stamps the asset's
+// thumbhash.
+func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, assetID uuid.UUID, hash, wavePath string) error {
 	f, err := os.Open(wavePath)
 	if err != nil {
 		return fmt.Errorf("open wave: %w", err)
@@ -644,35 +648,10 @@ func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, hash, wavePath s
 	if err != nil {
 		return fmt.Errorf("decode wave: %w", err)
 	}
-
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		ctype, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			return fmt.Errorf("backend put waveform variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: ctype,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "audio",
+	})
 }
 
 // persistMetadata merges the probed audio metadata into the asset's

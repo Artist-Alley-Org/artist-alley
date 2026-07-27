@@ -150,7 +150,7 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 		result.Source = "imagemagick"
 	}
 
-	if err := h.fanPosterToLadder(jobCtx, p.FileHash, posterPath); err != nil {
+	if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.psd.fan_failed",
 			slog.String("err", err.Error()))
 	} else {
@@ -357,11 +357,7 @@ func (h *PSDHandler) stage(ctx context.Context, hash, ext string) (string, func(
 	return src, cleanup, nil
 }
 
-func (h *PSDHandler) fanPosterToLadder(ctx context.Context, hash, posterPath string) error {
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load preview config: %w", err)
-	}
+func (h *PSDHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("open poster: %w", err)
@@ -371,34 +367,10 @@ func (h *PSDHandler) fanPosterToLadder(ctx context.Context, hash, posterPath str
 	if err != nil {
 		return fmt.Errorf("decode poster: %w", err)
 	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		ctype, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.psd.encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			return fmt.Errorf("backend put psd variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: ctype,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "psd",
+	})
 }
 
 func (h *PSDHandler) variantExists(ctx context.Context, hash, key string) bool {
