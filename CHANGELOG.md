@@ -24,6 +24,15 @@ where applicable, otherwise note "no-spec-impact."
   and existing ones. **The IIIF Image API is fully functional for the first time
   since it shipped** (#614, #618).
 
+- **Widescreen art was square-cropped on cards.** Every card requested a
+  single 320×320 centre-cropped thumbnail, because that was the only size
+  guaranteed to exist. A 16:9 video or a wide illustration therefore displayed
+  as a square — visibly disagreeing with its own hover preview, which used the
+  true aspect ratio. Cards now pick an appropriately-sized image from the sizes
+  this install actually generates, so wide art displays wide and large tiles
+  stop showing upscaled thumbnails. The grid's contact-sheet view keeps its
+  square crop, which is intentional (#502, #589).
+
 - **Viewer gap when the navbar auto-hides.** Opening a post after scrolling far
   enough that the navbar had slid away left a navbar-sized gap above the viewer,
   with the feed's tiles bleeding through. The viewer's top edge was glued to a
