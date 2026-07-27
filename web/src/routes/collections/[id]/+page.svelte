@@ -28,6 +28,7 @@
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
+  import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import AssetCard from '$components/AssetCard.svelte';
   import type { CardAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
@@ -90,6 +91,13 @@
 
   const id = $derived(page.params.id ?? '');
   const isOwner = $derived(!!collection && !!auth.user && collection.owner_user_ref === auth.user.ref);
+
+  // Come back from an asset with the grid where you left it (#584).
+  // Scroll offset only: the whole membership arrives in one request, so
+  // once that resolves the grid is exactly as tall as it was — nothing
+  // to hand back. (createScrollSnapshot keeps re-applying the offset
+  // while the fetch is in flight.)
+  export const snapshot = createScrollSnapshot();
 
   // Mode + sort come from the GLOBAL browseView store (localStorage), so
   // a collection shares the view preference with browse and the profile

@@ -64,13 +64,11 @@ export function createCloseToOrigin(): { handleClose: () => Promise<void> } {
       // the browser's own back button keeps meaning what the user
       // expects.
       //
-      // NOTE: this does NOT currently restore the origin page's scroll
-      // position — measured, a collection scrolled to 1200px comes back
-      // at 0. The app scrolls an inner `<main class="overflow-y-auto">`
-      // rather than the window, and SvelteKit's scroll snapshotting only
-      // tracks window scroll. Fixing that needs a snapshot on the
-      // scrolling container (SvelteKit's `snapshot` export), which is a
-      // separate change; goto() would not restore it either.
+      // The origin page's scroll offset comes back with it — see
+      // $lib/util/scrollSnapshot (#584). That is a property of
+      // history.back() specifically: SvelteKit only restores snapshots
+      // on popstate, so switching this to goto() would silently drop
+      // the offset AND the origin feed's loaded pages.
       history.back();
       return;
     }
