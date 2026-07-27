@@ -453,17 +453,32 @@ func seedRenderedRungs(t *testing.T, rig *previewTestRig, hash string) {
 // Acceptance 5 — a hash taken from a mostly-transparent waveform must
 // decode to something with structure, not a flat nothing.
 //
-// This is a real risk and not a hypothetical: ffmpeg renders the
-// waveform white-on-fully-transparent, so ~80% of the source pixels
-// carry alpha 0 and RGB 0. A naive encoder averaging straight RGB would
-// produce a uniform near-black card. thumbhash weights the colour
-// average BY alpha and encodes an alpha plane of its own, so the result
-// keeps the waveform's silhouette AND its transparency — which is what
-// the card wants, because the `col` variant it fades into is itself
-// transparent (encodeImage promotes alpha sources to lossless).
+// The risk is real, not hypothetical: ffmpeg renders the waveform
+// white-on-fully-transparent (`WaveformBackground: "00000000"`), so most
+// source pixels are alpha 0 with RGB 0, and an encoder that averaged
+// straight RGB would emit a uniform near-black card.
+//
+// WHERE THE STRUCTURE ACTUALLY LIVES. Measured on a real stored
+// waveform hash, decoded through the same `thumbhash` npm decoder the
+// frontend uses: 23 bytes, 32x6 (aspect 5.0 — the wide waveform shape
+// survives), alpha ranging 0..176 with 73% of pixels near-transparent,
+// and *straight* colour that is CONSTANT white. So the silhouette is
+// carried entirely by the ALPHA plane, not by luminance. That is the
+// correct outcome and not a degradation: the `col` variant the card
+// fades into is itself transparent (encodeImage promotes alpha sources
+// to lossless), so a translucent white blur over the card's own
+// backdrop is exactly the picture that is about to arrive. Compositing
+// onto an opaque matte before hashing would make it WORSE — it would
+// paint a solid rectangle the real image does not have.
+//
+// This test asserts against the alpha plane for that reason. Note that
+// Go's thumbhash.DecodeImage returns PREMULTIPLIED RGBA, so luminance
+// appears to vary here purely as a consequence of alpha; asserting on
+// luminance would be asserting on alpha by accident, and would silently
+// stop meaning anything if the decoder ever returned straight alpha.
 // ---------------------------------------------------------------------------
 
-func TestThumbhash_TransparentWaveformIsNotFlat(t *testing.T) {
+func TestThumbhash_TransparentWaveformKeepsItsSilhouetteInAlpha(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "wave.png")
 	writeWaveformPNG(t, p, 1024, 192)
@@ -485,51 +500,44 @@ func TestThumbhash_TransparentWaveformIsNotFlat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeImage: %v", err)
 	}
-
-	// 1. The alpha channel survived: a transparent source must not
-	//    decode to a fully opaque block, or the blur would paint a
-	//    rectangle where the card expects to see its own backdrop.
-	// 2. Luminance varies: min and max brightness must differ, i.e. the
-	//    waveform's shape is actually in there.
 	b := decoded.Bounds()
 	if b.Dx() == 0 || b.Dy() == 0 {
 		t.Fatal("decoded placeholder is empty")
 	}
-	var minLum, maxLum uint32 = 0xffff, 0
-	sawTransparent := false
-	sawOpaqueish := false
+
+	// The decoded placeholder must keep the source's landscape shape,
+	// or the card would letterbox a square blur into a 16:3 tile.
+	if b.Dx() <= b.Dy() {
+		t.Errorf("decoded placeholder is %dx%d — a 1024x192 source must stay landscape",
+			b.Dx(), b.Dy())
+	}
+
+	var minA, maxA uint32 = 0xffff, 0
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
-			r, g, bl, a := decoded.At(x, y).RGBA()
-			if a < 0x4000 {
-				sawTransparent = true
+			_, _, _, a := decoded.At(x, y).RGBA()
+			if a < minA {
+				minA = a
 			}
-			if a > 0xb000 {
-				sawOpaqueish = true
-			}
-			lum := (r + g + bl) / 3
-			if lum < minLum {
-				minLum = lum
-			}
-			if lum > maxLum {
-				maxLum = lum
+			if a > maxA {
+				maxA = a
 			}
 		}
 	}
-	if !sawTransparent {
-		t.Error("decoded placeholder has no transparent region — alpha was lost, " +
-			"the blur would paint a solid rectangle over the card backdrop")
+	if minA > 0x4000 {
+		t.Errorf("decoded placeholder is opaque everywhere (min alpha %d) — the blur "+
+			"would paint a solid rectangle over the card backdrop", minA)
 	}
-	if !sawOpaqueish {
-		t.Error("decoded placeholder is transparent everywhere — the waveform silhouette was lost")
+	if maxA < 0x4000 {
+		t.Errorf("decoded placeholder is transparent everywhere (max alpha %d) — the "+
+			"waveform silhouette was lost", maxA)
 	}
-	if maxLum-minLum < 0x1000 {
-		t.Errorf("decoded placeholder is flat (lum range %d) — no structure survived the hash",
-			maxLum-minLum)
+	if maxA-minA < 0x2000 {
+		t.Errorf("alpha is flat (range %d) — no silhouette survived the hash", maxA-minA)
 	}
 	if testing.Verbose() {
-		fmt.Printf("thumbhash: %d bytes, decoded %dx%d, lum range %d\n",
-			len(hash), b.Dx(), b.Dy(), maxLum-minLum)
+		fmt.Printf("thumbhash: %d bytes, decoded %dx%d, alpha %d..%d\n",
+			len(hash), b.Dx(), b.Dy(), minA, maxA)
 	}
 }
 
