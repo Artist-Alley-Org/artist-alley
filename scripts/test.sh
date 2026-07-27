@@ -46,10 +46,82 @@ export AA_DB_PASSWORD="${POSTGRES_PASSWORD:-}"
 DEV_DB_NAME="${POSTGRES_DB:-artist_alley}"
 export AA_DB_NAME="${DEV_DB_NAME}_test"
 
+# ── Per-worktree test databases (#644) ────────────────────────────
+# Every `git worktree` shares the primary checkout's gitignored .env,
+# so POSTGRES_DB — and therefore `<dev>_test` — is identical in all of
+# them. Two agents running this script at once both reset the SAME
+# database, and the reset's WITH (FORCE) below terminates the other
+# run's live connections mid-suite: the victim sees 40+ failures
+# ("terminating connection due to administrator command", `relation
+# "user" does not exist`) that look like catastrophic application
+# breakage and have nothing to do with its change.
+#
+# So a *linked* worktree gets its own database, keyed on a short hash
+# of its checkout path (stable for the life of the worktree, unlike
+# the branch name, which can change mid-run). The primary checkout
+# keeps plain `<dev>_test` — the single-checkout case is unchanged,
+# and its database persists between runs as before.
+#
+# Isolation, not serialisation: parallel worktrees exist so agents can
+# work in parallel, and a flock around the whole suite would just make
+# them queue behind each other for ~10 minutes.
+OWN_TEST_DB="no"
+if [ "$(git rev-parse --git-dir 2>/dev/null || echo .)" \
+     != "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" ]; then
+    wt_id="$(printf '%s' "$ROOT" | sha1sum | cut -c1-8)"
+    export AA_DB_NAME="${AA_DB_NAME}_${wt_id}"
+    # This run owns a disposable database nobody else will ever reuse,
+    # so it must also drop it — see the trap below. Per-worktree
+    # databases that pile up are their own problem (cf. #622).
+    OWN_TEST_DB="yes"
+fi
+
+# Postgres truncates identifiers at 63 bytes, and a truncated name is a
+# silent collision — exactly the failure mode this block exists to
+# prevent. Refuse rather than truncate.
+if [ "${#AA_DB_NAME}" -gt 63 ]; then
+    echo "ERROR: test database name '${AA_DB_NAME}' exceeds Postgres' 63-byte identifier limit." >&2
+    echo "       Shorten POSTGRES_DB in .env." >&2
+    exit 2
+fi
+
+# Whatever name we landed on, claim it for the duration of the run. If
+# a second run computes the same name — two invocations in one
+# checkout, two clones at different paths, a hand-set POSTGRES_DB — it
+# stops here with one clear message instead of quietly force-dropping
+# the database out from under the run that got there first.
+LOCK_FILE="${TMPDIR:-/tmp}/aa-test-db-${AA_DB_NAME}.lock"
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        echo "ERROR: test database '${AA_DB_NAME}' is already in use by another ./scripts/test.sh run." >&2
+        echo "       Wait for it to finish, or give this checkout its own database by" >&2
+        echo "       setting a distinct POSTGRES_DB in its .env." >&2
+        exit 2
+    fi
+else
+    echo "WARNING: flock not found — cannot detect a concurrent run on ${AA_DB_NAME}." >&2
+fi
+
 if ! docker compose ps --status running --format json 2>/dev/null | grep -q '"postgres"'; then
     echo "ERROR: postgres container is not running. Start it with 'docker compose up -d'." >&2
     exit 2
 fi
+
+# Drop a per-worktree database on the way out, however we exit — a
+# throwaway database per checkout is only an improvement if it also
+# goes away. Set AA_TEST_KEEP_DB=1 to keep it for a post-mortem.
+# The primary checkout's `<dev>_test` is deliberately left alone: it
+# is reset at the start of each run, not accumulated.
+cleanup_test_db() {
+    local rc=$?
+    if [ "$OWN_TEST_DB" = "yes" ] && [ "${AA_TEST_KEEP_DB:-0}" != "1" ]; then
+        docker compose exec -T postgres psql -U "$AA_DB_USER" -d postgres \
+            -c "DROP DATABASE IF EXISTS ${AA_DB_NAME} WITH (FORCE);" >/dev/null 2>&1 || true
+    fi
+    return $rc
+}
+trap cleanup_test_db EXIT
 
 with_s3="no"
 for arg in "$@"; do
@@ -74,7 +146,7 @@ step "Go tests (app/...)"
 
 # The dev app container can keep running. It is pinned to the dev
 # database ($DEV_DB_NAME); this suite runs entirely against
-# ${DEV_DB_NAME}_test, and LISTEN/NOTIFY channels (migration 00006 —
+# $AA_DB_NAME, and LISTEN/NOTIFY channels (migration 00006 —
 # federation_outbox / federation_inbox) are per-database, so the live
 # dispatcher + delivery worker cannot race the tests. Before #291 the
 # suite shared the dev DB and we had to stop `app` to avoid exactly
