@@ -7,7 +7,7 @@
   // post-by-asset lookup — renders modes identically instead of forking
   // the switch per page:
   //   grid / thumbnail → auto-fill TileGrid (tiles ≥ --tile-min)
-  //   masonry          → multi-column flow (columns ≥ --tile-min)
+  //   masonry          → append-stable column buckets (MasonryColumns)
   //   feed             → single column, image full-bleed (a `measure` cap)
   //   list             → the caller's table (`list` snippet); posts only,
   //                       so anything without one falls back to the grid
@@ -19,6 +19,7 @@
   import type { Snippet } from 'svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import TileGrid from '$components/TileGrid.svelte';
+  import MasonryColumns from '$components/MasonryColumns.svelte';
 
   interface Props {
     mode: ViewMode;
@@ -42,16 +43,12 @@
 {#if mode === 'list' && list}
   {@render list()}
 {:else if mode === 'masonry'}
-  <div class="posts-masonry" style="--tile-min: {tileMin}">
-    {#each items as item (item.id)}
-      <div class="mb-2 break-inside-avoid">{@render card(item, 'masonry')}</div>
-    {/each}
-    {#if loading}
-      {#each Array(8) as _, i (i)}
-        <div class="mb-2 break-inside-avoid aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
-      {/each}
-    {/if}
-  </div>
+  <!-- Masonry is no longer a CSS multi-column flow (#651). Multicol
+       BALANCES across the whole flow, so every infinite-scroll append
+       re-sorted tiles the user was already looking at into different
+       columns. MasonryColumns owns the replacement mechanism and the
+       full argument. -->
+  <MasonryColumns {items} {tileMin} {loading} {card} />
 {:else if mode === 'feed'}
   <div class="posts-feed gap-4">
     {#each items as item (item.id)}{@render card(item, 'feed')}{/each}
@@ -90,31 +87,22 @@
 {/if}
 
 <style>
-  /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
-     the browser fits as many columns as it can. Same lever, same
-     token, no `column-count` to guess.
+  /* Masonry's own CSS moved into MasonryColumns.svelte with the layout
+     mechanism it belongs to (#651). Two notes worth carrying forward:
    *
-   * A PLAIN LENGTH, deliberately — no `min(…, 100%)` wrapper like the
-   * one TileGrid uses. `column-width` accepts `<length> | auto` only;
-   * a percentage anywhere in the expression makes the whole `min()`
-   * invalid at computed-value time, the declaration falls back to
-   * `auto`, and `auto` with no `column-count` is ONE full-width
-   * column. That is #637 — five days of single-column masonry. The
-   * identical-looking idiom in TileGrid:46 is correct because it sits
-   * inside `minmax()` in grid track sizing, where percentages are
-   * valid; the difference is the property, not the expression.
+   * #637 was `column-width: min(22rem, 100%)` — a percentage anywhere in
+   * that expression makes it invalid at computed-value time, the
+   * declaration falls back to `auto`, and `auto` with no `column-count`
+   * is ONE full-width column. Five days of single-column masonry. The
+   * column count is now computed in JS from a probe, so the trap is
+   * gone, but the same `min(…, 100%)` guard IS valid on the probe's
+   * plain `width` and is used there.
    *
-   * The wrapper isn't needed here anyway: the used column count is
-   * `max(1, floor((available + gap) / (column-width + gap)))` and the
-   * used column width is then derived from the available width, so a
-   * `column-width` wider than the viewport degrades to one column that
-   * FITS rather than overflowing. Grid needs the guard because a track
-   * cannot shrink below its `minmax()` floor; multicol has no such
-   * floor. */
-  :global(.posts-masonry) {
-    column-width: var(--tile-min, 22rem);
-    column-gap: 0.5rem;
-  }
+   * The column-count formula the probe feeds —
+   * `max(1, floor((available + gap) / (tile-min + gap)))` — is multicol's
+   * own, deliberately, so the `--tile-min` ladder in browseView keeps
+   * producing the column counts its rungs were measured against. */
+
   /* feed is the honest floor of the same scale rather than a special
      case: one column at every width, image at full column width.
    *
