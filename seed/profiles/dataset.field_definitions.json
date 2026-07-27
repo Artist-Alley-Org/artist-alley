@@ -1,95 +1,109 @@
 [
-  {
-    "name": "pipeline_stage",
-    "label": "Pipeline stage",
-    "type": "select",
-    "options": [
-      "Greybox",
-      "Pass 1",
-      "Polish",
-      "Final",
-      "Locked"
-    ]
-  },
-  {
-    "name": "version",
-    "label": "Version",
-    "type": "text"
-  },
-  {
-    "name": "revision_count",
-    "label": "Revisions",
-    "type": "number"
-  },
-  {
-    "name": "rating",
-    "label": "Rating",
-    "type": "number"
-  },
-  {
-    "name": "polycount",
-    "label": "Polycount",
-    "type": "number"
-  },
-  {
-    "name": "texture_resolution",
-    "label": "Texture resolution",
-    "type": "select",
-    "options": [
-      "256x256",
-      "512x512",
-      "1024x1024",
-      "2048x2048",
-      "4096x4096"
-    ]
-  },
-  {
-    "name": "color_space",
-    "label": "Color space",
-    "type": "select",
-    "options": [
-      "sRGB",
-      "Linear",
-      "Raw",
-      "N/A"
-    ]
-  },
-  {
-    "name": "loop_seconds",
-    "label": "Loop length (s)",
-    "type": "number"
-  },
-  {
-    "name": "runtime_seconds",
-    "label": "Runtime (s)",
-    "type": "number"
-  },
-  {
-    "name": "engine_compatibility",
-    "label": "Engine",
-    "type": "select",
-    "options": [
-      "Unreal 5",
-      "Unity 2022",
-      "Godot 4",
-      "All",
-      "N/A"
-    ]
-  },
-  {
-    "name": "target_platforms",
-    "label": "Target platforms",
-    "type": "multi_select",
-    "options": [
-      "PC",
-      "Console",
-      "Mobile",
-      "All"
-    ]
-  },
-  {
-    "name": "naming_compliant",
-    "label": "Naming compliant",
-    "type": "boolean"
-  }
+ {
+  "name": "pipeline_stage",
+  "label": "Pipeline stage",
+  "type": "select",
+  "options": [
+   "Greybox",
+   "Pass 1",
+   "Polish",
+   "Final",
+   "Locked"
+  ]
+ },
+ {
+  "name": "version",
+  "label": "Version",
+  "type": "text"
+ },
+ {
+  "name": "revision_count",
+  "label": "Revisions",
+  "type": "number"
+ },
+ {
+  "name": "rating",
+  "label": "Rating",
+  "type": "number"
+ },
+ {
+  "name": "polycount",
+  "label": "Polycount",
+  "type": "number"
+ },
+ {
+  "name": "texture_resolution",
+  "label": "Texture resolution",
+  "type": "select",
+  "options": [
+   "256x256",
+   "512x512",
+   "1024x1024",
+   "2048x2048",
+   "4096x4096"
+  ]
+ },
+ {
+  "name": "color_space",
+  "label": "Color space",
+  "type": "select",
+  "options": [
+   "sRGB",
+   "Linear",
+   "Raw",
+   "N/A"
+  ]
+ },
+ {
+  "name": "loop_seconds",
+  "label": "Loop length (s)",
+  "type": "number"
+ },
+ {
+  "name": "runtime_seconds",
+  "label": "Runtime (s)",
+  "type": "number"
+ },
+ {
+  "name": "engine_compatibility",
+  "label": "Engine",
+  "type": "select",
+  "options": [
+   "Unreal 5",
+   "Unity 2022",
+   "Godot 4",
+   "All",
+   "N/A"
+  ]
+ },
+ {
+  "name": "target_platforms",
+  "label": "Target platforms",
+  "type": "multi_select",
+  "options": [
+   "PC",
+   "Console",
+   "Mobile",
+   "All"
+  ]
+ },
+ {
+  "name": "naming_compliant",
+  "label": "Naming compliant",
+  "type": "boolean"
+ },
+ {
+  "name": "pixel_width",
+  "label": "Pixel width",
+  "type": "number",
+  "extraction_source": "pixel_width",
+  "extraction_mode": "replace"
+ },
+ {
+  "name": "pixel_height",
+  "label": "Pixel height",
+  "type": "number",
+  "extraction_source": "pixel_height",
+  "extraction_mode": "replace"
+ }
 ]
