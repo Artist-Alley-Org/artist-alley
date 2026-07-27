@@ -10,7 +10,7 @@ require (
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/chai2010/webp v1.4.0
 	github.com/dsoprea/go-exif/v3 v3.0.1
-	github.com/getkin/kin-openapi v0.143.0
+	github.com/getkin/kin-openapi v0.145.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gowebpki/jcs v1.0.1
@@ -18,7 +18,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/kaitai-io/kaitai_struct_go_runtime v0.11.0
 	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
-	github.com/nwaples/rardecode/v2 v2.2.5
+	github.com/nwaples/rardecode/v2 v2.3.0
 	github.com/oapi-codegen/runtime v1.6.0
 	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/pgvector/pgvector-go v0.4.0
