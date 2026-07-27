@@ -192,8 +192,12 @@ func seedPeer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, handshakeRe
 		t.Fatalf("seed peer: %v", err)
 	}
 	t.Cleanup(func() {
+		// Cleanup runs after the test's context is cancelled, so this
+		// keeps its own deadline — t.Context() here would be dead on
+		// arrival and the cleanup a silent no-op (#622).
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
 		_, _ = pool.Exec(c, `DELETE FROM federation_peers WHERE id = $1`, peerID)
 	})
 	return peerID
@@ -331,6 +335,9 @@ func (fx *decryptFx) insertInbox(envelopeJSON []byte, activityID string, verb fe
 
 	id := uuid.UUID(row.ID.Bytes)
 	fx.t.Cleanup(func() {
+		// Deliberately NOT t.Context() (#622): by the time Cleanup
+		// callbacks run the test's context is already cancelled, so this
+		// DELETE needs its own bound or it would be dead on arrival.
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = fx.pool.Exec(c, `DELETE FROM federation_inbox WHERE id = $1`, id)

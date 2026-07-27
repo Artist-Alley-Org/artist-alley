@@ -70,8 +70,8 @@ func freshDatabase(t *testing.T) config.Config {
 	if err != nil {
 		t.Fatalf("open admin db: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	if err := admin.PingContext(ctx); err != nil {
 		admin.Close()
 		t.Skipf("dev Postgres not reachable (%v); skipping", err)
@@ -85,8 +85,12 @@ func freshDatabase(t *testing.T) config.Config {
 		t.Fatalf("create database %s: %v", name, err)
 	}
 	t.Cleanup(func() {
+		// Cleanup runs after the test's context is cancelled, so this
+		// keeps its own deadline — t.Context() here would be dead on
+		// arrival and the cleanup a silent no-op (#622).
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer dropCancel()
+
 		// FORCE terminates any lingering backend (the advisory-lock
 		// connections in the concurrency test) so the drop can't hang.
 		if _, err := admin.ExecContext(dropCtx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
@@ -113,8 +117,8 @@ func openCfg(t *testing.T, cfg config.Config) *sql.DB {
 
 func tableExists(t *testing.T, sqlDB *sql.DB, table string) bool {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	var exists bool
 	err := sqlDB.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
@@ -141,9 +145,8 @@ func TestMigrate_FreshDatabaseGivesSeederItsSchema(t *testing.T) {
 			t.Fatalf("precondition failed: %q already exists in a fresh database", tbl)
 		}
 	}
+	ctx := t.Context()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
 	if err := Migrate(ctx, cfg); err != nil {
 		t.Fatalf("Migrate on a fresh database: %v", err)
 	}
@@ -157,8 +160,7 @@ func TestMigrate_FreshDatabaseGivesSeederItsSchema(t *testing.T) {
 
 func TestMigrate_Idempotent(t *testing.T) {
 	cfg := freshDatabase(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	ctx := t.Context()
 
 	// Twice in a row: a re-seed of an existing instance runs Migrate
 	// against a database that is already fully migrated.
@@ -189,8 +191,8 @@ func TestMigrate_ConcurrentCallersAllSucceed(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
+			ctx := t.Context()
+
 			<-start // release together, maximising overlap
 			errs[i] = Migrate(ctx, cfg)
 		}(i)

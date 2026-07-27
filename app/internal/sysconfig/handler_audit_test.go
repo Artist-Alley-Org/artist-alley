@@ -20,7 +20,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -240,8 +239,8 @@ func withAuditStore(t *testing.T, fn func(context.Context, *sysconfig.Handler, *
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 

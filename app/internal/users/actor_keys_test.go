@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -80,8 +79,8 @@ func TestActorKeys_GetWhenAbsent(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 
@@ -99,8 +98,8 @@ func TestActorKeys_EnsureGeneratesAndPersists(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 	initAtrestForTest(t)
@@ -166,8 +165,8 @@ func TestActorKeys_EnsureIsIdempotent(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 	initAtrestForTest(t)
@@ -198,8 +197,8 @@ func TestActorKeys_EnsureRefusesWithoutMasterKey(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 	// Deliberately do NOT init atrest. Confirm Ensure refuses.
@@ -219,8 +218,8 @@ func TestActorKeys_CacheHitAfterEnsure(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 	initAtrestForTest(t)

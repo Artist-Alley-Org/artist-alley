@@ -12,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,9 +28,7 @@ func TestListAssetTypes_Live(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	pool := openPool(t, pwd)
 	defer pool.Close()
@@ -82,9 +79,7 @@ func TestListAssetTypes_HTTP(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	pool := openPool(t, pwd)
 	defer pool.Close()
@@ -159,9 +154,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	name := envOr("AA_DB_NAME", "artist_alley")
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
