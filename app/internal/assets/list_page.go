@@ -42,11 +42,18 @@ type ListAssetsPageGatedParams struct {
 	// caller (assets.Handler). It waives ONLY the soft-delete dimension
 	// of the predicate — never publication, sensitivity or processing
 	// state. See visibility.IncludeSoftDeleted.
-	IncludeDeleted  *bool
-	OwnerUserRef    *int64
-	AssetType       *int64
-	Status          *string
-	Q               *string
+	IncludeDeleted *bool
+	OwnerUserRef   *int64
+	AssetType      *int64
+	Status         *string
+	Q              *string
+	// Tag constrains the page to assets carrying one exact tag (#657).
+	// It lives HERE, as one more optional filter on the gated query,
+	// rather than in a separate by-tag query: the by-tag branch used to
+	// be its own static sqlc statement, and being separate is precisely
+	// how it ended up without the visibility predicate, without the
+	// ladder and without the preview flags. One query, one set of rules.
+	Tag             *string
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
@@ -115,6 +122,7 @@ func ListAssetsPageGated(
 		p.RowLimit,        // $7
 		caller.UserRef,    // $8 — anonymous carries ref 0, matching no membership
 		p.Ladder,          // $9 — configured preview ladder (#591)
+		p.Tag,             // $10 — optional single-tag filter (#657)
 	}
 
 	var opts []visibility.Option
@@ -157,6 +165,9 @@ WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
   AND ($3::TEXT IS NULL OR status = $3::TEXT)
   AND ($4::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $4::TEXT))
+  AND ($10::TEXT IS NULL
+       OR EXISTS (SELECT 1 FROM asset_tag t
+                   WHERE t.asset_id = assets.id AND t.tag = $10::TEXT))
   AND ($5::TIMESTAMPTZ IS NULL
        OR created_at < $5::TIMESTAMPTZ
        OR (created_at = $5::TIMESTAMPTZ AND id < $6::UUID))`)

@@ -1179,15 +1179,20 @@ func (h *Handler) ListAssets(
 		s := string(*req.Params.Status)
 		statusPtr = &s
 	}
-	// `q` is mutually exclusive with `tag` in practice (the tag-join
-	// query template doesn't carry the search_text column). When both
-	// are supplied we honour `tag` and drop `q`.
 	var qText *string
 	if req.Params.Q != nil {
 		s := strings.TrimSpace(*req.Params.Q)
 		if s != "" {
 			qText = &s
 		}
+	}
+	// `q` and `tag` now compose: both are conjuncts of the one gated
+	// query. Before #657 the tag filter lived in a separate sqlc
+	// statement that carried no search_text column, so supplying both
+	// meant silently dropping `q`.
+	var tagFilter *string
+	if req.Params.Tag != nil && *req.Params.Tag != "" {
+		tagFilter = req.Params.Tag
 	}
 
 	q := New(h.Pool)
@@ -1200,79 +1205,56 @@ func (h *Handler) ListAssets(
 	var lastID uuid.UUID
 	var rowCount int
 
-	if req.Params.Tag != nil && *req.Params.Tag != "" {
-		rows, err := q.ListAssetsByTagPage(ctx, ListAssetsByTagPageParams{
-			Tag:             *req.Params.Tag,
-			OwnerUserRef:    ownerRef,
-			AssetType:       resType,
-			Status:          statusPtr,
-			CursorCreatedAt: cursorTs,
-			CursorID:        cursorID,
-			RowLimit:        fetch,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("assets: list by tag: %w", err)
-		}
-		for _, r := range rows {
-			rowCount++
-			if rowCount > int(limit) {
-				break
-			}
-			tags, err := q.ListAssetTags(ctx, r.ID)
-			if err != nil {
-				return nil, fmt.Errorf("assets: list tags: %w", err)
-			}
-			assetsList = append(assetsList, rowToAsset(listByTagRowToGetRow(r), tags))
-			lastCreatedAt = r.CreatedAt.Time
-			lastID = uuid.UUID(r.ID.Bytes)
-		}
-		rowCount = len(rows)
-	} else {
-		// Hand-built so the visibility predicate can be spliced in
-		// (#429) — sqlc's static SQL cannot take a runtime fragment.
-		listCaller, listCaps := contentCaller(ctx)
-		rows, err := ListAssetsPageGated(ctx, h.Pool, listCaller, listCaps, ListAssetsPageGatedParams{
-			IncludeDeleted:  includeDeletedArg,
-			OwnerUserRef:    ownerRef,
-			AssetType:       resType,
-			Status:          statusPtr,
-			Q:               qText,
-			CursorCreatedAt: cursorTs,
-			CursorID:        cursorID,
-			RowLimit:        fetch,
-			Ladder:          h.ladder(ctx),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("assets: list: %w", err)
-		}
-		for i, r := range rows {
-			if i >= int(limit) {
-				break
-			}
-			tags, err := q.ListAssetTags(ctx, r.ID)
-			if err != nil {
-				return nil, fmt.Errorf("assets: list tags: %w", err)
-			}
-			a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
-			a.PreviewAvailable = r.PreviewAvailable
-			a.LadderAvailable = r.LadderAvailable
-			// #640 — the tile's aspect ratio, joined by the same pass.
-			// The gated row already applied the pair-or-neither rule.
-			a.PixelWidth = r.PixelWidth
-			a.PixelHeight = r.PixelHeight
-			// Surface soft-delete state so the admin trash view
-			// (include_deleted=true) can identify + label deleted rows.
-			if r.DeletedAt.Valid {
-				dt := r.DeletedAt.Time
-				a.DeletedAt = &dt
-				a.DeletedReason = r.DeletedReason
-			}
-			assetsList = append(assetsList, a)
-			lastCreatedAt = r.CreatedAt.Time
-			lastID = uuid.UUID(r.ID.Bytes)
-		}
-		rowCount = len(rows)
+	// ONE path, filtered or not (#657). Hand-built so the visibility
+	// predicate can be spliced in (#429) — sqlc's static SQL cannot take
+	// a runtime fragment. `tag` used to fork off to its own static sqlc
+	// query, which is how it came to apply no predicate, no ladder and
+	// no preview flags: a filter is not a different kind of read, and
+	// giving it a second query gave it a second set of rules that then
+	// drifted. Anything added here now applies to every browse.
+	listCaller, listCaps := contentCaller(ctx)
+	rows, err := ListAssetsPageGated(ctx, h.Pool, listCaller, listCaps, ListAssetsPageGatedParams{
+		IncludeDeleted:  includeDeletedArg,
+		OwnerUserRef:    ownerRef,
+		AssetType:       resType,
+		Status:          statusPtr,
+		Q:               qText,
+		Tag:             tagFilter,
+		CursorCreatedAt: cursorTs,
+		CursorID:        cursorID,
+		RowLimit:        fetch,
+		Ladder:          h.ladder(ctx),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("assets: list: %w", err)
 	}
+	for i, r := range rows {
+		if i >= int(limit) {
+			break
+		}
+		tags, err := q.ListAssetTags(ctx, r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("assets: list tags: %w", err)
+		}
+		a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
+		a.PreviewAvailable = r.PreviewAvailable
+		a.LadderAvailable = r.LadderAvailable
+		// #640 — the tile's aspect ratio, joined by the same pass.
+		// The gated row already applied the pair-or-neither rule.
+		a.PixelWidth = r.PixelWidth
+		a.PixelHeight = r.PixelHeight
+		// Surface soft-delete state so the admin trash view
+		// (include_deleted=true) can identify + label deleted rows.
+		if r.DeletedAt.Valid {
+			dt := r.DeletedAt.Time
+			a.DeletedAt = &dt
+			a.DeletedReason = r.DeletedReason
+		}
+		assetsList = append(assetsList, a)
+		lastCreatedAt = r.CreatedAt.Time
+		lastID = uuid.UUID(r.ID.Bytes)
+	}
+	rowCount = len(rows)
 
 	resp := openapi.AssetList{Items: assetsList}
 	if rowCount > int(limit) {
@@ -1722,27 +1704,6 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 }
 
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
-	return GetAssetRow{
-		ID:               r.ID,
-		Title:            r.Title,
-		Description:      r.Description,
-		AssetType:        r.AssetType,
-		OwnerUserRef:     r.OwnerUserRef,
-		Status:           r.Status,
-		FileHash:         r.FileHash,
-		FileExtension:    r.FileExtension,
-		FileSizeBytes:    r.FileSizeBytes,
-		Metadata:         r.Metadata,
-		OriginServerID:   r.OriginServerID,
-		StateID:          r.StateID,
-		ProcessingStatus: r.ProcessingStatus,
-		Thumbhash:        r.Thumbhash,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
-}
-
-func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 	return GetAssetRow{
 		ID:               r.ID,
 		Title:            r.Title,
