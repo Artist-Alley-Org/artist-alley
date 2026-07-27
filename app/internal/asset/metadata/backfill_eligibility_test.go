@@ -32,28 +32,33 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 )
 
-// TestBackfillEligibility_ImageAssetIsEligibleWithHasImageAtDefault is
+// TestBackfillEligibility_ImageAssetIsEligible is
 // THE invariant that was never true.
 //
 // If this fails, the backfill is selecting nothing again and every
 // downstream consumer of extracted metadata — pixel dimensions, and so
 // IIIF info.json (#618) — is starved with no error anywhere.
-func TestBackfillEligibility_ImageAssetIsEligibleWithHasImageAtDefault(t *testing.T) {
+func TestBackfillEligibility_ImageAssetIsEligible(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 
-	asset := seedAsset(t, pool) // active, jpg, file_hash set, has_image DEFAULT
+	asset := seedAsset(t, pool) // active, jpg, file_hash set
 
-	// Confirm the premise, so a future change that starts writing the
-	// column cannot make this pass for the wrong reason.
-	var hasImage bool
-	if err := pool.QueryRow(ctx,
-		`SELECT has_image FROM assets WHERE id = $1`, asset).Scan(&hasImage); err != nil {
-		t.Fatalf("read has_image: %v", err)
+	// Confirm the premise, so this cannot pass for the wrong reason.
+	//
+	// Originally "has_image is false for this row". #579 dropped the
+	// column outright, so the premise is now structural: it does not
+	// exist, and the backfill therefore cannot regress to gating on it.
+	var columnExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		                WHERE table_name = 'assets' AND column_name = 'has_image')
+	`).Scan(&columnExists); err != nil {
+		t.Fatalf("probe for has_image column: %v", err)
 	}
-	if hasImage {
-		t.Fatal("fixture asset has has_image = true; something now writes that " +
-			"column and this test no longer reproduces the #579 conditions")
+	if columnExists {
+		t.Fatal("assets.has_image is back; it had no writer, and gating the " +
+			"backfill on it selected zero assets (#579)")
 	}
 
 	enq := &fakeEnqueuer{}
