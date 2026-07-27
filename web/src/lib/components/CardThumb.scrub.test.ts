@@ -46,6 +46,7 @@ function asset(overrides: Partial<CardAsset> = {}): CardAsset {
     file_extension: 'glb',
     thumbhash: null,
     preview_available: true,
+    ladder_available: true,
     ...overrides,
   };
 }
