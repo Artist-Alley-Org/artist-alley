@@ -568,27 +568,35 @@ func (q *Queries) SeedInsertFeatured(ctx context.Context, arg SeedInsertFeatured
 
 const seedInsertField = `-- name: SeedInsertField :one
 INSERT INTO field_definition (
-    code, label, type, options, required, searchable, applies_to, subject_kind
+    code, label, type, options, required, searchable, applies_to, subject_kind,
+    extraction_source, extraction_mode
 )
-VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset')
+VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset',
+        $5, COALESCE(NULLIF($6::text, ''), 'skip_if_set'))
 ON CONFLICT (code) DO NOTHING
 RETURNING id
 `
 
 type SeedInsertFieldParams struct {
-	Code    string
-	Label   string
-	Type    string
-	Options []byte
+	Code             string
+	Label            string
+	Type             string
+	Options          []byte
+	ExtractionSource string
+	ExtractionMode   string
 }
 
 // Field definition. `code` is the federation-stable natural key.
+// extraction_source/mode carry the #618 wiring; NULLIF/COALESCE keeps
+// the column defaults for the operator-managed fields that pass ”.
 func (q *Queries) SeedInsertField(ctx context.Context, arg SeedInsertFieldParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, seedInsertField,
 		arg.Code,
 		arg.Label,
 		arg.Type,
 		arg.Options,
+		arg.ExtractionSource,
+		arg.ExtractionMode,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)

@@ -84,7 +84,10 @@ type Result struct {
 
 // CanonicalField is the stable string the extractor + applier +
 // validator all agree on. Operators map these to field-definition
-// IDs via field_definition.extraction_source + .extraction_canonical.
+// IDs via field_definition.extraction_source (which stores the
+// CanonicalField name) + .extraction_mode. (An earlier draft of this
+// comment named an `extraction_canonical` column; no such column
+// exists — #618's brief was misled by exactly that line.)
 type CanonicalField string
 
 const (

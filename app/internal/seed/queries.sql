@@ -161,10 +161,14 @@ ON CONFLICT (team_id, user_ref) DO NOTHING;
 
 -- name: SeedInsertField :one
 -- Field definition. `code` is the federation-stable natural key.
+-- extraction_source/mode carry the #618 wiring; NULLIF/COALESCE keeps
+-- the column defaults for the operator-managed fields that pass ''.
 INSERT INTO field_definition (
-    code, label, type, options, required, searchable, applies_to, subject_kind
+    code, label, type, options, required, searchable, applies_to, subject_kind,
+    extraction_source, extraction_mode
 )
-VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset')
+VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset',
+        $5, COALESCE(NULLIF(sqlc.arg(extraction_mode)::text, ''), 'skip_if_set'))
 ON CONFLICT (code) DO NOTHING
 RETURNING id;
 

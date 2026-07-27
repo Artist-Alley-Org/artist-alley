@@ -68,16 +68,28 @@ func iiifPool(t *testing.T) *pgxpool.Pool {
 // pixel dimensions, so a resolvable asset needs them to reach 200 —
 // this lets the test distinguish "404 because hidden" (the #460 fix)
 // from "404 because no pixels".
+// ensurePixelFields RESOLVES the pixel-dimension field definitions —
+// it no longer creates them (#618). The old version INSERTed the rows,
+// which is precisely the fixture pattern that hid the gap for a
+// release: the suite exercised a schema state no real install had, so
+// info.json 404ed everywhere while every test passed. Migration 00017
+// provides the rows, wired; if they are missing here, THAT is the bug,
+// and the loud failure is the point.
 func ensurePixelFields(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	one := func(code string) uuid.UUID {
 		var id uuid.UUID
+		var source string
 		err := pool.QueryRow(context.Background(),
-			`INSERT INTO field_definition (code, label, type) VALUES ($1,$1,'number')
-			 ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
-			 RETURNING id`, code).Scan(&id)
+			`SELECT id, extraction_source FROM field_definition WHERE code = $1`,
+			code).Scan(&id, &source)
 		if err != nil {
-			t.Fatalf("ensure field %s: %v", code, err)
+			t.Fatalf("field definition %s missing — migration 00017 should seed "+
+				"it; tests must not create it themselves (#618): %v", code, err)
+		}
+		if source == "" {
+			t.Fatalf("field definition %s exists but is UNWIRED "+
+				"(extraction_source = '') — the state #618 exists to remove", code)
 		}
 		return id
 	}
