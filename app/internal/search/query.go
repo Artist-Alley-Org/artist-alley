@@ -502,7 +502,27 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 
 // runCollections queries collections. Visibility gate composed via
 // visibility.Predicate — see the shared package (Phase 1.16.B-2).
-// Anonymous callers get an always-false predicate → zero hits.
+// Anonymous callers get the public floor (`deleted_at IS NULL AND
+// visibility = 'public'`), not the always-false predicate this comment
+// used to claim — that stopped being true when #445/#448 opened the
+// anonymous read paths.
+//
+// #650 — this used to select `c.featured` and emit it as a hit extra.
+// #456 (ADR 0065) dropped that column: featuring is a PLACEMENT row in
+// featured_items carrying an audience scope (public | org | team), not
+// a property of the collection. The select was never updated, so every
+// authenticated search 500'd with 42703 from the moment #456 landed.
+//
+// The flag is not re-derived. A single boolean cannot say WHICH
+// audience a placement is for, so reintroducing one here would rebuild
+// exactly the column-shaped concept ADR 0065 removed — and no client
+// reads it (the /search page types `extra` as an opaque bag and never
+// touches `featured`). A per-row EXISTS against featured_items would
+// therefore buy a lossy field, a join, and a second source of truth for
+// zero consumers. If a card ever needs to badge featured-ness, the
+// correct shape is a scoped placement lookup — the pattern
+// ListCollectionsPage already uses for its ?featured= filter — added
+// then, against a real consumer.
 func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityCollection, visibility.NewCaller(q.CallerUserRef))
 	if err != nil {
@@ -512,7 +532,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
-		       c.featured, c.created_at, c.updated_at,
+		       c.created_at, c.updated_at,
 		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
 		  FROM collections c
 		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
@@ -536,20 +556,18 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	hits := make([]Hit, 0, limit)
 	for rows.Next() {
 		var (
-			id       uuid.UUID
-			name     string
-			descr    string
-			owner    int64
-			origin   *uuid.UUID
-			featured bool
-			created  time.Time
-			updated  time.Time
-			score    float64
+			id      uuid.UUID
+			name    string
+			descr   string
+			owner   int64
+			origin  *uuid.UUID
+			created time.Time
+			updated time.Time
+			score   float64
 		)
-		if err := rows.Scan(&id, &name, &descr, &owner, &origin, &featured, &created, &updated, &score); err != nil {
+		if err := rows.Scan(&id, &name, &descr, &owner, &origin, &created, &updated, &score); err != nil {
 			return nil, 0, err
 		}
-		extra, _ := json.Marshal(map[string]any{"featured": featured})
 		hits = append(hits, Hit{
 			Type:           HitTypeCollection,
 			ID:             id,
@@ -560,7 +578,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			CreatedAt:      created,
 			UpdatedAt:      updated,
 			RawScore:       score,
-			ExtraJSON:      extra,
+			// No extras: nil marshals to `{}` in MarshalHitJSON.
 		})
 	}
 	if err := rows.Err(); err != nil {
