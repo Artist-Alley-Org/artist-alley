@@ -9,6 +9,26 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixes
 
+- **Search was broken for every signed-in user.** Every authenticated query returned
+  an internal error and no results. A change months earlier had removed the "featured"
+  flag from collections — featuring became a placement rather than a property — but the
+  search query still asked for the old column, so the whole search failed rather than
+  just the collection portion of it. Search works again; a test now pins the query
+  against the real schema so a removed column cannot silently break it a second time
+  (#650).
+
+- **Masonry no longer reshuffles while you scroll.** Each time the feed loaded more
+  results, the tiles you were already looking at jumped sideways into different columns.
+  The layout balanced all columns by height across the entire list, so adding anything to
+  the end genuinely changed where earlier items belonged. Tiles are now placed into
+  columns as they arrive and stay put — loading more only ever grows one column downward.
+  Measured: previously 30 of 36 visible tiles moved on each page load; now none do
+  (#651).
+
+- **Missing blur-up placeholders on posts.** Assets inside a post shipped without their
+  tiny preview hash, so tiles popped in from blank instead of fading up from a blur, even
+  though the data existed server-side (#648).
+
 - **The IIIF Image API returned 404 for every asset.** Both the image and
   `info.json` endpoints gated on `assets.has_image`, a column nothing in the
   codebase ever writes, so the condition was true for every asset and the whole
