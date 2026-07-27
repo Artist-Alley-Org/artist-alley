@@ -47,6 +47,13 @@ export interface CardAsset {
   file_extension: string | null;
   thumbhash: string | null;
   preview_available: boolean;
+  /** Every rung of the operator's CONFIGURED ladder exists for this
+   *  asset (#610). Distinct from preview_available, which promises only
+   *  `col` — a 320x320 cover CROP. This is what licenses a responsive
+   *  srcset over the wider `contain` rungs; without it a card can only
+   *  safely request `col`, which is why widescreen art was being
+   *  square-cropped (#502/#589). */
+  ladder_available: boolean;
 }
 
 /** The asset payload joined into a post member — the same presentation
@@ -58,4 +65,6 @@ export interface CardCoverAsset {
   file_extension: string | null;
   thumbhash: string | null;
   preview_available: boolean;
+  /** See CardAsset.ladder_available. */
+  ladder_available: boolean;
 }

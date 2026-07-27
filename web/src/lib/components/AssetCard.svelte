@@ -118,6 +118,7 @@
     fileExtension={asset.file_extension}
     hasFileHash={!!asset.file_hash}
     previewAvailable={asset.preview_available}
+    ladderAvailable={asset.ladder_available}
     {hovering}
     {framed}
     fill={mode === 'grid'}
