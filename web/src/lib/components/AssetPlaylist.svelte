@@ -36,6 +36,7 @@
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
+  import { chromeScroll } from '$stores/chromeScroll.svelte';
 
   interface Props {
     source: PlaylistSource;
@@ -202,23 +203,46 @@
   // glued to the navbar's bottom even as the navbar grows (the user
   // is planning to expand it downward for advanced search / filter
   // panels). Written to --aa-navbar-bottom on the root and consumed
-  // by the dialog's CSS. Falls back to 53px if the header isn't
-  // findable (defensive — auth routes have no header).
+  // by the dialog's CSS.
+  //
+  // TWO inputs, not one (#628). The ResizeObserver reports the header's
+  // HEIGHT — which is the right number only while the header is on
+  // screen. The navbar auto-hides via a chromeScroll-driven transform
+  // (translateY(-100%)), which moves its bottom edge to 0 WITHOUT
+  // changing its height, and a ResizeObserver never fires on
+  // transforms. The first version of this glue read only the height, so
+  // once the navbar slid away the variable sat stale at ~53px and the
+  // feed bled through the gap above the viewer. So the effect below
+  // combines the measured height with chromeScroll.hidden: hidden → 0
+  // (the viewer expands flush, per the layout's "maximum image real
+  // estate" intent), visible → the measured height. The observer stays,
+  // for the planned navbar-growth case; the store dependency is what
+  // makes the hide/reveal reactive.
+  //
+  // The dialog is deliberately non-modal, so the navbar hiding while
+  // the viewer is open is a NORMAL state, not an edge case.
   let navbarObserver: ResizeObserver | undefined;
+  let navbarHeight = $state(0);
   function trackNavbarBottom() {
     const header = document.querySelector('header');
     if (!header) {
-      document.documentElement.style.setProperty('--aa-navbar-bottom', '53px');
+      // No header at all (auth routes) → nothing to sit below. This
+      // used to say 53px, which reserved a gap for chrome that does
+      // not exist.
+      navbarHeight = 0;
       return;
     }
     const apply = () => {
-      const h = Math.round(header.getBoundingClientRect().height);
-      document.documentElement.style.setProperty('--aa-navbar-bottom', `${h}px`);
+      navbarHeight = Math.round(header.getBoundingClientRect().height);
     };
     apply();
     navbarObserver = new ResizeObserver(apply);
     navbarObserver.observe(header);
   }
+  $effect(() => {
+    const top = chromeScroll.hidden ? 0 : navbarHeight;
+    document.documentElement.style.setProperty('--aa-navbar-bottom', `${top}px`);
+  });
 
   // Audiobook auto-advance bridge — AudiobookView fires this when
   // the current track ends and there's a next sibling. We translate
@@ -769,6 +793,11 @@
      follows it without code change. */
   dialog.asset-playlist.windowed {
     top: var(--aa-navbar-bottom, 53px);
+    /* The navbar's hide is animated (transition-transform duration-200
+       ease-out in the layout); matching it here means the viewer's top
+       edge chases the navbar instead of snapping while the navbar is
+       still mid-slide (#628). */
+    transition: top 200ms ease-out;
     right: 0;
     bottom: 0;
     left: 0;
