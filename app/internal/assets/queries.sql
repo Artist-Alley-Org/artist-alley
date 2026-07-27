@@ -108,26 +108,15 @@ WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::INTEGER;
 
--- name: ListAssetsByTagPage :many
--- Same paginated list but constrained to a single tag. Separate
--- query because the join breaks the COALESCE pattern.
-SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
-       a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
-       a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
-       a.created_at, a.updated_at
-FROM assets a
-JOIN asset_tag t ON t.asset_id = a.id
-WHERE a.deleted_at IS NULL
-  AND t.tag = sqlc.arg('tag')::TEXT
-  AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR a.owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
-  AND (sqlc.narg('asset_type')::BIGINT  IS NULL OR a.asset_type  = sqlc.narg('asset_type')::BIGINT)
-  AND (sqlc.narg('status')::TEXT           IS NULL OR a.status          = sqlc.narg('status')::TEXT)
-  AND (sqlc.narg('cursor_created_at')::TIMESTAMPTZ IS NULL
-       OR a.created_at < sqlc.narg('cursor_created_at')::TIMESTAMPTZ
-       OR (a.created_at = sqlc.narg('cursor_created_at')::TIMESTAMPTZ
-           AND a.id < sqlc.narg('cursor_id')::UUID))
-ORDER BY a.created_at DESC, a.id DESC
-LIMIT sqlc.arg('row_limit')::INTEGER;
+-- ListAssetsByTagPage was DELETED by #657. It was the by-tag half of
+-- the browse: a second static query whose whole WHERE clause was
+-- `a.deleted_at IS NULL`, so `?tag=` served draft, archived and
+-- restricted rows to anonymous callers that plain `/assets` correctly
+-- withheld — and reported preview_available/ladder_available as false
+-- for every row (#612). The tag filter is now one more optional
+-- conjunct on ListAssetsPageGated (assets/list_page.go), where the
+-- visibility predicate already lives. Do not reintroduce it: a filter
+-- with its own query is a filter with its own rules.
 
 -- name: ListAssetTags :many
 SELECT tag FROM asset_tag WHERE asset_id = $1 ORDER BY tag;

@@ -3628,7 +3628,9 @@ paths:
             on each asset (built from title + description + tags + the
             searchable field-value text by the metadata
             trigger). Whitespace-separated tokens AND together via
-            plainto_tsquery. Ignored when `tag` is also provided.
+            plainto_tsquery. Composes with `tag`: both narrow the same
+            page (before #657 the by-tag branch was a separate query
+            with no search_text column, so `q` was silently dropped).
             A future search DSL (ADR 0010) will replace this.
           schema: { type: string, maxLength: 200 }
         - name: cursor
