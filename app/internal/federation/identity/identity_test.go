@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -43,8 +42,8 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	name := envOr("AA_DB_NAME", "artist_alley")
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -117,8 +116,8 @@ func ensureAtrest(t *testing.T) {
 func TestLoad_FirstBoot_GeneratesAndPersists(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	ensureAtrest(t)
 	scopedSysconfigKey(t, ctx, pool)
 
@@ -152,8 +151,8 @@ func TestLoad_FirstBoot_GeneratesAndPersists(t *testing.T) {
 func TestLoad_Idempotent_SameInstance(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	ensureAtrest(t)
 	// Scope the sysconfig row so we don't try to decrypt a row
 	// encrypted with a different at-rest key (prod boot uses
@@ -191,8 +190,8 @@ func TestGet_BeforeLoad_ReturnsErrNotLoaded(t *testing.T) {
 func TestSignAndVerify_RoundTrip(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	ensureAtrest(t)
 	scopedSysconfigKey(t, ctx, pool)
 

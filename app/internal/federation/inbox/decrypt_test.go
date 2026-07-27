@@ -37,8 +37,8 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	name := envOr("AA_DB_NAME", "artist_alley")
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -84,8 +84,12 @@ func fixtureUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) int64 {
 		t.Fatalf("fixture user: %v", err)
 	}
 	t.Cleanup(func() {
+		// Cleanup runs after the test's context is cancelled, so this
+		// keeps its own deadline — t.Context() here would be dead on
+		// arrival and the cleanup a silent no-op (#622).
 		ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
 		_, _ = pool.Exec(ctx2, `DELETE FROM "user" WHERE ref = $1`, ref)
 	})
 	return ref

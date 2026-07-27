@@ -25,7 +25,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -46,8 +45,8 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	name := envOr("AA_DB_NAME", "artist_alley")
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -116,8 +115,8 @@ func freshPEM(t *testing.T) string {
 func TestAdd_RejectsBadURLs(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	good := freshPEM(t)
@@ -147,8 +146,8 @@ func TestAdd_RejectsBadURLs(t *testing.T) {
 func TestAdd_StripsTrailingSlash(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
@@ -174,8 +173,8 @@ func TestAdd_StripsTrailingSlash(t *testing.T) {
 func TestAdd_RejectsBadPEM(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
@@ -211,8 +210,8 @@ func short(s string) string {
 func TestAdd_RejectsBadTier(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
@@ -234,8 +233,8 @@ func TestAdd_RejectsBadTier(t *testing.T) {
 func TestAddByURLUpdateDelete_RoundTrip(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
@@ -297,8 +296,8 @@ func TestAddByURLUpdateDelete_RoundTrip(t *testing.T) {
 func TestAdd_DuplicateURLRejected(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
@@ -336,8 +335,8 @@ func TestAdd_DuplicateURLRejected(t *testing.T) {
 func TestAdd_InvalidatesEnabledSnapshot(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	admin := fixtureAdmin(t, ctx, pool)
 
 	reg := cache.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))

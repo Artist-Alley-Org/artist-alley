@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -33,8 +32,8 @@ func TestListWorkflowStates_PostDomain(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	reg := cache.NewRegistry(pool, logger)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	if err := reg.Start(ctx); err != nil {
 		t.Fatalf("registry start: %v", err)
 	}

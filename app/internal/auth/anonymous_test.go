@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,8 +21,8 @@ func TestLoadAnonymousIdentity_SeededHasNoCaps(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openAnonPool(t, pwd)
 	defer pool.Close()
 
@@ -54,8 +53,8 @@ func TestLoadAnonymousIdentity_ReflectsRoleCaps(t *testing.T) {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openAnonPool(t, pwd)
 	defer pool.Close()
 
@@ -112,8 +111,8 @@ func openAnonPool(t *testing.T, pwd string) *pgxpool.Pool {
 	}
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
