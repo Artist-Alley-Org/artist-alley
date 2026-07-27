@@ -285,13 +285,20 @@ func TestPreviewModel_StampsThumbhashFromTurntable(t *testing.T) {
 	writeTurntablePNG(t, fixture, 512)
 
 	// blender shim: honour the three output flags the handler uses.
-	// --poster-output <file> / --iso-output <file> write one PNG;
-	// --output <dir> writes the turntable frames.
+	// --poster-output <file> / --iso-output <file> write one PNG.
+	// --output <dir> is the RENDER ROOT, not the frames dir — the real
+	// turntable.py creates turntable/ and views/ underneath it, and the
+	// Go side reads them back from those fixed subpaths.
 	blender := writeShim(t, shimDir, "blender", `
 while [ $# -gt 0 ]; do
   case "$1" in
     --poster-output|--iso-output) cp `+fixture+` "$2"; shift 2 ;;
-    --output) mkdir -p "$2"; cp `+fixture+` "$2/frame_0000.png"; shift 2 ;;
+    --output)
+      mkdir -p "$2/turntable" "$2/views"
+      cp `+fixture+` "$2/turntable/frame_0000.png"
+      cp `+fixture+` "$2/views/top.png"
+      cp `+fixture+` "$2/views/bottom.png"
+      shift 2 ;;
     *) shift ;;
   esac
 done
