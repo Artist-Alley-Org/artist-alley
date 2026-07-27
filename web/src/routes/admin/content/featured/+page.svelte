@@ -17,14 +17,19 @@
     subject_id: string;
     position: number;
     title: string;
+    /** The asset whose col variant renders the tile (#625): the subject
+     *  itself for an asset, the hero-card fallback for a collection.
+     *  Null when nothing is servable. This — not subject_kind — is what
+     *  thumbUrl keys on, because for a collection subject_id is the
+     *  COLLECTION and the variant endpoint would 404 on it. */
+    cover_asset_id?: string | null;
     asset_file_hash?: string | null;
-    /** A servable `col` variant exists. On THIS endpoint that is the
-     *  whole meaning: the admin curation query deliberately applies no
-     *  sensitivity gate ("served to operators who read every tier, so
-     *  variant existence alone decides it"), so unlike the public rail
-     *  there is no per-caller readability folded in — which is exactly
-     *  what a thumbnail needs to know. Populated for asset subjects
-     *  only; collection subjects always report false here. */
+    /** A servable `col` variant exists — for the asset itself, or for
+     *  the collection's resolved cover (#625). On THIS endpoint that is
+     *  the whole meaning: the admin curation query deliberately applies
+     *  no sensitivity gate ("served to operators who read every tier,
+     *  so variant existence alone decides it"), so unlike the public
+     *  rail there is no per-caller readability folded in. */
     preview_available?: boolean;
     created_at: string;
   }
@@ -119,31 +124,17 @@
     flash('ok', t('admin.featured.reordered'));
   }
 
-  // #619 — keyed on preview_available, NOT asset_has_image.
-  //
-  // The old gate was `asset_has_image && asset_file_hash`, and the middle
-  // term is the projection of `assets.has_image` — a column with no
-  // writer anywhere in the codebase, false for all 1007 assets on the
-  // seeded stack. So the condition was unsatisfiable and every asset
-  // subject rendered the "A" placeholder no matter how good its
-  // thumbnail was.
-  //
-  // preview_available answers the question this line is actually asking
-  // — is there a servable `col` to point an <img> at — and it is
-  // computed from live variant existence rather than from a
-  // denormalised flag nothing maintains. It is also what keeps the
-  // no-404 property: false means no request is fired at all, so an
-  // asset whose preview has not been generated yet degrades to the
-  // placeholder silently instead of a red line in the console (#471).
-  //
-  // asset_file_hash stays in the conjunction as a cheap sanity check: an
-  // item with a servable variant but no hash would be an inconsistent
-  // row, and the URL we build would 404.
+  // #619 keyed this on preview_available instead of the dead has_image;
+  // #625 drops the subject-kind gate on top of that. For a collection,
+  // subject_id is the COLLECTION id — the variant endpoint would 404 on
+  // it — so the gate is cover_asset_id, which the server resolves to the
+  // subject itself for an asset and to the hero-card fallback for a
+  // collection (same contract as FeaturedRail.svelte's thumbUrl). Both
+  // fields present ⇒ a servable col exists, so this never builds a URL
+  // that 404s; absent ⇒ null, placeholder, zero requests.
   function thumbUrl(it: FeaturedItem): string | null {
-    if (it.subject_kind === 'asset' && it.preview_available && it.asset_file_hash) {
-      return `/api/v1/assets/${it.subject_id}/variants/col`;
-    }
-    return null;
+    if (!it.cover_asset_id || !it.asset_file_hash) return null;
+    return `/api/v1/assets/${it.cover_asset_id}/variants/col`;
   }
 
   function subjectHref(it: FeaturedItem): string {

@@ -198,11 +198,23 @@ func listRowToAPI(r ListFeaturedItemsRow) openapi.FeaturedItem {
 		Title:       r.Title,
 		CreatedAt:   r.CreatedAt.Time,
 	}
-	if r.SubjectKind == "asset" {
-		out.AssetFileHash = r.AssetFileHash
-		out.PreviewAvailable = r.AssetPreviewAvailable
-		out.LadderAvailable = r.AssetLadderAvailable
+	// Thumbnail hints are populated for BOTH subject kinds (#625). This
+	// used to be gated behind `if r.SubjectKind == "asset"`, which meant
+	// the query below could resolve a collection cover perfectly and the
+	// mapper would throw it away — the admin list rendered a "C"
+	// placeholder for every collection while the public rail showed real
+	// covers (#559). The query yields NULL/'' hints when nothing is
+	// servable, so passing them through unconditionally adds no claim.
+	if r.CoverAssetID.Valid {
+		id := uuid.UUID(r.CoverAssetID.Bytes)
+		out.CoverAssetId = &id
 	}
+	if r.AssetFileHash != "" {
+		h := r.AssetFileHash
+		out.AssetFileHash = &h
+	}
+	out.PreviewAvailable = r.AssetPreviewAvailable
+	out.LadderAvailable = r.AssetLadderAvailable
 	return out
 }
 
