@@ -123,19 +123,42 @@ func idempotencyKey(assetID uuid.UUID) string {
 	return "search.visual_embed|" + assetID.String()
 }
 
-// IsImageExtension reports whether the file extension is one the
-// CLIP visual sidecar can process. Extensions match the has_image
-// classification on the assets table. Exported so tests can pin the
-// set + so the dispatch guard is verifiable by grep.
+// imageExtensions is what the CLIP visual sidecar can process.
 //
-// The set intentionally overlaps 1.18.A-2's isExifExtractableImageExt
-// but stays independent — a future extension may add HEIC / AVIF
-// support to Pillow before EXIF extraction picks them up.
+// The set intentionally overlaps asset/imagefmt's EXIF-extractable set
+// but stays INDEPENDENT — a future release may add HEIC / AVIF support
+// to Pillow before the EXIF extractor picks them up, and collapsing the
+// two would make one pipeline's capability silently govern the other.
+// Note it already diverges today: gif and bmp are embeddable but not
+// EXIF-extractable.
+//
+// The clause that used to sit here — "Extensions match the has_image
+// classification on the assets table" — was the false premise (#579).
+// has_image had no writer, so it classified nothing; this list is the
+// classification, and the column is gone.
+var imageExtensions = []string{"jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff"}
+
+// ImageExtensions returns the extensions CLIP can embed, for callers
+// that need to push the predicate into SQL.
+//
+// Returns a copy: it travels into queries as a text[] parameter, and a
+// caller mutating the shared backing array would change which assets
+// every later backfill selects.
+func ImageExtensions() []string {
+	out := make([]string, len(imageExtensions))
+	copy(out, imageExtensions)
+	return out
+}
+
+// IsImageExtension reports whether the file extension is one the CLIP
+// visual sidecar can process. Exported so tests can pin the set + so
+// the dispatch guard is verifiable by grep.
 func IsImageExtension(ext string) bool {
 	trimmed := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
-	switch trimmed {
-	case "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff":
-		return true
+	for _, e := range imageExtensions {
+		if e == trimmed {
+			return true
+		}
 	}
 	return false
 }

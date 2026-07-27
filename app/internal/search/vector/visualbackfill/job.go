@@ -19,6 +19,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualprovider"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
 )
@@ -160,7 +161,12 @@ func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, err
 			}), nil
 		}
 
-		queue, err := j.VisualStore.ListImageAssetsNeedingVisualEmbedding(ctx, batchSize)
+		queue, err := j.VisualStore.ListImageAssetsNeedingVisualEmbedding(ctx,
+			visualstore.ListImageAssetsNeedingVisualEmbeddingParams{
+				// Same predicate the dispatcher and the job guard use.
+				ImageExtensions: visualembed.ImageExtensions(),
+				Limit:           batchSize,
+			})
 		if err != nil {
 			if cerr := j.Store.Complete(ctx, run.ID, err.Error()); cerr != nil && j.Logger != nil {
 				j.Logger.LogAttrs(ctx, slog.LevelWarn, "visualbackfill.complete_error",

@@ -10996,15 +10996,6 @@ components:
             Thumbnail hint for the tile's cover asset; null when there
             is nothing servable for this caller. Populated for
             collection subjects too since #559.
-        asset_has_image:
-          type: boolean
-          description: |
-            Whether a raster thumbnail exists for the cover asset.
-
-            Unreliable for asset subjects — the underlying `has_image`
-            column has no writer, so it is false across the board;
-            clients key on `preview_available` instead. Retained because
-            removing a response field is a breaking change.
         preview_available:
           type: boolean
           description: |
@@ -11012,9 +11003,11 @@ components:
             cover asset AND the caller passes the content plane (ADR
             0064). The rail renders a thumbnail only when true, else a
             title-only tile with no byte request (#471). Computed from
-            live variant existence, so unlike `asset_has_image` it is
-            trustworthy. Populated for collection subjects too since
-            #559.
+            live variant existence rather than from a stored flag, which
+            is what makes it trustworthy — the `asset_has_image` field
+            that used to sit beside this one was the projection of a
+            column nothing wrote, and was removed with it in #579.
+            Populated for collection subjects too since #559.
         ladder_available:
           type: boolean
           description: |
