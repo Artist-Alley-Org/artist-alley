@@ -33,6 +33,7 @@
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
   import { decodeThumbhash } from '$lib/util/thumbhash';
+  import { previewLadder } from '$stores/previewLadder.svelte';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
 
   interface Props {
@@ -45,6 +46,13 @@
     fileExtension?: string | null;
     hasFileHash?: boolean;
     previewAvailable?: boolean;
+    /** Every CONFIGURED rung exists for this asset (#610). Licenses the
+     *  responsive srcset below; false → `col` only, exactly as before. */
+    ladderAvailable?: boolean;
+    /** Slot width for `sizes`, as a CSS length. The caller knows the
+     *  layout (tile rung, feed column, masonry column); this component
+     *  only knows it is a square-ish box. Defaults to the tile scale. */
+    sizesHint?: string;
     /** Card hover state, from the parent's interactive `<a>` (keeps the
      *  hover listeners on an interactive element, not this presentation
      *  frame). Drives the video/3D sprite-scrub animation. */
@@ -79,6 +87,8 @@
     fileExtension = null,
     hasFileHash = false,
     previewAvailable = false,
+    ladderAvailable = false,
+    sizesHint = '22rem',
     hovering = false,
     framed = true,
     fill = false,
@@ -86,6 +96,35 @@
   }: Props = $props();
 
   const colUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/col` : '');
+
+  // Responsive source set (#502/#589). Three conditions, all required:
+  //
+  //   ladderAvailable  the server confirms every configured rung exists
+  //                    for THIS asset — without it, requesting anything
+  //                    but `col` is the 404 class #471 removed
+  //   !fill            grid's `fill` mode wants the SQUARE CROP. A
+  //                    contact sheet is supposed to be a uniform wall,
+  //                    so `col` is correct there and this deliberately
+  //                    does not touch it (#561)
+  //   rungs present    the install's ladder, read from GET /previews —
+  //                    never hardcoded, or an operator who tuned their
+  //                    rungs gets 404s (#610's trap, client side)
+  //
+  // When any fails, `srcset` stays empty and the <img> renders from
+  // colUrl exactly as it did before this change.
+  onMount(() => previewLadder.init());
+  const srcset = $derived(
+    ladderAvailable && !fill && assetId ? (previewLadder.srcsetFor(assetId) ?? '') : '',
+  );
+  // `src` is the fallback for a browser that ignores srcset, and the
+  // thing the loader uses before it picks a candidate. The smallest
+  // CONTAIN rung, not col: mixing a square crop into a contain slot
+  // would flash the wrong shape before swapping.
+  const imgSrc = $derived.by(() => {
+    if (!srcset) return colUrl;
+    const smallest = previewLadder.smallestKey();
+    return smallest ? `/api/v1/assets/${assetId}/variants/${smallest}` : colUrl;
+  });
 
   // Decoded thumbhash → data URI. Lazy (post-mount) so the SSR snapshot
   // stays light; re-decode if the source asset changes.
@@ -233,7 +272,9 @@
       details view still shows the whole work (#515 slice 1).
     -->
     <img
-      src={colUrl}
+      src={imgSrc}
+      srcset={srcset || undefined}
+      sizes={srcset ? sizesHint : undefined}
       alt={title}
       loading="lazy"
       decoding="async"

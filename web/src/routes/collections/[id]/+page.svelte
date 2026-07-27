@@ -65,6 +65,10 @@
     added_at: string;
     asset_created_at?: string | null;
     preview_available?: boolean;
+    /** Every configured rung exists (#610). Feeds the card's responsive
+     *  srcset (#502) — the API row carries it, so pass it through rather
+     *  than letting the tile fall back to the square `col` crop. */
+    ladder_available?: boolean;
   }
 
   let collection = $state<Collection | null>(null);
@@ -118,6 +122,7 @@
       asset_type: m.asset_type,
       created_at: m.asset_created_at ?? m.added_at,
       preview_available: !!m.preview_available,
+      ladder_available: !!m.ladder_available,
     })),
   );
 

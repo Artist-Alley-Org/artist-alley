@@ -77,12 +77,16 @@
   const coverPreviewAvailable = $derived(!!coverAsset?.preview_available);
   const coverFileExtension = $derived(coverAsset?.file_extension ?? null);
 
-  // A responsive `srcset` would need the wider preview/screen/hires
-  // rungs, but preview_available only guarantees `col`; requesting a
-  // missing rung is exactly the 404 #471 removes. `feed` / `tileSizesLen`
-  // stay in the API for when a `ladder_available` signal brings it back.
-  void feed;
-  void tileSizesLen;
+  // The `ladder_available` signal arrived in #610, so the responsive
+  // srcset these two props were parked for is live (#502/#589) — the
+  // `void` lines that dead-coded them are gone.
+  //
+  // `sizes` tells the browser how wide the slot actually is, which is
+  // what stops a 200px tile pulling `hires`. Feed is one full-width
+  // column capped at the `measure` (see ContentGrid); every other mode
+  // is a tile at the user's chosen rung.
+  const coverLadderAvailable = $derived(!!coverAsset?.ladder_available);
+  const sizesHint = $derived(feed ? 'min(100vw, 46rem)' : tileSizesLen);
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub animation.
@@ -173,6 +177,8 @@
     fileExtension={coverFileExtension}
     hasFileHash={coverHasFile}
     previewAvailable={coverPreviewAvailable}
+    ladderAvailable={coverLadderAvailable}
+    {sizesHint}
     {hovering}
     {framed}
     fill={mode === 'grid'}
