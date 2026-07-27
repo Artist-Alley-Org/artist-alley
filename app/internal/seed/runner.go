@@ -362,10 +362,12 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			opts = b
 		}
 		id, err := r.q.SeedInsertField(ctx, SeedInsertFieldParams{
-			Code:    f.Name,
-			Label:   f.Label,
-			Type:    f.Type,
-			Options: opts,
+			Code:             f.Name,
+			Label:            f.Label,
+			Type:             f.Type,
+			Options:          opts,
+			ExtractionSource: f.ExtractionSource,
+			ExtractionMode:   f.ExtractionMode,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
