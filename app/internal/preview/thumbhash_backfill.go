@@ -45,6 +45,13 @@ const thumbhashBackfillBatch = 200
 type ThumbhashBackfillPayload struct{}
 
 // ThumbhashBackfillResult is what lands in jobs.result.
+//
+// Stamped counts assets whose rendered preview decoded and was handed
+// to the writer — not rows the UPDATE actually touched. The two are the
+// same here because the population selects `thumbhash IS NULL`, and the
+// writer's own NULL guard can only turn a write into a no-op if
+// something else stamped the row mid-sweep. Reading the row count back
+// would cost a round trip per asset to sharpen a progress number.
 type ThumbhashBackfillResult struct {
 	Scanned   int64   `json:"scanned"`
 	Stamped   int64   `json:"stamped"`
