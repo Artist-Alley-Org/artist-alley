@@ -140,9 +140,12 @@ jobs:
         # used to follow are gone (#371) — `created` is a mid-flight
         # state, so the reap deleted peer runs' containers. See ci.yml
         # for the full reasoning.
-        run: |
-          docker compose down -v --remove-orphans || true
-          docker image prune -f || true  # dangling only (shared daemon: never -a)
+        #
+        # Shared teardown (#599) — also reclaims the image compose builds
+        # for this project. This workflow builds ONE (aa-ci-<run>-app, the
+        # prod image); `web` is parked in the inert `vite` profile by
+        # docker-compose.ci.yml, so no aa-ci-<run>-web exists here.
+        uses: ./.github/actions/compose-cleanup
 
       # Replace the dev `app` service with the production image
       # (built from the root Dockerfile with `-tags embed_web`).
@@ -286,5 +289,7 @@ jobs:
           docker network disconnect "${COMPOSE_PROJECT_NAME}_default" "$(hostname)" 2>/dev/null || true
 
       - name: Stop the stack
+        # always(): a failed Playwright run built the same image a passing
+        # one did, so it must reclaim it too.
         if: always()
-        run: docker compose down -v --remove-orphans || true
+        uses: ./.github/actions/compose-cleanup
