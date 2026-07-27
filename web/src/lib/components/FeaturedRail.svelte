@@ -35,7 +35,6 @@
      *  collection (#559). Null when nothing is servable. */
     cover_asset_id?: string | null;
     asset_file_hash?: string | null;
-    asset_has_image?: boolean;
     preview_available?: boolean;
   }
 
@@ -62,12 +61,13 @@
   // all — the server strips it (ADR 0020). So the presence of the hash
   // is the signal, and this does not re-derive the rule.
   //
-  // Keyed on the hash rather than on `asset_has_image` deliberately:
-  // has_image has no writer anywhere in the codebase (DEFAULT false),
-  // so trusting it would make the rail render title-only tiles for
-  // content that has perfectly good bytes. A 404 on the variant falls
-  // back to the same title-only tile, so the worse failure is guarded
-  // either way.
+  // Keyed on the hash rather than on a stored "has an image" flag
+  // deliberately. The `asset_has_image` field this used to avoid was
+  // the projection of a column with no writer anywhere (DEFAULT false),
+  // so trusting it would have made the rail render title-only tiles for
+  // content with perfectly good bytes; both the field and the column
+  // are gone as of #579. A 404 on the variant falls back to the same
+  // title-only tile, so the worse failure is guarded either way.
   //
   // Collections resolve a cover the same way now (#559). The subject
   // kind is no longer the gate — `cover_asset_id` is, because for a

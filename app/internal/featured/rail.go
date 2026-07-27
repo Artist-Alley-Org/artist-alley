@@ -28,7 +28,6 @@ type RailRow struct {
 	// variant endpoint is keyed by asset (#559).
 	CoverAssetID          pgtype.UUID
 	AssetFileHash         *string
-	AssetHasImage         bool
 	AssetPreviewAvailable bool
 	// AssetLadderAvailable: every CONFIGURED preview rung exists for the
 	// cover asset AND it clears the same public-tier gate as
@@ -129,10 +128,6 @@ func ListPublicRail(
             WHEN 'asset'      THEN CASE WHEN a.sensitivity = 'public' THEN a.file_hash END
             WHEN 'collection' THEN cover.file_hash
        END AS asset_file_hash,
-       COALESCE(CASE f.subject_kind
-            WHEN 'asset'      THEN a.sensitivity = 'public' AND a.has_image
-            WHEN 'collection' THEN cover.file_hash IS NOT NULL
-       END, false)::boolean AS asset_has_image,
        -- preview_available (#471): public-tier AND a servable col exists.
        -- Gated on public exactly like the file_hash hint above, so it is
        -- suppressed for non-public assets (0064-safe) and the rail fires
@@ -175,10 +170,10 @@ LEFT JOIN collections c
 --   * sensitivity = 'public' — per-asset tier (ADR 0020/0064), same bar
 --     as the asset-subject hint, so an embargo cover yields no pixels
 --   * a servable col variant — so the tile never fires a 404
--- has_image is deliberately NOT a gate: nothing in the codebase writes
--- that column (DEFAULT false, no INSERT/UPDATE anywhere), so requiring
--- it would make every cover blank. The frontend reached the same
--- conclusion independently — see FeaturedRail.svelte's thumbUrl.
+-- The removed third gate was has_image, a column with no writer that
+-- would have made every cover blank had it been required. It is gone
+-- from the schema entirely as of #579; this note stays as the record of
+-- why the gate list is three and not four.
 LEFT JOIN LATERAL (
        SELECT ca.id, ca.file_hash
          FROM collection_posts cp
@@ -208,7 +203,7 @@ LIMIT $1::INTEGER`
 		if err := rows.Scan(
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
 			&r.Title, &r.CoverAssetID,
-			&r.AssetFileHash, &r.AssetHasImage, &r.AssetPreviewAvailable,
+			&r.AssetFileHash, &r.AssetPreviewAvailable,
 			&r.AssetLadderAvailable,
 		); err != nil {
 			return nil, fmt.Errorf("featured: rail scan: %w", err)

@@ -200,8 +200,6 @@ func listRowToAPI(r ListFeaturedItemsRow) openapi.FeaturedItem {
 	}
 	if r.SubjectKind == "asset" {
 		out.AssetFileHash = r.AssetFileHash
-		hasImg := r.AssetHasImage
-		out.AssetHasImage = &hasImg
 		out.PreviewAvailable = r.AssetPreviewAvailable
 		out.LadderAvailable = r.AssetLadderAvailable
 	}
@@ -287,8 +285,6 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 		out.CoverAssetId = &id
 	}
 	out.AssetFileHash = r.AssetFileHash
-	hasImg := r.AssetHasImage
-	out.AssetHasImage = &hasImg
 	out.PreviewAvailable = r.AssetPreviewAvailable
 	out.LadderAvailable = r.AssetLadderAvailable
 	return out

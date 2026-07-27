@@ -241,8 +241,8 @@ func seedAsset(t *testing.T, pool *pgxpool.Pool, ownerRef int64, title, hash str
 	_, err = pool.Exec(ctx, `
 		INSERT INTO assets (
 			id, title, asset_type, owner_user_ref, status,
-			file_hash, file_extension, file_size_bytes, sensitivity, has_image
-		) VALUES ($1, $2, 1, $3, 'active', $4, 'png', 1024, 'public', true)
+			file_hash, file_extension, file_size_bytes, sensitivity
+		) VALUES ($1, $2, 1, $3, 'active', $4, 'png', 1024, 'public')
 	`, id, title, ownerRef, hash)
 	if err != nil {
 		t.Fatalf("seed asset: %v", err)

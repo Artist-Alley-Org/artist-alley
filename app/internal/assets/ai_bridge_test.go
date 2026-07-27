@@ -72,14 +72,16 @@ func seedBridgeAsset(t *testing.T, pool *pgxpool.Pool, ownerRef int64, title, ha
 		t.Fatalf("seed storage_object: %v", err)
 	}
 	// asset_type is a FK to asset_types(ref); ref=1 is the seeded
-	// "Image" type. has_image=true so the bridge's MimeType derivation
-	// returns "image/png".
+	// "Image" type. file_extension='png' is what drives the bridge's
+	// MimeType derivation to "image/png" (#621) — it used to stamp
+	// has_image=true, a column no production path writes, which is
+	// exactly the fixture pattern that let #614/#618 hide.
 	_, err = pool.Exec(ctx, `
 		INSERT INTO assets (
 			id, title, asset_type, owner_user_ref, status,
 			file_hash, file_extension, file_size_bytes,
-			sensitivity, has_image
-		) VALUES ($1, $2, 1, $3, 'active', $4, 'png', 1024, 'public', true)
+			sensitivity
+		) VALUES ($1, $2, 1, $3, 'active', $4, 'png', 1024, 'public')
 	`, id, title, ownerRef, hash)
 	if err != nil {
 		t.Fatalf("seed asset: %v", err)

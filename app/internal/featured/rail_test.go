@@ -285,8 +285,9 @@ func TestRail_EmbargoAssetShowsTitleOnly(t *testing.T) {
 			t.Error("embargo asset exposed a file hash; ADR 0020 is title-only, so the thumbnail " +
 				"hint must be suppressed")
 		}
-		if r.AssetHasImage {
-			t.Error("embargo asset reported has_image; the client would render a thumbnail request")
+		if r.AssetPreviewAvailable {
+			t.Error("embargo asset reported preview_available; the client would " +
+				"render a thumbnail request for bytes it may not read")
 		}
 	}
 	if !found {

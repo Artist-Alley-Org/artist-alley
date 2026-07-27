@@ -479,8 +479,8 @@ func TestCanPeerAccess_ContainerFallback_AssetInSharedCollection(t *testing.T) {
 	}
 	assetID := uuid.New()
 	if _, err := fx.pool.Exec(ctx,
-		`INSERT INTO assets (id, title, asset_type, owner_user_ref, has_image)
-		 VALUES ($1, 'Test Asset', 1, $2, FALSE)`,
+		`INSERT INTO assets (id, title, asset_type, owner_user_ref)
+		 VALUES ($1, 'Test Asset', 1, $2)`,
 		assetID, fx.grantorRef,
 	); err != nil {
 		t.Fatal(err)

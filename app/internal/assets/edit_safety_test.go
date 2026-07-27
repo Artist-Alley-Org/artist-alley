@@ -58,8 +58,8 @@ func seedAssetForEditSafety(t *testing.T) (uuid.UUID, time.Time, *assets.Handler
 		t.Fatalf("seed storage_object: %v", err)
 	}
 	_, err = pool.Exec(ctx, `
-		INSERT INTO assets (id, title, asset_type, owner_user_ref, status, file_hash, file_extension, file_size_bytes, sensitivity, has_image)
-		VALUES ($1, 'edit-safety-test', 1, $2, 'active', $3, 'png', 1024, 'public', true)
+		INSERT INTO assets (id, title, asset_type, owner_user_ref, status, file_hash, file_extension, file_size_bytes, sensitivity)
+		VALUES ($1, 'edit-safety-test', 1, $2, 'active', $3, 'png', 1024, 'public')
 	`, id, userRef, hashHex)
 	if err != nil {
 		t.Fatalf("seed asset: %v", err)
