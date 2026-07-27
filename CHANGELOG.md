@@ -40,6 +40,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### API
 
+- **Removed: `asset_has_image` from featured-item payloads.** It reported whether
+  a raster thumbnail existed for a tile's cover asset, and it was **always
+  false** — the underlying database column had no writer anywhere, in any
+  install. Clients should use `preview_available`, which is computed from live
+  variant existence and has been the trustworthy signal since it was added. No
+  client behaviour changes, because nothing could have usefully depended on a
+  field that was universally false. The column itself was dropped in the same
+  change (#579).
+
 - **`ladder_available` on asset payloads** — reports whether the *complete*
   configured preview ladder exists for an asset, so clients can build a responsive
   `srcset` instead of assuming a single thumbnail size. Computed against the
