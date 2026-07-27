@@ -15,7 +15,14 @@ where applicable, otherwise note "no-spec-impact."
   Image API had been dead since it shipped — with no error, because "404" is also
   the correct answer for an asset that genuinely has no image. Image endpoints now
   serve real bytes, gated on whether a configured IIIF variant is actually stored.
-  `info.json` still 404s on a second, unrelated cause (#618) (#614).
+
+  `info.json` had a **second, unrelated cause**, now also fixed: it reports an
+  image's pixel dimensions, and nothing ever recorded them. The metadata
+  extractor emits width and height, but no field definition existed to receive
+  them, so the values were discarded and every `info.json` 404ed. The
+  definitions are now seeded and wired to the extractor — on both fresh installs
+  and existing ones. **The IIIF Image API is fully functional for the first time
+  since it shipped** (#614, #618).
 
 - **Viewer gap when the navbar auto-hides.** Opening a post after scrolling far
   enough that the navbar had slid away left a navbar-sized gap above the viewer,
