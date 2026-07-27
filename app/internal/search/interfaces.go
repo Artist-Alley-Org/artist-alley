@@ -189,8 +189,10 @@ type Hit struct {
 
 	// ExtraJSON is the per-entity extras the frontend uses to
 	// render an entity-specific card (asset thumbhash, post
-	// cover_asset_id, collection featured flag). Stored as raw
-	// JSON so the OpenAPI additionalProperties shape is honoured.
+	// cover_asset_id). Stored as raw JSON so the OpenAPI
+	// additionalProperties shape is honoured. Nil is legal and
+	// marshals to `{}` — collection hits carry no extras since
+	// #650 dropped the stale `featured` flag (ADR 0065).
 	ExtraJSON []byte
 }
 
