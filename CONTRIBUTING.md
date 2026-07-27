@@ -30,6 +30,8 @@ Run the full suite locally before pushing:
 
 CI must be green before merge. The script runs Go unit and integration tests against a real Postgres — it does not mock the database.
 
+The suite never touches your dev database. It resets and runs against a disposable `<POSTGRES_DB>_test` in the same Postgres container. In a `git worktree` the name gets a short hash of the checkout path appended, so runs from several worktrees can't reset each other's database mid-suite; that per-worktree database is dropped when the run exits (`AA_TEST_KEEP_DB=1` keeps it for a post-mortem). If two runs somehow land on the same database name, the second exits immediately with an explanation rather than force-dropping the first one's.
+
 ## Branches
 
 - `main` — stable. Only tested, working checkpoints land here.
