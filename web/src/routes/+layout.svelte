@@ -24,6 +24,7 @@
   import MessagesButton from '$components/MessagesButton.svelte';
   import NotificationsButton from '$components/NotificationsButton.svelte';
   import ExploreMenu from '$components/ExploreMenu.svelte';
+  import CardTooltip from '$components/CardTooltip.svelte';
 
   let { children } = $props();
 
@@ -322,6 +323,15 @@
   </main>
 
   <MobileNavDrawer bind:open={drawerOpen} onclose={() => (drawerOpen = false)} />
+
+  <!-- Masonry's hover tooltip (#652) — one instance for the whole app,
+       fed by whichever card the pointer is over. NOT gated on auth: the
+       browse wall is public, and the tooltip only surfaces facts the
+       card already renders. Mounted here rather than per-card so moving
+       between adjacent tiles swaps its contents instead of unmounting
+       and re-running the show delay, which is what made a per-card
+       tooltip strobe. -->
+  <CardTooltip />
 
   {#if !!auth.user}
     <!-- Upload modal + drop overlay are gated on auth: only signed-in

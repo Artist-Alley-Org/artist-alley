@@ -95,7 +95,7 @@
   import { untrack } from 'svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import { previewLadder } from '$stores/previewLadder.svelte';
-  import { cardTileRatio } from './cardAsset';
+  import { cardTileRatio, masonryMinTilePx, masonryTileHeight } from './cardAsset';
 
   interface Props {
     items: Array<{ id: string }>;
@@ -137,6 +137,10 @@
   let colWidth = 0;
   let gapPx = 0;
   let lastWidth = -1;
+  /** CardThumb's `min-height` floor (#652), resolved to px. Read here
+   *  and not assumed, because it is declared in rem — see
+   *  `masonryMinTilePx`. */
+  let minTilePx = 0;
 
   let columns = $state<Placed[][]>([]);
 
@@ -166,6 +170,7 @@
     const min = probe.getBoundingClientRect().width;
     const n = min > 0 ? Math.max(1, Math.floor((width + gapPx) / (min + gapPx))) : 1;
     colWidth = (width - gapPx * (n - 1)) / n;
+    minTilePx = masonryMinTilePx();
     lastWidth = width;
     colCount = n;
   }
@@ -198,13 +203,24 @@
   });
 
   /** Predicted height of `item`'s tile, in px, including the gap above
-   *  it. See cost (3) for why the three sources are in this order. */
+   *  it. See cost (3) for why the three sources are in this order.
+   *
+   *  Every branch goes through `masonryTileHeight`, which applies the
+   *  #652 floor — the SAME rule CardThumb writes into `min-height`.
+   *  This is the desynchronisation hazard the brief for that issue
+   *  flagged: a floor that exists in CSS but not here means the
+   *  bucketer places tiles against heights 30px shorter than they
+   *  render, the columns drift apart over a long scroll, and the append
+   *  instability #651 removed comes back through the side door.
+   *  Measured ratios come back as height ÷ width, hence the invert. */
   function estimate(item: { id: string }, ladderReady: boolean): number {
     const declared = cardTileRatio(item, ladderReady);
-    if (declared !== null) return colWidth / declared + gapPx;
+    if (declared !== null) return masonryTileHeight(colWidth, declared, minTilePx) + gapPx;
     const measured = measuredRatio.get(item.id);
-    if (measured !== undefined) return colWidth * measured + gapPx;
-    return colWidth / SQUARE + gapPx;
+    if (measured !== undefined && measured > 0) {
+      return masonryTileHeight(colWidth, 1 / measured, minTilePx) + gapPx;
+    }
+    return masonryTileHeight(colWidth, SQUARE, minTilePx) + gapPx;
   }
 
   /** Harvest what every rendered tile currently measures. Merged rather

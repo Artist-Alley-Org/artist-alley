@@ -25,7 +25,14 @@
 import { render } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import MasonryColumns from './MasonryColumns.svelte';
-import { cardTileRatio, RATIO_MAX, RATIO_MIN } from './cardAsset';
+import {
+  cardTileRatio,
+  masonryMinTilePx,
+  masonryTileHeight,
+  MASONRY_MIN_TILE_REM,
+  RATIO_MAX,
+  RATIO_MIN,
+} from './cardAsset';
 import { createRawSnippet } from 'svelte';
 
 describe('cardTileRatio', () => {
@@ -84,6 +91,48 @@ describe('cardTileRatio', () => {
   it('clamps values that could not be a picture', () => {
     expect(cardTileRatio(assetRow({ pixel_width: 4000, pixel_height: 1 }), true)).toBe(RATIO_MAX);
     expect(cardTileRatio(assetRow({ pixel_width: 1, pixel_height: 4000 }), true)).toBe(RATIO_MIN);
+  });
+});
+
+// #652 — the tile floor. Same argument as cardTileRatio above: the
+// renderer writes it as `min-height` and the bucketer has to predict the
+// identical number, so it is one function and this pins it. A floor in
+// CSS only would place tiles against heights they never have, drift the
+// columns apart over a long scroll, and reintroduce #651.
+describe('masonryTileHeight (#652)', () => {
+  const MIN = 60;
+
+  it('follows the aspect ratio for any tile above the floor', () => {
+    // 1.78:1 and 1:1 in a 300px column — the two #646 must keep exact.
+    expect(masonryTileHeight(300, 16 / 9, MIN)).toBeCloseTo(300 / (16 / 9), 5);
+    expect(masonryTileHeight(300, 1, MIN)).toBe(300);
+  });
+
+  it('floors the tiles a true ratio would make uninteractable', () => {
+    // The measured worst case: a 5.33:1 waveform in a 129px column
+    // wants 24px, which cannot hold a 44px control.
+    expect(masonryTileHeight(129, 16 / 3, MIN)).toBe(MIN);
+    // And the clamp ceiling, 12:1, in the widest measured column.
+    expect(masonryTileHeight(400, RATIO_MAX, MIN)).toBe(MIN);
+  });
+
+  it('floors the no-ratio square reservation too', () => {
+    // Not reachable at real column widths, but the branch must not be
+    // the one place the floor is missing.
+    expect(masonryTileHeight(20, null, MIN)).toBe(MIN);
+    expect(masonryTileHeight(300, null, MIN)).toBe(300);
+  });
+
+  // The floor is stated in rem because the controls are (`h-11`,
+  // `top-2`). A hardcoded 60 would put a 20px-root user's 55px controls
+  // straight back outside the tile.
+  it('derives the floor from the root font size, not from 16', () => {
+    expect(MASONRY_MIN_TILE_REM).toBe(2.75 + 0.5 * 2);
+    document.documentElement.style.fontSize = '';
+    expect(masonryMinTilePx()).toBeCloseTo(MASONRY_MIN_TILE_REM * 16, 3);
+    document.documentElement.style.fontSize = '20px';
+    expect(masonryMinTilePx()).toBeCloseTo(MASONRY_MIN_TILE_REM * 20, 3);
+    document.documentElement.style.fontSize = '';
   });
 });
 

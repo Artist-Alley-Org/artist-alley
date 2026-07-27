@@ -12,6 +12,7 @@
   import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
+  import { cardTooltip } from '$stores/cardTooltip.svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
@@ -36,6 +37,14 @@
   // thumbnail. See CardThumb `framed`.
   const framed = $derived(mode !== 'grid');
   const detailed = $derived(mode === 'thumbnail');
+
+  // Masonry only (#652). Its tiles are the shape of their images since
+  // #646, so the thinnest are ~60px — the floor CardThumb clamps them
+  // to, which is one 44px tap target plus its inset. At that size the
+  // overlay holds the ⋮ menu and the checkbox and nothing else; the
+  // title/date that grid paints across the bottom of the artwork would
+  // cover the entire work. Those facts move to the hover tooltip.
+  const compact = $derived(mode === 'masonry');
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub (keeps hover listeners off the presentation frame).
@@ -80,6 +89,31 @@
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   );
+
+  // Tooltip payload (#652). Scan-level facts only — type, size, date.
+  // Deliberately NOT the details card: masonry's job is looking at a lot
+  // of things quickly, and a tooltip you have to read is a tooltip that
+  // stops you scanning. The dimensions are here because #646 made them
+  // available and they are the one fact a thin tile actively hides.
+  const tipMeta = $derived(
+    [
+      asset.file_extension ? asset.file_extension.replace(/^\./, '').toUpperCase() : null,
+      asset.pixel_width && asset.pixel_height ? `${asset.pixel_width} × ${asset.pixel_height}` : null,
+      createdShort,
+    ].filter((v): v is string => !!v),
+  );
+
+  function tipEnter(e: MouseEvent) {
+    hovering = true;
+    if (compact) cardTooltip.enter(asset.id, { title: asset.title, meta: tipMeta }, e);
+  }
+  function tipMove(e: MouseEvent) {
+    if (compact) cardTooltip.move(asset.id, e);
+  }
+  function tipLeave() {
+    hovering = false;
+    if (compact) cardTooltip.leave(asset.id);
+  }
 </script>
 
 <!--
@@ -123,15 +157,21 @@
     {framed}
     fill={mode === 'grid'}
     variableAspect={mode === 'masonry'}
+    {compact}
     pixelWidth={asset.pixel_width}
     pixelHeight={asset.pixel_height}
   >
     <!-- Whole-card navigation target. Hover here drives CardThumb's
-         sprite-scrub (an interactive element, so no a11y warning). -->
+         sprite-scrub (an interactive element, so no a11y warning) and,
+         in masonry, the shared hover tooltip. The listeners hang off
+         THIS element and not the frame because it is exactly the tile's
+         box and it is interactive; `currentTarget` is therefore the
+         rect the tooltip anchors to. -->
     <a
       href="/assets/{asset.id}"
-      onmouseenter={() => (hovering = true)}
-      onmouseleave={() => (hovering = false)}
+      onmouseenter={tipEnter}
+      onmousemove={tipMove}
+      onmouseleave={tipLeave}
       class="absolute inset-0 z-[1]"
       aria-label={asset.title}
     ></a>
@@ -139,9 +179,10 @@
     <!-- Multi-select checkbox (top-left). -->
     <CardCheckbox id={asset.id} />
 
-    {#if !detailed}
-      <!-- Grid/masonry/feed: hover-only title overlay (clicks fall to
-           the link). Thumbnail shows a persistent footer below instead. -->
+    {#if !detailed && !compact}
+      <!-- Grid/feed: hover-only title overlay (clicks fall to the link).
+           Thumbnail shows a persistent footer below instead; masonry
+           shows the hover tooltip instead (#652) — see `compact`. -->
       <div
         class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
                p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
