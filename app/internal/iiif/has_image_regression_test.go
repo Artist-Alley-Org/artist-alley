@@ -242,14 +242,25 @@ func TestPoolLookupIgnoresHasImage(t *testing.T) {
 
 	// Confirm the premise this whole issue rests on, so the assertion
 	// below cannot pass for the wrong reason.
-	var hasImage bool
-	if err := pool.QueryRow(ctx,
-		`SELECT has_image FROM assets WHERE id = $1`, id).Scan(&hasImage); err != nil {
-		t.Fatalf("read has_image: %v", err)
+	//
+	// The premise used to be "has_image is false for this row", read
+	// with a SELECT. Since #579 dropped the column the premise is
+	// stronger and structural: the column does not exist, so nothing can
+	// gate on it even by accident. Asserting its ABSENCE is what keeps
+	// this test meaningful — a re-added column would silently restore
+	// the option of gating on it again.
+	var columnExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		                WHERE table_name = 'assets' AND column_name = 'has_image')
+	`).Scan(&columnExists); err != nil {
+		t.Fatalf("probe for has_image column: %v", err)
 	}
-	if hasImage {
-		t.Fatal("fixture asset has has_image = true; something now writes that " +
-			"column and this test no longer exercises the regression")
+	if columnExists {
+		t.Fatal("assets.has_image is back. It had no writer and gating on it " +
+			"returned 404 for every asset (#614); it was dropped in #579. If it " +
+			"has been reintroduced deliberately, this test needs rewriting rather " +
+			"than deleting.")
 	}
 
 	got, err := iiif.PoolLookup{Pool: pool}.GetIIIFAsset(ctx, id,

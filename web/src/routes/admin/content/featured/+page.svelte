@@ -18,12 +18,6 @@
     position: number;
     title: string;
     asset_file_hash?: string | null;
-    /** Dead field — `assets.has_image` has no writer anywhere, so this is
-     *  false for every asset in every install. Kept declared only so the
-     *  shape still matches the API response; #579 step 4 removes it from
-     *  the API and it goes from here at the same time. Do NOT gate
-     *  anything on it (#619). */
-    asset_has_image?: boolean;
     /** A servable `col` variant exists. On THIS endpoint that is the
      *  whole meaning: the admin curation query deliberately applies no
      *  sensitivity gate ("served to operators who read every tier, so

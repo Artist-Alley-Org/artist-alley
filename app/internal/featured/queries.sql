@@ -14,7 +14,6 @@ SELECT f.id, f.subject_kind, f.subject_id, f.position,
        f.created_at, f.created_by_user_ref,
        COALESCE(a.title, c.name, '')::text AS title,
        a.file_hash AS asset_file_hash,
-       COALESCE(a.has_image, false)::boolean AS asset_has_image,
        -- preview_available (#471): a servable col variant exists. This is
        -- the admin curation list, served to operators who read every
        -- tier, so variant existence alone decides it (no per-caller

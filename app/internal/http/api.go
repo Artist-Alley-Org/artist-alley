@@ -503,7 +503,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// the "-1 = unknown" sentinel so the admin dashboard doesn't
 		// hide the tile when the DB briefly misbehaves.
 		if s.visualBackfillHandler != nil && s.visualBackfillHandler.VisualStore != nil {
-			if n, err := s.visualBackfillHandler.VisualStore.CountVisualEmbeddingBacklog(ctx); err == nil {
+			if n, err := s.visualBackfillHandler.VisualStore.CountVisualEmbeddingBacklog(ctx, visualembed.ImageExtensions()); err == nil {
 				out["visual_embedding_backlog"] = n
 			} else {
 				out["visual_embedding_backlog"] = -1
@@ -2216,29 +2216,33 @@ func (a visualEmbedStorageAdapter) Download(ctx context.Context, hash, variant s
 }
 
 // visualEmbedAssetAdapter bridges the pool → the narrow
-// visualembed.AssetLookup interface. Reads file_hash + has_image +
+// visualembed.AssetLookup interface. Reads file_hash + file_extension +
 // deleted_at with a single SELECT so the job's Handle path adds one
 // row-scan per execution.
+//
+// file_extension rather than has_image (#579): image-ness is the file
+// FORMAT, and the column this used to select had no writer, so the job
+// it feeds rejected every asset as "not an image".
 type visualEmbedAssetAdapter struct{ pool *pgxpool.Pool }
 
 func (a visualEmbedAssetAdapter) Get(ctx context.Context, id uuid.UUID) (visualembed.AssetRecord, error) {
 	var (
 		fileHash  *string
-		hasImage  bool
+		fileExt   *string
 		deletedAt *time.Time
 	)
 	err := a.pool.QueryRow(ctx, `
-		SELECT file_hash, has_image, deleted_at
+		SELECT file_hash, file_extension, deleted_at
 		  FROM assets
 		 WHERE id = $1
-	`, id).Scan(&fileHash, &hasImage, &deletedAt)
+	`, id).Scan(&fileHash, &fileExt, &deletedAt)
 	if err != nil {
 		return visualembed.AssetRecord{}, err
 	}
 	return visualembed.AssetRecord{
-		FileHash: fileHash,
-		HasImage: hasImage,
-		Deleted:  deletedAt != nil,
+		FileHash:      fileHash,
+		FileExtension: fileExt,
+		Deleted:       deletedAt != nil,
 	}, nil
 }
 

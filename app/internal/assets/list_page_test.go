@@ -370,8 +370,8 @@ func seedAssetWithCol(t *testing.T, pool *pgxpool.Pool, sensitivity string, owne
 		}
 	}
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, has_image, file_hash)
-		 VALUES ($1, $2, $3, (SELECT MIN(ref) FROM asset_types), 'active', $4, 'ready', true, $5)`,
+		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, file_hash)
+		 VALUES ($1, $2, $3, (SELECT MIN(ref) FROM asset_types), 'active', $4, 'ready', $5)`,
 		id, "pa-"+sensitivity, owner, sensitivity, hash); err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}

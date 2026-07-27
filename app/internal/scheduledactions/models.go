@@ -77,7 +77,6 @@ type Asset struct {
 	FileExtension        *string            `json:"file_extension"`
 	FileSizeBytes        *int64             `json:"file_size_bytes"`
 	Access               int32              `json:"access"`
-	HasImage             bool               `json:"has_image"`
 	IsTranscoding        bool               `json:"is_transcoding"`
 	Metadata             []byte             `json:"metadata"`
 	OriginServerID       pgtype.UUID        `json:"origin_server_id"`

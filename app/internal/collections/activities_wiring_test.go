@@ -196,8 +196,8 @@ func TestAddCollectionResource_EmitsAddActivity(t *testing.T) {
 	// FK target. Cleanup deletes it after the test.
 	assetID := uuid.New()
 	if _, err := fx.pool.Exec(ctx,
-		`INSERT INTO assets (id, title, description, asset_type, status, has_image, owner_user_ref)
-		 VALUES ($1, $2, '', 1, 'active', false, $3)`,
+		`INSERT INTO assets (id, title, description, asset_type, status, owner_user_ref)
+		 VALUES ($1, $2, '', 1, 'active', $3)`,
 		pgtype.UUID{Bytes: assetID, Valid: true}, "wiring-test-asset", fx.userRef,
 	); err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualprovider"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
 )
@@ -64,7 +65,7 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	// block the run — the counter shows "0 / unknown" instead.
 	var total *int64
 	if h.VisualStore != nil {
-		if n, err := h.VisualStore.CountVisualEmbeddingBacklog(r.Context()); err == nil {
+		if n, err := h.VisualStore.CountVisualEmbeddingBacklog(r.Context(), visualembed.ImageExtensions()); err == nil {
 			total = &n
 		} else {
 			h.logError(r, "visualbackfill.count_backlog", err)

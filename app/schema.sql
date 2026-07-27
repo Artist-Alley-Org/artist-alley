@@ -874,7 +874,6 @@ CREATE TABLE public.assets (
     file_extension text,
     file_size_bytes bigint,
     access integer DEFAULT 0 NOT NULL,
-    has_image boolean DEFAULT false NOT NULL,
     is_transcoding boolean DEFAULT false NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     origin_server_id uuid,
