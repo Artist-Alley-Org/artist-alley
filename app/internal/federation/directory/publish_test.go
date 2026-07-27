@@ -124,9 +124,10 @@ func newPublishStub(t *testing.T, registerCode int, registerBody string) (*publi
 // publishFixture wires identity + registry + a rewriting Client
 // pointing at the given httptest server. Shared by all publish
 // tests.
+// ctx is t.Context() (#622): cancelled automatically at test end, so
+// the fixture no longer carries a cancel func for each test to defer.
 type publishFixture struct {
 	ctx     context.Context
-	cancel  context.CancelFunc
 	reg     *directory.Registry
 	client  *directory.Client
 	dir     *directory.Directory
@@ -159,7 +160,7 @@ func setupPublishFixture(t *testing.T, srvURL string, stubPubPEM []byte, stubPub
 	reg := directory.NewRegistry(pool, logger, regCache)
 	client := rewriteClient(t, logger, srvURL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx := t.Context()
 	admin := fixtureAdmin(t, ctx, pool)
 
 	// Subscribe to the stub at a fake https URL.
@@ -185,7 +186,7 @@ func setupPublishFixture(t *testing.T, srvURL string, stubPubPEM []byte, stubPub
 		t.Fatal(err)
 	}
 	return &publishFixture{
-		ctx: ctx, cancel: cancel, reg: reg, client: client, dir: dir,
+		ctx: ctx, reg: reg, client: client, dir: dir,
 		idMgr: idMgr, adminID: admin,
 	}
 }
@@ -193,7 +194,6 @@ func setupPublishFixture(t *testing.T, srvURL string, stubPubPEM []byte, stubPub
 func TestPublishFlow_HappyPath(t *testing.T) {
 	stub, srv := newPublishStub(t, 0, "") // 0 = default-success
 	fx := setupPublishFixture(t, srv.URL, stub.pub, stub.pubKey)
-	defer fx.cancel()
 
 	instanceURL := "https://instance-x.example"
 	// 1. Request challenge.
@@ -238,7 +238,6 @@ func TestPublishFlow_HappyPath(t *testing.T) {
 func TestPublishFlow_DNSNotPropagated_StaysPendingDNS(t *testing.T) {
 	stub, srv := newPublishStub(t, http.StatusAccepted, `{"error":"DNS-TXT not yet verifiable: NXDOMAIN"}`)
 	fx := setupPublishFixture(t, srv.URL, stub.pub, stub.pubKey)
-	defer fx.cancel()
 
 	instanceURL := "https://instance-x.example"
 	updated, _ := fx.client.RequestChallenge(fx.ctx, fx.reg, fx.dir, instanceURL)
@@ -258,7 +257,6 @@ func TestPublishFlow_DNSNotPropagated_StaysPendingDNS(t *testing.T) {
 func TestPublishFlow_HardFailure_LandsInFailed(t *testing.T) {
 	stub, srv := newPublishStub(t, http.StatusForbidden, `{"error":"DNS-TXT mismatch"}`)
 	fx := setupPublishFixture(t, srv.URL, stub.pub, stub.pubKey)
-	defer fx.cancel()
 
 	instanceURL := "https://instance-x.example"
 	updated, _ := fx.client.RequestChallenge(fx.ctx, fx.reg, fx.dir, instanceURL)
@@ -280,7 +278,6 @@ func TestPublishFlow_HardFailure_LandsInFailed(t *testing.T) {
 func TestRegister_RejectsBeforeChallenge(t *testing.T) {
 	stub, srv := newPublishStub(t, 0, "")
 	fx := setupPublishFixture(t, srv.URL, stub.pub, stub.pubKey)
-	defer fx.cancel()
 
 	// Skip RequestChallenge; status is not_published.
 	_, err := fx.client.RegisterListing(fx.ctx, fx.reg, fx.dir, fx.idMgr, "https://instance-x.example", directory.PublishMetadata{
@@ -294,7 +291,6 @@ func TestRegister_RejectsBeforeChallenge(t *testing.T) {
 func TestSetPublishMetadata_Independent(t *testing.T) {
 	stub, srv := newPublishStub(t, 0, "")
 	fx := setupPublishFixture(t, srv.URL, stub.pub, stub.pubKey)
-	defer fx.cancel()
 
 	// Save metadata without ever issuing a challenge. Status
 	// should stay not_published; metadata is persisted.

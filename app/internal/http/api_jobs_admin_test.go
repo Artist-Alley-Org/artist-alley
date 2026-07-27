@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -41,8 +40,8 @@ func openPoolForJobs(t *testing.T) *pgxpool.Pool {
 		" user=" + envOrSens("AA_DB_USER", "artist_alley") +
 		" dbname=" + envOrSens("AA_DB_NAME", "artist_alley") +
 		" sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)

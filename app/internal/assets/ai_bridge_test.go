@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -151,8 +150,7 @@ func TestGetAssetForAI_HappyPath(t *testing.T) {
 	seedTag(t, pool, assetID, "imported", "import", nil)
 
 	h := newBridgeHandler(t, pool)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	got, err := h.GetAssetForAI(ctx, assetID)
 	if err != nil {

@@ -41,8 +41,12 @@ func fixturePeer(t *testing.T, ctx context.Context, r *peer.Registry, admin int6
 		t.Fatalf("fixture peer: %v", err)
 	}
 	t.Cleanup(func() {
+		// Cleanup runs after the test's context is cancelled, so this
+		// keeps its own deadline — t.Context() here would be dead on
+		// arrival and the cleanup a silent no-op (#622).
 		ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
 		_ = r.Delete(ctx2, p.ID)
 	})
 	return p

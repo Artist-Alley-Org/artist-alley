@@ -32,9 +32,7 @@ func TestHealth_OK(t *testing.T) {
 
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

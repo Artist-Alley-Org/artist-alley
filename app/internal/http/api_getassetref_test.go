@@ -18,7 +18,6 @@ package http
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,9 +25,7 @@ import (
 func TestMetaAssetAdapterGetAssetRef(t *testing.T) {
 	pool := openPoolForSensitivity(t)
 	defer pool.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	// Throwaway team so the asset's team_id FK (-> teams.id) is
 	// satisfied and we can assert the previously-broken column carries

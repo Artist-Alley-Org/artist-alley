@@ -172,8 +172,7 @@ func TestSMTPSender_DeliversPlainNoAuth(t *testing.T) {
 		}, nil
 	}
 	sender := email.NewSMTPSender(provider).WithDialTimeout(2 * time.Second)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	err := sender.Send(ctx, email.Message{
 		To:       []string{"alice@example.com", "bob@example.com"},
