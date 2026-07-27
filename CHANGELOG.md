@@ -33,6 +33,14 @@ where applicable, otherwise note "no-spec-impact."
   still need field definitions with an extraction source configured before they
   land anywhere; tracked in #618.) (#579)
 
+- **Admin featured-content thumbnails.** The curation list at
+  `/admin/content/featured` could not render a thumbnail for *any* subject:
+  asset tiles were gated on the same never-written column (fixed with it), and
+  collection tiles had no cover resolution at all — the public rail resolved
+  covers since #559, but the admin list never received the same treatment.
+  Operators now see real covers for both subject kinds, including team-tier
+  covers the public rail rightly refuses to anonymous visitors (#619, #625).
+
 - **AI asset hints never identified images.** The AI bridge derived its MIME hint
   from the same dead column, so it was never set. It now derives a real MIME from
   the file extension (`image/png` rather than the `image/*` wildcard it aspired
