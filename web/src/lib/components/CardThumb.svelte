@@ -34,6 +34,7 @@
   import { onMount } from 'svelte';
   import { decodeThumbhash } from '$lib/util/thumbhash';
   import { previewLadder } from '$stores/previewLadder.svelte';
+  import { clampRatio } from './cardAsset';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
 
   interface Props {
@@ -236,15 +237,10 @@
   //
   // The clamp is a guard against bad metadata, not a design choice: a
   // corrupt 4000:1 would compute a sub-pixel tile the user can neither
-  // see nor click. It is set to stay OUT OF THE WAY of real content —
-  // measured on the dev library, the extremes are an 8.8:1 preview and
-  // a 1:2 portrait, and an earlier 8:1 bound was already flattening
-  // that widest tile. Widen it again rather than distort a tile if real
-  // content ever reaches it; the only thing it must exclude is a value
-  // that could not be a picture.
-  const RATIO_MIN = 1 / 12;
-  const RATIO_MAX = 12;
-  const clampRatio = (r: number) => Math.min(RATIO_MAX, Math.max(RATIO_MIN, r));
+  // see nor click. It lives in cardAsset.ts now (#651) because the
+  // masonry column bucketer has to predict this exact number one layer
+  // up — see `cardTileRatio` there, which mirrors `declaredRatio` below
+  // including the `srcset` precondition.
   const declaredRatio = $derived(
     srcset && pixelWidth && pixelHeight && pixelWidth > 0 && pixelHeight > 0
       ? clampRatio(pixelWidth / pixelHeight)

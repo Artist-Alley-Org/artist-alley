@@ -79,3 +79,69 @@ export interface CardCoverAsset {
   pixel_width: number | null;
   pixel_height: number | null;
 }
+
+// ── Tile shape, shared (#651) ────────────────────────────────────────
+//
+// CardThumb decides a masonry tile's aspect ratio from the recorded
+// dimensions (see its `tileRatio` block for the full argument). The
+// column bucketer in MasonryColumns has to predict the SAME number one
+// layer up, before the card renders, so it can pick the shortest column.
+//
+// Both now read the rule from here. Two copies of "when does a tile
+// declare a ratio, and what clamp applies" would drift, and a bucketer
+// that disagrees with the renderer produces a wall that is balanced
+// against heights nothing actually has.
+
+/** Guard against corrupt metadata, not a design choice: a 4000:1 would
+ *  compute a sub-pixel tile nobody can see or click. Deliberately wider
+ *  than any real content measured on the dev library (8.8:1 / 1:2) —
+ *  widen it again rather than distort a tile. */
+export const RATIO_MIN = 1 / 12;
+export const RATIO_MAX = 12;
+export const clampRatio = (r: number): number => Math.min(RATIO_MAX, Math.max(RATIO_MIN, r));
+
+/** The shape a tile's ratio can be read off — an asset row, or the cover
+ *  asset joined into a post member. */
+interface RatioSource {
+  ladder_available?: boolean | null;
+  pixel_width?: number | null;
+  pixel_height?: number | null;
+}
+
+/** The aspect ratio a masonry tile for `item` will DECLARE, or null when
+ *  it will render as a square.
+ *
+ *  Mirrors CardThumb's `declaredRatio` exactly, including the ladder
+ *  precondition: without the responsive srcset the card can only request
+ *  `col`, a 320x320 centre CROP, so the recorded source ratio is not the
+ *  shape that will be on screen. `ladderReady` is the caller's read of
+ *  `previewLadder.rungs.length > 0` — passed in rather than imported so
+ *  this stays a pure function the tests can drive.
+ *
+ *  Duck-typed on purpose. ContentGrid's `items` are deliberately loose
+ *  (Post / Asset / Collection rows, per surface), and the alternative —
+ *  a per-caller ratio callback — would put four copies of this lookup in
+ *  four route files, which is exactly the class of drift #595 exists to
+ *  stop. */
+export function cardTileRatio(item: unknown, ladderReady: boolean): number | null {
+  if (!ladderReady || !item || typeof item !== 'object') return null;
+  const row = item as Record<string, unknown>;
+
+  let src: RatioSource | null = null;
+  if ('pixel_width' in row) {
+    // Asset-shaped row (browse-by-asset, profile assets, collection members).
+    src = row as RatioSource;
+  } else if (Array.isArray(row.members)) {
+    // Post-shaped row — the tile shows the COVER asset, same resolution
+    // order PostCard uses (explicit cover → first member → nothing).
+    const members = row.members as Array<{ asset_id?: string; asset?: RatioSource }>;
+    const coverId = (row.cover_asset_id as string | null | undefined) ?? members[0]?.asset_id;
+    src = members.find((m) => m.asset_id === coverId)?.asset ?? null;
+  }
+  if (!src || src.ladder_available !== true) return null;
+
+  const w = src.pixel_width;
+  const h = src.pixel_height;
+  if (typeof w !== 'number' || typeof h !== 'number' || w <= 0 || h <= 0) return null;
+  return clampRatio(w / h);
+}
