@@ -46,6 +46,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -1415,7 +1416,8 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       `+sysconfig.LadderSatisfiedSQL("a.file_hash", "$3")+` AS has_ladder,
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
-		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member
+		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member,
+		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
 		WHERE a.id = ANY($1::uuid[])`,
 		ids, caller.UserRef, ladder)
@@ -1426,6 +1428,13 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 
 	avail := make(map[uuid.UUID]bool, len(idSet))
 	ladderOK := make(map[uuid.UUID]bool, len(idSet))
+	// Source pixel dimensions per member asset (#640). They ride this
+	// pass rather than ListPostAssets because that query's rows are
+	// CACHED per post and these have to reach a caller whose members came
+	// off the cache — the same reason the two availability flags are
+	// computed here. Unlike those, dimensions are not per-caller; they
+	// are just metadata about a row the caller can already see.
+	dims := make(map[uuid.UUID][2]int32, len(idSet))
 	for rows.Next() {
 		var (
 			id        pgtype.UUID
@@ -1434,9 +1443,14 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			hasCol    bool
 			hasLadder bool
 			isMember  bool
+			pxW       *int32
+			pxH       *int32
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember); err != nil {
+		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
+		}
+		if pixeldims.Sane(pxW, pxH) {
+			dims[uuid.UUID(id.Bytes)] = [2]int32{*pxW, *pxH}
 		}
 		// ONE readability decision feeds BOTH flags. Deriving
 		// ladder_available from anything other than the same
@@ -1460,6 +1474,11 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		for i := range fresh {
 			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
 			fresh[i].Asset.LadderAvailable = ladderOK[uuid.UUID(fresh[i].Asset.Id)]
+			fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = nil, nil
+			if wh, ok := dims[uuid.UUID(fresh[i].Asset.Id)]; ok {
+				w, h := wh[0], wh[1]
+				fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = &w, &h
+			}
 		}
 		p.Members = fresh
 	}

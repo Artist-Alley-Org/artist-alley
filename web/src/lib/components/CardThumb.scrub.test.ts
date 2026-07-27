@@ -47,6 +47,8 @@ function asset(overrides: Partial<CardAsset> = {}): CardAsset {
     thumbhash: null,
     preview_available: true,
     ladder_available: true,
+    pixel_width: null,
+    pixel_height: null,
     ...overrides,
   };
 }

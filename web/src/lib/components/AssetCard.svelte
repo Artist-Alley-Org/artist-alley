@@ -122,6 +122,9 @@
     {hovering}
     {framed}
     fill={mode === 'grid'}
+    variableAspect={mode === 'masonry'}
+    pixelWidth={asset.pixel_width}
+    pixelHeight={asset.pixel_height}
   >
     <!-- Whole-card navigation target. Hover here drives CardThumb's
          sprite-scrub (an interactive element, so no a11y warning). -->

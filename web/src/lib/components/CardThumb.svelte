@@ -74,6 +74,25 @@
      *  cropping them would clip a glyph or a file extension for no gain,
      *  so they stay centred on the matte in every mode. */
     fill?: boolean;
+    /** Let the tile take the SHAPE OF ITS IMAGE instead of a square
+     *  (#640). ON in masonry only — that layout exists to pack tiles of
+     *  different heights, and with a fixed `aspect-square` it was a
+     *  multi-column grid of identical boxes, which is what a masonry is
+     *  defined by not being.
+     *
+     *  Deliberately not the default, and deliberately not derived from
+     *  `mode` inside this component: grid is a contact sheet of squares
+     *  by design (#555/#588) and thumbnail is a framed details card
+     *  (#556). Both are correct as squares. See `tileRatio` below for
+     *  where the ratio comes from. */
+    variableAspect?: boolean;
+    /** Recorded SOURCE dimensions for this asset, or null (#640). These
+     *  are what let `variableAspect` reserve the tile's height before a
+     *  single byte is requested — the difference between a wall that is
+     *  the right shape at first paint and one that reflows 72 times as
+     *  images arrive. Null is normal (see cardAsset.ts). */
+    pixelWidth?: number | null;
+    pixelHeight?: number | null;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -92,6 +111,9 @@
     hovering = false,
     framed = true,
     fill = false,
+    variableAspect = false,
+    pixelWidth = null,
+    pixelHeight = null,
     children,
   }: Props = $props();
 
@@ -148,20 +170,88 @@
 
   let imgLoaded = $state(false);
   let imgError = $state(false);
+  // The ratio measured off the bytes that actually arrived. Only used
+  // when the server had nothing recorded — see tileRatio.
+  let loadedRatio = $state<number | null>(null);
   $effect(() => {
     // Reset the fade-in whenever the target asset changes.
     void assetId;
     imgLoaded = false;
     imgError = false;
+    loadedRatio = null;
   });
-  function onLoad() {
+  function onLoad(e: Event) {
     imgLoaded = true;
+    const el = e.currentTarget as HTMLImageElement | null;
+    if (el && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      loadedRatio = el.naturalWidth / el.naturalHeight;
+    }
   }
   // Defensive only: preview_available guarantees a servable col, so this
   // fires only on undecodable bytes — degrade to the icon placeholder.
   function onError() {
     imgError = true;
   }
+
+  // ── Tile shape (#640) ────────────────────────────────────────────
+  //
+  // THE TILE FOLLOWS THE RATIO OF THE IMAGE IT ACTUALLY RENDERS. That
+  // sentence is the whole rule, and the two clauses are both load-
+  // bearing.
+  //
+  // "follows the ratio" — masonry is a layout for tiles of unequal
+  // height. Until now the wrapper was hard-coded `aspect-square` with
+  // the art letterboxed inside, so a 5.33:1 ultrawide and a 1:1 square
+  // rendered as identical boxes and the mode was a grid wearing a
+  // masonry's name (#640). Everywhere else the square is deliberate, so
+  // this is opt-in per caller.
+  //
+  // "it actually renders" — the picture in the tile is not always the
+  // source image. Without a full ladder the card can only request `col`,
+  // which is a 320x320 centre-CROP (#471/#591), and sizing that tile
+  // from the source's 5.33:1 would letterbox a square inside a
+  // billboard. So the recorded dimensions are used only when the
+  // responsive `srcset` is live, i.e. when the contain rungs — which do
+  // preserve the source ratio — are what will be served.
+  //
+  // Resolution order, best information first:
+  //
+  //   1. recorded pixel_width/pixel_height — known BEFORE any request,
+  //      so the space is reserved and nothing shifts on load. This is
+  //      the reason #640 waited for #618's extraction fields to exist.
+  //   2. the loaded image's own naturalWidth/naturalHeight — exact, but
+  //      only knowable after the bytes arrive, so tiles that land here
+  //      DO settle into shape as they load. That is a deliberate trade
+  //      against the alternative, which is being confidently square and
+  //      wrong: on this dataset only ~18% of feed covers have recorded
+  //      dimensions, and the rest are audio waveforms (~16:3), video
+  //      frames and font sheets (16:9), 3D turntables — all of which
+  //      have a genuine non-square preview that nothing has measured.
+  //      Recording the PREVIEW variant's dimensions server-side is what
+  //      would move those tiles into case 1.
+  //   3. square — no image in the tile at all (typed-doc card, icon
+  //      placeholder, gated/thumbhash-only). There is no ratio to
+  //      follow, and a square is what those generated tiles are drawn
+  //      for.
+  //
+  // The clamp is a guard against bad metadata, not a design choice: a
+  // corrupt 4000:1 would compute a sub-pixel tile the user can neither
+  // see nor click. It is set to stay OUT OF THE WAY of real content —
+  // measured on the dev library, the extremes are an 8.8:1 preview and
+  // a 1:2 portrait, and an earlier 8:1 bound was already flattening
+  // that widest tile. Widen it again rather than distort a tile if real
+  // content ever reaches it; the only thing it must exclude is a value
+  // that could not be a picture.
+  const RATIO_MIN = 1 / 12;
+  const RATIO_MAX = 12;
+  const clampRatio = (r: number) => Math.min(RATIO_MAX, Math.max(RATIO_MIN, r));
+  const declaredRatio = $derived(
+    srcset && pixelWidth && pixelHeight && pixelWidth > 0 && pixelHeight > 0
+      ? clampRatio(pixelWidth / pixelHeight)
+      : null,
+  );
+  const measuredRatio = $derived(loadedRatio === null ? null : clampRatio(loadedRatio));
+  const tileRatio = $derived(variableAspect ? (declaredRatio ?? measuredRatio) : null);
 
   // Sprite-sheet hover preview. Video covers walk the preview.video 10×10
   // timeline sheet; 3D covers walk the preview.model 6×6 turntable sheet.
@@ -222,8 +312,25 @@
   set exactly in grid mode by both cards; the framed modes keep square
   corners inside their own rounded card.
 -->
+<!--
+  `aspect-square` is the DEFAULT, not the rule (#640). When the caller
+  asked for a variable tile and a ratio is known, an inline
+  `aspect-ratio` overrides it — inline because the value is per-asset
+  data, not a design token, exactly as ContentGrid sets `--tile-min`.
+  The class stays in the list so the tile is square while the ratio is
+  still unknown (before an undeclared image loads), which is both a
+  sensible reservation and the shape every mode had before this change.
+
+  `data-card-thumb` marks THE element whose height a masonry column
+  stacks. It is the tile's identity, not a style hook, so both the unit
+  tests and the layout measurements address it by this rather than by a
+  Tailwind class that a refactor is free to rename.
+-->
 <div
-  class="relative aspect-square overflow-hidden bg-thumb-matte
+  data-card-thumb
+  style={tileRatio ? `aspect-ratio: ${tileRatio};` : undefined}
+  class="relative overflow-hidden bg-thumb-matte
+         {tileRatio ? '' : 'aspect-square'}
          after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
          {fill ? 'rounded-[2px] after:rounded-[2px]' : ''}
          {framed
