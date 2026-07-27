@@ -1,0 +1,101 @@
+name: Compose cleanup
+description: >-
+  Tear down this run's compose project and reclaim everything it created:
+  containers, volumes, the network, the images compose BUILT for it, and
+  stale BuildKit cache. Safe on the shared self-hosted runner: every
+  removal of a NAMED thing is scoped to $COMPOSE_PROJECT_NAME (unique per
+  run_id + run_attempt), so it cannot reach a peer run's containers or
+  images, artist-alley-app:latest, or the long-running demo/dogfood
+  stacks. The two unscoped sweeps only ever touch things nothing can be
+  using: dangling (untagged) images and BuildKit cache idle for 48h.
+
+  Lives in one place because six workflow steps need identical behaviour
+  (#599): ci.yml x2, ui-pr.yml x2, ui-nightly.yml x2. Call it from an
+  `if: always()` step so a red run reclaims as much as a green one.
+
+inputs:
+  profiles:
+    description: >-
+      Extra compose profile flags for the teardown, e.g. "--profile dogfood".
+      Profile-gated services (app-b / nginx-b / postgres-b) are invisible to
+      a bare `down`, so their containers and volumes need the flag. When set,
+      a second bare `down` runs afterwards to catch everything else — the
+      same two-invocation pattern ui-nightly used inline.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Down + reclaim this run's images
+      shell: bash
+      env:
+        PROFILES: ${{ inputs.profiles }}
+      run: |
+        # ── 1. Containers, volumes, network ────────────────────────────
+        # `down` matches on the com.docker.compose.project label, so it
+        # targets exactly what this run created and can't reach a peer's.
+        #
+        # `--rmi local` additionally removes images compose built for this
+        # project that carry NO custom `image:` tag — i.e. exactly
+        # <project>-app and <project>-web. It deliberately does not touch
+        # artist-alley-app:latest (app-b's explicit tag), nginx,
+        # pgvector/pgvector, or minio/minio. `--rmi all` would, which is
+        # why it is not used here.
+        #
+        # $PROFILES is intentionally unquoted: it is a flag list, not a
+        # single argument.
+        if [ -n "${PROFILES}" ]; then
+          docker compose ${PROFILES} down -v --remove-orphans --rmi local || true
+        fi
+        docker compose down -v --remove-orphans --rmi local || true
+
+        # ── 2. Backstop: remove this run's images by name ──────────────
+        # Step 1 is load-bearing but SILENTLY conditional. Verified on
+        # compose v2.35.1, same project, same compose file, containers
+        # present, only the way the project name is supplied differing:
+        #
+        #   COMPOSE_PROJECT_NAME=<p> docker compose down --rmi local
+        #     → "Image <p>-app Removed"   (images reclaimed)
+        #   docker compose -p <p> down --rmi local
+        #     → containers + network removed, images UNTOUCHED, exit 0,
+        #       no warning
+        #
+        # These workflows use the env form, so step 1 works today. But it
+        # fails open — no error, no output, the leak just continues —
+        # which is exactly how the original leak went unnoticed. Anyone
+        # adding a `-p` for clarity would silently re-break it. So remove
+        # the images explicitly as well; the two are belt and braces.
+        #
+        # Scope: `<project>-*`, and the project name embeds
+        # <run_id>-<attempt>, so the glob can only match images THIS run
+        # built. `aa-ci-<id>-1-*` does not match `aa-ci-<id>-11-app`
+        # (verified), a peer run has a different run_id, and neither
+        # artist-alley-app:latest nor artist-alley:ci-<sha> shares the
+        # prefix. The empty-project guard matters: an unset
+        # COMPOSE_PROJECT_NAME would degrade the glob to `-*`.
+        #
+        # Removal is by repo:tag and WITHOUT -f, on purpose. If another tag
+        # points at the same image id, docker only untags (verified: a
+        # second tag on the same id survived intact with its layers). If a
+        # container still holds the image, the rm fails loudly-but-harmlessly
+        # instead of yanking it away.
+        if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+          docker image ls --filter "reference=${COMPOSE_PROJECT_NAME}-*" \
+            --format '{{.Repository}}:{{.Tag}}' \
+            | sort -u | xargs -r docker image rm || true
+        fi
+
+        # ── 3. Dangling layers ─────────────────────────────────────────
+        # Rebuilds of a SHARED custom tag (artist-alley-app:latest) leave
+        # the previous image untagged; this collects those. Never -a: the
+        # daemon is shared with stacks whose images may have no container
+        # running at this instant.
+        docker image prune -f || true
+
+        # ── 4. BuildKit cache older than 48h ───────────────────────────
+        # Previously in ui-nightly only, so ci.yml / ui-pr.yml build cache
+        # grew until a nightly happened to sweep it. BuildKit skips records
+        # that are in use, so this cannot starve a concurrent run's build;
+        # 48h keeps the cache warm enough for CI to stay fast.
+        docker builder prune -f --filter until=48h || true
