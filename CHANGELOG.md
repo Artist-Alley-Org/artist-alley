@@ -33,6 +33,22 @@ where applicable, otherwise note "no-spec-impact."
   stop showing upscaled thumbnails. The grid's contact-sheet view keeps its
   square crop, which is intentional (#502, #589).
 
+- **Masonry now stacks tiles at their real proportions.** Previously every masonry
+  tile was a fixed square, so a 16:9 video and a wide audio waveform were letterboxed
+  into identical boxes and the view was indistinguishable from the grid. Tiles now
+  follow each image's own aspect ratio — the space is reserved from recorded pixel
+  dimensions before the image loads, so nothing jumps. The grid keeps its square
+  contact-sheet tiles, which is intentional (#640).
+
+- **Scroll position survives closing an asset or post.** Opening a post from deep in
+  the feed and closing it returned you to the top, losing everything you had scrolled
+  past. Position and loaded pages are now restored on the post, asset, collection and
+  profile routes (#584).
+
+- **The viewer's minimize button did nothing when the navbar was hidden.** Minimizing
+  now brings the navbar back, with search usable, instead of leaving the viewer
+  indistinguishable from its maximized state (#635).
+
 - **Masonry view rendered as a single full-width column.** For five days the masonry
   layout showed one enormous tile per row instead of a multi-column wall — a CSS length
   property was given a percentage, which silently voided the whole declaration and fell
