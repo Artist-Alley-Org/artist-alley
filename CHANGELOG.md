@@ -17,6 +17,14 @@ where applicable, otherwise note "no-spec-impact."
   serve real bytes, gated on whether a configured IIIF variant is actually stored.
   `info.json` still 404s on a second, unrelated cause (#618) (#614).
 
+- **Viewer gap when the navbar auto-hides.** Opening a post after scrolling far
+  enough that the navbar had slid away left a navbar-sized gap above the viewer,
+  with the feed's tiles bleeding through. The viewer's top edge was glued to a
+  measured navbar height that never updated when the navbar hid (a transform,
+  which resize observers can't see). It now tracks the navbar's actual state —
+  expanding flush to the top of the screen when the navbar hides, and yielding
+  the space again when it returns, with a matching animation (#628).
+
 - **Regenerated previews never reached the browser.** Asset byte routes shipped
   `Cache-Control: immutable, max-age=31536000` with an ETag derived from the URL
   path — a validator that cannot change — and answered conditional requests with
