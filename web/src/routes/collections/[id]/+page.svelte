@@ -69,6 +69,10 @@
      *  srcset (#502) — the API row carries it, so pass it through rather
      *  than letting the tile fall back to the square `col` crop. */
     ladder_available?: boolean;
+    /** Recorded source dimensions (#640) — the masonry tile's aspect
+     *  ratio, carried by the CollectionResource row. */
+    pixel_width?: number | null;
+    pixel_height?: number | null;
   }
 
   let collection = $state<Collection | null>(null);
@@ -123,6 +127,12 @@
       created_at: m.asset_created_at ?? m.added_at,
       preview_available: !!m.preview_available,
       ladder_available: !!m.ladder_available,
+      // #640 — the masonry tile's aspect ratio. The annotation above is
+      // what forced this line to be written; without it the member tiles
+      // would silently have gone back to being squares in masonry while
+      // every other surface followed its art.
+      pixel_width: m.pixel_width ?? null,
+      pixel_height: m.pixel_height ?? null,
     })),
   );
 

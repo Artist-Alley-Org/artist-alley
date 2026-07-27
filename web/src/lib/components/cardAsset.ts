@@ -54,6 +54,14 @@ export interface CardAsset {
    *  safely request `col`, which is why widescreen art was being
    *  square-cropped (#502/#589). */
   ladder_available: boolean;
+  /** Recorded source pixel dimensions, or null (#640). Masonry sizes
+   *  each tile from this ratio BEFORE the image loads, so the column
+   *  heights are right from first paint and the wall doesn't reflow as
+   *  72 images arrive. Null for everything the EXIF pass hasn't
+   *  measured — draft rasters and every non-raster kind — where the
+   *  card falls back to measuring the image on load. */
+  pixel_width: number | null;
+  pixel_height: number | null;
 }
 
 /** The asset payload joined into a post member — the same presentation
@@ -67,4 +75,7 @@ export interface CardCoverAsset {
   preview_available: boolean;
   /** See CardAsset.ladder_available. */
   ladder_available: boolean;
+  /** See CardAsset.pixel_width. */
+  pixel_width: number | null;
+  pixel_height: number | null;
 }

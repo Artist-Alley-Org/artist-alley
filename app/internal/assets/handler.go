@@ -43,6 +43,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/mscrnt/artist-alley/app/internal/asset/imagefmt"
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -828,6 +829,26 @@ func (h *Handler) GetAsset(
 		return nil, fmt.Errorf("assets: list tag details: %w", err)
 	}
 	out := rowToAssetWithDetails(row, tags, details)
+	// Source pixel dimensions (#640). The detail response carries them
+	// for the same reason the list does — one asset shape, one meaning
+	// per field. Its own round trip because sqlc cannot express the
+	// nullability of the projection (see the note on GetAsset); detail is
+	// not a hot loop, and this is the same trade the tag-details query
+	// above already makes.
+	//
+	// NOT gated on the content plane: these are metadata about a row the
+	// caller has already been handed, like file_size_bytes. Nothing about
+	// a width confirms readable bytes.
+	var detW, detH *int32
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+` FROM assets WHERE assets.id = $1::uuid`,
+		uuid.UUID(req.Id).String(),
+	).Scan(&detW, &detH); err != nil {
+		return nil, fmt.Errorf("assets: pixel dimensions: %w", err)
+	}
+	if pixeldims.Sane(detW, detH) {
+		out.PixelWidth, out.PixelHeight = detW, detH
+	}
 	// preview_available (#471): a servable `col` exists AND the caller
 	// passes the content plane. Detail is not a hot loop, so an EXISTS +
 	// CanReadContent here is fine (the list path joins both in one pass).
@@ -1235,6 +1256,10 @@ func (h *Handler) ListAssets(
 			a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
 			a.PreviewAvailable = r.PreviewAvailable
 			a.LadderAvailable = r.LadderAvailable
+			// #640 — the tile's aspect ratio, joined by the same pass.
+			// The gated row already applied the pair-or-neither rule.
+			a.PixelWidth = r.PixelWidth
+			a.PixelHeight = r.PixelHeight
 			// Surface soft-delete state so the admin trash view
 			// (include_deleted=true) can identify + label deleted rows.
 			if r.DeletedAt.Valid {

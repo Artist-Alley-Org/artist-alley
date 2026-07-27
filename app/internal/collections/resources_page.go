@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -59,6 +60,11 @@ type ListCollectionResourcesPageGatedRow struct {
 	// passes the content plane (#591). Same 0064 contract as
 	// PreviewAvailable, from the same readability decision.
 	LadderAvailable bool
+	// PixelWidth / PixelHeight: recorded source dimensions, joined in the
+	// same pass (#640). Not readability-gated — metadata about a row the
+	// caller can already see — and nil unless BOTH are present.
+	PixelWidth  *int32
+	PixelHeight *int32
 }
 
 // ListCollectionResourcesPageGated runs the contents query for one caller.
@@ -97,6 +103,7 @@ func ListCollectionResourcesPageGated(
        a.file_extension, a.thumbhash,
        a.created_at AS asset_created_at,
        a.sensitivity, a.owner_user_ref,
+       ` + pixeldims.SelectColumnsSQL("a.id") + `,
        (a.file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
@@ -128,6 +135,8 @@ LIMIT $4::INTEGER`
 		var (
 			sensitivity        string
 			ownerUserRef       *int64
+			pixelWidth         *int32
+			pixelHeight        *int32
 			hasColVariant      bool
 			hasFullLadder      bool
 			callerIsTeamMember bool
@@ -138,16 +147,21 @@ LIMIT $4::INTEGER`
 			&i.Title, &i.AssetType, &i.Status, &i.FileHash,
 			&i.FileExtension, &i.Thumbhash,
 			&i.AssetCreatedAt,
-			&sensitivity, &ownerUserRef, &hasColVariant, &hasFullLadder, &callerIsTeamMember,
+			&sensitivity, &ownerUserRef, &pixelWidth, &pixelHeight,
+			&hasColVariant, &hasFullLadder, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
 		readable := visibility.ContentReadable(sensitivity, ownerUserRef, caller, caps, callerIsTeamMember)
-		out = append(out, ListCollectionResourcesPageGatedRow{
+		row := ListCollectionResourcesPageGatedRow{
 			ListCollectionResourcesPageRow: i,
 			PreviewAvailable:               hasColVariant && readable,
 			LadderAvailable:                hasFullLadder && readable,
-		})
+		}
+		if pixeldims.Sane(pixelWidth, pixelHeight) {
+			row.PixelWidth, row.PixelHeight = pixelWidth, pixelHeight
+		}
+		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("collections: list resources rows: %w", err)

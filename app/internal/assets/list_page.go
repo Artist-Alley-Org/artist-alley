@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -77,6 +78,14 @@ type ListAssetsPageGatedRow struct {
 	// PreviewAvailable and derived from the SAME readability decision,
 	// so the two can never disagree for a restricted asset.
 	LadderAvailable bool
+	// PixelWidth / PixelHeight: the recorded source dimensions, joined in
+	// the same pass (#640). NOT gated on readability — they are metadata
+	// about a row the caller can already see, the same plane as
+	// file_size_bytes, and the client needs them to reserve the tile's
+	// height before any bytes are requested. Nil when the install has
+	// never measured this asset; see the pixeldims package.
+	PixelWidth  *int32
+	PixelHeight *int32
 }
 
 // ListAssetsPageGated runs the browse query for one caller. `caps` is
@@ -135,6 +144,7 @@ func ListAssetsPageGated(
 	// from sensitivity + owner + that membership boolean + caps.
 	b.WriteString(`SELECT ` + listAssetsPageColumns + `,
        sensitivity,
+       ` + pixeldims.SelectColumnsSQL("assets.id") + `,
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
@@ -166,6 +176,8 @@ LIMIT $7::INTEGER`)
 		var i ListAssetsPageRow
 		var (
 			sensitivity        string
+			pixelWidth         *int32
+			pixelHeight        *int32
 			hasColVariant      bool
 			hasFullLadder      bool
 			callerIsTeamMember bool
@@ -175,16 +187,23 @@ LIMIT $7::INTEGER`)
 			&i.FileHash, &i.FileExtension, &i.FileSizeBytes, &i.Metadata,
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
-			&sensitivity, &hasColVariant, &hasFullLadder, &callerIsTeamMember,
+			&sensitivity, &pixelWidth, &pixelHeight,
+			&hasColVariant, &hasFullLadder, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
 		readable := visibility.ContentReadable(sensitivity, i.OwnerUserRef, caller, caps, callerIsTeamMember)
-		out = append(out, ListAssetsPageGatedRow{
+		row := ListAssetsPageGatedRow{
 			ListAssetsPageRow: i,
 			PreviewAvailable:  hasColVariant && readable,
 			LadderAvailable:   hasFullLadder && readable,
-		})
+		}
+		// A pair or neither — never a half-populated one the client has
+		// to re-validate before dividing.
+		if pixeldims.Sane(pixelWidth, pixelHeight) {
+			row.PixelWidth, row.PixelHeight = pixelWidth, pixelHeight
+		}
+		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("assets: list page rows: %w", err)

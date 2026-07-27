@@ -10738,7 +10738,7 @@ components:
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
          title, asset_type, status, preview_available, ladder_available,
-         file_hash, file_extension, thumbhash]
+         file_hash, file_extension, thumbhash, pixel_width, pixel_height]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -10788,6 +10788,24 @@ components:
             content plane. Identical contract to Asset.ladder_available —
             see there for why this is computed from config rather than
             from the default rung list.
+        pixel_width:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            REQUIRED (nullable), same contract as Asset.pixel_width — a
+            member tile is laid out by the same CardThumb as every other
+            surface, and in masonry that frame sizes itself from this
+            ratio (#640). Null when the install has no recorded
+            dimensions for the asset; see Asset.pixel_width for when
+            that happens.
+        pixel_height:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            REQUIRED (nullable), same as Asset.pixel_height. Projected
+            as a PAIR with `pixel_width` — never one without the other.
         asset_created_at: { type: string, format: date-time }
     CollectionResourceWrite:
       type: object
@@ -10821,7 +10839,8 @@ components:
       # them with no type error; that is exactly how the collection page
       # silently lost its video/3D badges and sprite-scrub previews.
       required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
-                 file_hash, file_extension, thumbhash, ladder_available]
+                 file_hash, file_extension, thumbhash, ladder_available,
+                 pixel_width, pixel_height]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -10920,6 +10939,39 @@ components:
             blurred placeholder rendering on feed cards. Computed
             synchronously at upload for image assets. NULL for
             non-image resources.
+        pixel_width:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            Recorded pixel width of the SOURCE image, or null when the
+            install has never measured one.
+
+            REQUIRED-but-nullable for the same reason as `thumbhash`
+            above: it is a field the card frame reads to decide what a
+            tile IS. Masonry sizes each tile from this ratio so the
+            space is reserved before the image loads and the wall does
+            not reflow as 72 images arrive (#640).
+
+            Not a column on `assets` — the value lives in
+            `asset_field_value` under the extraction-wired `pixel_width`
+            field definition seeded for #618, and is projected here.
+            Null is the honest answer for everything the EXIF pass has
+            not seen: a draft raster (the backfill selects
+            `status = 'active'`), and every non-raster kind — video, 3D,
+            audio, fonts, documents. Those still HAVE a preview with a
+            real aspect ratio (an audio waveform is ~16:3, a video frame
+            16:9); it is simply not recorded anywhere yet, so the client
+            falls back to measuring the image once it loads. Recording
+            preview-variant dimensions is what would close that gap.
+        pixel_height:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            Recorded pixel height of the source image, or null. See
+            `pixel_width` — the two are projected as a PAIR, so a
+            consumer never has to handle one without the other.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at:
