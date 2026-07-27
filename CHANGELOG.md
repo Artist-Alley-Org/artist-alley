@@ -33,6 +33,18 @@ where applicable, otherwise note "no-spec-impact."
   stop showing upscaled thumbnails. The grid's contact-sheet view keeps its
   square crop, which is intentional (#502, #589).
 
+- **Masonry view rendered as a single full-width column.** For five days the masonry
+  layout showed one enormous tile per row instead of a multi-column wall — a CSS length
+  property was given a percentage, which silently voided the whole declaration and fell
+  back to "one column". Masonry now forms columns that track the tile-size control, on
+  desktop and phone alike (#637).
+
+- **Cropped artwork in the seeded catalogue.** Some vector-sourced thumbnails were
+  missing chunks of their artwork — cut off mid-shape at the edges. The source files
+  declare no canvas size, and the renderer was guessing one and clipping anything that
+  fell outside it. 110 affected images were re-rendered; the renderer now measures each
+  drawing's real extent first (#630).
+
 - **Viewer gap when the navbar auto-hides.** Opening a post after scrolling far
   enough that the navbar had slid away left a navbar-sized gap above the viewer,
   with the feed's tiles bleeding through. The viewer's top edge was glued to a
