@@ -317,6 +317,23 @@
     if (!standalone) {
       localStorage.setItem('assetPlaylist.maximized', maximized ? '1' : '0');
     }
+    // Un-maximizing means "give me the chrome back" (#635). Without
+    // this the button reads as broken whenever the navbar had already
+    // auto-hidden before the viewer opened: windowed resolves
+    // --aa-navbar-bottom to 0 (correct, #628/#629 — there is no navbar
+    // to sit below), so windowed and maximized are pixel-identical and
+    // the only difference is the invisible modal/non-modal swap.
+    //
+    // reveal() rather than a sticky flag, same as the view switcher
+    // (#554): it clears `hidden` and lets the NEXT scroll-down hide the
+    // chrome again. Nothing re-hides it while the viewer is open —
+    // `main` is not the scroll context then — and it's a no-op under
+    // reduced-motion, where the chrome never hides.
+    //
+    // Deliberately only this direction: maximizing does not force-hide
+    // the navbar. Covering it is the point; yanking it away would be a
+    // new behaviour, and the un-maximize above restores it either way.
+    if (!maximized) chromeScroll.reveal();
     // Swap the dialog mode by closing + reopening — there's no
     // showModal()/show() in-place switch.
     if (dialogEl?.open) dialogEl.close();
