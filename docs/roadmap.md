@@ -138,8 +138,9 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
   accurate scrubbing. Audio: waveform PNG + click-to-seek scrub.
   PDF: multi-page navigator + raster. Fonts: specimen render. 3D:
   native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`,
-  Blender-rendered turntable thumbnails for heavy formats (`.blend`,
-  others coming under 1.18.B-11), pure-Go importers for legacy game
+  server-rendered turntable thumbnails via a headless three.js worker
+  (Chromium/SwiftShader — the same loaders as the viewer, so thumbnail
+  and live view match; #498/#500), pure-Go importers for legacy game
   formats (MD2 / MD3 / MDL / MS3D — 1.18.C-2 / C-3). Asset companion
   files (textures, `.mtl`, `.bin`) resolved per-asset so 3D loaders
   can pull their sidecars.

@@ -10,12 +10,22 @@ import (
 )
 
 func TestIsThreeJSExt(t *testing.T) {
-	for _, ext := range []string{"glb", "gltf", "fbx", "obj", ".GLB", "Gltf"} {
+	// Every entry here must also appear in loadModel() in
+	// scripts/threejs/render.html, and scripts/threejs/smoke.mjs must
+	// render a fixture for it — this map is only a claim; the smoke is
+	// the proof.
+	for _, ext := range []string{
+		"glb", "gltf", "fbx", "obj", "stl", "ply", "dae", ".GLB", "Gltf",
+	} {
 		if !isThreeJSExt(ext) {
 			t.Errorf("isThreeJSExt(%q) = false, want true", ext)
 		}
 	}
-	for _, ext := range []string{"blend", "mview", "md2", "stl", "png", ""} {
+	// mview / md2 convert to .glb before the render decision is taken, so
+	// they are deliberately absent here (see Handle). blend/usd/abc have no
+	// stock three.js loader and get no turntable until the Blender
+	// converter ships as a plugin (#499).
+	for _, ext := range []string{"blend", "mview", "md2", "usdz", "abc", "png", ""} {
 		if isThreeJSExt(ext) {
 			t.Errorf("isThreeJSExt(%q) = true, want false", ext)
 		}
@@ -39,13 +49,14 @@ func TestThreeJSAvailable(t *testing.T) {
 		t.Fatal("expected available with script + node_modules + node-on-PATH")
 	}
 
-	// DisableThreeJS forces the Blender path.
-	disabled := &ModelHandler{ThreeJSScript: script, NodePath: "sh", DisableThreeJS: true}
-	if disabled.threeJSAvailable() {
-		t.Error("DisableThreeJS should force unavailable")
-	}
+	// (The DisableThreeJS escape hatch was removed in #500. It forced the
+	// Blender path; with Blender out of the image it could only mean
+	// "generate no 3D previews at all", and nothing ever set it — no env
+	// var, no sysconfig key, only this test.)
 
-	// Missing script → unavailable (e.g. arm64 image without the worker).
+	// Missing script → unavailable. Since #500 that is a deployment fault
+	// rather than a fallback trigger: Handle turns it into a retryable job
+	// error instead of marking the asset ready with no preview.
 	noScript := &ModelHandler{ThreeJSScript: filepath.Join(dir, "absent.mjs"), NodePath: "sh"}
 	if noScript.threeJSAvailable() {
 		t.Error("missing script should be unavailable")
@@ -60,7 +71,7 @@ func TestThreeJSAvailable(t *testing.T) {
 		t.Error("missing node_modules should be unavailable")
 	}
 
-	// Missing node binary → unavailable (falls back to Blender).
+	// Missing node binary → unavailable.
 	noNode := &ModelHandler{ThreeJSScript: script, NodePath: "definitely-not-a-real-binary-xyz"}
 	if noNode.threeJSAvailable() {
 		t.Error("missing node binary should be unavailable")

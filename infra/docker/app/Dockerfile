@@ -1,9 +1,9 @@
 # artist-alley Go server image.
 #
 # Multi-stage: build the static binary in a Go toolchain image, then
-# copy it into a minimal runtime. Runtime bundles ffmpeg + a pinned
-# Blender 4.2 LTS so the preview.video and preview.model handlers can
-# run inline — final image is ~1.4 GB. Still one container.
+# copy it into a minimal runtime. Runtime bundles ffmpeg (preview.video)
+# + Chromium/Node (the headless three.js preview.model renderer) so
+# every preview kind runs inline. Still one container.
 
 ARG GO_VERSION=1.26
 ARG BUILD_VERSION=dev
@@ -61,62 +61,40 @@ COPY scripts/threejs/package.json scripts/threejs/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
 # ---- runtime stage --------------------------------------------------------
-# debian-slim instead of alpine because the official Blender tarball
-# (preview.model worker) is built against glibc. Final image lands
-# around ~1.9 GB; the cost buys one container that handles every
-# preview job kind (image / video / 3D) under a shared queue.
+# debian-slim instead of alpine because the Go binary is cgo'd against
+# glibc's libwebp. One container still handles every preview job kind
+# (image / video / 3D) under a shared queue.
 FROM debian:bookworm-slim AS runtime
 
 # - ffmpeg: drives preview.video (HLS encode, sprite sheet, poster).
-# - blender (Cycles CPU): drives preview.model (turntable + sprite
-#   sheet). No GPU stack baked in so it runs anywhere; deployments with
-#   GPUs can layer nvidia/cuda + reuse the same binary.
-# - libgl1 / libegl1 / libxrender1 / libxi6 / libxxf86vm1 / libxfixes3 /
-#   libxkbcommon0 / libxext6 / libsm6 / libice6: blender dlopens GL +
-#   X libs on startup even in --background; without them the binary
-#   aborts before our script runs.
-# - turntable.py is baked into the image at /app/blender/turntable.py
-#   via the COPY below — the Go handler defaults its ScriptPath to
-#   that location.
+# - chromium + node: drive preview.model — the headless three.js
+#   turntable renderer (#498, ADR 0069). Software WebGL (SwiftShader),
+#   so no GPU stack is baked in and it runs anywhere.
+#
+# Blender is deliberately NOT here (#500). It was 1.3 GB of a 3.64 GB
+# image and, since #498 routed every renderable format to the three.js
+# worker, nothing invoked it. It returns as an opt-in *converter*
+# plugin for proprietary formats (#499) — see ADR 0069, amended.
+#
+# The GL/X libs that used to be listed explicitly (libgl1, libegl1,
+# libxrender1, libxi6, libxxf86vm1, libxfixes3, libxkbcommon0, libxext6,
+# libsm6, libice6) were Blender's dlopen set and left with it. Chromium
+# pulls the X/GL libs it actually needs through its own apt dependency
+# tree, so there is no explicit list to maintain here; a turntable render
+# on this image is the check that matters, because a missing dlopen dep
+# fails at RENDER time, not build time (see scripts/threejs/smoke.mjs).
 ARG UID
 ARG GID
 
-# Blender pin. We deliberately do NOT use debian's `blender` package:
-# bookworm ships 3.4.1 (2022) and its bundled glTF / FBX add-ons use
-# `np.bool` which NumPy 1.20+ removed — version-skew that's been broken
-# for years. Pulling the official portable tarball gives us a known
-# Blender 4.2 LTS build that bundles its own Python + numpy, so the
-# add-ons match the runtime they were written against. LTS line is
-# supported through July 2027.
-# MUST stay identical to the root Dockerfile's BLENDER_VERSION /
-# BLENDER_SHA256 (the multi-arch release image). The two diverging is
-# what shipped a release with no Blender (#470); CI's "Blender pins in
-# sync across Dockerfiles" step fails if they drift. Bump both together.
-ARG BLENDER_VERSION=4.2.9
-ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
-
-# Runtime libs blender dlopens on startup even in --background mode
-# (libgl, libxrender, etc.); ffmpeg drives preview.video. xz-utils +
-# curl are only needed for the extraction step.
+# curl: the app healthcheck (docker-compose.yml) shells out to it.
 # chromium: the headless renderer for the three.js preview worker (#498).
 # The apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm,
 # …) so puppeteer can launch it on SwiftShader software WebGL — no GPU.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata curl xz-utils ffmpeg \
+        ca-certificates tzdata curl ffmpeg \
         librsvg2-bin libwebp7 poppler-utils ghostscript imagemagick unar \
-        libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
-        libxkbcommon0 libxext6 libsm6 libice6 \
         chromium \
  && rm -rf /var/lib/apt/lists/* \
- && curl -fL -o /tmp/blender.tar.xz \
-        "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
- && echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum -c - \
- && mkdir -p /opt/blender \
- && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
- && ln -s /opt/blender/blender /usr/local/bin/blender \
- && rm /tmp/blender.tar.xz \
- && apt-get purge -y xz-utils \
- && apt-get autoremove -y \
  && groupadd --gid "${GID}" app \
  && useradd --uid "${UID}" --gid app --no-create-home app \
  && mkdir -p /var/lib/aa-storage \
@@ -124,19 +102,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # three.js preview worker (#498): Node runtime + its node_modules + the
 # worker script. The Go handler defaults ThreeJSScript to
-# /app/threejs/worker.mjs and falls back to Blender if any piece is
-# absent (threeJSAvailable). PUPPETEER_EXECUTABLE_PATH points puppeteer at
+# /app/threejs/worker.mjs; with Blender gone (#500) this is the only 3D
+# renderer, so a missing piece fails preview.model jobs retryably rather
+# than degrading silently. PUPPETEER_EXECUTABLE_PATH points puppeteer at
 # the apt Chromium instead of a bundled download.
 COPY --from=threejs-deps /usr/local/bin/node /usr/local/bin/node
 COPY --from=threejs-deps --chown=app:app /app/threejs/node_modules /app/threejs/node_modules
-COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html scripts/threejs/package.json /app/threejs/
+COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html \
+                     scripts/threejs/smoke.mjs scripts/threejs/package.json /app/threejs/
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 USER app
 WORKDIR /app
 COPY --from=build --chown=app:app /out/aa /app/aa
-COPY --chown=app:app scripts/blender /app/blender
 
 EXPOSE 8080
 

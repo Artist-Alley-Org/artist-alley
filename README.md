@@ -92,8 +92,7 @@ cd artist-alley
 `bootstrap.sh` creates `.env` with random passwords, matches container UIDs to your host user, and brings the stack up.
 
 ```bash
-docker compose up -d            # core stack
-docker compose --profile workers up -d   # + Blender worker for 3D thumbnails
+docker compose up -d            # core stack (3D thumbnails included)
 docker compose --profile storage-s3 up -d  # + MinIO for S3-backend testing
 ```
 

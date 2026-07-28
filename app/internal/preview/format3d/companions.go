@@ -9,7 +9,7 @@ package format3d
 // URIs (buffers[].uri, images[].uri). An .obj points at one or more
 // .mtl material libraries (`mtllib`), and each .mtl points at texture
 // maps (`map_Kd`, `bump`, ...). None of that is embedded — the loader
-// (Blender, three.js, or the interactive viewer's GLTFLoader) resolves
+// (the headless three.js worker, or the interactive viewer's GLTFLoader) resolves
 // those references relative to the model file's directory at load time.
 //
 // So a multi-file model only renders if its siblings are registered as
