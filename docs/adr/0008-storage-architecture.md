@@ -84,8 +84,25 @@ performance.
 - **Dedup**. Same texture twice = one set of bytes, two pin rows.
 - **Federation integrity**. Peers can negotiate transfers by hash and
   verify any bytes they receive. This is the federation primitive.
-- **Forever-cacheable**. The hash never changes; CDN and HTTP caches
-  treat it as immutable.
+- **Forever-cacheable** — **for the ORIGINAL bytes only.** The hash never
+  changes, so `original` under a given hash is genuinely immutable and
+  CDN/HTTP caches may treat it as such.
+  **Amended 2026-07-26 (#620, PR #623):** as written, this bullet read as
+  licensing immutable caching for *any* URL under a stable hash, and the
+  codebase took it that way — `middleware/variant_cache.go` shipped
+  `Cache-Control: immutable, max-age=31536000` on **asset-addressed**
+  routes (`/api/v1/assets/{id}/variants/{key}`) with an ETag derived from
+  the URL path, and 304'd without consulting the stored bytes. The result
+  was not staleness but permanence: no sequence of requests could return
+  updated content.
+  **The distinction the bullet was missing:** a *derived variant* under a
+  stable hash is exactly what preview regeneration rewrites
+  (`RecreateAssetPreview`), and `file_hash` digests the original, so it
+  cannot witness that change. Immutability is a property of the original
+  bytes, not of everything addressed beneath their hash. Asset-addressed
+  byte routes now carry a content-derived validator
+  (`sha256(object_hash | variant_key | size | modtime)`) and
+  `public, max-age=60, must-revalidate`.
 - **Variant ergonomics**. Adding HLS segments to an existing original
   is just new keys under the same hash, no rename.
 

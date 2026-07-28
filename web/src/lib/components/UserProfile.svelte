@@ -161,7 +161,7 @@
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.posts')}</h2>
           <ContentGrid mode={browseView.mode} items={sortedPosts} tileMin={browseView.tileMin}>
             {#snippet card(item, mode)}
-              <PostCard post={item} feed={mode === 'feed'} tileSizesLen={browseView.tileSizesLen} />
+              <PostCard post={item} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} />
             {/snippet}
             {#snippet list()}
               <PostListTable items={sortedPosts} loading={false} />
@@ -185,8 +185,8 @@
         <section class="mt-10">
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.assets')}</h2>
           <ContentGrid mode={browseView.mode} items={sortedAssets} tileMin={browseView.tileMin}>
-            {#snippet card(item)}
-              <AssetCard asset={item} />
+            {#snippet card(item, mode)}
+              <AssetCard asset={item} {mode} tileSizes={browseView.tileSizes} />
             {/snippet}
           </ContentGrid>
         </section>

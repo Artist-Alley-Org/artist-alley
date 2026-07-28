@@ -30,8 +30,11 @@
     subject_id: string;
     position: number;
     title: string;
+    /** The asset to request the col variant from — the subject itself
+     *  for an asset, the collection's hero-card fallback for a
+     *  collection (#559). Null when nothing is servable. */
+    cover_asset_id?: string | null;
     asset_file_hash?: string | null;
-    asset_has_image?: boolean;
     preview_available?: boolean;
   }
 
@@ -54,20 +57,28 @@
     }
   }
 
-  // Collections have no standalone thumbnail endpoint, and assets
-  // whose sensitivity gates the bytes arrive with NO HASH at all — the
-  // server strips it (ADR 0020). So the presence of the hash is the
-  // signal, and this does not re-derive the rule.
+  // Assets whose sensitivity gates the bytes arrive with NO HASH at
+  // all — the server strips it (ADR 0020). So the presence of the hash
+  // is the signal, and this does not re-derive the rule.
   //
-  // Keyed on the hash rather than on `asset_has_image` deliberately:
-  // has_image is populated by the ingest pipeline and is false for
-  // every asset on installs whose assets predate it, which would make
-  // the rail render title-only tiles for content that has perfectly
-  // good bytes. A 404 on the variant falls back to the same title-only
-  // tile, so the worse failure is guarded either way.
+  // Keyed on the hash rather than on a stored "has an image" flag
+  // deliberately. The `asset_has_image` field this used to avoid was
+  // the projection of a column with no writer anywhere (DEFAULT false),
+  // so trusting it would have made the rail render title-only tiles for
+  // content with perfectly good bytes; both the field and the column
+  // are gone as of #579. A 404 on the variant falls back to the same
+  // title-only tile, so the worse failure is guarded either way.
+  //
+  // Collections resolve a cover the same way now (#559). The subject
+  // kind is no longer the gate — `cover_asset_id` is, because for a
+  // collection the tile renders ADR 0027's hero-card fallback (the
+  // most-recent post's asset) and `subject_id` is the collection, not
+  // something the variant endpoint accepts. A collection with no
+  // eligible public cover arrives with both fields null and still
+  // renders title-only, firing no request.
   function thumbUrl(it: FeaturedItem): string | null {
-    if (it.subject_kind !== 'asset' || !it.asset_file_hash) return null;
-    return `/api/v1/assets/${it.subject_id}/variants/col`;
+    if (!it.cover_asset_id || !it.asset_file_hash) return null;
+    return `/api/v1/assets/${it.cover_asset_id}/variants/col`;
   }
 
   // Fall back to the title-only tile if the variant is missing, rather
@@ -127,10 +138,12 @@
               />
             {:else}
               <!-- Title-only tile. The correct render for an asset
-                   whose bytes are gated, for collections (no cover
-                   endpoint), and for a variant that 404s. This text is
-                   the tile's accessible label — there is no caption
-                   underneath it, precisely so the name appears once. -->
+                   whose bytes are gated, for a collection with no
+                   eligible cover (empty, or every member above the
+                   public tier — #559), and for a variant that 404s.
+                   This text is the tile's accessible label — there is
+                   no caption underneath it, precisely so the name
+                   appears once. -->
               <div class="flex h-full w-full items-center justify-center p-3 text-center">
                 <span class="line-clamp-3 text-sm font-medium text-fg-muted">{it.title}</span>
               </div>

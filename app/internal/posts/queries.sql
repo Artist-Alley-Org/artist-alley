@@ -44,63 +44,21 @@ RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
 UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
--- name: ListPostsPage :many
--- Cursor pagination on (posted_at DESC, id DESC). Filters:
---   - author_user_ref: limit to posts by a given user
---   - visibility: 'public' for the public feed; NULL for whatever the
---     caller is authorised to see (handler enforces)
---   - q: plain-text TSVECTOR search across post search_text
---   - tag: single-tag filter (intersects with q if both given)
---   - feed_follower_ref (Phase 1.17.G2): when non-NULL, restrict the
---     feed to posts authored by users the given ref follows. EXISTS
---     subquery hits the user_follows PK (follower, followee) so it's
---     an index-only scan per candidate row — no nested loop.
-SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-       origin_server_id, team_id, state_id, created_at, updated_at,
-       deleted_at, deleted_reason
-FROM posts
-WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
-  AND (sqlc.narg('author_user_ref')::BIGINT IS NULL
-       OR author_user_ref = sqlc.narg('author_user_ref')::BIGINT)
-  AND (sqlc.narg('visibility')::TEXT IS NULL
-       OR visibility = sqlc.narg('visibility')::TEXT)
-  AND (sqlc.narg('q')::TEXT IS NULL
-       OR search_text @@ plainto_tsquery('english', sqlc.narg('q')::TEXT))
-  AND (sqlc.narg('tag')::TEXT IS NULL
-       OR EXISTS (SELECT 1 FROM post_tags pt
-                    WHERE pt.post_id = posts.id
-                      AND pt.tag = sqlc.narg('tag')::TEXT))
-  AND (sqlc.narg('feed_follower_ref')::BIGINT IS NULL
-       OR EXISTS (SELECT 1 FROM user_follows f
-                    WHERE f.follower_user_ref = sqlc.narg('feed_follower_ref')::BIGINT
-                      AND f.followee_user_ref = posts.author_user_ref))
-  AND (sqlc.narg('cursor_posted_at')::TIMESTAMPTZ IS NULL
-       OR posted_at < sqlc.narg('cursor_posted_at')::TIMESTAMPTZ
-       OR (posted_at = sqlc.narg('cursor_posted_at')::TIMESTAMPTZ
-           AND id < sqlc.narg('cursor_id')::UUID))
-ORDER BY posted_at DESC, id DESC
-LIMIT sqlc.arg('row_limit')::INTEGER;
-
--- name: ListPostsByAsset :many
--- Posts whose members include a given asset (#478 slice-2, post-by-asset
--- lookup). An asset is a many-to-many member of ≥0 posts via post_assets,
--- so this returns the visibility-filtered set. `visibilities` is the set
--- of tiers the caller may see — the handler passes {'public'} for an
--- anonymous caller and {'public','org-only'} for an authenticated one
--- (the same walled-garden view as the feed; the relationship tiers
--- private/followers/explicit-share are out of scope here). Bounded (no
--- cursor) — an asset lands in few posts, and the client only needs
--- "redirect if one, list if several". Newest first.
-SELECT id
-FROM posts p
-WHERE p.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM post_assets pa
-                WHERE pa.post_id = p.id
-                  AND pa.asset_id = sqlc.arg('asset_id')::UUID)
-  AND p.visibility = ANY(sqlc.arg('visibilities')::TEXT[])
-ORDER BY p.posted_at DESC, p.id DESC
-LIMIT 200;
+-- The two post LIST queries (ListPostsPage, ListPostsByAsset) are NOT
+-- here. They live in list_page.go as hand-built SQL, because the read
+-- rule they must apply is a runtime fragment (readRule.sql) and a sqlc
+-- query is a static string — the same reason every splice site of
+-- visibility.Predicate is hand-built.
+--
+-- They were deleted from this file rather than left in place unused
+-- (#660). The version that lived here took a caller-supplied
+-- `visibility` and applied it as a bare equality, documented as "NULL
+-- for whatever the caller is authorised to see (handler enforces)" —
+-- and the handler did not enforce, so `?visibility=private` returned
+-- every author's private posts to any signed-in caller. A second,
+-- ungated expression of "which posts does this list return" is exactly
+-- what produced that bug; leaving one here for the next caller to pick
+-- up would rebuild it.
 
 -- ---------------------------------------------------------------------------
 -- post_assets (members)
@@ -172,28 +130,15 @@ ON CONFLICT (collection_id, post_id) DO UPDATE SET
 -- name: RemoveCollectionPost :exec
 DELETE FROM collection_posts WHERE collection_id = $1 AND post_id = $2;
 
--- name: ListCollectionPostsPage :many
--- Pinned posts in a collection, sort_order then added_at. Excludes
--- expired memberships and soft-deleted posts. Returns the post row
--- joined with its cover_asset for the grid render.
-SELECT cp.collection_id, cp.post_id, cp.sort_order, cp.pinned,
-       cp.expires_at, cp.added_at,
-       p.author_user_ref, p.title, p.description, p.visibility,
-       p.cover_asset_id, p.posted_at, p.like_count, p.comment_count,
-       p.created_at AS post_created_at,
-       p.updated_at AS post_updated_at
-FROM collection_posts cp
-JOIN posts p ON p.id = cp.post_id
-WHERE cp.collection_id = $1
-  AND cp.pinned = TRUE
-  AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
-  AND p.deleted_at IS NULL
-  AND (sqlc.narg('cursor_sort_order')::INTEGER IS NULL
-       OR cp.sort_order > sqlc.narg('cursor_sort_order')::INTEGER
-       OR (cp.sort_order = sqlc.narg('cursor_sort_order')::INTEGER
-           AND cp.added_at > sqlc.narg('cursor_added_at')::TIMESTAMPTZ))
-ORDER BY cp.sort_order ASC, cp.added_at ASC
-LIMIT sqlc.arg('row_limit')::INTEGER;
+-- ListCollectionPostsPage was DELETED here (#661, epic #665). It listed
+-- a collection's pinned posts with `p.deleted_at IS NULL` as its only
+-- post-side condition — no visibility rule at all — and nothing in the
+-- tree called it: no handler, no test, and its generated row/param
+-- types were referenced nowhere. An unused query that would leak every
+-- private post in a collection the day somebody wired it up is not a
+-- head start, it is a trap; deleting it is strictly better than
+-- auditing it. A future collection-posts listing must go through
+-- posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
 
 -- ---------------------------------------------------------------------------
 -- ACLs (Phase 1.7.B-7b)

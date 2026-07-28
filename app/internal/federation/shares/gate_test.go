@@ -105,8 +105,8 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	name := envOr("AA_DB_NAME", "artist_alley")
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -151,8 +151,7 @@ func newGateFixture(t *testing.T) *gateFixture {
 	t.Helper()
 	pool := openPool(t)
 	t.Cleanup(pool.Close)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	regCache := cache.NewRegistry(pool, logger)
@@ -479,8 +478,8 @@ func TestCanPeerAccess_ContainerFallback_AssetInSharedCollection(t *testing.T) {
 	}
 	assetID := uuid.New()
 	if _, err := fx.pool.Exec(ctx,
-		`INSERT INTO assets (id, title, asset_type, owner_user_ref, has_image)
-		 VALUES ($1, 'Test Asset', 1, $2, FALSE)`,
+		`INSERT INTO assets (id, title, asset_type, owner_user_ref)
+		 VALUES ($1, 'Test Asset', 1, $2)`,
 		assetID, fx.grantorRef,
 	); err != nil {
 		t.Fatal(err)

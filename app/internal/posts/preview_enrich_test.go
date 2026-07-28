@@ -19,12 +19,12 @@ package posts
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,8 +57,8 @@ func previewPool(t *testing.T) *pgxpool.Pool {
 		" user=" + env("AA_DB_USER", "artist_alley") +
 		" dbname=" + env("AA_DB_NAME", "artist_alley") +
 		" sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -95,8 +95,8 @@ func seedPreviewAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string, with
 		}
 	}
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, has_image, file_hash)
-		 VALUES ($1,$2,$3,(SELECT MIN(ref) FROM asset_types),'active',$4,'ready',true,$5)`,
+		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, file_hash)
+		 VALUES ($1,$2,$3,(SELECT MIN(ref) FROM asset_types),'active',$4,'ready',$5)`,
 		id, "pe-"+sensitivity, pePostOwner, sensitivity, hash); err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}
@@ -241,5 +241,86 @@ func TestEnrichPreview_CacheIsolation(t *testing.T) {
 	}
 	if memberFlag(t, strangerView, restrictedCol) {
 		t.Fatal("LEAK: a stranger saw the owner's preview_available=true on a restricted member")
+	}
+}
+
+// setThumbhash writes assets.thumbhash for an already-seeded asset —
+// the shape of the raster worker's backfill, deliberately AFTER the post
+// row exists.
+func setThumbhash(t *testing.T, pool *pgxpool.Pool, assetID uuid.UUID, raw []byte) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET thumbhash = $2 WHERE id = $1`, assetID, raw); err != nil {
+		t.Fatalf("set thumbhash: %v", err)
+	}
+}
+
+func memberThumbhash(t *testing.T, p *openapi.Post, assetID uuid.UUID) *string {
+	t.Helper()
+	for _, m := range p.Members {
+		if uuid.UUID(m.Asset.Id) == assetID {
+			return m.Asset.Thumbhash
+		}
+	}
+	t.Fatalf("asset %v not a member of the post", assetID)
+	return nil
+}
+
+// TestEnrichPreview_Thumbhash is #648: every post member shipped
+// thumbhash=null, so the blur-up placeholder was dead on the browse feed
+// while the value sat in the database.
+//
+// The second half is why the field rides enrichPreview instead of the
+// cached ListPostAssets row: thumbhash is backfilled ASYNCHRONOUSLY by
+// the raster worker, which never invalidates a post cache. Baked into
+// the cached row, a post read before its raster job finished would pin
+// null indefinitely — the same class of bug, one step later.
+func TestEnrichPreview_Thumbhash(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+	ctx := context.Background()
+
+	withHash := seedPreviewAsset(t, pool, "public", true)
+	noHash := seedPreviewAsset(t, pool, "public", true) // e.g. a non-image
+	raw := []byte{0x01, 0x02, 0x03, 0xfe, 0xff}
+	wantB64 := base64.StdEncoding.EncodeToString(raw)
+	setThumbhash(t, pool, withHash, raw)
+
+	postID := seedPreviewPost(t, pool, withHash, noHash)
+	pgID := pgtype.UUID{Bytes: postID, Valid: true}
+
+	p, err := h.fetchFullPost(ctx, pgID)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if err := h.enrichPreview(ctxAs(pePostOwner), p); err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	got := memberThumbhash(t, p, withHash)
+	if got == nil {
+		t.Fatal("member with a thumbhash shipped null — #648")
+	}
+	if *got != wantB64 {
+		t.Errorf("thumbhash = %q, want base64 %q", *got, wantB64)
+	}
+	// An asset genuinely without one degrades to null, not "".
+	if th := memberThumbhash(t, p, noHash); th != nil {
+		t.Errorf("member without a thumbhash should be null, got %q", *th)
+	}
+
+	// Backfill AFTER the post is cached. The cached row is stale by
+	// construction; the per-request enrich must still carry the value.
+	raw2 := []byte{0xaa, 0xbb, 0xcc}
+	setThumbhash(t, pool, noHash, raw2)
+	p2, err := h.fetchFullPost(ctx, pgID) // served from h.byID
+	if err != nil {
+		t.Fatalf("fetch2: %v", err)
+	}
+	if err := h.enrichPreview(ctxAs(pePostOwner), p2); err != nil {
+		t.Fatalf("enrich2: %v", err)
+	}
+	got2 := memberThumbhash(t, p2, noHash)
+	if got2 == nil || *got2 != base64.StdEncoding.EncodeToString(raw2) {
+		t.Fatal("a thumbhash backfilled after the post was cached never reached the caller")
 	}
 }

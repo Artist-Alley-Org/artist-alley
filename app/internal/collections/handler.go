@@ -37,6 +37,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -74,6 +75,11 @@ type Handler struct {
 	// as if no required collection fields are configured (preserves
 	// pre-1.9.B behaviour for tests that don't wire metadata).
 	metadataGate MetadataGate
+
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). nil-safe: nil means no ladder, so
+	// ladder_available is false and clients stay on the `col` rung.
+	previewLadder sysconfig.PreviewLadderReader
 
 	// Audit records admin lifecycle events (soft_deleted; restore
 	// fires from softdelete.Service directly). Nil-safe.
@@ -151,6 +157,18 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 // and seed initial values inside the create tx.
 func (h *Handler) SetMetadataGate(g MetadataGate) {
 	h.metadataGate = g
+}
+
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
+
+// ladder returns the configured preview variant keys, or nil when the
+// reader is not wired — the conservative answer (ladder_available false).
+func (h *Handler) ladder(ctx context.Context) []string {
+	if h.previewLadder == nil {
+		return nil
+	}
+	return h.previewLadder(ctx)
 }
 
 // RequiredCollectionFieldMissingError signals that a required
@@ -857,6 +875,7 @@ func (h *Handler) ListCollectionResources(
 			CursorSortOrder: cursorSort,
 			CursorAddedAt:   cursorAdded,
 			RowLimit:        fetch,
+			Ladder:          h.ladder(ctx),
 		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)
@@ -871,6 +890,12 @@ func (h *Handler) ListCollectionResources(
 		}
 		item := resourceRowToAPI(r.ListCollectionResourcesPageRow)
 		item.PreviewAvailable = r.PreviewAvailable
+		item.LadderAvailable = r.LadderAvailable
+		// #640 — the member tile's aspect ratio. Same pair-or-neither
+		// contract as everywhere else; the gated row already dropped a
+		// half-populated pair.
+		item.PixelWidth = r.PixelWidth
+		item.PixelHeight = r.PixelHeight
 		items = append(items, item)
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
@@ -1054,6 +1079,22 @@ func (h *Handler) ListCollectionAcls(
 	}
 	// canRead: owner always; public visibility always; otherwise need
 	// mutate to view the ACL list (a stricter rule than read).
+	//
+	// #661 flagged this as a hand-maintained restatement of
+	// visibility.Filter that should be consolidated onto it. It is
+	// NOT a restatement — it is a DIFFERENT rule, deliberately, and
+	// folding it into the predicate would WIDEN access rather than
+	// consolidate it. The authenticated EntityCollection predicate is
+	// `public OR owner OR a live collection_acls grant`; this gate
+	// drops the grant disjunct (a read-grantee may use the collection
+	// without seeing who else was granted what) and adds a
+	// collections.admin / system.admin bypass the predicate
+	// deliberately refuses to carry. "Who may read the grant list" is
+	// a management question, not the row-visibility question ADR 0063
+	// answers.
+	//
+	// The soft-delete dimension is covered upstream: getByIDCached
+	// reads GetCollection, which filters `deleted_at IS NULL`.
 	if row.OwnerUserRef != caller.UserRef && row.Visibility != "public" && !canMutateCollection(caller, row) {
 		return openapi.ListCollectionAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
@@ -1278,6 +1319,16 @@ func resourceRowToAPI(r ListCollectionResourcesPageRow) openapi.CollectionResour
 		AssetType:    r.AssetType,
 		Status:       openapi.CollectionResourceStatus(r.Status),
 		FileHash:     r.FileHash,
+		// #595 — the media-type + blur-up fields. A member tile renders
+		// through the same CardThumb as a browse tile, and CardThumb
+		// reads the media type off the extension alone (video / 3D badge
+		// + sprite-scrub hover preview). Without these the tile is an
+		// untyped still. Encoded exactly as assets.assetRowToAPI does.
+		FileExtension: r.FileExtension,
+	}
+	if len(r.Thumbhash) > 0 {
+		v := base64.StdEncoding.EncodeToString(r.Thumbhash)
+		out.Thumbhash = &v
 	}
 	if r.ExpiresAt.Valid {
 		t := r.ExpiresAt.Time

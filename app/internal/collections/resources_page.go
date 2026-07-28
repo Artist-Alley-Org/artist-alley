@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -44,6 +46,9 @@ type ListCollectionResourcesPageGatedParams struct {
 	CursorSortOrder *int32
 	CursorAddedAt   pgtype.Timestamptz
 	RowLimit        int32
+	// Ladder is the operator's CONFIGURED preview variant keys (#591).
+	// Empty means "unknown" and resolves to ladder_available = false.
+	Ladder []string
 }
 
 // ListCollectionResourcesPageGatedRow is a contents row plus the derived
@@ -51,6 +56,15 @@ type ListCollectionResourcesPageGatedParams struct {
 type ListCollectionResourcesPageGatedRow struct {
 	ListCollectionResourcesPageRow
 	PreviewAvailable bool
+	// LadderAvailable: every CONFIGURED rung exists AND the caller
+	// passes the content plane (#591). Same 0064 contract as
+	// PreviewAvailable, from the same readability decision.
+	LadderAvailable bool
+	// PixelWidth / PixelHeight: recorded source dimensions, joined in the
+	// same pass (#640). Not readability-gated — metadata about a row the
+	// caller can already see — and nil unless BOTH are present.
+	PixelWidth  *int32
+	PixelHeight *int32
 }
 
 // ListCollectionResourcesPageGated runs the contents query for one caller.
@@ -69,6 +83,7 @@ func ListCollectionResourcesPageGated(
 		p.CursorAddedAt,   // $3
 		p.RowLimit,        // $4
 		caller.UserRef,    // $5 — team-membership probe; anon = ref 0, no match
+		p.Ladder,          // $6 — configured preview ladder (#591)
 	}
 
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
@@ -84,11 +99,15 @@ func ListCollectionResourcesPageGated(
 	// membership + caps.
 	sql := `SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at,
+       a.title, a.asset_type, a.status, a.file_hash,
+       a.file_extension, a.thumbhash,
+       a.created_at AS asset_created_at,
        a.sensitivity, a.owner_user_ref,
+       ` + pixeldims.SelectColumnsSQL("a.id") + `,
        (a.file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
+       ` + sysconfig.LadderSatisfiedSQL("a.file_hash", "$6") + ` AS has_full_ladder,
        (a.team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
              WHERE tm.team_id = a.team_id AND tm.user_ref = $5::BIGINT)) AS caller_is_team_member
@@ -116,22 +135,33 @@ LIMIT $4::INTEGER`
 		var (
 			sensitivity        string
 			ownerUserRef       *int64
+			pixelWidth         *int32
+			pixelHeight        *int32
 			hasColVariant      bool
+			hasFullLadder      bool
 			callerIsTeamMember bool
 		)
 		if err := rows.Scan(
 			&i.CollectionID, &i.AssetID, &i.SortOrder, &i.Pinned,
 			&i.ExpiresAt, &i.AddedAt,
-			&i.Title, &i.AssetType, &i.Status, &i.FileHash, &i.AssetCreatedAt,
-			&sensitivity, &ownerUserRef, &hasColVariant, &callerIsTeamMember,
+			&i.Title, &i.AssetType, &i.Status, &i.FileHash,
+			&i.FileExtension, &i.Thumbhash,
+			&i.AssetCreatedAt,
+			&sensitivity, &ownerUserRef, &pixelWidth, &pixelHeight,
+			&hasColVariant, &hasFullLadder, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
 		readable := visibility.ContentReadable(sensitivity, ownerUserRef, caller, caps, callerIsTeamMember)
-		out = append(out, ListCollectionResourcesPageGatedRow{
+		row := ListCollectionResourcesPageGatedRow{
 			ListCollectionResourcesPageRow: i,
 			PreviewAvailable:               hasColVariant && readable,
-		})
+			LadderAvailable:                hasFullLadder && readable,
+		}
+		if pixeldims.Sane(pixelWidth, pixelHeight) {
+			row.PixelWidth, row.PixelHeight = pixelWidth, pixelHeight
+		}
+		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("collections: list resources rows: %w", err)

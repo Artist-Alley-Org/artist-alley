@@ -46,8 +46,7 @@ func setupAdminFixture(t *testing.T) *adminFixture {
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
+	ctx := t.Context()
 
 	pool := openPool(t, pwd)
 	t.Cleanup(pool.Close)

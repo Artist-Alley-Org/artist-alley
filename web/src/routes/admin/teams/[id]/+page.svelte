@@ -206,7 +206,7 @@
           bind:value={editName}
           required
           maxlength="200"
-          class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
       </label>
       <label class="block text-xs">
@@ -215,7 +215,7 @@
           bind:value={editDescription}
           maxlength="500"
           rows="2"
-          class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         ></textarea>
       </label>
       <button
@@ -256,7 +256,7 @@
         type="text"
         bind:value={newParentId}
         placeholder="00000000-0000-0000-0000-000000000000"
-        class="flex-1 rounded border border-border bg-surface px-2 py-1 font-mono text-xs focus:border-accent focus:outline-none"
+        class="flex-1 rounded border border-border-strong bg-surface px-2 py-1 font-mono text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <button
         type="button"
@@ -299,7 +299,7 @@
         type="text"
         bind:value={newMemberRef}
         placeholder={t('admin.team_detail.add_member_placeholder')}
-        class="flex-1 rounded border border-border bg-surface px-2 py-1 text-xs focus:border-accent focus:outline-none"
+        class="flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <button
         type="button"

@@ -58,8 +58,8 @@ func TestWorkedExample_ShareCollection_GrantsImplicitAssetAccess(t *testing.T) {
 	assetIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	for _, aID := range assetIDs {
 		if _, err := fx.pool.Exec(ctx,
-			`INSERT INTO assets (id, title, asset_type, owner_user_ref, has_image)
-			 VALUES ($1, 'asset', 1, $2, FALSE)`, aID, fx.grantorRef); err != nil {
+			`INSERT INTO assets (id, title, asset_type, owner_user_ref)
+			 VALUES ($1, 'asset', 1, $2)`, aID, fx.grantorRef); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := fx.pool.Exec(ctx,
@@ -138,8 +138,8 @@ func TestWorkedExample_UnshareCollection_RevokesAccess_PreservesDerivatives(t *t
 	}
 	assetID := uuid.New()
 	if _, err := fx.pool.Exec(ctx,
-		`INSERT INTO assets (id, title, asset_type, owner_user_ref, has_image)
-		 VALUES ($1, 'asset', 1, $2, FALSE)`, assetID, fx.grantorRef); err != nil {
+		`INSERT INTO assets (id, title, asset_type, owner_user_ref)
+		 VALUES ($1, 'asset', 1, $2)`, assetID, fx.grantorRef); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fx.pool.Exec(ctx,

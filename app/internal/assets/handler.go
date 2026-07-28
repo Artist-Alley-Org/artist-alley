@@ -42,6 +42,8 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/imagefmt"
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -129,6 +131,11 @@ type Handler struct {
 	// defaults.
 	SysConfig *sysconfig.Store
 
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). nil-safe: nil yields no ladder, so
+	// ladder_available is false and clients stay on the `col` rung.
+	previewLadder sysconfig.PreviewLadderReader
+
 	// Audit records admin lifecycle events (soft_deleted currently;
 	// restored fires from the softdelete.Service directly). Nil-safe.
 	Audit *audit.Recorder
@@ -215,6 +222,20 @@ func (h *Handler) SetVisualEmbedDispatcher(d VisualEmbedDispatcher) { h.visualEm
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
+
+// ladder returns the configured preview variant keys, or nil when the
+// reader is not wired. nil is the conservative answer: it makes
+// ladder_available false, so a client falls back to the single `col`
+// rung rather than requesting rungs whose existence nobody vouched for.
+func (h *Handler) ladder(ctx context.Context) []string {
+	if h.previewLadder == nil {
+		return nil
+	}
+	return h.previewLadder(ctx)
+}
+
 func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry, sysCfg *sysconfig.Store) *Handler {
 	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg}
 	if registry != nil {
@@ -363,7 +384,7 @@ func (h *Handler) CreateAsset(
 		})
 		if err == nil {
 			// Pre-check hit. Behavior gates the response shape.
-			return h.dedupResponse(uploadCfg.DedupBehavior, existing)
+			return h.dedupResponse(ctx, uploadCfg.DedupBehavior, existing)
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("assets: dedup lookup: %w", err)
 		}
@@ -403,7 +424,7 @@ func (h *Handler) CreateAsset(
 				FileHash:     fileHashPtr,
 			})
 			if fetchErr == nil {
-				return h.dedupResponse(uploadCfg.DedupBehavior, existing)
+				return h.dedupResponse(ctx, uploadCfg.DedupBehavior, existing)
 			}
 		}
 		return nil, fmt.Errorf("assets: insert: %w", err)
@@ -625,15 +646,17 @@ const metadataExtractJobType jobs.JobType = "metadata.extract"
 // whether to enqueue a metadata.extract job. HEIC/AVIF/SVG/etc.
 // are images but we don't extract from them yet (HEIC needs the
 // future libheif add-on).
+//
+// Delegates rather than restating the set (#579). The backfill needs
+// the same answer and could not reach this unexported copy, so the list
+// was promoted to imagefmt.ExifExtractableExtensions; two copies of
+// "which formats can we extract from" is exactly the drift that leaves
+// the upload path and the backfill disagreeing about the same asset.
 func isExifExtractableImageExt(ext *string) bool {
 	if ext == nil {
 		return false
 	}
-	switch strings.ToLower(strings.TrimPrefix(*ext, ".")) {
-	case "jpg", "jpeg", "png", "tif", "tiff", "webp":
-		return true
-	}
-	return false
+	return imagefmt.IsExifExtractableExtension(*ext)
 }
 
 func aiTranscribeIdempotencyKey(assetID, model string) string {
@@ -658,7 +681,7 @@ func aiTranscribeIdempotencyKey(assetID, model string) string {
 // so the UI doesn't need a second round-trip to render the
 // "this file was already uploaded as X" dialog with thumbnail +
 // title.
-func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAssetByOwnerHashRow) (openapi.CreateAssetResponseObject, error) {
+func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBehavior, existing GetAssetByOwnerHashRow) (openapi.CreateAssetResponseObject, error) {
 	existingID := openapi_types.UUID(uuid.UUID(existing.ID.Bytes))
 	switch behavior {
 	case sysconfig.DedupBehaviorBlock:
@@ -671,6 +694,17 @@ func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAs
 		// haven't shipped yet — defaulting to "non-destructive
 		// + visible" is the conservative choice).
 		full := assetFromGetByOwnerHashRow(existing)
+		// This is the one CreateAsset branch that returns an asset which
+		// ALREADY has bytes, so it is the one that needs the derived
+		// fields (#655). The 201 branch is a row created this instant —
+		// no `col` variant, no ladder, nothing measured — where false /
+		// null is the honest answer rather than a missing lookup. Here
+		// the whole point of the payload is "render the file you already
+		// uploaded", and without preview_available the dialog draws a
+		// placeholder for an asset with a perfectly good thumbnail.
+		if err := h.enrichAssetDerived(ctx, &full); err != nil {
+			return nil, err
+		}
 		out := openapi.AssetWithDedup{
 			AssetType:        full.AssetType,
 			CreatedAt:        full.CreatedAt,
@@ -679,10 +713,15 @@ func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAs
 			FileHash:         full.FileHash,
 			FileSizeBytes:    full.FileSizeBytes,
 			Id:               full.Id,
+			LadderAvailable:  full.LadderAvailable,
 			Metadata:         full.Metadata,
 			OwnerUserRef:     full.OwnerUserRef,
+			PixelHeight:      full.PixelHeight,
+			PixelWidth:       full.PixelWidth,
+			PreviewAvailable: full.PreviewAvailable,
 			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
 			Status:           openapi.AssetWithDedupStatus(full.Status),
+			Thumbhash:        full.Thumbhash,
 			Title:            full.Title,
 			UpdatedAt:        full.UpdatedAt,
 		}
@@ -723,6 +762,13 @@ func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 			out.Metadata = &m
 		}
 	}
+	if len(r.Thumbhash) > 0 {
+		// Base64 on the wire, same as rowToAssetWithDetails. The dedup
+		// dialog renders a card, and a card without a thumbhash has no
+		// blur-up (#648).
+		v := base64.StdEncoding.EncodeToString(r.Thumbhash)
+		out.Thumbhash = &v
+	}
 	return out
 }
 
@@ -743,7 +789,7 @@ func isPgUniqueViolation(err error) bool {
 
 // jobTypeForExt picks the preview-job type for a given file extension.
 // preview.raster handles still images; preview.video runs the HLS
-// pipeline; preview.3d runs the Blender turntable renderer. Other
+// pipeline; preview.3d runs the headless three.js turntable renderer. Other
 // formats (audio/svg/pdf/font) land in follow-ups.
 // jobTypeForExt delegates to the shared dispatch map (#355): the
 // upload path, `aa seed`, and the preview handlers all read one set,
@@ -806,25 +852,77 @@ func (h *Handler) GetAsset(
 		return nil, fmt.Errorf("assets: list tag details: %w", err)
 	}
 	out := rowToAssetWithDetails(row, tags, details)
+	if err := h.enrichAssetDerived(ctx, &out); err != nil {
+		return nil, err
+	}
+	return openapi.GetAsset200JSONResponse(out), nil
+}
+
+// enrichAssetDerived fills the four fields a single-asset projection
+// cannot carry off its own row — preview_available (#471),
+// ladder_available (#610) and the recorded pixel dimensions (#640) —
+// for the request's caller.
+//
+// ONE place, because the class of bug this closes is a response shape
+// that disagrees with itself depending on which verb produced it (#655).
+// GetAsset had this inline and UpdateAsset had nothing, so a PATCH
+// returned preview_available=false for an asset whose GET one
+// millisecond later returned true. Any handler emitting an
+// openapi.Asset calls this; adding a fifth derived field means editing
+// this function, not auditing every caller.
+//
+// Reads `out.Id` and `out.FileHash`, so the caller must have populated
+// the row first. No-op on the zero-value id.
+func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) error {
+	assetID := uuid.UUID(out.Id)
+	if assetID == uuid.Nil {
+		return nil
+	}
+	// Source pixel dimensions (#640). The detail response carries them
+	// for the same reason the list does — one asset shape, one meaning
+	// per field. Its own round trip because sqlc cannot express the
+	// nullability of the projection (see the note on GetAsset); detail is
+	// not a hot loop, and this is the same trade the tag-details query
+	// above already makes.
+	//
+	// NOT gated on the content plane: these are metadata about a row the
+	// caller has already been handed, like file_size_bytes. Nothing about
+	// a width confirms readable bytes.
+	var detW, detH *int32
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+` FROM assets WHERE assets.id = $1::uuid`,
+		assetID.String(),
+	).Scan(&detW, &detH); err != nil {
+		return fmt.Errorf("assets: pixel dimensions: %w", err)
+	}
+	if pixeldims.Sane(detW, detH) {
+		out.PixelWidth, out.PixelHeight = detW, detH
+	}
 	// preview_available (#471): a servable `col` exists AND the caller
 	// passes the content plane. Detail is not a hot loop, so an EXISTS +
 	// CanReadContent here is fine (the list path joins both in one pass).
 	detCaller, detCaps := contentCaller(ctx)
-	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, uuid.UUID(req.Id))
+	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, assetID)
 	if err != nil {
-		return nil, fmt.Errorf("assets: content check: %w", err)
+		return fmt.Errorf("assets: content check: %w", err)
 	}
-	if readable && row.FileHash != nil && *row.FileHash != "" {
-		var hasCol bool
+	if readable && out.FileHash != nil && *out.FileHash != "" {
+		// Both flags in one round trip. ladder_available is computed
+		// against the CONFIGURED ladder (#591), never a hardcoded rung
+		// list — an operator who drops a rung must move this flag, not
+		// silently invalidate it.
+		var hasCol, hasLadder bool
 		if err := h.Pool.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col')`,
-			*row.FileHash,
-		).Scan(&hasCol); err != nil {
-			return nil, fmt.Errorf("assets: col variant check: %w", err)
+			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col'),
+			        `+sysconfig.LadderSatisfiedSQL("$1", "$2"),
+			*out.FileHash, h.ladder(ctx),
+		).Scan(&hasCol, &hasLadder); err != nil {
+			return fmt.Errorf("assets: variant check: %w", err)
 		}
 		out.PreviewAvailable = hasCol
+		out.LadderAvailable = hasLadder
 	}
-	return openapi.GetAsset200JSONResponse(out), nil
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -967,7 +1065,16 @@ func (h *Handler) UpdateAsset(
 		return nil, fmt.Errorf("assets: commit: %w", err)
 	}
 
-	return openapi.UpdateAsset200JSONResponse(rowToAsset(updateRowToGetRow(row), tags)), nil
+	// Same shape a GET returns (#655). The UPDATE's RETURNING row carries
+	// no preview / ladder / dimension columns, so without this a PATCH
+	// answered `preview_available: false` for an asset whose GET answers
+	// true — and a client that renders straight from the PATCH response
+	// loses the thumbnail it had a moment ago.
+	updated := rowToAsset(updateRowToGetRow(row), tags)
+	if err := h.enrichAssetDerived(ctx, &updated); err != nil {
+		return nil, err
+	}
+	return openapi.UpdateAsset200JSONResponse(updated), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1130,15 +1237,20 @@ func (h *Handler) ListAssets(
 		s := string(*req.Params.Status)
 		statusPtr = &s
 	}
-	// `q` is mutually exclusive with `tag` in practice (the tag-join
-	// query template doesn't carry the search_text column). When both
-	// are supplied we honour `tag` and drop `q`.
 	var qText *string
 	if req.Params.Q != nil {
 		s := strings.TrimSpace(*req.Params.Q)
 		if s != "" {
 			qText = &s
 		}
+	}
+	// `q` and `tag` now compose: both are conjuncts of the one gated
+	// query. Before #657 the tag filter lived in a separate sqlc
+	// statement that carried no search_text column, so supplying both
+	// meant silently dropping `q`.
+	var tagFilter *string
+	if req.Params.Tag != nil && *req.Params.Tag != "" {
+		tagFilter = req.Params.Tag
 	}
 
 	q := New(h.Pool)
@@ -1151,73 +1263,56 @@ func (h *Handler) ListAssets(
 	var lastID uuid.UUID
 	var rowCount int
 
-	if req.Params.Tag != nil && *req.Params.Tag != "" {
-		rows, err := q.ListAssetsByTagPage(ctx, ListAssetsByTagPageParams{
-			Tag:             *req.Params.Tag,
-			OwnerUserRef:    ownerRef,
-			AssetType:       resType,
-			Status:          statusPtr,
-			CursorCreatedAt: cursorTs,
-			CursorID:        cursorID,
-			RowLimit:        fetch,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("assets: list by tag: %w", err)
-		}
-		for _, r := range rows {
-			rowCount++
-			if rowCount > int(limit) {
-				break
-			}
-			tags, err := q.ListAssetTags(ctx, r.ID)
-			if err != nil {
-				return nil, fmt.Errorf("assets: list tags: %w", err)
-			}
-			assetsList = append(assetsList, rowToAsset(listByTagRowToGetRow(r), tags))
-			lastCreatedAt = r.CreatedAt.Time
-			lastID = uuid.UUID(r.ID.Bytes)
-		}
-		rowCount = len(rows)
-	} else {
-		// Hand-built so the visibility predicate can be spliced in
-		// (#429) — sqlc's static SQL cannot take a runtime fragment.
-		listCaller, listCaps := contentCaller(ctx)
-		rows, err := ListAssetsPageGated(ctx, h.Pool, listCaller, listCaps, ListAssetsPageGatedParams{
-			IncludeDeleted:  includeDeletedArg,
-			OwnerUserRef:    ownerRef,
-			AssetType:       resType,
-			Status:          statusPtr,
-			Q:               qText,
-			CursorCreatedAt: cursorTs,
-			CursorID:        cursorID,
-			RowLimit:        fetch,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("assets: list: %w", err)
-		}
-		for i, r := range rows {
-			if i >= int(limit) {
-				break
-			}
-			tags, err := q.ListAssetTags(ctx, r.ID)
-			if err != nil {
-				return nil, fmt.Errorf("assets: list tags: %w", err)
-			}
-			a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
-			a.PreviewAvailable = r.PreviewAvailable
-			// Surface soft-delete state so the admin trash view
-			// (include_deleted=true) can identify + label deleted rows.
-			if r.DeletedAt.Valid {
-				dt := r.DeletedAt.Time
-				a.DeletedAt = &dt
-				a.DeletedReason = r.DeletedReason
-			}
-			assetsList = append(assetsList, a)
-			lastCreatedAt = r.CreatedAt.Time
-			lastID = uuid.UUID(r.ID.Bytes)
-		}
-		rowCount = len(rows)
+	// ONE path, filtered or not (#657). Hand-built so the visibility
+	// predicate can be spliced in (#429) — sqlc's static SQL cannot take
+	// a runtime fragment. `tag` used to fork off to its own static sqlc
+	// query, which is how it came to apply no predicate, no ladder and
+	// no preview flags: a filter is not a different kind of read, and
+	// giving it a second query gave it a second set of rules that then
+	// drifted. Anything added here now applies to every browse.
+	listCaller, listCaps := contentCaller(ctx)
+	rows, err := ListAssetsPageGated(ctx, h.Pool, listCaller, listCaps, ListAssetsPageGatedParams{
+		IncludeDeleted:  includeDeletedArg,
+		OwnerUserRef:    ownerRef,
+		AssetType:       resType,
+		Status:          statusPtr,
+		Q:               qText,
+		Tag:             tagFilter,
+		CursorCreatedAt: cursorTs,
+		CursorID:        cursorID,
+		RowLimit:        fetch,
+		Ladder:          h.ladder(ctx),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("assets: list: %w", err)
 	}
+	for i, r := range rows {
+		if i >= int(limit) {
+			break
+		}
+		tags, err := q.ListAssetTags(ctx, r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("assets: list tags: %w", err)
+		}
+		a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
+		a.PreviewAvailable = r.PreviewAvailable
+		a.LadderAvailable = r.LadderAvailable
+		// #640 — the tile's aspect ratio, joined by the same pass.
+		// The gated row already applied the pair-or-neither rule.
+		a.PixelWidth = r.PixelWidth
+		a.PixelHeight = r.PixelHeight
+		// Surface soft-delete state so the admin trash view
+		// (include_deleted=true) can identify + label deleted rows.
+		if r.DeletedAt.Valid {
+			dt := r.DeletedAt.Time
+			a.DeletedAt = &dt
+			a.DeletedReason = r.DeletedReason
+		}
+		assetsList = append(assetsList, a)
+		lastCreatedAt = r.CreatedAt.Time
+		lastID = uuid.UUID(r.ID.Bytes)
+	}
+	rowCount = len(rows)
 
 	resp := openapi.AssetList{Items: assetsList}
 	if rowCount > int(limit) {
@@ -1667,27 +1762,6 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 }
 
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
-	return GetAssetRow{
-		ID:               r.ID,
-		Title:            r.Title,
-		Description:      r.Description,
-		AssetType:        r.AssetType,
-		OwnerUserRef:     r.OwnerUserRef,
-		Status:           r.Status,
-		FileHash:         r.FileHash,
-		FileExtension:    r.FileExtension,
-		FileSizeBytes:    r.FileSizeBytes,
-		Metadata:         r.Metadata,
-		OriginServerID:   r.OriginServerID,
-		StateID:          r.StateID,
-		ProcessingStatus: r.ProcessingStatus,
-		Thumbhash:        r.Thumbhash,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
-}
-
-func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 	return GetAssetRow{
 		ID:               r.ID,
 		Title:            r.Title,

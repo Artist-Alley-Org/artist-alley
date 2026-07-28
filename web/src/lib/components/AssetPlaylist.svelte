@@ -36,6 +36,7 @@
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
+  import { chromeScroll } from '$stores/chromeScroll.svelte';
 
   interface Props {
     source: PlaylistSource;
@@ -202,23 +203,46 @@
   // glued to the navbar's bottom even as the navbar grows (the user
   // is planning to expand it downward for advanced search / filter
   // panels). Written to --aa-navbar-bottom on the root and consumed
-  // by the dialog's CSS. Falls back to 53px if the header isn't
-  // findable (defensive — auth routes have no header).
+  // by the dialog's CSS.
+  //
+  // TWO inputs, not one (#628). The ResizeObserver reports the header's
+  // HEIGHT — which is the right number only while the header is on
+  // screen. The navbar auto-hides via a chromeScroll-driven transform
+  // (translateY(-100%)), which moves its bottom edge to 0 WITHOUT
+  // changing its height, and a ResizeObserver never fires on
+  // transforms. The first version of this glue read only the height, so
+  // once the navbar slid away the variable sat stale at ~53px and the
+  // feed bled through the gap above the viewer. So the effect below
+  // combines the measured height with chromeScroll.hidden: hidden → 0
+  // (the viewer expands flush, per the layout's "maximum image real
+  // estate" intent), visible → the measured height. The observer stays,
+  // for the planned navbar-growth case; the store dependency is what
+  // makes the hide/reveal reactive.
+  //
+  // The dialog is deliberately non-modal, so the navbar hiding while
+  // the viewer is open is a NORMAL state, not an edge case.
   let navbarObserver: ResizeObserver | undefined;
+  let navbarHeight = $state(0);
   function trackNavbarBottom() {
     const header = document.querySelector('header');
     if (!header) {
-      document.documentElement.style.setProperty('--aa-navbar-bottom', '53px');
+      // No header at all (auth routes) → nothing to sit below. This
+      // used to say 53px, which reserved a gap for chrome that does
+      // not exist.
+      navbarHeight = 0;
       return;
     }
     const apply = () => {
-      const h = Math.round(header.getBoundingClientRect().height);
-      document.documentElement.style.setProperty('--aa-navbar-bottom', `${h}px`);
+      navbarHeight = Math.round(header.getBoundingClientRect().height);
     };
     apply();
     navbarObserver = new ResizeObserver(apply);
     navbarObserver.observe(header);
   }
+  $effect(() => {
+    const top = chromeScroll.hidden ? 0 : navbarHeight;
+    document.documentElement.style.setProperty('--aa-navbar-bottom', `${top}px`);
+  });
 
   // Audiobook auto-advance bridge — AudiobookView fires this when
   // the current track ends and there's a next sibling. We translate
@@ -267,12 +291,20 @@
     window.removeEventListener('aa-audiobook-advance', onAudiobookAdvance as EventListener);
   });
 
+  // Once-per-close guard — see fireClose() below (#581). Declared here
+  // because openDialog() re-arms it.
+  let closing = false;
+
   // Open the dialog in the right mode. showModal() blocks page
   // interaction (correct for maximized = "this is the world now");
   // show() doesn't (correct for windowed = "I'm sitting on top, but
   // the navbar behind me is still clickable").
   function openDialog() {
     if (!dialogEl) return;
+    // Re-arm the once-per-close guard (#581) so a playlist that is
+    // closed and shown again — the maximize toggle below does exactly
+    // that — can still close.
+    closing = false;
     if (maximized) {
       dialogEl.showModal();
     } else {
@@ -285,6 +317,23 @@
     if (!standalone) {
       localStorage.setItem('assetPlaylist.maximized', maximized ? '1' : '0');
     }
+    // Un-maximizing means "give me the chrome back" (#635). Without
+    // this the button reads as broken whenever the navbar had already
+    // auto-hidden before the viewer opened: windowed resolves
+    // --aa-navbar-bottom to 0 (correct, #628/#629 — there is no navbar
+    // to sit below), so windowed and maximized are pixel-identical and
+    // the only difference is the invisible modal/non-modal swap.
+    //
+    // reveal() rather than a sticky flag, same as the view switcher
+    // (#554): it clears `hidden` and lets the NEXT scroll-down hide the
+    // chrome again. Nothing re-hides it while the viewer is open —
+    // `main` is not the scroll context then — and it's a no-op under
+    // reduced-motion, where the chrome never hides.
+    //
+    // Deliberately only this direction: maximizing does not force-hide
+    // the navbar. Covering it is the point; yanking it away would be a
+    // new behaviour, and the un-maximize above restores it either way.
+    if (!maximized) chromeScroll.reveal();
     // Swap the dialog mode by closing + reopening — there's no
     // showModal()/show() in-place switch.
     if (dialogEl?.open) dialogEl.close();
@@ -326,17 +375,40 @@
 
   // ---- Handlers ------------------------------------------------------------
 
+  // onClose must fire EXACTLY ONCE per close (#581). Three paths can
+  // reach it — the close button, a backdrop click, and the <dialog>'s
+  // native close event (Esc) — and the button path hit two of them:
+  // handleClose() called dialogEl.close(), which fires the dialog's
+  // `close` event → handleDialogClose → onClose(), and then called
+  // onClose() itself.
+  //
+  // That double-fire was invisible while the standalone routes closed
+  // with goto('/'), because navigating to the same URL twice is
+  // idempotent. Once close became history.back() it stopped being
+  // harmless: two backs skip past the page the user came from and land
+  // an entry too far (measured — profile → post → close landed on the
+  // collection BEFORE the profile).
+  //
+  // The guard is per-close rather than per-instance: openDialog()
+  // re-arms it, so a playlist that is closed and shown again still
+  // closes correctly.
+  function fireClose() {
+    if (closing) return;
+    closing = true;
+    onClose();
+  }
+
   function handleDialogClose() {
-    if (dialogEl?.open === false) onClose();
+    if (dialogEl?.open === false) fireClose();
   }
 
   function handleBackdropClick(e: MouseEvent) {
-    if (e.target === dialogEl) onClose();
+    if (e.target === dialogEl) fireClose();
   }
 
   function handleClose() {
     dialogEl?.close();
-    onClose();
+    fireClose();
   }
 
   /** Jump to a cursor position. Clamps to [0, items.length-1]; just
@@ -738,6 +810,11 @@
      follows it without code change. */
   dialog.asset-playlist.windowed {
     top: var(--aa-navbar-bottom, 53px);
+    /* The navbar's hide is animated (transition-transform duration-200
+       ease-out in the layout); matching it here means the viewer's top
+       edge chases the navbar instead of snapping while the navbar is
+       still mid-slide (#628). */
+    transition: top 200ms ease-out;
     right: 0;
     bottom: 0;
     left: 0;

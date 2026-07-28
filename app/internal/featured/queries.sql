@@ -13,20 +13,78 @@
 SELECT f.id, f.subject_kind, f.subject_id, f.position,
        f.created_at, f.created_by_user_ref,
        COALESCE(a.title, c.name, '')::text AS title,
-       a.file_hash AS asset_file_hash,
-       COALESCE(a.has_image, false)::boolean AS asset_has_image,
+       -- The asset whose col variant renders the tile (#625): the
+       -- subject itself for an asset, the hero-card fallback for a
+       -- collection. NULL when nothing is servable — the client keys on
+       -- this, not on subject_kind, because for a collection subject_id
+       -- is the COLLECTION and the variant endpoint would 404 on it.
+       CASE f.subject_kind
+            WHEN 'asset'      THEN a.id
+            WHEN 'collection' THEN cover.id
+       END::uuid AS cover_asset_id,
+       -- '' means "no servable hash" — same convention as the title
+       -- COALESCE above; the mapper turns it back into an absent field.
+       COALESCE(CASE f.subject_kind
+            WHEN 'asset'      THEN a.file_hash
+            WHEN 'collection' THEN cover.file_hash
+       END, '')::text AS asset_file_hash,
        -- preview_available (#471): a servable col variant exists. This is
        -- the admin curation list, served to operators who read every
        -- tier, so variant existence alone decides it (no per-caller
-       -- readability needed here).
-       COALESCE(EXISTS (
-            SELECT 1 FROM storage_variants sv
-             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col'), false)::boolean AS asset_preview_available
+       -- readability needed here). The cover lateral below already
+       -- REQUIRES a servable col, so for a collection its presence is
+       -- the answer.
+       COALESCE(CASE f.subject_kind
+            WHEN 'asset' THEN EXISTS (
+                 SELECT 1 FROM storage_variants sv
+                  WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')
+            WHEN 'collection' THEN cover.file_hash IS NOT NULL
+       END, false)::boolean AS asset_preview_available,
+       -- ladder_available (#591): every CONFIGURED rung exists — for the
+       -- asset itself, or for the collection's resolved cover. The rung
+       -- list is a parameter, not a literal, because the ladder is
+       -- operator-tunable — a hardcoded four-key check would report
+       -- false forever on an install that dropped a rung. The
+       -- cardinality guard makes an empty (unknown) ladder resolve to
+       -- false rather than vacuously true.
+       COALESCE((COALESCE(cardinality(sqlc.arg('ladder')::text[]), 0) > 0
+            AND COALESCE(a.file_hash, cover.file_hash) IS NOT NULL
+            AND (SELECT COUNT(DISTINCT sv.variant_key) FROM storage_variants sv
+                  WHERE sv.object_hash = COALESCE(a.file_hash, cover.file_hash)
+                    AND sv.variant_key = ANY(sqlc.arg('ladder')::text[]))
+                = cardinality(sqlc.arg('ladder')::text[])), false)::boolean AS asset_ladder_available
 FROM featured_items f
 LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id
 LEFT JOIN collections c
        ON f.subject_kind = 'collection' AND c.id = f.subject_id
+-- Hero-card fallback for collection subjects (#625), ported from the
+-- public rail's lateral (#559 / ADR 0027): the cover of the most recent
+-- eligible post in the collection.
+--
+-- DELIBERATELY WEAKER GATES THAN THE RAIL, and the difference is the
+-- point. The rail splices the caller's visibility predicate and demands
+-- ca.sensitivity = 'public', because it serves anonymous visitors and
+-- featuring must never widen access. This endpoint is system.admin-gated
+-- and "served to operators who read every tier" (see
+-- asset_preview_available above), so both caller-scoped gates are
+-- dropped: a team-tier or embargo cover SHOULD render here. What stays:
+--   * soft-delete on the post and the cover asset — the rail got these
+--     from the predicate it spliced, so dropping the splice must not
+--     drop them with it; a deleted asset is not a cover for anyone
+--   * a servable col variant — the zero-404 property; a tile must never
+--     build a byte URL that cannot be answered
+LEFT JOIN LATERAL (
+       SELECT ca.id, ca.file_hash
+         FROM collection_posts cp
+         JOIN posts p   ON p.id = cp.post_id AND p.deleted_at IS NULL
+         JOIN assets ca ON ca.id = p.cover_asset_id AND ca.deleted_at IS NULL
+        WHERE cp.collection_id = c.id
+          AND EXISTS (SELECT 1 FROM storage_variants sv
+                       WHERE sv.object_hash = ca.file_hash AND sv.variant_key = 'col')
+        ORDER BY p.created_at DESC, p.id DESC
+        LIMIT 1
+) cover ON true
 ORDER BY f.position ASC, f.created_at ASC;
 
 -- name: InsertFeaturedItem :one

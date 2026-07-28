@@ -161,10 +161,14 @@ ON CONFLICT (team_id, user_ref) DO NOTHING;
 
 -- name: SeedInsertField :one
 -- Field definition. `code` is the federation-stable natural key.
+-- extraction_source/mode carry the #618 wiring; NULLIF/COALESCE keeps
+-- the column defaults for the operator-managed fields that pass ''.
 INSERT INTO field_definition (
-    code, label, type, options, required, searchable, applies_to, subject_kind
+    code, label, type, options, required, searchable, applies_to, subject_kind,
+    extraction_source, extraction_mode
 )
-VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset')
+VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset',
+        $5, COALESCE(NULLIF(sqlc.arg(extraction_mode)::text, ''), 'skip_if_set'))
 ON CONFLICT (code) DO NOTHING
 RETURNING id;
 
@@ -288,3 +292,23 @@ ON CONFLICT (post_id, tag) DO NOTHING;
 INSERT INTO collection_posts (collection_id, post_id)
 VALUES ($1, $2)
 ON CONFLICT (collection_id, post_id) DO NOTHING;
+
+-- name: SeedInsertFollow :exec
+-- Local-origin follow edge for the seeded social graph (#563).
+-- origin_server_id is NULL — the seed graph is local, never federated
+-- (ADR 0007). Idempotent on the (follower, followee) primary key so
+-- re-seeds are byte-stable.
+INSERT INTO user_follows (follower_user_ref, followee_user_ref, created_at, origin_server_id)
+VALUES ($1, $2, $3, NULL)
+ON CONFLICT DO NOTHING;
+
+-- name: SeedInsertLike :exec
+-- Local-origin like for the seeded like history (#563). user_ref is set;
+-- peer_id/actor_uri stay NULL (the likes_origin_check enforces exactly
+-- one origin). target_kind is 'post' here. The likes_after_insert
+-- trigger maintains posts.like_count, so the count always equals the
+-- row set — no separate like_count write. Idempotent (the local unique
+-- index (target_kind, target_id, user_ref)) so re-seeds are stable.
+INSERT INTO likes (target_kind, target_id, user_ref, liked_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING;

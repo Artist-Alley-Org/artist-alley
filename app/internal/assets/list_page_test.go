@@ -23,7 +23,6 @@ import (
 	"encoding/hex"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -49,8 +48,8 @@ func listPagePool(t *testing.T) *pgxpool.Pool {
 		" user=" + env("AA_DB_USER", "artist_alley") +
 		" dbname=" + env("AA_DB_NAME", "artist_alley") +
 		" sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -370,8 +369,8 @@ func seedAssetWithCol(t *testing.T, pool *pgxpool.Pool, sensitivity string, owne
 		}
 	}
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, has_image, file_hash)
-		 VALUES ($1, $2, $3, (SELECT MIN(ref) FROM asset_types), 'active', $4, 'ready', true, $5)`,
+		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, file_hash)
+		 VALUES ($1, $2, $3, (SELECT MIN(ref) FROM asset_types), 'active', $4, 'ready', $5)`,
 		id, "pa-"+sensitivity, owner, sensitivity, hash); err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}

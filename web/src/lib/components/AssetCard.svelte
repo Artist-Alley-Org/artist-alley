@@ -1,218 +1,217 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // Single asset card for the browse grid. Three rendering layers:
-  //
-  //   1. Thumbhash placeholder (CSS background-image, ~30-byte data
-  //      URI decoded inline). Visible immediately, no HTTP RTT.
-  //   2. The col-sized JPEG variant (currently 320² @ q82). Fades
-  //      in over the placeholder once it arrives.
-  //   3. Fallback chain when col is missing: retry with backoff
-  //      (worker may still be generating) → /file (original) → icon
-  //      placeholder for non-image assets.
-  //
-  // The variant URL is content-addressed so the response carries
-  // long-lived Cache-Control + ETag (set by the VariantCache
-  // middleware). Subsequent grid renders are 304s.
+  // Single asset card for the browse / profile / collection grids. The
+  // thumbnail itself (thumbhash placeholder, col variant, sprite scrub,
+  // typed-doc + icon fallbacks, RS matte frame) lives in the shared
+  // CardThumb component (#515 slice 1) so AssetCard and PostCard render
+  // one identical treatment. This card adds the link wrapper + the
+  // hover title overlay.
 
-  import { onMount } from 'svelte';
-  import { decodeThumbhash } from '$lib/util/thumbhash';
+  import CardThumb from './CardThumb.svelte';
+  import CardMenu from './CardMenu.svelte';
+  import CardCheckbox from './CardCheckbox.svelte';
+  import { selection } from '$stores/selection.svelte';
+  import { cardTooltip } from '$stores/cardTooltip.svelte';
+  import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
+  import type { CardAsset } from '$components/cardAsset';
 
-  interface Asset {
-    id: string;
-    title: string;
-    file_hash?: string | null;
-    file_extension?: string | null;
-    asset_type: number;
-    created_at: string;
-    thumbhash?: string | null;
-    preview_available?: boolean;
-  }
-
-  import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
-  const isVideo = isVideoExt;
-  const is3D = is3DExt;
-  const isDoc = isDocExt;
+  // The card feed contract lives in cardAsset.ts, not here, because it
+  // is shared with PostCard and because its fields are REQUIRED — the
+  // presentation-critical ones were optional until #595 and a surface
+  // dropped two of them with no type error. Read that file before
+  // widening this prop back out.
 
   interface Props {
-    asset: Asset;
+    asset: CardAsset;
+    /** Active view mode (#515 slice 4). Grid = clean dense wall (no frame,
+     *  hover-only title); thumbnail = framed "details" tile with a
+     *  persistent metadata footer. */
+    mode?: ViewMode;
+    /** Slot width for `<img sizes>` — browseView's `tileSizes`. This card
+     *  used to pass nothing, so every asset tile on the collection and
+     *  profile grids advertised CardThumb's hardcoded `22rem` at every
+     *  viewport and every rung of the size stepper (#639). */
+    tileSizes?: string;
   }
 
-  let { asset }: Props = $props();
+  let { asset, mode = 'grid', tileSizes = DEFAULT_TILE_SIZES }: Props = $props();
 
-  // The col variant is the canonical grid thumbnail.
-  const colUrl = $derived(`/api/v1/assets/${asset.id}/variants/col`);
+  // Grid reads as a clean dense wall (no frame, hover-only title). The
+  // other modes keep the gallery frame + a persistent footer in
+  // thumbnail. See CardThumb `framed`.
+  const framed = $derived(mode !== 'grid');
+  const detailed = $derived(mode === 'thumbnail');
 
-  // Decoded thumbhash → CSS background. Computed lazily once mounted
-  // so the SSR snapshot stays light.
-  let placeholder = $state<string | null>(null);
-  onMount(() => {
-    placeholder = decodeThumbhash(asset.thumbhash);
-  });
+  // Masonry only (#652). Its tiles are the shape of their images since
+  // #646, so the thinnest are ~60px — the floor CardThumb clamps them
+  // to, which is one 44px tap target plus its inset. At that size the
+  // overlay holds the ⋮ menu and the checkbox and nothing else; the
+  // title/date that grid paints across the bottom of the artwork would
+  // cover the entire work. Those facts move to the hover tooltip.
+  const compact = $derived(mode === 'masonry');
 
-  // The server tells us whether a servable `col` exists for THIS caller
-  // (preview_available, #471). We render the <img> only when it does, so
-  // a content-gated / not-yet-generated / preview-less asset shows the
-  // thumbhash-or-icon placeholder and fires NO byte request that would
-  // 404 + spam the console. Doc assets render a typed card regardless.
-  const showImage = $derived(
-    !isDoc(asset.file_extension) && !!asset.file_hash && !!asset.preview_available,
+  // Hover state lives on the interactive <a> and feeds CardThumb's
+  // sprite-scrub (keeps hover listeners off the presentation frame).
+  let hovering = $state(false);
+
+  // Selected state (#515 slice 3) — the card gets a ring, the checkbox a
+  // check. Read from the shared selection singleton.
+  const selected = $derived(selection.has(asset.id));
+
+  // #555 — grid is a zero-gap CONTACT SHEET: drop the card chrome
+  // (rounded / border / elevated bg) so tiles butt into one unbroken
+  // wall, and let hover lift + enlarge the tile. The z-lift matters at
+  // zero gap: without it a scaling tile slides under its neighbours.
+  // Selection uses an INSET ring here so it reads inside the tile
+  // instead of bleeding over the adjacent one.
+  //
+  // #596 — the separation between grid tiles is PER-TILE, not a grid
+  // gap, matching the reference: its artwork grid declares no gap at all
+  // and each tile link carries `padding:2px; border-radius:4px`. Two
+  // neighbours therefore put 4px between their images (2px each) with
+  // rounded corners, which is the "almost 1px" softness the owner was
+  // describing. The grid itself stays flush (ContentGrid keeps gap-0).
+  //
+  // Literal px, not Tailwind's rem-based scale: the reference stylesheet
+  // uses px throughout and our previous `gap-2` was 0.5rem, so it
+  // rescaled with the user's font size — a gutter that grows when
+  // someone bumps their browser text is not the same design.
+  //
+  // The 2px ring is filled with `bg-thumb-matte` rather than left to
+  // show the page. The matte is deliberately offset from the page
+  // (#590), so it separates light artwork on a light page — which the
+  // page colour itself would not: at 95% against near-white art there
+  // are ~3 L points, and that near-invisibility is the whole reason the
+  // matte token exists.
+  const wrapperClass = $derived(
+    framed
+      ? `rounded-lg bg-surface-elevated border ${selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}`
+      : `p-[2px] rounded-[4px] bg-thumb-matte hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
   );
-  let imgLoaded = $state(false);
-  let imgError = $state(false);
-  $effect(() => {
-    // Reset the fade-in whenever the target asset changes.
-    void asset.id;
-    imgLoaded = false;
-    imgError = false;
-  });
-
-  function onLoad() {
-    imgLoaded = true;
-  }
-
-  // Defensive only: preview_available guarantees a servable col, so this
-  // fires only on undecodable bytes — degrade to the icon placeholder.
-  function onError() {
-    imgError = true;
-  }
 
   const created = $derived(new Date(asset.created_at));
   const createdShort = $derived(
-    created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   );
 
-  // Sprite-sheet hover preview for video assets (same scheme as
-  // PostCard). Video covers walk the preview.video 10×10 timeline
-  // sheet; 3D covers walk the preview.model 6×6 turntable sheet.
-  // Both serve from the same sprites.jpg variant.
-  const assetIsVideo = $derived(isVideo(asset.file_extension));
-  const assetIs3D = $derived(is3D(asset.file_extension));
-  const assetIsDoc = $derived(isDoc(asset.file_extension));
-  const assetHasSpriteScrub = $derived(assetIsVideo || assetIs3D);
-  const spriteUrl = $derived(`/api/v1/assets/${asset.id}/variants/sprites.jpg`);
-  const spriteCols = $derived(assetIs3D ? 6 : 10);
-  const spriteRows = $derived(assetIs3D ? 6 : 10);
-  const spriteCells = $derived(spriteCols * spriteRows);
-  let hovering = $state(false);
-  let spriteFrame = $state(0);
-  let spriteInterval: ReturnType<typeof setInterval> | null = null;
-  function onHoverEnter() {
+  // Tooltip payload (#652). Scan-level facts only — type, size, date.
+  // Deliberately NOT the details card: masonry's job is looking at a lot
+  // of things quickly, and a tooltip you have to read is a tooltip that
+  // stops you scanning. The dimensions are here because #646 made them
+  // available and they are the one fact a thin tile actively hides.
+  const tipMeta = $derived(
+    [
+      asset.file_extension ? asset.file_extension.replace(/^\./, '').toUpperCase() : null,
+      asset.pixel_width && asset.pixel_height ? `${asset.pixel_width} × ${asset.pixel_height}` : null,
+      createdShort,
+    ].filter((v): v is string => !!v),
+  );
+
+  function tipEnter(e: MouseEvent) {
     hovering = true;
-    if (!assetHasSpriteScrub) return;
-    if (spriteInterval) return;
-    spriteInterval = setInterval(() => {
-      spriteFrame = (spriteFrame + 1) % spriteCells;
-    }, 120);
+    if (compact) cardTooltip.enter(asset.id, { title: asset.title, meta: tipMeta }, e);
   }
-  function onHoverLeave() {
+  function tipMove(e: MouseEvent) {
+    if (compact) cardTooltip.move(asset.id, e);
+  }
+  function tipLeave() {
     hovering = false;
-    if (spriteInterval) {
-      clearInterval(spriteInterval);
-      spriteInterval = null;
-    }
-    spriteFrame = 0;
+    if (compact) cardTooltip.leave(asset.id);
   }
 </script>
 
-<a
-  href="/assets/{asset.id}"
-  onmouseenter={onHoverEnter}
-  onmouseleave={onHoverLeave}
-  class="group block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
+<!--
+  Stretched-link pattern (#515 slice 2): the card is a container, not an
+  <a>, so the tool row's <button>s aren't illegally nested in an anchor.
+  A whole-card <a> covers the thumb for navigation (z-[1]); the title
+  overlay is pointer-events-none; the tool row (z-20) captures its own
+  clicks above the link.
+-->
+<div
+  class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
-  <div
-    class="relative aspect-square bg-surface bg-cover bg-center"
-    style={placeholder ? `background-image: url(${placeholder})` : undefined}
+  {#if detailed}
+    <!-- Details HEADER (#556). The owner's ask was "there should be a
+         top to the thumbnail cards … title near the top": the title now
+         LEADS the card instead of trailing it as a caption strip.
+         Actions are NOT duplicated here — per the owner's 2026-07-25
+         amendment the ⋮ CardMenu is the one action affordance in every
+         mode, so it stays in its overlay position over the thumb.
+         Kept self-contained: #552 swaps this field set for an
+         operator-configured one, and wants that swap local. -->
+    <div class="border-b border-border px-3 py-2">
+      <a
+        href="/assets/{asset.id}"
+        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
+      </a>
+    </div>
+  {/if}
+
+  <CardThumb
+    assetId={asset.id}
+    title={asset.title}
+    thumbhash={asset.thumbhash}
+    fileExtension={asset.file_extension}
+    assetType={asset.asset_type}
+    hasFileHash={!!asset.file_hash}
+    previewAvailable={asset.preview_available}
+    ladderAvailable={asset.ladder_available}
+    sizesHint={tileSizes}
+    {hovering}
+    {framed}
+    fill={mode === 'grid'}
+    variableAspect={mode === 'masonry'}
+    {compact}
+    pixelWidth={asset.pixel_width}
+    pixelHeight={asset.pixel_height}
+    titleAdjacent={detailed}
   >
-    {#if assetIsDoc}
-      <!-- Typed doc card — text/code don't get a rasterised preview
-           variant, so we render a file-shape with the extension. -->
-      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-surface-elevated to-surface text-fg-muted/80">
-        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-          <line x1="8" y1="13" x2="16" y2="13" />
-          <line x1="8" y1="17" x2="16" y2="17" />
-          <line x1="8" y1="9" x2="12" y2="9" />
-        </svg>
-        {#if asset.file_extension}
-          <span class="rounded bg-black/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg">
-            {asset.file_extension.replace(/^\./, '')}
-          </span>
-        {/if}
-      </div>
-    {:else if showImage && !imgError}
-      <img
-        src={colUrl}
-        alt={asset.title}
-        loading="lazy"
-        decoding="async"
-        class="absolute inset-0 h-full w-full object-contain transition-opacity duration-200 group-hover:scale-[1.02]"
-        class:opacity-0={!imgLoaded}
-        class:opacity-100={imgLoaded}
-        onload={onLoad}
-        onerror={onError}
-      />
-      {#if assetHasSpriteScrub && hovering}
-        {#if assetIsVideo}
-          <!-- Video scrub: 16:9 sprite cells letterboxed in the 1:1
-               slot. Black backdrop + inner aspect-video div renders
-               the cell at native ratio (same shape RS uses in
-               pages/search_views/thumbs.php). -->
-          <div class="pointer-events-none absolute inset-0 bg-black/95 transition-opacity duration-150">
-            <div
-              class="absolute left-0 right-0 top-1/2 aspect-video -translate-y-1/2 bg-no-repeat"
-              style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
-            ></div>
-          </div>
-        {:else}
-          <!-- 3D turntable: 1:1 cells in 1:1 slot — no letterbox. -->
-          <div
-            class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
-            style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
-          ></div>
-        {/if}
-      {/if}
-      {#if assetIsVideo}
-        <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
-          video
-        </div>
-      {:else if assetIs3D}
-        <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
-          3D
-        </div>
-      {/if}
-    {:else if !placeholder}
-      <!-- No thumbhash either — fall back to the icon. -->
-      <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="48"
-          height="48"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <circle cx="9" cy="9" r="2" />
-          <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-        </svg>
+    <!-- Whole-card navigation target. Hover here drives CardThumb's
+         sprite-scrub (an interactive element, so no a11y warning) and,
+         in masonry, the shared hover tooltip. The listeners hang off
+         THIS element and not the frame because it is exactly the tile's
+         box and it is interactive; `currentTarget` is therefore the
+         rect the tooltip anchors to. -->
+    <a
+      href="/assets/{asset.id}"
+      onmouseenter={tipEnter}
+      onmousemove={tipMove}
+      onmouseleave={tipLeave}
+      class="absolute inset-0 z-[1]"
+      aria-label={asset.title}
+    ></a>
+
+    <!-- Multi-select checkbox (top-left). -->
+    <CardCheckbox id={asset.id} />
+
+    {#if !detailed && !compact}
+      <!-- Grid/feed: hover-only title overlay (clicks fall to the link).
+           Thumbnail shows a persistent footer below instead; masonry
+           shows the hover tooltip instead (#652) — see `compact`. -->
+      <div
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
+               p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      >
+        <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
+        <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
       </div>
     {/if}
 
-    <!-- Hover overlay with title -->
-    <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/50 to-transparent
-             p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-    >
-      <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
-      <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
-    </div>
-  </div>
-</a>
+    <!-- Overflow menu (info / share / add-to-collection). ONE affordance
+         in every mode, including thumbnail — owner amendment 2026-07-25
+         to #556, superseding "actions visible in the details tile". -->
+    <CardMenu assetId={asset.id} detailPath="/assets/{asset.id}" />
+  </CardThumb>
+
+  {#if detailed}
+    <!-- Details FOOTER: the secondary at-a-glance metadata. The title
+         moved to the header (#556); this keeps the supporting fields
+         below the image where they don't compete with it. -->
+    <a href="/assets/{asset.id}" class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      <p class="text-xs text-fg-muted">{createdShort}</p>
+    </a>
+  {/if}
+</div>

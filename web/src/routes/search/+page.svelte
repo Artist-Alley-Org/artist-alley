@@ -14,6 +14,7 @@
   import { goto } from '$app/navigation';
   import { t } from '$stores/lang.svelte';
   import ThumbButtons from '$components/search/ThumbButtons.svelte';
+  import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
 
   type Hit = {
     type: 'asset' | 'collection' | 'post';
@@ -75,7 +76,14 @@
   // /search/advanced builder or a "Find similar assets" nav.
   let dslMode = $state(false);
 
+  /** Bumped by every runSearch and by snapshot restoration, so a
+   *  result set that has been superseded can't land on top of a newer
+   *  one. Restoring a back-navigation is exactly that race: the mount
+   *  fetch and `snapshot.restore` have no defined order. */
+  let searchGen = 0;
+
   async function runSearch(query: string, opts: { append?: boolean } = {}) {
+    const gen = ++searchGen;
     if (!query) {
       hits = [];
       totalCount = 0;
@@ -101,11 +109,13 @@
           ? Promise.resolve(null)
           : fetch(`/api/v1/search/facets?q=${encodeURIComponent(query)}`, { credentials: 'include' }),
       ]);
+      if (gen !== searchGen) return;
       if (!searchResp.ok) {
         error = t('search.err_generic', { status: searchResp.status });
         return;
       }
       const data = (await searchResp.json()) as SearchResponse;
+      if (gen !== searchGen) return;
       cursor = data.next_cursor || '';
       totalCount = data.total_count;
       totalCountCapped = data.total_count_capped;
@@ -115,10 +125,12 @@
         facets = fd.facets ?? {};
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (gen === searchGen) error = e instanceof Error ? e.message : String(e);
     } finally {
-      loading = false;
-      loadingMore = false;
+      if (gen === searchGen) {
+        loading = false;
+        loadingMore = false;
+      }
     }
   }
 
@@ -161,7 +173,48 @@
       dslMode = false;
       q = urlQ ?? '';
     }
-    if (q) void runSearch(q);
+    // `hits` already populated means snapshot.restore got here first
+    // (back-navigation) — re-running the search would throw away the
+    // "load more" pages the user had accumulated.
+    if (q && hits.length === 0) void runSearch(q);
+  });
+
+  // Back-navigation restoration (#584). Results are paged behind a
+  // manual "load more", so the offset is only meaningful alongside the
+  // hits it was measured against — restoring one without the other
+  // would land the user in the middle of a shorter list.
+  interface SearchSnapshot {
+    q: string;
+    dsl: boolean;
+    hits: Hit[];
+    cursor: string;
+    totalCount: number;
+    totalCountCapped: boolean;
+    facets: Record<string, FacetResult>;
+  }
+  export const snapshot = createScrollSnapshot<SearchSnapshot>({
+    capture: () => ({
+      q,
+      dsl: dslMode,
+      hits,
+      cursor,
+      totalCount,
+      totalCountCapped,
+      facets,
+    }),
+    restore: (saved) => {
+      if (!saved || saved.hits.length === 0) return;
+      searchGen++;
+      q = saved.q;
+      dslMode = saved.dsl;
+      hits = saved.hits;
+      cursor = saved.cursor;
+      totalCount = saved.totalCount;
+      totalCountCapped = saved.totalCountCapped;
+      facets = saved.facets;
+      loading = false;
+      loadingMore = false;
+    },
   });
 
   function typeBadge(type: Hit['type']): string {
@@ -319,7 +372,7 @@
         type="search"
         placeholder={t('search.query_placeholder')}
         data-testid="search-input"
-        class="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg
+        class="flex-1 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-fg
                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <button
@@ -400,7 +453,7 @@
         <input
           bind:value={saveName}
           type="text"
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       {#if saveResult}
@@ -444,7 +497,7 @@
         <input
           bind:value={saveSearchName}
           type="text"
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       <label class="mb-3 block text-sm">
@@ -454,14 +507,14 @@
           type="number"
           min="15"
           step="15"
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       <label class="mb-3 block text-sm">
         <span class="mb-1 block text-fg-muted">{t('search.save_search.channel_label')}</span>
         <select
           bind:value={saveSearchChannel}
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         >
           <option value="email">{t('search.save_search.channel_email')}</option>
           <option value="none">{t('search.save_search.channel_none')}</option>

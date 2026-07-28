@@ -3,6 +3,14 @@
 <script lang="ts">
   // Labelled text input with optional helper / error text. Two-way
   // bound via $bindable so callers can do <TextField bind:value=... />.
+  //
+  // The resting border is `border-border-strong`, NOT `border-border`
+  // (#594). On a form control the border is the whole affordance — it is
+  // the only thing that says "you can type here" — so it is graphical
+  // information under WCAG 1.4.11 and owes 3:1. `border-border` is the
+  // divider role and measures 1.28:1 / 1.38:1; it is correct on a card
+  // edge or a table rule and wrong here. Any new control follows this,
+  // and app.css states the split.
 
   interface Props {
     label: string;
@@ -76,7 +84,7 @@
            placeholder:text-fg-muted/60
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface focus-visible:ring-ring
            disabled:opacity-50 disabled:cursor-not-allowed
-           {hasError ? 'border-danger' : 'border-border'}"
+           {hasError ? 'border-danger' : 'border-border-strong'}"
   />
   {#if hasError}
     <p id={helperId} class="text-xs text-danger" role="alert">{error}</p>

@@ -109,7 +109,7 @@ func makeClaim(t *testing.T, id uuid.UUID) *jobs.Claim {
 
 // TestHandle_ProviderNil_TransientError — job re-queues, counter bumps.
 func TestHandle_ProviderNil_TransientError(t *testing.T) {
-	j := newTestJob(AssetRecord{HasImage: true, FileHash: strPtr("abc")}, nil, stubStorage{})
+	j := newTestJob(AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc")}, nil, stubStorage{})
 	_, err := j.Handle(context.Background(), makeClaim(t, uuid.New()))
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -124,8 +124,13 @@ func TestHandle_ProviderNil_TransientError(t *testing.T) {
 }
 
 // TestHandle_AssetNotImage_PermanentTerminal — defence in depth.
+//
+// "Not an image" is now a FORMAT the CLIP sidecar cannot process (#579),
+// so the fixture is a pdf rather than a has_image=false flag. The flag
+// was never set by any production path, which made this case
+// unreachable in practice even though the test passed.
 func TestHandle_AssetNotImage_PermanentTerminal(t *testing.T) {
-	j := newTestJob(AssetRecord{HasImage: false, FileHash: strPtr("abc")}, stubEmbedProvider{}, stubStorage{})
+	j := newTestJob(AssetRecord{FileExtension: strPtr("pdf"), FileHash: strPtr("abc")}, stubEmbedProvider{}, stubStorage{})
 	_, err := j.Handle(context.Background(), makeClaim(t, uuid.New()))
 	var terminal *jobs.TerminalError
 	if !errors.As(err, &terminal) {
@@ -139,7 +144,7 @@ func TestHandle_AssetNotImage_PermanentTerminal(t *testing.T) {
 // TestHandle_AssetDeleted_PermanentTerminal — asset gone between
 // dispatch and execution; don't retry.
 func TestHandle_AssetDeleted_PermanentTerminal(t *testing.T) {
-	j := newTestJob(AssetRecord{HasImage: true, FileHash: strPtr("abc"), Deleted: true}, stubEmbedProvider{}, stubStorage{})
+	j := newTestJob(AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc"), Deleted: true}, stubEmbedProvider{}, stubStorage{})
 	_, err := j.Handle(context.Background(), makeClaim(t, uuid.New()))
 	var terminal *jobs.TerminalError
 	if !errors.As(err, &terminal) {
@@ -149,7 +154,7 @@ func TestHandle_AssetDeleted_PermanentTerminal(t *testing.T) {
 
 // TestHandle_AssetMissingFileHash_PermanentTerminal — no bytes to fetch.
 func TestHandle_AssetMissingFileHash_PermanentTerminal(t *testing.T) {
-	j := newTestJob(AssetRecord{HasImage: true, FileHash: nil}, stubEmbedProvider{}, stubStorage{})
+	j := newTestJob(AssetRecord{FileExtension: strPtr("png"), FileHash: nil}, stubEmbedProvider{}, stubStorage{})
 	_, err := j.Handle(context.Background(), makeClaim(t, uuid.New()))
 	var terminal *jobs.TerminalError
 	if !errors.As(err, &terminal) {
@@ -162,7 +167,7 @@ func TestHandle_AssetMissingFileHash_PermanentTerminal(t *testing.T) {
 // resurrect them).
 func TestHandle_StorageDownloadFails_PermanentTerminal(t *testing.T) {
 	j := newTestJob(
-		AssetRecord{HasImage: true, FileHash: strPtr("abc")},
+		AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc")},
 		stubEmbedProvider{},
 		stubStorage{err: errors.New("backend gone")},
 	)
@@ -176,7 +181,7 @@ func TestHandle_StorageDownloadFails_PermanentTerminal(t *testing.T) {
 // TestHandle_EmptyBytes_PermanentTerminal — zero-byte upload; skip.
 func TestHandle_EmptyBytes_PermanentTerminal(t *testing.T) {
 	j := newTestJob(
-		AssetRecord{HasImage: true, FileHash: strPtr("abc")},
+		AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc")},
 		stubEmbedProvider{},
 		stubStorage{data: []byte{}},
 	)
@@ -191,7 +196,7 @@ func TestHandle_EmptyBytes_PermanentTerminal(t *testing.T) {
 // framework retries (plain error, not Terminal).
 func TestHandle_ProviderTransient_ReQueues(t *testing.T) {
 	j := newTestJob(
-		AssetRecord{HasImage: true, FileHash: strPtr("abc")},
+		AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc")},
 		stubEmbedProvider{
 			embed: func(context.Context, []byte) (visualprovider.Embedding, error) {
 				return visualprovider.Embedding{}, visualprovider.ErrSidecarUnreachable
@@ -216,7 +221,7 @@ func TestHandle_ProviderTransient_ReQueues(t *testing.T) {
 // ⇒ Terminal so the framework stops retrying.
 func TestHandle_ProviderPermanent_TerminalError(t *testing.T) {
 	j := newTestJob(
-		AssetRecord{HasImage: true, FileHash: strPtr("abc")},
+		AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc")},
 		stubEmbedProvider{
 			embed: func(context.Context, []byte) (visualprovider.Embedding, error) {
 				return visualprovider.Embedding{}, visualprovider.ErrDimMismatch
@@ -245,7 +250,7 @@ func TestHandle_RateLimit_BlocksThenProceeds_TimesOut(t *testing.T) {
 	// Burn the initial token so the next Handle definitely waits.
 	limiter.Allow()
 	j := &Job{
-		Assets:               stubAssets{rec: AssetRecord{HasImage: true, FileHash: strPtr("abc")}},
+		Assets:               stubAssets{rec: AssetRecord{FileExtension: strPtr("png"), FileHash: strPtr("abc")}},
 		Storage:              stubStorage{data: []byte{0xff, 0xd8}},
 		Provider:             stubEmbedProvider{},
 		Counter:              NewCounter(),
@@ -268,7 +273,7 @@ func TestHandle_RateLimit_BlocksThenProceeds_TimesOut(t *testing.T) {
 // TestHandle_PendingGauge_StartEndPaired — success + failure paths
 // both leave pending at 0.
 func TestHandle_PendingGauge_StartEndPaired(t *testing.T) {
-	j := newTestJob(AssetRecord{HasImage: true, FileHash: nil}, stubEmbedProvider{}, stubStorage{})
+	j := newTestJob(AssetRecord{FileExtension: strPtr("png"), FileHash: nil}, stubEmbedProvider{}, stubStorage{})
 	_, _ = j.Handle(context.Background(), makeClaim(t, uuid.New()))
 	if got := j.Counter.Snapshot()["visual_embed_auto_pending"]; got != 0 {
 		t.Fatalf("pending after Handle: got %d, want 0", got)

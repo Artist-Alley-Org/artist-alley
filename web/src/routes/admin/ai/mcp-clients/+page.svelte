@@ -200,20 +200,20 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_name')}</span>
           <input type="text" required bind:value={form.name}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.field_name_hint')}</span>
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_url')}</span>
           <input type="url" required bind:value={form.url}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.field_url_hint')}</span>
         </label>
 
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_transport')}</span>
           <select bind:value={form.transport}
-                  class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none">
+                  class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
             <option value="http">http</option>
             <option value="stdio">stdio</option>
           </select>
@@ -222,7 +222,7 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_privacy')}</span>
           <select bind:value={form.privacy_class}
-                  class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none">
+                  class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
             <option value="cloud">cloud</option>
             <option value="local">local</option>
           </select>
@@ -232,7 +232,7 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_kind')}</span>
           <select bind:value={form.auth_kind}
-                  class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none">
+                  class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
             <option value="none">none</option>
             <option value="bearer">bearer</option>
             <option value="header">header</option>
@@ -244,7 +244,7 @@
           <label class="block">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref')}</span>
             <input type="password" bind:value={form.auth_secret_ref}
-                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                   class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
             <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref_hint')}</span>
           </label>
         {/if}
@@ -253,7 +253,7 @@
           <label class="block">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_header_name')}</span>
             <input type="text" bind:value={form.auth_header_name} placeholder="X-API-Key"
-                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                   class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
             <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.field_auth_header_name_hint')}</span>
           </label>
         {/if}
@@ -261,17 +261,17 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_rate_limit_per_second')}</span>
           <input type="number" min="1" bind:value={form.rate_limit_per_second}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_rate_limit_per_minute')}</span>
           <input type="number" min="1" bind:value={form.rate_limit_per_minute}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_health_interval')}</span>
           <input type="number" min="10" bind:value={form.health_check_interval_s}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
       </div>
 

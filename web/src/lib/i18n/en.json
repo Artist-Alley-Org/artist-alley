@@ -165,6 +165,48 @@
     },
     "end_of_feed": "— end of feed —"
   },
+  "card": {
+    "tools": {
+      "row_label": "Quick actions",
+      "menu_label": "More actions",
+      "info": "View details",
+      "share": "Copy link",
+      "copied": "Link copied",
+      "add_to_collection": "Add to collection…"
+    },
+    "select": {
+      "label": "Select",
+      "deselect": "Deselect"
+    },
+    "multi": {
+      "badge_label": "{count} assets in this post"
+    },
+    "footer": {
+      "likes": "{count} likes",
+      "comments": "{count} comments"
+    },
+    "fallback": {
+      "kind": {
+        "image": "Image",
+        "video": "Video",
+        "pdf": "PDF",
+        "audio": "Audio",
+        "sequence": "Image sequence",
+        "font": "Typeface",
+        "sprite": "Sprite sheet",
+        "3d": "3D model",
+        "ebook": "E-book",
+        "doc": "Document",
+        "audiobook": "Audiobook",
+        "archive": "Archive",
+        "placeholder": "File"
+      }
+    }
+  },
+  "selection": {
+    "count": "{count} selected",
+    "clear": "Clear"
+  },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
     "profile": "Profile",
@@ -483,7 +525,6 @@
       "loading": "Loading sessions…",
       "none": "No active sessions besides this one.",
       "current_badge": "This device",
-      "ip_label": "IP",
       "ua_label": "Device",
       "last_used": "Last used",
       "created": "Signed in",

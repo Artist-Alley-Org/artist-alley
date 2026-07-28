@@ -27,8 +27,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/logging"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Version is overwritten at build time via -ldflags "-X main.Version=...".
@@ -88,14 +86,62 @@ func runSeed(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	// Own the schema prerequisite (#574). `aa seed` is specified to
+	// write straight to postgres + storage with NO running server, so
+	// it cannot assume something else has migrated — but until now only
+	// run() (the serve path) called Migrate. The seeder's first phase,
+	// resolveLookups, reads user / workflow_states / asset_types, so
+	// against an unmigrated database it died on
+	// `relation "user" does not exist`.
+	//
+	// In the nightly that showed up as a RACE rather than a hard
+	// failure: `docker compose up -d` returns before the app finishes
+	// migrating, and the seed runs via `run --rm --no-deps` which
+	// explicitly skips dependency waiting. Whichever site lost the race
+	// seeded nothing and every UI spec then asserted against an empty
+	// instance.
+	//
+	// Migrate is idempotent (goose version table) and now takes an
+	// advisory lock, so this is safe whether the server already
+	// migrated, is migrating right now, or was never started. Must come
+	// before db.Open + seed.Reset, both of which assume tables.
+	if err := db.Migrate(ctx, cfg); err != nil {
+		return fmt.Errorf("seed: migrate: %w", err)
+	}
+	logger.Info("seed.migrate.done")
+
 	pool, err := db.Open(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
+	// The OTHER half of the same prerequisite (#574). Migrating alone
+	// only moves the failure: resolveLookups' very first statement
+	// resolves the bootstrap admin (the seed's collections are owned by
+	// it), and the admin is created by bootstrap.Run — which, like
+	// Migrate, only ever ran on the serve path. A seed that won the
+	// schema race but lost the bootstrap race would swap
+	// `relation "user" does not exist` for `resolve admin: no rows` and
+	// still leave an empty instance.
+	//
+	// Same call the server makes, same config. Idempotent (no-ops when
+	// an admin already exists) and explicitly race-safe — it re-checks
+	// inside its transaction precisely so two processes can't both
+	// create the admin.
+	//
+	// nil recorder: the seed has no audit recorder wired, which just
+	// skips the key_generated audit row. The keypair is still minted.
+	if err := bootstrap.Run(ctx, pool, bootstrap.Config{
+		ScrambleKey:         cfg.ScrambleKey,
+		AdminPath:           cfg.BootstrapAdminPath,
+		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
+	}, logger, nil); err != nil {
+		return fmt.Errorf("seed: bootstrap admin: %w", err)
+	}
+
 	if *reset {
-		if err := resetSeedTables(ctx, pool, bootstrap.DefaultUsername); err != nil {
+		if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
 			return fmt.Errorf("seed reset: %w", err)
 		}
 		logger.Info("seed.reset.done")
@@ -125,61 +171,6 @@ func runSeed(args []string) error {
 		"posts", counts.Posts, "comments", counts.Comments)
 	fmt.Printf("seed complete: users=%d teams=%d collections=%d assets=%d posts=%d comments=%d\n",
 		counts.Users, counts.Teams, counts.Collections, counts.Assets, counts.Posts, counts.Comments)
-	return nil
-}
-
-// resetSeedTables clears the content tables so a re-seed starts from a
-// clean slate. Baseline lookups (workflow_states, asset_types) and the
-// bootstrap admin survive; every fictional user + all their content is
-// removed. CASCADE handles the join/dependent tables.
-func resetSeedTables(ctx context.Context, pool *pgxpool.Pool, adminUsername string) error {
-	// storage_objects is deliberately NOT truncated (#355). The content
-	// store is content-addressed and asset-independent: storage_objects
-	// / storage_variants are keyed by object_hash and describe what is
-	// physically on the storage volume, which a DB truncate obviously
-	// does not erase. Truncating them (CASCADE also took storage_variants
-	// + storage_pins) desynced the two — the blobs stayed on disk while
-	// their rows vanished, and because the preview handlers skip any
-	// variant whose blob already exists, a re-seed would then regenerate
-	// nothing and leave the instance with originals and zero variant
-	// rows: /variants/col 404s, exactly the bug this issue is about.
-	//
-	// Leaving them alone is also idempotent: the seed's asset ids are
-	// stable (from MANIFEST.json), so a re-seed re-uploads the same
-	// hashes, dedups onto the existing objects, and re-pins identically.
-	const truncate = `TRUNCATE
-	    assets, posts, comments, collections, field_definition
-	    RESTART IDENTITY CASCADE`
-	if _, err := pool.Exec(ctx, truncate); err != nil {
-		return err
-	}
-	// teams gets a per-row DELETE, NOT a slot in the TRUNCATE above.
-	// TRUNCATE ... CASCADE empties dependent tables WHOLESALE, and
-	// user_roles / user_capability_grants / user_capability_revokes all
-	// carry a team_id FK — so naming teams in the TRUNCATE wiped every
-	// role and capability grant in the install, including the bootstrap
-	// admin's GLOBAL (team_id IS NULL) role. The instance then answered
-	// needs_setup=true and nobody could log in, after every --reset.
-	//
-	// A per-row DELETE follows the same FK with ON DELETE CASCADE but
-	// only removes the rows that actually reference a deleted team, so
-	// global roles + grants survive.
-	if _, err := pool.Exec(ctx, `DELETE FROM teams`); err != nil {
-		return err
-	}
-	// Fictional users (everyone but the bootstrap admin). Their
-	// federation keys + profiles cascade.
-	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE username <> $1`, adminUsername); err != nil {
-		return err
-	}
-	// Preview jobs for the content we just truncated (#355). Every
-	// preview job names an asset_id; with the assets gone they'd churn
-	// through their retries and land in `failed`. Now that a seed
-	// dispatches one per asset, skipping this would orphan a whole
-	// dataset's worth on every --reset.
-	if _, err := pool.Exec(ctx, `DELETE FROM jobs WHERE type LIKE 'preview.%'`); err != nil {
-		return err
-	}
 	return nil
 }
 

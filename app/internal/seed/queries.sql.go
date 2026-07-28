@@ -568,31 +568,89 @@ func (q *Queries) SeedInsertFeatured(ctx context.Context, arg SeedInsertFeatured
 
 const seedInsertField = `-- name: SeedInsertField :one
 INSERT INTO field_definition (
-    code, label, type, options, required, searchable, applies_to, subject_kind
+    code, label, type, options, required, searchable, applies_to, subject_kind,
+    extraction_source, extraction_mode
 )
-VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset')
+VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset',
+        $5, COALESCE(NULLIF($6::text, ''), 'skip_if_set'))
 ON CONFLICT (code) DO NOTHING
 RETURNING id
 `
 
 type SeedInsertFieldParams struct {
-	Code    string
-	Label   string
-	Type    string
-	Options []byte
+	Code             string
+	Label            string
+	Type             string
+	Options          []byte
+	ExtractionSource string
+	ExtractionMode   string
 }
 
 // Field definition. `code` is the federation-stable natural key.
+// extraction_source/mode carry the #618 wiring; NULLIF/COALESCE keeps
+// the column defaults for the operator-managed fields that pass ”.
 func (q *Queries) SeedInsertField(ctx context.Context, arg SeedInsertFieldParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, seedInsertField,
 		arg.Code,
 		arg.Label,
 		arg.Type,
 		arg.Options,
+		arg.ExtractionSource,
+		arg.ExtractionMode,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const seedInsertFollow = `-- name: SeedInsertFollow :exec
+INSERT INTO user_follows (follower_user_ref, followee_user_ref, created_at, origin_server_id)
+VALUES ($1, $2, $3, NULL)
+ON CONFLICT DO NOTHING
+`
+
+type SeedInsertFollowParams struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+	CreatedAt       pgtype.Timestamptz
+}
+
+// Local-origin follow edge for the seeded social graph (#563).
+// origin_server_id is NULL — the seed graph is local, never federated
+// (ADR 0007). Idempotent on the (follower, followee) primary key so
+// re-seeds are byte-stable.
+func (q *Queries) SeedInsertFollow(ctx context.Context, arg SeedInsertFollowParams) error {
+	_, err := q.db.Exec(ctx, seedInsertFollow, arg.FollowerUserRef, arg.FolloweeUserRef, arg.CreatedAt)
+	return err
+}
+
+const seedInsertLike = `-- name: SeedInsertLike :exec
+INSERT INTO likes (target_kind, target_id, user_ref, liked_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+`
+
+type SeedInsertLikeParams struct {
+	TargetKind string
+	TargetID   pgtype.UUID
+	UserRef    *int64
+	LikedAt    pgtype.Timestamptz
+}
+
+// Local-origin like for the seeded like history (#563). user_ref is set;
+// peer_id/actor_uri stay NULL (the likes_origin_check enforces exactly
+// one origin). target_kind is 'post' here. The likes_after_insert
+// trigger maintains posts.like_count, so the count always equals the
+// row set — no separate like_count write. Idempotent (the local unique
+// index (target_kind, target_id, user_ref)) so re-seeds are stable.
+func (q *Queries) SeedInsertLike(ctx context.Context, arg SeedInsertLikeParams) error {
+	_, err := q.db.Exec(ctx, seedInsertLike,
+		arg.TargetKind,
+		arg.TargetID,
+		arg.UserRef,
+		arg.LikedAt,
+	)
+	return err
 }
 
 const seedInsertPost = `-- name: SeedInsertPost :one

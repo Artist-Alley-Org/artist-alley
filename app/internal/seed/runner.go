@@ -31,14 +31,17 @@ package seed
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +89,9 @@ type Counts struct {
 	Assets      int
 	Posts       int
 	Comments    int
+	Follows     int
+	Likes       int
+	Featured    int
 }
 
 // Runner executes the seed phases against a live pool + storage.
@@ -176,12 +182,15 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyUsers", r.applyUsers},
 		{"applyTeams", r.applyTeams},
 		{"applyMemberships", r.applyMemberships},
+		{"applyFollows", r.applyFollows},
 		{"applyFields", r.applyFields},
 		{"applyCollections", r.applyCollections},
 		{"applyFeatured", r.applyFeatured},
 		{"applyAssets", r.applyAssets},
 		{"applyPosts", r.applyPosts},
+		{"applyLikes", r.applyLikes},
 		{"applyComments", r.applyComments},
+		{"applyPostComments", r.applyPostComments},
 	}
 	for _, p := range phases {
 		start := time.Now()
@@ -353,10 +362,12 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			opts = b
 		}
 		id, err := r.q.SeedInsertField(ctx, SeedInsertFieldParams{
-			Code:    f.Name,
-			Label:   f.Label,
-			Type:    f.Type,
-			Options: opts,
+			Code:             f.Name,
+			Label:            f.Label,
+			Type:             f.Type,
+			Options:          opts,
+			ExtractionSource: f.ExtractionSource,
+			ExtractionMode:   f.ExtractionMode,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -375,7 +386,30 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 // --- phase: collections ----------------------------------------------
 
 func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
+	// The catalogue lists every collection across BOTH studios, but each
+	// site ships only its own studio's assets (plus shared) — so creating
+	// all of them left site_a with 11 of 18 collections holding zero
+	// assets, and any `featured` flag on one of those put an empty
+	// collection on the front rail (#565).
+	//
+	// Skip the ones with no content HERE. This is not "the studio split is
+	// wrong" — Project Toybox is empty on site_a and 516 assets deep on
+	// site_b, which is the split working. It is that an empty shell should
+	// not be created at all. applyFeatured then drops the corresponding
+	// featured entry on its own, since it only features collections that
+	// made it into r.collections.
+	withContent := make(map[string]struct{}, len(cat.Assets))
+	for _, a := range cat.Assets {
+		if a.CollectionName != "" {
+			withContent[a.CollectionName] = struct{}{}
+		}
+	}
+	skipped := 0
 	for _, c := range cat.Collections {
+		if _, ok := withContent[c.Name]; !ok {
+			skipped++
+			continue
+		}
 		cid := parseUUID(c.ID)
 		// org-only unless the catalogue says otherwise. That default is
 		// the restrictive one on purpose: a demo dataset should not
@@ -401,7 +435,7 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 		}
 		r.collections[c.Name] = id
 	}
-	r.log.Info("seed.collections", "count", len(r.collections))
+	r.log.Info("seed.collections", "count", len(r.collections), "skipped_empty", skipped)
 	return nil
 }
 
@@ -535,7 +569,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 
 		// Register multi-file companions (#486). A .gltf/.obj declares its
 		// buffer/textures/.mtl as sibling files; without companion rows the
-		// Blender render stages nothing and the interactive viewer's
+		// render stages nothing and the interactive viewer's
 		// GLTFLoader 404s on the .bin, so the model renders blank. Do this
 		// BEFORE the preview enqueue below so the worker finds them staged.
 		// Best-effort: a companion hiccup shouldn't fail an otherwise-good
@@ -854,6 +888,15 @@ func (r *Runner) verify(ctx context.Context) (Counts, error) {
 	if c.Comments, err = q(`SELECT count(*) FROM comments WHERE deleted_at IS NULL`); err != nil {
 		return c, err
 	}
+	if c.Follows, err = q(`SELECT count(*) FROM user_follows`); err != nil {
+		return c, err
+	}
+	if c.Likes, err = q(`SELECT count(*) FROM likes`); err != nil {
+		return c, err
+	}
+	if c.Featured, err = q(`SELECT count(*) FROM featured_items`); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 
@@ -957,6 +1000,346 @@ func parseTime(s string) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// --- social history (#563): follows, likes, threaded post comments ---
+//
+// All three phases build a DETERMINISTIC graph from a stable hash of the
+// natural keys (same shape as stableUUID) so re-seeds — and both sites —
+// are byte-reproducible. Timestamps are distributed across the content's
+// created_at span (earliest → latest post) rather than now(), so history
+// reads as lived-in AND stays reproducible (now() would drift per run).
+
+// stableHash: 64-bit digest over a fixed namespace + the parts. The
+// engine behind the deterministic counts, picks, and timestamps below.
+func stableHash(parts ...string) uint64 {
+	h := sha256.New()
+	h.Write([]byte("artist-alley.seed.hist.v1"))
+	for _, p := range parts {
+		h.Write([]byte{0})
+		h.Write([]byte(p))
+	}
+	return binary.BigEndian.Uint64(h.Sum(nil)[:8])
+}
+
+// stableIntn returns a deterministic int in [0, n).
+func stableIntn(n int, parts ...string) int {
+	if n <= 0 {
+		return 0
+	}
+	return int(stableHash(parts...) % uint64(n))
+}
+
+// stableFrac returns a deterministic float in [0, 1).
+func stableFrac(parts ...string) float64 {
+	return float64(stableHash(parts...)) / (float64(math.MaxUint64) + 1)
+}
+
+// stableTimeBetween returns a deterministic instant in [lo, hi].
+func stableTimeBetween(lo, hi time.Time, parts ...string) time.Time {
+	if !hi.After(lo) {
+		return lo
+	}
+	return lo.Add(time.Duration(stableFrac(parts...) * float64(hi.Sub(lo))))
+}
+
+// sortedUsernames returns the fictional-user natural keys in a stable
+// order so map iteration never leaks into the graph shape.
+func (r *Runner) sortedUsernames() []string {
+	names := make([]string, 0, len(r.users))
+	for u := range r.users {
+		names = append(names, u)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// contentSpan is the [earliest, latest] post created_at window. Follow /
+// like / comment timestamps are distributed inside it (dataset-derived,
+// so reproducible — no now()).
+func (r *Runner) contentSpan(cat *catalogues) (time.Time, time.Time) {
+	var lo, hi time.Time
+	for _, p := range cat.Posts {
+		t := parseTime(p.CreatedAt)
+		if !t.Valid {
+			continue
+		}
+		if lo.IsZero() || t.Time.Before(lo) {
+			lo = t.Time
+		}
+		if t.Time.After(hi) {
+			hi = t.Time
+		}
+	}
+	if lo.IsZero() {
+		lo = hi.AddDate(-1, 0, 0)
+	}
+	if !hi.After(lo) {
+		hi = lo.AddDate(0, 1, 0)
+	}
+	return lo, hi
+}
+
+// pickDistinct deterministically selects up to count names from pool
+// (excluding `exclude`), ordered by a salted hash — a stable shuffle.
+func pickDistinct(pool []string, count int, exclude string, salt ...string) []string {
+	type scored struct {
+		name string
+		h    uint64
+	}
+	scoredNames := make([]scored, 0, len(pool))
+	for _, name := range pool {
+		if name == exclude {
+			continue
+		}
+		scoredNames = append(scoredNames, scored{name, stableHash(append(append([]string{}, salt...), name)...)})
+	}
+	sort.Slice(scoredNames, func(i, j int) bool { return scoredNames[i].h < scoredNames[j].h })
+	if count > len(scoredNames) {
+		count = len(scoredNames)
+	}
+	out := make([]string, count)
+	for i := 0; i < count; i++ {
+		out[i] = scoredNames[i].name
+	}
+	return out
+}
+
+// Generic, IP-clean art-feedback lines (per the IP-scrub policy — no
+// real-property references). Picked deterministically per comment.
+var seedPostComments = []string{
+	"Love the composition here.",
+	"The lighting really sells the mood.",
+	"Nice restraint on the palette.",
+	"This reads great even at thumbnail size.",
+	"The silhouette is super clear — easy to parse.",
+	"Textures are doing a lot of work here.",
+	"Great sense of depth in this one.",
+	"The framing draws the eye right where it wants to go.",
+	"Really clean linework.",
+	"That focal point lands perfectly.",
+	"The colour story holds together top to bottom.",
+	"Strong values — bet this reads in greyscale too.",
+}
+
+var seedPostReplies = []string{
+	"Agreed — the balance is spot on.",
+	"Same, the mood is the standout for me.",
+	"Good call, hadn't clocked that.",
+	"This. The read is effortless.",
+	"Yeah, the palette choice makes it.",
+	"Nice catch — the depth is subtle but it's there.",
+}
+
+// --- phase: follows ---------------------------------------------------
+//
+// Deterministic follow graph over the fictional users. A directed RING
+// guarantees every user has ≥1 follower AND ≥1 followee; skewed extras
+// then bias toward the sorted head so some users read as "popular".
+func (r *Runner) applyFollows(ctx context.Context, cat *catalogues) error {
+	names := r.sortedUsernames()
+	if len(names) < 2 {
+		r.log.Info("seed.follows", "inserted", 0, "note", "need ≥2 users")
+		return nil
+	}
+	lo, hi := r.contentSpan(cat)
+	edges := followEdges(names)
+	inserted := 0
+	for _, e := range edges {
+		follower, followee := e[0], e[1]
+		ts := stableTimeBetween(lo, hi, "follow", follower, followee)
+		if err := r.q.SeedInsertFollow(ctx, SeedInsertFollowParams{
+			FollowerUserRef: r.users[follower],
+			FolloweeUserRef: r.users[followee],
+			CreatedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
+		}); err != nil {
+			return fmt.Errorf("follow %s->%s: %w", follower, followee, err)
+		}
+		inserted++
+	}
+	r.log.Info("seed.follows", "inserted", inserted, "users", len(names))
+	return nil
+}
+
+// followEdges is the PURE follow-graph computation (deterministic, no DB)
+// so the "every user has ≥1 follower AND ≥1 followee" invariant and
+// reproducibility are unit-testable. `names` must be pre-sorted.
+//
+// A directed RING (u[i]→u[i+1]) gives every node exactly one guaranteed
+// follower + followee; skewed extras (2–6 per user, min-of-two draws)
+// then bias toward the sorted head so early users read as "popular".
+// Returns deduplicated [follower, followee] pairs; self-edges dropped.
+func followEdges(names []string) [][2]string {
+	n := len(names)
+	if n < 2 {
+		return nil
+	}
+	seen := make(map[[2]string]struct{})
+	var edges [][2]string
+	add := func(follower, followee string) {
+		if follower == followee {
+			return
+		}
+		key := [2]string{follower, followee}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		edges = append(edges, key)
+	}
+	// Ring base.
+	for i, u := range names {
+		add(u, names[(i+1)%n])
+	}
+	// Skewed extras.
+	for i, u := range names {
+		extra := 2 + stableIntn(5, "followcnt", u)
+		for j := 0; j < extra; j++ {
+			js := strconv.Itoa(j)
+			a := stableIntn(n, "followa", u, js)
+			b := stableIntn(n, "followb", u, js)
+			idx := a
+			if b < idx {
+				idx = b
+			}
+			if idx == i {
+				idx = (idx + 1) % n
+			}
+			add(u, names[idx])
+		}
+	}
+	return edges
+}
+
+// --- phase: likes -----------------------------------------------------
+//
+// Like ROWS per post, only from users who can see it. Seed posts are all
+// org-only (applyPosts) → visible to every fictional user (the walled
+// garden), so the eligible pool is all users minus the author; a private
+// post (none in the dataset today) would collapse to the author. The
+// likes_after_insert trigger keeps posts.like_count == the row count.
+func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
+	names := r.sortedUsernames()
+	if len(names) < 2 {
+		r.log.Info("seed.likes", "inserted", 0, "note", "need ≥2 users")
+		return nil
+	}
+	_, hi := r.contentSpan(cat)
+	inserted := 0
+	for _, p := range cat.Posts {
+		postID, ok := r.posts[p.ID]
+		if !ok {
+			continue
+		}
+		// Eligible viewers = who can see the post. Seed posts are all
+		// org-only (applyPosts) ⇒ every fictional user can see every post;
+		// the author is excluded from their own likes below. If the seed
+		// ever grows private/followers-gated posts, the eligible pool
+		// would narrow here (ADR 0010) — today it's the whole membership.
+		eligible := names
+		// Skewed like count: a baseline for every post, plus a big bump
+		// for ~1-in-5 "popular" posts.
+		count := 1 + stableIntn(5, "likebase", p.ID)
+		if stableIntn(5, "likepop", p.ID) == 0 {
+			count += 8 + stableIntn(12, "likebonus", p.ID)
+		}
+		postCreated := parseTime(p.CreatedAt).Time
+		for _, liker := range pickDistinct(eligible, count, p.AuthorUsername, "like", p.ID) {
+			ref := r.users[liker]
+			ts := stableTimeBetween(postCreated, hi, "likeat", p.ID, liker)
+			if ts.Before(postCreated) {
+				ts = postCreated
+			}
+			if err := r.q.SeedInsertLike(ctx, SeedInsertLikeParams{
+				TargetKind: "post",
+				TargetID:   postID,
+				UserRef:    &ref,
+				LikedAt:    pgtype.Timestamptz{Time: ts, Valid: true},
+			}); err != nil {
+				return fmt.Errorf("like post %s by %s: %w", p.ID, liker, err)
+			}
+			inserted++
+		}
+	}
+	r.log.Info("seed.likes", "inserted", inserted)
+	return nil
+}
+
+// --- phase: post comments ---------------------------------------------
+//
+// Threaded post DISCUSSION (distinct from applyComments' one-per-asset
+// review notes): 0–3 top-level comments per post from varied non-author
+// users, each with a ~1-in-3 chance of a threaded reply. The
+// comments_after_insert trigger maintains posts.comment_count.
+func (r *Runner) applyPostComments(ctx context.Context, cat *catalogues) error {
+	names := r.sortedUsernames()
+	if len(names) < 2 {
+		r.log.Info("seed.post_comments", "made", 0, "note", "need ≥2 users")
+		return nil
+	}
+	_, hi := r.contentSpan(cat)
+	made := 0
+	for _, p := range cat.Posts {
+		postID, ok := r.posts[p.ID]
+		if !ok {
+			continue
+		}
+		postCreated := parseTime(p.CreatedAt).Time
+		nTop := stableIntn(4, "cmtcnt", p.ID) // 0..3
+		for ci, author := range pickDistinct(names, nTop, p.AuthorUsername, "cmt", p.ID) {
+			cis := strconv.Itoa(ci)
+			cid := stableUUID("postcmt", p.ID, author)
+			ts := stableTimeBetween(postCreated, hi, "cmtat", p.ID, author)
+			if ts.Before(postCreated) {
+				ts = postCreated
+			}
+			body := seedPostComments[stableIntn(len(seedPostComments), "cmtbody", p.ID, author)]
+			authorRef := r.users[author]
+			if _, err := r.admin.CreateComment(ctx, nil, authorRef, CommentInput{
+				ID:            &cid,
+				TargetKind:    CommentTargetPost,
+				TargetID:      uuid.UUID(postID.Bytes),
+				AuthorUserRef: authorRef,
+				Body:          body,
+				CreatedAt:     &ts,
+			}); err != nil {
+				return fmt.Errorf("post comment %s by %s: %w", p.ID, author, err)
+			}
+			made++
+
+			// ~1-in-3 top-level comments get one threaded reply from a
+			// different user.
+			if stableIntn(3, "cmtreply", p.ID, author, cis) != 0 {
+				continue
+			}
+			repliers := pickDistinct(names, 1, author, "cmtreplier", p.ID, author)
+			if len(repliers) == 0 {
+				continue
+			}
+			replier := repliers[0]
+			rid := stableUUID("postreply", p.ID, author, replier)
+			rts := stableTimeBetween(ts, hi, "replyat", p.ID, author, replier)
+			if rts.Before(ts) {
+				rts = ts
+			}
+			rbody := seedPostReplies[stableIntn(len(seedPostReplies), "replybody", p.ID, author, replier)]
+			replierRef := r.users[replier]
+			if _, err := r.admin.CreateComment(ctx, nil, replierRef, CommentInput{
+				ID:            &rid,
+				TargetKind:    CommentTargetPost,
+				TargetID:      uuid.UUID(postID.Bytes),
+				ParentID:      &cid,
+				AuthorUserRef: replierRef,
+				Body:          rbody,
+				CreatedAt:     &rts,
+			}); err != nil {
+				return fmt.Errorf("post reply %s by %s: %w", p.ID, replier, err)
+			}
+			made++
+		}
+	}
+	r.log.Info("seed.post_comments", "made", made)
+	return nil
 }
 
 // stableUUID mirrors apply.py's _stable_uuid: sha256 over a fixed

@@ -71,7 +71,7 @@
       autocomplete="current-password"
       bind:value={current}
       required
-      class="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 
@@ -82,7 +82,7 @@
       autocomplete="new-password"
       bind:value={next}
       required
-      class="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 
@@ -93,7 +93,7 @@
       autocomplete="new-password"
       bind:value={confirm}
       required
-      class="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 

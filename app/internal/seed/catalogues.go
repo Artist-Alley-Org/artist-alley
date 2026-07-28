@@ -60,6 +60,15 @@ type catField struct {
 	Label   string   `json:"label"`
 	Type    string   `json:"type"`
 	Options []string `json:"options"`
+	// Extraction wiring (#618). extraction_source must be one of the
+	// extractor's CanonicalField names or the definition routes nothing:
+	// the mapping query filters WHERE extraction_source != '', so an
+	// unwired technical field is indistinguishable from a missing one —
+	// the exact defect that kept IIIF's info.json 404ing after the
+	// definitions notionally "existed". Empty = operator-managed field,
+	// which is right for the studio-fiction set.
+	ExtractionSource string `json:"extraction_source"`
+	ExtractionMode   string `json:"extraction_mode"`
 }
 
 // manifestAsset is the subset of a MANIFEST.json entry the seeder uses.

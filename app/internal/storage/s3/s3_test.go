@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -45,8 +44,8 @@ func TestS3_BackendContract(t *testing.T) {
 
 	storagetest.RunBackendContract(t, func(t *testing.T) storage.Backend {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+		ctx := t.Context()
+
 		b, err := s3.New(ctx, s3.Config{
 			Endpoint:     endpoint,
 			Bucket:       bucket,
@@ -96,8 +95,7 @@ func TestS3_Name(t *testing.T) {
 // call on every run.
 func ensureBucket(t *testing.T, endpoint, bucket, access, secret string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),

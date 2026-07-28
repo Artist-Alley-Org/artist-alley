@@ -198,12 +198,23 @@ func listRowToAPI(r ListFeaturedItemsRow) openapi.FeaturedItem {
 		Title:       r.Title,
 		CreatedAt:   r.CreatedAt.Time,
 	}
-	if r.SubjectKind == "asset" {
-		out.AssetFileHash = r.AssetFileHash
-		hasImg := r.AssetHasImage
-		out.AssetHasImage = &hasImg
-		out.PreviewAvailable = r.AssetPreviewAvailable
+	// Thumbnail hints are populated for BOTH subject kinds (#625). This
+	// used to be gated behind `if r.SubjectKind == "asset"`, which meant
+	// the query below could resolve a collection cover perfectly and the
+	// mapper would throw it away — the admin list rendered a "C"
+	// placeholder for every collection while the public rail showed real
+	// covers (#559). The query yields NULL/'' hints when nothing is
+	// servable, so passing them through unconditionally adds no claim.
+	if r.CoverAssetID.Valid {
+		id := uuid.UUID(r.CoverAssetID.Bytes)
+		out.CoverAssetId = &id
 	}
+	if r.AssetFileHash != "" {
+		h := r.AssetFileHash
+		out.AssetFileHash = &h
+	}
+	out.PreviewAvailable = r.AssetPreviewAvailable
+	out.LadderAvailable = r.AssetLadderAvailable
 	return out
 }
 
@@ -252,7 +263,7 @@ func (h *HTTPHandler) GetPublicFeaturedRail(
 		caller = visibility.NewCaller(&id.UserRef)
 	}
 
-	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, limit)
+	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, limit, h.domain.Ladder(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("featured: public rail: %w", err)
 	}
@@ -266,6 +277,13 @@ func (h *HTTPHandler) GetPublicFeaturedRail(
 // railRowToAPI mirrors listRowToAPI. The thumbnail hints are already
 // suppressed in SQL for non-public assets (ADR 0020), so this copies
 // what it is given rather than re-deciding.
+//
+// Copied for BOTH subject kinds (#559). This used to be gated on
+// `== "asset"`, which discarded a collection's cover even once the
+// query produced one — the hints are populated per subject kind in SQL,
+// and re-deciding here is exactly the duplicated rule the comment above
+// warns against. A collection with no eligible cover arrives with a nil
+// hash and false flags, so the gate bought nothing.
 func railRowToAPI(r RailRow) openapi.FeaturedItem {
 	out := openapi.FeaturedItem{
 		Id:          uuid.UUID(r.ID.Bytes),
@@ -274,11 +292,12 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 		Position:    int(r.Position),
 		Title:       r.Title,
 	}
-	if r.SubjectKind == "asset" {
-		out.AssetFileHash = r.AssetFileHash
-		hasImg := r.AssetHasImage
-		out.AssetHasImage = &hasImg
-		out.PreviewAvailable = r.AssetPreviewAvailable
+	if r.CoverAssetID.Valid {
+		id := uuid.UUID(r.CoverAssetID.Bytes)
+		out.CoverAssetId = &id
 	}
+	out.AssetFileHash = r.AssetFileHash
+	out.PreviewAvailable = r.AssetPreviewAvailable
+	out.LadderAvailable = r.AssetLadderAvailable
 	return out
 }

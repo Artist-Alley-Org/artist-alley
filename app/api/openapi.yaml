@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -2706,6 +2706,13 @@ paths:
         the /account/sessions self-service page. The row that's
         authenticating this request carries `current: true` so the
         UI can hide its own revoke button.
+
+        Never returns `ip` — see SessionRow.ip (#567). Devices are
+        identified by user-agent.
+
+        In demo mode (`AA_DEMO_MODE=1`) every visitor shares one
+        account, so this returns ONLY the session authenticating the
+        request rather than every visitor's.
       tags: [auth]
       security:
         - cookieAuth: []
@@ -2733,6 +2740,11 @@ paths:
         Ownership-checked: revokes only when the session id belongs
         to the caller. 404 covers both "wrong owner" and "no such
         session" so existence can't be probed.
+
+        In demo mode (`AA_DEMO_MODE=1`) every visitor shares one
+        account, so the caller's "other" sessions belong to other
+        people. Only the session authenticating the request may be
+        revoked; anything else is 403 (#567).
       tags: [auth]
       security:
         - cookieAuth: []
@@ -2742,6 +2754,8 @@ paths:
           description: Session revoked.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2759,6 +2773,13 @@ paths:
         the per-user admin detail page. Same row shape as the
         self-service endpoint; `current` is omitted (admins are
         viewing someone else's sessions, not their own).
+
+        Gated on `users.read`. The session `ip` is omitted for callers
+        without `users.pii.read` on top of it (#573), exactly as
+        /admin/audit withholds actor IPs from callers lacking
+        `system.audit.pii.read` (#425) — one data class, one bar. The
+        rest of the row is unaffected, so a support role can still
+        label and revoke devices without holding the addresses.
       tags: [users]
       security:
         - cookieAuth: []
@@ -3614,7 +3635,9 @@ paths:
             on each asset (built from title + description + tags + the
             searchable field-value text by the metadata
             trigger). Whitespace-separated tokens AND together via
-            plainto_tsquery. Ignored when `tag` is also provided.
+            plainto_tsquery. Composes with `tag`: both narrow the same
+            page (before #657 the by-tag branch was a separate query
+            with no search_text column, so `q` was silently dropped).
             A future search DSL (ADR 0010) will replace this.
           schema: { type: string, maxLength: 200 }
         - name: cursor
@@ -8447,6 +8470,55 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AppearanceConfig" }
 
+  /previews:
+    get:
+      operationId: getPublicPreviewLadder
+      summary: Read the configured preview variant ladder
+      description: |
+        The rungs the operator has configured — the key, fit and
+        longest-edge of every preview variant this install generates.
+
+        This is the companion to `ladder_available` (#591). That flag
+        says a given asset HAS the whole ladder; this says what the
+        ladder IS. A client needs both to build a responsive `srcset`:
+        the keys become `/assets/{id}/variants/{key}` URLs and `max_dim`
+        becomes the `Nw` width descriptor. Without this endpoint a client
+        would have to hardcode the four default keys, which is exactly
+        the assumption the flag exists to remove — an install that tuned
+        its ladder would serve 404s.
+
+        GOVERNED BY PUBLIC MODE (#445), like `/assets` and
+        `/collections`: anonymous on a public install, **401 on a private
+        one**. It is NOT open to anonymous callers unconditionally, and
+        it is deliberately NOT excused the way `/appearance` is. The
+        difference is what each endpoint is for — fonts render the login
+        card, so an install that refused them anonymously could not draw
+        its own sign-in page, whereas nothing before sign-in needs image
+        rungs. The first consumer is the browse grid, which on a private
+        install is already behind auth. So this endpoint follows the
+        content it describes rather than being treated as boot-critical
+        when it is not.
+
+        The registration and the full reasoning live in
+        `auth.PublicSurfaceRoutes` — that table, not this description, is
+        what the gate actually reads.
+
+        What it exposes on a PUBLIC install is the install's own
+        image-pipeline configuration: no asset, no user, no access
+        decision.
+      tags: [system]
+      # Governed by public mode, exactly like listAssets / listCollections
+      # above. Documentary only — auth.PublicSurfaceRoutes enforces the
+      # gate, not this block, and on a private install this endpoint
+      # returns 401. Do not read `security: []` here as "ungated".
+      security: []
+      responses:
+        "200":
+          description: The configured ladder, in the operator's order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewLadder" }
+
   /brush-packs:
     get:
       operationId: listBrushPacks
@@ -10012,6 +10084,43 @@ components:
           description: |
             The asset the variation derives from. Echoed for
             caller-side correlation.
+    PreviewLadder:
+      type: object
+      description: |
+        The preview variants this install generates, in configured
+        order. See `getPublicPreviewLadder`.
+      required: [variants]
+      properties:
+        variants:
+          type: array
+          items: { $ref: "#/components/schemas/PreviewLadderRung" }
+    PreviewLadderRung:
+      type: object
+      required: [key, fit, max_dim]
+      properties:
+        key:
+          type: string
+          description: |
+            Variant key — the `{key}` in `/assets/{id}/variants/{key}`.
+            Operator-defined, so do NOT assume the default set
+            (col / preview / screen / hires).
+        fit:
+          type: string
+          enum: [cover, contain]
+          description: |
+            `cover` CROPS to a square of max_dim; `contain` preserves
+            aspect ratio within max_dim. The distinction is load-bearing
+            for layout: the default `col` rung is a 320x320 COVER crop,
+            so a client wanting the true aspect ratio must use a
+            `contain` rung, not `col`.
+        max_dim:
+          type: integer
+          description: |
+            Longest edge in pixels. Doubles as the `Nw` width descriptor
+            in a `srcset` for `contain` rungs.
+        format:
+          type: string
+          enum: [webp, jpeg, png]
     AppearanceConfig:
       type: object
       description: |
@@ -10637,7 +10746,8 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status, preview_available]
+         title, asset_type, status, preview_available, ladder_available,
+         file_hash, file_extension, thumbhash, pixel_width, pixel_height]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -10654,6 +10764,23 @@ components:
         file_hash:
           type: string
           nullable: true
+        file_extension:
+          type: string
+          nullable: true
+          description: |
+            REQUIRED (nullable), same as Asset.file_extension. A member
+            tile is rendered by the same CardThumb as every other
+            surface, and CardThumb derives the media TYPE from this
+            field alone — video / 3D badge and the sprite-scrub hover
+            preview both key off it. Omitting it renders a collection
+            member as an untyped still (#595).
+        thumbhash:
+          type: string
+          nullable: true
+          description: |
+            REQUIRED (nullable), same as Asset.thumbhash — the member
+            tile's blur-up placeholder. See file_extension above for why
+            the card-critical fields are required rather than optional.
         preview_available:
           type: boolean
           description: |
@@ -10662,6 +10789,32 @@ components:
             + 0064-safety as Asset.preview_available — the tile renders a
             thumbnail only when true, else a placeholder with no byte
             request (#471).
+        ladder_available:
+          type: boolean
+          description: |
+            True iff every variant in the operator's CONFIGURED preview
+            ladder exists for this member asset AND the caller passes the
+            content plane. Identical contract to Asset.ladder_available —
+            see there for why this is computed from config rather than
+            from the default rung list.
+        pixel_width:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            REQUIRED (nullable), same contract as Asset.pixel_width — a
+            member tile is laid out by the same CardThumb as every other
+            surface, and in masonry that frame sizes itself from this
+            ratio (#640). Null when the install has no recorded
+            dimensions for the asset; see Asset.pixel_width for when
+            that happens.
+        pixel_height:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            REQUIRED (nullable), same as Asset.pixel_height. Projected
+            as a PAIR with `pixel_width` — never one without the other.
         asset_created_at: { type: string, format: date-time }
     CollectionResourceWrite:
       type: object
@@ -10686,7 +10839,17 @@ components:
           nullable: true
     Asset:
       type: object
-      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags]
+      # file_hash / file_extension / thumbhash are REQUIRED-but-nullable
+      # on purpose (#595). They are the three fields CardThumb needs to
+      # decide what a tile IS — has bytes, what media type, what blur-up
+      # — so every asset-shaped payload must carry them even when null.
+      # As OPTIONAL fields they generated `field?: T` in the frontend
+      # types, which let a surface hand-map a narrower object and drop
+      # them with no type error; that is exactly how the collection page
+      # silently lost its video/3D badges and sprite-scrub previews.
+      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
+                 file_hash, file_extension, thumbhash, ladder_available,
+                 pixel_width, pixel_height]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -10746,6 +10909,37 @@ components:
             restricted asset the caller may not read reads identically to
             "no preview" (false), so this never confirms `restricted`
             (0064-safe).
+        ladder_available:
+          type: boolean
+          description: |
+            True iff EVERY variant in the operator's CONFIGURED preview
+            ladder exists for this asset AND the caller passes the
+            content plane. Same ADR 0064 contract as
+            `preview_available`: a restricted asset reports false rather
+            than 403, so the flag never confirms `restricted`.
+
+            This is the signal a responsive `srcset` needs.
+            `preview_available` promises only `col` — a 320x320 COVER
+            crop — so a client that inferred the wider `preview` /
+            `screen` / `hires` rungs from it would request bytes that may
+            not exist, which is exactly the 404 class #471 removed. With
+            no way to ask, the frontend disabled responsive images
+            entirely and every card serves a 320px square regardless of
+            viewport. This flag is how the client stops guessing.
+
+            THE LADDER IS OPERATOR-CONFIGURABLE, so this is NOT "the four
+            default rungs exist". It is computed against
+            `sysconfig.GetPreviews`, whose defaults (col/preview/screen/
+            hires) are a default and not the contract. An install that
+            drops or adds a rung changes what this flag means, which is
+            the intent — clients should read the ladder from
+            `GET /previews` rather than assuming the default keys.
+
+            Deliberately NOT an alias for `preview_available`. On a
+            healthy install the raster pass writes the whole ladder or
+            none of it, so today the two are nearly co-extensive; they
+            diverge exactly where it matters — assets whose raster pass
+            partly failed, and any future partial-ladder state.
         thumbhash:
           type: string
           nullable: true
@@ -10754,6 +10948,39 @@ components:
             blurred placeholder rendering on feed cards. Computed
             synchronously at upload for image assets. NULL for
             non-image resources.
+        pixel_width:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            Recorded pixel width of the SOURCE image, or null when the
+            install has never measured one.
+
+            REQUIRED-but-nullable for the same reason as `thumbhash`
+            above: it is a field the card frame reads to decide what a
+            tile IS. Masonry sizes each tile from this ratio so the
+            space is reserved before the image loads and the wall does
+            not reflow as 72 images arrive (#640).
+
+            Not a column on `assets` — the value lives in
+            `asset_field_value` under the extraction-wired `pixel_width`
+            field definition seeded for #618, and is projected here.
+            Null is the honest answer for everything the EXIF pass has
+            not seen: a draft raster (the backfill selects
+            `status = 'active'`), and every non-raster kind — video, 3D,
+            audio, fonts, documents. Those still HAVE a preview with a
+            real aspect ratio (an audio waveform is ~16:3, a video frame
+            16:9); it is simply not recorded anywhere yet, so the client
+            falls back to measuring the image once it loads. Recording
+            preview-variant dimensions is what would close that gap.
+        pixel_height:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            Recorded pixel height of the source image, or null. See
+            `pixel_width` — the two are projected as a PAIR, so a
+            consumer never has to handle one without the other.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at:
@@ -10783,9 +11010,10 @@ components:
       description: |
         GitHub #341 — one admin-curated featured entry pointing at an
         asset or collection, with an explicit ordering position and
-        the resolved subject title. Asset subjects also carry
-        thumbnail hints so the admin list can render a preview.
-      required: [id, subject_kind, subject_id, position, title, preview_available, created_at]
+        the resolved subject title. Both subject kinds carry thumbnail
+        hints so a tile can render a cover: assets from themselves,
+        collections via ADR 0027's hero-card fallback (#559).
+      required: [id, subject_kind, subject_id, position, title, preview_available, created_at, ladder_available]
       properties:
         id:
           type: string
@@ -10805,22 +11033,50 @@ components:
           description: |
             Resolved subject title (asset title or collection name).
             Empty when the subject was deleted out from under the row.
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The asset whose `col` variant renders this tile (#559).
+
+            For an asset subject this is the subject itself. For a
+            COLLECTION it is the hero-card fallback of ADR 0027 — the
+            most-recent post's cover asset — which is why the id is
+            needed separately: `subject_id` is the collection, and the
+            variant endpoint is keyed by asset.
+
+            Null when nothing is servable to this caller, in which case
+            the tile is title-only. Subject to the same gating as
+            `asset_file_hash`, so it never names an asset the caller
+            cannot see.
         asset_file_hash:
           type: string
           nullable: true
-          description: Asset subjects only — thumbnail hint; null otherwise.
-        asset_has_image:
-          type: boolean
-          description: Asset subjects only — whether a raster thumbnail exists.
+          description: |
+            Thumbnail hint for the tile's cover asset; null when there
+            is nothing servable for this caller. Populated for
+            collection subjects too since #559.
         preview_available:
           type: boolean
           description: |
-            Asset subjects only (false for collections) — true iff a
-            servable `col` variant exists AND the caller passes the
-            content plane (ADR 0064). The rail renders a thumbnail only
-            when true, else a title-only tile with no byte request (#471).
-            Unlike `asset_has_image` (unreliable — false for pre-ingest
-            assets), this is computed from live variant existence.
+            True iff a servable `col` variant exists for the tile's
+            cover asset AND the caller passes the content plane (ADR
+            0064). The rail renders a thumbnail only when true, else a
+            title-only tile with no byte request (#471). Computed from
+            live variant existence rather than from a stored flag, which
+            is what makes it trustworthy — the `asset_has_image` field
+            that used to sit beside this one was the projection of a
+            column nothing wrote, and was removed with it in #579.
+            Populated for collection subjects too since #559.
+        ladder_available:
+          type: boolean
+          description: |
+            True iff every variant in the operator's CONFIGURED preview
+            ladder exists for the tile's cover asset AND the caller
+            passes the content plane. Identical contract to
+            Asset.ladder_available — see there for why this is computed
+            from config rather than from the default rung list.
         created_at:
           type: string
           format: date-time
@@ -12048,11 +12304,11 @@ components:
     SessionRow:
       type: object
       description: |
-        One active session. The IP + user-agent are
-        best-effort observability captured at login; both can be null
-        when behind a proxy that strips them. `current` is true only
-        on the self-service endpoint for the row that's authenticating
-        the request — the UI uses it to hide its own revoke button.
+        One active session. The user-agent is best-effort
+        observability captured at login and can be null behind a proxy
+        that strips it. `current` is true only on the self-service
+        endpoint for the row that's authenticating the request — the
+        UI uses it to hide its own revoke button.
       required: [id, created_at, last_used_at]
       properties:
         id: { type: string, format: uuid }
@@ -12069,6 +12325,28 @@ components:
         ip:
           type: string
           nullable: true
+          description: |
+            Client IP recorded at login — PERSONAL DATA, and returned
+            ONLY on the admin view (`GET /admin/users/{ref}/sessions`),
+            where locating a suspicious session is the point, and there
+            only to callers holding `users.pii.read` on top of the
+            `users.read` that admits them to the list at all (#573).
+
+            That is the same shape audit uses for actor IPs —
+            `system.audit.pii.read` on top of `system.audit.read`
+            (#425). Raw IPs are one data class with one bar, gated
+            `<area>.pii.read` additive to `<area>.read` (ADR 0072).
+
+            Never returned by `GET /account/sessions` (#567). That
+            endpoint is self-scoped, and on a shared-account install
+            "self" is every visitor — so the raw address is omitted
+            unconditionally rather than gated, per the data-
+            minimisation posture of ADR 0024.
+
+            Omitted from the JSON entirely, not blanked — the same
+            convention AuditRow.ip uses (#425) — so an absent value
+            always means "not returned to you" and never "no IP
+            recorded".
         user_agent:
           type: string
           nullable: true

@@ -56,6 +56,34 @@ GAPS: list[GapAsset] = [
     # =========================================================================
     # VIDEO — Blender Foundation open films (CC-BY) + early animation (PD)
     # =========================================================================
+    # ---- Blender open movies, fetched DIRECT from Blender ------------------
+    # archive.org mirrors 503 under rate-limiting (measured 2026-07-25: 10
+    # consecutive failures across two runs), which silently starved the
+    # catalogue of its best video. These come straight from the Foundation,
+    # so there is no longer a single point of failure for the content that
+    # matters most. Do not "simplify" these back to archive.org mirrors.
+    GapAsset(
+        name="Sintel (2010) — full film, 1080p",
+        url="https://download.blender.org/demo/movies/Sintel.2010.1080p.mkv",
+        target_dir="video",
+        target_filename="sintel-2010-1080p.mkv",
+        license="CC-BY 3.0",
+        attribution="(c) Blender Foundation | durian.blender.org",
+        source="Blender Foundation",
+        asset_type="video",
+        notes="Full 15-min film in MKV — long-form playback + a container the trailer doesn't exercise",
+    ),
+    GapAsset(
+        name="Tears of Steel — 720p",
+        url="https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov",
+        target_dir="video",
+        target_filename="tears-of-steel-720p.mov",
+        license="CC-BY 3.0",
+        attribution="(c) Blender Foundation | mango.blender.org",
+        source="Blender Foundation",
+        asset_type="video",
+        notes="Live-action/VFX short in QuickTime — direct Blender mirror",
+    ),
     GapAsset(
         name="Big Buck Bunny — 720p surround",
         url="https://www.archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_720p_surround.mp4",
@@ -1066,19 +1094,46 @@ def main() -> int:
                         help="Output directory (gitignored cache)")
     parser.add_argument("--force", action="store_true",
                         help="Re-fetch even if file is already cached")
+    parser.add_argument("--only", default=None,
+                        help="Case-insensitive substring of the gap asset's "
+                             "name; fetch just that one. Exists because "
+                             "repairing a single multi-file model (Sponza's "
+                             "companions, #572) otherwise means re-walking "
+                             "the whole multi-GB catalogue, and 'the cheap "
+                             "way to fix one asset is to skip the tool' is "
+                             "how the companions went missing.")
+    parser.add_argument("--manifest", action="store_true",
+                        help="Rewrite MANIFEST.json. Off when --only is used: "
+                             "a one-asset run would otherwise replace the "
+                             "catalogue manifest with a one-entry file.")
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
 
-    print(f"fetching {len(GAPS)} gap assets to {args.out}", file=sys.stderr)
+    gaps = GAPS
+    if args.only:
+        needle = args.only.lower()
+        gaps = [g for g in GAPS if needle in g.name.lower()]
+        if not gaps:
+            print(f"error: --only {args.only!r} matched none of "
+                  f"{len(GAPS)} gap assets", file=sys.stderr)
+            return 2
+
+    print(f"fetching {len(gaps)} gap assets to {args.out}", file=sys.stderr)
     manifest: list[dict] = []
     failed: list[str] = []
-    for gap in GAPS:
+    for gap in gaps:
         result = fetch(gap, args.out, force=args.force)
         if result is None:
             failed.append(gap.name)
             continue
         manifest.append(result)
+
+    if args.only and not args.manifest:
+        print(f"\n{len(manifest)} asset(s) fetched / cached "
+              "(MANIFEST.json left alone — pass --manifest to rewrite it)",
+              file=sys.stderr)
+        return 1 if failed else 0
 
     manifest_path = args.out / "MANIFEST.json"
     manifest_path.write_text(json.dumps({

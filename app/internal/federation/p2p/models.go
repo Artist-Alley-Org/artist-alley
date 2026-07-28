@@ -77,7 +77,6 @@ type Asset struct {
 	FileExtension        *string
 	FileSizeBytes        *int64
 	Access               int32
-	HasImage             bool
 	IsTranscoding        bool
 	Metadata             []byte
 	OriginServerID       pgtype.UUID

@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -28,8 +27,8 @@ func withSMTPTestHandler(t *testing.T, fn func(ctx context.Context, h *sysconfig
 	if pwd == "" {
 		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool := openPool(t, pwd)
 	defer pool.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

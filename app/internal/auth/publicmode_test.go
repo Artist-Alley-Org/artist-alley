@@ -198,6 +198,35 @@ func TestResolveIdentityPublicModeGate(t *testing.T) {
 			wantStatus: http.StatusOK,
 			why:        "the login page cannot render without it",
 		},
+		// The two /previews cases sit next to /appearance deliberately:
+		// the pair IS the distinction, and collapsing it is a live
+		// hazard rather than a nitpick. The endpoint shipped (#591)
+		// with a spec description claiming it was open "for the same
+		// reasoning as /appearance" and that "the boot path needs it
+		// before sign-in" — both false, and both an argument for
+		// deleting the gate below. A reviewer auditing anonymous
+		// surface reads the description, not the route table, so the
+		// claim has to be pinned somewhere that fails when it stops
+		// being true (#611).
+		{
+			name:       "preview ladder IS gated, toggle off",
+			publicMode: func(context.Context) bool { return false },
+			path:       "/api/v1/previews",
+			wantStatus: http.StatusUnauthorized,
+			why: "a private install must not hand its image-pipeline config to " +
+				"anonymous callers; nothing before sign-in needs image rungs, so " +
+				"this endpoint follows the content it describes rather than being " +
+				"excused as boot-critical the way /appearance genuinely is",
+		},
+		{
+			name:       "preview ladder served when the toggle is on",
+			publicMode: func(context.Context) bool { return true },
+			path:       "/api/v1/previews",
+			wantStatus: http.StatusOK,
+			why: "guards the guard — without this the case above would still pass " +
+				"if the route were gated by accident, or by something unrelated to " +
+				"public mode",
+		},
 		{
 			name:       "a nil reader denies rather than publishes",
 			publicMode: nil,

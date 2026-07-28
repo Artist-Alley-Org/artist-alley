@@ -1,0 +1,507 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
+<script lang="ts">
+  // Shared grid-thumbnail frame for AssetCard + PostCard (#515 slice 1).
+  //
+  // Both cards previously carried a byte-identical copy of this block;
+  // #511 shared the grid (ContentGrid/TileGrid) but the cards were still
+  // forked. This is the one thumbnail treatment every asset-showing
+  // surface renders — browse + profile + post-by-asset (via PostCard) and
+  // the profile asset section + collections + asset detail (via
+  // AssetCard) — so the RS-style presentation lands everywhere at once.
+  //
+  // RS thumbnail pattern (pages/search_views/thumbs.php): the artwork is
+  // LETTERBOXED on a neutral matte inside a framed panel — never cropped —
+  // so mixed-aspect art reads like a gallery wall. The previous treatment
+  // painted the thumbhash as a `bg-cover` backdrop, so a contained image
+  // sat on a blurred, zoomed CROP of itself; here the matte is a clean
+  // neutral and the thumbhash is only the contained loading placeholder,
+  // fading out once the real bytes arrive.
+  //
+  // Rendering layers (unchanged from the forked originals):
+  //   1. Thumbhash placeholder — ~30-byte data URI decoded inline,
+  //      shown contained until the col variant loads. No HTTP RTT.
+  //   2. The col-sized JPEG variant, object-contain on the matte.
+  //   3. Fallbacks: the no-preview plate (CardFallback, #558) whenever
+  //      there is no servable variant AND no thumbhash, which covers
+  //      text/code assets and failed derivatives alike; sprite-scrub
+  //      hover preview for video/3D over the real image.
+  //
+  // preview_available gating (#471) is preserved: the <img> renders only
+  // when the server confirms a servable `col` for THIS caller, so gated /
+  // not-yet-generated / preview-less assets fire NO byte request that
+  // would 404 (keeps the zero-console-404 tiles shipped in v0.6.0).
+
+  import type { Snippet } from 'svelte';
+  import { onMount } from 'svelte';
+  import { decodeThumbhash } from '$lib/util/thumbhash';
+  import { previewLadder } from '$stores/previewLadder.svelte';
+  import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
+  import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
+  import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
+  import CardFallback from './CardFallback.svelte';
+
+  interface Props {
+    /** Asset whose variants back the thumbnail (the cover asset for a
+     *  Post). Null → placeholder only. */
+    assetId: string | null;
+    /** Alt text + used by the caller's overlay. */
+    title: string;
+    thumbhash?: string | null;
+    fileExtension?: string | null;
+    /** Asset-type ref, for the no-preview plate's kind lookup (#558):
+     *  a PNG uploaded as a sprite atlas is a sprite sheet, and the
+     *  extension alone cannot say so. Only read when there is no
+     *  preview to show.
+     *
+     *  PostCard deliberately passes nothing: its tile is a COVER asset
+     *  (CardCoverAsset, #595), which carries only the fields the tile
+     *  reads, and the one kind asset_type changes — a sprite atlas — is
+     *  a raster that always has a preview and so never reaches the
+     *  plate. Widen the contract if that stops being true. */
+    assetType?: number | null;
+    hasFileHash?: boolean;
+    previewAvailable?: boolean;
+    /** Every CONFIGURED rung exists for this asset (#610). Licenses the
+     *  responsive srcset below; false → `col` only, exactly as before. */
+    ladderAvailable?: boolean;
+    /** Slot width for `sizes`. The caller knows the layout (tile rung,
+     *  feed column, masonry column); this component only knows it is a
+     *  square-ish box. Defaults to the tile ladder's default rung.
+     *
+     *  A `sizes` LIST, not a single length — see browseView.tileSizes
+     *  for what belongs in it and why. It leads with `auto`, which only
+     *  works because the <img> below is `loading="lazy"`; see there
+     *  before changing either. */
+    sizesHint?: string;
+    /** Card hover state, from the parent's interactive `<a>` (keeps the
+     *  hover listeners on an interactive element, not this presentation
+     *  frame). Drives the video/3D sprite-scrub animation. */
+    hovering?: boolean;
+    /** Draw the gallery-mount frame ring (#515 slice 4). ON in the
+     *  "details" modes (thumbnail / masonry / feed); OFF in grid, which
+     *  reads as a clean dense wall. The bg-surface matte stays either way
+     *  so art always letterboxes and never crops (slice 1's value). */
+    framed?: boolean;
+    /** Fill the tile edge-to-edge instead of letterboxing (#561). ON in
+     *  grid only — a contact sheet fills, a details view shows the whole
+     *  work. This DELIBERATELY reverses slice 1's "letterbox, never crop"
+     *  for that one mode: the inset matte ring left visible whitespace
+     *  inside every tile, and a dense wall of art should butt edge to
+     *  edge rather than sit in a grid of individually-padded boxes.
+     *
+     *  Applies to the real image variant ONLY. The typed-doc card, icon
+     *  placeholder and thumbhash placeholder are GENERATED, not artwork —
+     *  cropping them would clip a glyph or a file extension for no gain,
+     *  so they stay centred on the matte in every mode. */
+    fill?: boolean;
+    /** Let the tile take the SHAPE OF ITS IMAGE instead of a square
+     *  (#640). ON in masonry only — that layout exists to pack tiles of
+     *  different heights, and with a fixed `aspect-square` it was a
+     *  multi-column grid of identical boxes, which is what a masonry is
+     *  defined by not being.
+     *
+     *  Deliberately not the default, and deliberately not derived from
+     *  `mode` inside this component: grid is a contact sheet of squares
+     *  by design (#555/#588) and thumbnail is a framed details card
+     *  (#556). Both are correct as squares. See `tileRatio` below for
+     *  where the ratio comes from. */
+    variableAspect?: boolean;
+    /** The tile may be only as tall as the control floor (#652) — set
+     *  in masonry, where a 5.33:1 waveform lands at ~60px. Strips the
+     *  chrome that cannot survive at that size to leave exactly the two
+     *  controls the owner asked to keep (checkbox + ⋮ menu); everything
+     *  else moves into the hover tooltip.
+     *
+     *  Separate from `variableAspect` even though both are set by the
+     *  same mode: one is about SHAPE and one is about how much chrome
+     *  fits. A future caller could reasonably want a variable-aspect
+     *  tile with full chrome, and reading the mode in here is what
+     *  #640 deliberately avoided. */
+    compact?: boolean;
+    /** Recorded SOURCE dimensions for this asset, or null (#640). These
+     *  are what let `variableAspect` reserve the tile's height before a
+     *  single byte is requested — the difference between a wall that is
+     *  the right shape at first paint and one that reflows 72 times as
+     *  images arrive. Null is normal (see cardAsset.ts). */
+    pixelWidth?: number | null;
+    pixelHeight?: number | null;
+    /** The card already prints the title immediately next to this box —
+     *  thumbnail mode's persistent header (#556). Only the no-preview
+     *  plate reads it, to avoid printing the same string twice 8px
+     *  apart; see CardFallback. */
+    titleAdjacent?: boolean;
+    /** Card-specific chrome stacked over the thumb (multi-asset badge,
+     *  hover title overlay, future tool row / checkbox). Rendered inside
+     *  the same positioned frame so absolute overlays anchor to it. */
+    children?: Snippet;
+  }
+
+  let {
+    assetId,
+    title,
+    thumbhash = null,
+    fileExtension = null,
+    assetType = null,
+    hasFileHash = false,
+    previewAvailable = false,
+    ladderAvailable = false,
+    sizesHint = DEFAULT_TILE_SIZES,
+    hovering = false,
+    framed = true,
+    fill = false,
+    variableAspect = false,
+    compact = false,
+    pixelWidth = null,
+    pixelHeight = null,
+    titleAdjacent = false,
+    children,
+  }: Props = $props();
+
+  const colUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/col` : '');
+
+  // Responsive source set (#502/#589). Three conditions, all required:
+  //
+  //   ladderAvailable  the server confirms every configured rung exists
+  //                    for THIS asset — without it, requesting anything
+  //                    but `col` is the 404 class #471 removed
+  //   !fill            grid's `fill` mode wants the SQUARE CROP. A
+  //                    contact sheet is supposed to be a uniform wall,
+  //                    so `col` is correct there and this deliberately
+  //                    does not touch it (#561)
+  //   rungs present    the install's ladder, read from GET /previews —
+  //                    never hardcoded, or an operator who tuned their
+  //                    rungs gets 404s (#610's trap, client side)
+  //
+  // When any fails, `srcset` stays empty and the <img> renders from
+  // colUrl exactly as it did before this change.
+  onMount(() => previewLadder.init());
+  const srcset = $derived(
+    ladderAvailable && !fill && assetId ? (previewLadder.srcsetFor(assetId) ?? '') : '',
+  );
+  // `src` is the fallback for a browser that ignores srcset, and the
+  // thing the loader uses before it picks a candidate. The smallest
+  // CONTAIN rung, not col: mixing a square crop into a contain slot
+  // would flash the wrong shape before swapping.
+  const imgSrc = $derived.by(() => {
+    if (!srcset) return colUrl;
+    const smallest = previewLadder.smallestKey();
+    return smallest ? `/api/v1/assets/${assetId}/variants/${smallest}` : colUrl;
+  });
+
+  // Decoded thumbhash → data URI. Lazy (post-mount) so the SSR snapshot
+  // stays light; re-decode if the source asset changes.
+  let placeholder = $state<string | null>(null);
+  onMount(() => {
+    placeholder = decodeThumbhash(thumbhash);
+  });
+  $effect(() => {
+    void thumbhash;
+    placeholder = decodeThumbhash(thumbhash);
+  });
+
+  const isDoc = $derived(isDocExt(fileExtension));
+  const isVideo = $derived(isVideoExt(fileExtension));
+  const is3D = $derived(is3DExt(fileExtension));
+
+  // Render the <img> only when the server confirms a servable col for
+  // this caller (preview_available, #471) and the asset actually has
+  // bytes. Doc assets get a typed card instead of a raster preview.
+  const showImage = $derived(!isDoc && !!assetId && !!hasFileHash && !!previewAvailable);
+
+  let imgLoaded = $state(false);
+  let imgError = $state(false);
+  // The ratio measured off the bytes that actually arrived. Only used
+  // when the server had nothing recorded — see tileRatio.
+  let loadedRatio = $state<number | null>(null);
+  $effect(() => {
+    // Reset the fade-in whenever the target asset changes.
+    void assetId;
+    imgLoaded = false;
+    imgError = false;
+    loadedRatio = null;
+  });
+  function onLoad(e: Event) {
+    imgLoaded = true;
+    const el = e.currentTarget as HTMLImageElement | null;
+    if (el && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      loadedRatio = el.naturalWidth / el.naturalHeight;
+    }
+  }
+  // Defensive only: preview_available guarantees a servable col, so this
+  // fires only on undecodable bytes — degrade to the icon placeholder.
+  function onError() {
+    imgError = true;
+  }
+
+  // ── Tile shape (#640) ────────────────────────────────────────────
+  //
+  // THE TILE FOLLOWS THE RATIO OF THE IMAGE IT ACTUALLY RENDERS. That
+  // sentence is the whole rule, and the two clauses are both load-
+  // bearing.
+  //
+  // "follows the ratio" — masonry is a layout for tiles of unequal
+  // height. Until now the wrapper was hard-coded `aspect-square` with
+  // the art letterboxed inside, so a 5.33:1 ultrawide and a 1:1 square
+  // rendered as identical boxes and the mode was a grid wearing a
+  // masonry's name (#640). Everywhere else the square is deliberate, so
+  // this is opt-in per caller.
+  //
+  // "it actually renders" — the picture in the tile is not always the
+  // source image. Without a full ladder the card can only request `col`,
+  // which is a 320x320 centre-CROP (#471/#591), and sizing that tile
+  // from the source's 5.33:1 would letterbox a square inside a
+  // billboard. So the recorded dimensions are used only when the
+  // responsive `srcset` is live, i.e. when the contain rungs — which do
+  // preserve the source ratio — are what will be served.
+  //
+  // Resolution order, best information first:
+  //
+  //   1. recorded pixel_width/pixel_height — known BEFORE any request,
+  //      so the space is reserved and nothing shifts on load. This is
+  //      the reason #640 waited for #618's extraction fields to exist.
+  //   2. the loaded image's own naturalWidth/naturalHeight — exact, but
+  //      only knowable after the bytes arrive, so tiles that land here
+  //      DO settle into shape as they load. That is a deliberate trade
+  //      against the alternative, which is being confidently square and
+  //      wrong: on this dataset only ~18% of feed covers have recorded
+  //      dimensions, and the rest are audio waveforms (~16:3), video
+  //      frames and font sheets (16:9), 3D turntables — all of which
+  //      have a genuine non-square preview that nothing has measured.
+  //      Recording the PREVIEW variant's dimensions server-side is what
+  //      would move those tiles into case 1.
+  //   3. square — no image in the tile at all (typed-doc card, icon
+  //      placeholder, gated/thumbhash-only). There is no ratio to
+  //      follow, and a square is what those generated tiles are drawn
+  //      for.
+  //
+  // The clamp is a guard against bad metadata, not a design choice: a
+  // corrupt 4000:1 would compute a sub-pixel tile the user can neither
+  // see nor click. It lives in cardAsset.ts now (#651) because the
+  // masonry column bucketer has to predict this exact number one layer
+  // up — see `cardTileRatio` there, which mirrors `declaredRatio` below
+  // including the `srcset` precondition.
+  const declaredRatio = $derived(
+    srcset && pixelWidth && pixelHeight && pixelWidth > 0 && pixelHeight > 0
+      ? clampRatio(pixelWidth / pixelHeight)
+      : null,
+  );
+  const measuredRatio = $derived(loadedRatio === null ? null : clampRatio(loadedRatio));
+  const tileRatio = $derived(variableAspect ? (declaredRatio ?? measuredRatio) : null);
+
+  // The tile floor (#652). Applied to every variable-aspect tile, not
+  // only the ones currently under it: the ratio can change under us
+  // (declared → measured on load, or a resize), and a floor that has to
+  // be re-decided is a floor that will be missed. Above it the
+  // `aspect-ratio` is unaffected, so #646 holds everywhere it shows.
+  //
+  // The two rules — this and MasonryColumns' height prediction — read
+  // the same constant from cardAsset.ts. Do not inline the number here:
+  // a CSS-only clamp that the bucketer does not predict desynchronises
+  // the columns and brings back the append instability #651 removed.
+  //
+  // ⚠️ `width: 100%` is LOAD-BEARING, not tidying. `aspect-ratio` plus
+  // `min-height` on a block whose width is `auto` makes the engine
+  // re-derive the INLINE size from the ratio once the floor clamps the
+  // height: measured in Chromium, a 5.33:1 tile in a 269px column came
+  // out 320x60 — 51px wider than the card it sits in. The card is
+  // `overflow-hidden`, so the artwork was silently cropped on the right
+  // and the ⋮ menu (inset from the FRAME's right edge, now 51px past
+  // the card's) was clipped away entirely. A probe that measures the
+  // controls against the frame sees nothing wrong, because the frame
+  // moved with them; measure against the CARD.
+  //
+  // Making the width definite pins it: the ratio then only ever decides
+  // the height, and the floor only ever raises it.
+  const frameStyle = $derived.by(() => {
+    const parts: string[] = [];
+    if (tileRatio) parts.push(`aspect-ratio: ${tileRatio}`);
+    if (variableAspect) parts.push(`min-height: ${MASONRY_MIN_TILE_REM}rem`, 'width: 100%');
+    return parts.length > 0 ? `${parts.join('; ')};` : undefined;
+  });
+
+  // Sprite-sheet hover preview. Video covers walk the preview.video 10×10
+  // timeline sheet; 3D covers walk the preview.model 6×6 turntable sheet.
+  // Both serve from the same sprites.jpg variant.
+  const hasSpriteScrub = $derived(isVideo || is3D);
+  const spriteUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/sprites.jpg` : '');
+  const spriteCols = $derived(is3D ? 6 : 10);
+  const spriteRows = $derived(is3D ? 6 : 10);
+  const spriteCells = $derived(spriteCols * spriteRows);
+  let spriteFrame = $state(0);
+  // Run the sprite turntable only while the card is hovered. The effect
+  // owns the interval so it's torn down on unhover / unmount.
+  $effect(() => {
+    if (!hovering || !hasSpriteScrub) {
+      spriteFrame = 0;
+      return;
+    }
+    const iv = setInterval(() => {
+      spriteFrame = (spriteFrame + 1) % spriteCells;
+    }, 120);
+    return () => clearInterval(iv);
+  });
+</script>
+
+<!--
+  RS matte — `bg-thumb-matte`, a dedicated token offset a few L points
+  from the PAGE in both themes (#590 amendment). It used to be
+  `bg-surface`, i.e. the page colour itself, which meant a light-artwork
+  tile in light mode had nothing separating it from the page. Always on,
+  so mixed-aspect art letterboxes cleanly instead of a blurred self-crop.
+
+  The `after:` inset ring is now drawn in EVERY mode, not just `framed`.
+  Two different bleeds needed covering:
+
+    * grid — since #588 the art is object-cover with no padding, so it
+      reaches the tile edge and the matte is never visible. Only a
+      boundary line can delimit a white-artwork tile against a near-white
+      page. #515 slice 4 dropped this ring from grid for a "clean dense
+      wall"; that read fine while tiles were letterboxed, and stopped
+      reading once they filled.
+    * contain modes — the matte offset above does most of the work; the
+      ring finishes the edge.
+
+  The ring is TRANSLUCENT and theme-directional — black in light, white
+  in dark — so it always contrasts with the page while staying invisible
+  over artwork that already contrasts. A solid colour cannot do this:
+  the library holds both near-white and near-black assets, so any fixed
+  line disappears against one of them. (`dark:` now follows our theme
+  class, not the OS — see @custom-variant in app.css.)
+-->
+<!--
+  The inner radius is CONCENTRIC with the tile's outer one (#596): the
+  grid tile is 4px rounded with a 2px inset, so the image inside wants
+  4 - 2 = 2px to curve on the same centre. Square corners inside a
+  rounded box read as a mistake at this size. `rounded-[2px]` and not
+  `rounded-sm`, because the reference works in px and Tailwind's scale
+  is rem — see AssetCard's wrapperClass. Applied with `fill`, which is
+  set exactly in grid mode by both cards; the framed modes keep square
+  corners inside their own rounded card.
+-->
+<!--
+  `aspect-square` is the DEFAULT, not the rule (#640). When the caller
+  asked for a variable tile and a ratio is known, an inline
+  `aspect-ratio` overrides it — inline because the value is per-asset
+  data, not a design token, exactly as ContentGrid sets `--tile-min`.
+  The class stays in the list so the tile is square while the ratio is
+  still unknown (before an undeclared image loads), which is both a
+  sensible reservation and the shape every mode had before this change.
+
+  `data-card-thumb` marks THE element whose height a masonry column
+  stacks. It is the tile's identity, not a style hook, so both the unit
+  tests and the layout measurements address it by this rather than by a
+  Tailwind class that a refactor is free to rename.
+-->
+<div
+  data-card-thumb
+  style={frameStyle}
+  class="relative overflow-hidden bg-thumb-matte
+         {tileRatio ? '' : 'aspect-square'}
+         after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
+         {fill ? 'rounded-[2px] after:rounded-[2px]' : ''}
+         {framed
+           ? 'after:ring-black/[0.07] dark:after:ring-white/[0.06]'
+           : 'after:ring-black/[0.12] dark:after:ring-white/[0.10]'}"
+>
+  {#if isDoc}
+    <!-- Text/code assets get no rasterised preview variant at all, so
+         the plate IS their tile rather than a fallback from one (#558). -->
+    <CardFallback {title} {fileExtension} {assetType} {titleAdjacent} />
+  {:else if showImage && !imgError}
+    <!-- Thumbhash loading placeholder — contained (not bg-cover) so it
+         sits where the real art will, blurred, and fades out on load
+         rather than bleeding a cropped backdrop around the letterbox. -->
+    {#if placeholder}
+      <div
+        class="absolute inset-0 bg-center bg-no-repeat transition-opacity duration-200"
+        style="background-image: url({placeholder}); background-size: contain; filter: blur(6px); transform: scale(1.03);"
+        class:opacity-0={imgLoaded}
+        aria-hidden="true"
+      ></div>
+    {/if}
+    <!--
+      grid (fill): object-cover with NO padding, so the tile is filled
+      edge-to-edge. The `col` variant is itself a 320×320 centre-cropped
+      square (sysconfig DefaultPreviewConfig: Fit=cover, MaxDim=320 —
+      verified against the stored bytes), and the tile is square, so
+      "cover" here is a 1:1 display of the variant: no second crop, no
+      upscale beyond what `contain` was already doing. It just removes the
+      6px matte ring that `p-1.5` drew inside every tile.
+
+      everything else (contain + p-1.5): letterbox on the matte, so a
+      details view still shows the whole work (#515 slice 1).
+
+      `loading="lazy"` is ALSO what makes `sizes: auto` work (#639). Per
+      spec `auto` resolves to 100vw on an eagerly-loaded image, and the
+      rest of the sizes list is not consulted — measured. Making this
+      eager would turn the slot hint into "the whole viewport" on every
+      card, with no other visible symptom.
+    -->
+    <img
+      src={imgSrc}
+      srcset={srcset || undefined}
+      sizes={srcset ? sizesHint : undefined}
+      alt={title}
+      loading="lazy"
+      decoding="async"
+      class="absolute inset-0 h-full w-full transition-opacity duration-200 group-hover:scale-[1.02]
+             {fill ? 'object-cover' : 'object-contain p-1.5'}"
+      class:opacity-0={!imgLoaded}
+      class:opacity-100={imgLoaded}
+      onload={onLoad}
+      onerror={onError}
+    />
+    {#if hasSpriteScrub && hovering}
+      {#if isVideo}
+        <!-- Video scrub: 16:9 sprite cells letterboxed in the 1:1 slot on
+             a black backdrop, so the cell renders at native ratio. -->
+        <div class="pointer-events-none absolute inset-0 bg-black/95 transition-opacity duration-150">
+          <div
+            class="absolute left-0 right-0 top-1/2 aspect-video -translate-y-1/2 bg-no-repeat"
+            style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+          ></div>
+        </div>
+      {:else}
+        <!-- 3D turntable: 1:1 cells in the 1:1 slot — no letterbox. -->
+        <div
+          class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
+          style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+        ></div>
+      {/if}
+    {/if}
+    <!-- Media-type badge. Suppressed under `compact` (#652): it lives at
+         `left-2 top-2`, which is exactly where the selection checkbox
+         goes, and on a 60px masonry tile the two are the whole tile.
+         The type is in the hover tooltip there instead. -->
+    {#if isVideo && !compact}
+      <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
+        video
+      </div>
+    {:else if is3D && !compact}
+      <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
+        3D
+      </div>
+    {/if}
+  {:else if !placeholder}
+    <!-- No servable preview AND no thumbhash — nothing of the asset can
+         be shown, so the plate states what it is instead (#558). This
+         used to be a 48px landscape icon at 40% opacity, identical for a
+         failed 3D turntable, a failed JPEG derivative and a gated asset:
+         a tile that says "image missing" about a CAD model is worse than
+         one that says nothing. -->
+    <CardFallback {title} {fileExtension} {assetType} {titleAdjacent} />
+  {:else}
+    <!-- Gated / not-yet-generated / preview-less but thumbhash present:
+         show the blurred thumbhash contained, no byte request (no 404). -->
+    <div
+      class="absolute inset-0 bg-center bg-no-repeat"
+      style="background-image: url({placeholder}); background-size: contain; filter: blur(6px); transform: scale(1.03);"
+      aria-hidden="true"
+    ></div>
+  {/if}
+
+  {@render children?.()}
+</div>

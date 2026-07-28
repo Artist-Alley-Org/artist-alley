@@ -129,7 +129,7 @@
           <select
             value={picks[`${s.slot === 'sans' ? 'body' : s.slot}_font` as keyof AppearancePicks]}
             onchange={(e) => setSlot(s.slot, (e.currentTarget as HTMLSelectElement).value)}
-            class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">{t('admin.system.themes.use_default')} ({DEFAULT_BY_SLOT[s.slot]})</option>
             {#each fontsForSlot(s.slot) as f (f.id)}

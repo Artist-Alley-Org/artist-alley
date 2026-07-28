@@ -121,11 +121,11 @@
             <div class="mt-3 space-y-2 border-t border-border pt-3">
               <label class="block text-xs">
                 <span class="mb-1 block text-fg-muted">{t('admin.requests.reason')}</span>
-                <input type="text" bind:value={decisionReason} maxlength="1000" class="w-full rounded border border-border bg-surface px-2 py-1 text-sm" />
+                <input type="text" bind:value={decisionReason} maxlength="1000" class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm" />
               </label>
               <label class="block text-xs">
                 <span class="mb-1 block text-fg-muted">{t('admin.requests.expires_at')}</span>
-                <input type="datetime-local" bind:value={decisionExpires} class="w-full rounded border border-border bg-surface px-2 py-1 text-sm" />
+                <input type="datetime-local" bind:value={decisionExpires} class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm" />
               </label>
               <div class="flex flex-wrap gap-2">
                 <button type="button" disabled={deciding} onclick={() => decide(r.id, 'granted')} class="rounded border border-success bg-success/10 px-3 py-1 text-xs font-medium text-success hover:bg-success/20 disabled:opacity-50" data-testid="admin-grant-{r.id}">{t('admin.requests.grant')}</button>

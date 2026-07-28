@@ -11,8 +11,23 @@
   // Browse-only chrome (the feed filter: team / trending / latest /
   // following) is NOT here — it's injected by BrowseFooter through the
   // optional `middle` snippet, which sits centred between the two
-  // clusters. Surfaces without a feed filter (profile, post-by-asset)
-  // simply omit it.
+  // clusters. Surfaces without a feed filter (profile, post-by-asset,
+  // the collection page) simply omit it, and the left and right clusters
+  // stay anchored to their edges — the row just has no centre item.
+  //
+  // LAYOUT — SPREAD, NOT CENTRED. This is deliberate and has been
+  // relitigated twice (#554, then #590 amendment 1), so before you
+  // gather these into one cluster again: that was tried and the owner
+  // rejected it both times. The intended layout is view controls
+  // bottom-LEFT, feed filter CENTRED, sort bottom-RIGHT — three anchored
+  // positions, and the spread between them is the design, not an
+  // accident of extraction. The "three unrelated floating islands"
+  // reading that motivated the consolidation was a planning
+  // misjudgement, not a user complaint.
+  //
+  // Kept from the consolidation attempt because neither was the problem:
+  // the lucide gallery-thumbnails glyph, and chromeScroll.reveal() in
+  // pick() so the bar survives choosing a view.
   import type { Snippet } from 'svelte';
   import { browseView, type ViewMode } from '$stores/browseView.svelte';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
@@ -47,6 +62,13 @@
   function pick(mode: ViewMode) {
     browseView.setMode(mode);
     expanded = false;
+    // Keep the bar on screen after choosing (#554). `expanded` was the
+    // only thing holding it visible, so collapsing the switcher handed
+    // control straight back to a `hidden` that may already be true from
+    // scrolling down mid-interaction — the bar vanished the instant you
+    // picked. Clearing it in the store means the bar stays until the
+    // next scroll-down, which then hides it normally.
+    chromeScroll.reveal();
   }
   function dec() {
     browseView.decSize();
@@ -94,7 +116,7 @@
           onclick={() => pick(v.id)}
           title={t(v.labelKey)}
           aria-label={t(v.labelKey)}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {#if v.icon === 'grid'}
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -111,16 +133,16 @@
               <rect x="14" y="12" width="7" height="9" rx="1" />
             </svg>
           {:else if v.icon === 'thumbnail'}
+            <!-- lucide `gallery-thumbnails` (#554): a large preview over a
+                 strip of thumbs, which is what this view actually is. The
+                 old glyph was a 3x3 of equal squares — indistinguishable
+                 from the grid icon two buttons away. -->
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3"  y="3"  width="4" height="4" rx="0.5" />
-              <rect x="10" y="3"  width="4" height="4" rx="0.5" />
-              <rect x="17" y="3"  width="4" height="4" rx="0.5" />
-              <rect x="3"  y="10" width="4" height="4" rx="0.5" />
-              <rect x="10" y="10" width="4" height="4" rx="0.5" />
-              <rect x="17" y="10" width="4" height="4" rx="0.5" />
-              <rect x="3"  y="17" width="4" height="4" rx="0.5" />
-              <rect x="10" y="17" width="4" height="4" rx="0.5" />
-              <rect x="17" y="17" width="4" height="4" rx="0.5" />
+              <rect width="18" height="14" x="3" y="3" rx="2" />
+              <path d="M4 21h1" />
+              <path d="M9 21h1" />
+              <path d="M14 21h1" />
+              <path d="M19 21h1" />
             </svg>
           {:else if v.icon === 'feed'}
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -150,7 +172,7 @@
           disabled={!browseView.canDec}
           title={t('browse.footer.dec_size')}
           aria-label={t('browse.footer.dec_size')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="5" y1="12" x2="19" y2="12" />
@@ -186,16 +208,13 @@
             <line x1="3" y1="19" x2="14" y2="19" />
           </svg>
         {:else if activeView.icon === 'thumbnail'}
+          <!-- lucide `gallery-thumbnails` — see the note on the twin above. -->
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3"  y="3"  width="4" height="4" rx="0.5" />
-            <rect x="10" y="3"  width="4" height="4" rx="0.5" />
-            <rect x="17" y="3"  width="4" height="4" rx="0.5" />
-            <rect x="3"  y="10" width="4" height="4" rx="0.5" />
-            <rect x="10" y="10" width="4" height="4" rx="0.5" />
-            <rect x="17" y="10" width="4" height="4" rx="0.5" />
-            <rect x="3"  y="17" width="4" height="4" rx="0.5" />
-            <rect x="10" y="17" width="4" height="4" rx="0.5" />
-            <rect x="17" y="17" width="4" height="4" rx="0.5" />
+            <rect width="18" height="14" x="3" y="3" rx="2" />
+            <path d="M4 21h1" />
+            <path d="M9 21h1" />
+            <path d="M14 21h1" />
+            <path d="M19 21h1" />
           </svg>
         {:else}
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -216,7 +235,7 @@
           disabled={!browseView.canInc}
           title={t('browse.footer.inc_size')}
           aria-label={t('browse.footer.inc_size')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
@@ -233,7 +252,7 @@
     onclick={backToTop}
     title={t('browse.footer.back_to_top')}
     aria-label={t('browse.footer.back_to_top')}
-    class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="12" y1="19" x2="12" y2="5" />
@@ -254,7 +273,7 @@
     onclick={() => browseView.toggleFeedDir()}
     title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
     aria-label={t('browse.sort.toggle')}
-    class="pointer-events-auto ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="pointer-events-auto ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       {#if browseView.feedDir === 'desc'}

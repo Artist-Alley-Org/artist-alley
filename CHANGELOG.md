@@ -7,6 +7,373 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Security
+
+Four separate leaks, all found in one week and all the same underlying mistake: a
+read path that wrote out the "who may see this" rule itself instead of asking the
+one component that owns it. Each copy was correct when written, then the shared rule
+moved and the copy didn't. None was caught by a test. They are grouped here because
+the pattern matters more than any one of them (#665).
+
+- **Anyone signed in could read anyone else's private posts.** Adding
+  `?visibility=private` to the post list returned other people's private posts —
+  title and body — while opening the same post directly correctly refused. No special
+  role was needed; an ordinary account was enough. The list and the single-post view
+  now run the *same* rule, so they cannot disagree again, and a test enumerates the
+  visibility tiers from the database itself so a tier added later is covered without
+  anyone remembering (#660).
+
+- **Any signed-in user could read other people's private collections.** The IIIF
+  manifest route returned a collection's name, description and full member list with
+  no permission check at all for signed-in callers (#661).
+
+- **On a public install, adding a tag filter exposed unpublished work.** Browsing
+  anonymously with `?tag=…` returned draft, archived and restricted assets that the
+  unfiltered browse correctly hid, because the tag-filtered branch was a separate
+  query that never got the visibility rule. Measured on the reference install: 34
+  items including 17 drafts, versus 5 after the fix (#657).
+
+- **Related-asset and IIIF manifest routes leaked unpublished assets anonymously**,
+  including using a draft asset as a similarity anchor. Also fixed the same drift
+  pointing the other way: genuinely public collections were returning "not found" to
+  anonymous visitors (#661).
+
+- **Session IP addresses are now a separately granted permission.** Viewing a user's
+  sessions in the admin area required only the ordinary "read users" permission, yet
+  it showed raw client IP addresses — personal data that the audit log had already
+  been gating behind a dedicated permission. The two now match: the session list is
+  still visible, the addresses need the additional grant, and a new decision record
+  fixes the naming so the next surface carrying personal data doesn't invent a third
+  standard (#573, ADR 0072).
+
+### Operator-facing changes
+
+- **The server image is half the size: 3.64 GB → 1.82 GB.** Blender is no longer
+  packaged. It was 1.3 GB of the image — roughly a third — plus the ten X/GL
+  libraries it loaded at startup, and since the three.js renderer landed (#498)
+  nothing in the product invoked it: every 3D format in the reference catalogue
+  (`glb`, `obj`, `fbx`, `gltf`) already rendered through the three.js worker, and
+  a search of the whole catalogue for the Blender-only formats returned nothing.
+  `stl`, `ply` and `dae` moved onto the worker with this change so they keep
+  their thumbnails. Formats with no three.js loader (`.blend`, `.usd*`, `.abc`,
+  `.x3d`) get no generated thumbnail for now — the file itself still uploads,
+  downloads and serves normally — and regain one when the Blender converter
+  ships as an optional plugin (#499). Nothing to do on upgrade; no configuration
+  changed. (#500, ADR 0069 amended.)
+
+  Two smaller consequences worth knowing: arm64 deployments are unaffected
+  because they never had Blender in the first place (its tarball is x64-only) —
+  they have had 3D previews since #498. And the `AA`-side escape hatch that
+  forced the old renderer is gone; with one renderer there is nothing to switch
+  to. Nobody had it set.
+
+### User-facing changes
+
+- **The seeded demo library now has eleven working studios instead of one.**
+  site_a shipped 1,007 assets in which **Animation and Characters had none at
+  all**, Marketing Art had 3 and Textures had 8, while Environment held **47.3%
+  of everything**. Clicking a studio either showed an empty page or showed the
+  whole dataset. It now holds **1,946** assets with every team between 116 and
+  421, and Environment down to **21.6%** — a studio with a specialism rather
+  than a studio plus ten placeholders (#572, closes #562).
+
+  Two levers, because a floor alone would have left Environment at 37%. **55
+  records were on the wrong team in the source data and said so in their own
+  tags** — 34 minimap icons tagged `ui`, 18 tiling texture plates tagged
+  `texture`, 3 voiceover clips tagged `voiceover` — and moving them to UI /
+  Textures / Audio is a correctness fix that happens to cap the biggest team.
+  The other 895 are new, drawn from the CC0 Kenney bundle the library already
+  came from and of which only ~1.3% was in use. Nothing was deleted: posts,
+  collections and sibling groups all reference those ids.
+
+  The **floor is 60 per team, and it comes from the product** — `/search`
+  returns 25 results a page and the browse rails render 24 tiles, so a team
+  whose whole library fits in one response has nothing to scroll and nothing to
+  narrow. It reads as a stub even when it is technically non-empty.
+
+- **45 more video references, chosen to look like a game studio's.** Video
+  coverage went from 47 clips to **92**. The additions are searched for
+  deliberately — arcade cabinets, controllers and keyboards, neon and glitch
+  plates, particles, smoke and sparks, pixel-art animation, esports floors —
+  rather than generic stock, and each record records the search that found it.
+  They land across Reference, VFX, UI, Marketing Art and Animation instead of
+  piling into one bucket (#572).
+
+- **Sponza renders instead of failing.** The canonical Khronos test scene was
+  the one 3D asset in the instance stuck at `failed`, because its geometry
+  buffer and 69 textures were never staged next to it — the copier attached a
+  model's siblings only when it copied the model, so a model already present at
+  the destination silently skipped its own companions. It now reaches `ready`
+  with a turntable (#572, completes #486).
+
+- **Assets with no preview picture now get a designed tile instead of a blank
+  one.** Text and code files never get a rendered thumbnail, and a preview can
+  also simply have failed — a 3D scene missing its geometry file, a photograph
+  too large for the render cap. Both used to land on an anonymous grey landscape
+  glyph that said "image missing" whether the asset was a CAD model, a README or
+  a JPEG, which read as a broken tile rather than a deliberate one. The tile now
+  states the two facts it actually has: the file's format, set as a wordmark, and
+  its kind in plain language — `GLTF / 3D model`, `MD / Document`. Where the card
+  does not already show the title next to the tile, the title is in it too, since
+  a document is mostly its name. The tile composes itself to the space it has, so
+  it holds up from a 60px masonry sliver to a full-width feed column. Rare on an
+  image-heavy library — 3 of 1007 assets on the reference install — and much less
+  rare on a document- or CAD-heavy one (#558).
+
+### Accessibility
+
+- **Form controls you could not see the edge of.** Inputs, selects and
+  text areas drew their border in the same colour as a divider rule, which
+  measured **1.38:1 in dark and 1.28:1 in light** against the surface behind it.
+  On a divider that quietness is deliberate; on a control the border *is* the
+  affordance — it is the only thing saying "you can type here" — and WCAG 2.2
+  requires 3:1 for it (SC 1.4.11). 251 controls now use the strong border role,
+  which was itself raised to clear the bar: measured on the rendered page,
+  **1.38 → 3.98 (dark)** and **1.28 → 3.42 (light)**. Divider borders are
+  unchanged; they carry no information and the low contrast there is intended.
+
+- **Focus was easy to lose on those same controls.** 122 of them indicated
+  focus by darkening that 1px border — a **1.95:1** change between the two
+  states, and one that would have become invisible once the resting border was
+  strengthened. They now draw the standard 2px focus ring, measured at
+  **7.08:1 (dark)** and **3.39:1 (light)** against the page.
+
+- **Secondary colour ramp fixed before anything used it.** Its white text
+  measured 4.46:1 on the steel fill, under the 4.5:1 body-text floor. Now 4.85:1.
+  No component is wired to this ramp yet, so nothing changes visually — the point
+  is that the first one to reach for it does not ship a failure (#594).
+
+### Fixes
+
+- **The demo profile silently shipped 36 fewer assets than the studio profile it
+  is a copy of.** `demo` and `dev` are aliases for `studio-a` and `studio-b`, but
+  they were written before the dataset upgrade pass ran — so every upgrade since
+  #604 landed on the studio profiles and missed its own aliases. A demo re-seed
+  would have dropped all 36 added videos and nothing would have reported it. The
+  aliases are re-copied after the upgrade, and a test asserts they match (#572).
+
+- **A site could serve fewer posts than its dataset had.** `posts.json` was the
+  one file the archive publisher never wrote — it was copied by hand — so site_a
+  served 584 posts against a profile holding 859. The publisher now stages it
+  (`--posts`), and warns when it is left stale (#572).
+
+- **A missing source cache reported fully-staged assets as missing.** The
+  internet-fetched cache is gitignored and usually absent on a machine that
+  already has a populated site, so re-publishing reported 58 present-and-correct
+  videos as MISSING and exited non-zero. Absence of a *source* is not absence of
+  the *asset*; the check now confirms against the manifest's own byte count
+  first (#572).
+
+- **A few catalogue tiles showed a tiny graphic marooned in a big empty box.** The
+  splat and line-pattern thumbnails rendered their artwork at about 1% of the tile,
+  jammed into the top-left corner. Two separate things were wrong. The images the
+  instance was serving had been rendered before the earlier canvas fix (#630) and were
+  never re-loaded, so the catalogue was still handing out the old broken pictures. And
+  the fix itself only went half way: it measures each drawing on a fixed-size search
+  frame, so the safety margin it leaves is a fixed distance in the drawing's own
+  coordinates — fine for a big drawing, a quarter of the picture for a small one. Small
+  vectors came out filling half their frame. The renderer now measures a second time at
+  the drawing's own scale, so the frame is tight whatever the size, and the 110 affected
+  images were re-rendered and re-loaded. Images that were already correct are unchanged,
+  including sprites whose source deliberately declares a padded canvas — those keep
+  their padding. A new checker (`seed/scripts/detect_oversized_canvas.mjs`) measures how
+  much of a frame the artwork actually fills; the existing one only sees artwork cut off
+  at an edge and reads this failure as healthy (#672).
+
+- **Resetting the demo left stale rows pointing at content that no longer existed.**
+  `aa seed --reset` empties the content tables with `TRUNCATE ... CASCADE`, and CASCADE
+  only follows foreign keys — so any table that names its target by a *kind + id* pair
+  (which cannot have a foreign key) kept its rows while the things they referred to were
+  deleted. Notifications about vanished posts, scheduled actions queued against deleted
+  assets, workflow history for wiped assets, and featured placements for collections that
+  were no longer there all survived every reset. Follower edges were worse: nothing linked
+  them to the accounts they described, so each reset added a whole dataset's worth on top
+  of the last (149 → 298 → 447 measured across three runs) while every earlier edge pointed
+  at an account that no longer existed. A reset now finishes by deleting exactly the rows
+  whose target is gone — rows that still point at something real, such as an action
+  scheduled against the admin account, are left alone. Every such table in the database is
+  now classified explicitly, with the storage pin table deliberately exempt, and a test
+  fails if a new one is added without a decision (#569).
+
+- **Search was broken for every signed-in user.** Every authenticated query returned
+  an internal error and no results. A change months earlier had removed the "featured"
+  flag from collections — featuring became a placement rather than a property — but the
+  search query still asked for the old column, so the whole search failed rather than
+  just the collection portion of it. Search works again; a test now pins the query
+  against the real schema so a removed column cannot silently break it a second time
+  (#650).
+
+- **Masonry no longer reshuffles while you scroll.** Each time the feed loaded more
+  results, the tiles you were already looking at jumped sideways into different columns.
+  The layout balanced all columns by height across the entire list, so adding anything to
+  the end genuinely changed where earlier items belonged. Tiles are now placed into
+  columns as they arrive and stay put — loading more only ever grows one column downward.
+  Measured: previously 30 of 36 visible tiles moved on each page load; now none do
+  (#651).
+
+- **Missing blur-up placeholders on posts.** Assets inside a post shipped without their
+  tiny preview hash, so tiles popped in from blank instead of fading up from a blur, even
+  though the data existed server-side (#648).
+
+- **Masonry overlay controls no longer overflow thin tiles.** Giving each tile its true
+  aspect ratio made audio waveforms genuinely thin — the narrowest measured 24px tall —
+  while the selection checkbox and options menu need 44px each, so they spilled outside
+  the tile they belonged to. Masonry tiles now have a floor tall enough to hold them,
+  derived from the controls rather than picked; the overlay keeps only those two
+  controls; and everything else about the asset moved into a tooltip that follows the
+  cursor and sits outside the artwork it describes. The thinnest assets are slightly
+  letterboxed as a result, which is the deliberate trade — a tile too small to click is
+  worse than one slightly taller than its picture (#652).
+
+- **Cards fetched images larger than the space they were drawn in.** The hint telling the
+  browser how much room a picture would occupy advertised the largest size the install
+  generates rather than the actual column width, so browsers downloaded oversized files —
+  33% too large on a desktop wall, 113% on a phone. The hint now describes the real slot
+  (#639).
+
+- **A written post now returns the same shape a read does.** Creating or updating a post
+  returned a response missing the preview availability, pixel dimensions and blur-up hash
+  that every read path includes. Nothing visibly broke, because the app re-fetches after
+  saving — but four such fields had quietly accumulated, and anything trusting the save
+  response would have rendered a card with no picture and no placeholder. The same gap
+  existed on two asset write paths and is fixed there too (#655).
+
+- **Audio, 3D, video, fonts and ebooks had no blur-up placeholder at all.** The tiny
+  preview hash was only ever computed when the uploaded file was itself an image, so
+  every asset whose thumbnail is a *rendered* preview — an audio waveform, a 3D
+  turntable, a video frame, a page render, a glyph specimen — had none, and its tile
+  flashed blank before the picture arrived. Most visible on audio, which is both the
+  largest group and the thinnest tile in masonry. Every preview format now computes the
+  hash from the picture it just rendered, and a one-time sweep fills it in for assets
+  already in the library — 618 of them on the reference install (#645).
+
+- **The IIIF Image API returned 404 for every asset.** Both the image and
+  `info.json` endpoints gated on `assets.has_image`, a column nothing in the
+  codebase ever writes, so the condition was true for every asset and the whole
+  Image API had been dead since it shipped — with no error, because "404" is also
+  the correct answer for an asset that genuinely has no image. Image endpoints now
+  serve real bytes, gated on whether a configured IIIF variant is actually stored.
+
+  `info.json` had a **second, unrelated cause**, now also fixed: it reports an
+  image's pixel dimensions, and nothing ever recorded them. The metadata
+  extractor emits width and height, but no field definition existed to receive
+  them, so the values were discarded and every `info.json` 404ed. The
+  definitions are now seeded and wired to the extractor — on both fresh installs
+  and existing ones. **The IIIF Image API is fully functional for the first time
+  since it shipped** (#614, #618).
+
+- **Widescreen art was square-cropped on cards.** Every card requested a
+  single 320×320 centre-cropped thumbnail, because that was the only size
+  guaranteed to exist. A 16:9 video or a wide illustration therefore displayed
+  as a square — visibly disagreeing with its own hover preview, which used the
+  true aspect ratio. Cards now pick an appropriately-sized image from the sizes
+  this install actually generates, so wide art displays wide and large tiles
+  stop showing upscaled thumbnails. The grid's contact-sheet view keeps its
+  square crop, which is intentional (#502, #589).
+
+- **Masonry now stacks tiles at their real proportions.** Previously every masonry
+  tile was a fixed square, so a 16:9 video and a wide audio waveform were letterboxed
+  into identical boxes and the view was indistinguishable from the grid. Tiles now
+  follow each image's own aspect ratio — the space is reserved from recorded pixel
+  dimensions before the image loads, so nothing jumps. The grid keeps its square
+  contact-sheet tiles, which is intentional (#640).
+
+- **Scroll position survives closing an asset or post.** Opening a post from deep in
+  the feed and closing it returned you to the top, losing everything you had scrolled
+  past. Position and loaded pages are now restored on the post, asset, collection and
+  profile routes (#584).
+
+- **The viewer's minimize button did nothing when the navbar was hidden.** Minimizing
+  now brings the navbar back, with search usable, instead of leaving the viewer
+  indistinguishable from its maximized state (#635).
+
+- **Masonry view rendered as a single full-width column.** For five days the masonry
+  layout showed one enormous tile per row instead of a multi-column wall — a CSS length
+  property was given a percentage, which silently voided the whole declaration and fell
+  back to "one column". Masonry now forms columns that track the tile-size control, on
+  desktop and phone alike (#637).
+
+- **Cropped artwork in the seeded catalogue.** Some vector-sourced thumbnails were
+  missing chunks of their artwork — cut off mid-shape at the edges. The source files
+  declare no canvas size, and the renderer was guessing one and clipping anything that
+  fell outside it. 110 affected images were re-rendered; the renderer now measures each
+  drawing's real extent first (#630).
+
+- **Viewer gap when the navbar auto-hides.** Opening a post after scrolling far
+  enough that the navbar had slid away left a navbar-sized gap above the viewer,
+  with the feed's tiles bleeding through. The viewer's top edge was glued to a
+  measured navbar height that never updated when the navbar hid (a transform,
+  which resize observers can't see). It now tracks the navbar's actual state —
+  expanding flush to the top of the screen when the navbar hides, and yielding
+  the space again when it returns, with a matching animation (#628).
+
+- **Regenerated previews never reached the browser.** Asset byte routes shipped
+  `Cache-Control: immutable, max-age=31536000` with an ETag derived from the URL
+  path — a validator that cannot change — and answered conditional requests with
+  304 without ever consulting the stored bytes. Once a client had cached a
+  variant, no sequence of requests could return updated content, so an operator
+  who used "Recreate previews" after a renderer fix could never see the result.
+  Validators are now derived from the stored bytes, and revalidation is permitted
+  (#620).
+
+- **EXIF metadata extraction processed zero assets.** The backfill selected on the
+  same never-written `has_image` column, so a run would report success having
+  enqueued nothing. It now selects on file format — the formats the metadata
+  pipeline actually has an extractor for, EXIF plus camera raw. (Extracted values
+  still need field definitions with an extraction source configured before they
+  land anywhere; tracked in #618.) (#579)
+
+- **Admin featured-content thumbnails.** The curation list at
+  `/admin/content/featured` could not render a thumbnail for *any* subject:
+  asset tiles were gated on the same never-written column (fixed with it), and
+  collection tiles had no cover resolution at all — the public rail resolved
+  covers since #559, but the admin list never received the same treatment.
+  Operators now see real covers for both subject kinds, including team-tier
+  covers the public rail rightly refuses to anonymous visitors (#619, #625).
+
+- **AI asset hints never identified images.** The AI bridge derived its MIME hint
+  from the same dead column, so it was never set. It now derives a real MIME from
+  the file extension (`image/png` rather than the `image/*` wildcard it aspired
+  to) (#579).
+
+### Operator-facing changes
+
+- **New capability `users.pii.read` — session IP addresses now need it.** The admin
+  view of a user's sessions (`/admin/users/{ref}/sessions`, and the "Active sessions"
+  panel on the user detail page) returned each session's raw client IP to anyone
+  holding `users.read`, while the audit log has required a dedicated
+  `system.audit.pii.read` for actor IPs since v0.5.0. Same data class, two different
+  bars — so the looser one was raised rather than the stricter one lowered. `users.read`
+  still lists the sessions, labels the devices, and revokes them; the address is
+  additionally gated on `users.pii.read`, exactly as audit gates actor IPs. `system.admin`
+  is unaffected (it satisfies every capability). **Operators who want an existing
+  non-admin role to keep seeing session IPs must grant it the new capability** — the
+  field is simply absent otherwise, never blank. Documented as a rule for every future
+  IP-bearing surface in ADR 0072 (#573).
+
+### API
+
+- **Removed: `asset_has_image` from featured-item payloads.** It reported whether
+  a raster thumbnail existed for a tile's cover asset, and it was **always
+  false** — the underlying database column had no writer anywhere, in any
+  install. Clients should use `preview_available`, which is computed from live
+  variant existence and has been the trustworthy signal since it was added. No
+  client behaviour changes, because nothing could have usefully depended on a
+  field that was universally false. The column itself was dropped in the same
+  change (#579).
+
+- **`ladder_available` on asset payloads** — reports whether the *complete*
+  configured preview ladder exists for an asset, so clients can build a responsive
+  `srcset` instead of assuming a single thumbnail size. Computed against the
+  operator's configured rungs rather than a hardcoded list, so an install that
+  tunes its ladder is described accurately (#591).
+
+- **`GET /previews`** — the rung keys and dimensions this install generates, so a
+  client can build width descriptors without hardcoding defaults. Governed by
+  public mode: anonymous on a public install, 401 on a private one (#591).
+
+## [v0.6.0] — 2026-07-23 — Public read surface + demo hardening
+
 ### User-facing changes
 
 - **Public user-profile pages.** Every user now has a profile page, reachable by
@@ -28,6 +395,18 @@ where applicable, otherwise note "no-spec-impact."
   time** (the Blender path was amd64-only). Multi-file glTF (a `.gltf` plus its
   external `.bin`/textures) now renders correctly, where before it failed
   silently (#497/#498/#507/#508, #486). Blender stays as an automatic fallback.
+
+### Fixes
+
+- **Federation-path query bug.** A metadata-adapter query referenced a
+  nonexistent column (`owning_team_id` instead of the real `team_id`), so that
+  path errored on every call. Pre-existing since ≤v0.5.2 and invisible to
+  standard CI (which doesn't run federation); caught by the federation nightly
+  and fixed before this release (#538).
+
+- **CI reliability.** A large hardening pass on the test suite — shared-auth
+  setup resilience, worker-isolation races, and timeout tuning — so a green run
+  genuinely means green, not retry-masked (#485, #481, #505, #527, #535).
 
 ## [v0.5.2] — 2026-07-21
 

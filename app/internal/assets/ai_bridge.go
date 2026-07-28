@@ -34,6 +34,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/mscrnt/artist-alley/app/internal/ai"
+
+	"github.com/mscrnt/artist-alley/app/internal/asset/imagefmt"
 )
 
 // GetAssetForAI satisfies ai.AssetLookup. Returns the typed
@@ -63,12 +65,18 @@ func (h *Handler) GetAssetForAI(ctx context.Context, id uuid.UUID) (ai.AssetForA
 		out.OwningTeamID = &teamID
 	}
 
-	// MimeType isn't stored on the assets row — derive a best-effort
-	// hint from has_image so the AI handler at least knows it's an
-	// image asset. A future asset-types refactor will surface the
-	// real MIME at this layer.
-	if row.HasImage {
-		out.MimeType = "image/*"
+	// MimeType isn't stored on the assets row — derive it from the file
+	// extension (#579).
+	//
+	// This used to read `if row.HasImage`, a column that is DEFAULT
+	// false with no writer anywhere, so the hint was never set for ANY
+	// asset and the AI handler never learned that an asset was an image.
+	// The extension is real data, so this now yields the actual MIME
+	// ("image/png") rather than the "image/*" wildcard the old code
+	// aspired to — the wildcard existed because has_image could only
+	// ever say "image, kind unknown".
+	if mime := imagefmt.MimeTypeForExtension(nullableString(row.FileExtension)); mime != "" {
+		out.MimeType = mime
 	}
 
 	// existing_tags arrives as a JSON string from json_agg. Parse it

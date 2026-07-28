@@ -75,8 +75,12 @@ type AssetLookup interface {
 // dispatched — this is defense in depth in case guards were bypassed).
 type AssetRecord struct {
 	FileHash *string
-	HasImage bool
-	Deleted  bool
+	// FileExtension decides image-ness (#579). This used to be a
+	// HasImage bool read from assets.has_image — a column with no writer,
+	// so it was false for every asset and this job's guard below rejected
+	// everything the dispatcher managed to enqueue.
+	FileExtension *string
+	Deleted       bool
 }
 
 // Job implements jobs.Handler for JobTypeVisualEmbed.
@@ -147,9 +151,11 @@ func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, err
 		j.Counter.RecordPermanentFailed()
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("visualembed: asset deleted")}
 	}
-	if !asset.HasImage {
+	if asset.FileExtension == nil || !IsImageExtension(*asset.FileExtension) {
 		// Guard bypass — dispatch should have caught this. Terminal so
-		// the job doesn't retry on the same fact.
+		// the job doesn't retry on the same fact. Same predicate the
+		// dispatcher and the backfill queries use, so all three agree on
+		// what CLIP can process.
 		j.Counter.RecordPermanentFailed()
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("visualembed: asset is not an image")}
 	}

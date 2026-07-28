@@ -198,6 +198,14 @@ func (s *Service) Download(ctx context.Context, hash, variant string) (io.ReadCl
 	return s.Backend.Get(ctx, hash, variant)
 }
 
+// Stat reports a stored variant's size, content type and modification
+// time without opening it. Used by the HTTP layer to build a
+// content-derived cache validator before deciding whether the byte
+// transfer is needed at all (#620).
+func (s *Service) Stat(ctx context.Context, hash, variant string) (*ObjectInfo, error) {
+	return s.Backend.Stat(ctx, hash, variant)
+}
+
 // DownloadRange opens a byte range of a variant.
 func (s *Service) DownloadRange(ctx context.Context, hash, variant string, offset, length int64) (io.ReadCloser, error) {
 	return s.Backend.GetRange(ctx, hash, variant, offset, length)

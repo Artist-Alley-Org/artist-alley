@@ -18,19 +18,26 @@
 //
 // Every manifest passes through:
 //
-//  1. The IIIF CONTENT-PLANE gate (ADR 0064) — restricted/team
+//  1. The ROW-PLANE predicate (ADR 0063) — every query in loader.go
+//     splices visibility.Predicate.ToSQL, so a caller reaches a
+//     manifest only for a row they could also reach through
+//     GET /assets/{id} or GET /collections/{id}. This was ABSENT
+//     until #661: the loaders read by id with `deleted_at IS NULL`
+//     and nothing else (LoadCollection not even that), so a draft
+//     asset served a full anonymous manifest and any signed-in user
+//     could read anyone's private collection manifest. Earlier
+//     versions of this comment described the state accurately and
+//     the state was wrong; see epic #665.
+//  2. The IIIF CONTENT-PLANE gate (ADR 0064) — restricted/team
 //     assets return 404, embargoed assets return a stub. This is NOT
-//     a second copy of the row-visibility rule (ADR 0063), and an
-//     earlier version of this comment was wrong to describe it as
-//     "on top of visibility.Filter": that predicate is NOT invoked on
-//     the manifest route at all. LoadAsset (loader.go) reads by id
-//     with `deleted_at IS NULL` and nothing else, so this gate is the
-//     SOLE sensitivity enforcement on this path, not a supplementary
-//     one — removing it exposes a restricted asset's full manifest to
-//     any anonymous caller once public mode is on. The row plane
-//     decides whether a caller may know an asset EXISTS; the content
-//     plane decides what its manifest may CONTAIN. Two planes, two
-//     rules, by design — see #432, which settled that this is not
+//     a second copy of the rule in (1), and it is not redundant with
+//     it either: the AUTHENTICATED EntityAsset predicate is
+//     soft-delete only, so the row plane admits a signed-in caller to
+//     a restricted asset's existence and the content plane still
+//     decides what its manifest may contain. The row plane decides
+//     whether a caller may know an asset EXISTS; the content plane
+//     decides what its manifest may CONTAIN. Two planes, two rules,
+//     by design — see #432, which settled that this is not
 //     redundancy.
 //  2. The federated-URI resolver — assets with a non-nil
 //     origin_server_id surface their canvas as the remote peer's

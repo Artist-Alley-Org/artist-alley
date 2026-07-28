@@ -149,7 +149,7 @@
         type="search"
         bind:value={searchInput}
         placeholder="Find in book…"
-        class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-[11px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       {#if session.searchBusy}
         <p class="mt-2 text-[10px] text-fg-muted">Searching…</p>
@@ -186,7 +186,7 @@
           bind:value={bookmarkNote}
           placeholder="Optional note…"
           onkeydown={(e) => { if (e.key === 'Enter') addBookmark(); }}
-          class="flex-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+          class="flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
         <button
           type="button"

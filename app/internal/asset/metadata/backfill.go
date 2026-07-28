@@ -18,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+
+	"github.com/mscrnt/artist-alley/app/internal/asset/imagefmt"
 )
 
 // JobTypeBackfill is the canonical job type for the operator-
@@ -124,8 +126,10 @@ type ChildEnqueuer interface {
 // Eligibility (PR-B scope):
 //   - active (status='active', deleted_at IS NULL)
 //   - has a file_hash (NULL means upload pipeline hasn't materialised yet)
-//   - has_image = true (we only run EXIF extraction on images right
-//     now; broader extractors land in 1.18.A-3)
+//   - the file extension is one the EXIF extractor can process
+//     (imagefmt.ExifExtractableExtensions — we only run EXIF
+//     extraction on formats it claims via Supports(); broader
+//     extractors land in 1.18.A-3)
 //   - matches the optional asset_type_ref filter
 //
 // Cancellation: the handler re-reads the run row on every batch
@@ -287,9 +291,13 @@ type backfillAssetRow struct {
 //   - file-extension filter: scope.FileExtensions is matched against
 //     assets.file_extension (lowercased on both sides). Empty list =
 //     no extension filter.
-//   - has_image gate: by default we keep the Phase 1.18.A-2 PR-B
-//     image-only behaviour. scope.IncludeNonImage opens up to PDFs
-//   - future paginated asset types.
+//   - image-ness gate: by default we keep the Phase 1.18.A-2 PR-B
+//     image-only behaviour, expressed as "the extension is one the
+//     EXIF extractor supports" rather than as the writerless
+//     has_image column (#579). scope.IncludeNonImage opens up to PDFs
+//   - future paginated asset types — it WIDENS the default
+//     population, and must never be the only thing that makes it
+//     non-empty.
 //
 // Pure SQL — no dynamic strcat, so the EXPLAIN plan stays stable
 // across scope combinations. The COALESCE+ANY-OR-NULL idiom keeps
@@ -301,7 +309,13 @@ func (h *BackfillJobHandler) listAssetsPage(ctx context.Context, scope BackfillS
 		SELECT id FROM assets
 		 WHERE status = 'active'
 		   AND deleted_at IS NULL
-		   AND ($5::BOOLEAN = TRUE OR has_image = TRUE)
+		   -- Image-ness is a question about the FORMAT, not about
+		   -- whether a derivative exists (#579). This used to read
+		   -- has_image = TRUE, a column with no writer, so the default
+		   -- population was empty and IncludeNonImage was the only
+		   -- thing that made the query return anything -- inverting the
+		   -- flag's meaning from "widen" to "work at all".
+		   AND ($5::BOOLEAN = TRUE OR LOWER(file_extension) = ANY($6::TEXT[]))
 		   AND file_hash IS NOT NULL
 		   AND ($1::UUID IS NULL OR id > $1::UUID)
 		   AND ($2::BIGINT[] IS NULL OR asset_type = ANY($2::BIGINT[]))
@@ -314,6 +328,7 @@ func (h *BackfillJobHandler) listAssetsPage(ctx context.Context, scope BackfillS
 		nullableStringSlice(extensions),
 		limit,
 		scope.IncludeNonImage,
+		imagefmt.ExtractableImageExtensions(),
 	)
 	if err != nil {
 		return nil, err

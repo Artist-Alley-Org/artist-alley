@@ -439,7 +439,7 @@
     <textarea
       id="license-text"
       bind:value={licenseText}
-      class="mb-3 block w-full rounded border border-border bg-bg p-2 font-mono text-xs"
+      class="mb-3 block w-full rounded border border-border-strong bg-bg p-2 font-mono text-xs"
       rows="10"
       placeholder={t('admin.system.license.upload_placeholder')}
       spellcheck="false"

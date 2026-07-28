@@ -237,7 +237,7 @@
         oninput={onSearchInput}
         type="search"
         placeholder={t('collection_picker.search_placeholder')}
-        class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </div>
 
@@ -292,7 +292,7 @@
           placeholder={t('collection_picker.new_placeholder')}
           maxlength="200"
           disabled={creating || busy}
-          class="min-w-0 flex-1 rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus:border-accent focus:outline-none disabled:opacity-50"
+          class="min-w-0 flex-1 rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-50"
         />
         <button
           type="submit"

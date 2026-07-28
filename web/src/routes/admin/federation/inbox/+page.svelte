@@ -135,7 +135,7 @@
   <div class="grid gap-3 sm:grid-cols-3">
     <label class="flex flex-col gap-1 text-sm">
       <span class="text-fg-muted">Peer</span>
-      <select bind:value={peerFilter} class="rounded border border-border bg-bg p-2 text-fg">
+      <select bind:value={peerFilter} class="rounded border border-border-strong bg-bg p-2 text-fg">
         <option value="">— all —</option>
         {#each peers as p}
           <option value={p.id}>{p.display_name || p.instance_url}</option>
@@ -144,7 +144,7 @@
     </label>
     <label class="flex flex-col gap-1 text-sm">
       <span class="text-fg-muted">Status</span>
-      <select bind:value={statusFilter} class="rounded border border-border bg-bg p-2 text-fg">
+      <select bind:value={statusFilter} class="rounded border border-border-strong bg-bg p-2 text-fg">
         <option value="">— all —</option>
         <option value="pending">pending</option>
         <option value="processed">processed</option>
@@ -157,7 +157,7 @@
       <input
         bind:value={activityTypeFilter}
         placeholder="Like / Create / aa:Share / …"
-        class="rounded border border-border bg-bg p-2 text-fg"
+        class="rounded border border-border-strong bg-bg p-2 text-fg"
       />
     </label>
   </div>

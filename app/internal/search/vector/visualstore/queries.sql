@@ -42,13 +42,21 @@ SELECT COUNT(*)::BIGINT AS total FROM asset_visual_embedding;
 
 -- name: CountVisualEmbeddingBacklog :one
 -- Health gauge: image assets that LACK a visual embedding.
--- Anti-join between assets (has_image = true) + asset_visual_embedding.
--- Used by the admin dashboard to trigger operator backfill when
--- coverage lags.
+-- Anti-join between the image assets CLIP can embed and
+-- asset_visual_embedding. Used by the admin dashboard to trigger
+-- operator backfill when coverage lags.
+--
+-- Image-ness is the FILE FORMAT (#579). This used to read
+-- `a.has_image = TRUE`, a column with no writer anywhere, so the
+-- backlog was 0 for every install and the dashboard reported perfect
+-- coverage of nothing. The eligible extensions arrive as a parameter
+-- from visualembed.IsImageExtension rather than being inlined here,
+-- so this file and the worker's guard cannot disagree about what CLIP
+-- can process.
 SELECT COUNT(*)::BIGINT AS backlog
 FROM assets a
 WHERE a.deleted_at IS NULL
-  AND a.has_image = TRUE
+  AND LOWER(a.file_extension) = ANY(sqlc.arg('image_extensions')::TEXT[])
   AND NOT EXISTS (
       SELECT 1 FROM asset_visual_embedding v WHERE v.asset_id = a.id
   );
@@ -57,10 +65,14 @@ WHERE a.deleted_at IS NULL
 -- Backfill worker's queue: image assets without a visual embedding,
 -- oldest-first so the backfill converges predictably. Batched;
 -- the caller iterates until zero rows returned.
+--
+-- Same format predicate as the backlog count above, from the same
+-- parameter — a queue that disagreed with its own count would report
+-- work it then refused to do.
 SELECT a.id, a.file_hash, a.file_extension
 FROM assets a
 WHERE a.deleted_at IS NULL
-  AND a.has_image = TRUE
+  AND LOWER(a.file_extension) = ANY(sqlc.arg('image_extensions')::TEXT[])
   AND a.file_hash IS NOT NULL
   AND NOT EXISTS (
       SELECT 1 FROM asset_visual_embedding v WHERE v.asset_id = a.id

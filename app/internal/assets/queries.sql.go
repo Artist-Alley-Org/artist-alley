@@ -298,6 +298,12 @@ type GetAssetRow struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+// Pixel dimensions are deliberately NOT selected here (#640). sqlc types
+// a scalar subquery as NOT NULL — it has no way to infer otherwise — so
+// an asset with no recorded dimensions would scan NULL into an int32 and
+// fail at runtime on the detail endpoint. The projection therefore lives
+// in pixeldims.SelectColumnsSQL, spliced into the hand-built queries that
+// need it, and the detail path fetches it alongside its variant probe.
 func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, error) {
 	row := q.db.QueryRow(ctx, getAsset, id)
 	var i GetAssetRow
@@ -508,7 +514,12 @@ SELECT
     a.team_id,
     a.title,
     a.file_hash,
-    a.has_image,
+    -- file_extension, not has_image (#579). has_image is DEFAULT false
+    -- with no writer, so the MimeType hint it fed was never set for any
+    -- asset and the AI handler never learned an asset was an image. The
+    -- extension is real data and yields a real MIME rather than a
+    -- wildcard.
+    a.file_extension,
     COALESCE(
         (SELECT json_agg(json_build_object('tag', t.tag, 'source', t.source))
            FROM asset_tag t
@@ -526,7 +537,7 @@ type GetAssetForAIBridgeRow struct {
 	TeamID           pgtype.UUID
 	Title            string
 	FileHash         *string
-	HasImage         bool
+	FileExtension    *string
 	ExistingTagsJson string
 }
 
@@ -556,7 +567,7 @@ func (q *Queries) GetAssetForAIBridge(ctx context.Context, id pgtype.UUID) (GetA
 		&i.TeamID,
 		&i.Title,
 		&i.FileHash,
-		&i.HasImage,
+		&i.FileExtension,
 		&i.ExistingTagsJson,
 	)
 	return i, err
@@ -689,9 +700,19 @@ func (q *Queries) ListAssetCompanions(ctx context.Context, assetID pgtype.UUID) 
 }
 
 const listAssetTags = `-- name: ListAssetTags :many
+
 SELECT tag FROM asset_tag WHERE asset_id = $1 ORDER BY tag
 `
 
+// ListAssetsByTagPage was DELETED by #657. It was the by-tag half of
+// the browse: a second static query whose whole WHERE clause was
+// `a.deleted_at IS NULL`, so `?tag=` served draft, archived and
+// restricted rows to anonymous callers that plain `/assets` correctly
+// withheld — and reported preview_available/ladder_available as false
+// for every row (#612). The tag filter is now one more optional
+// conjunct on ListAssetsPageGated (assets/list_page.go), where the
+// visibility predicate already lives. Do not reintroduce it: a filter
+// with its own query is a filter with its own rules.
 func (q *Queries) ListAssetTags(ctx context.Context, assetID pgtype.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, listAssetTags, assetID)
 	if err != nil {
@@ -752,102 +773,6 @@ func (q *Queries) ListAssetTagsDetailed(ctx context.Context, assetID pgtype.UUID
 			&i.Confidence,
 			&i.CreatedByProvider,
 			&i.CreatedByModel,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAssetsByTagPage = `-- name: ListAssetsByTagPage :many
-SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
-       a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
-       a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
-       a.created_at, a.updated_at
-FROM assets a
-JOIN asset_tag t ON t.asset_id = a.id
-WHERE a.deleted_at IS NULL
-  AND t.tag = $1::TEXT
-  AND ($2::BIGINT IS NULL OR a.owner_user_ref = $2::BIGINT)
-  AND ($3::BIGINT  IS NULL OR a.asset_type  = $3::BIGINT)
-  AND ($4::TEXT           IS NULL OR a.status          = $4::TEXT)
-  AND ($5::TIMESTAMPTZ IS NULL
-       OR a.created_at < $5::TIMESTAMPTZ
-       OR (a.created_at = $5::TIMESTAMPTZ
-           AND a.id < $6::UUID))
-ORDER BY a.created_at DESC, a.id DESC
-LIMIT $7::INTEGER
-`
-
-type ListAssetsByTagPageParams struct {
-	Tag             string
-	OwnerUserRef    *int64
-	AssetType       *int64
-	Status          *string
-	CursorCreatedAt pgtype.Timestamptz
-	CursorID        pgtype.UUID
-	RowLimit        int32
-}
-
-type ListAssetsByTagPageRow struct {
-	ID               pgtype.UUID
-	Title            string
-	Description      string
-	AssetType        int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-}
-
-// Same paginated list but constrained to a single tag. Separate
-// query because the join breaks the COALESCE pattern.
-func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPageParams) ([]ListAssetsByTagPageRow, error) {
-	rows, err := q.db.Query(ctx, listAssetsByTagPage,
-		arg.Tag,
-		arg.OwnerUserRef,
-		arg.AssetType,
-		arg.Status,
-		arg.CursorCreatedAt,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListAssetsByTagPageRow
-	for rows.Next() {
-		var i ListAssetsByTagPageRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Title,
-			&i.Description,
-			&i.AssetType,
-			&i.OwnerUserRef,
-			&i.Status,
-			&i.FileHash,
-			&i.FileExtension,
-			&i.FileSizeBytes,
-			&i.Metadata,
-			&i.OriginServerID,
-			&i.StateID,
-			&i.ProcessingStatus,
-			&i.Thumbhash,
-			&i.CreatedAt,
-			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

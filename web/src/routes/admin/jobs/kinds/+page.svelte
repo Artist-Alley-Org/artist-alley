@@ -99,7 +99,7 @@
               <input
                 type="number" min="0" max="64" step="1"
                 bind:value={editing[k.type]}
-                class="w-20 rounded border border-border bg-surface px-2 py-1 text-right text-sm"
+                class="w-20 rounded border border-border-strong bg-surface px-2 py-1 text-right text-sm"
                 aria-label={`Concurrency cap for ${k.type}`} />
               <button onclick={() => save(k)} class="ml-1 rounded bg-accent px-2 py-1 text-xs font-medium text-on-accent" disabled={editing[k.type] === String(k.cap)}>Save</button>
             </td>

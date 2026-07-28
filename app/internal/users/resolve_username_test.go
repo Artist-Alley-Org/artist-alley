@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -40,8 +39,8 @@ func openResolvePool(t *testing.T) *pgxpool.Pool {
 	name := envResolveOr("AA_DB_NAME", "artist_alley")
 	dsn := "host=" + host + " port=" + port + " user=" + user +
 		" dbname=" + name + " sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
@@ -72,8 +71,7 @@ func randResolveHex(t *testing.T, n int) string {
 func TestResolveUsername_ReturnsKnownUsername(t *testing.T) {
 	pool := openResolvePool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	username := "resolve-test-" + randResolveHex(t, 6)
 	var ref int64
@@ -97,8 +95,7 @@ func TestResolveUsername_ReturnsKnownUsername(t *testing.T) {
 func TestResolveUsername_ReturnsEmptyOnUnknownRef(t *testing.T) {
 	pool := openResolvePool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	// Astronomically unlikely to exist.
@@ -111,8 +108,7 @@ func TestResolveUsername_ReturnsEmptyOnUnknownRef(t *testing.T) {
 func TestResolveUsername_UsesCacheWhenAvailable(t *testing.T) {
 	pool := openResolvePool(t)
 	defer pool.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
 
 	reg := cache.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer reg.Stop()

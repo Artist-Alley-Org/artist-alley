@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -40,14 +42,26 @@ type ListAssetsPageGatedParams struct {
 	// caller (assets.Handler). It waives ONLY the soft-delete dimension
 	// of the predicate — never publication, sensitivity or processing
 	// state. See visibility.IncludeSoftDeleted.
-	IncludeDeleted  *bool
-	OwnerUserRef    *int64
-	AssetType       *int64
-	Status          *string
-	Q               *string
+	IncludeDeleted *bool
+	OwnerUserRef   *int64
+	AssetType      *int64
+	Status         *string
+	Q              *string
+	// Tag constrains the page to assets carrying one exact tag (#657).
+	// It lives HERE, as one more optional filter on the gated query,
+	// rather than in a separate by-tag query: the by-tag branch used to
+	// be its own static sqlc statement, and being separate is precisely
+	// how it ended up without the visibility predicate, without the
+	// ladder and without the preview flags. One query, one set of rules.
+	Tag             *string
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
+	// Ladder is the operator's CONFIGURED preview variant keys (#591),
+	// supplied by the handler from the cached sysconfig reader. Empty
+	// means "unknown", which LadderSatisfiedSQL resolves to false — the
+	// client then falls back to the single `col` rung.
+	Ladder []string
 }
 
 // listAssetsPageColumns mirrors the sqlc query's SELECT list exactly.
@@ -66,6 +80,19 @@ type ListAssetsPageGatedRow struct {
 	// passes the content plane — computed here so the client renders a
 	// thumbnail only when true, never firing a byte request that 404s.
 	PreviewAvailable bool
+	// LadderAvailable: EVERY variant in the configured ladder exists AND
+	// the caller passes the content plane (#591). Same 0064 contract as
+	// PreviewAvailable and derived from the SAME readability decision,
+	// so the two can never disagree for a restricted asset.
+	LadderAvailable bool
+	// PixelWidth / PixelHeight: the recorded source dimensions, joined in
+	// the same pass (#640). NOT gated on readability — they are metadata
+	// about a row the caller can already see, the same plane as
+	// file_size_bytes, and the client needs them to reserve the tile's
+	// height before any bytes are requested. Nil when the install has
+	// never measured this asset; see the pixeldims package.
+	PixelWidth  *int32
+	PixelHeight *int32
 }
 
 // ListAssetsPageGated runs the browse query for one caller. `caps` is
@@ -94,6 +121,8 @@ func ListAssetsPageGated(
 		p.CursorID,        // $6
 		p.RowLimit,        // $7
 		caller.UserRef,    // $8 — anonymous carries ref 0, matching no membership
+		p.Ladder,          // $9 — configured preview ladder (#591)
+		p.Tag,             // $10 — optional single-tag filter (#657)
 	}
 
 	var opts []visibility.Option
@@ -117,14 +146,17 @@ func ListAssetsPageGated(
 	// Two derived columns join preview_available's inputs in the SAME
 	// pass — no per-asset round-trips on this browse hot path (#471):
 	//   has_col_variant     — a servable `col` thumbnail exists
+	//   has_full_ladder     — every CONFIGURED rung exists (#591)
 	//   caller_is_team_member — caller belongs to a team-tier asset's team
 	// Readability is then decided in-Go per row (visibility.ContentReadable)
 	// from sensitivity + owner + that membership boolean + caps.
 	b.WriteString(`SELECT ` + listAssetsPageColumns + `,
        sensitivity,
+       ` + pixeldims.SelectColumnsSQL("assets.id") + `,
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
+       ` + sysconfig.LadderSatisfiedSQL("assets.file_hash", "$9") + ` AS has_full_ladder,
        (team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
              WHERE tm.team_id = assets.team_id AND tm.user_ref = $8::BIGINT)) AS caller_is_team_member
@@ -133,6 +165,9 @@ WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
   AND ($3::TEXT IS NULL OR status = $3::TEXT)
   AND ($4::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $4::TEXT))
+  AND ($10::TEXT IS NULL
+       OR EXISTS (SELECT 1 FROM asset_tag t
+                   WHERE t.asset_id = assets.id AND t.tag = $10::TEXT))
   AND ($5::TIMESTAMPTZ IS NULL
        OR created_at < $5::TIMESTAMPTZ
        OR (created_at = $5::TIMESTAMPTZ AND id < $6::UUID))`)
@@ -152,7 +187,10 @@ LIMIT $7::INTEGER`)
 		var i ListAssetsPageRow
 		var (
 			sensitivity        string
+			pixelWidth         *int32
+			pixelHeight        *int32
 			hasColVariant      bool
+			hasFullLadder      bool
 			callerIsTeamMember bool
 		)
 		if err := rows.Scan(
@@ -160,15 +198,23 @@ LIMIT $7::INTEGER`)
 			&i.FileHash, &i.FileExtension, &i.FileSizeBytes, &i.Metadata,
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
-			&sensitivity, &hasColVariant, &callerIsTeamMember,
+			&sensitivity, &pixelWidth, &pixelHeight,
+			&hasColVariant, &hasFullLadder, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
 		readable := visibility.ContentReadable(sensitivity, i.OwnerUserRef, caller, caps, callerIsTeamMember)
-		out = append(out, ListAssetsPageGatedRow{
+		row := ListAssetsPageGatedRow{
 			ListAssetsPageRow: i,
 			PreviewAvailable:  hasColVariant && readable,
-		})
+			LadderAvailable:   hasFullLadder && readable,
+		}
+		// A pair or neither — never a half-populated one the client has
+		// to re-validate before dividing.
+		if pixeldims.Sane(pixelWidth, pixelHeight) {
+			row.PixelWidth, row.PixelHeight = pixelWidth, pixelHeight
+		}
+		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("assets: list page rows: %w", err)

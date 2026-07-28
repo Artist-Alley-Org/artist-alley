@@ -220,7 +220,7 @@
         type="text"
         bind:value={row.title}
         placeholder={row.file.name}
-        class="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="min-w-0 flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         aria-label={t('upload.file_row.title_aria')}
       />
       <span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium {stateClass}">
@@ -290,7 +290,7 @@
         onkeydown={handleTagKeydown}
         onblur={commitTag}
         placeholder={row.tags.length === 0 ? t('upload.file_row.tag_placeholder') : '+'}
-        class="min-w-[6rem] flex-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-fg placeholder:text-fg-muted/60 focus:border-border focus:bg-surface-elevated focus:outline-none"
+        class="min-w-[6rem] flex-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-fg placeholder:text-fg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus:bg-surface-elevated focus:outline-none"
       />
     </div>
 
@@ -328,14 +328,14 @@
                         type="text"
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLInputElement).value })}
-                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       />
                     {:else if f.type === 'longtext'}
                       <textarea
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLTextAreaElement).value })}
                         rows="2"
-                        class="mt-0.5 w-full resize-y rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full resize-y rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       ></textarea>
                     {:else if f.type === 'number'}
                       <input
@@ -345,7 +345,7 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueNum: v === '' ? null : Number(v) });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       />
                     {:else if f.type === 'boolean'}
                       <label class="mt-0.5 inline-flex items-center gap-2 text-sm">
@@ -365,7 +365,7 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueDate: v === '' ? null : new Date(v).toISOString() });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       />
                     {:else if f.type === 'datetime'}
                       <input
@@ -375,13 +375,13 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueDate: v === '' ? null : new Date(v).toISOString() });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       />
                     {:else if f.type === 'select'}
                       <select
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLSelectElement).value || null })}
-                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       >
                         <option value="">—</option>
                         {#each (f.options?.values ?? []) as opt (opt)}
@@ -463,7 +463,7 @@
                 value={c.path}
                 oninput={(e) => upload.setCompanionPath(row.id, c.id, (e.currentTarget as HTMLInputElement).value)}
                 disabled={c.state === 'uploading' || c.state === 'done'}
-                class="ml-auto w-44 rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-xs focus:border-accent focus:outline-none disabled:opacity-60"
+                class="ml-auto w-44 rounded border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-60"
               />
               <span class="w-14 text-right text-[10px] uppercase tracking-wider"
                 class:text-fg-muted={c.state === 'pending'}

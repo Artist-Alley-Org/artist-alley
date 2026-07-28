@@ -145,7 +145,7 @@ func (h *TextHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
 		img := h.renderCard(lines, meta)
-		if err := h.fanCardToLadder(jobCtx, p.FileHash, img); err != nil {
+		if err := h.fanCardToLadder(jobCtx, p.AssetID, p.FileHash, img); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.text.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -300,39 +300,11 @@ func (h *TextHandler) stage(ctx context.Context, hash string) ([]byte, func(), e
 	return body, func() {}, nil
 }
 
-func (h *TextHandler) fanCardToLadder(ctx context.Context, hash string, src image.Image) error {
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load preview config: %w", err)
-	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		ctype, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.text.encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			return fmt.Errorf("backend put text variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: ctype,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+func (h *TextHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, hash string, src image.Image) error {
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "text",
+	})
 }
 
 func (h *TextHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta TextMetadata) error {

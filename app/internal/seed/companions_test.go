@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -47,8 +46,8 @@ func openCompanionTestPool(t *testing.T) *pgxpool.Pool {
 		" user=" + envOr("AA_DB_USER", "artist_alley") +
 		" dbname=" + envOr("AA_DB_NAME", "artist_alley") +
 		" sslmode=disable password=" + pwd
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)

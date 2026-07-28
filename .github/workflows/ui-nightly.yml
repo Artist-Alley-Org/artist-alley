@@ -96,7 +96,7 @@ jobs:
           # See the `ref` input above (#370).
           ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -141,10 +141,16 @@ jobs:
         # gone (#371) — `created` is a mid-flight state, so the reap
         # deleted peer runs' containers. See ci.yml for the full
         # reasoning.
-        run: |
-          docker compose --profile dogfood down -v --remove-orphans || true
-          docker image prune -f || true  # dangling only (shared daemon: never -a)
-          docker builder prune -f --filter until=48h || true  # sweep old buildkit cache (keeps ~2d for CI speed)
+        #
+        # Shared teardown (#599): the image prune + the 48h buildkit sweep
+        # that used to be inline here now live in the composite action —
+        # unchanged, just shared with ci.yml / ui-pr.yml, which had no
+        # builder sweep at all. It additionally reclaims aa-ci-<run>-app.
+        # app-b keeps its explicit artist-alley-app:latest tag, which
+        # `--rmi local` and the <project>-* glob both leave alone.
+        uses: ./.github/actions/compose-cleanup
+        with:
+          profiles: --profile dogfood
 
       - name: Sweep stale /etc/hosts entries from previous runs
         # Older up.sh versions wrote `127.0.0.1 studio-b.local`
@@ -366,7 +372,9 @@ jobs:
         # up app-b/nginx-b/postgres-b + their volumes; the bare one
         # catches everything else. This always() teardown is what makes
         # the cross-run reap unnecessary (#371) — each run removes
-        # exactly its own label-scoped project.
-        run: |
-          docker compose --profile dogfood down -v --remove-orphans || true
-          docker compose down -v --remove-orphans || true
+        # exactly its own label-scoped project. The composite action
+        # keeps both invocations when `profiles` is set (#599) and adds
+        # the image reclaim this step was missing entirely.
+        uses: ./.github/actions/compose-cleanup
+        with:
+          profiles: --profile dogfood

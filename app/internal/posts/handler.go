@@ -46,6 +46,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -53,6 +54,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -99,18 +101,6 @@ type Handler struct {
 	// already no-ops on a nil Registry.
 	registry *cache.Registry
 
-	// follows is the social-graph seam: posts.handler consults it
-	// to gate visibility='followers' posts (the long-parked TODO
-	// from Phase 1.13.I, finally wired in 1.17.G2). Local interface
-	// rather than a direct social.Handler import so this package
-	// doesn't grow a cross-feature dep; concrete impl is injected
-	// at boot via SetFollowChecker.
-	//
-	// nil-safe: when the registry isn't wired (tests), visibility
-	// 'followers' falls back to "treat as public" — the
-	// pre-1.17.G2 behaviour — rather than refusing every read.
-	follows followChecker
-
 	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
 	// per ADR 0044). Wired post-construction in api.go. Handlers
 	// use h.activities.WithEmission to record every social action
@@ -119,6 +109,17 @@ type Handler struct {
 	// (direct domain writes; no activity record).
 	activities *activities.Writer
 	baseURLFn  func(ctx context.Context) string
+
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys, cached (#591). Feeds member.asset.ladder_available so the
+	// browse grid can build a responsive srcset instead of serving one
+	// 320px square at every viewport.
+	//
+	// nil-safe, and nil means "no ladder" — ladder_available comes back
+	// false and the client keeps using the single `col` rung it already
+	// knows exists. Tests that don't wire it get the conservative
+	// answer rather than a panic or a wrong true.
+	previewLadder sysconfig.PreviewLadderReader
 
 	// Audit records admin lifecycle events (soft_deleted; restore
 	// fires from softdelete.Service directly). Nil-safe.
@@ -137,17 +138,19 @@ type Handler struct {
 	mentions *mention.Service
 }
 
-// followChecker is the slice of social.Handler this package needs:
-// "does follower follow followee?" Wired at boot via
-// SetFollowChecker so we don't grow an import cycle.
-type followChecker interface {
-	IsFollowing(ctx context.Context, follower, followee int64) (bool, error)
-}
+// The social-graph seam this package used to carry (followChecker /
+// SetFollowChecker, wired at boot from social.Handler) is gone. It
+// existed so canReadPost could ask "does the caller follow the author?"
+// in Go, and it came with a nil-safe fallback that treated the
+// `followers` tier as public whenever the seam was unwired — a fixture
+// convenience that would have opened every followers-tier post on any
+// boot-order slip. The follow check is now a conjunct of the one read
+// rule (readRule.sql), evaluated against user_follows in the same query
+// that returns the rows, so there is nothing to inject and nothing to
+// degrade to.
 
-// SetFollowChecker installs the social-graph dependency post-
-// construction (same pattern users.Handler uses for the audit
-// recorder + auth.Handler uses for the provider registry).
-func (h *Handler) SetFollowChecker(fc followChecker) { h.follows = fc }
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
 
 // SetActivitiesWriter installs the federation activity-ledger
 // writer + baseURL resolver per ADR 0044. Post-construction
@@ -371,6 +374,15 @@ func (h *Handler) CreatePost(
 	if err != nil {
 		return nil, err
 	}
+	// A written post is the same post a read returns (#655). Everything
+	// enrichPreview derives is invisible to fetchFullPost: it is either
+	// per-caller (preview_available, ladder_available) or written outside
+	// the cached ListPostAssets row (pixel dimensions, the async
+	// thumbhash). Four fields accumulated in that hole because the write
+	// paths never made the call — see enrichPreview's own doc comment.
+	if err := h.enrichPreview(ctx, full); err != nil {
+		return nil, err
+	}
 	return openapi.CreatePost201JSONResponse(*full), nil
 }
 
@@ -398,7 +410,11 @@ func (h *Handler) GetPost(
 		}
 		return nil, err
 	}
-	if !h.canReadPost(ctx, id, full) {
+	readable, err := h.canReadPost(ctx, id, full)
+	if err != nil {
+		return nil, err
+	}
+	if !readable {
 		return openapi.GetPost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -545,6 +561,10 @@ func (h *Handler) UpdatePost(
 
 	full, err := h.fetchFullPost(ctx, pgID)
 	if err != nil {
+		return nil, err
+	}
+	// Same shape a GET returns (#655). See CreatePost.
+	if err := h.enrichPreview(ctx, full); err != nil {
 		return nil, err
 	}
 	return openapi.UpdatePost200JSONResponse(*full), nil
@@ -718,23 +738,32 @@ func (h *Handler) ListPosts(
 
 	// Default visibility filter: org-only (the post-1.22.C-a
 	// equivalent of legacy 'public' for the walled-garden feed).
-	// Callers can pass `?visibility=private` to get their own
-	// private posts (we still AND with the caller's own author_ref
-	// so other people's privates aren't leaked). A future feed
-	// query upgrade unifies the filter with the share-table view
-	// for "what I can actually see"; this is the conservative
-	// preserve-old-behavior path for the cleanup migration.
-	visibility := "org-only"
-	if req.Params.Visibility != nil {
-		visibility = string(*req.Params.Visibility)
-	}
-	// Author filter: if caller asks for their own posts, drop the
-	// visibility filter — they see all of their own visibilities.
+	//
+	// `?visibility=` NARROWS within what the caller may read; it never
+	// widens it. Authorization is the read rule's job (readRule.sql,
+	// spliced into the query below), so this parameter is a plain
+	// display filter: `?visibility=private` means "the private posts I
+	// may read" — my own, plus everyone's for a moderator — and
+	// `followers` / `explicit-share` behave the same way. Before #660 it
+	// went into the query as a bare `visibility = $n` with no author or
+	// relationship conjunct anywhere, which handed every signed-in
+	// caller every other author's private posts.
+	//
+	// The DEFAULT stays org-only so the browse feed keeps showing the
+	// walled-garden tier and nothing else — without it, signing in would
+	// start dropping your own private posts into the public grid. An
+	// explicit author filter for yourself still drops the default, since
+	// "show me my posts" means all of your tiers.
 	var visPtr *string
-	if req.Params.AuthorRef != nil && *req.Params.AuthorRef == caller.UserRef {
+	switch {
+	case req.Params.Visibility != nil:
+		v := string(*req.Params.Visibility)
+		visPtr = &v
+	case req.Params.AuthorRef != nil && *req.Params.AuthorRef == caller.UserRef:
 		visPtr = nil
-	} else {
-		visPtr = &visibility
+	default:
+		v := "org-only"
+		visPtr = &v
 	}
 	var authorPtr *int64
 	if req.Params.AuthorRef != nil {
@@ -773,7 +802,7 @@ func (h *Handler) ListPosts(
 	}
 
 	fetch := limit + 1
-	rows, err := New(h.Pool).ListPostsPage(ctx, ListPostsPageParams{
+	rows, err := h.ListPostsPageGated(ctx, caller, ListPostsPageParams{
 		IncludeDeleted:  includeDeletedArg,
 		AuthorUserRef:   authorPtr,
 		Visibility:      visPtr,
@@ -843,29 +872,20 @@ func (h *Handler) ListPosts(
 //
 // Anonymous admission is decided upstream by the public-mode gate
 // (auth.PublicSurfaceRoutes): with public mode off an anonymous request
-// never reaches here. Visibility mirrors the feed — anonymous sees only
-// 'public' posts, an authenticated caller sees the walled-garden
-// 'org-only' tier. Bounded result (no cursor); the client redirects when
-// exactly one post is visible and lists when several.
+// never reaches here. Visibility is the same read rule the feed and
+// GetPost use (readRule.sql) rather than a tier list restated here —
+// anonymous sees the public tier, an authenticated caller additionally
+// sees org-only, their own posts at every tier, followed authors'
+// followers-tier posts, and (as a moderator) private ones. Bounded
+// result (no cursor); the client redirects when exactly one post is
+// visible and lists when several.
 func (h *Handler) GetPostsByAsset(
 	ctx context.Context,
 	req openapi.GetPostsByAssetRequestObject,
 ) (openapi.GetPostsByAssetResponseObject, error) {
-	// Anonymous → public tier only. Authenticated → the walled-garden
-	// view (public + org-only), the same tiers the feed shows. The
-	// relationship tiers (private / followers / explicit-share) need
-	// ownership/relationship checks and are out of scope for this lookup.
-	visibilities := []string{"public"}
-	if auth.IdentityFromContext(ctx) != nil {
-		visibilities = append(visibilities, "org-only")
-	}
-
-	ids, err := New(h.Pool).ListPostsByAsset(ctx, ListPostsByAssetParams{
-		AssetID:      pgtype.UUID{Bytes: req.Id, Valid: true},
-		Visibilities: visibilities,
-	})
+	ids, err := h.ListPostsByAssetGated(ctx, auth.IdentityFromContext(ctx), req.Id)
 	if err != nil {
-		return nil, fmt.Errorf("posts: by asset: %w", err)
+		return nil, err
 	}
 
 	items := make([]openapi.Post, 0, len(ids))
@@ -1009,7 +1029,11 @@ func (h *Handler) ListPostAcls(
 		}
 		return nil, err
 	}
-	if !h.canReadPost(ctx, caller, full) {
+	readable, err := h.canReadPost(ctx, caller, full)
+	if err != nil {
+		return nil, err
+	}
+	if !readable {
 		return openapi.ListPostAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -1202,49 +1226,23 @@ func canMutatePost(id *auth.Identity, authorRef int64) bool {
 	return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
 }
 
-// canReadPost gates GetPost. Author always wins; otherwise the
-// visibility decides. Method (not free function) so the followers-
-// visibility branch can consult h.follows. Anonymous + nil-follows
-// callers fall through to "treat followers like public" — the
-// pre-1.17.G2 behaviour — to keep the test path that doesn't wire
-// the social handler working.
-func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi.Post) bool {
+// canReadPost gates the single-item read paths (GetPost, ListPostAcls).
+//
+// It does not decide anything itself: it runs the ONE read rule
+// (readRule.sql) as an EXISTS probe against the post's id, which is the
+// same fragment ListPostsPageGated filters the feed with. That is the
+// #660 fix — before it, this function was the real rule and the list
+// query was a second, weaker restatement of it, so the list returned
+// posts this function would have refused.
+//
+// The DB error case is propagated rather than swallowed: the caller
+// turns it into a 500. A read gate that answers "no" on a transport
+// blip looks exactly like a permissions bug to whoever hits it.
+func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi.Post) (bool, error) {
 	if id == nil {
-		return false
+		return false, nil
 	}
-	if id.UserRef == p.AuthorUserRef {
-		return true
-	}
-	switch p.Visibility {
-	case openapi.PostVisibilityOrgOnly:
-		// Any authenticated local user can read org-only posts —
-		// the post-1.22.C-a equivalent of legacy 'public' for the
-		// walled-garden default tier.
-		return true
-	case openapi.PostVisibilityFollowers:
-		// Phase 1.17.G2 wires this: the post is visible only when
-		// the caller follows the author. follows nil → degrade to
-		// org-only-style behaviour so legacy test fixtures keep passing.
-		if h.follows == nil {
-			return true
-		}
-		ok, err := h.follows.IsFollowing(ctx, id.UserRef, p.AuthorUserRef)
-		if err != nil {
-			// Fail closed on a DB error — better to 403 a real
-			// follower temporarily than silently expose a private
-			// post if the follows table is unreachable.
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.followers_check.error",
-				slog.Int64("follower", id.UserRef),
-				slog.Int64("followee", p.AuthorUserRef),
-				slog.String("err", err.Error()),
-			)
-			return false
-		}
-		return ok
-	case openapi.PostVisibilityPrivate:
-		return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
-	}
-	return false
+	return h.postReadable(ctx, id, uuid.UUID(p.Id))
 }
 
 // validVisibility checks against the 4-tier closed catalogue
@@ -1384,35 +1382,87 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		ids = append(ids, id.String())
 	}
 
+	// The configured ladder travels in as a PARAMETER rather than being
+	// baked into the SQL (#591). Read once for the whole batch — a cached
+	// in-process lookup, not a config round-trip per row.
+	var ladder []string
+	if h.previewLadder != nil {
+		ladder = h.previewLadder(ctx)
+	}
+
 	rows, err := h.Pool.Query(ctx, `
 		SELECT a.id, a.sensitivity, a.owner_user_ref,
 		       (a.file_hash IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
+		       `+sysconfig.LadderSatisfiedSQL("a.file_hash", "$3")+` AS has_ladder,
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
-		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member
+		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member,
+		       a.thumbhash,
+		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
 		WHERE a.id = ANY($1::uuid[])`,
-		ids, caller.UserRef)
+		ids, caller.UserRef, ladder)
 	if err != nil {
 		return fmt.Errorf("posts: preview enrich: %w", err)
 	}
 	defer rows.Close()
 
 	avail := make(map[uuid.UUID]bool, len(idSet))
+	ladderOK := make(map[uuid.UUID]bool, len(idSet))
+	// Source pixel dimensions per member asset (#640). They ride this
+	// pass rather than ListPostAssets because that query's rows are
+	// CACHED per post and these have to reach a caller whose members came
+	// off the cache — the same reason the two availability flags are
+	// computed here. Unlike those, dimensions are not per-caller; they
+	// are just metadata about a row the caller can already see.
+	dims := make(map[uuid.UUID][2]int32, len(idSet))
+	// Blur-up placeholder per member asset (#648). Rides this pass for
+	// the SAME reason as dims, and one more: thumbhash is written
+	// ASYNCHRONOUSLY. It is computed synchronously at upload only when
+	// the image decodes there; every other case — a decode that failed,
+	// an asset that predates the column — is backfilled later by the
+	// raster worker (preview.backfillThumbhash → SetAssetThumbhashIfMissing),
+	// which has no reason to invalidate a post cache. On the cached
+	// ListPostAssets row a post read before its raster job finished would
+	// pin thumbhash=NULL until an unrelated post write evicted it, which
+	// is the same "server has it, client can't see it" failure this issue
+	// exists to close. Read per request instead; it costs one more column
+	// on a query that already runs.
+	hashes := make(map[uuid.UUID]string, len(idSet))
 	for rows.Next() {
 		var (
-			id       pgtype.UUID
-			sens     string
-			owner    *int64
-			hasCol   bool
-			isMember bool
+			id        pgtype.UUID
+			sens      string
+			owner     *int64
+			hasCol    bool
+			hasLadder bool
+			isMember  bool
+			thumb     []byte
+			pxW       *int32
+			pxH       *int32
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &isMember); err != nil {
+		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember, &thumb, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
-		avail[uuid.UUID(id.Bytes)] = hasCol && visibility.ContentReadable(sens, owner, caller, caps, isMember)
+		if pixeldims.Sane(pxW, pxH) {
+			dims[uuid.UUID(id.Bytes)] = [2]int32{*pxW, *pxH}
+		}
+		if len(thumb) > 0 {
+			// Base64 on the wire, matching assets.rowToAPI — the
+			// frontend decoder takes either form and this is the one
+			// every other surface already ships.
+			hashes[uuid.UUID(id.Bytes)] = base64.StdEncoding.EncodeToString(thumb)
+		}
+		// ONE readability decision feeds BOTH flags. Deriving
+		// ladder_available from anything other than the same
+		// ContentReadable call that gates preview_available would let the
+		// two disagree on a restricted asset — and a true ladder flag on
+		// gated bytes is a 403 the client walks straight into.
+		readable := visibility.ContentReadable(sens, owner, caller, caps, isMember)
+		avail[uuid.UUID(id.Bytes)] = hasCol && readable
+		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && readable
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("posts: preview enrich rows: %w", err)
@@ -1426,6 +1476,17 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		copy(fresh, p.Members) // detaches from the cached backing array
 		for i := range fresh {
 			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
+			fresh[i].Asset.LadderAvailable = ladderOK[uuid.UUID(fresh[i].Asset.Id)]
+			fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = nil, nil
+			if wh, ok := dims[uuid.UUID(fresh[i].Asset.Id)]; ok {
+				w, h := wh[0], wh[1]
+				fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = &w, &h
+			}
+			fresh[i].Asset.Thumbhash = nil
+			if th, ok := hashes[uuid.UUID(fresh[i].Asset.Id)]; ok {
+				v := th
+				fresh[i].Asset.Thumbhash = &v
+			}
 		}
 		p.Members = fresh
 	}

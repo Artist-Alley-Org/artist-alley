@@ -26,8 +26,9 @@ excerpt: >-
   turntable and poster, reusing the same code as the interactive
   viewer so previews are WYSIWYG. Blender is demoted from "renders
   every 3D thumbnail" to a converter invoked only for proprietary
-  formats three.js cannot parse, and moves to an optional worker image
-  so the base image sheds the heavy dependency.
+  formats three.js cannot parse. Amended 2026-07-27 (#500): Blender is
+  not packaged at all — it left the image entirely (3.64 GB → 1.82 GB)
+  and returns as a plugin, so the three.js worker is the only renderer.
 ---
 ## Context
 
@@ -122,6 +123,71 @@ glTF that Blender emits for a `.max` file — is the headless-three.js
 path. 0039 is amended accordingly (its Consequences bullet asserting
 Blender renders every 3D thumbnail is struck and pointed here).
 
+### Amendment 2026-07-27 (#500): Blender is not packaged at all
+
+Step 4 below said Blender "moves behind an optional profile / separate
+image" — still *packaged*, just not in the default image, and still the
+Layer-2 converter that ships with the product. **That is no longer the
+plan. Blender is not packaged by Artist Alley in any image. It becomes
+a plugin.**
+
+The measurements that forced the change, taken on the v0.6.0 image
+before this landed:
+
+- `/opt/blender` was **1.3 GB of a 3.64 GB image (~36%)**. Removing it
+  and the GL/X libraries it dlopened took the compose runtime image to
+  **1.82 GB — a 50% cut**, larger than Blender itself because the
+  `libgl1 / libegl1 / libxrender1 / libxi6 / libxxf86vm1 / libxfixes3 /
+  libxkbcommon0 / libxext6 / libsm6 / libice6` set and `xz-utils` went
+  with it.
+- The 3D catalogue is **`glb` (116), `obj` (105), `fbx` (105),
+  `gltf` (2)** — every one of which has routed to the three.js worker
+  since #498. A query for the Blender-only formats
+  (`md2/md3/mdl/ms3d/mview`) across the whole catalogue returns
+  **none**.
+
+So the "transitional fallback" was not a fallback. It was 1.3 GB of
+dead weight that no upload could reach, on the *common* path, for a
+capability nobody was using.
+
+What this changes concretely:
+
+1. **There is exactly one renderer.** A format outside the three.js
+   loader set gets no turntable — a logged, terminal-free skip, not a
+   job failure. The upload is intact and served; only the generated
+   thumbnail is absent, and marking an asset `failed` over a missing
+   thumbnail would be a lie.
+2. **A missing worker is a deployment fault, not a degraded mode.**
+   With nothing to fall back to, `preview.model` returns a *retryable*
+   error when the worker is absent rather than marking the asset ready
+   with no preview. The `DisableThreeJS` escape hatch is **removed**:
+   it existed to force the Blender path, and "disable the only
+   renderer" is not an operation worth offering. Nothing ever set it —
+   no env var, no `system_config` key, only a test.
+3. **`stl`, `ply` and `dae` moved onto the worker.** Blender used to
+   produce their thumbnails. This ADR already listed them among the
+   formats "three.js parses natively", so they are picked up via the
+   stock loaders rather than losing previews.
+4. **`blend`, `x3d`, `wrl`, `usd*`, `abc` have no renderer** until the
+   converter plugin ships (#499, re-scoped to plugin delivery and moved
+   to v0.14.0). They are the formats the catalogue does not contain.
+5. **The release-image smoke test survives, re-pointed.** Its purpose —
+   proving the 3D chain works *in the built image* — outlives Blender,
+   because what can now go missing (Chromium's dlopen deps, the
+   `node_modules` copy, the importmap paths, a loader that moved in
+   three's addons) still fails at **render** time, where a clean build
+   proves nothing. `scripts/threejs/smoke.mjs` drives the real chain
+   once per supported format and asserts the poster has non-transparent
+   pixels, since an empty render is what a broken loader looks like on
+   disk. The Blender pin-drift gate (#470) is likewise re-pointed at
+   the renderer that replaced it rather than deleted.
+
+`scripts/blender/turntable.py` and `ab_engine_test.py` are deleted with
+this change. They are recoverable from git history, but the plugin
+(#499) should be written against the Blender and worker contracts
+current at that time, not resurrected from a 4.2-era script wired to a
+ModelHandler that no longer exists.
+
 ## Consequences
 
 ### Positive
@@ -132,9 +198,11 @@ Blender renders every 3D thumbnail is struck and pointed here).
 - **One rendering codebase.** The viewer's loaders and scene setup are
   reused headless; a format that renders in the viewer renders in the
   thumbnail by construction.
-- **Slim base image.** Blender leaves the default image; the ~300 MB
-  dependency and its GPL-extension/smoke-test burden become an opt-in
-  worker only proprietary-format operators deploy.
+- **Slim base image.** Blender leaves the default image. *(Amended
+  2026-07-27, #500: it leaves the product entirely and becomes a
+  plugin, and the dependency measured 1.3 GB rather than the ~300 MB
+  estimated here — 3.64 GB → 1.82 GB once its GL/X libraries went too.
+  The GPL-extension burden leaves with it.)*
 - **Faster common path.** three.js rasterization is far cheaper than
   Blender Cycles path-tracing on CPU; the vast majority of 3D uploads
   (open formats) get quicker previews on lighter workers.
@@ -152,14 +220,22 @@ Blender renders every 3D thumbnail is struck and pointed here).
   (same three.js), but software rendering performance and any
   GPU-vs-software rendering differences must be validated against a
   real corpus before the Blender render path is removed. A spike
-  gates the migration.
+  gates the migration. *(Done — #497/#498.)*
 - **Two render substrates during migration.** Until the three.js
   preview worker is proven across the format matrix, Blender rendering
   stays as the fallback; there is a transitional period with both.
+  *(Closed 2026-07-27, #500. The transitional period is over: there is
+  one substrate. See the amendment above — the fallback turned out to
+  be unreachable, because every format in the catalogue routes to the
+  worker.)*
 - **Very heavy scenes** that a browser WebGL context handles poorly
   (enormous vertex counts, exotic materials) may render worse headless
-  than in Blender. The proprietary-viewer moat (0039 Layer 3) and the
-  Blender converter still exist for those; the poster can fall back.
+  than in Blender. The proprietary-viewer moat (0039 Layer 3) still
+  covers those. **There is no longer a renderer to fall back to** —
+  amended 2026-07-27 (#500): a scene the worker cannot render produces
+  no turntable, and the asset is still served and viewable. Do not read
+  the sentence this replaced ("the poster can fall back") as a live
+  capability; it never shipped as one.
 
 ## Alternatives considered
 
@@ -193,20 +269,28 @@ proprietary-converter build:
 2. **Migrate open-format previews off Blender.** Route open 3D formats
    through the three.js preview worker; keep Blender rendering only as
    a transitional fallback until the corpus is clean.
-3. **Build the ADR 0039 Layer-2 Blender *converter* worker**, behind
-   an optional profile / separate image: `.max` + `.ma` via
-   `nrgsille76/io_scene_max` (GPL, in-container, black-box — see 0039);
-   `.mb` via the opt-in `mayapy` build; USD via Blender's USD import.
-   Output glTF, then render via the three.js worker. This is the
-   "build the Blender extension" work the operator asked for.
-4. **Drop Blender from the base image.** Once open-format previews no
-   longer use Blender and the converter is a separate worker, remove
-   the Blender dependency (and its smoke test) from the default build;
-   the converter smoke test moves to the optional worker image.
+3. **Build the ADR 0039 Layer-2 Blender *converter*** — `.max` + `.ma`
+   via `nrgsille76/io_scene_max` (GPL, in-container, black-box — see
+   0039); `.mb` via the opt-in `mayapy` build; USD via Blender's USD
+   import. Output glTF, then render via the three.js worker. This is
+   the "build the Blender extension" work the operator asked for.
+   **Amended 2026-07-27 (#500): it ships as a plugin, not as a worker
+   image we package.** #499 is re-scoped to plugin delivery and moved
+   to v0.14.0.
+4. **Drop Blender from the base image.** ~~Once open-format previews no
+   longer use Blender and the converter is a separate worker~~ —
+   **done 2026-07-27 (#500), and ahead of step 3 rather than after
+   it.** Waiting for the converter would have meant carrying 1.3 GB of
+   unreachable dependency through however many releases step 3 takes;
+   the catalogue showed nothing was using it. Removed: the Blender
+   download/verify/extract from both Dockerfiles, the `/app/blender/`
+   layout and `turntable.py`, the GL/X libs it dlopened, the Blender
+   render/poster/isometric paths in `ModelHandler`, and the
+   `DisableThreeJS` escape hatch. The release-image smoke test was
+   **re-pointed, not deleted** — see the amendment above.
 
-Target: **all four before v1.0.0.** Steps 1–2 (WYSIWYG + slim image)
-are the priority; steps 3–4 land the proprietary coverage and finish
-the dependency removal.
+Target: **all four before v1.0.0.** Steps 1, 2 and 4 have landed
+(#497/#498/#500); step 3 lands the proprietary coverage as a plugin.
 
 ## References
 

@@ -77,12 +77,75 @@ const TILE_MAX_IDX = TILE_STEPS_REM.length - 1;
  *  is written down as a rule — they're consequences. */
 const DEFAULT_TILE_IDX = 5;
 
-/** thumbnail is the same ladder, two rungs denser. That's the old
- *  `size + 3` column bump re-expressed as a size: at the default it
- *  lands on 16rem → 7 columns at 1920px, which is exactly what
- *  `resolveCols('thumbnail', 4)` used to return. Product intent (a
- *  dense preview wall), not layout guesswork. */
-const THUMBNAIL_RUNG_OFFSET = -2;
+/** thumbnail is the same ladder, one rung ROOMIER than grid — at the
+ *  default that is 28rem → 4 columns at 1920px, against grid's 22rem → 5.
+ *
+ *  This inverts the previous -2 ("a dense preview wall", 16rem → 7
+ *  columns), and the inversion is the point (#556). thumbnail is the
+ *  DETAILS view: it carries a title header, the thumb, and a metadata
+ *  footer, and the owner's ask is "info at a glance". A details tile
+ *  that is denser than the plain grid tile is a contradiction — it was
+ *  why the metadata read as a cramped caption strip. Roomier than grid
+ *  is the product intent now; do not "restore" the dense wall without
+ *  re-reading #556. */
+const THUMBNAIL_RUNG_OFFSET = 1;
+
+// ── The tile-size clamp, in one place (#639) ─────────────────────────
+//
+// `tileMin` is a three-zone clamp and `tileSizes` is the SAME three
+// zones spelled as an `<img sizes>` list. They have to agree — a `sizes`
+// that advertises a different width than the layout gives the tile makes
+// the browser pick the wrong rung — so both read the two constants
+// below and neither restates the arithmetic.
+//
+// CEIL_AT_PX is the viewport width at which the vw zone reaches the rem
+// ceiling: `R rem` and `R·(100·16/CEIL_AT_PX) vw` are the same length
+// there, by construction.
+// FLOOR_RATIO then places the floor handoff at FLOOR_RATIO·CEIL_AT_PX
+// (0.4 · 1920 = 768px), because `FLOOR_RATIO·R rem` is what the vw zone
+// resolves to at that width. Change either number and BOTH the clamp and
+// the sizes list move together.
+const CEIL_AT_PX = 1920;
+const FLOOR_RATIO = 0.4;
+/** px per rem, for converting the ceiling into a vw percentage. Matches
+ *  the browser default root size; a user with a larger root gets a
+ *  proportionally larger rem floor/ceiling anyway, so the vw zone stays
+ *  the only part expressed in absolute viewport units. */
+const ROOT_PX = 16;
+/** The viewport width below which the clamp sits on its floor. */
+const FLOOR_BELOW_PX = CEIL_AT_PX * FLOOR_RATIO;
+
+/** The clamp's three zones for a rung, as numbers. */
+function clampZones(rem: number): { floorRem: number; vw: number; ceilRem: number } {
+  return {
+    floorRem: +(rem * FLOOR_RATIO).toFixed(2),
+    vw: +((rem * ROOT_PX * 100) / CEIL_AT_PX).toFixed(2),
+    ceilRem: rem,
+  };
+}
+
+/** `--tile-min` for a rung: the CSS lever the layout actually uses. */
+export function tileMinFor(rem: number): string {
+  const { floorRem, vw, ceilRem } = clampZones(rem);
+  return `clamp(${floorRem}rem, ${vw}vw, ${ceilRem}rem)`;
+}
+
+/** The `<img sizes>` list for a rung — see `BrowseViewState.tileSizes`
+ *  for the full argument. Exported so a card that renders outside a
+ *  browse surface has one honest default instead of a literal `22rem`. */
+export function tileSizesFor(rem: number): string {
+  const { floorRem, vw, ceilRem } = clampZones(rem);
+  return (
+    `auto, (max-width: ${FLOOR_BELOW_PX}px) ${floorRem}rem, ` +
+    `(max-width: ${CEIL_AT_PX}px) ${vw}vw, ${ceilRem}rem`
+  );
+}
+
+/** The hint for a card whose caller passed none. Derived from the
+ *  default rung rather than written out, so it cannot drift from the
+ *  ladder the way the literal `'22rem'` it replaces did — that literal
+ *  survived two rung recalibrations without moving. */
+export const DEFAULT_TILE_SIZES = tileSizesFor(TILE_STEPS_REM[DEFAULT_TILE_IDX]);
 
 const DEFAULT_MODE: ViewMode = 'grid';
 /** Phones default to `feed` — but only when nothing is stored, and only
@@ -278,17 +341,62 @@ class BrowseViewState {
    *  the column count — it's a property of the viewport, and the only
    *  thing qualified to compute it is the layout engine. */
   get tileMin(): string {
-    const r = this.activeRem;
-    const floor = +(r * 0.4).toFixed(2);
-    const vw = +(r * (16 / 19.2)).toFixed(2);
-    return `clamp(${floor}rem, ${vw}vw, ${r}rem)`;
+    return tileMinFor(this.activeRem);
   }
 
-  /** The active rung as a plain `${R}rem`, for the `<img sizes>` desktop
-   *  clause. `sizes` is not CSS and rejects clamp()/min()/var(), so it
-   *  can't consume `tileMin` — it needs a bare length. */
-  get tileSizesLen(): string {
-    return `${this.activeRem}rem`;
+  /** The slot width to advertise in `<img sizes>`.
+   *
+   *  This used to be the bare rung `${R}rem` — the clamp's CEILING —
+   *  which is the width the tile occupies only above 1920px. Everywhere
+   *  else it over-stated (#639). Measured on the dev library at the
+   *  default rung, advertised against the painted image box:
+   *    masonry 1440px  355px vs 255px   1.33x
+   *    masonry  390px  352px vs 155px   2.13x   (DPR 2)
+   *  Over-stating can only over-FETCH, never upscale, so on the default
+   *  1024/1920/4096 ladder it changed nothing at either width — every
+   *  column lands on `preview` either way. It bites where a phone at
+   *  DPR 2 advertises 705 device px of need against 310 of real slot,
+   *  which crosses a rung on any ladder with a smaller bottom step, and
+   *  ladders are operator-configured (ADR 0071).
+   *
+   *  Two answers, in preference order, because `sizes` accepts a list:
+   *
+   *  1. `auto` — the browser uses the image's OWN laid-out width, which
+   *     is the exact slot including the part no static value can express:
+   *     `auto-fill` and the masonry bucketer resolve a column COUNT, and
+   *     a column is `container/n`, never the bare minimum. Any static
+   *     hint is wrong by up to a factor of two on that alone. Measured in
+   *     Chromium: a lazy `<img>` in a 200px slot resolved `auto` to
+   *     exactly 200px.
+   *
+   *     REQUIRES `loading="lazy"` — CardThumb sets it, and it is load-
+   *     bearing, not incidental. On an eagerly-loaded image `auto`
+   *     resolves to 100vw per spec, and the rest of the list is NOT
+   *     consulted: measured, the same probe made eager advertised the
+   *     full 1440px viewport. Dropping that attribute turns this hint
+   *     into its own worst case.
+   *
+   *  2. The clamp, restated as media-query-conditioned lengths, for UAs
+   *     that do not implement `auto` — they fail to parse it as a
+   *     source-size-value and fall through to the rest of the list, which
+   *     is what the list form is for. Still not exact, but wrong by the
+   *     column-count remainder instead of by the whole floor-to-ceiling
+   *     span.
+   *
+   *  NOT `var(--tile-min)`: `sizes` is not CSS and cannot see custom
+   *  properties. Measured — `sizes: var(--slot)` is discarded outright
+   *  and the 100vw default applies, so it is not a smaller improvement,
+   *  it is silently no hint at all.
+   *
+   *  `min()` / `clamp()` are a different story than #639 assumed: they DO
+   *  parse here. Measured in Chromium, `clamp(8.8rem, 18.33vw, 22rem)`
+   *  resolved to 265px at a 1440px viewport — the correct answer — so
+   *  "sizes rejects clamp()" is not why this is a media-query list. The
+   *  reason is that a CSS math function inside a non-CSS attribute is a
+   *  per-engine bet, while media-conditioned lengths are the original
+   *  `sizes` grammar and resolve to the identical number. */
+  get tileSizes(): string {
+    return tileSizesFor(this.activeRem);
   }
 
   /** Whether dec / inc are currently meaningful. list + feed lock both:

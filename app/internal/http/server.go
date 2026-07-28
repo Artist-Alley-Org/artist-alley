@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
@@ -88,7 +89,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.Recover(logger))
-	r.Use(middleware.VariantCache)
+	// Content-derived ETags for the asset-addressed byte routes (#620).
+	// The validator resolves the asset's file hash and stats the stored
+	// variant, so a re-render under a stable asset id changes the ETag
+	// and a conditional request correctly misses. See variant_cache.go
+	// for why the asset's file_hash alone is not sufficient.
+	r.Use(middleware.VariantCache(newVariantValidator(pool, storageSvc)))
 
 	health := &handlers.Health{
 		Pool:    pool,
@@ -194,7 +200,8 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// Register preview handlers. preview.raster ships in 1.18.A;
 	// preview.video adds the HLS / poster / scrub-sprite pipeline
 	// in 1.18.B-1 (with GPU-encoder auto-detection at boot);
-	// preview.model adds the Blender-headless turntable in 1.18.B-11.
+	// preview.model adds the 3D turntable in 1.18.B-11 (headless
+	// three.js since #498; Blender left the image in #500).
 	// SVG joins the raster handler (extension lives in rasterExts).
 	// pdf / font still pending.
 	// Storage integrity sweeps (#403) — registered as job kinds so a
@@ -215,6 +222,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewComicHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewTextHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewArchiveHandler(pool, storageSvc, sysCfg, logger))
+	// Thumbhash safety-net sweep (#645). Assets whose preview was
+	// rendered from a non-image source (audio waveform, 3D turntable,
+	// page render, glyph sheet) carried thumbhash=NULL until the ladder
+	// step started stamping it, so their tiles flashed blank instead of
+	// fading up from a blur. The handlers are fixed for new ingests;
+	// this backfills what is already on disk.
+	jobRegistry.Register(preview.NewThumbhashBackfillHandler(pool, storageSvc, sysCfg, logger))
 	// Audiobook post-processing — Phase B-2 stubs. Registered so
 	// the dispatcher knows the type names + the admin queue page
 	// renders them; the actual ffmpeg work is a TODO in
@@ -281,6 +295,22 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			}
 		},
 	})
+	// Kick the thumbhash sweep (#645). Enqueued rather than run inline
+	// so boot is never blocked on storage I/O, and idempotency-keyed so
+	// a restart loop can't stack sweeps. Steady state is one indexed
+	// query that returns zero rows and a job that finishes in
+	// microseconds — the same "safety net" shape as the federation
+	// keypair backfill in cmd/aa.
+	backfillPriority := jobs.PriorityBackfil
+	if _, err := jobSvc.Enqueue(serverCtx, preview.JobTypeThumbhashBackfill,
+		preview.ThumbhashBackfillPayload{}, jobs.EnqueueOpts{
+			Priority:       &backfillPriority,
+			IdempotencyKey: preview.ThumbhashBackfillIdempotencyKey,
+		}); err != nil {
+		logger.LogAttrs(serverCtx, slog.LevelWarn, "preview.thumbhash_backfill.enqueue_error",
+			slog.String("err", err.Error()))
+	}
+
 	// Kick the digest loop: enqueue the first coordinator run at the
 	// top of the next hour. Idempotency-keyed so a restart doesn't
 	// stack duplicate coordinators.
@@ -1006,6 +1036,40 @@ func loadCapLicenseFeatures(ctx context.Context, pool *pgxpool.Pool) (map[string
 		out[r.Code] = *r.RequiredLicenseFeature
 	}
 	return out, nil
+}
+
+// newVariantValidator builds the middleware's content-validator: asset
+// id -> stored file hash -> the variant's size + modification time.
+//
+// Two cheap reads, one indexed PK lookup and one Stat. It returns
+// ok=false for anything it cannot resolve — a missing asset, an asset
+// with no file, a variant the preview worker has not written yet — and
+// the middleware then makes no caching claim at all rather than
+// inventing a weaker validator.
+//
+// Deliberately does NOT consult visibility: this resolves the identity
+// of bytes, not permission to see them. The handler behind it still
+// runs every content check it ran before, and a caller who fails those
+// gets a 404 with `no-store`. A validator that leaked existence would
+// be an ADR 0064 problem; one derived from storage layout, hashed, and
+// only ever returned alongside the handler's own answer is not.
+func newVariantValidator(pool *pgxpool.Pool, svc *storage.Service) middleware.VariantValidator {
+	return func(ctx context.Context, assetID uuid.UUID, variantKey string) (string, bool) {
+		var fileHash *string
+		err := pool.QueryRow(ctx,
+			`SELECT file_hash FROM assets WHERE id = $1 AND deleted_at IS NULL`,
+			assetID,
+		).Scan(&fileHash)
+		if err != nil || fileHash == nil || *fileHash == "" {
+			return "", false
+		}
+		info, err := svc.Stat(ctx, *fileHash, variantKey)
+		if err != nil || info == nil {
+			return "", false
+		}
+		return middleware.VariantETag(*fileHash, variantKey, info.Size,
+			info.ModifiedAt.UnixNano()), true
+	}
 }
 
 // iiifVariantLister adapts sysconfig.Store into the

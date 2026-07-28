@@ -236,7 +236,7 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// pre-dating poster-derived thumbnails). The inner helpers skip
 	// what's already on the backend.
 	posterExists := h.variantExists(jobCtx, p.FileHash, "poster")
-	if err := h.writePoster(jobCtx, work, p.FileHash, probe); err != nil {
+	if err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe); err != nil {
 		return nil, fmt.Errorf("preview.video: poster: %w", err)
 	}
 	if posterExists {
@@ -389,7 +389,7 @@ func parseRatio(s string) float64 {
 // Poster
 // ---------------------------------------------------------------------------
 
-func (h *VideoHandler) writePoster(ctx context.Context, w workDir, hash string, probe Probe) error {
+func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe) error {
 	posterPath := filepath.Join(w.dir, "poster.jpg")
 	if h.variantExists(ctx, hash, "poster") {
 		// Re-extract from source to drive the raster ladder without
@@ -410,7 +410,7 @@ func (h *VideoHandler) writePoster(ctx context.Context, w workDir, hash string, 
 		if err := runFFmpeg(cmd); err != nil {
 			return err
 		}
-		return h.writePosterVariants(ctx, hash, posterPath)
+		return h.writePosterVariants(ctx, assetID, hash, posterPath)
 	}
 
 	at := 1.0
@@ -439,22 +439,19 @@ func (h *VideoHandler) writePoster(ctx context.Context, w workDir, hash string, 
 	// from the poster frame so videos render the same shape as images
 	// across every browse + post-detail surface. This is what makes a
 	// video card actually look like a card instead of a placeholder.
-	return h.writePosterVariants(ctx, hash, posterPath)
+	return h.writePosterVariants(ctx, assetID, hash, posterPath)
 }
 
 // writePosterVariants decodes the poster JPEG and runs it through the
-// sysconfig.PreviewConfig ladder, reusing the raster handler's
-// resizeFor/encodeImage helpers (same package). Variants that already
-// exist on the backend are skipped — re-runs are cheap.
-func (h *VideoHandler) writePosterVariants(ctx context.Context, hash, posterPath string) error {
-	if h.SysConfig == nil {
-		return nil // tests may omit; not fatal.
-	}
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("poster variants: load config: %w", err)
-	}
-
+// shared ladder step, which writes each rung and stamps the asset's
+// thumbhash from the poster frame. Rungs already on the backend are
+// skipped — re-runs are cheap.
+//
+// A failed Put here now fails the job (it used to log + continue). The
+// job system retries up to max_attempts, and the alternative — a video
+// reporting success with no `col` — is the col-404 class the model
+// handler already fixed for itself.
+func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("poster variants: open: %w", err)
@@ -464,38 +461,10 @@ func (h *VideoHandler) writePosterVariants(ctx context.Context, hash, posterPath
 	if err != nil {
 		return fmt.Errorf("poster variants: decode: %w", err)
 	}
-
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		contentType, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.video.poster_variant_encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.video.poster_variant_put_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "video", Source: "poster",
+	})
 }
 
 // ---------------------------------------------------------------------------

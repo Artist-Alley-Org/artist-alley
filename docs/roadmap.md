@@ -52,6 +52,7 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
 
 | Version | Date | Headline |
 |---|---|---|
+| **v0.6.0** | 2026-07-23 | Public read surface + demo hardening — public user-profile pages (#478), three.js 3D-preview migration (multi-file glTF fixed, arm64 3D previews) (#496 steps 1–2, #486), shared browse view controls (#511), CI-reliability epic (#485); fixes a federation-path query bug caught by the nightly (#538) |
 | **v0.5.2** | 2026-07-21 | `content.read.all` capability (#474) — a content-plane-only read cap so a read-only viewer (the public demo) sees `team`/`restricted` content without exposing admin surfaces; fixes the demo's blank "Preview unavailable" tiles |
 | **v0.5.1** | 2026-07-21 | Shareable asset pages (`/assets/[id]`, fixing dead-end collection clicks) + 3D previews restored to published images (Blender was missing from the release build); also promoted the accumulated foundation work — scheduled-action engine (ADR 0020), audit retention/export (ADR 0032), and a visibility-consolidation batch |
 | **v0.5.0** | 2026-07-20 | Public mode — anonymous browsing behind an operator toggle (off by default); single visibility enforcement point (ADR 0063); sensitivity gates content not rows (ADR 0064); featured rail on the placement model (ADR 0065); audit-IP PII gating |
@@ -137,8 +138,9 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
   accurate scrubbing. Audio: waveform PNG + click-to-seek scrub.
   PDF: multi-page navigator + raster. Fonts: specimen render. 3D:
   native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`,
-  Blender-rendered turntable thumbnails for heavy formats (`.blend`,
-  others coming under 1.18.B-11), pure-Go importers for legacy game
+  server-rendered turntable thumbnails via a headless three.js worker
+  (Chromium/SwiftShader — the same loaders as the viewer, so thumbnail
+  and live view match; #498/#500), pure-Go importers for legacy game
   formats (MD2 / MD3 / MDL / MS3D — 1.18.C-2 / C-3). Asset companion
   files (textures, `.mtl`, `.bin`) resolved per-asset so 3D loaders
   can pull their sidecars.
@@ -622,6 +624,33 @@ milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
 
+> **⚠️ Release train re-cut 2026-07-27 — authoritative summary. The detailed per-version prose further down predates this and is being reconciled; where they disagree, this table + the GitHub milestones win.**
+>
+> **What changed on 2026-07-27 and why.** v0.7.0's theme was *"operator configurability + browse polish"* — two releases in one, which is why it kept growing instead of closing. It has been split: the browse half keeps v0.7.0, and **two new milestones were inserted**, shifting everything from the old v0.8.0 upward by two. No issues were reassigned in that shift; the milestones themselves were renamed, so each carried its contents with it.
+>
+> | Milestone | Theme |
+> |---|---|
+> | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
+> | **v0.7.0** *(current)* | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) |
+> | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine (#519/#520/#521), branding (#517), feature flags (#524) |
+> | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577) |
+> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* |
+> | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
+> | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
+> | v0.13.0 | Privacy, audit, observability & reporting *(was v0.11.0)* |
+> | v0.14.0 | Platform & extensibility (plugins / add-ons / MCP / imports) *(was v0.12.0)* |
+> | v0.15.0 | Monetization & premium DCC *(gated on v0.14 add-ons registry; was v0.13.0)* |
+> | v0.16.0 | AI & creative tooling *(was v0.14.0)* |
+> | v0.17.0 | RS migration tool *(was v0.15.0)* |
+> | v0.18.0 | Physical archive mode *(was v0.16.0)* |
+> | v0.19.0 | Distribution & packaging *(was v0.17.0)* |
+> | v0.20.0 | Federation / multi-site / fediverse *(was v0.18.0)* |
+> | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) |
+>
+> Locked sequencing: platform (now v0.14) **before** monetization/premium (now v0.15). Each GitHub milestone's issue list is authoritative.
+>
+> **Why the split matters beyond tidiness.** The two halves of the old v0.7.0 had no dependency on each other — admin configuration does not block browse correctness, and vice versa — so holding them in one milestone meant neither could ship. Separating them makes v0.7.0 tag-able on work that is already largely done.
+
 
 
 - **v0.3.1 — foundation cleanup** (shipped 2026-07-17): admin read-cap UI
@@ -653,21 +682,22 @@ map to the milestones below.
 > (grounded in the code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered
 > backlog, not a promise of one release each.
 
-> **On the milestones past v0.6.0:** every open issue is assigned to a version in
-> **dependency order** — nothing sits in a milestone that depends on a later one. The
-> *sizes* are provisional: several later milestones hold more epics than a single release
-> has ever shipped, and each gets a scope-cut when it is actually planned (grounded in the
-> code as it is then), the way v0.6.0 was. Treat v0.7.0+ as an ordered backlog, not a
-> promise of one release each.
-
 - **v0.6.0 — scheduled-action engine + audit completion** (foundation slice,
   scope-cut 2026-07-21). The greenfield **scheduled-action engine** (#40 — embargo
   auto-lift, reveal-with-logging, the executor #44/#51/#52-retention all depend on),
   **audit-log completion** (#52 — retention + signed export; the core shipped with
   #425), and the visibility-cleanup tail (#451, #458, #460, #212) plus #431. Licensing
   (#27), observability (#53), storage tooling (#22) and the privacy switch (#426)
-  deferred to v0.7.0 — each is its own large build.
-- **v0.7.0 — Content config & Integrations** (#21 + external imports #55).
+  deferred out of v0.6.0 — each is its own large build. *(Their later homes have
+  since moved; see the release-train table above, which is authoritative.)*
+- **v0.7.0 — Operator config + browse polish.** *Corrected 2026-07-26.* This line
+  previously read "Content config & Integrations (#21 + external imports #55)",
+  which contradicted the rebalanced release train above and was the sole reason
+  **#21** (Phase 1.18 — Integrations) sat in v0.7.0 at all. **#21 moved to
+  v0.12.0** (Platform & extensibility — OAuth apps, webhooks and integrations are
+  extensibility surfaces) and **#22** (Phase 1.19 — Storage tooling) **to
+  v0.11.0**. Both are multi-release builds that were never sized for v0.7.0; they
+  inherited the milestone from this stale prose rather than from a decision.
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
   static binaries, Homebrew (#286).
 

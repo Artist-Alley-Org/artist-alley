@@ -190,18 +190,63 @@ worth separating what is open from what is not:
 
 Until then the authenticated post/collection branch stays `public OR author` — byte-for-byte —
 asserted by test so an accidental widening fails as loudly as a tightening. **The decision is
-tracked as #462; the mechanical consolidation that waits on it (routing `ListPostsPage` through
+tracked as #462; the mechanical consolidation that waits on it (routing the post list through
 the predicate) is #212, which is therefore gated on #462, not shippable ahead of it.** One
 distinction keeps the two straight: the post-feed *filter* `FeedFollowerRef` ("posts from accounts
 I follow") is *curation*, not authorization, and correctly stays **out** of the predicate — a peer
 cannot be trusted to run another user's feed query. The `followers` *visibility tier* is
 authorization and belongs *in* the predicate. They share a word and nothing else.
 
+**Update 2026-07-27 (#660).** The named query is gone: `ListPostsPage` was deleted from
+`posts/queries.sql` and the feed is now `posts.Handler.ListPostsPageGated`, which splices
+`posts/read_rule.go`. That is **not** #212 and does not pre-empt #462. #212 is "route the post
+list through *this* predicate"; what #660 did is narrower — the post list now obtains the rule
+the post *single-item* gate (`canReadPost`) was already applying, instead of restating a weaker
+one. It answers no open product question; it only removes a disagreement inside the posts
+package. The disagreement was live: the list took the caller's `?visibility=` straight into SQL
+with no author or relationship conjunct, so any signed-in caller could read every author's
+private posts while `GET /posts/{id}` refused them the same rows. Note what that implies about
+the paragraph above — the deferral was recorded honestly for the *predicate*, and a second
+expression outside the predicate leaked anyway. Deferring a rule in one place does not defer it
+everywhere; it just moves where someone will express it.
+
+**Update 2026-07-28 (#661).** Splicing-at-every-site turned out to be insufficient *in practice*,
+and it is worth recording why rather than restating the rule. The mechanism is sound; what fails
+is the assumption that a read path's author will reach for it. Three more sites were found by
+sweep, none by a test, and each had been correct-looking on the day it was written:
+
+- `GET /assets/{id}/similar` performed **no** identity check at all — a bare existence probe for
+  the anchor and a `deleted_at IS NULL` re-fetch for the neighbours, returning the full Asset
+  projection. It was unexploitable only because the embedding tables were empty, which is not the
+  same as safe: seeding embeddings reproduced the leak immediately.
+- The IIIF Presentation loaders (`iiif/presentation/loader.go`) read by id with `deleted_at IS
+  NULL` — and `LoadCollection` not even that. So a draft asset served a full anonymous manifest,
+  and **any signed-in caller could read the manifest and full member list of anyone else's private
+  collection**. The route had a carefully-designed *content*-plane gate (ADR 0064) and no
+  *row*-plane gate whatsoever; the presence of one plane is why nobody noticed the absence of the
+  other.
+
+Two things generalise. **First: a gate that lives in a different file from the query is not a
+property of the query.** `LoadCollection` was safe for anonymous callers only because a switch in
+`http.go` defaulted closed, and that switch had gone stale — it fell through on `public`, a value
+migration 00008 added, so genuinely public collections 404'd while private ones leaked to
+authenticated callers. One expression, two wrong answers. **Second: caller-scoped predicates and
+shared caches interact.** The `EntityCollection` authenticated branch binds the caller's ref, so
+the manifest cache — keyed only on `anonymous` vs `authenticated` — would have handed the first
+entitled caller's manifest to every later one. Splicing the predicate into a read path is not
+finished until the path's cache key is at least as specific as the predicate's inputs.
+
 ## Consequences
 
 - Content visibility has exactly one definition; new read paths inherit it by construction,
   and a new *storage-shaped* read path that cannot splice a fragment is a design smell to
   resolve, not to work around.
+- **Splicing is not self-enforcing.** Every instance in epic #665 was a path that never called
+  `Filter` at all, so no amount of correctness *inside* the predicate would have caught them.
+  What now prevents recurrence is the invariant test shape the sweep converged on: a list path
+  may never return a row the corresponding single-item read would refuse, asserted per entity
+  and per caller class. It is stated set-theoretically so it survives changes to the predicate
+  itself, and it fails on a path that forgot the rule rather than on one that got it wrong.
 - The contract test is the real deliverable of this work — more than the migration.
 - Anonymous access remains unreachable in production until the anonymous API surface lands,
   so this change is behaviour-preserving on merge.

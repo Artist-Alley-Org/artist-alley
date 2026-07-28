@@ -51,11 +51,18 @@ type ModelResult struct {
 	WorkS      float64  `json:"work_s"`
 }
 
-// ModelHandler renders an N-frame turntable of a 3D asset via headless
-// Blender, fans the first frame into the standard raster ladder
-// (col / preview / screen / hires), and composes the rest into a
-// sprite sheet + WebVTT cues that the existing hover-scrub UI already
-// understands (same scheme as preview.video sprites).
+// ModelHandler renders an N-frame turntable of a 3D asset via the
+// headless three.js worker (Chromium + SwiftShader), fans the poster
+// into the standard raster ladder (col / preview / screen / hires),
+// and composes the frames into a sprite sheet + WebVTT cues that the
+// existing hover-scrub UI already understands (same scheme as
+// preview.video sprites).
+//
+// Blender left the image entirely in #500 (ADR 0069 amended): the
+// worker is the only renderer, and it drives the same three.js loaders
+// as the interactive viewer, so the thumbnail and the live view match
+// by construction. Formats no loader handles produce no turntable —
+// see the renderable-format gate in Handle.
 //
 // Idempotent: every output is checked against the storage backend
 // before re-rendering. A re-queued job only fills the gaps.
@@ -65,13 +72,6 @@ type ModelHandler struct {
 	SysConfig *sysconfig.Store
 	Logger    *slog.Logger
 
-	// BlenderPath / ScriptPath override the executable + script lookups.
-	// Empty BlenderPath = `blender` from PATH. Empty ScriptPath defaults
-	// to /app/blender/turntable.py — the container layout the Dockerfile
-	// ships.
-	BlenderPath string
-	ScriptPath  string
-
 	TempDir string
 
 	// Conservative: 3D source files larger than this are rejected.
@@ -79,28 +79,22 @@ type ModelHandler struct {
 	// belong somewhere else.
 	MaxSourceBytes int64
 
-	// Per-job wallclock cap. Blender Cycles on CPU at 36 frames × 512²
-	// × 32 samples lands around 60-180s on a modern desktop; cap at 15
-	// min so a pathological mesh doesn't hold a worker forever.
+	// Per-job wallclock cap. A three.js turntable is seconds rather than
+	// minutes, but Chromium launch plus a pathological mesh can drag;
+	// cap at 15 min so one job can't hold a worker forever.
 	MaxJobDuration time.Duration
 
 	// Turntable resolution + frame count. The defaults give a 36-frame
 	// loop at 10° steps (6×6 sprite grid).
-	Frames  int
-	Res     int
-	Samples int
+	Frames int
+	Res    int
 
-	// three.js worker (#498, ADR 0069). glTF/GLB/FBX/OBJ render through a
-	// headless Chromium + SwiftShader + three.js worker instead of Blender
-	// — ~20-30× faster, correct PBR first-pass. NodePath / ThreeJSScript
-	// override the executable + script lookups (empty = `node` from PATH /
-	// /app/threejs/worker.mjs, the container layout). Blender stays as the
-	// transitional fallback for anything the worker rejects (#500 removes
-	// it). DisableThreeJS forces the Blender path (ops escape hatch).
-	NodePath       string
-	ThreeJSScript  string
-	PosterRes      int
-	DisableThreeJS bool
+	// three.js worker (#498, ADR 0069). NodePath / ThreeJSScript override
+	// the executable + script lookups (empty = `node` from PATH /
+	// /app/threejs/worker.mjs, the container layout).
+	NodePath      string
+	ThreeJSScript string
+	PosterRes     int
 }
 
 // NewModelHandler — recommended constructor with sensible defaults.
@@ -111,7 +105,6 @@ func NewModelHandler(pool *pgxpool.Pool, st *storage.Service, sc *sysconfig.Stor
 		MaxJobDuration: 15 * time.Minute,
 		Frames:         36,
 		Res:            512,
-		Samples:        32,
 		PosterRes:      2048,
 	}
 }
@@ -119,10 +112,11 @@ func NewModelHandler(pool *pgxpool.Pool, st *storage.Service, sc *sysconfig.Stor
 func (h *ModelHandler) Type() jobs.JobType { return jobs.TypePreview3D }
 
 // format3dExts is the set of formats served by the in-tree
-// preview/format3d Go importer. We convert these to .glb up-front
-// and then fall through to the standard Blender turntable, same
-// dance .mview already does. Keep in sync with the per-format
-// Decode* funcs in the format3d package.
+// preview/format3d Go importer. We convert these to .glb up-front and
+// then fall through to the standard turntable, same dance .mview
+// already does — the render step reads the post-conversion extension,
+// so both land on the three.js worker. Keep in sync with the
+// per-format Decode* funcs in the format3d package.
 var format3dExts = map[string]format3dDecoder{
 	"md2":  format3d.DecodeMD2,
 	"md3":  format3d.DecodeMD3,
@@ -167,7 +161,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	defer cleanup()
 
 	// Materialise companions next to the model file at their declared
-	// relative paths. Blender's importers resolve external resources
+	// relative paths. three.js's loaders resolve external resources
 	// (MTL files, .bin buffers, sibling textures) relative to the
 	// loaded file's directory — so as long as the user attached the
 	// right files via the companion API, the chain just works:
@@ -188,15 +182,15 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	//      embedded thumbnail.jpg so the col variant exists even
 	//      if the GLB conversion fails.
 	//   2. In-process convert to GLB. On success we swap sourcePath
-	//      to the .glb so the standard Blender turntable below
-	//      picks it up; the conversion gives us real turntable +
-	//      reference views matching the rest of the 3D pipeline.
+	//      to the .glb so the standard turntable below picks it up;
+	//      the conversion gives us real turntable + reference views
+	//      matching the rest of the 3D pipeline.
 	// A conversion failure is non-fatal: the safety-net thumbnail
 	// already populated the raster ladder, marmoset.js still serves
-	// the live view, and we just skip the heavy Blender frames.
-	// format3d (MD2 / MD3 / MDL) — in-tree Go importer. Same shape
-	// as .mview: convert to .glb in the workdir, swap sourcePath, fall
-	// through to the standard Blender turntable. Soft-fail: a parse
+	// the live view, and we just skip the turntable.
+	// format3d (MD2 / MD3 / MDL / MS3D) — in-tree Go importer. Same
+	// shape as .mview: convert to .glb in the workdir, swap sourcePath,
+	// fall through to the standard turntable. Soft-fail: a parse
 	// failure logs and skips the turntable (raster ladder still
 	// works since the source is just bytes).
 	if dec, ok := format3dExts[strings.ToLower(strings.TrimPrefix(p.FileExtension, "."))]; ok {
@@ -216,7 +210,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 
 	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
-		h.extractMviewThumbBestEffort(jobCtx, p.FileHash, work.sourcePath)
+		h.extractMviewThumbBestEffort(jobCtx, p.AssetID, p.FileHash, work.sourcePath)
 		glbPath, err := h.convertMviewToGLB(jobCtx, work.sourcePath)
 		if err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.mview_convert_failed",
@@ -243,11 +237,11 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	spritesDone := h.variantExists(jobCtx, p.FileHash, "sprites.jpg")
 	framesDone := h.variantExists(jobCtx, p.FileHash, "turntable/0000.png")
 	viewsDone := h.variantExists(jobCtx, p.FileHash, "views/top.png")
-	// isoDone tracks the isometric Cycles re-fan over the col/preview/
-	// screen ladder. The workbench poster always succeeds (fast & cheap)
-	// so posterDone alone isn't enough to skip the whole job — a textured
-	// Kenney model can be poster-done with a magenta-pink col, and we'd
-	// never run the iso pass that fixes it.
+	// isoDone is the "the ladder was fanned from a textured render"
+	// sentinel. It predates #500 (it used to gate a Blender Cycles re-fan
+	// that fixed workbench's magenta textures); with three.js as the only
+	// renderer the poster IS that textured source, and the sentinel now
+	// only serves the re-enqueue early exit below.
 	isoDone := h.variantExists(jobCtx, p.FileHash, "iso/source.png")
 	if posterDone && spritesDone && framesDone && viewsDone && isoDone {
 		result.Skipped = append(result.Skipped, "col", "sprites", "frames", "views", "iso")
@@ -256,8 +250,8 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		return json.Marshal(result)
 	}
 
-	// Both renderers write <out>/turntable/*.png + <out>/views/*.png + a
-	// poster.png so the Go side reads one layout regardless of engine.
+	// The worker writes <out>/turntable/*.png + <out>/views/*.png + a
+	// poster.png; everything below reads that fixed layout.
 	renderOut := work.dir
 	framesDir := filepath.Join(renderOut, "turntable")
 	viewsDir := filepath.Join(renderOut, "views")
@@ -265,61 +259,57 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// so those formats route to three.js too.
 	renderExt := strings.ToLower(strings.TrimPrefix(filepath.Ext(work.sourcePath), "."))
 
-	// three.js render step (#498). glTF/GLB/FBX/OBJ go through the headless
-	// worker: one pass yields a correctly-textured turntable + a hi-res
-	// poster + reference views, ~20-30× faster than Blender Cycles. Because
-	// three.js binds textures the same way the live viewer does, there's no
-	// workbench-magenta quirk — so the raster ladder fans straight off the
-	// poster and the Blender iso re-fan below is skipped. Any failure falls
-	// back to the Blender path (transitional until #500).
-	usedThreeJS := false
-	if isThreeJSExt(renderExt) && h.threeJSAvailable() {
-		if err := h.renderThreeJS(jobCtx, work.sourcePath, work.dir, renderOut); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.threejs_failed_fallback_blender",
-				slog.String("asset_id", p.AssetID.String()),
-				slog.String("err", err.Error()))
-		} else {
-			usedThreeJS = true
-			posterPath := filepath.Join(renderOut, "poster.png")
-			if !posterDone {
-				if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
-					h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.threejs_poster_fan_failed",
-						slog.String("err", err.Error()))
-				} else {
-					result.Variants = append(result.Variants, "poster")
-					posterDone = true
-				}
-			}
-			// The poster IS the textured ladder source; persist it under the
-			// iso sentinel so a re-enqueue can early-exit without re-rendering.
-			if !isoDone {
-				if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err == nil {
-					isoDone = true
-				}
-			}
-		}
+	// Renderable-format gate (#500). Blender is gone from the image, so
+	// the three.js worker is the only renderer: a format outside its
+	// loader set gets no turntable at all. That is a clean, terminal-free
+	// skip rather than a job failure — the upload is intact and served,
+	// only the generated thumbnail is missing, and marking the asset
+	// `failed` over an absent thumbnail would be a lie. Proprietary/exotic
+	// formats (.blend, .abc, .usd*, .x3d) regain previews when the Blender
+	// converter ships as a plugin (#499).
+	if !isThreeJSExt(renderExt) {
+		h.Logger.LogAttrs(jobCtx, slog.LevelInfo, "preview.model.no_renderer_for_format",
+			slog.String("asset_id", p.AssetID.String()),
+			slog.String("ext", renderExt))
+		result.FrameCount = 0
+		result.Skipped = append(result.Skipped, "render:no_renderer_for_format")
+		h.markReady(jobCtx, p.AssetID)
+		result.WorkS = time.Since(started).Seconds()
+		return json.Marshal(result)
 	}
 
-	if !usedThreeJS {
-		// Blender path. Fast workbench poster (~1s) fans the ladder while
-		// the slow Cycles turntable renders, then the turntable itself.
-		if !posterDone {
-			posterPath := filepath.Join(work.dir, "poster.png")
-			if err := h.renderPoster(jobCtx, work.sourcePath, posterPath); err != nil {
-				h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_render_failed",
-					slog.String("asset_id", p.AssetID.String()),
-					slog.String("err", err.Error()))
-			} else if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
-				h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
-					slog.String("err", err.Error()))
-			} else {
-				result.Variants = append(result.Variants, "poster")
-				posterDone = true // skip the Cycles-frame-0 ladder below
-			}
+	// A missing/broken worker is an image or deployment fault, not an
+	// asset fault: return a retryable error so the job comes back once
+	// ops fixes it, instead of silently marking the asset ready with no
+	// preview. Deliberately NOT a TerminalError.
+	if !h.threeJSAvailable() {
+		return nil, fmt.Errorf("preview.model: three.js worker unavailable at %s (node=%s)",
+			h.threeJSScriptPath(), h.nodeBin())
+	}
+
+	// three.js render step (#498). One pass yields a correctly-textured
+	// turntable + a hi-res poster + reference views. Because three.js
+	// binds textures the same way the live viewer does, the raster ladder
+	// fans straight off the poster.
+	if err := h.renderThreeJS(jobCtx, work.sourcePath, work.dir, renderOut); err != nil {
+		h.markFailed(jobCtx, p.AssetID, err.Error())
+		return nil, fmt.Errorf("preview.model: render: %w", err)
+	}
+	posterPath := filepath.Join(renderOut, "poster.png")
+	if !posterDone {
+		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
+				slog.String("err", err.Error()))
+		} else {
+			result.Variants = append(result.Variants, "poster")
+			posterDone = true
 		}
-		if err := h.renderTurntable(jobCtx, work.sourcePath, renderOut); err != nil {
-			h.markFailed(jobCtx, p.AssetID, err.Error())
-			return nil, fmt.Errorf("preview.model: render: %w", err)
+	}
+	// The poster IS the textured ladder source; persist it under the
+	// iso sentinel so a re-enqueue can early-exit without re-rendering.
+	if !isoDone {
+		if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err == nil {
+			isoDone = true
 		}
 	}
 
@@ -328,7 +318,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
 		firstFrame := filepath.Join(framesDir, "frame_0000.png")
-		if err := h.fanRasterLadder(jobCtx, p.FileHash, firstFrame); err != nil {
+		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, firstFrame); err != nil {
 			return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
 		}
 		result.Variants = append(result.Variants, "raster")
@@ -367,44 +357,12 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		result.Variants = append(result.Variants, "sprites")
 	}
 
-	// --- isometric thumbnail overwrite -----------------------------------
-	// The workbench poster fanned at the top of this function paints
-	// textured Kenney models magenta because workbench's image-texture
-	// binding behaves differently from Cycles. Now that the Cycles
-	// turntable has completed (with companions staged in the work-dir),
-	// we know textures bind correctly through Cycles — so render one
-	// extra Cycles frame at the 45°/30° isometric angle and re-fan
-	// the col/preview/screen ladder from it. Costs ~3-5s per asset on
-	// top of the turntable, but turns "pink thumbnail forever" into
-	// "real textured thumbnail once the turntable finishes". Best-
-	// effort: any failure logs and leaves the workbench poster in
-	// place (no regression for assets where workbench was already
-	// correct, e.g. untextured / single-color models).
-	//
-	// Also persists the iso shot itself as the `iso/source.png` variant
-	// so the early-exit guard above can skip rerunning the iso pass
-	// on a re-enqueue.
-	if usedThreeJS || isoDone {
-		// three.js already produced a correctly-textured poster/ladder, so
-		// the Blender iso re-fan (which fixes workbench's magenta textures)
-		// is unnecessary.
-		result.Skipped = append(result.Skipped, "iso")
-	} else {
-		isoPath := filepath.Join(work.dir, "iso.png")
-		if err := h.renderIsometric(jobCtx, work.sourcePath, isoPath); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_render_failed",
-				slog.String("asset_id", p.AssetID.String()),
-				slog.String("err", err.Error()))
-		} else if err := h.fanRasterLadderOpts(jobCtx, p.FileHash, isoPath, true); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_fan_failed",
-				slog.String("err", err.Error()))
-		} else if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", isoPath, "image/png"); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_persist_failed",
-				slog.String("err", err.Error()))
-		} else {
-			result.Variants = append(result.Variants, "iso")
-		}
-	}
+	// The isometric Cycles re-fan that used to live here is gone with
+	// Blender (#500): it existed solely to repaint the magenta thumbnails
+	// Blender's workbench engine produced for textured models, and the
+	// three.js poster is already correctly textured. `iso/source.png` is
+	// still written above, as the re-enqueue sentinel.
+	result.Skipped = append(result.Skipped, "iso")
 
 	h.markReady(jobCtx, p.AssetID)
 	result.WorkS = time.Since(started).Seconds()
@@ -430,8 +388,8 @@ func (h *ModelHandler) writeFrameVariants(ctx context.Context, hash, framesDir s
 
 // writeReferenceViews uploads top + bottom orthographic-ish reference
 // renders as `views/top.png` and `views/bottom.png`. Best-effort per
-// view — a missing file is a soft fail so a Blender render that wrote
-// only one view doesn't tank the whole job.
+// view — a missing file is a soft fail so a render that wrote only one
+// view doesn't tank the whole job.
 func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir string) error {
 	for _, name := range []string{"top", "bottom"} {
 		key := "views/" + name + ".png"
@@ -457,7 +415,7 @@ func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir s
 // failures log a warning and return, never abort the job — the col
 // variant is a "nice to have here, the GLB conversion below produces
 // real renders on success".
-func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mviewPath string) {
+func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, assetID uuid.UUID, hash, mviewPath string) {
 	if h.variantExists(ctx, hash, "col") {
 		return
 	}
@@ -474,7 +432,7 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 			slog.String("err", err.Error()))
 		return
 	}
-	if err := h.fanThumbBytes(ctx, hash, thumb); err != nil {
+	if err := h.fanThumbBytes(ctx, assetID, hash, thumb); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_thumb_fan_failed",
 			slog.String("err", err.Error()))
 	}
@@ -483,7 +441,7 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 // convertFormat3D runs an in-tree format3d decoder against the
 // staged source file and writes the resulting glTF binary next to
 // it. Returns the .glb path so the caller can swap work.sourcePath
-// before the standard Blender turntable runs.
+// before the standard turntable runs.
 //
 // Streams the source through the decoder rather than reading the
 // whole file into memory, then asks format3d.WriteGLB to encode
@@ -519,7 +477,7 @@ func (h *ModelHandler) convertFormat3D(ctx context.Context, src string, dec form
 // convertMviewToGLB runs the in-process Marmoset → glTF binary
 // converter and writes the result next to the .mview source in the
 // workdir. Returns the path to the new .glb so the caller can swap
-// the Blender input over.
+// the renderer's input over.
 //
 // Honours ctx so a worker timeout aborts the conversion cleanly, and
 // caps total decompressed payload at MaxSourceBytes (the same ceiling
@@ -554,55 +512,19 @@ func (h *ModelHandler) convertMviewToGLB(ctx context.Context, mviewPath string) 
 // fanThumbBytes decodes a JPEG and writes it through the raster
 // variant ladder. Shared by the mview path; could be repurposed by
 // any future "we already have a poster, just resize it" worker.
-func (h *ModelHandler) fanThumbBytes(ctx context.Context, hash string, jpegBytes []byte) error {
-	if h.SysConfig == nil {
-		return nil
-	}
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
+func (h *ModelHandler) fanThumbBytes(ctx context.Context, assetID uuid.UUID, hash string, jpegBytes []byte) error {
 	src, err := jpeg.Decode(bytes.NewReader(jpegBytes))
 	if err != nil {
 		return fmt.Errorf("decode thumb: %w", err)
 	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		contentType, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			// Loud-fail (was silent continue) — see col-404 sidequest.
-			// A skipped variant leaves the asset with missing thumbnails
-			// even though the job reports success; the job system already
-			// retries up to max_attempts on a returned error so a
-			// transient blip self-heals.
-			return fmt.Errorf("backend put mview variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "model", Source: "mview",
+	})
 }
 
-// stageCompanions writes every companion the asset has into the
-// Blender workdir at the relative path the user declared. Loaders
+// stageCompanions writes every companion the asset has into the render
+// workdir at the relative path the user declared. Loaders
 // then resolve relative references (OBJ's mtllib, glTF's .bin uri,
 // MTL's map_Kd 'Textures/foo.png') naturally against the workdir.
 //
@@ -691,7 +613,7 @@ func (h *ModelHandler) uploadFile(ctx context.Context, hash, key, path, contentT
 
 // ---------------------------------------------------------------------------
 // Staging — download original to a temp dir with the right extension.
-// Blender's importer dispatch is extension-driven.
+// Loader dispatch (here and in the worker) is extension-driven.
 // ---------------------------------------------------------------------------
 
 func (h *ModelHandler) stage(ctx context.Context, hash, ext string) (workDir, func(), error) {
@@ -732,156 +654,30 @@ func (h *ModelHandler) stage(ctx context.Context, hash, ext string) (workDir, fu
 }
 
 // ---------------------------------------------------------------------------
-// Blender invocation
-// ---------------------------------------------------------------------------
-
-func (h *ModelHandler) renderTurntable(ctx context.Context, src, framesDir string) error {
-	if err := os.MkdirAll(framesDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir frames: %w", err)
-	}
-	// --background: no UI / no GL window. Audio is auto-disabled in
-	//   background mode per the docs, so no separate -noaudio needed.
-	// --factory-startup: ignore user prefs (CI determinism).
-	// --disable-autoexec (-Y): refuse to auto-run Python embedded in
-	//   uploaded .blend files. Without this, an attacker could ship a
-	//   .blend whose driver expressions execute arbitrary Python under
-	//   the worker UID. Default-off when run from CLI, but explicit
-	//   here is belt-and-suspenders.
-	// --python-exit-code 1: critical. Without it, Blender exits 0 even
-	//   if our script raises an unhandled exception, and the Go handler
-	//   thinks the render succeeded.
-	// --engine: A/B test against a textured torus showed Workbench
-	//   wins on every format except .blend, where the source often
-	//   carries full PBR setups that Cycles needs to render
-	//   faithfully. See engineForExt().
-	// `--` separates Blender's args from the script's argv.
-	cmd := exec.CommandContext(ctx, h.blenderBin(),
-		"--background",
-		"--factory-startup",
-		"--disable-autoexec",
-		"--python-exit-code", "1",
-		"--python", h.scriptPath(),
-		"--",
-		"--input", src,
-		"--output", framesDir,
-		"--engine", engineForExt(filepath.Ext(src)),
-		"--frames", strconv.Itoa(h.Frames),
-		"--res", strconv.Itoa(h.Res),
-		"--samples", strconv.Itoa(h.Samples),
-	)
-	var stderr, stdout bytes.Buffer
-	cmd.Stderr = &stderr
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		// Blender prints render progress to stdout; surface the tail of
-		// stderr (where actual errors land) in the wrapped message.
-		tail := strings.TrimSpace(stderr.String())
-		if len(tail) > 800 {
-			tail = "..." + tail[len(tail)-800:]
-		}
-		return fmt.Errorf("blender exit: %w: %s", err, tail)
-	}
-	return nil
-}
-
-// renderPoster invokes the same turntable.py with --poster-output, which
-// short-circuits to a single Workbench-engine render (~1s) instead of
-// the 22s Cycles turntable. Used to seed the col / preview / screen
-// thumbnail ladder while the full render is still in flight.
-func (h *ModelHandler) renderPoster(ctx context.Context, src, posterPath string) error {
-	if err := os.MkdirAll(filepath.Dir(posterPath), 0o755); err != nil {
-		return fmt.Errorf("mkdir poster: %w", err)
-	}
-	cmd := exec.CommandContext(ctx, h.blenderBin(),
-		"--background",
-		"--factory-startup",
-		"--disable-autoexec",
-		"--python-exit-code", "1",
-		"--python", h.scriptPath(),
-		"--",
-		"--input", src,
-		"--poster-output", posterPath,
-	)
-	var stderr, stdout bytes.Buffer
-	cmd.Stderr = &stderr
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		tail := strings.TrimSpace(stderr.String())
-		if len(tail) > 800 {
-			tail = "..." + tail[len(tail)-800:]
-		}
-		return fmt.Errorf("blender poster: %w: %s", err, tail)
-	}
-	return nil
-}
-
-// renderIsometric shells out to Blender for a single Cycles frame at
-// the 45°/30° isometric angle. Used to overwrite the workbench poster's
-// col/preview/screen variants once the rest of the pipeline has staged
-// companions — workbench paints textured Kenney models magenta because
-// of how it binds image-texture nodes, whereas Cycles handles them the
-// same way the live three.js viewer does. The iso render shares that
-// Cycles path, so it picks up textures correctly when companions are
-// in place.
-func (h *ModelHandler) renderIsometric(ctx context.Context, src, isoPath string) error {
-	if err := os.MkdirAll(filepath.Dir(isoPath), 0o755); err != nil {
-		return fmt.Errorf("mkdir iso: %w", err)
-	}
-	cmd := exec.CommandContext(ctx, h.blenderBin(),
-		"--background",
-		"--factory-startup",
-		"--disable-autoexec",
-		"--python-exit-code", "1",
-		"--python", h.scriptPath(),
-		"--",
-		"--input", src,
-		"--iso-output", isoPath,
-	)
-	var stderr, stdout bytes.Buffer
-	cmd.Stderr = &stderr
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		tail := strings.TrimSpace(stderr.String())
-		if len(tail) > 800 {
-			tail = "..." + tail[len(tail)-800:]
-		}
-		return fmt.Errorf("blender iso: %w: %s", err, tail)
-	}
-	return nil
-}
-
-// engineForExt picks the best-looking Blender render engine for a
-// given 3D source extension, determined by the A/B sweep at
-// scripts/blender/ab_engine_test.py against a textured torus.
-//
-// Workbench (matcap-style viewport shading) reads better for almost
-// every format: it produces clean, evenly lit thumbnails with crisp
-// silhouettes that match the static col poster — no over-bright
-// Cycles specular blooming. The exception is .blend, where the
-// source usually ships its own PBR shader graph, lights, and HDRI
-// that only Cycles can render faithfully.
-//
-// .mview converts to .glb before reaching this function (see
-// convertMviewToGLB), so it inherits glb's workbench choice.
-func engineForExt(ext string) string {
-	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
-	case "blend":
-		return "cycles"
-	default:
-		return "workbench"
-	}
-}
-
-// ---------------------------------------------------------------------------
 // three.js worker invocation (#498)
 // ---------------------------------------------------------------------------
 
-// threeJSExts is the set of open formats the headless three.js worker
-// renders directly (the same loaders ModelView.svelte uses). Formats the
-// in-tree importers convert to .glb first (md2/md3/mview/…) also land
-// here because the render decision reads the post-conversion extension.
+// threeJSExts is the set of formats the headless three.js worker renders
+// directly. Formats the in-tree importers convert to .glb first
+// (md2/md3/mdl/ms3d/mview) also land here because the render decision
+// reads the post-conversion extension.
+//
+// MUST stay in sync with loadModel() in scripts/threejs/render.html —
+// this map is the Go side's copy of that dispatch, and the
+// three-formats smoke (scripts/threejs/smoke.mjs) renders one fixture
+// per entry so a drift shows up as a failed smoke rather than as
+// "worker exit 1" on a real upload.
+//
+// glb/gltf/fbx/obj are what the interactive viewer loads. stl/ply/dae
+// are render-only: Blender used to produce their thumbnails, and #500
+// took Blender out of the image, so the worker picks them up via the
+// stock three.js loaders (ADR 0069 already listed them as formats
+// "three.js parses natively"). The remaining ModelExts entries
+// (blend/x3d/wrl/usd*/abc) have no stock loader and get no turntable
+// until the Blender converter ships as a plugin (#499).
 var threeJSExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {},
+	"stl": {}, "ply": {}, "dae": {},
 }
 
 func isThreeJSExt(ext string) bool {
@@ -910,14 +706,12 @@ func (h *ModelHandler) posterRes() int {
 	return 2048
 }
 
-// threeJSAvailable reports whether the headless worker can run: enabled,
-// script present, node on PATH, and the worker's node_modules installed.
-// A missing piece (e.g. arm64 image without the worker, or the ops
-// escape hatch) cleanly falls back to Blender rather than failing jobs.
+// threeJSAvailable reports whether the headless worker can run: script
+// present, node on PATH, and the worker's node_modules installed. With
+// Blender out of the image (#500) there is nothing to fall back to, so a
+// missing piece is a deployment fault the caller surfaces as a retryable
+// job error rather than a silent no-preview.
 func (h *ModelHandler) threeJSAvailable() bool {
-	if h.DisableThreeJS {
-		return false
-	}
 	script := h.threeJSScriptPath()
 	if _, err := os.Stat(script); err != nil {
 		return false
@@ -932,10 +726,10 @@ func (h *ModelHandler) threeJSAvailable() bool {
 }
 
 // renderThreeJS shells out to the headless three.js worker, which writes
-// the same on-disk layout as the Blender turntable (turntable/*.png +
-// views/*.png + poster.png) so the fanning below is engine-agnostic. The
-// model + its staged companions both live under workDir so the loaders
-// resolve sibling .bin/textures by relative URL.
+// turntable/*.png + views/*.png + poster.png under outDir — the layout
+// the fanning below reads. The model + its staged companions both live
+// under workDir so the loaders resolve sibling .bin/textures by relative
+// URL.
 func (h *ModelHandler) renderThreeJS(ctx context.Context, src, workDir, outDir string) error {
 	cmd := exec.CommandContext(ctx, h.nodeBin(), h.threeJSScriptPath(),
 		"--input", src,
@@ -958,40 +752,19 @@ func (h *ModelHandler) renderThreeJS(ctx context.Context, src, workDir, outDir s
 	return nil
 }
 
-func (h *ModelHandler) blenderBin() string {
-	if h.BlenderPath != "" {
-		return h.BlenderPath
-	}
-	return "blender"
-}
-func (h *ModelHandler) scriptPath() string {
-	if h.ScriptPath != "" {
-		return h.ScriptPath
-	}
-	return "/app/blender/turntable.py"
-}
-
 // ---------------------------------------------------------------------------
 // Raster ladder — load frame 0, fan into col / preview / screen / hires.
 // ---------------------------------------------------------------------------
 
-func (h *ModelHandler) fanRasterLadder(ctx context.Context, hash, framePath string) error {
-	return h.fanRasterLadderOpts(ctx, hash, framePath, false)
-}
-
-// fanRasterLadderOpts is the overwrite-aware variant. The iso pass
-// calls this with overwrite=true so it can paint over the workbench
-// poster's stale col/preview/screen variants (workbench paints
-// textured models magenta-pink and the existence check would
-// otherwise refuse to replace those bytes).
-func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, hash, framePath string, overwrite bool) error {
-	if h.SysConfig == nil {
-		return nil
-	}
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
+// fanRasterLadder decodes a rendered PNG and fans it across the
+// configured variant ladder.
+//
+// This used to have an overwrite-aware sibling, because the Blender
+// isometric pass needed to paint over the workbench poster's magenta
+// col/preview/screen bytes. three.js renders textured on the first
+// pass, so there is nothing to repaint and no second writer — the pair
+// collapsed back into one function with #500.
+func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, hash, framePath string) error {
 	f, err := os.Open(framePath)
 	if err != nil {
 		return fmt.Errorf("open frame: %w", err)
@@ -1001,35 +774,10 @@ func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, hash, framePath 
 	if err != nil {
 		return fmt.Errorf("decode frame: %w", err)
 	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if !overwrite && h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		contentType, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.raster_encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			// Loud-fail (was silent continue) — see col-404 sidequest.
-			return fmt.Errorf("backend put raster variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "model", Source: "turntable",
+	})
 }
 
 // ---------------------------------------------------------------------------

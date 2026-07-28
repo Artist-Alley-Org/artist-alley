@@ -78,6 +78,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
@@ -354,6 +356,21 @@ def stable_uuid(*parts: str) -> str:
         h.update(str(p).encode())
     d = h.hexdigest()
     return f"{d[0:8]}-{d[8:12]}-{d[12:16]}-{d[16:20]}-{d[20:32]}"
+
+
+def stable_int(n: int, *parts: str) -> int:
+    """Deterministic int in [0, n) from the same namespace as stable_uuid.
+    Used for per-item flavour picks so composition never depends on RNG
+    call ORDER — a seeded Random() re-sequences every downstream draw when
+    an earlier pass changes, which silently rewrites unrelated posts."""
+    if n <= 0:
+        return 0
+    h = hashlib.sha256()
+    h.update(_NAMESPACE_SEED.encode())
+    for p in parts:
+        h.update(b"\x00")
+        h.update(str(p).encode())
+    return int.from_bytes(h.digest()[:8], "big") % n
 
 
 # -----------------------------------------------------------------------------
@@ -705,22 +722,30 @@ def derive_brand_workspaces(rows: list[AssetRecord]) -> list[dict[str, Any]]:
     ]
 
 
-def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[dict[str, Any]]:
-    """Generate posts across multiple shapes to give each site ~500+ posts
-    after per-site filtering. Four pass strategy:
+def derive_posts(assets: list[AssetRecord]) -> list[dict[str, Any]]:
+    """Compose posts from the asset pool, sibling sets FIRST (#565).
 
-      1. Multi-asset posts — anchor + 1-4 related companions of different
-         asset_types (the "real" mixed-asset post UI exercise).
-      2. Single-asset showcase posts — one post per remaining asset,
-         framed as a solo drop. Boosts count significantly.
-      3. Team roundup posts — periodic "this sprint's <team> output"
-         summaries that link 5-10 assets owned by the same team.
-      4. Project sprint posts — milestone posts that link 5-10 assets
-         from a single project across teams.
+    Pass order matters — each pass consumes what the previous one left:
 
-    Posts inherit author, collection, brand_workspace, and timestamps
-    from their anchor (or are generated for roundups). Sort order is
-    by created_at across all post types so the feed feels organic.
+      1. asset_group  — every group_id with 2+ shipped members becomes
+         exactly ONE post holding ALL of them. This is the authoritative
+         pass: group_id is the catalogue's own record of what belongs
+         together (turnarounds, variant sets, kits).
+      2. multi_asset  — the loose remainder, clustered by
+         (collection, team, type) and bundled into 3-5 asset working sets.
+      3. solo_showcase / revision_* — what is genuinely standalone, plus a
+         capped number of lifecycle framings.
+      4. team_roundup / project_sprint / video_* / cinematics_showreel —
+         narrative posts that re-surface assets in a second context.
+
+    Composition used to run (2) FIRST using (team, collection) proximity,
+    with no notion of group_id at all, which scattered real sibling sets
+    into single-asset posts — 73% of site_a's feed. There is no
+    post-count target any more: the shape follows the data.
+
+    Deterministic: passes 1-3 derive every choice from stable_uuid /
+    stable_int over asset ids, so composition does not depend on
+    iteration or RNG call order.
     """
     import random
     rng = random.Random("artist-alley.posts.v2")
@@ -747,74 +772,181 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
 
     posts: list[dict[str, Any]] = []
 
-    # ---------------------------------------------------------------------
-    # Pass 1: Multi-asset posts (the original logic, expanded)
-    # ---------------------------------------------------------------------
-    used_in_multi: set[str] = set()
-    multi_candidates = [
-        a for a in assets
-        if len(by_team_project[(a.team_name, a.collection_name)]) >= 3
-    ]
-    rng.shuffle(multi_candidates)
-
-    multi_target = 250
-    for anchor in multi_candidates:
-        if anchor.id in used_in_multi:
-            continue
-        siblings = by_team_project[(anchor.team_name, anchor.collection_name)]
-        eligible = [s for s in siblings if s.id != anchor.id and s.id not in used_in_multi]
-        eligible.sort(key=lambda x: (x.asset_type == anchor.asset_type, x.id))
-        n_companions = rng.randint(1, 4)
-        chosen = eligible[:n_companions]
-        if not chosen:
-            continue
-
-        post_assets = [anchor] + chosen
-        used_in_multi.update(a.id for a in post_assets)
-
-        types_in_post = sorted({a.asset_type for a in post_assets})
-        theme_parts = [theme_by_type.get(t, t) for t in types_in_post]
-        title = f"{anchor.collection_name}: {anchor.team_name} {' + '.join(theme_parts)}"
-
-        if len(types_in_post) > 1:
-            desc = (f"{anchor.team_name} working pass for {anchor.collection_name}. "
-                    f"Bundles {len(post_assets)} assets across "
-                    f"{', '.join(types_in_post)} — concept, references, and supporting media in one post.")
-        else:
-            desc = (f"{anchor.team_name} drop for {anchor.collection_name}. "
-                    f"{len(post_assets)} {types_in_post[0]} assets pulled together.")
-
-        all_tags = sorted({t for a in post_assets for t in (a.tags or [])})
-        last_updated = max((a.updated_at for a in post_assets), default=anchor.updated_at)
-
-        posts.append({
-            "id": stable_uuid("post", "multi", anchor.id),
-            "title": title,
-            "description": desc,
-            "author_username": anchor.owner_username,
-            "collection_name": anchor.collection_name,
-            "team_name": anchor.team_name,
-            "brand_workspace": anchor.brand_workspace,
-            "tags": all_tags,
-            "asset_ids": [a.id for a in post_assets],
+    def _post(**kw: Any) -> dict[str, Any]:
+        """Build a post with the canonical key set. Every post in
+        posts.json must carry exactly these 18 keys (the Go seeder reads a
+        subset via manifestPost; downstream tooling assumes key
+        invariance), so they are assembled in one place."""
+        members: list[AssetRecord] = kw.pop("members")
+        types_in_post = sorted({a.asset_type for a in members})
+        return {
+            "id": kw.pop("id"),
+            "title": kw.pop("title"),
+            "description": kw.pop("description"),
+            "author_username": kw.pop("author_username"),
+            "collection_name": kw.pop("collection_name"),
+            "team_name": kw.pop("team_name"),
+            "brand_workspace": kw.pop("brand_workspace"),
+            "tags": kw.pop("tags"),
+            "asset_ids": [a.id for a in members],
             "asset_types_in_post": types_in_post,
             "is_mixed_type": len(types_in_post) > 1,
-            "post_kind": "multi_asset",
-            "workflow_state": anchor.workflow_state,
-            "sensitivity_tier": anchor.sensitivity_tier,
-            "created_at": anchor.created_at,
-            "updated_at": last_updated,
-            "studio": anchor.studio,
-            "layer": "A" if all(a.layer == "A" for a in post_assets) else "B",
-        })
-        if len(posts) >= multi_target:
-            break
+            "post_kind": kw.pop("post_kind"),
+            "workflow_state": kw.pop("workflow_state"),
+            "sensitivity_tier": kw.pop("sensitivity_tier"),
+            "created_at": kw.pop("created_at"),
+            "updated_at": max((a.updated_at for a in members), default=""),
+            "studio": kw.pop("studio"),
+            "layer": "A" if all(a.layer == "A" for a in members) else "B",
+        }
+
+    def _dominant(members: list[AssetRecord], attr: str) -> Any:
+        """Most common non-empty value of `attr` across members, ties
+        broken by name so the pick is deterministic."""
+        counts: dict[Any, int] = defaultdict(int)
+        for a in members:
+            v = getattr(a, attr)
+            if v:
+                counts[v] += 1
+        if not counts:
+            return None
+        return sorted(counts.items(), key=lambda kv: (-kv[1], str(kv[0])))[0][0]
+
+    def _studio_of(members: list[AssetRecord]) -> str:
+        studios = {a.studio for a in members}
+        if len(studios) == 1:
+            return next(iter(studios))
+        return "shared"
 
     # ---------------------------------------------------------------------
-    # Pass 2: Single-asset showcase posts
+    # Pass 1: group_id sibling sets — the authoritative composition (#565)
     # ---------------------------------------------------------------------
-    # For assets not yet anchoring a multi-post, create a solo showcase
-    # post. Caps at target_per_site / 2 so we don't drown out other types.
+    # Every asset carries the group_id it was catalogued under: turnaround
+    # sets, colour/size variants, multi-part kits. A group is a REAL
+    # sibling set, so it becomes exactly ONE post holding ALL of its
+    # shipped members.
+    #
+    # This pass used to pick "related" assets by (team, collection)
+    # proximity instead, which scattered genuine sibling sets across
+    # solo_showcase / revision_* singles and left the feed a wall of
+    # one-asset posts (73% single on site_a).
+    #
+    # Only groups with 2+ SHIPPED members qualify. groups.csv's
+    # asset_count describes the ORIGINAL source; sampling (apply_trims plus
+    # the per-type balance cap) drops members, so a group claiming six
+    # assets may ship two. What is on disk is what composes — a singleton
+    # group is just a loose asset.
+    by_group: dict[str, list[AssetRecord]] = defaultdict(list)
+    loose: list[AssetRecord] = []
+    for a in sorted(assets, key=lambda x: x.id):
+        gid = (a.metadata or {}).get("group_id") or ""
+        if gid:
+            by_group[gid].append(a)
+        else:
+            loose.append(a)
+
+    for gid in sorted(by_group):
+        members = sorted(by_group[gid], key=lambda x: x.id)
+        if len(members) < 2:
+            loose.extend(members)
+            continue
+        anchor = max(members, key=lambda x: (x.updated_at, x.id))
+        types_in_post = sorted({a.asset_type for a in members})
+        collection = _dominant(members, "collection_name")
+        team = _dominant(members, "team_name")
+        if len(types_in_post) == 1:
+            title = f"{anchor.title} — {len(members)}-part set"
+            desc = (f"{len(members)}-piece {types_in_post[0]} set from "
+                    f"{collection}, owned by {team}. Variants and siblings "
+                    f"kept together as one delivery.")
+        else:
+            title = f"{anchor.title} — {len(members)}-asset bundle"
+            desc = (f"{team} bundle for {collection}: {len(members)} assets "
+                    f"across {', '.join(types_in_post)}, delivered together.")
+        posts.append(_post(
+            members=members,
+            id=stable_uuid("post", "group", gid),
+            title=title,
+            description=desc,
+            author_username=anchor.owner_username,
+            collection_name=collection,
+            team_name=team,
+            brand_workspace=anchor.brand_workspace,
+            tags=sorted({t for a in members for t in (a.tags or [])}),
+            post_kind="asset_group",
+            workflow_state=anchor.workflow_state,
+            sensitivity_tier=anchor.sensitivity_tier,
+            created_at=anchor.created_at,
+            studio=_studio_of(members),
+        ))
+
+    # ---------------------------------------------------------------------
+    # Pass 2: working-set bundles from the loose assets
+    # ---------------------------------------------------------------------
+    # Assets with no group (or a group that shipped only one member) still
+    # mostly belong to a body of work. Cluster them by
+    # (collection, team, asset_type) and bundle a share of each cluster
+    # into 3-5 asset "working set" posts; the remainder falls through to
+    # solo posts below.
+    #
+    # LOOSE_BUNDLE_SHARE is the dial between "multi-asset dominant" and
+    # "enough posts to fill a feed". Bundling a cluster WHOLESALE is not
+    # the answer: (collection, team, type) is coarse — site_a's 481 loose
+    # assets fall into just 19 clusters — so consuming all of them would
+    # collapse the feed to ~284 posts and leave 1% singles, which is as
+    # unrepresentative as the wall of singles it replaces.
+    LOOSE_BUNDLE_SHARE = 0.88
+    BUNDLE_SIZES = (3, 4, 5)
+
+    loose_clusters: dict[tuple[str, str, str], list[AssetRecord]] = defaultdict(list)
+    for a in loose:
+        loose_clusters[(a.collection_name, a.team_name, a.asset_type)].append(a)
+
+    solo_pool: list[AssetRecord] = []
+    size_idx = 0
+    for key in sorted(loose_clusters):
+        cluster = sorted(loose_clusters[key], key=lambda x: (x.created_at, x.id))
+        n_bundle = int(len(cluster) * LOOSE_BUNDLE_SHARE)
+        to_bundle, rest = cluster[:n_bundle], cluster[n_bundle:]
+        solo_pool.extend(rest)
+
+        i = 0
+        while i < len(to_bundle):
+            size = BUNDLE_SIZES[size_idx % len(BUNDLE_SIZES)]
+            size_idx += 1
+            chunk = to_bundle[i:i + size]
+            i += size
+            if len(chunk) < 2:
+                # A trailing single is a solo post, not a "bundle of one".
+                solo_pool.extend(chunk)
+                continue
+            anchor = max(chunk, key=lambda x: (x.updated_at, x.id))
+            collection, team, atype = key
+            types_in_post = sorted({a.asset_type for a in chunk})
+            theme = theme_by_type.get(atype, atype)
+            title = f"{collection}: {team} {theme} — {len(chunk)} assets"
+            desc = (f"{team} working set for {collection}. "
+                    f"{len(chunk)} {atype} assets pulled together for review.")
+            posts.append(_post(
+                members=chunk,
+                id=stable_uuid("post", "bundle", anchor.id),
+                title=title,
+                description=desc,
+                author_username=anchor.owner_username,
+                collection_name=collection,
+                team_name=team,
+                brand_workspace=anchor.brand_workspace,
+                tags=sorted({t for a in chunk for t in (a.tags or [])}),
+                post_kind="multi_asset",
+                workflow_state=anchor.workflow_state,
+                sensitivity_tier=anchor.sensitivity_tier,
+                created_at=anchor.created_at,
+                studio=_studio_of(chunk),
+            ))
+
+    # ---------------------------------------------------------------------
+    # Pass 3: solo showcase posts for the genuinely standalone remainder
+    # ---------------------------------------------------------------------
     showcase_solo_titles = {
         "image": ["new render", "color study", "lighting pass", "reference plate", "concept sketch"],
         "3d": ["model drop", "topology pass", "PBR test", "WIP turntable", "asset ship"],
@@ -825,48 +957,34 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
         "comic": ["storyboard panel", "page rough", "layout pass"],
     }
 
-    solo_candidates = [a for a in assets if a.id not in used_in_multi]
-    rng.shuffle(solo_candidates)
-    solo_target = 600
-
-    for asset in solo_candidates:
-        if len(posts) - multi_target >= solo_target:
-            break
-
+    for asset in sorted(solo_pool, key=lambda x: x.id):
         title_options = showcase_solo_titles.get(asset.asset_type, ["asset drop"])
-        flavor = rng.choice(title_options)
-        title = f"{asset.title} — {flavor}"
-
-        # Keep description short for solo posts; lean on the asset's
-        # own description rather than re-narrating
+        flavor = title_options[stable_int(len(title_options), "solo", asset.id)]
         desc_lead = asset.description or f"{asset.title} from {asset.collection_name}."
         if len(desc_lead) > 140:
             desc_lead = desc_lead[:137] + "..."
+        posts.append(_post(
+            members=[asset],
+            id=stable_uuid("post", "solo", asset.id),
+            title=f"{asset.title} — {flavor}",
+            description=desc_lead,
+            author_username=asset.owner_username,
+            collection_name=asset.collection_name,
+            team_name=asset.team_name,
+            brand_workspace=asset.brand_workspace,
+            tags=list(asset.tags or []),
+            post_kind="solo_showcase",
+            workflow_state=asset.workflow_state,
+            sensitivity_tier=asset.sensitivity_tier,
+            created_at=asset.created_at,
+            studio=asset.studio,
+        ))
 
-        posts.append({
-            "id": stable_uuid("post", "solo", asset.id),
-            "title": title,
-            "description": desc_lead,
-            "author_username": asset.owner_username,
-            "collection_name": asset.collection_name,
-            "team_name": asset.team_name,
-            "brand_workspace": asset.brand_workspace,
-            "tags": list(asset.tags or []),
-            "asset_ids": [asset.id],
-            "asset_types_in_post": [asset.asset_type],
-            "is_mixed_type": False,
-            "post_kind": "solo_showcase",
-            "workflow_state": asset.workflow_state,
-            "sensitivity_tier": asset.sensitivity_tier,
-            "created_at": asset.created_at,
-            "updated_at": asset.updated_at,
-            "studio": asset.studio,
-            "layer": asset.layer,
-        })
-
-    # Pass 2b: Revision-stage posts — for a subset of high-rated assets,
-    # generate additional posts framing them at different lifecycle stages
-    # (draft, review pass, final ship). Same asset, different "moments."
+    # Pass 3b: Revision-stage posts — a few high-rated assets framed at
+    # three lifecycle moments (draft, review, ship). Deliberately CAPPED:
+    # each one is the same single asset posted a third time, so a large
+    # target (this used to be 350) manufactures single-asset posts and is
+    # exactly what buried the real multi-asset work.
     revision_stages = [
         ("draft", "Draft drop — {title}",
          "First-pass draft of {title}. Open for early feedback."),
@@ -875,9 +993,11 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
         ("ship", "Ship gate — {title}",
          "Locking in {title}. Sign-off from approver: {reviewer}."),
     ]
-    high_rated = [a for a in assets if a.field_values.get("rating", 0) >= 4]
-    rng.shuffle(high_rated)
-    revision_target = 350
+    high_rated = sorted(
+        (a for a in assets if a.field_values.get("rating", 0) >= 4),
+        key=lambda x: x.id,
+    )
+    revision_target = 90
     revision_count = 0
     for asset in high_rated:
         if revision_count >= revision_target:
@@ -885,26 +1005,22 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
         for stage_key, title_tmpl, desc_tmpl in revision_stages:
             owner = asset.owner_username or "unknown"
             reviewer = asset.reviewer_username or owner
-            posts.append({
-                "id": stable_uuid("post", "revision", stage_key, asset.id),
-                "title": title_tmpl.format(title=asset.title),
-                "description": desc_tmpl.format(title=asset.title, owner=owner, reviewer=reviewer),
-                "author_username": owner if stage_key != "ship" else reviewer,
-                "collection_name": asset.collection_name,
-                "team_name": asset.team_name,
-                "brand_workspace": asset.brand_workspace,
-                "tags": list(asset.tags or []) + [f"stage:{stage_key}"],
-                "asset_ids": [asset.id],
-                "asset_types_in_post": [asset.asset_type],
-                "is_mixed_type": False,
-                "post_kind": f"revision_{stage_key}",
-                "workflow_state": asset.workflow_state,
-                "sensitivity_tier": asset.sensitivity_tier,
-                "created_at": asset.created_at,
-                "updated_at": asset.updated_at,
-                "studio": asset.studio,
-                "layer": asset.layer,
-            })
+            posts.append(_post(
+                members=[asset],
+                id=stable_uuid("post", "revision", stage_key, asset.id),
+                title=title_tmpl.format(title=asset.title),
+                description=desc_tmpl.format(title=asset.title, owner=owner, reviewer=reviewer),
+                author_username=owner if stage_key != "ship" else reviewer,
+                collection_name=asset.collection_name,
+                team_name=asset.team_name,
+                brand_workspace=asset.brand_workspace,
+                tags=list(asset.tags or []) + [f"stage:{stage_key}"],
+                post_kind=f"revision_{stage_key}",
+                workflow_state=asset.workflow_state,
+                sensitivity_tier=asset.sensitivity_tier,
+                created_at=asset.created_at,
+                studio=asset.studio,
+            ))
             revision_count += 1
             if revision_count >= revision_target:
                 break
@@ -941,7 +1057,11 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
             "title": title,
             "description": desc,
             "author_username": anchor.owner_username,
-            "collection_name": None,  # team-scoped, not collection-scoped
+            # A roundup spans projects, but leaving collection_name NULL
+            # meant the post landed in no collection at all and made the
+            # collection pages look emptier than the data is (#565). File
+            # it under the project it draws from most.
+            "collection_name": _dominant(sample, "collection_name"),
             "team_name": team_name,
             "brand_workspace": None,
             "tags": sorted({t for a in sample for t in (a.tags or [])}),
@@ -994,7 +1114,10 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
             "description": desc,
             "author_username": anchor.owner_username,
             "collection_name": project_name,
-            "team_name": None,
+            # A sprint spans teams, but a NULL team_name left these posts
+            # unattributable in team views (#565 — 24 such posts on
+            # site_a). Credit the team that contributed most of the sample.
+            "team_name": _dominant(sample, "team_name"),
             "brand_workspace": anchor.brand_workspace,
             "tags": sorted({t for a in sample for t in (a.tags or [])}),
             "asset_ids": [a.id for a in sample],
@@ -1010,10 +1133,14 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
         })
 
     # ---------------------------------------------------------------------
-    # Pass 5: Video boost — videos are scarce in the dataset, so generate
-    # extra video-anchored posts so they're not buried in the feed.
-    # Each video gets 3-5 separate post framings + a "cinematics showreel"
-    # post that bundles multiple videos with related references.
+    # Pass 5: Video boost — videos are scarce in the dataset, so give each
+    # one a couple of framings + a "cinematics showreel" post that bundles
+    # several together.
+    #
+    # This used to emit FIVE single-asset posts per video. With only 8
+    # videos on site_a that is 40 manufactured singles — the same
+    # padding-with-singles that buried the real multi-asset work, so it is
+    # cut to two framings (#565).
     # ---------------------------------------------------------------------
     videos = [a for a in assets if a.asset_type == "video"]
     video_post_templates = [
@@ -1021,12 +1148,6 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
          "Today's video pass on {project}. Reviewing pacing, color, and continuity."),
         ("cinematic_cut", "Cinematic cut — {title}",
          "Latest cinematic cut for {project}. Compositing and grade approaching final."),
-        ("preview_share", "Preview share — {title}",
-         "Sharing the latest preview for {project} for cross-team feedback."),
-        ("playblast",    "Playblast — {title}",
-         "Raw playblast from {project}. Animation timing pass."),
-        ("reference",    "Reference reel — {title}",
-         "Reference reel pulled for {project}. Annotating motion and staging cues."),
     ]
     for video in videos:
         for template_key, title_tmpl, desc_tmpl in video_post_templates:
@@ -1070,7 +1191,7 @@ def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[
                                f"the {reel_label.lower()} screening — see for pacing references "
                                f"and stylistic consistency across active projects."),
                 "author_username": anchor.owner_username,
-                "collection_name": None,
+                "collection_name": _dominant(sample, "collection_name"),
                 "team_name": "Marketing Art",
                 "brand_workspace": None,
                 "tags": sorted({t for v in sample for t in (v.tags or [])}) + ["cinematic", "showreel"],
@@ -1220,6 +1341,16 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
                 "attribution": entry.get("attribution", ""),
                 "group_id": "",
                 "sha256": entry.get("sha256", ""),
+                # fetch_gaps.py already writes the URL it pulled the file
+                # from into the internet manifest, and this function used
+                # to drop it on the floor — every internet record reached
+                # the profile with no way back to its source. Carry both
+                # keys so a record's provenance survives assembly (#602):
+                # fetched_from is where a human looks, media_url is what a
+                # machine GETs. For these sources they are the same URL;
+                # for Pexels they are not, which is the whole point.
+                "fetched_from": entry.get("fetched_from", ""),
+                "media_url": entry.get("fetched_from", ""),
             },
             field_values={},
             external_id="",
@@ -1241,9 +1372,66 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
 # Main
 # -----------------------------------------------------------------------------
 
+def recompose_posts(profiles: Path, sites: list[Path], dry_run: bool = False) -> int:
+    """Regenerate posts IN PLACE from the already-assembled asset
+    profiles, without the 12,871-row source CSV.
+
+    seed/profiles/studio-{a,b}.assets.json are serialised AssetRecords —
+    the exact asset set each site ships (verified id-for-id against each
+    site's MANIFEST.json) — so post composition can be re-derived from the
+    repo alone. That matters because the source dataset is a ~10 GB
+    archive that is not checked in and not present on most machines.
+
+    Posts are derived PER SITE rather than once over the combined pool.
+    The combined path then filters posts down to those whose assets all
+    live on one site, which silently DROPS any post composed across the
+    studio split — including group posts, whose members are exactly the
+    siblings most likely to span it. Deriving per site means every post
+    that is generated is a post that lands.
+    """
+    out_names = {"studio-a.assets.json": "studio-a.posts.json",
+                 "studio-b.assets.json": "studio-b.posts.json"}
+    site_by_profile = {"studio-a.assets.json": "site_a",
+                       "studio-b.assets.json": "site_b"}
+    combined: dict[str, dict[str, Any]] = {}
+
+    for assets_name, posts_name in out_names.items():
+        src = profiles / assets_name
+        if not src.is_file():
+            print(f"error: {src} not found", file=sys.stderr)
+            return 2
+        raw = json.loads(src.read_text(encoding="utf-8"))
+        assets = [AssetRecord(**a) for a in raw]
+        posts = derive_posts(assets)
+        combined.update({p["id"]: p for p in posts})
+
+        n_multi = sum(1 for p in posts if len(p["asset_ids"]) > 1)
+        share = 100.0 * (len(posts) - n_multi) / len(posts) if posts else 0.0
+        print(f"{site_by_profile[assets_name]}: {len(assets):,} assets -> "
+              f"{len(posts):,} posts ({n_multi:,} multi-asset, "
+              f"{share:.0f}% single)", file=sys.stderr)
+
+        if dry_run:
+            continue
+        write_json(profiles / posts_name, posts)
+        # The Go seeder reads posts.json from the SITE root, not from the
+        # catalogue dir (see catalogues.go loadCatalogues), so the site
+        # copies are the ones a reseed actually consumes.
+        for site_root in sites:
+            if site_root.name == site_by_profile[assets_name]:
+                write_json(site_root / "posts.json", posts)
+                print(f"  wrote {site_root / 'posts.json'}", file=sys.stderr)
+
+    if not dry_run:
+        write_json(profiles / "dataset.posts.json",
+                   sorted(combined.values(), key=lambda p: (p["created_at"], p["id"])))
+    print(f"combined dataset.posts.json: {len(combined):,} posts", file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True, type=Path,
+    parser.add_argument("--source", type=Path,
                         help="Path to artist-alley_dataset directory containing metadata.csv")
     parser.add_argument("--out", required=True, type=Path,
                         help="Output directory for profile JSONs")
@@ -1252,7 +1440,25 @@ def main() -> int:
                         help="Directory containing internet-fetched MANIFEST.json")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print summary stats; don't write files")
+    parser.add_argument("--recompose-posts", action="store_true",
+                        help="Regenerate posts only, in place from --out's "
+                             "studio-*.assets.json (no source CSV needed)")
+    parser.add_argument("--site", type=Path, action="append", default=[],
+                        help="Site root to also write posts.json into "
+                             "(repeatable; used with --recompose-posts)")
+    parser.add_argument("--skip-upgrade", action="store_true",
+                        help="Do NOT apply the #604 dataset upgrade to the "
+                             "generated profiles. Produces the pre-upgrade "
+                             "library (916 sub-kilobyte images, no added "
+                             "videos) — for reproducing the original "
+                             "assembly only, never for a real site build.")
     args = parser.parse_args()
+
+    if args.recompose_posts:
+        return recompose_posts(args.out, args.site, args.dry_run)
+
+    if args.source is None:
+        parser.error("--source is required unless --recompose-posts is given")
 
     csv_path = args.source / "metadata.csv"
     if not csv_path.is_file():
@@ -1381,7 +1587,7 @@ def main() -> int:
     teams = derive_teams(assets)
     collections = derive_collections(assets)
     brand_workspaces = derive_brand_workspaces(assets)
-    posts = derive_posts(assets, target_per_site=600)
+    posts = derive_posts(assets)
     mixed_type_posts = [p for p in posts if p["is_mixed_type"]]
     print(f"\nDerived {len(posts)} posts ({len(mixed_type_posts)} mixed-type)",
           file=sys.stderr)
@@ -1448,7 +1654,63 @@ def main() -> int:
     print(f"posts per site: site_a={len(site_a_posts)}, site_b={len(site_b_posts)}",
           file=sys.stderr)
 
+    # The upgrade pass (#604). Everything above rebuilds the profiles from
+    # the SOURCE metadata.csv, which still describes the pre-upgrade
+    # library — 916 sub-kilobyte sprite tiles and no added videos. Without
+    # this step a re-run silently reverts the dataset: populate_archive
+    # copies the profile straight over MANIFEST.json, so the site would
+    # come back with the tiny images restored and the videos gone.
+    #
+    # Applied here rather than left as a manual follow-up because "you
+    # must remember to run a second script or you corrupt the dataset" is
+    # not a pipeline, it is a trap. The step is idempotent and asserts its
+    # own post-conditions, so a re-run that cannot satisfy them fails
+    # loudly instead of writing a half-upgraded profile.
+    if not args.skip_upgrade:
+        rc = apply_dataset_upgrade(out)
+        if rc != 0:
+            return rc
+
     print(f"\nwrote {len(list(out.glob('*.json')))} files to {out}", file=sys.stderr)
+    return 0
+
+
+def apply_dataset_upgrade(out: Path) -> int:
+    """Re-apply the #604 upgrade to the freshly-generated profiles."""
+    upgrades = Path(__file__).resolve().parents[1] / "upgrades"
+    if not upgrades.is_dir():
+        print(f"warning: {upgrades} not found — profiles left un-upgraded",
+              file=sys.stderr)
+        return 0
+    print("\napplying dataset upgrade (#604)", file=sys.stderr)
+    for site, stem in (("site_a", "studio-a"), ("site_b", "studio-b")):
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("apply_upgrade.py")),
+             "--site", site,
+             "--profile", str(out / f"{stem}.assets.json"),
+             "--posts", str(out / f"{stem}.posts.json"),
+             "--upgrades", str(upgrades)],
+            capture_output=True, text=True)
+        sys.stderr.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        if proc.returncode != 0:
+            print(f"error: upgrade pass failed for {site}", file=sys.stderr)
+            return proc.returncode
+
+    # `dev` and `demo` are aliases for site_b and site_a, and they were
+    # written ABOVE — before the upgrade ran. So every upgrade since #604
+    # has landed on studio-{a,b} and silently missed its own aliases:
+    # demo.assets.json shipped 971 records where studio-a had 1,007,
+    # i.e. a demo re-seed would have quietly dropped all 36 added videos
+    # and none of the checks would have noticed, because nothing compares
+    # an alias to its source. Re-copy after the upgrade so an alias is an
+    # alias (#572).
+    for stem, alias in (("studio-a", "demo"), ("studio-b", "dev")):
+        src, dst = out / f"{stem}.assets.json", out / f"{alias}.assets.json"
+        if src.is_file():
+            shutil.copyfile(src, dst)
+            print(f"alias       : {alias}.assets.json <- {stem}.assets.json",
+                  file=sys.stderr)
     return 0
 
 

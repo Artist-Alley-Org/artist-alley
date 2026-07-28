@@ -302,7 +302,9 @@ func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UU
 const listCollectionResourcesPage = `-- name: ListCollectionResourcesPage :many
 SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at
+       a.title, a.asset_type, a.status, a.file_hash,
+       a.file_extension, a.thumbhash,
+       a.created_at AS asset_created_at
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 WHERE cr.collection_id = $1
@@ -335,6 +337,8 @@ type ListCollectionResourcesPageRow struct {
 	AssetType      int64
 	Status         string
 	FileHash       *string
+	FileExtension  *string
+	Thumbhash      []byte
 	AssetCreatedAt pgtype.Timestamptz
 }
 
@@ -344,9 +348,18 @@ type ListCollectionResourcesPageRow struct {
 // visibility.Predicate — sqlc's static SQL cannot take a runtime
 // fragment (#438). Retained for its generated row shape, which stays in
 // sync with the schema. Do not call it from handler code.
+//
+// #661 proposed deleting it as dead. The QUERY is unreachable, but the
+// generated ListCollectionResourcesPageRow is load-bearing: the gated
+// row embeds it and resourceRowToAPI consumes it, so deleting the query
+// means hand-writing that struct and losing the schema sync this
+// comment relies on. Keeping it is the better trade.
 // Returns pinned members, sorted by sort_order then added_at. Excludes
 // expired-membership rows. Joined onto assets so the list can carry
 // the title/thumb/type the front-end needs without an N+1.
+// file_extension + thumbhash are part of that set (#595): a member tile
+// renders through the same CardThumb as browse, which derives the media
+// type (video / 3D badge + sprite-scrub hover) from the extension alone.
 func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListCollectionResourcesPageParams) ([]ListCollectionResourcesPageRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionResourcesPage,
 		arg.CollectionID,
@@ -372,6 +385,8 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 			&i.AssetType,
 			&i.Status,
 			&i.FileHash,
+			&i.FileExtension,
+			&i.Thumbhash,
 			&i.AssetCreatedAt,
 		); err != nil {
 			return nil, err
@@ -429,6 +444,18 @@ type ListCollectionsPageParams struct {
 	RowLimit        int32
 }
 
+// NOT THE ENFORCEMENT PATH, and NOT dead either. It applies no
+// visibility predicate and no production code calls it — browse goes
+// through ListCollectionsPageGated (list_page.go), which splices
+// visibility.Predicate. It is retained as the PARITY ORACLE for
+// TestListCollectionsPage_FilterParity: every narg filter and the
+// (created_at DESC, id DESC) cursor are product behaviour that had to
+// survive the #449 hand-rewrite, and comparing the two implementations
+// over the same rows catches a filter bug that hand-written
+// expectations would encode twice. #661 proposed deleting it as dead;
+// it is not — deleting it deletes that test's oracle. Do not call it
+// from handler code.
+//
 // Cursor pagination on (created_at DESC, id DESC). Filters are
 // nullable narg() so a single query covers every combo.
 //

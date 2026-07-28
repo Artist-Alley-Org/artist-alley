@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // FederationResolver is the narrow surface the http.Handler
@@ -63,10 +64,11 @@ func (h *Handler) serveAssetManifest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
-	isAnon := auth.IdentityFromContext(r.Context()) == nil
+	caller := callerFrom(r)
+	isAnon := caller.IsAnonymous
 	rb := h.Builder.ForRequest(PublicBaseURL(r))
-	ref, err := h.loadWithCache(r.Context(), EntityAsset, id, isAnon, func() (any, error) {
-		e, err := h.Loader.LoadAsset(r.Context(), id, isAnon)
+	ref, err := h.loadWithCache(r.Context(), EntityAsset, id, caller, func() (any, error) {
+		e, err := h.Loader.LoadAsset(r.Context(), id, caller)
 		if err != nil {
 			return nil, err
 		}
@@ -89,17 +91,22 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
-	isAnon := auth.IdentityFromContext(r.Context()) == nil
+	caller := callerFrom(r)
+	isAnon := caller.IsAnonymous
 	rb := h.Builder.ForRequest(PublicBaseURL(r))
-	ref, err := h.loadWithCache(r.Context(), EntityCollection, id, isAnon, func() (any, error) {
-		c, err := h.Loader.LoadCollection(r.Context(), id)
+	ref, err := h.loadWithCache(r.Context(), EntityCollection, id, caller, func() (any, error) {
+		c, err := h.Loader.LoadCollection(r.Context(), id, caller)
 		if err != nil {
 			return nil, err
 		}
-		if isAnon && (c.Sensitivity == SensitivityRestricted || c.Sensitivity == SensitivityTeam) {
-			return nil, ErrRestricted
-		}
-		members, err := h.Loader.LoadCollectionMembers(r.Context(), id, isAnon, 200)
+		// The anonymous sensitivity refusal that used to sit here is
+		// gone (#661): LoadCollection now applies the EntityCollection
+		// predicate, whose anonymous branch is `visibility = 'public'`
+		// — strictly narrower than "not restricted and not team" over
+		// the mapping above. BuildCollectionManifest still runs the
+		// content-plane check on the parent, so this is one expression
+		// removed, not one gate removed.
+		members, err := h.Loader.LoadCollectionMembers(r.Context(), id, caller, 200)
 		if err != nil {
 			return nil, err
 		}
@@ -116,12 +123,38 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 	writeManifest(w, ref)
 }
 
+// callerFrom builds the visibility caller for the request. No identity
+// in context means anonymous — the resolver leaves nothing behind for
+// an unauthenticated request, and on a private install the public-mode
+// gate in auth.ResolveIdentity has already 401'd before we get here.
+func callerFrom(r *http.Request) visibility.Caller {
+	if id := auth.IdentityFromContext(r.Context()); id != nil {
+		return visibility.NewCaller(&id.UserRef)
+	}
+	return visibility.NewCaller(nil)
+}
+
 // loadWithCache serves from the manifest cache when fresh.
-func (h *Handler) loadWithCache(ctx context.Context, kind EntityType, id uuid.UUID, isAnon bool, build func() (any, error)) (any, error) {
-	if h.Cache == nil {
+//
+// #661 — an AUTHENTICATED collection manifest is not cached, and that
+// is load-bearing rather than an oversight. The EntityCollection
+// predicate binds the caller's own ref (owner OR a live ACL grant), so
+// two signed-in callers can legitimately get different answers for the
+// same id; a cache keyed on "authenticated" alone would hand the first
+// entitled caller's manifest to every later one. Every other
+// combination stays cached: the anonymous branch of both predicates
+// binds no caller, and the authenticated EntityAsset branch is
+// soft-delete only, so those answers really are caller-independent.
+//
+// Keying the collection entry on the user ref instead was the
+// alternative; it was rejected because InvalidateCollection could then
+// no longer enumerate the keys to drop on a write, and a manifest cache
+// that cannot be invalidated is worse than one that misses.
+func (h *Handler) loadWithCache(ctx context.Context, kind EntityType, id uuid.UUID, caller visibility.Caller, build func() (any, error)) (any, error) {
+	if h.Cache == nil || (kind == EntityCollection && !caller.IsAnonymous) {
 		return build()
 	}
-	key := h.Cache.Key(kind, id, isAnon)
+	key := h.Cache.Key(kind, id, caller.IsAnonymous)
 	if v, ok := h.Cache.Get(key); ok {
 		if h.Counter != nil {
 			h.Counter.RecordManifestCacheHit()

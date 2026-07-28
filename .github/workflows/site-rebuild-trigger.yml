@@ -97,7 +97,7 @@ jobs:
       # github.event.before, which on a multi-commit push is further
       # back than a shallow clone reaches. The self-hosted runner
       # reuses its workspace, so this is an incremental fetch.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

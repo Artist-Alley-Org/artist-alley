@@ -81,6 +81,7 @@ func (q *Queries) AddPostAcl(ctx context.Context, arg AddPostAclParams) error {
 
 const addPostAsset = `-- name: AddPostAsset :exec
 
+
 INSERT INTO post_assets (post_id, asset_id, sort_order)
 VALUES ($1, $2, $3)
 ON CONFLICT (post_id, asset_id) DO UPDATE SET
@@ -93,6 +94,21 @@ type AddPostAssetParams struct {
 	SortOrder int32
 }
 
+// The two post LIST queries (ListPostsPage, ListPostsByAsset) are NOT
+// here. They live in list_page.go as hand-built SQL, because the read
+// rule they must apply is a runtime fragment (readRule.sql) and a sqlc
+// query is a static string — the same reason every splice site of
+// visibility.Predicate is hand-built.
+//
+// They were deleted from this file rather than left in place unused
+// (#660). The version that lived here took a caller-supplied
+// `visibility` and applied it as a bare equality, documented as "NULL
+// for whatever the caller is authorised to see (handler enforces)" —
+// and the handler did not enforce, so `?visibility=private` returned
+// every author's private posts to any signed-in caller. A second,
+// ungated expression of "which posts does this list return" is exactly
+// what produced that bug; leaving one here for the next caller to pick
+// up would rebuild it.
 // ---------------------------------------------------------------------------
 // post_assets (members)
 // ---------------------------------------------------------------------------
@@ -249,99 +265,8 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 	return i, err
 }
 
-const listCollectionPostsPage = `-- name: ListCollectionPostsPage :many
-SELECT cp.collection_id, cp.post_id, cp.sort_order, cp.pinned,
-       cp.expires_at, cp.added_at,
-       p.author_user_ref, p.title, p.description, p.visibility,
-       p.cover_asset_id, p.posted_at, p.like_count, p.comment_count,
-       p.created_at AS post_created_at,
-       p.updated_at AS post_updated_at
-FROM collection_posts cp
-JOIN posts p ON p.id = cp.post_id
-WHERE cp.collection_id = $1
-  AND cp.pinned = TRUE
-  AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
-  AND p.deleted_at IS NULL
-  AND ($2::INTEGER IS NULL
-       OR cp.sort_order > $2::INTEGER
-       OR (cp.sort_order = $2::INTEGER
-           AND cp.added_at > $3::TIMESTAMPTZ))
-ORDER BY cp.sort_order ASC, cp.added_at ASC
-LIMIT $4::INTEGER
-`
-
-type ListCollectionPostsPageParams struct {
-	CollectionID    pgtype.UUID
-	CursorSortOrder *int32
-	CursorAddedAt   pgtype.Timestamptz
-	RowLimit        int32
-}
-
-type ListCollectionPostsPageRow struct {
-	CollectionID  pgtype.UUID
-	PostID        pgtype.UUID
-	SortOrder     int32
-	Pinned        bool
-	ExpiresAt     pgtype.Timestamptz
-	AddedAt       pgtype.Timestamptz
-	AuthorUserRef int64
-	Title         string
-	Description   string
-	Visibility    string
-	CoverAssetID  pgtype.UUID
-	PostedAt      pgtype.Timestamptz
-	LikeCount     int64
-	CommentCount  int64
-	PostCreatedAt pgtype.Timestamptz
-	PostUpdatedAt pgtype.Timestamptz
-}
-
-// Pinned posts in a collection, sort_order then added_at. Excludes
-// expired memberships and soft-deleted posts. Returns the post row
-// joined with its cover_asset for the grid render.
-func (q *Queries) ListCollectionPostsPage(ctx context.Context, arg ListCollectionPostsPageParams) ([]ListCollectionPostsPageRow, error) {
-	rows, err := q.db.Query(ctx, listCollectionPostsPage,
-		arg.CollectionID,
-		arg.CursorSortOrder,
-		arg.CursorAddedAt,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListCollectionPostsPageRow
-	for rows.Next() {
-		var i ListCollectionPostsPageRow
-		if err := rows.Scan(
-			&i.CollectionID,
-			&i.PostID,
-			&i.SortOrder,
-			&i.Pinned,
-			&i.ExpiresAt,
-			&i.AddedAt,
-			&i.AuthorUserRef,
-			&i.Title,
-			&i.Description,
-			&i.Visibility,
-			&i.CoverAssetID,
-			&i.PostedAt,
-			&i.LikeCount,
-			&i.CommentCount,
-			&i.PostCreatedAt,
-			&i.PostUpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listPostAcls = `-- name: ListPostAcls :many
+
 
 SELECT post_id, principal_type, principal_id, permission,
        granted_at, granted_by_user_ref, expires_at
@@ -350,6 +275,15 @@ WHERE post_id = $1
 ORDER BY granted_at DESC, principal_type, principal_id, permission
 `
 
+// ListCollectionPostsPage was DELETED here (#661, epic #665). It listed
+// a collection's pinned posts with `p.deleted_at IS NULL` as its only
+// post-side condition — no visibility rule at all — and nothing in the
+// tree called it: no handler, no test, and its generated row/param
+// types were referenced nowhere. An unused query that would leak every
+// private post in a collection the day somebody wired it up is not a
+// head start, it is a trap; deleting it is strictly better than
+// auditing it. A future collection-posts listing must go through
+// posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
 // ---------------------------------------------------------------------------
 // ACLs (Phase 1.7.B-7b)
 // ---------------------------------------------------------------------------
@@ -473,171 +407,6 @@ func (q *Queries) ListPostTags(ctx context.Context, postID pgtype.UUID) ([]strin
 			return nil, err
 		}
 		items = append(items, tag)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listPostsByAsset = `-- name: ListPostsByAsset :many
-SELECT id
-FROM posts p
-WHERE p.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM post_assets pa
-                WHERE pa.post_id = p.id
-                  AND pa.asset_id = $1::UUID)
-  AND p.visibility = ANY($2::TEXT[])
-ORDER BY p.posted_at DESC, p.id DESC
-LIMIT 200
-`
-
-type ListPostsByAssetParams struct {
-	AssetID      pgtype.UUID
-	Visibilities []string
-}
-
-// Posts whose members include a given asset (#478 slice-2, post-by-asset
-// lookup). An asset is a many-to-many member of ≥0 posts via post_assets,
-// so this returns the visibility-filtered set. `visibilities` is the set
-// of tiers the caller may see — the handler passes {'public'} for an
-// anonymous caller and {'public','org-only'} for an authenticated one
-// (the same walled-garden view as the feed; the relationship tiers
-// private/followers/explicit-share are out of scope here). Bounded (no
-// cursor) — an asset lands in few posts, and the client only needs
-// "redirect if one, list if several". Newest first.
-func (q *Queries) ListPostsByAsset(ctx context.Context, arg ListPostsByAssetParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, listPostsByAsset, arg.AssetID, arg.Visibilities)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []pgtype.UUID
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listPostsPage = `-- name: ListPostsPage :many
-SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-       origin_server_id, team_id, state_id, created_at, updated_at,
-       deleted_at, deleted_reason
-FROM posts
-WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
-  AND ($2::BIGINT IS NULL
-       OR author_user_ref = $2::BIGINT)
-  AND ($3::TEXT IS NULL
-       OR visibility = $3::TEXT)
-  AND ($4::TEXT IS NULL
-       OR search_text @@ plainto_tsquery('english', $4::TEXT))
-  AND ($5::TEXT IS NULL
-       OR EXISTS (SELECT 1 FROM post_tags pt
-                    WHERE pt.post_id = posts.id
-                      AND pt.tag = $5::TEXT))
-  AND ($6::BIGINT IS NULL
-       OR EXISTS (SELECT 1 FROM user_follows f
-                    WHERE f.follower_user_ref = $6::BIGINT
-                      AND f.followee_user_ref = posts.author_user_ref))
-  AND ($7::TIMESTAMPTZ IS NULL
-       OR posted_at < $7::TIMESTAMPTZ
-       OR (posted_at = $7::TIMESTAMPTZ
-           AND id < $8::UUID))
-ORDER BY posted_at DESC, id DESC
-LIMIT $9::INTEGER
-`
-
-type ListPostsPageParams struct {
-	IncludeDeleted  *bool
-	AuthorUserRef   *int64
-	Visibility      *string
-	Q               *string
-	Tag             *string
-	FeedFollowerRef *int64
-	CursorPostedAt  pgtype.Timestamptz
-	CursorID        pgtype.UUID
-	RowLimit        int32
-}
-
-type ListPostsPageRow struct {
-	ID                    pgtype.UUID
-	AuthorUserRef         int64
-	Title                 string
-	Description           string
-	Visibility            string
-	CoverAssetID          pgtype.UUID
-	CoverThumbnailAssetID pgtype.UUID
-	PostedAt              pgtype.Timestamptz
-	LikeCount             int64
-	CommentCount          int64
-	OriginServerID        pgtype.UUID
-	TeamID                pgtype.UUID
-	StateID               pgtype.UUID
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	DeletedAt             pgtype.Timestamptz
-	DeletedReason         *string
-}
-
-// Cursor pagination on (posted_at DESC, id DESC). Filters:
-//   - author_user_ref: limit to posts by a given user
-//   - visibility: 'public' for the public feed; NULL for whatever the
-//     caller is authorised to see (handler enforces)
-//   - q: plain-text TSVECTOR search across post search_text
-//   - tag: single-tag filter (intersects with q if both given)
-//   - feed_follower_ref (Phase 1.17.G2): when non-NULL, restrict the
-//     feed to posts authored by users the given ref follows. EXISTS
-//     subquery hits the user_follows PK (follower, followee) so it's
-//     an index-only scan per candidate row — no nested loop.
-func (q *Queries) ListPostsPage(ctx context.Context, arg ListPostsPageParams) ([]ListPostsPageRow, error) {
-	rows, err := q.db.Query(ctx, listPostsPage,
-		arg.IncludeDeleted,
-		arg.AuthorUserRef,
-		arg.Visibility,
-		arg.Q,
-		arg.Tag,
-		arg.FeedFollowerRef,
-		arg.CursorPostedAt,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListPostsPageRow
-	for rows.Next() {
-		var i ListPostsPageRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.AuthorUserRef,
-			&i.Title,
-			&i.Description,
-			&i.Visibility,
-			&i.CoverAssetID,
-			&i.CoverThumbnailAssetID,
-			&i.PostedAt,
-			&i.LikeCount,
-			&i.CommentCount,
-			&i.OriginServerID,
-			&i.TeamID,
-			&i.StateID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.DeletedReason,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

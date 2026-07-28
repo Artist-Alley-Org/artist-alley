@@ -7,7 +7,7 @@
   // post-by-asset lookup — renders modes identically instead of forking
   // the switch per page:
   //   grid / thumbnail → auto-fill TileGrid (tiles ≥ --tile-min)
-  //   masonry          → multi-column flow (columns ≥ --tile-min)
+  //   masonry          → append-stable column buckets (MasonryColumns)
   //   feed             → single column, image full-bleed (a `measure` cap)
   //   list             → the caller's table (`list` snippet); posts only,
   //                       so anything without one falls back to the grid
@@ -19,6 +19,7 @@
   import type { Snippet } from 'svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import TileGrid from '$components/TileGrid.svelte';
+  import MasonryColumns from '$components/MasonryColumns.svelte';
 
   interface Props {
     mode: ViewMode;
@@ -42,16 +43,12 @@
 {#if mode === 'list' && list}
   {@render list()}
 {:else if mode === 'masonry'}
-  <div class="posts-masonry" style="--tile-min: {tileMin}">
-    {#each items as item (item.id)}
-      <div class="mb-2 break-inside-avoid">{@render card(item, 'masonry')}</div>
-    {/each}
-    {#if loading}
-      {#each Array(8) as _, i (i)}
-        <div class="mb-2 break-inside-avoid aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
-      {/each}
-    {/if}
-  </div>
+  <!-- Masonry is no longer a CSS multi-column flow (#651). Multicol
+       BALANCES across the whole flow, so every infinite-scroll append
+       re-sorted tiles the user was already looking at into different
+       columns. MasonryColumns owns the replacement mechanism and the
+       full argument. -->
+  <MasonryColumns {items} {tileMin} {loading} {card} />
 {:else if mode === 'feed'}
   <div class="posts-feed gap-4">
     {#each items as item (item.id)}{@render card(item, 'feed')}{/each}
@@ -62,25 +59,50 @@
     {/if}
   </div>
 {:else}
-  <!-- grid / thumbnail — and list with no table falls through here. -->
-  <TileGrid {tileMin}>
+  <!-- grid / thumbnail — and list with no table falls through here.
+       Grid is a ZERO-GAP contact sheet: tiles butt edge-to-edge into one
+       unbroken wall (#555/#560). Thumbnail keeps its gutter — it's a
+       "details" view, not a contact sheet.
+
+       #561 briefly made this a uniform 8px gutter on a misreading of the
+       reference; the owner rejected it and it is back. What makes zero
+       gap safe now is CardThumb's boundary ring, added in #590: it is an
+       inset ring on all four edges, and it is STRONGER on unframed tiles
+       (black/0.12 · white/0.10) than on framed ones (0.07 · 0.06) — so
+       grid, the one mode that has no gutter to separate tiles, gets the
+       strongest separation. Two adjacent white-artwork tiles are divided
+       by a hairline instead of by empty space. Don't restore a gutter
+       here without checking that case first. -->
+  <TileGrid {tileMin} class={mode === 'grid' ? 'gap-0' : 'gap-2'}>
     {#each items as item (item.id)}{@render card(item, mode)}{/each}
     {#if loading}
       {#each Array(8) as _, i (i)}
-        <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+        <div
+          class="aspect-square bg-surface-elevated animate-pulse
+                 {mode === 'grid' ? '' : 'rounded-lg border border-border'}"
+        ></div>
       {/each}
     {/if}
   </TileGrid>
 {/if}
 
 <style>
-  /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
-     the browser fits as many columns as it can. Same lever, same
-     token, no `column-count` to guess. */
-  :global(.posts-masonry) {
-    column-width: min(var(--tile-min, 22rem), 100%);
-    column-gap: 0.5rem;
-  }
+  /* Masonry's own CSS moved into MasonryColumns.svelte with the layout
+     mechanism it belongs to (#651). Two notes worth carrying forward:
+   *
+   * #637 was `column-width: min(22rem, 100%)` — a percentage anywhere in
+   * that expression makes it invalid at computed-value time, the
+   * declaration falls back to `auto`, and `auto` with no `column-count`
+   * is ONE full-width column. Five days of single-column masonry. The
+   * column count is now computed in JS from a probe, so the trap is
+   * gone, but the same `min(…, 100%)` guard IS valid on the probe's
+   * plain `width` and is used there.
+   *
+   * The column-count formula the probe feeds —
+   * `max(1, floor((available + gap) / (tile-min + gap)))` — is multicol's
+   * own, deliberately, so the `--tile-min` ladder in browseView keeps
+   * producing the column counts its rungs were measured against. */
+
   /* feed is the honest floor of the same scale rather than a special
      case: one column at every width, image at full column width.
    *

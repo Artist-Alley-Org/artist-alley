@@ -200,7 +200,7 @@
             bind:value={regenPassword}
             required
             autocomplete="current-password"
-            class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+            class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
         <button
@@ -224,7 +224,7 @@
             bind:value={disablePassword}
             required
             autocomplete="current-password"
-            class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+            class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
         <button
@@ -280,7 +280,7 @@
             maxlength="6"
             required
             autocomplete="one-time-code"
-            class="mt-1 w-32 rounded border border-border bg-surface px-2 py-1 text-center font-mono text-lg tracking-widest focus:border-accent focus:outline-none"
+            class="mt-1 w-32 rounded border border-border-strong bg-surface px-2 py-1 text-center font-mono text-lg tracking-widest focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
         <button

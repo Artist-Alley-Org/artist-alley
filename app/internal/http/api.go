@@ -185,6 +185,7 @@ type apiServer struct {
 	requests          *requests.Handler
 	requestsHTTP      *requests.HTTPHandler
 	featuredHTTP      *featured.HTTPHandler
+	featuredDomain    *featured.Handler
 	subtitles         *subtitles.Handler
 	subtitlesHTTP     *subtitles.HTTPHandler
 	aieditHTTP        *aiedit.HTTPHandler
@@ -502,7 +503,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// the "-1 = unknown" sentinel so the admin dashboard doesn't
 		// hide the tile when the DB briefly misbehaves.
 		if s.visualBackfillHandler != nil && s.visualBackfillHandler.VisualStore != nil {
-			if n, err := s.visualBackfillHandler.VisualStore.CountVisualEmbeddingBacklog(ctx); err == nil {
+			if n, err := s.visualBackfillHandler.VisualStore.CountVisualEmbeddingBacklog(ctx, visualembed.ImageExtensions()); err == nil {
 				out["visual_embedding_backlog"] = n
 			} else {
 				out["visual_embedding_backlog"] = -1
@@ -964,13 +965,6 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.storageAdmin = storage.NewAdminHandler(pool).WithJobs(jobSvc)
 	s.sysCfg = sysCfg
 
-	// Wire the social-graph seam into posts so visibility='followers'
-	// gating consults the new follows table (Phase 1.17.G2). Done
-	// post-construction since the two handlers are siblings in the
-	// struct literal and a direct cross-reference there would be
-	// awkward to read.
-	s.posts.SetFollowChecker(s.social)
-
 	// Notifications writer + handler (Phase 1.17.I2). The writer is
 	// the cross-package entry point every emitter (social, posts,
 	// licensing in I2-b, L in 1.17.L) calls. Permission gates
@@ -1261,7 +1255,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 
 	// Admin-curated featured-content list (GitHub #341). Thin,
 	// system.admin-gated CRUD over the featured_items table.
-	s.featuredHTTP = featured.NewHTTPHandler(featured.NewHandler(pool, logger), logger)
+	s.featuredDomain = featured.NewHandler(pool, logger)
+	s.featuredHTTP = featured.NewHTTPHandler(s.featuredDomain, logger)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -1399,6 +1394,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// Phase 1.9.B — let collections.Create probe required collection
 	// fields + seed initial values via the metadata package.
 	s.collections.SetMetadataGate(collectionsMetadataGateAdapter{md: s.metadata})
+
+	// #591 — one cached reader of the operator's CONFIGURED preview
+	// ladder, shared by every surface that reports ladder_available.
+	// Built once so all four agree on what the ladder is: four
+	// independently-constructed readers would be four caches that could
+	// disagree for a request or two after an operator edits the config,
+	// and a client that saw preview_available and ladder_available
+	// disagree across two endpoints would have no way to resolve it.
+	ladderReader := sysconfig.NewPreviewLadderReader(sysCfg, cacheReg, logger)
+	s.assets.SetPreviewLadder(ladderReader)
+	s.posts.SetPreviewLadder(ladderReader)
+	s.collections.SetPreviewLadder(ladderReader)
+	s.featuredDomain.SetPreviewLadder(ladderReader)
 	return s
 }
 
@@ -2082,6 +2090,9 @@ func authHandlerWithPolicy(pool *pgxpool.Pool, logger *slog.Logger, cfg config.C
 	lockoutMgr.Policy = lockoutPolicyAdapter{store: sysCfg}.Get
 	lockoutMgr.Auditor = lockoutAuditAdapter{rec: auditRec}
 	h.SetLockoutManager(lockoutMgr, cfg.ScrambleKey)
+	// #567 — shared-account demo installs scope session reads/revokes
+	// to the requesting session.
+	h.DemoMode = cfg.DemoMode
 	return h
 }
 
@@ -2198,29 +2209,33 @@ func (a visualEmbedStorageAdapter) Download(ctx context.Context, hash, variant s
 }
 
 // visualEmbedAssetAdapter bridges the pool → the narrow
-// visualembed.AssetLookup interface. Reads file_hash + has_image +
+// visualembed.AssetLookup interface. Reads file_hash + file_extension +
 // deleted_at with a single SELECT so the job's Handle path adds one
 // row-scan per execution.
+//
+// file_extension rather than has_image (#579): image-ness is the file
+// FORMAT, and the column this used to select had no writer, so the job
+// it feeds rejected every asset as "not an image".
 type visualEmbedAssetAdapter struct{ pool *pgxpool.Pool }
 
 func (a visualEmbedAssetAdapter) Get(ctx context.Context, id uuid.UUID) (visualembed.AssetRecord, error) {
 	var (
 		fileHash  *string
-		hasImage  bool
+		fileExt   *string
 		deletedAt *time.Time
 	)
 	err := a.pool.QueryRow(ctx, `
-		SELECT file_hash, has_image, deleted_at
+		SELECT file_hash, file_extension, deleted_at
 		  FROM assets
 		 WHERE id = $1
-	`, id).Scan(&fileHash, &hasImage, &deletedAt)
+	`, id).Scan(&fileHash, &fileExt, &deletedAt)
 	if err != nil {
 		return visualembed.AssetRecord{}, err
 	}
 	return visualembed.AssetRecord{
-		FileHash: fileHash,
-		HasImage: hasImage,
-		Deleted:  deletedAt != nil,
+		FileHash:      fileHash,
+		FileExtension: fileExt,
+		Deleted:       deletedAt != nil,
 	}, nil
 }
 
@@ -3105,6 +3120,10 @@ func (s *apiServer) GetAppearanceConfig(ctx context.Context, req openapi.GetAppe
 func (s *apiServer) UpdateAppearanceConfig(ctx context.Context, req openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
 	return s.sysconfigH.UpdateAppearanceConfig(ctx, req)
 }
+func (s *apiServer) GetPublicPreviewLadder(ctx context.Context, req openapi.GetPublicPreviewLadderRequestObject) (openapi.GetPublicPreviewLadderResponseObject, error) {
+	return s.sysconfigH.GetPublicPreviewLadder(ctx, req)
+}
+
 func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	return s.sysconfigH.GetPublicAppearance(ctx, req)
 }

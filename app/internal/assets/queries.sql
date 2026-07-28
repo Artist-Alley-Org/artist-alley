@@ -13,6 +13,12 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
           created_at, updated_at;
 
 -- name: GetAsset :one
+-- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
+-- a scalar subquery as NOT NULL — it has no way to infer otherwise — so
+-- an asset with no recorded dimensions would scan NULL into an int32 and
+-- fail at runtime on the detail endpoint. The projection therefore lives
+-- in pixeldims.SelectColumnsSQL, spliced into the hand-built queries that
+-- need it, and the detail path fetches it alongside its variant probe.
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
@@ -102,26 +108,15 @@ WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::INTEGER;
 
--- name: ListAssetsByTagPage :many
--- Same paginated list but constrained to a single tag. Separate
--- query because the join breaks the COALESCE pattern.
-SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
-       a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
-       a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
-       a.created_at, a.updated_at
-FROM assets a
-JOIN asset_tag t ON t.asset_id = a.id
-WHERE a.deleted_at IS NULL
-  AND t.tag = sqlc.arg('tag')::TEXT
-  AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR a.owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
-  AND (sqlc.narg('asset_type')::BIGINT  IS NULL OR a.asset_type  = sqlc.narg('asset_type')::BIGINT)
-  AND (sqlc.narg('status')::TEXT           IS NULL OR a.status          = sqlc.narg('status')::TEXT)
-  AND (sqlc.narg('cursor_created_at')::TIMESTAMPTZ IS NULL
-       OR a.created_at < sqlc.narg('cursor_created_at')::TIMESTAMPTZ
-       OR (a.created_at = sqlc.narg('cursor_created_at')::TIMESTAMPTZ
-           AND a.id < sqlc.narg('cursor_id')::UUID))
-ORDER BY a.created_at DESC, a.id DESC
-LIMIT sqlc.arg('row_limit')::INTEGER;
+-- ListAssetsByTagPage was DELETED by #657. It was the by-tag half of
+-- the browse: a second static query whose whole WHERE clause was
+-- `a.deleted_at IS NULL`, so `?tag=` served draft, archived and
+-- restricted rows to anonymous callers that plain `/assets` correctly
+-- withheld — and reported preview_available/ladder_available as false
+-- for every row (#612). The tag filter is now one more optional
+-- conjunct on ListAssetsPageGated (assets/list_page.go), where the
+-- visibility predicate already lives. Do not reintroduce it: a filter
+-- with its own query is a filter with its own rules.
 
 -- name: ListAssetTags :many
 SELECT tag FROM asset_tag WHERE asset_id = $1 ORDER BY tag;
@@ -367,7 +362,12 @@ SELECT
     a.team_id,
     a.title,
     a.file_hash,
-    a.has_image,
+    -- file_extension, not has_image (#579). has_image is DEFAULT false
+    -- with no writer, so the MimeType hint it fed was never set for any
+    -- asset and the AI handler never learned an asset was an image. The
+    -- extension is real data and yields a real MIME rather than a
+    -- wildcard.
+    a.file_extension,
     COALESCE(
         (SELECT json_agg(json_build_object('tag', t.tag, 'source', t.source))
            FROM asset_tag t

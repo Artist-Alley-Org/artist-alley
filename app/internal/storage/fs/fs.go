@@ -24,8 +24,6 @@ package fs
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -120,11 +118,19 @@ func (b *Backend) Put(ctx context.Context, hash, variant string, r io.Reader) (*
 		return nil, fmt.Errorf("fs: rename: %w", err)
 	}
 
+	// Read the mtime back off the renamed file rather than using
+	// time.Now(): the validator returned here must equal the one a
+	// later Stat produces, or the first conditional request after an
+	// upload misses for no reason.
+	mod := time.Now().UTC()
+	if st, statErr := os.Stat(full); statErr == nil {
+		mod = st.ModTime().UTC()
+	}
 	info := &storage.ObjectInfo{
 		Size:        n,
 		ContentType: "application/octet-stream",
-		ETag:        weakETag(hash, variant, n),
-		ModifiedAt:  time.Now().UTC(),
+		ETag:        weakETag(hash, variant, n, mod),
+		ModifiedAt:  mod,
 	}
 	return info, nil
 }
@@ -150,7 +156,7 @@ func (b *Backend) Get(ctx context.Context, hash, variant string) (io.ReadCloser,
 	info := &storage.ObjectInfo{
 		Size:        st.Size(),
 		ContentType: "application/octet-stream",
-		ETag:        weakETag(hash, variant, st.Size()),
+		ETag:        weakETag(hash, variant, st.Size(), st.ModTime()),
 		ModifiedAt:  st.ModTime().UTC(),
 	}
 	return f, info, nil
@@ -211,7 +217,7 @@ func (b *Backend) Stat(ctx context.Context, hash, variant string) (*storage.Obje
 	return &storage.ObjectInfo{
 		Size:        st.Size(),
 		ContentType: "application/octet-stream",
-		ETag:        weakETag(hash, variant, st.Size()),
+		ETag:        weakETag(hash, variant, st.Size(), st.ModTime()),
 		ModifiedAt:  st.ModTime().UTC(),
 	}, nil
 }
@@ -227,13 +233,23 @@ func (b *Backend) PresignPut(ctx context.Context, hash, variant string, ttl time
 	return "", storage.ErrUnsupported
 }
 
-// weakETag produces a stable identifier for cache validation. Hash +
-// variant + size uniquely identifies the content; bumping size means
-// the file was rewritten, which invalidates any cached copies.
-func weakETag(hash, variant string, size int64) string {
-	var rnd [4]byte
-	_, _ = rand.Read(rnd[:]) // entropy on first allocation only matters for tie-breaking; ignore err
-	return fmt.Sprintf(`W/"%s-%d-%s"`, hash[:8], size, hex.EncodeToString(rnd[:2]))
+// weakETag builds the backend's validator for a stored variant.
+//
+// It used to mix in two random bytes, which made it useless as an HTTP
+// validator: a fresh value on every call means a conditional request can
+// never match, so If-None-Match always misses and the bytes are always
+// re-sent. That was latent rather than harmful only because nothing
+// compared it — the asset routes shipped their own (path-derived) ETag
+// instead (#620).
+//
+// Now derived from size + modification time, which is stable across
+// reads of unchanged bytes and changes when a variant is re-rendered.
+// Still WEAK: it is not a digest of the content, so a rewrite that
+// preserved both size and mtime to the nanosecond would not be
+// detected. That does not occur for a re-render, and a weak validator
+// is the correct HTTP shape for "semantically the same bytes".
+func weakETag(hash, variant string, size int64, mod time.Time) string {
+	return fmt.Sprintf(`W/"%s-%d-%d"`, hash[:8], size, mod.UTC().UnixNano())
 }
 
 // limitedFileReader couples a *os.File with an io.LimitReader so
