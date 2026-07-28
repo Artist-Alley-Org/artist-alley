@@ -123,8 +123,6 @@
     },
     "filter": {
       "label": "Feed filter",
-      "team": "Team",
-      "trending": "Trending",
       "latest": "Latest",
       "following": "Following"
     },

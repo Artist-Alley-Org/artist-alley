@@ -8,8 +8,7 @@
   // surface — browse, the profile pages, post-by-asset — mounts the SAME
   // controls instead of forking them.
   //
-  // Browse-only chrome (the feed filter: team / trending / latest /
-  // following) is NOT here — it's injected by BrowseFooter through the
+  // Browse-only chrome (the feed filter: latest / following) is NOT here — it's injected by BrowseFooter through the
   // optional `middle` snippet, which sits centred between the two
   // clusters. Surfaces without a feed filter (profile, post-by-asset,
   // the collection page) simply omit it, and the left and right clusters

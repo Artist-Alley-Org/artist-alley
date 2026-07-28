@@ -38,7 +38,21 @@ import { browser } from '$app/environment';
 
 export type ViewMode = 'grid' | 'masonry' | 'thumbnail' | 'list' | 'feed';
 export type SortDir = 'asc' | 'desc';
-export type FeedFilter = 'team' | 'trending' | 'latest' | 'following';
+/** The feed segments the SERVER can actually serve.
+ *
+ *  This list is the client mirror of the `feed` enum on `GET /posts`
+ *  (`app/api/openapi.yaml`). It used to also carry `team` and
+ *  `trending`, which were never in that enum — clicking either sent an
+ *  undeclared query param, the server ignored it, and the user got the
+ *  plain latest feed under a label that promised otherwise (#691).
+ *
+ *  Neither is coming back by widening this union alone:
+ *    - `trending` needs a ranking model (recency vs engagement, decay)
+ *      chosen first; a guessed one is worse than none.
+ *    - `team` returns with the teams browse surface (#684), where the
+ *      team-scoped query gets designed once.
+ *  Add a member here only when `feed` accepts it. */
+export type FeedFilter = 'latest' | 'following';
 
 const STORAGE_MODE = 'aa_browse_mode';
 /** Legacy 1..7 column-count stepper. Read once, migrated, never written. */
@@ -271,11 +285,23 @@ function writeSort(s: { col: string; dir: SortDir }): void {
   try { localStorage.setItem(STORAGE_SORT, JSON.stringify(s)); } catch { /* */ }
 }
 
-const VALID_FILTERS: ReadonlyArray<FeedFilter> = ['team', 'trending', 'latest', 'following'];
+const VALID_FILTERS: ReadonlyArray<FeedFilter> = ['latest', 'following'];
+/** Read the persisted segment, dropping anything this build no longer
+ *  serves.
+ *
+ *  The allow-list is what makes shrinking `FeedFilter` safe: a browser
+ *  still holding `team` or `trending` from before #691 fails the
+ *  `includes` and lands on `latest`, so no removed value can reach the
+ *  segmented control (which would render no active segment) or the
+ *  fetch params. The stale key is also REWRITTEN, not just ignored —
+ *  otherwise it sits in localStorage forever, silently reactivating if
+ *  that string ever becomes valid again for a different reason. */
 function readFilter(): FeedFilter {
   if (!browser) return 'latest';
   const v = localStorage.getItem(STORAGE_FILTER);
-  return (VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '') ? (v as FeedFilter) : 'latest';
+  if ((VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '')) return v as FeedFilter;
+  if (v !== null) writeFilter('latest');
+  return 'latest';
 }
 function writeFilter(v: FeedFilter): void {
   if (!browser) return;
@@ -300,7 +326,7 @@ class BrowseViewState {
   listColumns = $state<string[]>(DEFAULT_VISIBLE_COLS);
   /** Sort key + direction for the list view. */
   sort = $state<{ col: string; dir: SortDir }>({ col: 'posted_at', dir: 'desc' });
-  /** Which feed segment is active (team / trending / latest / following). */
+  /** Which feed segment is active (latest / following). */
   filter = $state<FeedFilter>('latest');
   /** Sort direction for the feed itself (newest-first vs oldest-first). */
   feedDir = $state<SortDir>('desc');

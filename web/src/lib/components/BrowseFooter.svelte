@@ -4,14 +4,19 @@
   // Browse's floating control bar. Since #511 the view switcher + sort
   // toggle live in the shared ViewControls component (reused by the
   // profile + post-by-asset pages); BrowseFooter is now just ViewControls
-  // plus the browse-only feed filter (team / trending / latest /
-  // following), injected as the centre `middle` snippet.
+  // plus the browse-only feed filter (latest / following), injected as
+  // the centre `middle` snippet.
   //
   // Filter pill is a segmented control. Setting the active segment
-  // updates browseView.filter, which +page.svelte feeds to /posts as a
-  // query param. Backend support for trending / following / team lands
-  // incrementally — until then the param is sent and the server returns
-  // the default newest-first feed.
+  // updates browseView.filter, which +page.svelte maps onto /posts's
+  // `feed` query param.
+  //
+  // FILTERS is deliberately not a superset of what the server serves.
+  // It used to carry `team` and `trending` too, neither of which was in
+  // the `feed` enum — the pills rendered, the click did nothing the
+  // server could see, and the user got the latest feed under another
+  // name (#691). Every segment here must be a `FeedFilter`, and every
+  // `FeedFilter` must be a value `GET /posts` accepts.
   import ViewControls from '$components/ViewControls.svelte';
   import { browseView, type FeedFilter } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
@@ -19,15 +24,20 @@
   let filterOpen = $state(false);
 
   const FILTERS: Array<{ id: FeedFilter; labelKey: string }> = [
-    { id: 'team',      labelKey: 'browse.filter.team' },
-    { id: 'trending',  labelKey: 'browse.filter.trending' },
     { id: 'latest',    labelKey: 'browse.filter.latest' },
     { id: 'following', labelKey: 'browse.filter.following' },
   ];
 
-  /** The pill's label below `sm`. Falls back to `latest`, the store's own
-   *  default, rather than to the first segment. */
-  const activeFilter = $derived(FILTERS.find((f) => f.id === browseView.filter) ?? FILTERS[2]);
+  const DEFAULT_FILTER: FeedFilter = 'latest';
+
+  /** The pill's label below `sm`. Falls back to `latest` — the store's
+   *  own default — looked up BY ID rather than by position, so trimming
+   *  or reordering FILTERS can't silently point the fallback at some
+   *  other segment. */
+  const activeFilter = $derived(
+    FILTERS.find((f) => f.id === browseView.filter) ??
+      FILTERS.find((f) => f.id === DEFAULT_FILTER)!,
+  );
 
   function onWindowKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && filterOpen) filterOpen = false;
@@ -88,8 +98,8 @@
     >
       <!-- Inactive segments get a real BACKGROUND on hover, not just a
            text-colour change (#590 amendment 3): `hover:text-fg` alone
-           moved fg-muted -> fg with no fill behind it, so Team /
-           Trending / Following felt dead to the pointer. Active keeps
+           moved fg-muted -> fg with no fill behind it, so the
+           inactive segment felt dead to the pointer. Active keeps
            the solid accent, so selected stays clearly distinct from
            hovered. -->
       {#each FILTERS as f (f.id)}
