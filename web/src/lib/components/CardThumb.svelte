@@ -22,8 +22,10 @@
   //   1. Thumbhash placeholder — ~30-byte data URI decoded inline,
   //      shown contained until the col variant loads. No HTTP RTT.
   //   2. The col-sized JPEG variant, object-contain on the matte.
-  //   3. Fallbacks: typed-doc card (no raster preview), sprite-scrub
-  //      hover preview for video/3D, icon placeholder otherwise.
+  //   3. Fallbacks: the no-preview plate (CardFallback, #558) whenever
+  //      there is no servable variant AND no thumbhash, which covers
+  //      text/code assets and failed derivatives alike; sprite-scrub
+  //      hover preview for video/3D over the real image.
   //
   // preview_available gating (#471) is preserved: the <img> renders only
   // when the server confirms a servable `col` for THIS caller, so gated /
@@ -37,6 +39,7 @@
   import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
+  import CardFallback from './CardFallback.svelte';
 
   interface Props {
     /** Asset whose variants back the thumbnail (the cover asset for a
@@ -46,6 +49,17 @@
     title: string;
     thumbhash?: string | null;
     fileExtension?: string | null;
+    /** Asset-type ref, for the no-preview plate's kind lookup (#558):
+     *  a PNG uploaded as a sprite atlas is a sprite sheet, and the
+     *  extension alone cannot say so. Only read when there is no
+     *  preview to show.
+     *
+     *  PostCard deliberately passes nothing: its tile is a COVER asset
+     *  (CardCoverAsset, #595), which carries only the fields the tile
+     *  reads, and the one kind asset_type changes — a sprite atlas — is
+     *  a raster that always has a preview and so never reaches the
+     *  plate. Widen the contract if that stops being true. */
+    assetType?: number | null;
     hasFileHash?: boolean;
     previewAvailable?: boolean;
     /** Every CONFIGURED rung exists for this asset (#610). Licenses the
@@ -112,6 +126,11 @@
      *  images arrive. Null is normal (see cardAsset.ts). */
     pixelWidth?: number | null;
     pixelHeight?: number | null;
+    /** The card already prints the title immediately next to this box —
+     *  thumbnail mode's persistent header (#556). Only the no-preview
+     *  plate reads it, to avoid printing the same string twice 8px
+     *  apart; see CardFallback. */
+    titleAdjacent?: boolean;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -123,6 +142,7 @@
     title,
     thumbhash = null,
     fileExtension = null,
+    assetType = null,
     hasFileHash = false,
     previewAvailable = false,
     ladderAvailable = false,
@@ -134,6 +154,7 @@
     compact = false,
     pixelWidth = null,
     pixelHeight = null,
+    titleAdjacent = false,
     children,
   }: Props = $props();
 
@@ -384,22 +405,9 @@
            : 'after:ring-black/[0.12] dark:after:ring-white/[0.10]'}"
 >
   {#if isDoc}
-    <!-- Typed doc card — text/code don't get a rasterised preview
-         variant, so render a file-shape with the extension. -->
-    <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-surface-elevated to-surface text-fg-muted/80">
-      <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="8" y1="13" x2="16" y2="13" />
-        <line x1="8" y1="17" x2="16" y2="17" />
-        <line x1="8" y1="9" x2="12" y2="9" />
-      </svg>
-      {#if fileExtension}
-        <span class="rounded bg-black/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg">
-          {fileExtension.replace(/^\./, '')}
-        </span>
-      {/if}
-    </div>
+    <!-- Text/code assets get no rasterised preview variant at all, so
+         the plate IS their tile rather than a fallback from one (#558). -->
+    <CardFallback {title} {fileExtension} {assetType} {titleAdjacent} />
   {:else if showImage && !imgError}
     <!-- Thumbhash loading placeholder — contained (not bg-cover) so it
          sits where the real art will, blurred, and fades out on load
@@ -478,14 +486,13 @@
       </div>
     {/if}
   {:else if !placeholder}
-    <!-- No thumbhash either — fall back to the icon. -->
-    <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
-      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <circle cx="9" cy="9" r="2" />
-        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-      </svg>
-    </div>
+    <!-- No servable preview AND no thumbhash — nothing of the asset can
+         be shown, so the plate states what it is instead (#558). This
+         used to be a 48px landscape icon at 40% opacity, identical for a
+         failed 3D turntable, a failed JPEG derivative and a gated asset:
+         a tile that says "image missing" about a CAD model is worse than
+         one that says nothing. -->
+    <CardFallback {title} {fileExtension} {assetType} {titleAdjacent} />
   {:else}
     <!-- Gated / not-yet-generated / preview-less but thumbhash present:
          show the blurred thumbhash contained, no byte request (no 404). -->

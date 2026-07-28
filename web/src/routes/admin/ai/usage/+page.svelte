@@ -81,7 +81,7 @@
       bind:value={period}
       onchange={() => reloadAfterChange()}
       data-testid="ai-usage-period"
-      class="mt-1 rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+      class="mt-1 rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 </div>

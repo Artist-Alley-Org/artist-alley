@@ -102,7 +102,7 @@
           placeholder={t('admin.teams.create_name_placeholder')}
           required
           maxlength="200"
-          class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
       </label>
       <label class="block text-xs">
@@ -114,7 +114,7 @@
           placeholder={t('admin.teams.create_slug_placeholder')}
           required
           maxlength="80"
-          class="w-full rounded border border-border bg-surface px-2 py-1 font-mono text-sm focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-2 py-1 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
       </label>
     </div>
@@ -124,7 +124,7 @@
         bind:value={newDesc}
         maxlength="500"
         rows="2"
-        class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       ></textarea>
     </label>
     <button

@@ -101,11 +101,11 @@
       <div class="grid grid-cols-2 gap-3">
         <label class="text-sm">
           <span class="block text-xs text-fg-muted">{t('admin.system.auth.min_length')}</span>
-          <input type="number" min="0" max="256" bind:value={policy.min_length} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+          <input type="number" min="0" max="256" bind:value={policy.min_length} class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
         <label class="text-sm">
           <span class="block text-xs text-fg-muted">{t('admin.system.auth.max_age_days')}</span>
-          <input type="number" min="0" max="36500" bind:value={policy.max_age_days} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+          <input type="number" min="0" max="36500" bind:value={policy.max_age_days} class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
       </div>
       <div class="grid grid-cols-2 gap-2">
@@ -129,7 +129,7 @@
       </label>
       <label class="block">
         <span class="block text-xs text-fg-muted">{t('admin.system.auth.self_registration_default_role')}</span>
-        <input type="text" bind:value={selfRegistration.default_role} placeholder="Base" class="mt-1 w-full max-w-xs rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+        <input type="text" bind:value={selfRegistration.default_role} placeholder="Base" class="mt-1 w-full max-w-xs rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
       </label>
     </section>
 
@@ -149,7 +149,7 @@
               <div class="grid grid-cols-1 gap-2 md:grid-cols-[10rem_1fr_auto_auto]">
                 <label class="text-sm">
                   <span class="block text-xs text-fg-muted">{t('admin.system.auth.provider_kind')}</span>
-                  <select bind:value={providers[idx].kind} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none">
+                  <select bind:value={providers[idx].kind} class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
                     <option value="ldap">LDAP</option>
                     <option value="saml">SAML</option>
                     <option value="google">Google</option>
@@ -159,7 +159,7 @@
                 </label>
                 <label class="text-sm">
                   <span class="block text-xs text-fg-muted">{t('admin.system.auth.provider_display_name')}</span>
-                  <input type="text" bind:value={providers[idx].display_name} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none" />
+                  <input type="text" bind:value={providers[idx].display_name} class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
                 </label>
                 <label class="inline-flex items-end gap-1 text-sm">
                   <input type="checkbox" bind:checked={providers[idx].enabled} class="h-4 w-4 accent-accent" />

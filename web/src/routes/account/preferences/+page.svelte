@@ -274,7 +274,7 @@
                   <td class="whitespace-nowrap px-6 py-2.5 text-center">
                     {#if ch === 'email'}
                       <select
-                        class="rounded border border-border bg-bg px-2 py-1 text-sm"
+                        class="rounded border border-border-strong bg-bg px-2 py-1 text-sm"
                         value={cadenceFor(event)}
                         onchange={(e) => setCadence(event, (e.target as HTMLSelectElement).value)}
                         disabled={savingPrefs}
@@ -315,7 +315,7 @@
         <label class="block text-sm">
           <span class="mb-1 block font-medium text-fg">{t('account.preferences.views_home_tab')}</span>
           <select
-            class="w-full rounded border border-border bg-bg px-2 py-1.5"
+            class="w-full rounded border border-border-strong bg-bg px-2 py-1.5"
             value={prefs.default_views.home_tab ?? ''}
             onchange={(e) => setView('home_tab', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
@@ -329,7 +329,7 @@
         <label class="block text-sm">
           <span class="mb-1 block font-medium text-fg">{t('account.preferences.views_browse_layout')}</span>
           <select
-            class="w-full rounded border border-border bg-bg px-2 py-1.5"
+            class="w-full rounded border border-border-strong bg-bg px-2 py-1.5"
             value={prefs.default_views.browse_layout ?? ''}
             onchange={(e) => setView('browse_layout', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
@@ -343,7 +343,7 @@
         <label class="block text-sm">
           <span class="mb-1 block font-medium text-fg">{t('account.preferences.views_browse_sort')}</span>
           <select
-            class="w-full rounded border border-border bg-bg px-2 py-1.5"
+            class="w-full rounded border border-border-strong bg-bg px-2 py-1.5"
             value={prefs.default_views.browse_sort ?? ''}
             onchange={(e) => setView('browse_sort', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}

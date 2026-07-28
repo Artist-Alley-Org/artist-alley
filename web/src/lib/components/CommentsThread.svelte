@@ -258,7 +258,7 @@
       rows="2"
       maxlength="10000"
       disabled={posting}
-      class="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:border-border-strong focus:outline-none disabled:opacity-50"
+      class="w-full resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-50"
     ></textarea>
     <div class="flex justify-end">
       <button
@@ -401,7 +401,7 @@
               rows="2"
               maxlength="10000"
               disabled={posting}
-              class="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:border-border-strong focus:outline-none disabled:opacity-50"
+              class="w-full resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:opacity-50"
             ></textarea>
             <div class="flex justify-end gap-2">
               <button

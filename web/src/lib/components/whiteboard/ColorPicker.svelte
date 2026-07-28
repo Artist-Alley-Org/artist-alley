@@ -256,7 +256,7 @@
           type="text"
           value={hexInput}
           oninput={(e) => onHexChange((e.currentTarget as HTMLInputElement).value)}
-          class="w-full rounded border border-border bg-surface px-1 py-0.5 font-mono text-xs"
+          class="w-full rounded border border-border-strong bg-surface px-1 py-0.5 font-mono text-xs"
           maxlength={7}
         />
       </label>
@@ -269,7 +269,7 @@
             min={0} max={255} step={1}
             value={Math.round(cur)}
             oninput={(e) => onRgbChange(ch as 'r'|'g'|'b', +(e.currentTarget as HTMLInputElement).value)}
-            class="w-full rounded border border-border bg-surface px-1 py-0.5 font-mono text-xs"
+            class="w-full rounded border border-border-strong bg-surface px-1 py-0.5 font-mono text-xs"
           />
         </label>
       {/each}

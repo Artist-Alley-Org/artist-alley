@@ -129,7 +129,7 @@
           rows="3"
           maxlength="10000"
           data-testid="field-input-{def.code}"
-          class="mt-1 w-full resize-y rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          class="mt-1 w-full resize-y rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         ></textarea>
       {:else}
         <input
@@ -139,7 +139,7 @@
           {disabled}
           maxlength="500"
           data-testid="field-input-{def.code}"
-          class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         />
       {/if}
     {:else if def.type === 'number'}
@@ -149,7 +149,7 @@
         oninput={(e) => emitNum((e.currentTarget as HTMLInputElement).value)}
         {disabled}
         data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       />
     {:else if def.type === 'boolean'}
       <label class="mt-1 flex items-center gap-2 text-sm">
@@ -159,7 +159,7 @@
           onchange={(e) => emitBool((e.currentTarget as HTMLInputElement).checked)}
           {disabled}
           data-testid="field-input-{def.code}"
-          class="h-4 w-4 rounded border-border"
+          class="h-4 w-4 rounded border-border-strong"
         />
         <span>{def.label}</span>
       </label>
@@ -170,7 +170,7 @@
         onchange={(e) => emitDate((e.currentTarget as HTMLInputElement).value)}
         {disabled}
         data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       />
     {:else if def.type === 'select'}
       <select
@@ -178,7 +178,7 @@
         onchange={(e) => emitSelect((e.currentTarget as HTMLSelectElement).value)}
         {disabled}
         data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
         <option value=""></option>
         {#each selectOptions as opt (opt.value)}
@@ -196,7 +196,7 @@
         }}
         {disabled}
         data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
         {#each selectOptions as opt (opt.value)}
           <option value={opt.value}>{opt.label ?? opt.value}</option>
@@ -210,7 +210,7 @@
         placeholder="UUID"
         {disabled}
         data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 font-mono text-xs focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       />
     {/if}
   </label>

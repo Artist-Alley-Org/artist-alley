@@ -166,7 +166,7 @@
       <input
         bind:value={assetTypeFilter}
         placeholder="leave blank for all types"
-        class="w-64 rounded border border-border bg-bg p-2 text-fg"
+        class="w-64 rounded border border-border-strong bg-bg p-2 text-fg"
       />
     </label>
     <label class="flex flex-col gap-1 text-sm">
@@ -174,7 +174,7 @@
       <input
         bind:value={fileExtensionsInput}
         placeholder="e.g. cr2,nef,dng or pdf"
-        class="w-64 rounded border border-border bg-bg p-2 text-fg"
+        class="w-64 rounded border border-border-strong bg-bg p-2 text-fg"
       />
     </label>
     <label class="flex items-center gap-2 text-sm">

@@ -241,7 +241,7 @@
               type="checkbox"
               bind:checked={configureSMTP}
               disabled={submitting}
-              class="rounded border-border bg-surface-elevated"
+              class="rounded border-border-strong bg-surface-elevated"
             />
             {t('setup.smtp.configure_now')}
           </label>
@@ -267,7 +267,7 @@
               <select
                 bind:value={smtpEncryption}
                 disabled={submitting}
-                class="block w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="block w-full rounded-md border border-border-strong bg-surface-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="none">{t('setup.smtp.encryption_none')}</option>
                 <option value="starttls">STARTTLS</option>

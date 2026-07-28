@@ -95,14 +95,14 @@
     bind:value={query}
     oninput={onFilterChange}
     placeholder={t('admin.users.search_placeholder')}
-    class="flex-1 min-w-[14rem] rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+    class="flex-1 min-w-[14rem] rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
   />
   <label class="flex items-center gap-2 text-xs text-fg-muted">
     <span>{t('admin.users.filter_status_label')}</span>
     <select
       bind:value={status}
       onchange={onFilterChange}
-      class="rounded border border-border bg-surface px-2 py-1 text-xs"
+      class="rounded border border-border-strong bg-surface px-2 py-1 text-xs"
     >
       <option value="">{t('admin.users.filter_status_all')}</option>
       <option value="active">{t('admin.users.filter_status_active')}</option>

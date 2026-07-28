@@ -173,7 +173,7 @@
               type="checkbox"
               bind:checked={includeDeleted}
               onchange={() => void load()}
-              class="h-3.5 w-3.5 rounded border-border"
+              class="h-3.5 w-3.5 rounded border-border-strong"
             />
             {t('collections.include_deleted')}
           </label>
@@ -184,7 +184,7 @@
             bind:value={q}
             oninput={onSearchInput}
             placeholder={t('collections.search_placeholder')}
-            class="w-full rounded-md border border-border bg-surface py-1.5 pl-9 pr-3 text-sm focus-visible:border-border-strong focus:outline-none"
+            class="w-full rounded-md border border-border-strong bg-surface py-1.5 pl-9 pr-3 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted">
             <circle cx="11" cy="11" r="8" />

@@ -372,7 +372,7 @@
         type="search"
         placeholder={t('search.query_placeholder')}
         data-testid="search-input"
-        class="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg
+        class="flex-1 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-fg
                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <button
@@ -453,7 +453,7 @@
         <input
           bind:value={saveName}
           type="text"
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       {#if saveResult}
@@ -497,7 +497,7 @@
         <input
           bind:value={saveSearchName}
           type="text"
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       <label class="mb-3 block text-sm">
@@ -507,14 +507,14 @@
           type="number"
           min="15"
           step="15"
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       <label class="mb-3 block text-sm">
         <span class="mb-1 block text-fg-muted">{t('search.save_search.channel_label')}</span>
         <select
           bind:value={saveSearchChannel}
-          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         >
           <option value="email">{t('search.save_search.channel_email')}</option>
           <option value="none">{t('search.save_search.channel_none')}</option>

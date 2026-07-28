@@ -725,7 +725,7 @@
             if (e.key === 'Escape') cancelDraft();
             else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submitDraft(); }
           }}
-          class="w-full resize-none rounded border border-border bg-surface px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+          class="w-full resize-none rounded border border-border-strong bg-surface px-2 py-1 text-xs text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         ></textarea>
         <div class="mt-1 flex items-center justify-between">
           <div class="flex items-center gap-0.5">

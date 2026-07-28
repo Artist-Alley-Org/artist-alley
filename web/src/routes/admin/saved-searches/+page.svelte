@@ -99,7 +99,7 @@
       <input
         bind:value={ownerFilter}
         placeholder="leave blank for all"
-        class="w-48 rounded border border-border bg-bg p-2 text-fg"
+        class="w-48 rounded border border-border-strong bg-bg p-2 text-fg"
       />
     </label>
     <label class="flex items-center gap-2 text-sm">
