@@ -7,6 +7,45 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Security
+
+Four separate leaks, all found in one week and all the same underlying mistake: a
+read path that wrote out the "who may see this" rule itself instead of asking the
+one component that owns it. Each copy was correct when written, then the shared rule
+moved and the copy didn't. None was caught by a test. They are grouped here because
+the pattern matters more than any one of them (#665).
+
+- **Anyone signed in could read anyone else's private posts.** Adding
+  `?visibility=private` to the post list returned other people's private posts —
+  title and body — while opening the same post directly correctly refused. No special
+  role was needed; an ordinary account was enough. The list and the single-post view
+  now run the *same* rule, so they cannot disagree again, and a test enumerates the
+  visibility tiers from the database itself so a tier added later is covered without
+  anyone remembering (#660).
+
+- **Any signed-in user could read other people's private collections.** The IIIF
+  manifest route returned a collection's name, description and full member list with
+  no permission check at all for signed-in callers (#661).
+
+- **On a public install, adding a tag filter exposed unpublished work.** Browsing
+  anonymously with `?tag=…` returned draft, archived and restricted assets that the
+  unfiltered browse correctly hid, because the tag-filtered branch was a separate
+  query that never got the visibility rule. Measured on the reference install: 34
+  items including 17 drafts, versus 5 after the fix (#657).
+
+- **Related-asset and IIIF manifest routes leaked unpublished assets anonymously**,
+  including using a draft asset as a similarity anchor. Also fixed the same drift
+  pointing the other way: genuinely public collections were returning "not found" to
+  anonymous visitors (#661).
+
+- **Session IP addresses are now a separately granted permission.** Viewing a user's
+  sessions in the admin area required only the ordinary "read users" permission, yet
+  it showed raw client IP addresses — personal data that the audit log had already
+  been gating behind a dedicated permission. The two now match: the session list is
+  still visible, the addresses need the additional grant, and a new decision record
+  fixes the naming so the next surface carrying personal data doesn't invent a third
+  standard (#573, ADR 0072).
+
 ### Fixes
 
 - **Resetting the demo left stale rows pointing at content that no longer existed.**
@@ -43,6 +82,29 @@ where applicable, otherwise note "no-spec-impact."
 - **Missing blur-up placeholders on posts.** Assets inside a post shipped without their
   tiny preview hash, so tiles popped in from blank instead of fading up from a blur, even
   though the data existed server-side (#648).
+
+- **Masonry overlay controls no longer overflow thin tiles.** Giving each tile its true
+  aspect ratio made audio waveforms genuinely thin — the narrowest measured 24px tall —
+  while the selection checkbox and options menu need 44px each, so they spilled outside
+  the tile they belonged to. Masonry tiles now have a floor tall enough to hold them,
+  derived from the controls rather than picked; the overlay keeps only those two
+  controls; and everything else about the asset moved into a tooltip that follows the
+  cursor and sits outside the artwork it describes. The thinnest assets are slightly
+  letterboxed as a result, which is the deliberate trade — a tile too small to click is
+  worse than one slightly taller than its picture (#652).
+
+- **Cards fetched images larger than the space they were drawn in.** The hint telling the
+  browser how much room a picture would occupy advertised the largest size the install
+  generates rather than the actual column width, so browsers downloaded oversized files —
+  33% too large on a desktop wall, 113% on a phone. The hint now describes the real slot
+  (#639).
+
+- **A written post now returns the same shape a read does.** Creating or updating a post
+  returned a response missing the preview availability, pixel dimensions and blur-up hash
+  that every read path includes. Nothing visibly broke, because the app re-fetches after
+  saving — but four such fields had quietly accumulated, and anything trusting the save
+  response would have rendered a card with no picture and no placeholder. The same gap
+  existed on two asset write paths and is fixed there too (#655).
 
 - **Audio, 3D, video, fonts and ebooks had no blur-up placeholder at all.** The tiny
   preview hash was only ever computed when the uploaded file was itself an image, so
