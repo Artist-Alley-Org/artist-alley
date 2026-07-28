@@ -3,7 +3,7 @@ id: "0073"
 title: Articles (blogs) are posts with a kind, not a new entity
 status: accepted
 date: 2026-07-28
-area: content
+area: architecture
 phases: []
 supersedes: []
 related:
