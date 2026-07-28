@@ -461,7 +461,7 @@
            grid here exactly as it does in UserProfile's asset section. -->
       <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
         {#snippet card(item, mode)}
-          <AssetCard asset={item} {mode} />
+          <AssetCard asset={item} {mode} tileSizes={browseView.tileSizes} />
         {/snippet}
       </ContentGrid>
     {/if}
