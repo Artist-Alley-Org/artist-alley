@@ -623,26 +623,32 @@ milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
 
-> **⚠️ Release train rebalanced 2026-07-23 — authoritative summary. The detailed per-version prose further down predates this and is being reconciled; where they disagree, this table + the GitHub milestones win.**
+> **⚠️ Release train re-cut 2026-07-27 — authoritative summary. The detailed per-version prose further down predates this and is being reconciled; where they disagree, this table + the GitHub milestones win.**
+>
+> **What changed on 2026-07-27 and why.** v0.7.0's theme was *"operator configurability + browse polish"* — two releases in one, which is why it kept growing instead of closing. It has been split: the browse half keeps v0.7.0, and **two new milestones were inserted**, shifting everything from the old v0.8.0 upward by two. No issues were reassigned in that shift; the milestones themselves were renamed, so each carried its contents with it.
 >
 > | Milestone | Theme |
 > |---|---|
 > | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
-> | **v0.7.0** *(current)* | Operator config + browse polish |
-> | v0.8.0 | Review & collaboration arc (Phase 1.18.B) |
-> | v0.9.0 | Community, moderation & engagement |
-> | v0.10.0 | Sharing, bulk-ops & asset workflow |
-> | v0.11.0 | Privacy, audit, observability & reporting |
-> | v0.12.0 | Platform & extensibility (plugins / add-ons / MCP / imports) |
-> | v0.13.0 | Monetization & premium DCC *(gated on v0.12 add-ons registry)* |
-> | v0.14.0 | AI & creative tooling |
-> | v0.15.0 | RS migration tool |
-> | v0.16.0 | Physical archive mode |
-> | v0.17.0 | Distribution & packaging |
-> | v0.18.0 | Federation / multi-site / fediverse |
+> | **v0.7.0** *(current)* | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) |
+> | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine (#519/#520/#521), branding (#517), feature flags (#524) |
+> | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577) |
+> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* |
+> | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
+> | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
+> | v0.13.0 | Privacy, audit, observability & reporting *(was v0.11.0)* |
+> | v0.14.0 | Platform & extensibility (plugins / add-ons / MCP / imports) *(was v0.12.0)* |
+> | v0.15.0 | Monetization & premium DCC *(gated on v0.14 add-ons registry; was v0.13.0)* |
+> | v0.16.0 | AI & creative tooling *(was v0.14.0)* |
+> | v0.17.0 | RS migration tool *(was v0.15.0)* |
+> | v0.18.0 | Physical archive mode *(was v0.16.0)* |
+> | v0.19.0 | Distribution & packaging *(was v0.17.0)* |
+> | v0.20.0 | Federation / multi-site / fediverse *(was v0.18.0)* |
 > | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) |
 >
-> Locked sequencing: platform (v0.12) **before** monetization/premium (v0.13). Each GitHub milestone's issue list is authoritative.
+> Locked sequencing: platform (now v0.14) **before** monetization/premium (now v0.15). Each GitHub milestone's issue list is authoritative.
+>
+> **Why the split matters beyond tidiness.** The two halves of the old v0.7.0 had no dependency on each other — admin configuration does not block browse correctness, and vice versa — so holding them in one milestone meant neither could ship. Separating them makes v0.7.0 tag-able on work that is already largely done.
 
 
 
