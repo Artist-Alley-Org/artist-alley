@@ -64,7 +64,7 @@ type ThumbhashBackfillResult struct {
 //
 // WHY A SEPARATE SWEEP AND NOT A PREVIEW RE-QUEUE. Re-running the
 // preview job would work — the ladder step now stamps the hash — but it
-// costs a Blender turntable, an ffmpeg waveform render or a Ghostscript
+// costs a three.js turntable, an ffmpeg waveform render or a Ghostscript
 // rasterise per asset to recover 30 bytes that can be derived from
 // output already sitting in storage. This reads that output back
 // instead: one small GET, one decode, one UPDATE.

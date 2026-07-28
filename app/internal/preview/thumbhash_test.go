@@ -36,8 +36,8 @@ import (
 // thumbhash.
 //
 // These drive the real jobs.Handler.Handle path with the external
-// renderers faked at the exec boundary (ffmpeg/ffprobe/blender are not
-// in the test image), because that boundary is exactly where the bug
+// renderers faked at the exec boundary (ffmpeg/ffprobe/node are not in
+// the test image), because that boundary is exactly where the bug
 // lived: the handlers produced a perfectly good rendered preview and
 // then never hashed it. A test that called the hashing helper directly
 // would have passed on the broken code.
@@ -175,7 +175,7 @@ func writeWaveformPNG(t *testing.T, path string, w, h int) {
 	}
 }
 
-// writeTurntablePNG writes a stand-in for a Blender turntable frame:
+// writeTurntablePNG writes a stand-in for a rendered turntable frame:
 // an opaque dark background with a bright blob, i.e. what a rendered
 // 3D model looks like to a hashing pass.
 func writeTurntablePNG(t *testing.T, path string, side int) {
@@ -206,8 +206,8 @@ func writeTurntablePNG(t *testing.T, path string, side int) {
 }
 
 // writeShim drops an executable shell script and returns its path.
-// Used to stand in for ffmpeg / ffprobe / blender, which the plain
-// golang test image does not carry.
+// Used to stand in for ffmpeg / ffprobe / node, which the plain golang
+// test image does not carry.
 func writeShim(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -278,23 +278,35 @@ cp `+fixture+` "$last"
 
 func TestPreviewModel_StampsThumbhashFromTurntable(t *testing.T) {
 	rig := newPreviewTestRig(t)
-	assetID, hash := rig.seedPreviewAsset(t, "glb", []byte("glTF stand-in; the blender shim doesn't parse it"))
+	assetID, hash := rig.seedPreviewAsset(t, "glb", []byte("glTF stand-in; the worker shim doesn't parse it"))
 
 	shimDir := t.TempDir()
 	fixture := filepath.Join(shimDir, "frame-fixture.png")
 	writeTurntablePNG(t, fixture, 512)
 
-	// blender shim: honour the three output flags the handler uses.
-	// --poster-output <file> / --iso-output <file> write one PNG.
-	// --output <dir> is the RENDER ROOT, not the frames dir — the real
-	// turntable.py creates turntable/ and views/ underneath it, and the
-	// Go side reads them back from those fixed subpaths.
-	blender := writeShim(t, shimDir, "blender", `
+	// three.js worker shim (#500 — Blender is no longer in the image, so
+	// this stands in for `node /app/threejs/worker.mjs`). The handler
+	// invokes it as `<node> <script> --input .. --workdir .. --output ..`
+	// and reads poster.png + turntable/ + views/ back out of --output.
+	//
+	// The script path must live in a directory that also has
+	// node_modules/three, because that is exactly what threeJSAvailable
+	// checks — the shim has to satisfy the real availability probe, not
+	// bypass it.
+	workerDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workerDir, "node_modules", "three"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workerScript := filepath.Join(workerDir, "worker.mjs")
+	if err := os.WriteFile(workerScript, []byte("// stand-in; the node shim never reads it"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	node := writeShim(t, shimDir, "node", `
 while [ $# -gt 0 ]; do
   case "$1" in
-    --poster-output|--iso-output) cp `+fixture+` "$2"; shift 2 ;;
     --output)
       mkdir -p "$2/turntable" "$2/views"
+      cp `+fixture+` "$2/poster.png"
       cp `+fixture+` "$2/turntable/frame_0000.png"
       cp `+fixture+` "$2/views/top.png"
       cp `+fixture+` "$2/views/bottom.png"
@@ -306,9 +318,8 @@ exit 0
 `)
 
 	h := NewModelHandler(rig.pool, rig.storage, rig.sysCfg, rig.logger)
-	h.BlenderPath = blender
-	h.ScriptPath = filepath.Join(shimDir, "turntable.py") // never read by the shim
-	h.DisableThreeJS = true                               // force the Blender path
+	h.NodePath = node
+	h.ThreeJSScript = workerScript
 	h.TempDir = t.TempDir()
 	h.Frames = 1
 

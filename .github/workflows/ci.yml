@@ -191,30 +191,34 @@ jobs:
           fi
           echo "gofmt: all files formatted"
 
-      # Blender pin drift gate (#470). The release image (root
-      # Dockerfile) and the local-compose image (infra/docker/app/
-      # Dockerfile) each declare BLENDER_VERSION + BLENDER_SHA256
-      # independently. They MUST agree — when they silently diverged the
-      # release shipped with no Blender at all and every 3D preview
-      # failed in production while local compose worked. This static grep
-      # fails the moment a Blender bump lands in one file but not the
-      # other. Cheap, no build, runs on every PR incl. forks.
-      - name: Blender pins in sync across Dockerfiles
+      # 3D renderer parity across Dockerfiles — the successor to the
+      # Blender pin-drift gate (#470, removed in #500 along with Blender).
+      # The original failure it guarded still exists in the same shape:
+      # the release image (root Dockerfile) and the local-compose image
+      # (infra/docker/app/Dockerfile) declare their runtime stages
+      # independently, and when they drift, prod ships with no working 3D
+      # renderer while local compose is fine. The renderer is now Chromium
+      # + the Node worker, so that is what has to be present in both.
+      # Cheap, no build, runs on every PR incl. forks. The deeper check —
+      # that the renderer actually renders — is the smoke in docker-build.
+      - name: 3D renderer present in both Dockerfiles
         run: |
-          pin() { sed -n "s/^ARG $2=//p" "$1" | head -n1; }
-          rv=$(pin Dockerfile BLENDER_VERSION)
-          rs=$(pin Dockerfile BLENDER_SHA256)
-          cv=$(pin infra/docker/app/Dockerfile BLENDER_VERSION)
-          cs=$(pin infra/docker/app/Dockerfile BLENDER_SHA256)
-          if [ -z "$rv" ] || [ -z "$rs" ] || [ -z "$cv" ] || [ -z "$cs" ]; then
-            echo "::error::Blender pin not found — release(v=$rv sha=$rs) compose(v=$cv sha=$cs). Did the ARGs move?"
+          for f in Dockerfile infra/docker/app/Dockerfile; do
+            for needle in "chromium" "threejs-deps" "worker.mjs" "PUPPETEER_EXECUTABLE_PATH"; do
+              if ! grep -q "$needle" "$f"; then
+                echo "::error::$f does not mention '$needle' — the three.js preview renderer is incomplete in this image. Both runtime stages must carry it (cf. #470)."
+                exit 1
+              fi
+            done
+          done
+          # Match the things that INSTALL Blender, not the word itself —
+          # both files still explain in comments why it is gone.
+          if grep -qE 'BLENDER_VERSION|download\.blender\.org|/opt/blender|/app/blender' \
+                 Dockerfile infra/docker/app/Dockerfile; then
+            echo "::error::Blender is being installed into a base image again. It was removed in #500 (1.3 GB of a 3.64 GB image, zero callers) and returns as an opt-in converter plugin, #499 — not in the base image."
             exit 1
           fi
-          if [ "$rv" != "$cv" ] || [ "$rs" != "$cs" ]; then
-            echo "::error::Blender pin drift — release(v=$rv sha=$rs) vs compose(v=$cv sha=$cs). Bump both Dockerfiles together."
-            exit 1
-          fi
-          echo "Blender pins in sync: $rv ($rs)"
+          echo "3D renderer (chromium + three.js worker) present in both Dockerfiles; no Blender."
 
       - uses: actions/setup-node@v7
         with:
@@ -498,56 +502,50 @@ jobs:
           docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} --version || \
           docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} -h || true
 
-      # Regression net for #470: the release image (root Dockerfile) once
-      # shipped with no Blender because its runtime stage diverged from
-      # infra/docker/app/Dockerfile — every 3D preview failed in prod
-      # while local compose worked. This asserts the amd64 release image
-      # actually carries a working Blender AND can drive the exact
-      # turntable.py + poster path preview.model uses (so it also covers
-      # the glTF importer add-on + the GL libs Blender dlopens, not just
-      # "the binary is on disk"). Red on the pre-fix Dockerfile.
-      - name: Assert Blender + 3D preview smoke (amd64 release image)
+      # Regression net for #470, carried over to the three.js renderer in
+      # #500. The original bug: the release image (root Dockerfile) shipped
+      # with no working 3D renderer because its runtime stage diverged from
+      # infra/docker/app/Dockerfile — every 3D preview failed in prod while
+      # local compose worked. Removing Blender did not remove that failure
+      # mode, it only changed which pieces can go missing: Chromium's
+      # dlopen deps, the node_modules copy, the importmap paths, a loader
+      # that moved in three's addons. Every one of those fails at RENDER
+      # time, so a green `docker build` proves none of them.
+      #
+      # scripts/threejs/smoke.mjs therefore drives the real chain — node →
+      # puppeteer → Chromium/SwiftShader → render.html → three.js loader →
+      # PNG frames on disk — once per format in threeJSExts, and asserts
+      # the poster has non-transparent pixels (an empty render is what a
+      # broken loader or a dead GL context actually looks like on disk).
+      # Fixtures are synthesised at runtime, so there is still no committed
+      # binary fixture and no dependency on the gitignored seed corpus.
+      #
+      # Runs in ONE docker run as the image's DEFAULT (non-root) user,
+      # writing only to a container-internal path (/tmp) that user owns —
+      # NOT a host bind-mount. On the self-hosted runner the container uid
+      # can't write a bind-mounted dir even at chmod 777 (#494), and the
+      # non-root render path is precisely what this proves, so we do NOT
+      # add --user root.
+      - name: Assert 3D preview smoke (three.js, amd64 release image)
         run: |
           set -euo pipefail
           IMG=artist-alley:ci-${{ github.sha }}
 
-          echo "::group::blender --version"
-          docker run --rm --entrypoint blender "$IMG" --version
+          echo "::group::blender must be absent (#500)"
+          if docker run --rm --entrypoint sh "$IMG" -c 'command -v blender' >/dev/null 2>&1; then
+            echo "::error::Blender is back in the release image. #500 removed it (1.3 GB of a 3.64 GB image, zero callers); it returns as an opt-in converter plugin, #499."
+            exit 1
+          fi
+          echo "blender: absent, as intended"
           echo "::endgroup::"
 
-          # Exercise the real preview.model chain: Blender exports a cube
-          # .glb, then re-imports it through the exact turntable.py + poster
-          # path ModelHandler.renderPoster uses (the bundled glTF add-on —
-          # export AND import — plus the GL libs Blender dlopens). No
-          # committed fixture (the seed/ .glb models are gitignored).
-          #
-          # Everything runs in ONE docker exec, as the image's DEFAULT
-          # (non-root) user, writing to a container-internal path (/tmp)
-          # that user owns — NOT a host bind-mount. On the self-hosted
-          # runner the container uid can't write a bind-mounted dir even at
-          # chmod 777 (#494), and the whole point of this smoke is the
-          # non-root render path, so we do NOT add --user root. Keeping the
-          # export→import chain + the existence checks inside the container
-          # means no output ever crosses the mount boundary. `\"` escapes
-          # the Python path quotes for the inner sh.
-          docker run --rm --entrypoint sh "$IMG" -euc '
-            blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
-              --python-expr "import bpy; bpy.ops.mesh.primitive_cube_add(); bpy.ops.export_scene.gltf(filepath=\"/tmp/cube.glb\")"
-            [ -s /tmp/cube.glb ] || { echo "smoke FAILED: Blender did not export the glTF fixture" >&2; exit 1; }
-
-            blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
-              --python /app/blender/turntable.py -- \
-              --input /tmp/cube.glb --poster-output /tmp/poster.png
-            [ -s /tmp/poster.png ] || { echo "preview.model smoke FAILED: no poster produced" >&2; exit 1; }
-
-            echo "3D preview smoke OK: poster $(stat -c%s /tmp/poster.png) bytes"
-          '
+          docker run --rm --entrypoint node "$IMG" /app/threejs/smoke.mjs
 
       - name: Reclaim the loaded production image
         # `load: true` above puts artist-alley:ci-<sha> into the shared
         # daemon's image store, and this job had NO cleanup at all — so
-        # every push leaked one full release image (Go binary + Blender +
-        # GL libs, the largest single artifact CI produces). It is never
+        # every push leaked one full release image (Go binary + Chromium +
+        # Node, the largest single artifact CI produces). It is never
         # dangling (unique per-sha tag), so `docker image prune -f` in the
         # OTHER job could never have collected it either.
         #
@@ -556,7 +554,7 @@ jobs:
         # from buildx without `load`, so they put nothing in the local
         # store. Removal is by tag and without -f: if a concurrent job
         # somehow holds the same image id under a different tag, this only
-        # untags. always() so a failed Blender smoke doesn't leak it.
+        # untags. always() so a failed 3D smoke doesn't leak it.
         if: always()
         run: |
           docker image rm "artist-alley:ci-${{ github.sha }}" || true

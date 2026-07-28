@@ -569,7 +569,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 
 		// Register multi-file companions (#486). A .gltf/.obj declares its
 		// buffer/textures/.mtl as sibling files; without companion rows the
-		// Blender render stages nothing and the interactive viewer's
+		// render stages nothing and the interactive viewer's
 		// GLTFLoader 404s on the .bin, so the model renders blank. Do this
 		// BEFORE the preview enqueue below so the worker finds them staged.
 		// Best-effort: a companion hiccup shouldn't fail an otherwise-good

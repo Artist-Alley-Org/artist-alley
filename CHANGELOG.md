@@ -46,6 +46,27 @@ the pattern matters more than any one of them (#665).
   fixes the naming so the next surface carrying personal data doesn't invent a third
   standard (#573, ADR 0072).
 
+### Operator-facing changes
+
+- **The server image is half the size: 3.64 GB → 1.82 GB.** Blender is no longer
+  packaged. It was 1.3 GB of the image — roughly a third — plus the ten X/GL
+  libraries it loaded at startup, and since the three.js renderer landed (#498)
+  nothing in the product invoked it: every 3D format in the reference catalogue
+  (`glb`, `obj`, `fbx`, `gltf`) already rendered through the three.js worker, and
+  a search of the whole catalogue for the Blender-only formats returned nothing.
+  `stl`, `ply` and `dae` moved onto the worker with this change so they keep
+  their thumbnails. Formats with no three.js loader (`.blend`, `.usd*`, `.abc`,
+  `.x3d`) get no generated thumbnail for now — the file itself still uploads,
+  downloads and serves normally — and regain one when the Blender converter
+  ships as an optional plugin (#499). Nothing to do on upgrade; no configuration
+  changed. (#500, ADR 0069 amended.)
+
+  Two smaller consequences worth knowing: arm64 deployments are unaffected
+  because they never had Blender in the first place (its tarball is x64-only) —
+  they have had 3D previews since #498. And the `AA`-side escape hatch that
+  forced the old renderer is gone; with one renderer there is nothing to switch
+  to. Nobody had it set.
+
 ### User-facing changes
 
 - **Assets with no preview picture now get a designed tile instead of a blank

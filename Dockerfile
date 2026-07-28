@@ -115,8 +115,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # resolves node:22-bookworm-slim per TARGETPLATFORM, so the node binary +
 # modules copied into the runtime below match the target arch. Puppeteer's
 # bundled Chromium download is skipped — the runtime uses the apt
-# `chromium` package (available on amd64 AND arm64, unlike Blender, so
-# arm64 gains 3D previews here).
+# `chromium` package, which exists on amd64 AND arm64. That is why arm64
+# has 3D previews at all: the Blender tarball it replaced (#500) was
+# x64-glibc only, so arm64 images shipped with no 3D renderer.
 
 FROM node:${NODE_VERSION}-bookworm-slim AS threejs-deps
 WORKDIR /app/threejs
@@ -139,22 +140,17 @@ LABEL org.opencontainers.image.description="Self-hosted art review and archival 
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
 
-# buildx populates TARGETARCH per platform in a multi-arch build. We use
-# it to install Blender on amd64 only (see the Blender block below).
-ARG TARGETARCH
-
-# Blender pin — MUST stay identical to infra/docker/app/Dockerfile's
-# BLENDER_VERSION / BLENDER_SHA256 (the local-compose runtime image). The
-# two runtime stages diverging is exactly what shipped a release image
-# with no Blender (#470); CI's "Blender pins in sync across Dockerfiles"
-# step (codegen-drift job) fails if these drift apart. Bump both together.
-ARG BLENDER_VERSION=4.2.9
-ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
-
 # chromium: headless renderer for the three.js preview worker (#498). The
 # apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm, …)
 # so puppeteer launches it on SwiftShader software WebGL — no GPU. Present
-# on amd64 AND arm64, so 3D previews work on both (Blender is amd64-only).
+# on amd64 AND arm64, so this stage is now arch-uniform: #500 removed the
+# amd64-only Blender block that used to make it differ per platform, along
+# with the GL/X libs (libgl1, libegl1, libxrender1, libxi6, libxxf86vm1,
+# libxfixes3, libxkbcommon0, libxext6, libsm6, libice6) that existed
+# solely for Blender's dlopens. Chromium brings the X/GL libs it needs
+# through its own dependency tree. Those are RENDER-time dependencies, so
+# a green build proves nothing about them — scripts/threejs/smoke.mjs,
+# which CI runs against this image, is what actually proves it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl libwebp7 \
         ffmpeg librsvg2-bin poppler-utils ghostscript imagemagick unar \
@@ -164,39 +160,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && mkdir -p /var/lib/aa-storage \
  && chown app:app /var/lib/aa-storage
 
-# Blender (Cycles/Workbench CPU) drives preview.model — the 3D turntable
-# + poster thumbnails. The official portable tarball is x64-glibc only;
-# Blender ships no arm64 build on the LTS line, and this image is built
-# multi-arch (linux/amd64,linux/arm64). So install Blender ONLY on amd64;
-# arm64 ships without it and preview.model degrades gracefully (the
-# ModelHandler no-ops when the `blender` binary is absent from PATH —
-# arm64 deployments simply get no 3D thumbnails until a community build
-# is wired, a v0.6.0 follow-up). The GL/X libs below are the ones Blender
-# dlopens on startup even in --background; without them it aborts before
-# our script runs. xz-utils is only needed for extraction and is purged.
-RUN if [ "${TARGETARCH}" = "amd64" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends \
-            xz-utils \
-            libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
-            libxkbcommon0 libxext6 libsm6 libice6 \
-     && curl -fL -o /tmp/blender.tar.xz \
-            "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
-     && echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum -c - \
-     && mkdir -p /opt/blender \
-     && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
-     && ln -s /opt/blender/blender /usr/local/bin/blender \
-     && rm /tmp/blender.tar.xz \
-     && apt-get purge -y xz-utils \
-     && apt-get autoremove -y \
-     && rm -rf /var/lib/apt/lists/* ; \
-    fi
-
 # three.js preview worker (#498): Node runtime + node_modules + script.
-# The Go ModelHandler defaults ThreeJSScript to /app/threejs/worker.mjs
-# and falls back to Blender if any piece is missing (threeJSAvailable).
+# The Go ModelHandler defaults ThreeJSScript to /app/threejs/worker.mjs.
+# Since #500 this is the ONLY 3D renderer in the image — Blender is gone
+# (it was 1.3 GB of a 3.64 GB image and, once #498 routed every renderable
+# format here, nothing called it) and comes back as an opt-in converter
+# plugin for proprietary formats, #499. See ADR 0069, amended.
 COPY --from=threejs-deps /usr/local/bin/node /usr/local/bin/node
 COPY --from=threejs-deps --chown=app:app /app/threejs/node_modules /app/threejs/node_modules
-COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html scripts/threejs/package.json /app/threejs/
+COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html \
+                     scripts/threejs/smoke.mjs scripts/threejs/package.json /app/threejs/
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
@@ -204,9 +177,6 @@ USER app
 WORKDIR /app
 
 COPY --from=go-build --chown=app:app /out/aa /app/aa
-# turntable.py + helpers — the ModelHandler defaults its ScriptPath to
-# /app/blender/turntable.py. Harmless on arm64 (no Blender to run it).
-COPY --chown=app:app scripts/blender /app/blender
 
 ENV AA_HTTP_ADDR=":8080" \
     AA_STORAGE_BACKEND="fs" \

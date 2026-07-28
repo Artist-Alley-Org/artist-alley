@@ -25,7 +25,7 @@ import (
 // visible surface" step.
 //
 // WHY THIS EXISTS. Every non-raster preview handler ends the same way:
-// it produces one image — an ffmpeg waveform, a Blender turntable frame,
+// it produces one image — an ffmpeg waveform, a three.js turntable frame,
 // a pdftoppm page render, a glyph specimen, a video poster — and then
 // fans that image across the configured variant ladder. Ten handlers
 // carried ten near-identical copies of that loop, and the raster handler
@@ -65,13 +65,19 @@ type ladderInput struct {
 	// Kind names the pipeline for log keys: "preview.<kind>.…".
 	Kind string
 	// Source is an optional discriminator for handlers that fan from
-	// more than one origin (the model handler renders both a Blender
-	// turntable frame and an mview-extracted thumb).
+	// more than one origin (the model handler fans both a three.js
+	// poster and an mview-extracted thumb).
 	Source string
-	// Overwrite re-encodes rungs that already exist on the backend.
-	// The 3D isometric pass needs it to paint over the workbench
-	// poster's stale bytes; everything else leaves existing rungs
-	// alone so re-queues are nearly free.
+	// Overwrite re-encodes rungs that already exist on the backend
+	// instead of leaving them alone (which is what makes a re-queue
+	// nearly free).
+	//
+	// NOTE: no caller sets this today. Its only user was the Blender
+	// isometric re-fan, which had to paint over the workbench poster's
+	// magenta bytes; that left with Blender in #500. Kept because a
+	// second writer to the same ladder is a real scenario the shared
+	// primitive should still answer — but if you are reading this
+	// looking for the code that overwrites variants, there isn't any.
 	Overwrite bool
 }
 
