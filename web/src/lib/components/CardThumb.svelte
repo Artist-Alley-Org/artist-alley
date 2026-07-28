@@ -34,7 +34,7 @@
   import { onMount } from 'svelte';
   import { decodeThumbhash } from '$lib/util/thumbhash';
   import { previewLadder } from '$stores/previewLadder.svelte';
-  import { clampRatio } from './cardAsset';
+  import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
 
   interface Props {
@@ -87,6 +87,18 @@
      *  (#556). Both are correct as squares. See `tileRatio` below for
      *  where the ratio comes from. */
     variableAspect?: boolean;
+    /** The tile may be only as tall as the control floor (#652) — set
+     *  in masonry, where a 5.33:1 waveform lands at ~60px. Strips the
+     *  chrome that cannot survive at that size to leave exactly the two
+     *  controls the owner asked to keep (checkbox + ⋮ menu); everything
+     *  else moves into the hover tooltip.
+     *
+     *  Separate from `variableAspect` even though both are set by the
+     *  same mode: one is about SHAPE and one is about how much chrome
+     *  fits. A future caller could reasonably want a variable-aspect
+     *  tile with full chrome, and reading the mode in here is what
+     *  #640 deliberately avoided. */
+    compact?: boolean;
     /** Recorded SOURCE dimensions for this asset, or null (#640). These
      *  are what let `variableAspect` reserve the tile's height before a
      *  single byte is requested — the difference between a wall that is
@@ -113,6 +125,7 @@
     framed = true,
     fill = false,
     variableAspect = false,
+    compact = false,
     pixelWidth = null,
     pixelHeight = null,
     children,
@@ -249,6 +262,37 @@
   const measuredRatio = $derived(loadedRatio === null ? null : clampRatio(loadedRatio));
   const tileRatio = $derived(variableAspect ? (declaredRatio ?? measuredRatio) : null);
 
+  // The tile floor (#652). Applied to every variable-aspect tile, not
+  // only the ones currently under it: the ratio can change under us
+  // (declared → measured on load, or a resize), and a floor that has to
+  // be re-decided is a floor that will be missed. Above it the
+  // `aspect-ratio` is unaffected, so #646 holds everywhere it shows.
+  //
+  // The two rules — this and MasonryColumns' height prediction — read
+  // the same constant from cardAsset.ts. Do not inline the number here:
+  // a CSS-only clamp that the bucketer does not predict desynchronises
+  // the columns and brings back the append instability #651 removed.
+  //
+  // ⚠️ `width: 100%` is LOAD-BEARING, not tidying. `aspect-ratio` plus
+  // `min-height` on a block whose width is `auto` makes the engine
+  // re-derive the INLINE size from the ratio once the floor clamps the
+  // height: measured in Chromium, a 5.33:1 tile in a 269px column came
+  // out 320x60 — 51px wider than the card it sits in. The card is
+  // `overflow-hidden`, so the artwork was silently cropped on the right
+  // and the ⋮ menu (inset from the FRAME's right edge, now 51px past
+  // the card's) was clipped away entirely. A probe that measures the
+  // controls against the frame sees nothing wrong, because the frame
+  // moved with them; measure against the CARD.
+  //
+  // Making the width definite pins it: the ratio then only ever decides
+  // the height, and the floor only ever raises it.
+  const frameStyle = $derived.by(() => {
+    const parts: string[] = [];
+    if (tileRatio) parts.push(`aspect-ratio: ${tileRatio}`);
+    if (variableAspect) parts.push(`min-height: ${MASONRY_MIN_TILE_REM}rem`, 'width: 100%');
+    return parts.length > 0 ? `${parts.join('; ')};` : undefined;
+  });
+
   // Sprite-sheet hover preview. Video covers walk the preview.video 10×10
   // timeline sheet; 3D covers walk the preview.model 6×6 turntable sheet.
   // Both serve from the same sprites.jpg variant.
@@ -324,7 +368,7 @@
 -->
 <div
   data-card-thumb
-  style={tileRatio ? `aspect-ratio: ${tileRatio};` : undefined}
+  style={frameStyle}
   class="relative overflow-hidden bg-thumb-matte
          {tileRatio ? '' : 'aspect-square'}
          after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
@@ -406,12 +450,16 @@
         ></div>
       {/if}
     {/if}
-    {#if isVideo}
+    <!-- Media-type badge. Suppressed under `compact` (#652): it lives at
+         `left-2 top-2`, which is exactly where the selection checkbox
+         goes, and on a 60px masonry tile the two are the whole tile.
+         The type is in the hover tooltip there instead. -->
+    {#if isVideo && !compact}
       <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
         video
       </div>
-    {:else if is3D}
+    {:else if is3D && !compact}
       <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
         3D

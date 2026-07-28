@@ -21,6 +21,7 @@
   import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
+  import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
@@ -64,6 +65,11 @@
   // keep the gallery frame + a persistent footer in thumbnail.
   const framed = $derived(mode !== 'grid');
   const detailed = $derived(mode === 'thumbnail');
+
+  // Masonry only (#652) — the tile can be as short as the 60px control
+  // floor, so the overlay carries the ⋮ menu and the checkbox and
+  // nothing else. See the twin in AssetCard.
+  const compact = $derived(mode === 'masonry');
 
   // Pick the cover asset id (explicit cover → first member → nothing),
   // then resolve its summary from members. CardThumb turns these into
@@ -135,6 +141,35 @@
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   );
 
+  // Tooltip payload (#652) — the facts the compact overlay drops, in
+  // scan order. Multi-asset count is here because the badge that used
+  // to carry it is one of the things `compact` removes: it sits
+  // bottom-right, which on a 60px tile is the SAME 44px band as the ⋮
+  // menu top-right. Likes/comments deliberately stay out — they are
+  // engagement, not identification, and this is not the details card.
+  const tipMeta = $derived(
+    [
+      coverFileExtension ? coverFileExtension.replace(/^\./, '').toUpperCase() : null,
+      coverPixelWidth && coverPixelHeight ? `${coverPixelWidth} × ${coverPixelHeight}` : null,
+      memberCount > 1 ? t('card.multi.badge_label', { count: String(memberCount) }) : null,
+      createdShort,
+    ].filter((v): v is string => !!v),
+  );
+
+  function tipEnter(e: MouseEvent) {
+    hovering = true;
+    if (compact) {
+      cardTooltip.enter(post.id, { title: post.title || 'Untitled', meta: tipMeta }, e);
+    }
+  }
+  function tipMove(e: MouseEvent) {
+    if (compact) cardTooltip.move(post.id, e);
+  }
+  function tipLeave() {
+    hovering = false;
+    if (compact) cardTooltip.leave(post.id);
+  }
+
   async function handleClick(e: MouseEvent) {
     // Modifier-key / non-primary clicks fall through to the native
     // <a href>. Standard browser behavior: new tab, new window,
@@ -190,16 +225,19 @@
     {framed}
     fill={mode === 'grid'}
     variableAspect={mode === 'masonry'}
+    {compact}
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
-         fallback). Hover here drives CardThumb's sprite-scrub. -->
+         fallback). Hover here drives CardThumb's sprite-scrub and, in
+         masonry, the shared hover tooltip (#652). -->
     <a
       href="/posts/{post.id}"
       onclick={handleClick}
-      onmouseenter={() => (hovering = true)}
-      onmouseleave={() => (hovering = false)}
+      onmouseenter={tipEnter}
+      onmousemove={tipMove}
+      onmouseleave={tipLeave}
       class="absolute inset-0 z-[1]"
       aria-label={post.title || 'Untitled'}
     ></a>
@@ -213,8 +251,17 @@
          claimed: checkbox + CardThumb's video/3D type badge top-left, ⋮
          menu top-right. Bottom-right is also clear of the hover title
          overlay, which is bottom-LEFT-aligned. Only shown when the post
-         bundles more than one asset. -->
-    {#if memberCount > 1}
+         bundles more than one asset.
+
+         Suppressed under `compact` (#652). On a 60px masonry tile
+         "bottom-right" and "top-right" are the same 44px band, so the
+         badge and the ⋮ menu sit on top of each other — the owner's
+         "only keep the options and checkbox" resolves that collision.
+         The count is in the hover tooltip there instead, so the signal
+         is still available, just not at rest. This is the one place
+         #580's "persistent at rest" property is traded away; if the
+         owner wants it back in masonry, the tile floor has to grow. -->
+    {#if memberCount > 1 && !compact}
       <div
         class="pointer-events-none absolute bottom-2 right-2 z-[2] inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm"
         aria-label={t('card.multi.badge_label', { count: String(memberCount) })}
@@ -228,9 +275,10 @@
       </div>
     {/if}
 
-    {#if !detailed}
-      <!-- Grid/masonry/feed: hover-only title overlay (clicks fall to the
-           link). Thumbnail shows a persistent footer below instead. -->
+    {#if !detailed && !compact}
+      <!-- Grid/feed: hover-only title overlay (clicks fall to the link).
+           Thumbnail shows a persistent footer below instead; masonry
+           shows the hover tooltip instead (#652). -->
       <div
         class="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/85 via-black/50 to-transparent
                p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
