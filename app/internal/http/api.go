@@ -965,13 +965,6 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.storageAdmin = storage.NewAdminHandler(pool).WithJobs(jobSvc)
 	s.sysCfg = sysCfg
 
-	// Wire the social-graph seam into posts so visibility='followers'
-	// gating consults the new follows table (Phase 1.17.G2). Done
-	// post-construction since the two handlers are siblings in the
-	// struct literal and a direct cross-reference there would be
-	// awkward to read.
-	s.posts.SetFollowChecker(s.social)
-
 	// Notifications writer + handler (Phase 1.17.I2). The writer is
 	// the cross-package entry point every emitter (social, posts,
 	// licensing in I2-b, L in 1.17.L) calls. Permission gates
