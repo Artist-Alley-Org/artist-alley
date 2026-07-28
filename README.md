@@ -29,17 +29,26 @@ Supporting all three: artist-alley implements [**ArchivePub**](docs/protocol/arc
 
 Seeded with the public demo dataset ([ADR 0058](docs/adr/0058-demo-seed-dataset.md)).
 
-![Browse feed (dark)](docs/screenshots/browse-dark.png)
+The viewer is the app — posts, comments, metadata, and the asset playlist in
+one surface.
 
-| 3D viewer (live WebGL) | Faceted search |
+![Asset viewer with comments, metadata, and the playlist filmstrip](docs/screenshots/viewer-image.png)
+
+| 3D viewer (live WebGL) | Frame-accurate video review |
 |---|---|
-| ![3D viewer](docs/screenshots/viewer-3d.png) | ![Search](docs/screenshots/search.png) |
+| ![3D viewer with camera, HDRI, and lighting controls](docs/screenshots/viewer-3d.png) | ![Video player with timecode, frame counter, speed and loop controls](docs/screenshots/video-player.png) |
+
+| Sprite sheet viewer | Sprite auto-detection |
+|---|---|
+| ![Sprite sheet with per-frame slicing](docs/screenshots/sprite-viewer.png) | ![Automatic sprite detection finding 45 sprites](docs/screenshots/sprite-detect.png) |
+
+![Browse feed (dark)](docs/screenshots/browse-dark.png)
 
 <details>
 <summary>More surfaces</summary>
 
+![Faceted search](docs/screenshots/search.png)
 ![Browse feed (light)](docs/screenshots/browse-light.png)
-![HDR viewer with AI variation](docs/screenshots/viewer-image.png)
 ![Admin overview](docs/screenshots/admin.png)
 
 </details>
