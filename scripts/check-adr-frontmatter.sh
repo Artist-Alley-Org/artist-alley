@@ -129,7 +129,7 @@ def split_frontmatter(text):
             'no YAML frontmatter block — the file must start with a `---` '
             'line (this is what broke ADR 0071)'
         )
-    end = text.find('\n---\n', 3)
+    end = text.find('\n---\n', 4)
     if end < 0:
         return None, 'frontmatter block is never closed (missing the second `---`)'
     return text[4:end], None
