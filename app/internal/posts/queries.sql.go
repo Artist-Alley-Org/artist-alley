@@ -265,99 +265,8 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 	return i, err
 }
 
-const listCollectionPostsPage = `-- name: ListCollectionPostsPage :many
-SELECT cp.collection_id, cp.post_id, cp.sort_order, cp.pinned,
-       cp.expires_at, cp.added_at,
-       p.author_user_ref, p.title, p.description, p.visibility,
-       p.cover_asset_id, p.posted_at, p.like_count, p.comment_count,
-       p.created_at AS post_created_at,
-       p.updated_at AS post_updated_at
-FROM collection_posts cp
-JOIN posts p ON p.id = cp.post_id
-WHERE cp.collection_id = $1
-  AND cp.pinned = TRUE
-  AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
-  AND p.deleted_at IS NULL
-  AND ($2::INTEGER IS NULL
-       OR cp.sort_order > $2::INTEGER
-       OR (cp.sort_order = $2::INTEGER
-           AND cp.added_at > $3::TIMESTAMPTZ))
-ORDER BY cp.sort_order ASC, cp.added_at ASC
-LIMIT $4::INTEGER
-`
-
-type ListCollectionPostsPageParams struct {
-	CollectionID    pgtype.UUID
-	CursorSortOrder *int32
-	CursorAddedAt   pgtype.Timestamptz
-	RowLimit        int32
-}
-
-type ListCollectionPostsPageRow struct {
-	CollectionID  pgtype.UUID
-	PostID        pgtype.UUID
-	SortOrder     int32
-	Pinned        bool
-	ExpiresAt     pgtype.Timestamptz
-	AddedAt       pgtype.Timestamptz
-	AuthorUserRef int64
-	Title         string
-	Description   string
-	Visibility    string
-	CoverAssetID  pgtype.UUID
-	PostedAt      pgtype.Timestamptz
-	LikeCount     int64
-	CommentCount  int64
-	PostCreatedAt pgtype.Timestamptz
-	PostUpdatedAt pgtype.Timestamptz
-}
-
-// Pinned posts in a collection, sort_order then added_at. Excludes
-// expired memberships and soft-deleted posts. Returns the post row
-// joined with its cover_asset for the grid render.
-func (q *Queries) ListCollectionPostsPage(ctx context.Context, arg ListCollectionPostsPageParams) ([]ListCollectionPostsPageRow, error) {
-	rows, err := q.db.Query(ctx, listCollectionPostsPage,
-		arg.CollectionID,
-		arg.CursorSortOrder,
-		arg.CursorAddedAt,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListCollectionPostsPageRow
-	for rows.Next() {
-		var i ListCollectionPostsPageRow
-		if err := rows.Scan(
-			&i.CollectionID,
-			&i.PostID,
-			&i.SortOrder,
-			&i.Pinned,
-			&i.ExpiresAt,
-			&i.AddedAt,
-			&i.AuthorUserRef,
-			&i.Title,
-			&i.Description,
-			&i.Visibility,
-			&i.CoverAssetID,
-			&i.PostedAt,
-			&i.LikeCount,
-			&i.CommentCount,
-			&i.PostCreatedAt,
-			&i.PostUpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listPostAcls = `-- name: ListPostAcls :many
+
 
 SELECT post_id, principal_type, principal_id, permission,
        granted_at, granted_by_user_ref, expires_at
@@ -366,6 +275,15 @@ WHERE post_id = $1
 ORDER BY granted_at DESC, principal_type, principal_id, permission
 `
 
+// ListCollectionPostsPage was DELETED here (#661, epic #665). It listed
+// a collection's pinned posts with `p.deleted_at IS NULL` as its only
+// post-side condition — no visibility rule at all — and nothing in the
+// tree called it: no handler, no test, and its generated row/param
+// types were referenced nowhere. An unused query that would leak every
+// private post in a collection the day somebody wired it up is not a
+// head start, it is a trap; deleting it is strictly better than
+// auditing it. A future collection-posts listing must go through
+// posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
 // ---------------------------------------------------------------------------
 // ACLs (Phase 1.7.B-7b)
 // ---------------------------------------------------------------------------

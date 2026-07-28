@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // Loader fetches the EntityRef + metadata pairs the builder
@@ -24,10 +26,36 @@ type Loader struct {
 // NewLoader constructs a Loader.
 func NewLoader(pool *pgxpool.Pool) *Loader { return &Loader{Pool: pool} }
 
+// ---------------------------------------------------------------------------
+// The row plane is OBTAINED here, not expressed (#661, epic #665)
+// ---------------------------------------------------------------------------
+//
+// Every query in this file splices visibility.Predicate.ToSQL (ADR
+// 0063) rather than carrying a hand-written WHERE clause. Before #661
+// they read by id with `deleted_at IS NULL` and nothing else — and
+// LoadCollection did not even have that — so the manifest route's ONLY
+// gate was the in-builder sensitivity check (ADR 0064). That check is a
+// CONTENT-plane rule: it knows about `restricted` / `team` / embargo and
+// nothing about `status` or `processing_status`. The row-plane conjuncts
+// the anonymous EntityAsset predicate carries — `status = 'active' AND
+// processing_status = 'ready'` — had no expression here at all, so a
+// DRAFT asset with public sensitivity served a full anonymous manifest
+// (title, description, custom-field metadata, GPS, a canvas) while
+// `GET /assets/{id}` for the same id returned 404.
+//
+// The two planes are still separate and both still run; what changed is
+// that the row plane is now present, and it is the same one every other
+// read path uses. See sensitivity_test.go, whose header documented the
+// absence this fixes.
+
 // LoadAsset returns the asset's EntityRef with metadata pairs
 // pre-filtered by field-definition visibility (public-only for
 // anonymous callers).
-func (l *Loader) LoadAsset(ctx context.Context, id uuid.UUID, isAnonymous bool) (EntityRef, error) {
+//
+// Returns ErrNotFound when the row does not exist OR the caller may not
+// see it — the two collapse deliberately, so the 404 the HTTP layer
+// emits does not confirm a hidden id.
+func (l *Loader) LoadAsset(ctx context.Context, id uuid.UUID, caller visibility.Caller) (EntityRef, error) {
 	var (
 		ref         EntityRef
 		sensitivity string
@@ -36,13 +64,20 @@ func (l *Loader) LoadAsset(ctx context.Context, id uuid.UUID, isAnonymous bool) 
 		pageCount   *int32
 		fileExt     *string
 	)
-	err := l.Pool.QueryRow(ctx, `
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
+	if err != nil {
+		return EntityRef{}, fmt.Errorf("presentation.LoadAsset: %w", err)
+	}
+	// One placeholder bound so far ($1 = id); the fragment owns
+	// everything above it and its args append LAST.
+	frag, predArgs := pred.ToSQL("", 1)
+	err = l.Pool.QueryRow(ctx, `
 		SELECT id, title, description, sensitivity, owner_user_ref,
 		       origin_server_id, page_count, file_extension,
 		       created_at, updated_at
 		  FROM assets
-		 WHERE id = $1 AND deleted_at IS NULL
-	`, id).Scan(&ref.ID, &ref.Title, &ref.Description, &sensitivity, &owner,
+		 WHERE id = $1`+frag,
+		append([]any{id}, predArgs...)...).Scan(&ref.ID, &ref.Title, &ref.Description, &sensitivity, &owner,
 		&origin, &pageCount, &fileExt, &ref.CreatedAt, &ref.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -74,7 +109,7 @@ func (l *Loader) LoadAsset(ctx context.Context, id uuid.UUID, isAnonymous bool) 
 	// Custom-field metadata pairs — respecting per-field
 	// visibility. Anonymous callers only see fields flagged as
 	// visible in public IIIF surfaces.
-	pairs, mErr := l.loadMetadataPairs(ctx, id, isAnonymous)
+	pairs, mErr := l.loadMetadataPairs(ctx, id, caller.IsAnonymous)
 	if mErr == nil {
 		ref.Metadata = pairs
 	}
@@ -82,18 +117,46 @@ func (l *Loader) LoadAsset(ctx context.Context, id uuid.UUID, isAnonymous bool) 
 }
 
 // LoadCollection returns the collection's EntityRef.
-func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID) (EntityRef, error) {
+//
+// #661 — this query had NO WHERE clause beyond the id: not the
+// visibility disjunction, not even `deleted_at IS NULL`. Anonymous
+// callers were saved by the default-deny sensitivity switch below,
+// which is safety that lives somewhere else and would vanish with one
+// edit there; AUTHENTICATED callers had no gate at all, on either
+// plane, so any signed-in user could read the manifest — name,
+// description, and via LoadCollectionMembers the full member list — of
+// anyone else's PRIVATE collection. That is the #660 shape exactly, on
+// a different route. The EntityCollection predicate (public OR owner OR
+// a live ACL grant, minus soft-deleted) now decides, and it is the same
+// one GET /collections/{id} uses.
+//
+// One deliberate divergence from that handler: it keeps a superadmin
+// fall-through so the admin UI can render a Restore button on a
+// soft-deleted row. This does not, because admitting capabilities here
+// would mean threading a visibility.CapabilityChecker through the
+// loader to answer a question no IIIF client asks — the same widening
+// visibility.Filter's EntityCollection branch declines. A system.admin
+// therefore gets 404 on the manifest of a collection they neither own
+// nor hold a grant on. That is stricter than the item read for exactly
+// one caller class, and no UI surface consumes it: the SPA never reads
+// manifests, third-party viewers do.
+func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID, caller visibility.Caller) (EntityRef, error) {
 	var (
 		ref    EntityRef
 		origin *uuid.UUID
 		vis    string
 	)
-	err := l.Pool.QueryRow(ctx, `
+	pred, err := visibility.Filter(ctx, visibility.EntityCollection, caller)
+	if err != nil {
+		return EntityRef{}, fmt.Errorf("presentation.LoadCollection: %w", err)
+	}
+	frag, predArgs := pred.ToSQL("", 1)
+	err = l.Pool.QueryRow(ctx, `
 		SELECT id, name, description, visibility, origin_server_id,
 		       created_at, updated_at
 		  FROM collections
-		 WHERE id = $1
-	`, id).Scan(&ref.ID, &ref.Title, &ref.Description, &vis, &origin,
+		 WHERE id = $1`+frag,
+		append([]any{id}, predArgs...)...).Scan(&ref.ID, &ref.Title, &ref.Description, &vis, &origin,
 		&ref.CreatedAt, &ref.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -104,16 +167,20 @@ func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID) (EntityRef, e
 	ref.Kind = EntityCollection
 	ref.OriginServerID = origin
 	// Collections carry a visibility enum rather than sensitivity.
-	// Map to the presentation Sensitivity so the anonymous gate
-	// can uniformly refuse non-public rows.
+	// Map to the presentation Sensitivity so the content-plane gate in
+	// the builder reads a uniform tier.
 	//
-	// Note: the current collections.visibility CHECK constraint is
-	// {private, org-only, followers, explicit-share} — there is NO
-	// "public" value. Anonymous IIIF callers therefore see zero
-	// collection manifests today; that's correct until an operator
-	// adds a truly-public collection visibility. Unknown values
-	// default to SensitivityRestricted (fail-closed).
+	// `public` was MISSING from this switch and fell through to the
+	// fail-closed default, which was correct when the comment here was
+	// written — the CHECK constraint had no such value — and stopped
+	// being correct when migration 00008 added the tier (#414). A truly
+	// public collection therefore 404'd for anonymous IIIF callers: the
+	// stale half of the same drift this issue is about, pointing the
+	// other way. Unknown values still default to
+	// SensitivityRestricted.
 	switch vis {
+	case "public":
+		ref.Sensitivity = SensitivityPublic
 	case "org-only", "followers":
 		ref.Sensitivity = SensitivityTeam
 	case "private", "explicit-share":
@@ -125,12 +192,30 @@ func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID) (EntityRef, e
 }
 
 // LoadCollectionMembers returns member EntityRefs in the canonical
-// (sort_order ASC, added_at ASC) order per pre-audit Q2. Members
-// with sensitivity=restricted/team are pre-filtered when isAnonymous.
-func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, isAnonymous bool, limit int) ([]EntityRef, error) {
+// (sort_order ASC, added_at ASC) order per pre-audit Q2.
+//
+// #661 — the member rows now carry the EntityAsset predicate, so this
+// LIST agrees with the single-item read of the same asset. It did not
+// before: `a.deleted_at IS NULL` plus a Go-side sensitivity filter let a
+// DRAFT public-sensitivity member be listed in an anonymous manifest
+// while `/iiif/3/asset/{that id}/manifest.json` refuses it — a list path
+// wider than the item path, which is the invariant epic #665 names. The
+// inline soft-delete conjunct is gone because the predicate asserts it
+// (#429/#438 precedent). The builder's per-member sensitivity filter
+// stays: it is the content plane, and for an AUTHENTICATED caller the
+// predicate is soft-delete only, so that filter is not redundant there.
+func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, caller visibility.Caller, limit int) ([]EntityRef, error) {
 	if limit <= 0 {
 		limit = 200
 	}
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
+	if err != nil {
+		return nil, err
+	}
+	// Two placeholders bound ($1 collection id, $2 limit) before the
+	// fragment renders. LIMIT binds first even though it reads last —
+	// the invariant is an index bound, not textual order.
+	frag, predArgs := pred.ToSQL("a", 2)
 	rows, err := l.Pool.Query(ctx, `
 		SELECT a.id, a.title, a.sensitivity, a.owner_user_ref,
 		       a.origin_server_id, a.file_extension,
@@ -139,11 +224,10 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		  JOIN assets a ON a.id = cr.asset_id
 		 WHERE cr.collection_id = $1
 		   AND cr.pinned = TRUE
-		   AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
-		   AND a.deleted_at IS NULL
+		   AND (cr.expires_at IS NULL OR cr.expires_at > NOW())`+frag+`
 		 ORDER BY cr.sort_order ASC, cr.added_at ASC
-		 LIMIT $2
-	`, collectionID, limit)
+		 LIMIT $2`,
+		append([]any{collectionID, limit}, predArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +252,7 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		if ext != nil {
 			ref.FileExtension = *ext
 		}
-		if isAnonymous && (ref.Sensitivity == SensitivityRestricted || ref.Sensitivity == SensitivityTeam) {
+		if caller.IsAnonymous && (ref.Sensitivity == SensitivityRestricted || ref.Sensitivity == SensitivityTeam) {
 			continue
 		}
 		out = append(out, ref)

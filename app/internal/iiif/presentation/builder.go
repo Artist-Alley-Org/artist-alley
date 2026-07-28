@@ -148,10 +148,12 @@ func (b *Builder) BuildAssetManifest(entity EntityRef, isAnonymous bool) (*Manif
 // callers hand us.
 //
 // Anonymous callers hit the content-plane sensitivity gate (ADR
-// 0064). NOTE: the members list is NOT pre-filtered by
-// visibility.Filter — LoadCollectionMembers reads with deleted_at
-// only (loader.go) — so the per-member check below is the sole gate,
-// not a supplement. See #432.
+// 0064). Since #661 the members list IS pre-filtered by
+// visibility.Filter (LoadCollectionMembers splices the EntityAsset
+// predicate), so the per-member check below is a content-plane
+// supplement rather than the sole gate — but it is still required,
+// because the AUTHENTICATED branch of that predicate is soft-delete
+// only and admits every sensitivity tier. See #432, #661.
 func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef, isAnonymous bool) (*CollectionManifest, error) {
 	if isAnonymous {
 		if entity.Sensitivity == SensitivityRestricted || entity.Sensitivity == SensitivityTeam {
@@ -180,12 +182,13 @@ func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef,
 	}
 
 	// Filter restricted/team members out of an anonymous manifest.
-	// This is described elsewhere in the tree as "belt-and-braces on
-	// top of the caller's visibility.Filter" — that is WRONG and the
-	// wording is being corrected under #432: LoadCollectionMembers
-	// applies no predicate, so this loop is the ONLY thing keeping a
-	// restricted member out of an anonymous collection manifest. Do
-	// not remove it on the belief that an upstream gate covers it.
+	// Since #661 LoadCollectionMembers DOES splice the EntityAsset
+	// predicate, whose anonymous branch already requires
+	// sensitivity='public', so for an anonymous caller this loop is
+	// now belt-and-braces. It stays because it is the content-plane
+	// rule (ADR 0064) and the two planes are maintained separately:
+	// if the authenticated sensitivity rule ever lands (#210) this is
+	// where the manifest's answer comes from.
 	items := make([]CollectionMember, 0, len(members))
 	for _, mem := range members {
 		if isAnonymous && (mem.Sensitivity == SensitivityRestricted || mem.Sensitivity == SensitivityTeam) {

@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // defaultSimilarLimit when the request omits it. Mirrors
@@ -58,15 +59,21 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 	}
 
 	anchorID := uuid.UUID(req.Id)
+	caller := callerFromContext(ctx)
 
-	// Verify the anchor asset exists at all. 404 distinct from the
-	// "no embedding yet" case below — the asset row missing means
-	// the URL is wrong, not that processing is pending.
-	exists, err := h.assetExists(ctx, anchorID)
+	// #661 — the anchor must be VISIBLE to this caller, not merely
+	// present. The check here used to be a bare existence probe with no
+	// predicate, so any asset id worked as an anchor: a draft, archived,
+	// still-processing or `restricted` asset on a public-mode install
+	// confirmed its own existence to an anonymous caller and then seeded
+	// a neighbour list. CanSee obtains the same rule GetAsset uses (ADR
+	// 0063) rather than restating it, so the two cannot disagree — and
+	// 404 rather than 403 keeps this from confirming a hidden id.
+	visible, err := visibility.CanSee(ctx, h.Pool, visibility.EntityAsset, caller, anchorID)
 	if err != nil {
-		return nil, fmt.Errorf("ListSimilarAssets: anchor existence: %w", err)
+		return nil, fmt.Errorf("ListSimilarAssets: anchor visibility: %w", err)
 	}
-	if !exists {
+	if !visible {
 		return openapi.ListSimilarAssets404JSONResponse{}, nil
 	}
 
@@ -116,7 +123,7 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 	for _, n := range neighbours {
 		ids = append(ids, pgtype.UUID{Bytes: n.AssetID, Valid: true})
 	}
-	assets, err := h.fetchAssetsByIDs(ctx, ids)
+	assets, err := h.fetchAssetsByIDs(ctx, caller, ids)
 	if err != nil {
 		return nil, fmt.Errorf("ListSimilarAssets: fetch assets: %w", err)
 	}
@@ -143,16 +150,6 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 		Results:            out,
 		AnchorHasEmbedding: true,
 	}), nil
-}
-
-// assetExists is the cheapest path to a 404 — we'd rather signal a
-// missing anchor before the kNN burns its index lookup.
-func (h *Handler) assetExists(ctx context.Context, id uuid.UUID) (bool, error) {
-	exists, err := New(h.Pool).AssetExistsForAI(ctx, pgtype.UUID{Bytes: id, Valid: true})
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
 }
 
 // defaultEmbeddingModel reads system_config.ai.embedding.default_model.
@@ -183,10 +180,28 @@ func (h *Handler) defaultEmbeddingModel(ctx context.Context) (string, error) {
 // fetchAssetsByIDs runs a single SELECT for a batch of IDs and shapes
 // each row into the openapi.Asset projection. Uses the existing
 // rowToAsset helper to keep the shape identical to GET /assets/{id}.
-func (h *Handler) fetchAssetsByIDs(ctx context.Context, ids []pgtype.UUID) ([]openapi.Asset, error) {
+//
+// #661 — the visibility predicate is spliced in rather than restated.
+// The kNN runs over the raw embedding table, which knows nothing about
+// publication status or sensitivity, so this re-fetch is the ONLY place
+// a neighbour can be dropped. Before this it filtered on `deleted_at IS
+// NULL` alone and returned the full Asset projection — title,
+// description, owner, file_hash — for every neighbour regardless of
+// tier. The inline `deleted_at IS NULL` is deliberately gone: the
+// predicate asserts soft-delete itself and a second expression of one
+// rule on one path is the defect ADR 0063 exists to prevent (#429,
+// #438 set the precedent).
+func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller, ids []pgtype.UUID) ([]openapi.Asset, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
+	if err != nil {
+		return nil, err
+	}
+	// One bound placeholder so far ($1 = the id array); the fragment
+	// owns everything above it and its args append LAST.
+	frag, predArgs := pred.ToSQL("", 1)
 	// Build a $1, $2, ... placeholder list. pgx5 supports ANY($1::uuid[])
 	// when passing the slice directly; that's the cleanest path.
 	rows, err := h.Pool.Query(ctx, `
@@ -195,8 +210,8 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, ids []pgtype.UUID) ([]op
 		       origin_server_id, state_id, processing_status, thumbhash,
 		       created_at, updated_at
 		FROM assets
-		WHERE id = ANY($1) AND deleted_at IS NULL
-	`, ids)
+		WHERE id = ANY($1)`+frag,
+		append([]any{ids}, predArgs...)...)
 	if err != nil {
 		return nil, err
 	}
