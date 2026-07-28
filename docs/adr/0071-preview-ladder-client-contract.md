@@ -1,10 +1,28 @@
-# 0071 — The preview ladder is a published contract, not a shared constant
+---
+id: "0071"
+title: The preview ladder is a published contract, not a shared constant
+status: accepted
+date: 2026-07-27
+area: storage
+phases: []
+supersedes: []
+related:
+  - "0008"
+  - "0011"
+  - "0064"
+tags:
+  - storage
+  - previews
+  - api
+  - frontend
+excerpt: >-
+  The set of raster variants an install generates is operator-configured,
+  so neither the server nor the client may hardcode rung keys. The server
+  publishes the configured ladder and a per-asset `ladder_available`
+  flag; the client asks rather than assumes.
+---
 
-- **Status:** Accepted
-- **Date:** 2026-07-27
-- **Supersedes:** nothing
-- **Related:** [0008](0008-storage-architecture.md) (content-addressed storage, amended 2026-07-27), [0011](0011-asset-entity.md) (asset entity, amended 2026-07-27), [0064](0064-visibility-two-planes.md) (row plane vs content plane)
-- **Implemented by:** #610 (`ladder_available`), #613 (`GET /previews` gating), #636 (client consumption), #626 (`has_image` removal)
+# 0071 — The preview ladder is a published contract, not a shared constant
 
 ## Context
 
