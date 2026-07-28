@@ -31,30 +31,58 @@ publication are gated on CI green.
    staging if you have one.
 2. Open the merge PR `dev → main`. Get CI green.
 3. Merge with a merge commit (not squash) so the changelog can group
-   commits by conventional-commit type.
-4. Locally:
+   commits by conventional-commit type. The `main` ruleset now restricts
+   `allowed_merge_methods` to `merge` alone, so this is enforced rather
+   than remembered.
+
+   > **If the PR reports `BEHIND`:** `main` carries one merge commit per
+   > previous release that `dev` never sees, so `dev` is permanently
+   > "behind" as a bookkeeping artifact. This blocked the v0.7.0
+   > promotion. The `strict_required_status_checks_policy` that caused it
+   > was **removed on 2026-07-28** — it bought nothing here, because
+   > `main` only ever receives merges *from* `dev` and the checks already
+   > ran against dev's exact content. If it is ever re-enabled, the fix is
+   > `gh api repos/.../merges -X POST -f base=dev -f head=main` (merging
+   > main into dev via the API, no local tree mutation), **not** weakening
+   > the rule to get the merge through.
+4. Create the annotated tag **via the API**, not locally:
 
    ```bash
-   git checkout main
-   git pull
-   git tag -s -a v0.1.0 -m "v0.1.0"
-   git push origin v0.1.0
+   MAIN=$(git rev-parse origin/main)
+   TAG=$(gh api repos/Artist-Alley-Org/artist-alley/git/tags -X POST \
+     -f tag=v0.7.0 -f message="v0.7.0 — <headline>" \
+     -f object=$MAIN -f type=commit --jq .sha)
+   gh api repos/Artist-Alley-Org/artist-alley/git/refs -X POST \
+     -f ref=refs/tags/v0.7.0 -f sha=$TAG
    ```
 
-   (`-s` requires a GPG key — drop it if you haven't set one up yet.
-   We sign images via Sigstore separately, so the tag signature is a
-   bonus rather than a gate.)
+   The API path is preferred over `git tag && git push` because the
+   shared working tree is frequently checked out on a verification
+   branch, and a stray local tag push is awkward to undo. Both produce
+   an identical annotated tag object; verify with
+   `git cat-file -t v0.7.0` → `tag` (not `commit`).
+
+   Image signing is Sigstore/cosign, separate from the tag, so a GPG
+   tag signature is a bonus rather than a gate.
 
 5. The Release workflow takes over and publishes:
-   - Static binaries for `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`,
-     `windows/amd64` (`.tar.gz` / `.zip`)
-   - `.deb` + `.rpm` packages (amd64 + arm64)
-   - Homebrew formula → `Artist-Alley-Org/homebrew-tap` (if `HOMEBREW_TAP_TOKEN`
-     is set)
-   - Multi-arch Docker images to `ghcr.io/mscrnt/artist-alley` and
-     `docker.io/${DOCKERHUB_USERNAME}/artist-alley`
-   - SHA256SUMS + SBOM
-   - GitHub Release with auto-generated changelog
+   - Multi-arch Docker images (`linux/amd64,linux/arm64`) to
+     `ghcr.io/artist-alley-org/artist-alley` and Docker Hub, with the tag
+     fan-out `:vX.Y.Z / :vX.Y / :vX / :latest`, plus provenance + SBOM
+   - Sigstore/cosign keyless signatures on every image
+   - GitHub Release with auto-generated notes
+
+   **`assets=0` on the GitHub Release is expected.** Docker is the sole
+   distribution channel right now. Static binaries, `.deb`/`.rpm` and
+   Homebrew were trimmed in #238: `Artist-Alley-Org/webp` is a CGO
+   dependency, goreleaser needed `CGO_ENABLED=0`, and CGO cannot be
+   cross-compiled — so each target must build on its own platform.
+   Restoring them is #286; the macOS arm64 half is #687 (an M1 runner).
+
+   The Release page publishes as soon as the notes job finishes, while
+   the multi-arch image job is still running. **The release is not done
+   until that second job completes** — `:latest` only moves at the end,
+   and the demo's autoupdate keys off `:latest`.
    - Cosign keyless signatures on every image
 
 ## Versioning
