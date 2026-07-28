@@ -141,7 +141,7 @@
         pattern="^[a-z][a-z0-9_]*$"
         required
         data-testid="admin-fields-create-code"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 font-mono text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
     <label class="block">
@@ -151,7 +151,7 @@
         bind:value={newLabel}
         required
         data-testid="admin-fields-create-label"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
     <label class="block">
@@ -159,7 +159,7 @@
       <select
         bind:value={newType}
         data-testid="admin-fields-create-type"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       >
         {#each TYPES as opt (opt)}
           <option value={opt}>{opt}</option>
@@ -193,7 +193,7 @@
         type="checkbox"
         bind:checked={newRequired}
         data-testid="admin-fields-create-required"
-        class="h-4 w-4 rounded border-border"
+        class="h-4 w-4 rounded border-border-strong"
       />
       <span>{t('admin.fields.create_help_required')}</span>
     </label>

@@ -104,14 +104,14 @@
       type="text"
       bind:value={newName}
       placeholder={t('account.tokens.name')}
-      class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+      class="rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       required
     />
     <input
       type="text"
       bind:value={newScopes}
       placeholder={t('account.tokens.scopes') + ' (comma-separated, optional)'}
-      class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+      class="rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
     <button
       type="submit"

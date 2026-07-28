@@ -46,6 +46,45 @@ the pattern matters more than any one of them (#665).
   fixes the naming so the next surface carrying personal data doesn't invent a third
   standard (#573, ADR 0072).
 
+### User-facing changes
+
+- **Assets with no preview picture now get a designed tile instead of a blank
+  one.** Text and code files never get a rendered thumbnail, and a preview can
+  also simply have failed — a 3D scene missing its geometry file, a photograph
+  too large for the render cap. Both used to land on an anonymous grey landscape
+  glyph that said "image missing" whether the asset was a CAD model, a README or
+  a JPEG, which read as a broken tile rather than a deliberate one. The tile now
+  states the two facts it actually has: the file's format, set as a wordmark, and
+  its kind in plain language — `GLTF / 3D model`, `MD / Document`. Where the card
+  does not already show the title next to the tile, the title is in it too, since
+  a document is mostly its name. The tile composes itself to the space it has, so
+  it holds up from a 60px masonry sliver to a full-width feed column. Rare on an
+  image-heavy library — 3 of 1007 assets on the reference install — and much less
+  rare on a document- or CAD-heavy one (#558).
+
+### Accessibility
+
+- **Form controls you could not see the edge of.** Inputs, selects and
+  text areas drew their border in the same colour as a divider rule, which
+  measured **1.38:1 in dark and 1.28:1 in light** against the surface behind it.
+  On a divider that quietness is deliberate; on a control the border *is* the
+  affordance — it is the only thing saying "you can type here" — and WCAG 2.2
+  requires 3:1 for it (SC 1.4.11). 251 controls now use the strong border role,
+  which was itself raised to clear the bar: measured on the rendered page,
+  **1.38 → 3.98 (dark)** and **1.28 → 3.42 (light)**. Divider borders are
+  unchanged; they carry no information and the low contrast there is intended.
+
+- **Focus was easy to lose on those same controls.** 122 of them indicated
+  focus by darkening that 1px border — a **1.95:1** change between the two
+  states, and one that would have become invisible once the resting border was
+  strengthened. They now draw the standard 2px focus ring, measured at
+  **7.08:1 (dark)** and **3.39:1 (light)** against the page.
+
+- **Secondary colour ramp fixed before anything used it.** Its white text
+  measured 4.46:1 on the steel fill, under the 4.5:1 body-text floor. Now 4.85:1.
+  No component is wired to this ramp yet, so nothing changes visually — the point
+  is that the first one to reach for it does not ship a failure (#594).
+
 ### Fixes
 
 - **Resetting the demo left stale rows pointing at content that no longer existed.**

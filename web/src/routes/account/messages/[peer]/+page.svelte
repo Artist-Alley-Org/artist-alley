@@ -194,7 +194,7 @@
     }}
   >
     <textarea
-      class="min-h-[2.5rem] flex-1 resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+      class="min-h-[2.5rem] flex-1 resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
       placeholder={t('messages.compose_placeholder')}
       bind:value={draft}
       onkeydown={onKey}

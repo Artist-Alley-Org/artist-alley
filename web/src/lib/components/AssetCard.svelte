@@ -155,6 +155,7 @@
     title={asset.title}
     thumbhash={asset.thumbhash}
     fileExtension={asset.file_extension}
+    assetType={asset.asset_type}
     hasFileHash={!!asset.file_hash}
     previewAvailable={asset.preview_available}
     ladderAvailable={asset.ladder_available}
@@ -166,6 +167,7 @@
     {compact}
     pixelWidth={asset.pixel_width}
     pixelHeight={asset.pixel_height}
+    titleAdjacent={detailed}
   >
     <!-- Whole-card navigation target. Hover here drives CardThumb's
          sprite-scrub (an interactive element, so no a11y warning) and,

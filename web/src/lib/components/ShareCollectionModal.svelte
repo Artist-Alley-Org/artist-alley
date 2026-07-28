@@ -149,7 +149,7 @@
     <section>
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">{t('collections.share_add_heading')}</h3>
       <div class="grid grid-cols-[auto_1fr_auto_auto] gap-2">
-        <select bind:value={principalType} class="rounded border border-border bg-surface px-2 py-1 text-sm">
+        <select bind:value={principalType} class="rounded border border-border-strong bg-surface px-2 py-1 text-sm">
           <option value="user">{t('collections.principal_user')}</option>
           <option value="role">{t('collections.principal_role')}</option>
           <option value="team">{t('collections.principal_team')}</option>
@@ -158,9 +158,9 @@
           type="text"
           bind:value={principalId}
           placeholder={t('collections.principal_id_placeholder')}
-          class="rounded border border-border bg-surface px-2 py-1 text-sm"
+          class="rounded border border-border-strong bg-surface px-2 py-1 text-sm"
         />
-        <select bind:value={permission} class="rounded border border-border bg-surface px-2 py-1 text-sm">
+        <select bind:value={permission} class="rounded border border-border-strong bg-surface px-2 py-1 text-sm">
           <option value="read">{t('collections.perm_read')}</option>
           <option value="write">{t('collections.perm_write')}</option>
           <option value="admin">{t('collections.perm_admin')}</option>

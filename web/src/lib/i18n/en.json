@@ -184,6 +184,23 @@
     "footer": {
       "likes": "{count} likes",
       "comments": "{count} comments"
+    },
+    "fallback": {
+      "kind": {
+        "image": "Image",
+        "video": "Video",
+        "pdf": "PDF",
+        "audio": "Audio",
+        "sequence": "Image sequence",
+        "font": "Typeface",
+        "sprite": "Sprite sheet",
+        "3d": "3D model",
+        "ebook": "E-book",
+        "doc": "Document",
+        "audiobook": "Audiobook",
+        "archive": "Archive",
+        "placeholder": "File"
+      }
     }
   },
   "selection": {

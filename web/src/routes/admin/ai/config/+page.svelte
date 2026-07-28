@@ -161,7 +161,7 @@
     {/if}
 
     <label class="flex items-center gap-2 text-sm">
-      <input type="checkbox" bind:checked={cfg.enabled} data-testid="ai-config-enabled" class="h-4 w-4 rounded border-border" />
+      <input type="checkbox" bind:checked={cfg.enabled} data-testid="ai-config-enabled" class="h-4 w-4 rounded border-border-strong" />
       <span class="font-medium">{t('admin.ai_inference.enabled_label')}</span>
     </label>
     <p class="-mt-4 text-xs text-fg-muted">{t('admin.ai_inference.enabled_help')}</p>
@@ -177,7 +177,7 @@
               type="text"
               bind:value={cfg.routing[concern]}
               data-testid="ai-config-routing-{concern}"
-              class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 font-mono text-sm focus-visible:border-border-strong focus:outline-none"
+              class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
             />
           </label>
         {/each}
@@ -195,7 +195,7 @@
             bind:value={fallbackText[concern]}
             placeholder="e.g. claude, openai, ollama"
             data-testid="ai-config-fallback-{concern}"
-            class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 font-mono text-sm focus-visible:border-border-strong focus:outline-none"
+            class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
       {/each}
@@ -204,7 +204,7 @@
     <section class="space-y-3 rounded border border-border bg-surface p-4">
       <h3 class="text-sm font-semibold">{t('admin.ai_inference.privacy_section')}</h3>
       <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" bind:checked={cfg.privacy.lock_sensitive_to_local} data-testid="ai-config-privacy-lock" class="h-4 w-4 rounded border-border" />
+        <input type="checkbox" bind:checked={cfg.privacy.lock_sensitive_to_local} data-testid="ai-config-privacy-lock" class="h-4 w-4 rounded border-border-strong" />
         <span>{t('admin.ai_inference.privacy_lock_label')}</span>
       </label>
       <p class="text-xs text-fg-muted">{t('admin.ai_inference.privacy_lock_help')}</p>
@@ -214,7 +214,7 @@
           type="text"
           bind:value={privacyLocalText}
           data-testid="ai-config-privacy-local"
-          class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 font-mono text-sm focus-visible:border-border-strong focus:outline-none"
+          class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
         <span class="mt-1 block text-xs text-fg-muted">{t('admin.ai_inference.privacy_local_help')}</span>
       </label>
@@ -230,7 +230,7 @@
             bind:value={cfg.default_budget.soft_warning_usd}
             min="0"
             data-testid="ai-config-budget-soft"
-            class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+            class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
           <span class="mt-1 block text-xs text-fg-muted">{t('admin.ai_inference.budget_soft_help')}</span>
         </label>
@@ -241,7 +241,7 @@
             bind:value={cfg.default_budget.hard_cap_usd}
             min="0"
             data-testid="ai-config-budget-hard"
-            class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+            class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
           <span class="mt-1 block text-xs text-fg-muted">{t('admin.ai_inference.budget_hard_help')}</span>
         </label>

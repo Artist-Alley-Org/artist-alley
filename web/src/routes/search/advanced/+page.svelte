@@ -88,7 +88,7 @@
         bind:value={freeText}
         type="text"
         placeholder={t('search.advanced.freetext_placeholder')}
-        class="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
 
@@ -100,7 +100,7 @@
           </label>
           <select
             bind:value={row.field}
-            class="rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
+            class="rounded-md border border-border-strong bg-surface px-2 py-1.5 text-sm"
           >
             {#each FIELDS as f (f.value)}
               <option value={f.value}>{t(f.labelKey)}</option>
@@ -110,7 +110,7 @@
             bind:value={row.value}
             type="text"
             placeholder={t('search.advanced.value_placeholder')}
-            class="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+            class="flex-1 rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
             data-testid="advanced-row-value"
           />
           <button

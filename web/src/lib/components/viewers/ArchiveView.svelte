@@ -258,7 +258,7 @@
         value={session.filter}
         oninput={(e) => session.setFilter((e.currentTarget as HTMLInputElement).value)}
         placeholder={t('archive.filter_placeholder')}
-        class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-[11px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <label class="mt-1 flex items-center gap-1 text-[10px] text-fg-muted">
         <input

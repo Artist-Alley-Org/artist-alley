@@ -87,7 +87,7 @@
           type="number"
           min="1"
           placeholder="e.g. 42"
-          class="w-40 rounded border border-border bg-bg p-2 text-fg"
+          class="w-40 rounded border border-border-strong bg-bg p-2 text-fg"
           data-testid="user-ref-input"
         />
       </label>

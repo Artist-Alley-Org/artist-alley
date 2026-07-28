@@ -168,7 +168,7 @@
 <section class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-3">
   <label class="flex flex-col gap-1">
     <span class="text-xs text-fg-muted">{t('admin.audit.filter_event_type')}</span>
-    <select bind:value={filterType} class="rounded-md border border-border bg-surface px-2 py-1 text-sm">
+    <select bind:value={filterType} class="rounded-md border border-border-strong bg-surface px-2 py-1 text-sm">
       <option value="">{t('admin.audit.filter_event_type_any')}</option>
       {#each eventTypes as opt (opt)}
         <option value={opt}>{opt}</option>
@@ -182,7 +182,7 @@
       bind:value={filterActor}
       type="number"
       placeholder={t('admin.audit.filter_user_ref_placeholder')}
-      class="w-24 rounded-md border border-border bg-surface px-2 py-1 text-sm"
+      class="w-24 rounded-md border border-border-strong bg-surface px-2 py-1 text-sm"
     />
   </label>
 
@@ -192,18 +192,18 @@
       bind:value={filterSubject}
       type="number"
       placeholder={t('admin.audit.filter_user_ref_placeholder')}
-      class="w-24 rounded-md border border-border bg-surface px-2 py-1 text-sm"
+      class="w-24 rounded-md border border-border-strong bg-surface px-2 py-1 text-sm"
     />
   </label>
 
   <label class="flex flex-col gap-1">
     <span class="text-xs text-fg-muted">{t('admin.audit.filter_since')}</span>
-    <input bind:value={filterSince} type="datetime-local" class="rounded-md border border-border bg-surface px-2 py-1 text-sm" />
+    <input bind:value={filterSince} type="datetime-local" class="rounded-md border border-border-strong bg-surface px-2 py-1 text-sm" />
   </label>
 
   <label class="flex flex-col gap-1">
     <span class="text-xs text-fg-muted">{t('admin.audit.filter_until')}</span>
-    <input bind:value={filterUntil} type="datetime-local" class="rounded-md border border-border bg-surface px-2 py-1 text-sm" />
+    <input bind:value={filterUntil} type="datetime-local" class="rounded-md border border-border-strong bg-surface px-2 py-1 text-sm" />
   </label>
 
   <button

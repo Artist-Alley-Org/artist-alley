@@ -1267,7 +1267,7 @@
           <select
             value={session.fontFamily}
             onchange={(e) => pickFont((e.currentTarget as HTMLSelectElement).value)}
-            class="w-full rounded border border-border bg-surface px-2 py-1 text-xs"
+            class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-xs"
           >
             {#each GOOGLE_FONTS as f (f.family)}
               <option value={f.family} style:font-family={`"${f.family}", system-ui`}>
@@ -1513,7 +1513,7 @@
           <textarea
             bind:value={commentDraft}
             placeholder="Add a comment\u2026"
-            class="mb-1 block w-full rounded border border-border bg-surface px-2 py-1 text-xs"
+            class="mb-1 block w-full rounded border border-border-strong bg-surface px-2 py-1 text-xs"
             rows="2"
           ></textarea>
           <button
@@ -1575,7 +1575,7 @@
                   bind:value={editingLayerName}
                   onblur={commitRename}
                   onkeydown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') editingLayerId = null; }}
-                  class="min-w-0 flex-1 rounded border border-border bg-surface px-1 text-xs"
+                  class="min-w-0 flex-1 rounded border border-border-strong bg-surface px-1 text-xs"
                   autofocus
                 />
               {:else}

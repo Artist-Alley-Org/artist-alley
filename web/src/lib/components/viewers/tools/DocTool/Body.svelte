@@ -235,7 +235,7 @@
         value={session.searchQuery}
         oninput={(e) => session.setSearchQuery((e.currentTarget as HTMLInputElement).value)}
         placeholder="Find in document…"
-        class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-[11px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <div class="mt-1 flex items-center gap-1">
         <button
@@ -287,7 +287,7 @@
             value={session.replaceWith}
             oninput={(e) => session.setReplaceWith((e.currentTarget as HTMLInputElement).value)}
             placeholder="Replace with…"
-            class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+            class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-[11px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
           <p class="mt-1 text-[10px] leading-snug text-fg-muted">
             Replace lands when the editor flips to edit mode (Phase&nbsp;D). The
@@ -307,7 +307,7 @@
           bind:value={bookmarkNote}
           placeholder="Optional note…"
           onkeydown={(e) => { if (e.key === 'Enter') addBookmark(); }}
-          class="flex-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+          class="flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
         <button
           type="button"
@@ -522,7 +522,7 @@
                     <textarea
                       bind:value={editDraft}
                       rows="2"
-                      class="w-full resize-none rounded border border-border bg-surface px-1.5 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+                      class="w-full resize-none rounded border border-border-strong bg-surface px-1.5 py-1 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                     ></textarea>
                     <div class="mt-1 flex items-center gap-1">
                       {#each HIGHLIGHT_SWATCHES as c (c)}

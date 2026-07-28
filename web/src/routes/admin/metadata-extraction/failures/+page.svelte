@@ -148,7 +148,7 @@
   <div class="grid gap-3 sm:grid-cols-3">
     <label class="flex flex-col gap-1 text-sm">
       <span class="text-fg-muted">Error kind</span>
-      <select bind:value={errorKindFilter} class="rounded border border-border bg-bg p-2 text-fg">
+      <select bind:value={errorKindFilter} class="rounded border border-border-strong bg-bg p-2 text-fg">
         {#each ERROR_KINDS as k}
           <option value={k.value}>{k.label}</option>
         {/each}
@@ -159,7 +159,7 @@
       <input
         bind:value={formatFilter}
         placeholder="image/jpeg, image/png, …"
-        class="rounded border border-border bg-bg p-2 text-fg"
+        class="rounded border border-border-strong bg-bg p-2 text-fg"
       />
     </label>
     <div class="flex items-end gap-2">

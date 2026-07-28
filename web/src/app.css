@@ -113,9 +113,34 @@
   --color-fg-disabled: oklch(55% 0.010 250);        /* disabled controls */
   --color-on-accent:   oklch(17% 0.025 64);         /* CRITICAL: near-black — the dark accent is LIGHT, white text fails (~2:1) */
 
-  /* ── Structural (3:1 against surface — WCAG 1.4.11) */
+  /* ── Structural. THREE ROLES, and only one of them is a 1.4.11
+       surface (#594). The header used to claim "3:1 against surface"
+       for the whole family, which was never true of `border` — it
+       measures 1.38:1 here and 1.28:1 in light — and the false claim is
+       what let 200-odd form controls be built on a line you cannot see.
+
+       border         DIVIDER. Card edges, table rules, panel splits,
+                      the line under a section header. Carries no
+                      information: delete it and nothing becomes
+                      unidentifiable, so 1.4.11 does not apply and the
+                      low contrast is a deliberate quiet. UNCHANGED.
+       border-strong  AFFORDANCE. The boundary that IS the control —
+                      an input, a select, a textarea, a checkbox. This
+                      one is graphical information under 1.4.11 and
+                      must clear 3:1 against every surface a control
+                      sits on.
+       border-subtle  a divider that is quieter still.
+
+       border-strong was 45% here (2.71 / 2.38 / 2.09 against surface /
+       elevated / overlay — under the floor on all three) and is 54%
+       (3.98 / 3.51 / 3.07). Picked against OVERLAY even though NOTHING
+       uses that tier today (measured: Tailwind does not even emit
+       `--color-surface-overlay`, because no utility references it, see
+       #594) — it is the lightest declared surface, so a control border
+       chosen against it stays correct if the modal tier is ever wired,
+       and the cost of the margin is nil. */
   --color-border:        oklch(28% 0.020 250);
-  --color-border-strong: oklch(45% 0.020 250);
+  --color-border-strong: oklch(54% 0.020 250);
   --color-border-subtle: oklch(22% 0.020 250);
   --color-scrim:         oklch( 8% 0.010 250 / 0.7);
 
@@ -198,9 +223,13 @@
     --color-fg-disabled: oklch(68% 0.012 250);
     --color-on-accent:   oklch(98% 0.005 250);         /* the light accent is a MID tone — white text clears AA */
 
-    /* ── Structural (3:1 against surface — WCAG 1.4.11) */
+    /* ── Structural — see the dark block for the role split (#594).
+         border-strong was 68% (2.49 / 2.76 / 2.87 against surface /
+         elevated / overlay) and is 60% (3.41 / 3.77 / 3.93). Picked
+         against SURFACE here, which is the darkest of the three and so
+         the worst case in this exposure — the mirror of dark's. */
     --color-border:        oklch(87% 0.012 250);
-    --color-border-strong: oklch(68% 0.018 250);
+    --color-border-strong: oklch(60% 0.018 250);
     --color-border-subtle: oklch(92% 0.008 250);
     --color-scrim:         oklch(22% 0.020 250 / 0.6);
 
@@ -212,8 +241,14 @@
     --color-on-accent-container:  oklch(40% 0.140 41);  /* text on the soft tint */
 
     /* ── Secondary (steel). Hue 234 sits beside the 250 neutral, so it
-         reads as a cousin of the surface rather than a third family. */
-    --color-secondary:              oklch(56% 0.098 234);
+         reads as a cousin of the surface rather than a third family.
+
+         56% → 54% (#594): its own on-secondary — pure white, and there
+         is nowhere lighter for it to go — measured 4.43:1 against it,
+         under the 4.5 body floor. 4.82:1 now. The ramp is not wired to
+         a component yet, so this costs nothing today and stops the
+         first component that reaches for it from shipping a failure. */
+    --color-secondary:              oklch(54% 0.098 234);
     --color-on-secondary:           oklch(99% 0     0);
     --color-secondary-container:    oklch(93% 0.017 240);
     --color-on-secondary-container: oklch(40% 0.090 235);

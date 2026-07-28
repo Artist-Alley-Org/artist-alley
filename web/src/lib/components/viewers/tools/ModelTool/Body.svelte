@@ -329,7 +329,7 @@
         <select
           value={session.toneMapping}
           onchange={(e) => session.setToneMapping((e.currentTarget as HTMLSelectElement).value as ToneMappingId)}
-          class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-[11px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           {#each TONE_MAPS as t (t.id)}
             <option value={t.id}>{t.label}</option>
@@ -413,7 +413,7 @@
             <span>Color</span>
             <input type="color" value={session.keyColor}
               oninput={(e) => session.setKeyColor((e.currentTarget as HTMLInputElement).value)}
-              class="h-6 w-12 cursor-pointer rounded border border-border bg-surface" />
+              class="h-6 w-12 cursor-pointer rounded border border-border-strong bg-surface" />
           </label>
         {/if}
       </div>
@@ -596,7 +596,7 @@
                   <span>Color</span>
                   <input type="color" value={curColor}
                     oninput={(e) => session.setMaterialOverride(m.id, { color: (e.currentTarget as HTMLInputElement).value })}
-                    class="h-5 w-10 cursor-pointer rounded border border-border bg-surface" />
+                    class="h-5 w-10 cursor-pointer rounded border border-border-strong bg-surface" />
                 </label>
                 <label class="block">
                   <span class="mb-0.5 flex items-center justify-between text-fg-muted">
@@ -644,7 +644,7 @@
         <select
           value={session.currentClip}
           onchange={(e) => session.selectClip(+(e.currentTarget as HTMLSelectElement).value)}
-          class="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+          class="mb-2 w-full rounded border border-border-strong bg-surface px-2 py-1 text-[11px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value={-1}>(No clip)</option>
           {#each session.clips as c, i (i)}

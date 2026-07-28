@@ -88,7 +88,7 @@
     <input
       type="checkbox"
       bind:checked={upload.compose.enabled}
-      class="h-4 w-4 rounded border-border accent-accent"
+      class="h-4 w-4 rounded border-border-strong accent-accent"
     />
     <span class="font-medium text-fg">{t('upload.compose.toggle')}</span>
   </label>
@@ -101,14 +101,14 @@
         bind:value={upload.compose.title}
         placeholder={t('upload.compose.title_placeholder')}
         maxlength="500"
-        class="w-full rounded border border-border bg-surface px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         aria-label={t('upload.compose.title_aria')}
       />
       <textarea
         bind:value={upload.compose.description}
         placeholder={t('upload.compose.description_placeholder')}
         rows="2"
-        class="w-full resize-y rounded border border-border bg-surface px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="w-full resize-y rounded border border-border-strong bg-surface px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         aria-label={t('upload.compose.description_aria')}
       ></textarea>
     </div>
@@ -119,7 +119,7 @@
         <span class="mb-1 block text-fg-muted">{t('upload.compose.visibility_label')}</span>
         <select
           bind:value={upload.compose.visibility}
-          class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value="public">{t('upload.compose.visibility_public')}</option>
           <option value="followers">{t('upload.compose.visibility_followers')}</option>
@@ -131,7 +131,7 @@
         <span class="mb-1 block text-fg-muted">{t('upload.compose.post_mode_label')}</span>
         <select
           bind:value={upload.compose.mode}
-          class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value="one-post">{t('upload.compose.mode_one_post')}</option>
           <option value="one-per-file">{t('upload.compose.mode_one_per_file')}</option>
@@ -143,7 +143,7 @@
           <span class="mb-1 block text-fg-muted">{t('upload.compose.workflow_state_label')}</span>
           <select
             bind:value={upload.compose.stateId}
-            class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+            class="w-full rounded border border-border-strong bg-surface-elevated px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           >
             <option value={null}>{t('upload.compose.workflow_state_default')}</option>
             {#each states as s (s.id)}
