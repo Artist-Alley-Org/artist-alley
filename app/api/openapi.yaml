@@ -2773,6 +2773,13 @@ paths:
         the per-user admin detail page. Same row shape as the
         self-service endpoint; `current` is omitted (admins are
         viewing someone else's sessions, not their own).
+
+        Gated on `users.read`. The session `ip` is omitted for callers
+        without `users.pii.read` on top of it (#573), exactly as
+        /admin/audit withholds actor IPs from callers lacking
+        `system.audit.pii.read` (#425) — one data class, one bar. The
+        rest of the row is unaffected, so a support role can still
+        label and revoke devices without holding the addresses.
       tags: [users]
       security:
         - cookieAuth: []
@@ -12320,9 +12327,15 @@ components:
           nullable: true
           description: |
             Client IP recorded at login — PERSONAL DATA, and returned
-            ONLY on the admin view (`GET /admin/users/{ref}/sessions`,
-            behind `users.read`), where locating a suspicious session
-            is the point.
+            ONLY on the admin view (`GET /admin/users/{ref}/sessions`),
+            where locating a suspicious session is the point, and there
+            only to callers holding `users.pii.read` on top of the
+            `users.read` that admits them to the list at all (#573).
+
+            That is the same shape audit uses for actor IPs —
+            `system.audit.pii.read` on top of `system.audit.read`
+            (#425). Raw IPs are one data class with one bar, gated
+            `<area>.pii.read` additive to `<area>.read` (ADR 0072).
 
             Never returned by `GET /account/sessions` (#567). That
             endpoint is self-scoped, and on a shared-account install
