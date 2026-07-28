@@ -1,0 +1,53 @@
+# ADR frontmatter gate.
+#
+# docs/adr/*.md is the source of truth for the ADR catalogue, but the
+# renderer that consumes it (`sync-adrs.mjs`) lives in the separate,
+# private artist-alley-site repo. A malformed ADR therefore breaks a
+# build in a repo nobody is watching, hours after merge. Twice now:
+#
+#   - ADR 0071 landed with no frontmatter block at all
+#   - ADR 0073 landed with `area: content`, not in the site's enum
+#
+# and ADR 0074 had to be hand-validated to avoid a third. This gate
+# moves that validation into the repo that owns the files.
+#
+# See scripts/check-adr-frontmatter.sh for what is checked, and ADR
+# 0035 for the frontmatter schema itself.
+
+name: ADR frontmatter check
+
+on:
+  pull_request:
+    paths:
+      - "docs/adr/**"
+      - "scripts/check-adr-frontmatter.sh"
+      - ".github/workflows/adr-frontmatter-check.yml"
+
+concurrency:
+  group: adr-frontmatter-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate ADR frontmatter
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      # The whole corpus is validated on every run, not just the
+      # changed files: the cross-reference check needs every id
+      # anyway, and 74 files take well under a second.
+      - name: Run validator
+        run: ./scripts/check-adr-frontmatter.sh
