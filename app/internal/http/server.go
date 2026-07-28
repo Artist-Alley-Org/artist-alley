@@ -221,6 +221,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewComicHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewTextHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewArchiveHandler(pool, storageSvc, sysCfg, logger))
+	// Thumbhash safety-net sweep (#645). Assets whose preview was
+	// rendered from a non-image source (audio waveform, 3D turntable,
+	// page render, glyph sheet) carried thumbhash=NULL until the ladder
+	// step started stamping it, so their tiles flashed blank instead of
+	// fading up from a blur. The handlers are fixed for new ingests;
+	// this backfills what is already on disk.
+	jobRegistry.Register(preview.NewThumbhashBackfillHandler(pool, storageSvc, sysCfg, logger))
 	// Audiobook post-processing — Phase B-2 stubs. Registered so
 	// the dispatcher knows the type names + the admin queue page
 	// renders them; the actual ffmpeg work is a TODO in
@@ -287,6 +294,22 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			}
 		},
 	})
+	// Kick the thumbhash sweep (#645). Enqueued rather than run inline
+	// so boot is never blocked on storage I/O, and idempotency-keyed so
+	// a restart loop can't stack sweeps. Steady state is one indexed
+	// query that returns zero rows and a job that finishes in
+	// microseconds — the same "safety net" shape as the federation
+	// keypair backfill in cmd/aa.
+	backfillPriority := jobs.PriorityBackfil
+	if _, err := jobSvc.Enqueue(serverCtx, preview.JobTypeThumbhashBackfill,
+		preview.ThumbhashBackfillPayload{}, jobs.EnqueueOpts{
+			Priority:       &backfillPriority,
+			IdempotencyKey: preview.ThumbhashBackfillIdempotencyKey,
+		}); err != nil {
+		logger.LogAttrs(serverCtx, slog.LevelWarn, "preview.thumbhash_backfill.enqueue_error",
+			slog.String("err", err.Error()))
+	}
+
 	// Kick the digest loop: enqueue the first coordinator run at the
 	// top of the next hour. Idempotency-keyed so a restart doesn't
 	// stack duplicate coordinators.
