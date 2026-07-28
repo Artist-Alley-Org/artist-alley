@@ -409,6 +409,13 @@
   // ── Active sessions (admin view; Phase 1.17.C) ──────────────────
   // Same row shape as /account/sessions, minus `current` (the admin is
   // viewing someone else's sessions). Any session is revocable.
+  //
+  // `ip` is optional because the server OMITS it for callers without
+  // `users.pii.read` (#573, ADR 0072) — the same treatment audit gives
+  // actor IPs. The row renders it with `{#if s.ip}`, so absence degrades
+  // to one fewer line rather than a dash or a blank. Do NOT re-derive
+  // the rule with a client-side auth.can(): a second copy of a server
+  // rule is free to disagree with the response it is describing.
   interface SessionRow {
     id: string;
     created_at: string;

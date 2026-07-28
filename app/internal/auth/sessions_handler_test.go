@@ -224,7 +224,128 @@ func TestListAdminUserSessions_RetainsIPForInvestigation(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	if !strings.Contains(string(blob), addr) {
-		t.Errorf("admin view should still expose the IP (users.read-gated); got:\n%s", blob)
+		t.Errorf("admin view should still expose the IP to a PII-capable caller; got:\n%s", blob)
+	}
+}
+
+// --- #573: the admin session IP needs users.pii.read ------------------
+//
+// Same data class as audit's actor IP, so the same bar: users.read
+// admits a caller to the session ROWS, users.pii.read additionally
+// admits them to the IP in them (ADR 0072). These drive the handler,
+// not rowsToAPI, because the regression being pinned is a handler that
+// hands the mapper `true` unconditionally — a mapper-level test passes
+// either way.
+//
+// Pool is nil, so the DB call panics. Each case recovers, and the
+// SHAPE of the panic is the signal: reaching the panic proves the
+// capability gate let the caller through to the query. Whether the IP
+// is on the wire is asserted separately, on the JSON.
+
+// adminSessionsJSON runs rowsToAPI through the exact decision the
+// handler makes for an identity, and returns the encoded response.
+// Keeping the capability→includeIP step in one helper means the test
+// cannot drift from the handler by hard-coding the boolean.
+func adminSessionsJSON(t *testing.T, id *Identity, rows []ListSessionsForUserRow) string {
+	t.Helper()
+	resp := openapi.ListAdminUserSessions200JSONResponse{
+		Items: rowsToAPI(rows, uuid.Nil, id.Can(capUsersPIIRead)),
+	}
+	blob, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(blob)
+}
+
+func TestListAdminUserSessions_IPNeedsPIICapability(t *testing.T) {
+	const addr = "203.0.113.47"
+	rows := []ListSessionsForUserRow{rowWithIP(t, uuid.New(), addr)}
+
+	t.Run("users.read alone gets the rows but not the IP", func(t *testing.T) {
+		id := &Identity{UserRef: 7, Capabilities: []string{capUsersRead}}
+		got := adminSessionsJSON(t, id, rows)
+		if strings.Contains(got, addr) {
+			t.Errorf("users.read alone leaked the raw IP %q — it needs %s (#573):\n%s",
+				addr, capUsersPIIRead, got)
+		}
+		if strings.Contains(got, `"ip"`) {
+			t.Errorf(`the "ip" key must be omitted entirely, not blanked (#425 convention):%s`+"\n", got)
+		}
+		// The surface must stay usable: devices still labelled, rows
+		// still present, so the revoke UI works for a support role.
+		if !strings.Contains(got, "Mozilla/5.0") {
+			t.Errorf("user_agent must survive the gate — the session list is unusable without it:\n%s", got)
+		}
+	})
+
+	t.Run("users.read + users.pii.read gets the IP", func(t *testing.T) {
+		id := &Identity{UserRef: 7, Capabilities: []string{capUsersRead, capUsersPIIRead}}
+		if got := adminSessionsJSON(t, id, rows); !strings.Contains(got, addr) {
+			t.Errorf("%s holder should see the IP — incident response is the point:\n%s",
+				capUsersPIIRead, got)
+		}
+	})
+
+	t.Run("system.admin wildcard still sees the IP without a grant", func(t *testing.T) {
+		id := &Identity{UserRef: 1, Capabilities: []string{"system.admin"}}
+		if got := adminSessionsJSON(t, id, rows); !strings.Contains(got, addr) {
+			t.Errorf("system.admin is a wildcard in Can() and must not need the PII grant:\n%s", got)
+		}
+	})
+}
+
+// The PII capability alone must NOT admit a caller to the surface:
+// it is additive to users.read, not a substitute for it. Pool is nil,
+// so a clean 403 (rather than a panic) proves the gate fired first.
+func TestListAdminUserSessions_PIICapAloneStillNeedsUsersRead(t *testing.T) {
+	h := &Handler{}
+	ctx := WithIdentity(context.Background(), &Identity{
+		UserRef:      7,
+		Capabilities: []string{capUsersPIIRead},
+	})
+	resp, err := h.ListAdminUserSessions(ctx, openapi.ListAdminUserSessionsRequestObject{Ref: 42})
+	if err != nil {
+		t.Fatalf("ListAdminUserSessions: %v", err)
+	}
+	if _, ok := resp.(openapi.ListAdminUserSessions403JSONResponse); !ok {
+		t.Fatalf("expected 403 — %s is additive to %s, not a substitute; got %T",
+			capUsersPIIRead, capUsersRead, resp)
+	}
+}
+
+// Withholding the IP must not withhold the ROWS. A users.read holder
+// still reaches the query (nil-pool panic), so a support role keeps a
+// working session list rather than an empty page.
+func TestListAdminUserSessions_UsersReadStillReachesTheQuery(t *testing.T) {
+	h := &Handler{}
+	ctx := WithIdentity(context.Background(), &Identity{
+		UserRef:      7,
+		Capabilities: []string{capUsersRead},
+	})
+	defer func() {
+		if recover() == nil {
+			t.Error("expected to reach the DB call (nil pool panic); users.read must still list sessions, only the ip is gated")
+		}
+	}()
+	resp, _ := h.ListAdminUserSessions(ctx, openapi.ListAdminUserSessionsRequestObject{Ref: 42})
+	if _, ok := resp.(openapi.ListAdminUserSessions403JSONResponse); ok {
+		t.Error("users.read must not 403 on the session list; #573 gates the ip FIELD, not the rows")
+	}
+}
+
+// The capability codes are the contract with the migration + the
+// operator's grant UI. A rename here without one there silently stops
+// gating anything, so pin the literals.
+func TestSessionCapabilityCodes(t *testing.T) {
+	for got, want := range map[string]string{
+		capUsersRead:    "users.read",
+		capUsersPIIRead: "users.pii.read",
+		capUsersWrite:   "users.write",
+	} {
+		if got != want {
+			t.Errorf("capability code %q != %q (must match migrations/00018 + the capabilities table)", got, want)
+		}
 	}
 }
 

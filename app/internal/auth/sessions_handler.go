@@ -6,7 +6,8 @@
 // Four operations:
 //   - GET    /account/sessions               — caller's own
 //   - DELETE /account/sessions/{id}          — caller's own, ownership-checked
-//   - GET    /admin/users/{ref}/sessions     — admin (users.read)
+//   - GET    /admin/users/{ref}/sessions     — admin (users.read;
+//     the row's `ip` additionally needs users.pii.read, #573)
 //   - DELETE /admin/users/{ref}/sessions/{id} — admin (users.write)
 //
 // The list endpoint marks the row that's authenticating the current
@@ -33,13 +34,35 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
+// Capabilities for the session surfaces.
+//
+// capUsersRead admits a caller to another user's session list;
+// capUsersPIIRead additionally admits them to the personal data in it
+// (#573). Same split, same shape, same reasoning as audit's
+// system.audit.read / system.audit.pii.read (#425) — a raw IP is a
+// separately-grantable data class, not a free rider on the area's read
+// capability (ADR 0072). system.admin satisfies either as a wildcard in
+// Identity.Can, so it needs no grant.
+//
+// capUsersWrite gates revoke, which is a write, not a read of personal
+// data — unchanged.
+const (
+	capUsersRead    = "users.read"
+	capUsersPIIRead = "users.pii.read"
+	capUsersWrite   = "users.write"
+)
+
 // rowsToAPI builds the openapi.SessionRow slice from the sqlc rows.
 // `currentID` marks one row as current; pass uuid.Nil to omit the
 // flag entirely (admin path).
 //
-// includeIP gates the raw client IP — PERSONAL DATA (#567). It is
-// false on the self-service path and true only for the admin view,
-// which is already behind users.read.
+// includeIP gates the raw client IP — PERSONAL DATA (#567, #573). It is
+// false unconditionally on the self-service path, and on the admin path
+// carries the users.pii.read decision.
+//
+// The parameter's zero value is the SAFE one on purpose, matching
+// audit's toOpenAPI: a caller who gets this wrong omits the IP rather
+// than leaking it.
 //
 // Omitted, not blanked, matching the convention audit/handler.go
 // settled on for actor IPs (#425): a field that is absent means "you
@@ -200,9 +223,9 @@ func (h *Handler) ListAdminUserSessions(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can("users.read") {
+	if !id.Can(capUsersRead) {
 		return openapi.ListAdminUserSessions403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "users.read capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capUsersRead + " capability required"},
 		}, nil
 	}
 	q := New(h.Pool)
@@ -213,13 +236,20 @@ func (h *Handler) ListAdminUserSessions(
 	// Admin path: never set the current-marker (admin is looking at
 	// someone else's sessions).
 	//
-	// includeIP=true — deliberately unchanged by #567. Locating the
-	// source of a suspicious session is the point of this view, and it
-	// is already behind users.read. Worth noting the asymmetry for a
-	// follow-up: audit's actor IPs need system.audit.pii.read ON TOP
-	// of system.audit.read (#425), whereas session IPs here ride on
-	// users.read alone.
-	return openapi.ListAdminUserSessions200JSONResponse{Items: rowsToAPI(rows, uuid.Nil, true)}, nil
+	// The IP rides on users.pii.read, NOT on users.read (#573). #567
+	// left it on users.read and flagged the asymmetry against audit,
+	// where actor IPs need system.audit.pii.read on top of
+	// system.audit.read (#425) — same data class, two bars. Raised to
+	// match audit rather than lowering audit to match this: locating a
+	// suspicious session is still a legitimate need, but it is a
+	// distinct one from "may read user records", and a missing grant
+	// withholding data fails safer than the reverse.
+	//
+	// Resolved once for the page rather than per row, same as audit's
+	// list view: the answer cannot change mid-response, and per-row
+	// evaluation would invite a future caller to vary it.
+	includeIP := id.Can(capUsersPIIRead)
+	return openapi.ListAdminUserSessions200JSONResponse{Items: rowsToAPI(rows, uuid.Nil, includeIP)}, nil
 }
 
 // RevokeAdminUserSession revokes a specific user's session (admin).
@@ -233,9 +263,9 @@ func (h *Handler) RevokeAdminUserSession(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !caller.Can("users.write") {
+	if !caller.Can(capUsersWrite) {
 		return openapi.RevokeAdminUserSession403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "users.write capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capUsersWrite + " capability required"},
 		}, nil
 	}
 	q := New(h.Pool)
