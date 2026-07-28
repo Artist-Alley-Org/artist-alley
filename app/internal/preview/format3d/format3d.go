@@ -2,14 +2,14 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // Package format3d is an in-process Go importer for legacy 3D mesh
-// formats that Blender's built-in importers can't read — the long
-// tail of game-engine assets users upload (Quake / Half-Life model
-// formats today, more later).
+// formats no stock three.js loader reads — the long tail of
+// game-engine assets users upload (Quake / Half-Life model formats
+// today, more later).
 //
 // Each format gets its own file (md2.go, md3.go, mdl.go, …). They
 // all parse into the shared Model intermediate, which GLB.Write
-// emits as a glTF 2.0 binary the existing preview.model worker can
-// hand off to Blender's turntable.
+// emits as a glTF 2.0 binary the existing preview.model worker
+// renders like any other .glb.
 //
 // Design constraints:
 //
@@ -35,8 +35,9 @@
 //	err := format3d.WriteGLB(model, writer) // *Model → glTF binary stream
 //
 // The model worker reaches for this package when the upload's
-// extension isn't in Blender's native dispatch table. See
-// app/internal/preview/model.go.
+// extension has no three.js loader; the conversion happens before the
+// render decision is taken, so the result routes to the worker as a
+// .glb. See app/internal/preview/model.go.
 package format3d
 
 // Vertex is one position + texture-coord pair in the rest pose. For

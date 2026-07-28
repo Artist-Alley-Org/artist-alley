@@ -3,12 +3,10 @@
 //
 // Production headless three.js preview renderer (#498, epic #496, ADR 0069).
 //
-// A drop-in for the Blender turntable render step in the Go ModelHandler
-// (app/internal/preview/model.go): given a staged model + its companions
-// in a work dir, it renders a turntable + poster + reference views and
-// writes them in the SAME on-disk layout scripts/blender/turntable.py
-// produces, so the Go side's existing sprite/ladder/frame fanning
-// consumes the output unchanged:
+// The render step behind the Go ModelHandler (app/internal/preview/model.go):
+// given a staged model + its companions in a work dir, it renders a
+// turntable + poster + reference views and writes them in the fixed
+// on-disk layout the Go side's sprite/ladder/frame fanning reads:
 //
 //   <output>/turntable/frame_0000.png ... frame_{N-1}.png   (res × res)
 //   <output>/poster.png                                     (posterRes²)
@@ -16,7 +14,7 @@
 //
 // Rendering is headless Chromium (Puppeteer) on SwiftShader software
 // WebGL — the exact stack #497 proved: no GPU required, ~20-30× faster
-// than Blender Cycles, equal-or-better PBR fidelity. The same three.js
+// than Blender Cycles was, equal-or-better PBR fidelity. The same three.js
 // loaders the interactive viewer uses (ModelView.svelte) load the model,
 // so anything the viewer renders, this renders identically.
 //
@@ -27,7 +25,10 @@
 // The model + its companions must both live under --workdir so the
 // loaders resolve sibling .bin/textures by relative URL (the Go handler's
 // stageCompanions writes them there). Exit 0 on success, non-zero on any
-// failure so the Go handler can fall back to Blender.
+// failure so the Go handler can fail (and retry) the preview job.
+//
+// Formats: the dispatch in render.html's loadModel() is the source of
+// truth; threeJSExts in model.go mirrors it and smoke.mjs covers it.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -52,6 +53,7 @@ const CONTENT_TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.fbx': 'application/octet-stream',
   '.obj': 'text/plain', '.mtl': 'text/plain', '.bin': 'application/octet-stream',
+  '.stl': 'model/stl', '.ply': 'application/octet-stream', '.dae': 'model/vnd.collada+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', '.wasm': 'application/wasm',
 };
@@ -149,7 +151,7 @@ async function main() {
       modelUrl, ext, { frames, res, posterRes },
     );
 
-    // Write in the Blender-compatible layout the Go handler reads.
+    // Write in the layout the Go handler reads.
     out.turntable.forEach((u, i) => {
       fs.writeFileSync(
         path.join(output, 'turntable', `frame_${String(i).padStart(4, '0')}.png`),

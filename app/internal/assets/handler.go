@@ -789,7 +789,7 @@ func isPgUniqueViolation(err error) bool {
 
 // jobTypeForExt picks the preview-job type for a given file extension.
 // preview.raster handles still images; preview.video runs the HLS
-// pipeline; preview.3d runs the Blender turntable renderer. Other
+// pipeline; preview.3d runs the headless three.js turntable renderer. Other
 // formats (audio/svg/pdf/font) land in follow-ups.
 // jobTypeForExt delegates to the shared dispatch map (#355): the
 // upload path, `aa seed`, and the preview handlers all read one set,

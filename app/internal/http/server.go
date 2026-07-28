@@ -200,7 +200,8 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// Register preview handlers. preview.raster ships in 1.18.A;
 	// preview.video adds the HLS / poster / scrub-sprite pipeline
 	// in 1.18.B-1 (with GPU-encoder auto-detection at boot);
-	// preview.model adds the Blender-headless turntable in 1.18.B-11.
+	// preview.model adds the 3D turntable in 1.18.B-11 (headless
+	// three.js since #498; Blender left the image in #500).
 	// SVG joins the raster handler (extension lives in rasterExts).
 	// pdf / font still pending.
 	// Storage integrity sweeps (#403) — registered as job kinds so a
