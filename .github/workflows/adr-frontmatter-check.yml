@@ -49,5 +49,10 @@ jobs:
       # The whole corpus is validated on every run, not just the
       # changed files: the cross-reference check needs every id
       # anyway, and 74 files take well under a second.
+      # Invoked through `bash` rather than as `./script` — same as
+      # mdx-hazard-check.yml. The scripts in this repo are not
+      # uniformly mode 755 (core.filemode is off on the WSL checkouts
+      # they get written from), and a lost +x bit should not be able
+      # to turn this gate into a red X for the wrong reason.
       - name: Run validator
-        run: ./scripts/check-adr-frontmatter.sh
+        run: bash scripts/check-adr-frontmatter.sh
