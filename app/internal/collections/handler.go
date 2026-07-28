@@ -1079,6 +1079,22 @@ func (h *Handler) ListCollectionAcls(
 	}
 	// canRead: owner always; public visibility always; otherwise need
 	// mutate to view the ACL list (a stricter rule than read).
+	//
+	// #661 flagged this as a hand-maintained restatement of
+	// visibility.Filter that should be consolidated onto it. It is
+	// NOT a restatement — it is a DIFFERENT rule, deliberately, and
+	// folding it into the predicate would WIDEN access rather than
+	// consolidate it. The authenticated EntityCollection predicate is
+	// `public OR owner OR a live collection_acls grant`; this gate
+	// drops the grant disjunct (a read-grantee may use the collection
+	// without seeing who else was granted what) and adds a
+	// collections.admin / system.admin bypass the predicate
+	// deliberately refuses to carry. "Who may read the grant list" is
+	// a management question, not the row-visibility question ADR 0063
+	// answers.
+	//
+	// The soft-delete dimension is covered upstream: getByIDCached
+	// reads GetCollection, which filters `deleted_at IS NULL`.
 	if row.OwnerUserRef != caller.UserRef && row.Visibility != "public" && !canMutateCollection(caller, row) {
 		return openapi.ListCollectionAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
