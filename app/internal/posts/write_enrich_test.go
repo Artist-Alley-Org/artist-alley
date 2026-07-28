@@ -24,9 +24,12 @@ package posts
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
@@ -110,6 +113,55 @@ func strPtrStr(p *string) string {
 	return *p
 }
 
+// bodyOf runs a strict-server response through its OWN generated Visit
+// method and decodes the bytes back.
+//
+// The struct a handler returns and the JSON a client receives are two
+// different things, and only the second is the contract: a stray
+// `omitempty` on `preview_available` would drop a `false` from the wire
+// while the field sat right there in the struct, and an assertion on the
+// return value would never notice. Everything below therefore compares
+// SERIALIZED bodies. (This also matches how the defect was originally
+// observed — by diffing two HTTP payloads.)
+func bodyOf(t *testing.T, visit func(http.ResponseWriter) error) (openapi.Post, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	if err := visit(rec); err != nil {
+		t.Fatalf("serialize response: %v", err)
+	}
+	var typed openapi.Post
+	if err := json.Unmarshal(rec.Body.Bytes(), &typed); err != nil {
+		t.Fatalf("decode response body: %v (body=%s)", err, rec.Body.String())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response body as map: %v", err)
+	}
+	return typed, raw
+}
+
+// memberKeys returns the key set of the first member's `asset` object as
+// it appears ON THE WIRE. Decoding into a struct cannot distinguish "the
+// key is absent" from "the key is present and false/null", and absent is
+// a different bug from unenriched.
+func memberKeys(t *testing.T, raw map[string]any) map[string]bool {
+	t.Helper()
+	members, _ := raw["members"].([]any)
+	if len(members) == 0 {
+		t.Fatalf("response body has no members: %v", raw)
+	}
+	m, _ := members[0].(map[string]any)
+	asset, _ := m["asset"].(map[string]any)
+	if asset == nil {
+		t.Fatalf("first member has no asset object: %v", m)
+	}
+	out := make(map[string]bool, len(asset))
+	for k := range asset {
+		out[k] = true
+	}
+	return out
+}
+
 // weFields extracts the enriched slice for one member of a post.
 func weFields(t *testing.T, p *openapi.Post, assetID uuid.UUID) weEnriched {
 	t.Helper()
@@ -191,7 +243,7 @@ func TestCreatePostResponseMatchesRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("CreatePost returned %T, want 201", resp)
 	}
-	post := openapi.Post(created)
+	post, createdRaw := bodyOf(t, created.VisitCreatePostResponse)
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = h.Pool.Exec(c, `DELETE FROM post_assets WHERE post_id = $1`, uuid.UUID(post.Id))
@@ -207,7 +259,22 @@ func TestCreatePostResponseMatchesRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("GetPost returned %T, want 200", readResp)
 	}
-	readPost := openapi.Post(read200)
+	readPost, readRaw := bodyOf(t, read200.VisitGetPostResponse)
+
+	// The two bodies must carry the same KEYS before the values are
+	// worth comparing — an absent key is a different bug from an
+	// unenriched one, and only the raw body can tell them apart.
+	ck, rk := memberKeys(t, createdRaw), memberKeys(t, readRaw)
+	for _, f := range []string{
+		"preview_available", "ladder_available", "pixel_width", "pixel_height", "thumbhash",
+	} {
+		if !ck[f] {
+			t.Errorf("POST /posts body: member asset is missing the %q key entirely", f)
+		}
+		if !rk[f] {
+			t.Errorf("GET /posts/{id} body: member asset is missing the %q key entirely", f)
+		}
+	}
 
 	// Precondition: the READ side must actually carry values, or the
 	// equivalence would pass on two empty shapes. This is the
@@ -252,7 +319,7 @@ func TestUpdatePostResponseMatchesRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("UpdatePost returned %T, want 200", resp)
 	}
-	patched := openapi.Post(updated)
+	patched, _ := bodyOf(t, updated.VisitUpdatePostResponse)
 
 	readResp, err := h.GetPost(ctx, openapi.GetPostRequestObject{Id: openapi_types.UUID(postID)})
 	if err != nil {
@@ -262,7 +329,7 @@ func TestUpdatePostResponseMatchesRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("GetPost returned %T, want 200", readResp)
 	}
-	readPost := openapi.Post(read200)
+	readPost, _ := bodyOf(t, read200.VisitGetPostResponse)
 
 	want := weFields(t, &readPost, assetID)
 	if !want.PreviewAvailable || !want.LadderAvailable ||
@@ -305,7 +372,7 @@ func TestWritePathDoesNotPoisonCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePost: %v", err)
 	}
-	created := openapi.Post(resp.(openapi.CreatePost201JSONResponse))
+	created, _ := bodyOf(t, resp.(openapi.CreatePost201JSONResponse).VisitCreatePostResponse)
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = h.Pool.Exec(c, `DELETE FROM post_assets WHERE post_id = $1`, uuid.UUID(created.Id))
@@ -331,7 +398,7 @@ func TestWritePathDoesNotPoisonCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPost owner: %v", err)
 	}
-	ownerPost := openapi.Post(ownerRead.(openapi.GetPost200JSONResponse))
+	ownerPost, _ := bodyOf(t, ownerRead.(openapi.GetPost200JSONResponse).VisitGetPostResponse)
 	if f := weFields(t, &ownerPost, restricted); !f.PreviewAvailable || !f.LadderAvailable ||
 		f.PixelWidth == nil || f.Thumbhash == nil {
 		t.Errorf("read after create returned a cached unenriched shape (%s)", f)
@@ -342,7 +409,7 @@ func TestWritePathDoesNotPoisonCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPost stranger: %v", err)
 	}
-	strangerPost := openapi.Post(strangerRead.(openapi.GetPost200JSONResponse))
+	strangerPost, _ := bodyOf(t, strangerRead.(openapi.GetPost200JSONResponse).VisitGetPostResponse)
 	if f := weFields(t, &strangerPost, restricted); f.PreviewAvailable {
 		t.Errorf("LEAK: a stranger inherited the author's preview_available from the write path (%s)", f)
 	}
