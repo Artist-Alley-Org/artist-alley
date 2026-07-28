@@ -108,6 +108,19 @@ HQ_SOURCE_ROOT = "hq"
 # download if absent" rather than "verify or lose it".
 SITE_SOURCE_ROOT = "site"
 
+# Bytes copied verbatim out of the "Kenney Game Assets All-in-1" bundle
+# (#572). populate_archive.py resolves this against --pack-source, and
+# falls back to extracting the file from the pack's own CC0 zip when the
+# bundle is not on the machine. See kenney_pack_sources.py.
+PACK_SOURCE_ROOT = "pack"
+
+# Upgrade doc pairs merged into every profile, in order. `added` is
+# #604/#602's video + internet material; `balance` is #572's per-team
+# fill. Kept as separate files rather than one because they answer
+# different questions and a 900-record append into the 36-record doc
+# would bury the Pexels provenance work in noise.
+DOC_SETS = ("added", "balance", "pexels")
+
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
 _CATEGORY_PREFIX_RE = re.compile(
     r"^(?:2d-assets|3d-assets|ui-assets|icons|audio|other|goodies|archive|early-access)-"
@@ -249,6 +262,33 @@ def merge_added(profile: list[dict], added: list[dict]) -> tuple[int, int]:
     return n, repaired
 
 
+def apply_team_corrections(profile: list[dict],
+                           corrections: list[dict]) -> list[tuple[str, int]]:
+    """Move records the SOURCE CSV puts on the wrong team (#572).
+
+    Idempotent by construction: a correction only fires on a record still
+    sitting on the `from` team, so a second run moves nothing. Matched on
+    the record's ORIGINAL source path, because `source_path` is rewritten
+    to a pool filename by the #604 swap and stops identifying the pack.
+
+    This runs BEFORE apply_replacements, so the composition snapshot that
+    function takes already contains the corrected team and the "swap the
+    file, keep the record" assertion still means what it says.
+    """
+    out: list[tuple[str, int]] = []
+    for c in corrections:
+        n = 0
+        for e in profile:
+            if e.get("team_name") != c["from"]:
+                continue
+            original = e.get("replaced_source_path") or e.get("source_path") or ""
+            if c["match"] in original:
+                e["team_name"] = c["to"]
+                n += 1
+        out.append((f"{c['from']} -> {c['to']} ({c['match']})", n))
+    return out
+
+
 def merge_posts(posts: list[dict], added: list[dict]) -> int:
     have = {p["id"] for p in posts}
     n = 0
@@ -318,6 +358,35 @@ def audit(profile: list[dict], posts: list[dict],
                 f"added asset {a['id']} has media_url but lost fetched_from — "
                 "the source page is the attribution + licence evidence and "
                 "must survive alongside the byte URL")
+        # A bundle-sourced record is only reconstructible if it says WHICH
+        # zip and WHICH member, and the sha256 is what turns that from a
+        # plausible string into evidence — the byte count does that job
+        # for a direct media_url, and an archive has no per-member count
+        # to check (#572).
+        if e.get("source_root") == PACK_SOURCE_ROOT:
+            sa = meta.get("source_archive") or {}
+            if not (sa.get("url") and sa.get("member") and sa.get("sha256")):
+                problems.append(
+                    f"added asset {a['id']} ({meta.get('filename')}) is "
+                    "bundle-sourced with an incomplete metadata."
+                    "source_archive — its bytes exist only inside a paid "
+                    "bundle and cannot be re-fetched. Run: python3 "
+                    "seed/scripts/studio_balance.py emit --pack <bundle>")
+            if not meta.get("fetched_from"):
+                problems.append(
+                    f"added asset {a['id']} is bundle-sourced with no "
+                    "fetched_from — the pack page is the CC0 evidence")
+
+    # Every file_path in the profile must be unique, not just the HQ
+    # ones. #572 introduced a second copied-bytes root, and two records
+    # pointing at one destination is the same silent wrongness whichever
+    # root produced it.
+    all_paths = [e["file_path"] for e in profile if e.get("file_path")]
+    if len(all_paths) != len(set(all_paths)):
+        dupes = sorted({p for p in all_paths if all_paths.count(p) > 1})
+        problems.append(
+            f"{len(all_paths) - len(set(all_paths))} records share a "
+            f"file_path (e.g. {dupes[:2]})")
 
     post_ids = {p["id"] for p in posts}
     for p in added_posts:
@@ -334,7 +403,7 @@ def audit(profile: list[dict], posts: list[dict],
 
     # Every copier-visible record needs a source root the copier knows.
     known_roots = {"local", "internet", "torrent_import",
-                   HQ_SOURCE_ROOT, SITE_SOURCE_ROOT}
+                   HQ_SOURCE_ROOT, SITE_SOURCE_ROOT, PACK_SOURCE_ROOT}
     bad_roots = sorted({e.get("source_root") for e in profile
                         if e.get("source_root") not in known_roots})
     if bad_roots:
@@ -358,13 +427,26 @@ def main() -> int:
     args = ap.parse_args()
 
     reps = load(args.upgrades / f"kenney-hq-replacements.{args.site}.json")
-    add_a = load(args.upgrades / f"added-assets.{args.site}.json")
-    add_p = load(args.upgrades / f"added-posts.{args.site}.json")
+    add_a: list[dict] = []
+    add_p: list[dict] = []
+    for stem in DOC_SETS:
+        a = args.upgrades / f"{stem}-assets.{args.site}.json"
+        p = args.upgrades / f"{stem}-posts.{args.site}.json"
+        # site_b has no balance docs yet (#572 is site_a only), and a
+        # missing doc must mean "nothing to merge", not a crash — the
+        # site_b arm of this script runs on every assembly.
+        if a.is_file():
+            add_a += load(a)
+        if p.is_file():
+            add_p += load(p)
+    corrections_doc = args.upgrades / f"team-corrections.{args.site}.json"
+    corrections = load(corrections_doc) if corrections_doc.is_file() else []
     profile = load(args.profile)
     posts = load(args.posts)
 
     before_assets, before_posts = len(profile), len(posts)
 
+    corrected = apply_team_corrections(profile, corrections)
     changed, problems = apply_replacements(profile, reps)
     n_assets, n_repaired = merge_added(profile, add_a)
     n_posts = merge_posts(posts, add_p)
@@ -373,6 +455,8 @@ def main() -> int:
     print(f"site        : {args.site}", file=sys.stderr)
     print(f"replacements: {changed}/{len(reps)} records repointed at the HQ pool",
           file=sys.stderr)
+    for desc, n in corrected:
+        print(f"correction  : {n:5d}  {desc}", file=sys.stderr)
     print(f"assets      : {before_assets} -> {len(profile)} (+{n_assets})",
           file=sys.stderr)
     print(f"posts       : {before_posts} -> {len(posts)} (+{n_posts})",
@@ -390,7 +474,7 @@ def main() -> int:
 
     if args.check:
         # In --check mode nothing may have needed doing.
-        drift = n_assets or n_posts or n_repaired
+        drift = n_assets or n_posts or n_repaired or any(n for _, n in corrected)
         if drift:
             print("\nFAIL: profile is not upgraded — re-assembly would drop "
                   f"{n_assets} assets and {n_posts} posts, and {n_repaired} "

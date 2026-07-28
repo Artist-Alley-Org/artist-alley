@@ -48,6 +48,43 @@ the pattern matters more than any one of them (#665).
 
 ### User-facing changes
 
+- **The seeded demo library now has eleven working studios instead of one.**
+  site_a shipped 1,007 assets in which **Animation and Characters had none at
+  all**, Marketing Art had 3 and Textures had 8, while Environment held **47.3%
+  of everything**. Clicking a studio either showed an empty page or showed the
+  whole dataset. It now holds **1,946** assets with every team between 116 and
+  421, and Environment down to **21.6%** — a studio with a specialism rather
+  than a studio plus ten placeholders (#572, closes #562).
+
+  Two levers, because a floor alone would have left Environment at 37%. **55
+  records were on the wrong team in the source data and said so in their own
+  tags** — 34 minimap icons tagged `ui`, 18 tiling texture plates tagged
+  `texture`, 3 voiceover clips tagged `voiceover` — and moving them to UI /
+  Textures / Audio is a correctness fix that happens to cap the biggest team.
+  The other 895 are new, drawn from the CC0 Kenney bundle the library already
+  came from and of which only ~1.3% was in use. Nothing was deleted: posts,
+  collections and sibling groups all reference those ids.
+
+  The **floor is 60 per team, and it comes from the product** — `/search`
+  returns 25 results a page and the browse rails render 24 tiles, so a team
+  whose whole library fits in one response has nothing to scroll and nothing to
+  narrow. It reads as a stub even when it is technically non-empty.
+
+- **45 more video references, chosen to look like a game studio's.** Video
+  coverage went from 47 clips to **92**. The additions are searched for
+  deliberately — arcade cabinets, controllers and keyboards, neon and glitch
+  plates, particles, smoke and sparks, pixel-art animation, esports floors —
+  rather than generic stock, and each record records the search that found it.
+  They land across Reference, VFX, UI, Marketing Art and Animation instead of
+  piling into one bucket (#572).
+
+- **Sponza renders instead of failing.** The canonical Khronos test scene was
+  the one 3D asset in the instance stuck at `failed`, because its geometry
+  buffer and 69 textures were never staged next to it — the copier attached a
+  model's siblings only when it copied the model, so a model already present at
+  the destination silently skipped its own companions. It now reaches `ready`
+  with a turntable (#572, completes #486).
+
 - **Assets with no preview picture now get a designed tile instead of a blank
   one.** Text and code files never get a rendered thumbnail, and a preview can
   also simply have failed — a 3D scene missing its geometry file, a photograph
@@ -86,6 +123,25 @@ the pattern matters more than any one of them (#665).
   is that the first one to reach for it does not ship a failure (#594).
 
 ### Fixes
+
+- **The demo profile silently shipped 36 fewer assets than the studio profile it
+  is a copy of.** `demo` and `dev` are aliases for `studio-a` and `studio-b`, but
+  they were written before the dataset upgrade pass ran — so every upgrade since
+  #604 landed on the studio profiles and missed its own aliases. A demo re-seed
+  would have dropped all 36 added videos and nothing would have reported it. The
+  aliases are re-copied after the upgrade, and a test asserts they match (#572).
+
+- **A site could serve fewer posts than its dataset had.** `posts.json` was the
+  one file the archive publisher never wrote — it was copied by hand — so site_a
+  served 584 posts against a profile holding 859. The publisher now stages it
+  (`--posts`), and warns when it is left stale (#572).
+
+- **A missing source cache reported fully-staged assets as missing.** The
+  internet-fetched cache is gitignored and usually absent on a machine that
+  already has a populated site, so re-publishing reported 58 present-and-correct
+  videos as MISSING and exited non-zero. Absence of a *source* is not absence of
+  the *asset*; the check now confirms against the manifest's own byte count
+  first (#572).
 
 - **A few catalogue tiles showed a tiny graphic marooned in a big empty box.** The
   splat and line-pattern thumbnails rendered their artwork at about 1% of the tile,
