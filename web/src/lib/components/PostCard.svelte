@@ -23,7 +23,7 @@
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
-  import type { ViewMode } from '$stores/browseView.svelte';
+  import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
 
   // Cover-asset shape is the shared card feed contract (#595) — its
@@ -50,16 +50,18 @@
      *  rendered far larger than a grid tile. Only affects `sizes` —
      *  the card treatment is deliberately identical. */
     feed?: boolean;
-    /** The active rung as a plain `${R}rem`, for `sizes` (not the
-     *  clamp — `sizes` rejects clamp()). */
-    tileSizesLen?: string;
+    /** The slot width to advertise in `<img sizes>` — browseView's
+     *  `tileSizes`, which mirrors the tile clamp rather than its
+     *  ceiling (#639). Never a `clamp()` / `min()`: `sizes` is not CSS
+     *  and discards the whole attribute when it sees one. */
+    tileSizes?: string;
     /** Active view mode (#515 slice 4). Grid = clean dense wall (no frame,
      *  hover-only title); thumbnail = framed "details" tile with a
      *  persistent metadata footer. */
     mode?: ViewMode;
   }
 
-  let { post, feed = false, tileSizesLen = '22rem', mode = 'grid' }: Props = $props();
+  let { post, feed = false, tileSizes = DEFAULT_TILE_SIZES, mode = 'grid' }: Props = $props();
 
   // Grid reads clean/dense (no frame, hover-only title); the other modes
   // keep the gallery frame + a persistent footer in thumbnail.
@@ -99,7 +101,18 @@
   // answer as "no dimensions recorded".
   const coverPixelWidth = $derived(coverAsset?.pixel_width ?? null);
   const coverPixelHeight = $derived(coverAsset?.pixel_height ?? null);
-  const sizesHint = $derived(feed ? 'min(100vw, 46rem)' : tileSizesLen);
+  // Feed is one column capped at a 46rem MEASURE (ContentGrid's
+  // `.posts-feed { max-width: min(100%, 46rem) }`), so the slot is the
+  // viewport up to that cap and the cap above it.
+  //
+  // Was `min(100vw, 46rem)`, which — unlike the tile hint — was already
+  // telling the truth: measured in Chromium it resolves to 736px against
+  // a 737px feed column. This is the same value in the portable spelling
+  // plus the `auto` first entry, so feed and tiles share one shape and
+  // neither depends on a CSS math function parsing inside a non-CSS
+  // attribute. See browseView.tileSizes for the whole argument.
+  const FEED_SIZES = 'auto, (max-width: 46rem) 100vw, 46rem';
+  const sizesHint = $derived(feed ? FEED_SIZES : tileSizes);
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub animation.

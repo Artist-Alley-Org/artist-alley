@@ -34,6 +34,7 @@
   import { onMount } from 'svelte';
   import { decodeThumbhash } from '$lib/util/thumbhash';
   import { previewLadder } from '$stores/previewLadder.svelte';
+  import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
 
@@ -50,9 +51,14 @@
     /** Every CONFIGURED rung exists for this asset (#610). Licenses the
      *  responsive srcset below; false → `col` only, exactly as before. */
     ladderAvailable?: boolean;
-    /** Slot width for `sizes`, as a CSS length. The caller knows the
-     *  layout (tile rung, feed column, masonry column); this component
-     *  only knows it is a square-ish box. Defaults to the tile scale. */
+    /** Slot width for `sizes`. The caller knows the layout (tile rung,
+     *  feed column, masonry column); this component only knows it is a
+     *  square-ish box. Defaults to the tile ladder's default rung.
+     *
+     *  A `sizes` LIST, not a single length — see browseView.tileSizes
+     *  for what belongs in it and why. It leads with `auto`, which only
+     *  works because the <img> below is `loading="lazy"`; see there
+     *  before changing either. */
     sizesHint?: string;
     /** Card hover state, from the parent's interactive `<a>` (keeps the
      *  hover listeners on an interactive element, not this presentation
@@ -120,7 +126,7 @@
     hasFileHash = false,
     previewAvailable = false,
     ladderAvailable = false,
-    sizesHint = '22rem',
+    sizesHint = DEFAULT_TILE_SIZES,
     hovering = false,
     framed = true,
     fill = false,
@@ -417,6 +423,12 @@
 
       everything else (contain + p-1.5): letterbox on the matte, so a
       details view still shows the whole work (#515 slice 1).
+
+      `loading="lazy"` is ALSO what makes `sizes: auto` work (#639). Per
+      spec `auto` resolves to 100vw on an eagerly-loaded image, and the
+      rest of the sizes list is not consulted — measured. Making this
+      eager would turn the slot hint into "the whole viewport" on every
+      card, with no other visible symptom.
     -->
     <img
       src={imgSrc}

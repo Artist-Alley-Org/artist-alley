@@ -374,6 +374,15 @@ func (h *Handler) CreatePost(
 	if err != nil {
 		return nil, err
 	}
+	// A written post is the same post a read returns (#655). Everything
+	// enrichPreview derives is invisible to fetchFullPost: it is either
+	// per-caller (preview_available, ladder_available) or written outside
+	// the cached ListPostAssets row (pixel dimensions, the async
+	// thumbhash). Four fields accumulated in that hole because the write
+	// paths never made the call — see enrichPreview's own doc comment.
+	if err := h.enrichPreview(ctx, full); err != nil {
+		return nil, err
+	}
 	return openapi.CreatePost201JSONResponse(*full), nil
 }
 
@@ -552,6 +561,10 @@ func (h *Handler) UpdatePost(
 
 	full, err := h.fetchFullPost(ctx, pgID)
 	if err != nil {
+		return nil, err
+	}
+	// Same shape a GET returns (#655). See CreatePost.
+	if err := h.enrichPreview(ctx, full); err != nil {
 		return nil, err
 	}
 	return openapi.UpdatePost200JSONResponse(*full), nil
