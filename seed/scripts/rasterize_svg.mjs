@@ -36,8 +36,8 @@ import { dirname } from 'node:path';
 // fix it: the guessed canvas scales with density, so clipped stays
 // clipped at every resolution.
 //
-// The fix is probe-then-precise, for dimensionless files ONLY:
-//   1. PROBE: patch a large negative-inclusive viewBox onto the root
+// The fix is search-refine-precise, for dimensionless files ONLY:
+//   1. SEARCH: patch a large negative-inclusive viewBox onto the root
 //      and render small (1024px over 8192 units = 8 units/px), then
 //      measure the content bounding box from the raw alpha channel.
 //      Negative-inclusive because "the observed clipping is
@@ -45,17 +45,33 @@ import { dirname } from 'node:path';
 //      at negative coordinates is found, not assumed away. If the bbox
 //      touches the probe edge the canvas widens 4x and probes once
 //      more; still touching after that is a per-file failure, loudly.
-//   2. PRECISE: re-render with the viewBox set to the measured bbox
-//      plus a 2-probe-pixel safety margin (covers sub-probe-pixel
-//      edges; ~1% of the frame, which keeps the pool's tight-fit,
-//      minimal-margin philosophy), at a density chosen to land the
-//      long edge at ~2048px before the same resize-to-px the
-//      dimensioned path uses, capped at the pipeline's own 384 so a
-//      huge bbox cannot demand a gigapixel render.
+//   2. REFINE (#672): re-probe the region the search found, so the
+//      measurement resolution scales with the DRAWING rather than with
+//      the search canvas — see the block below.
+//   3. PRECISE: re-render with the viewBox set to the refined bbox plus
+//      a 2-probe-pixel safety margin (covers sub-probe-pixel edges), at
+//      a density chosen to land the long edge at ~2048px before the
+//      same resize-to-px the dimensioned path uses, capped at the
+//      pipeline's own 384 so a huge bbox cannot demand a gigapixel
+//      render.
 //
 // NEVER combine the big probe viewBox with density 384 — 8192 units at
 // 384dpi is a ~44k-pixel edge, gigabytes of RGBA. The probe density is
 // derived from the canvas so the probe is always ~1024px.
+//
+// #672 — WHY THE REFINE PASS EXISTS. The search probe spreads 1024
+// pixels over an 8192-unit canvas, so one probe pixel is 8 user units
+// and the 2-pixel safety margin is 16 user units NO MATTER HOW BIG THE
+// DRAWING IS. That is the ~1% of frame the original comment claimed
+// only when the drawing nearly fills the search canvas. The Kenney
+// splat pack's vectors span ~100 units, so 16 units became a ~15%
+// margin PER SIDE and the artwork filled 50% of its own frame — a
+// splat floating in a box on the browse grid. Re-probing the found
+// region (padded 2% so content cannot sit on the refine frame's edge)
+// puts 1024 pixels across the DRAWING, so the same 2-pixel margin is
+// ~0.2% of the long edge and the frame is tight at any extent.
+// This is the same "measure the real extent" principle as #630, applied
+// at a resolution that is actually proportionate to what is measured.
 //
 // Dimensioned SVGs — anything with a viewBox, or with both width and
 // height — take EXACTLY the code path this script always had, so their
@@ -112,12 +128,17 @@ function withViewBox(svgText, vb) {
 }
 
 /** Measure the content bounding box (in SVG user units) by rendering a
- *  probe frame and scanning the alpha channel. Returns null when the
- *  probe frame contains no content at all. */
-async function measureBBox(svgText, origin, units) {
+ *  probe frame over `rect` ({x, y, w, h} in user units) and scanning the
+ *  alpha channel. The probe's LONG edge is always ~1024px, so one probe
+ *  pixel is `max(w,h)/1024` units and the returned safety margin is two
+ *  of those — proportional to the region being measured, which is the
+ *  whole point of the refine pass (#672). Returns null when the frame
+ *  contains no content at all. */
+async function measureBBox(svgText, rect) {
   const probePx = 1024;
+  const units = Math.max(rect.w, rect.h);
   const unitsPerPx = units / probePx;
-  const patched = withViewBox(svgText, [origin, origin, units, units]);
+  const patched = withViewBox(svgText, [rect.x, rect.y, rect.w, rect.h]);
   const { data, info } = await sharp(Buffer.from(patched), {
     density: (72 * probePx) / units,
   }).raw().toBuffer({ resolveWithObject: true });
@@ -138,11 +159,24 @@ async function measureBBox(svgText, origin, units) {
   const margin = 2 * unitsPerPx;
   return {
     touchesEdge,
-    x: origin + minX * unitsPerPx - margin,
-    y: origin + minY * unitsPerPx - margin,
+    x: rect.x + minX * unitsPerPx - margin,
+    y: rect.y + minY * unitsPerPx - margin,
     w: (maxX - minX + 1) * unitsPerPx + 2 * margin,
     h: (maxY - minY + 1) * unitsPerPx + 2 * margin,
   };
+}
+
+/** The square, negative-inclusive search frames the first pass uses. */
+const searchRect = (origin, units) => ({ x: origin, y: origin, w: units, h: units });
+
+/** Grow a rect by `frac` of its long edge on every side. The refine probe
+ *  runs over this, not over the raw search bbox, so content is guaranteed
+ *  to sit off the refine frame's edges — a bbox that touched the frame
+ *  would mean "possibly still clipped", which is exactly the ambiguity
+ *  #630 exists to remove. */
+function padRect(rect, frac) {
+  const pad = Math.max(rect.w, rect.h) * frac;
+  return { x: rect.x - pad, y: rect.y - pad, w: rect.w + 2 * pad, h: rect.h + 2 * pad };
 }
 
 async function render({ src, dst, px }) {
@@ -150,14 +184,22 @@ async function render({ src, dst, px }) {
 
   const svgText = readFileSync(src, 'utf8');
   if (isDimensionless(svgText)) {
-    // Probe canvas 1: -2048..6144 (negative-inclusive). Canvas 2, if the
+    // Search canvas 1: -2048..6144 (negative-inclusive). Canvas 2, if the
     // content runs off the first: 4x wider.
-    let bbox = await measureBBox(svgText, -2048, 8192);
-    if (bbox && bbox.touchesEdge) bbox = await measureBBox(svgText, -8192, 32768);
+    let bbox = await measureBBox(svgText, searchRect(-2048, 8192));
+    if (bbox && bbox.touchesEdge) bbox = await measureBBox(svgText, searchRect(-8192, 32768));
     if (!bbox) throw new Error('dimensionless SVG rendered no content in the probe frame');
     if (bbox.touchesEdge) {
       throw new Error('content exceeds a 32768-unit probe canvas; refusing to render a silently-cropped frame');
     }
+    // REFINE (#672): re-measure at the drawing's own scale so the safety
+    // margin is proportional. A refine probe that somehow finds nothing,
+    // or finds content on its own edge, is not trusted — the search bbox
+    // is already a correct-but-loose frame, so fall back to it rather
+    // than risk a tighter frame that clips.
+    const refined = await measureBBox(svgText, padRect(bbox, 0.02));
+    if (refined && !refined.touchesEdge) bbox = refined;
+
     const longUnits = Math.max(bbox.w, bbox.h);
     const density = Math.min(384, (72 * 2048) / longUnits);
     await sharp(Buffer.from(withViewBox(svgText, [bbox.x, bbox.y, bbox.w, bbox.h])), { density })

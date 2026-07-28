@@ -9,6 +9,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixes
 
+- **A few catalogue tiles showed a tiny graphic marooned in a big empty box.** The
+  splat and line-pattern thumbnails rendered their artwork at about 1% of the tile,
+  jammed into the top-left corner. Two separate things were wrong. The images the
+  instance was serving had been rendered before the earlier canvas fix (#630) and were
+  never re-loaded, so the catalogue was still handing out the old broken pictures. And
+  the fix itself only went half way: it measures each drawing on a fixed-size search
+  frame, so the safety margin it leaves is a fixed distance in the drawing's own
+  coordinates — fine for a big drawing, a quarter of the picture for a small one. Small
+  vectors came out filling half their frame. The renderer now measures a second time at
+  the drawing's own scale, so the frame is tight whatever the size, and the 110 affected
+  images were re-rendered and re-loaded. Images that were already correct are unchanged,
+  including sprites whose source deliberately declares a padded canvas — those keep
+  their padding. A new checker (`seed/scripts/detect_oversized_canvas.mjs`) measures how
+  much of a frame the artwork actually fills; the existing one only sees artwork cut off
+  at an edge and reads this failure as healthy (#672).
+
 - **Resetting the demo left stale rows pointing at content that no longer existed.**
   `aa seed --reset` empties the content tables with `TRUNCATE ... CASCADE`, and CASCADE
   only follows foreign keys — so any table that names its target by a *kind + id* pair
