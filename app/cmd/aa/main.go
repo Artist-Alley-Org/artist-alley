@@ -27,8 +27,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/logging"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Version is overwritten at build time via -ldflags "-X main.Version=...".
@@ -106,7 +104,7 @@ func runSeed(args []string) error {
 	// Migrate is idempotent (goose version table) and now takes an
 	// advisory lock, so this is safe whether the server already
 	// migrated, is migrating right now, or was never started. Must come
-	// before db.Open + resetSeedTables, both of which assume tables.
+	// before db.Open + seed.Reset, both of which assume tables.
 	if err := db.Migrate(ctx, cfg); err != nil {
 		return fmt.Errorf("seed: migrate: %w", err)
 	}
@@ -143,7 +141,7 @@ func runSeed(args []string) error {
 	}
 
 	if *reset {
-		if err := resetSeedTables(ctx, pool, bootstrap.DefaultUsername); err != nil {
+		if err := seed.Reset(ctx, pool, bootstrap.DefaultUsername); err != nil {
 			return fmt.Errorf("seed reset: %w", err)
 		}
 		logger.Info("seed.reset.done")
@@ -173,82 +171,6 @@ func runSeed(args []string) error {
 		"posts", counts.Posts, "comments", counts.Comments)
 	fmt.Printf("seed complete: users=%d teams=%d collections=%d assets=%d posts=%d comments=%d\n",
 		counts.Users, counts.Teams, counts.Collections, counts.Assets, counts.Posts, counts.Comments)
-	return nil
-}
-
-// resetSeedTables clears the content tables so a re-seed starts from a
-// clean slate. Baseline lookups (workflow_states, asset_types) and the
-// bootstrap admin survive; every fictional user + all their content is
-// removed. CASCADE handles the join/dependent tables.
-func resetSeedTables(ctx context.Context, pool *pgxpool.Pool, adminUsername string) error {
-	// storage_objects is deliberately NOT truncated (#355). The content
-	// store is content-addressed and asset-independent: storage_objects
-	// / storage_variants are keyed by object_hash and describe what is
-	// physically on the storage volume, which a DB truncate obviously
-	// does not erase. Truncating them (CASCADE also took storage_variants
-	// + storage_pins) desynced the two — the blobs stayed on disk while
-	// their rows vanished, and because the preview handlers skip any
-	// variant whose blob already exists, a re-seed would then regenerate
-	// nothing and leave the instance with originals and zero variant
-	// rows: /variants/col 404s, exactly the bug this issue is about.
-	//
-	// Leaving them alone is also idempotent: the seed's asset ids are
-	// stable (from MANIFEST.json), so a re-seed re-uploads the same
-	// hashes, dedups onto the existing objects, and re-pins identically.
-	// likes is named EXPLICITLY (#566). It is polymorphic — (target_kind,
-	// target_id) with NO foreign key to posts/assets/comments — so
-	// TRUNCATE ... CASCADE never reaches it, and the row-level
-	// social_sweep_after_post_delete trigger that normally sweeps a
-	// deleted post's likes does NOT fire for TRUNCATE (statement-level
-	// only). Every like therefore SURVIVED the reset while its target was
-	// wiped, which produced two bugs:
-	//
-	//   1. Orphans: likes pointing at posts that no longer exist (82 on
-	//      site_a — the admin's own likes on API-created posts), which
-	//      surface in any who-liked / activity / federation view.
-	//   2. Wrong counts: on the next reset the seeded likes would survive
-	//      too, posts would be recreated with like_count = 0, and the
-	//      re-insert would hit ON CONFLICT DO NOTHING — so the trigger
-	//      never fires and like_count silently undercounts by ~3.5k.
-	//
-	// Truncating it alongside the content it describes fixes both.
-	// notifications + scheduled_actions are polymorphic the same way and
-	// are NOT listed here: both are empty today and scheduled_actions can
-	// hold operator config, so they are tracked separately rather than
-	// wiped on a content reset.
-	const truncate = `TRUNCATE
-	    assets, posts, comments, collections, field_definition, likes
-	    RESTART IDENTITY CASCADE`
-	if _, err := pool.Exec(ctx, truncate); err != nil {
-		return err
-	}
-	// teams gets a per-row DELETE, NOT a slot in the TRUNCATE above.
-	// TRUNCATE ... CASCADE empties dependent tables WHOLESALE, and
-	// user_roles / user_capability_grants / user_capability_revokes all
-	// carry a team_id FK — so naming teams in the TRUNCATE wiped every
-	// role and capability grant in the install, including the bootstrap
-	// admin's GLOBAL (team_id IS NULL) role. The instance then answered
-	// needs_setup=true and nobody could log in, after every --reset.
-	//
-	// A per-row DELETE follows the same FK with ON DELETE CASCADE but
-	// only removes the rows that actually reference a deleted team, so
-	// global roles + grants survive.
-	if _, err := pool.Exec(ctx, `DELETE FROM teams`); err != nil {
-		return err
-	}
-	// Fictional users (everyone but the bootstrap admin). Their
-	// federation keys + profiles cascade.
-	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE username <> $1`, adminUsername); err != nil {
-		return err
-	}
-	// Preview jobs for the content we just truncated (#355). Every
-	// preview job names an asset_id; with the assets gone they'd churn
-	// through their retries and land in `failed`. Now that a seed
-	// dispatches one per asset, skipping this would orphan a whole
-	// dataset's worth on every --reset.
-	if _, err := pool.Exec(ctx, `DELETE FROM jobs WHERE type LIKE 'preview.%'`); err != nil {
-		return err
-	}
 	return nil
 }
 
