@@ -384,7 +384,7 @@ func (h *Handler) CreateAsset(
 		})
 		if err == nil {
 			// Pre-check hit. Behavior gates the response shape.
-			return h.dedupResponse(uploadCfg.DedupBehavior, existing)
+			return h.dedupResponse(ctx, uploadCfg.DedupBehavior, existing)
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("assets: dedup lookup: %w", err)
 		}
@@ -424,7 +424,7 @@ func (h *Handler) CreateAsset(
 				FileHash:     fileHashPtr,
 			})
 			if fetchErr == nil {
-				return h.dedupResponse(uploadCfg.DedupBehavior, existing)
+				return h.dedupResponse(ctx, uploadCfg.DedupBehavior, existing)
 			}
 		}
 		return nil, fmt.Errorf("assets: insert: %w", err)
@@ -681,7 +681,7 @@ func aiTranscribeIdempotencyKey(assetID, model string) string {
 // so the UI doesn't need a second round-trip to render the
 // "this file was already uploaded as X" dialog with thumbnail +
 // title.
-func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAssetByOwnerHashRow) (openapi.CreateAssetResponseObject, error) {
+func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBehavior, existing GetAssetByOwnerHashRow) (openapi.CreateAssetResponseObject, error) {
 	existingID := openapi_types.UUID(uuid.UUID(existing.ID.Bytes))
 	switch behavior {
 	case sysconfig.DedupBehaviorBlock:
@@ -694,6 +694,17 @@ func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAs
 		// haven't shipped yet — defaulting to "non-destructive
 		// + visible" is the conservative choice).
 		full := assetFromGetByOwnerHashRow(existing)
+		// This is the one CreateAsset branch that returns an asset which
+		// ALREADY has bytes, so it is the one that needs the derived
+		// fields (#655). The 201 branch is a row created this instant —
+		// no `col` variant, no ladder, nothing measured — where false /
+		// null is the honest answer rather than a missing lookup. Here
+		// the whole point of the payload is "render the file you already
+		// uploaded", and without preview_available the dialog draws a
+		// placeholder for an asset with a perfectly good thumbnail.
+		if err := h.enrichAssetDerived(ctx, &full); err != nil {
+			return nil, err
+		}
 		out := openapi.AssetWithDedup{
 			AssetType:        full.AssetType,
 			CreatedAt:        full.CreatedAt,
@@ -702,10 +713,15 @@ func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAs
 			FileHash:         full.FileHash,
 			FileSizeBytes:    full.FileSizeBytes,
 			Id:               full.Id,
+			LadderAvailable:  full.LadderAvailable,
 			Metadata:         full.Metadata,
 			OwnerUserRef:     full.OwnerUserRef,
+			PixelHeight:      full.PixelHeight,
+			PixelWidth:       full.PixelWidth,
+			PreviewAvailable: full.PreviewAvailable,
 			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
 			Status:           openapi.AssetWithDedupStatus(full.Status),
+			Thumbhash:        full.Thumbhash,
 			Title:            full.Title,
 			UpdatedAt:        full.UpdatedAt,
 		}
@@ -745,6 +761,13 @@ func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 		if err := json.Unmarshal(r.Metadata, &m); err == nil {
 			out.Metadata = &m
 		}
+	}
+	if len(r.Thumbhash) > 0 {
+		// Base64 on the wire, same as rowToAssetWithDetails. The dedup
+		// dialog renders a card, and a card without a thumbhash has no
+		// blur-up (#648).
+		v := base64.StdEncoding.EncodeToString(r.Thumbhash)
+		out.Thumbhash = &v
 	}
 	return out
 }
@@ -829,6 +852,32 @@ func (h *Handler) GetAsset(
 		return nil, fmt.Errorf("assets: list tag details: %w", err)
 	}
 	out := rowToAssetWithDetails(row, tags, details)
+	if err := h.enrichAssetDerived(ctx, &out); err != nil {
+		return nil, err
+	}
+	return openapi.GetAsset200JSONResponse(out), nil
+}
+
+// enrichAssetDerived fills the four fields a single-asset projection
+// cannot carry off its own row — preview_available (#471),
+// ladder_available (#610) and the recorded pixel dimensions (#640) —
+// for the request's caller.
+//
+// ONE place, because the class of bug this closes is a response shape
+// that disagrees with itself depending on which verb produced it (#655).
+// GetAsset had this inline and UpdateAsset had nothing, so a PATCH
+// returned preview_available=false for an asset whose GET one
+// millisecond later returned true. Any handler emitting an
+// openapi.Asset calls this; adding a fifth derived field means editing
+// this function, not auditing every caller.
+//
+// Reads `out.Id` and `out.FileHash`, so the caller must have populated
+// the row first. No-op on the zero-value id.
+func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) error {
+	assetID := uuid.UUID(out.Id)
+	if assetID == uuid.Nil {
+		return nil
+	}
 	// Source pixel dimensions (#640). The detail response carries them
 	// for the same reason the list does — one asset shape, one meaning
 	// per field. Its own round trip because sqlc cannot express the
@@ -842,9 +891,9 @@ func (h *Handler) GetAsset(
 	var detW, detH *int32
 	if err := h.Pool.QueryRow(ctx,
 		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+` FROM assets WHERE assets.id = $1::uuid`,
-		uuid.UUID(req.Id).String(),
+		assetID.String(),
 	).Scan(&detW, &detH); err != nil {
-		return nil, fmt.Errorf("assets: pixel dimensions: %w", err)
+		return fmt.Errorf("assets: pixel dimensions: %w", err)
 	}
 	if pixeldims.Sane(detW, detH) {
 		out.PixelWidth, out.PixelHeight = detW, detH
@@ -853,11 +902,11 @@ func (h *Handler) GetAsset(
 	// passes the content plane. Detail is not a hot loop, so an EXISTS +
 	// CanReadContent here is fine (the list path joins both in one pass).
 	detCaller, detCaps := contentCaller(ctx)
-	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, uuid.UUID(req.Id))
+	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, assetID)
 	if err != nil {
-		return nil, fmt.Errorf("assets: content check: %w", err)
+		return fmt.Errorf("assets: content check: %w", err)
 	}
-	if readable && row.FileHash != nil && *row.FileHash != "" {
+	if readable && out.FileHash != nil && *out.FileHash != "" {
 		// Both flags in one round trip. ladder_available is computed
 		// against the CONFIGURED ladder (#591), never a hardcoded rung
 		// list — an operator who drops a rung must move this flag, not
@@ -866,14 +915,14 @@ func (h *Handler) GetAsset(
 		if err := h.Pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col'),
 			        `+sysconfig.LadderSatisfiedSQL("$1", "$2"),
-			*row.FileHash, h.ladder(ctx),
+			*out.FileHash, h.ladder(ctx),
 		).Scan(&hasCol, &hasLadder); err != nil {
-			return nil, fmt.Errorf("assets: variant check: %w", err)
+			return fmt.Errorf("assets: variant check: %w", err)
 		}
 		out.PreviewAvailable = hasCol
 		out.LadderAvailable = hasLadder
 	}
-	return openapi.GetAsset200JSONResponse(out), nil
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,7 +1065,16 @@ func (h *Handler) UpdateAsset(
 		return nil, fmt.Errorf("assets: commit: %w", err)
 	}
 
-	return openapi.UpdateAsset200JSONResponse(rowToAsset(updateRowToGetRow(row), tags)), nil
+	// Same shape a GET returns (#655). The UPDATE's RETURNING row carries
+	// no preview / ladder / dimension columns, so without this a PATCH
+	// answered `preview_available: false` for an asset whose GET answers
+	// true — and a client that renders straight from the PATCH response
+	// loses the thumbnail it had a moment ago.
+	updated := rowToAsset(updateRowToGetRow(row), tags)
+	if err := h.enrichAssetDerived(ctx, &updated); err != nil {
+		return nil, err
+	}
+	return openapi.UpdateAsset200JSONResponse(updated), nil
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@
   import CardCheckbox from './CardCheckbox.svelte';
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
-  import type { ViewMode } from '$stores/browseView.svelte';
+  import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
   // The card feed contract lives in cardAsset.ts, not here, because it
@@ -28,9 +28,14 @@
      *  hover-only title); thumbnail = framed "details" tile with a
      *  persistent metadata footer. */
     mode?: ViewMode;
+    /** Slot width for `<img sizes>` — browseView's `tileSizes`. This card
+     *  used to pass nothing, so every asset tile on the collection and
+     *  profile grids advertised CardThumb's hardcoded `22rem` at every
+     *  viewport and every rung of the size stepper (#639). */
+    tileSizes?: string;
   }
 
-  let { asset, mode = 'grid' }: Props = $props();
+  let { asset, mode = 'grid', tileSizes = DEFAULT_TILE_SIZES }: Props = $props();
 
   // Grid reads as a clean dense wall (no frame, hover-only title). The
   // other modes keep the gallery frame + a persistent footer in
@@ -153,6 +158,7 @@
     hasFileHash={!!asset.file_hash}
     previewAvailable={asset.preview_available}
     ladderAvailable={asset.ladder_available}
+    sizesHint={tileSizes}
     {hovering}
     {framed}
     fill={mode === 'grid'}
