@@ -94,6 +94,43 @@ silent data bug — see the module docstrings for the full story:
 | 1 | Name pool files by an 8-char hash of the **source path**, never the basename | Packs ship identical basenames in sibling directories (four packs contain `Tilesheet/tilesheet_complete_2X.png`). Slugging by basename silently overwrote 48 assets, then 65. The manifest still validated; the bytes were wrong. |
 | 2 | Gate quality on **dimensions**, never on byte size | Flat-colour vector renders compress hard: 415 upgraded assets are under 10 KB *and* ≥512px. A byte threshold rejects exactly what the upgrade produces. |
 | 3 | **Weight the sample explicitly** (`PACK_WEIGHTS`) | `Icons/Input Prompts` alone is 1,504 near-identical button glyphs, ~29% of every vector in the pack. Sampled evenly, browse looks like a settings screen. |
+| 4 | Record a **direct media URL**, not the page you found it on | The 30 Pexels videos stored `https://www.pexels.com/video/…/` — an HTML page behind Cloudflare. Verify-don't-copy kept working as long as the archive share was mounted, so nothing ever failed here; a rebuild on a clean machine simply could not reconstruct them (#602). |
+
+### Provenance: `fetched_from` vs `media_url` (#602)
+
+Every internet-sourced record carries **both**, and they answer different
+questions:
+
+| key | what it is | who uses it |
+|---|---|---|
+| `metadata.fetched_from` | the page a human was looking at | attribution, licence evidence, ATTRIBUTIONS.md / Kaggle paperwork |
+| `metadata.media_url` | the direct, unauthenticated URL of the exact bytes | `populate_archive.py` re-fetch, any from-scratch rebuild |
+
+For most sources they are the same URL. For Pexels they are not, and that
+is the entire point — the page is where the licence lives, the CDN path is
+where the mp4 lives. A `media_url` is only ever written after a HEAD
+returns `Content-Length` equal to the record's `file_size_bytes`, so it is
+evidence rather than a plausible-looking string.
+
+```bash
+# resolve + write (needs network; FLARESOLVERR_URL for the Cloudflare-guarded pages)
+python3 seed/scripts/resolve_media_urls.py --write \
+    seed/upgrades/added-assets.site_a.json seed/profiles/studio-a.assets.json
+
+# offline gate — no network, no share
+python3 seed/scripts/resolve_media_urls.py --check seed/profiles/*.assets.json
+
+# prove the round trip against the staged copies
+python3 seed/scripts/resolve_media_urls.py --refetch /tmp/out \
+    --against /mnt/<share>/datasets/artist_alley/site_a \
+    seed/profiles/studio-a.assets.json
+```
+
+`populate_archive.py` uses `media_url` on its own: a pre-staged record
+that is absent at the destination is **downloaded** instead of reported
+MISSING. That only happens for records that would otherwise fail, so a
+normal run over a populated share does no network I/O. `--no-refetch`
+restores the old verify-only behaviour.
 
 Rebuilding the pool needs the renderer installed once (no sudo):
 
@@ -238,6 +275,8 @@ transform):
 | `confidentiality` | `assets.sensitivity_tier` | Public→public, Internal→team, Restricted→restricted |
 | `license` + `usage_rights` + `attribution` | `assets.metadata.rights` jsonb | |
 | `source` | `assets.metadata.acquisition_source` | Also drives Layer A/B |
+| — | `assets.metadata.fetched_from` | Source PAGE — attribution + licence evidence (#602) |
+| — | `assets.metadata.media_url` | Direct byte URL — what a rebuild GETs (#602) |
 | `is_published` | `assets.archive_state` | true→active, false→draft |
 | `archived_reason` | `assets.metadata.archive_reason` | When status=Archived |
 | `external_id` | `assets.metadata.external_id` | Perforce/Jira ref |

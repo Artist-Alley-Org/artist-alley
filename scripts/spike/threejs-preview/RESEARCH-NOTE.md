@@ -5,6 +5,22 @@ Copyright (C) 2026 Kenneth Blossom
 
 # SPIKE #497 — Headless three.js turntable renderer vs Blender
 
+> **ARCHIVED (#658).** The prototype this note describes — `worker.mjs`,
+> `render.html`, `package.json`, `package-lock.json` — has been **deleted**.
+> It did its job: #497 and #498 are both closed and the spike was
+> productionised as **`scripts/threejs/`**, which is the code to read, run
+> and change. What remained here was a stale second copy of the spike's
+> dependencies, and it was the *only* thing holding the repo's one open
+> Dependabot alert (`sharp` < 0.35.0, GHSA-f88m-g3jw-g9cj — inherited
+> libvips CVE-2026-33327 / -33328 / -35590 / -35591). Deleting it closes
+> the alert rather than maintaining a dead prototype's lockfile forever.
+>
+> The measurements, corpus and verdict below are kept as the evidence
+> behind ADR 0069. The "How to reproduce" section no longer runs as
+> written — recover the prototype from git history
+> (`git log -- scripts/spike/threejs-preview/worker.mjs`) if you ever
+> need to re-run it.
+
 **Epic:** #496 (ADR 0069) · **Type:** research note + working prototype (NOT a cutover)
 **Verdict:** **GO** — a headless Chromium + SwiftShader + three.js worker renders every
 open-format model in the demo corpus, produces byte-shape-identical preview variants, and

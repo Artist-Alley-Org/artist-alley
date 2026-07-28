@@ -27,9 +27,27 @@ Each profile record carries:
                          kenney_hq.py from the CC0 Kenney pack (#604)
         'torrent_import' / 'site'   pre-staged AT the destination; the
                          copier verifies presence instead of copying,
-                         because there is no reachable source
+                         because there is no LOCAL source. When such a
+                         record is missing and carries a
+                         `metadata.media_url`, it is downloaded instead
+                         of reported missing (#602) — see RE-FETCH below.
   - source_path: relative path under that root
   - file_path:   destination path relative to <dest>
+
+RE-FETCH (#602)
+---------------
+A pre-staged record used to be a dead end on a machine without the
+archive share: verify-don't-copy could only report MISSING. The Pexels
+videos now carry `metadata.media_url` — the direct CDN URL of the exact
+bytes, size-matched against `file_size_bytes` when it was recorded — so
+a missing one is downloaded rather than lost, and a from-scratch rebuild
+no longer needs the share for them.
+
+Re-fetch is attempted ONLY for records that would otherwise be reported
+missing, so a normal run over a populated share does no network I/O at
+all. `--no-refetch` restores the old verify-only behaviour. A download
+whose length disagrees with the manifest is discarded, not written: a
+wrong file staged silently is worse than a missing one reported loudly.
 
 Usage
 -----
@@ -53,12 +71,44 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 # Source roots whose bytes already sit at the destination. The copier
-# verifies these instead of copying them — there is no reachable source
-# to copy FROM. See the handling in the copy loop for what each means.
+# verifies these instead of copying them — there is no LOCAL source to
+# copy FROM. See the handling in the copy loop for what each means.
 PRESTAGED_ROOTS = frozenset({"torrent_import", "site"})
+
+UA = ("artist-alley-seed-fetcher/2.0 "
+      "(+https://github.com/Artist-Alley-Org/artist-alley)")
+
+
+def refetch(url: str, dest: Path, expect_size: int | None) -> tuple[bool, str]:
+    """Download `url` to `dest`. Returns (ok, note).
+
+    Written to a .part file and only moved into place once the length
+    agrees with the manifest. A short or substituted download that landed
+    at the real path would look pre-staged on the next run and never be
+    noticed — the whole point of recording a byte count alongside the URL
+    is to make that impossible.
+    """
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            safe_mkdir(dest.parent)
+            with tmp.open("wb") as f:
+                shutil.copyfileobj(resp, f, length=1 << 20)
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        return False, f"download failed: {e}"
+    got = tmp.stat().st_size
+    if expect_size and got != expect_size:
+        tmp.unlink(missing_ok=True)
+        return False, (f"size mismatch: manifest {expect_size:,} B, "
+                       f"served {got:,} B — refusing to stage it")
+    tmp.replace(dest)
+    return True, f"{got:,} B"
 
 
 def safe_mkdir(path: Path, max_retries: int = 3) -> None:
@@ -192,6 +242,11 @@ def main() -> int:
                         help="Delete files at <dest> not in the profile")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would copy without writing")
+    parser.add_argument("--no-refetch", action="store_true",
+                        help="Do not download pre-staged records that are "
+                             "missing at <dest>, even when they carry a "
+                             "metadata.media_url (#602). Restores the old "
+                             "verify-only behaviour.")
     args = parser.parse_args()
 
     sources: dict[str, Path] = {
@@ -241,6 +296,9 @@ def main() -> int:
         for a in profile if a.get("file_path") and a.get("source_path")
     }
     wanted_dest_paths = set(path_map.values())
+    # The pre-staged branch needs the RECORD, not just the path — the
+    # media_url and the byte count it is checked against both live there.
+    by_dest = {a["file_path"]: a for a in profile if a.get("file_path")}
     wanted_group_ids = {a.get("metadata", {}).get("group_id") for a in profile}
     wanted_group_ids.discard(None)
     wanted_group_ids.discard("")
@@ -331,32 +389,53 @@ def main() -> int:
     skipped = 0
     missing = 0
     bytes_copied = 0
+    refetched = 0
     progress_every = max(1, len(path_map) // 20)
     items = sorted(path_map.items(), key=lambda x: x[1])  # sort by dest path
     preexisting = 0
     for i, ((root, source_path), dest_rel) in enumerate(items):
         # PRE-STAGED roots: the bytes already live at the destination and
-        # cannot be re-copied from this side, so verify rather than copy.
+        # have no LOCAL source to copy from, so verify rather than copy.
         #
         #   torrent_import — pre-copied on the destination NAS
         #                    (Synology-to-Synology from /volume1/torrents/).
-        #   site           — added directly to the site and not re-fetchable
-        #                    from the recorded provenance (#604). The Pexels
-        #                    videos record a page URL, not a direct media
-        #                    URL, so there is nothing to GET.
+        #   site           — added directly to the site (#604).
         #
         # Verify-don't-copy is also what makes re-assembly SAFE for them:
         # the alternative — treating an unreachable source as "drop the
         # record" — is exactly how the added videos would disappear.
+        #
+        # When one IS absent, `metadata.media_url` (#602) turns what used
+        # to be a terminal MISSING into a download. That field is the
+        # direct CDN URL, recorded only after a HEAD confirmed it serves
+        # exactly `file_size_bytes`; the Pexels page URL in `fetched_from`
+        # is an HTML document and was never something you could GET bytes
+        # from, which is what left this branch a dead end before.
         if root in PRESTAGED_ROOTS:
             dest_file = args.dest / dest_rel
             if dest_file.is_file() and dest_file.stat().st_size > 0:
                 preexisting += 1
-            else:
-                missing += 1
-                if missing <= 5:
-                    print(f"  MISSING [{root}]: {dest_rel} — not pre-staged?",
+                continue
+            rec = by_dest.get(dest_rel) or {}
+            media_url = (rec.get("metadata") or {}).get("media_url")
+            if media_url and not args.no_refetch and not args.dry_run:
+                ok, note = refetch(media_url, dest_file,
+                                   rec.get("file_size_bytes"))
+                if ok:
+                    refetched += 1
+                    bytes_copied += dest_file.stat().st_size
+                    print(f"  REFETCHED [{root}]: {dest_rel} ({note})",
                           file=sys.stderr)
+                    continue
+                print(f"  REFETCH FAILED [{root}]: {dest_rel} — {note}\n"
+                      f"    {media_url}", file=sys.stderr)
+            missing += 1
+            if missing <= 5:
+                hint = ("" if media_url else
+                        " — no metadata.media_url either, so there is nothing "
+                        "to re-fetch from (see resolve_media_urls.py, #602)")
+                print(f"  MISSING [{root}]: {dest_rel} — not pre-staged?{hint}",
+                      file=sys.stderr)
             continue
 
         src_file = sources[root] / source_path
@@ -428,7 +507,9 @@ def main() -> int:
     print(f"  copied:      {copied:,} files ({bytes_copied / 2**30:.2f} GB)", file=sys.stderr)
     print(f"  companions:  {companions_copied:,} multi-file model siblings (#486)", file=sys.stderr)
     print(f"  skipped:     {skipped:,} (already present, same size)", file=sys.stderr)
-    print(f"  preexisting: {preexisting:,} (torrent_import — bytes already in place)",
+    print(f"  preexisting: {preexisting:,} (pre-staged — bytes already in place)",
+          file=sys.stderr)
+    print(f"  refetched:   {refetched:,} (downloaded from metadata.media_url, #602)",
           file=sys.stderr)
     print(f"  missing:     {missing:,} (not found in source)", file=sys.stderr)
     if args.prune:
