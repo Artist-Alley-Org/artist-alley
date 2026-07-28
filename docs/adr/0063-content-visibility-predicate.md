@@ -190,12 +190,25 @@ worth separating what is open from what is not:
 
 Until then the authenticated post/collection branch stays `public OR author` — byte-for-byte —
 asserted by test so an accidental widening fails as loudly as a tightening. **The decision is
-tracked as #462; the mechanical consolidation that waits on it (routing `ListPostsPage` through
+tracked as #462; the mechanical consolidation that waits on it (routing the post list through
 the predicate) is #212, which is therefore gated on #462, not shippable ahead of it.** One
 distinction keeps the two straight: the post-feed *filter* `FeedFollowerRef` ("posts from accounts
 I follow") is *curation*, not authorization, and correctly stays **out** of the predicate — a peer
 cannot be trusted to run another user's feed query. The `followers` *visibility tier* is
 authorization and belongs *in* the predicate. They share a word and nothing else.
+
+**Update 2026-07-27 (#660).** The named query is gone: `ListPostsPage` was deleted from
+`posts/queries.sql` and the feed is now `posts.Handler.ListPostsPageGated`, which splices
+`posts/read_rule.go`. That is **not** #212 and does not pre-empt #462. #212 is "route the post
+list through *this* predicate"; what #660 did is narrower — the post list now obtains the rule
+the post *single-item* gate (`canReadPost`) was already applying, instead of restating a weaker
+one. It answers no open product question; it only removes a disagreement inside the posts
+package. The disagreement was live: the list took the caller's `?visibility=` straight into SQL
+with no author or relationship conjunct, so any signed-in caller could read every author's
+private posts while `GET /posts/{id}` refused them the same rows. Note what that implies about
+the paragraph above — the deferral was recorded honestly for the *predicate*, and a second
+expression outside the predicate leaked anyway. Deferring a rule in one place does not defer it
+everywhere; it just moves where someone will express it.
 
 ## Consequences
 
