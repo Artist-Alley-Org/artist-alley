@@ -100,6 +100,65 @@ export const RATIO_MIN = 1 / 12;
 export const RATIO_MAX = 12;
 export const clampRatio = (r: number): number => Math.min(RATIO_MAX, Math.max(RATIO_MIN, r));
 
+// ── The masonry tile floor (#652) ────────────────────────────────────
+//
+// #646 gave every masonry tile its TRUE ratio, which is right, and had
+// one consequence nobody had priced: an audio waveform is genuinely
+// thin. Measured at 1440px on the dev library, the shortest tile was
+// 30px tall and 45 of 216 were under 60px — while the two controls that
+// have to live inside it are 44x44 each (WCAG 2.5.8). The checkbox and
+// the ⋮ menu were literally hanging out of the artwork.
+//
+// So masonry tiles get a floor, and it is DERIVED rather than picked:
+// the controls are `h-11` (2.75rem) inset `top-2 / left-2 / right-2`
+// (0.5rem). They are horizontally OPPOSED — checkbox left, menu right —
+// so they share one 44px band rather than stacking, and the floor is
+// one control plus its inset above and below. 3.75rem, i.e. 60px at a
+// 16px root. In rem and not px because the controls are themselves in
+// rem: a user at a 20px root gets 55px controls, and a hardcoded 60px
+// floor would put them straight back outside the tile.
+//
+// The cost, taken deliberately (owner's explicit call): the very
+// thinnest assets stop being exactly true-to-aspect and letterbox
+// inside a slightly taller box. A tile too small to interact with is
+// worse than one taller than its content. Every tile ABOVE the floor is
+// untouched, so #646 holds everywhere it is visible.
+//
+// This lives here for the same reason `cardTileRatio` does: CardThumb
+// applies the floor in CSS and MasonryColumns has to predict the same
+// number when it buckets, one layer up and before the card renders. A
+// clamp applied in only one of the two desynchronises the columns and
+// reintroduces the append instability #651 removed.
+
+/** Tap-target edge of the overlay controls, in rem (Tailwind `h-11`). */
+export const MASONRY_CONTROL_REM = 2.75;
+/** Their inset from the tile edge, in rem (Tailwind `top-2`/`left-2`). */
+export const MASONRY_CONTROL_INSET_REM = 0.5;
+/** The floor a masonry tile may not go under: one control band plus its
+ *  inset top and bottom. 3.75rem = 60px at a 16px root. */
+export const MASONRY_MIN_TILE_REM = MASONRY_CONTROL_REM + 2 * MASONRY_CONTROL_INSET_REM;
+
+/** `MASONRY_MIN_TILE_REM` resolved against the document's root font
+ *  size, for the bucketer's arithmetic. Resolved rather than assumed
+ *  16px so the prediction tracks whatever the CSS floor actually
+ *  computes to for this user. */
+export function masonryMinTilePx(): number {
+  const fallback = MASONRY_MIN_TILE_REM * 16;
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return fallback;
+  const root = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return root > 0 ? MASONRY_MIN_TILE_REM * root : fallback;
+}
+
+/** The height a masonry tile of `ratio` will occupy in a `colWidth`
+ *  column, floored at `minPx`. THE one place the floor is applied, so
+ *  the renderer's `min-height` and the bucketer's prediction cannot
+ *  disagree. `ratio` null ⇒ the tile reserves a square (see
+ *  CardThumb's `aspect-square` default). */
+export function masonryTileHeight(colWidth: number, ratio: number | null, minPx: number): number {
+  const natural = ratio === null || ratio <= 0 ? colWidth : colWidth / ratio;
+  return Math.max(natural, minPx);
+}
+
 /** The shape a tile's ratio can be read off — an asset row, or the cover
  *  asset joined into a post member. */
 interface RatioSource {
