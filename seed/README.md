@@ -11,6 +11,15 @@ emitted from one canonical source:
 | `studio-b.assets.json` | Phase 1.22.I-a dogfood (Adventureworks side) | Layer A + B — full curated set, ~600 assets, ~610 MB |
 | `dev.assets.json` | Solo developer DB re-seed | Layer A + B unified — everything in one instance |
 
+`demo` and `dev` are byte-for-byte **aliases** of `studio-a` and
+`studio-b`. They used to be written before the upgrade pass ran, so
+every upgrade since #604 landed on `studio-{a,b}` and missed its own
+aliases — `demo.assets.json` shipped 971 records against `studio-a`'s
+1,007, and a demo re-seed would have dropped all 36 added videos with
+nothing to notice it. `sanitize_and_assemble.py` now re-copies them
+after the upgrade, and `test_dataset_upgrade.py` asserts the equality
+(#572).
+
 The four profiles + supporting catalogues (users, teams, collections,
 brand workspaces, field definitions, workflow states) are produced from a
 single Python script that reads the existing 12,871-row metadata.csv at
@@ -95,6 +104,95 @@ silent data bug — see the module docstrings for the full story:
 | 2 | Gate quality on **dimensions**, never on byte size | Flat-colour vector renders compress hard: 415 upgraded assets are under 10 KB *and* ≥512px. A byte threshold rejects exactly what the upgrade produces. |
 | 3 | **Weight the sample explicitly** (`PACK_WEIGHTS`) | `Icons/Input Prompts` alone is 1,504 near-identical button glyphs, ~29% of every vector in the pack. Sampled evenly, browse looks like a settings screen. |
 | 4 | Record a **direct media URL**, not the page you found it on | The 30 Pexels videos stored `https://www.pexels.com/video/…/` — an HTML page behind Cloudflare. Verify-don't-copy kept working as long as the archive share was mounted, so nothing ever failed here; a rebuild on a clean machine simply could not reconstruct them (#602). |
+
+### The per-team balance pass (#572)
+
+site_a shipped 1,007 assets across 11 teams with **Animation and
+Characters at zero**, Marketing Art at 3, Textures at 8 — and
+Environment holding **47.3%** of the whole library. Clicking a studio
+either showed nothing or showed the dataset.
+
+The issue assumed this needed a cross-studio rewrite because "Animation
+has 2 assets globally". That was true of the *manifest*, not the
+*source*: those 1,007 records are drawn from a 78,441-file CC0 bundle of
+which ~1.3% was in use. So the fix is additive, in two levers:
+
+| lever | what it does | effect |
+|---|---|---|
+| `team-corrections.site_a.json` | moves 55 records the source CSV mis-teams — 34 minimap icons tagged `ui`, 18 texture plates tagged `texture`, 3 voiceover clips | Environment 476 → **421** |
+| `balance-assets.site_a.json` | 895 new pack-sourced records for the starved teams | everyone else up; Environment's SHARE 47.3% → **21.6%** |
+
+Nothing is deleted. Posts, collections and group siblings all reference
+those ids, and #604's "swap the file, keep the record" rule exists
+because removing records from this dataset breaks composition silently.
+
+**The floor is 60, and it comes from the product.** `/search` returns 25
+results per page and the browse rails render 24 tiles, so a team whose
+entire library fits in one response has nothing to scroll and nothing to
+narrow — it reads as a stub even when it is technically non-empty. 60 is
+two and a half pages. The smallest team lands at 116.
+
+```bash
+# what would change, per team, writing nothing
+python3 seed/scripts/studio_balance.py plan --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0"
+
+# write the upgrade docs (pool entries + assets + posts + corrections)
+python3 seed/scripts/studio_balance.py emit --pack "$DATASETS/..."
+# then build the pool, then record the render sizes it produced
+python3 seed/scripts/studio_balance.py sizes --pool "$DATASETS/kenney-hq-pool"
+
+# offline gate — no network, no share
+python3 seed/scripts/studio_balance.py check
+```
+
+A fifth source root, `pack`, copies bytes verbatim out of the bundle
+(3D models, audio, already-large PNGs). Vectors still go through the
+kenney-hq pool so they are RENDERED by the pipeline's own rasteriser
+(#679); `studio_balance.py emit` appends them to `kenney-hq-pool.json`
+so `kenney_hq.py build` reproduces them like any other pool file.
+
+### Provenance for bundle-sourced records (#572)
+
+The All-in-1 bundle is a paid itch.io download, so until #572 the ~90%
+of the library that is Kenney had **no internet provenance at all** —
+the same hole #602 closed for 30 Pexels videos, larger and quieter,
+because verify-don't-copy never fails while the mount is up.
+
+Kenney also publishes every pack individually as a free CC0 zip, and
+those zips are byte-identical to the bundle. So each added record
+carries:
+
+| key | what it is |
+|---|---|
+| `metadata.fetched_from` | `kenney.nl/assets/<slug>` — the pack page, where the CC0 dedication lives |
+| `metadata.source_archive.url` | the pack's free zip |
+| `metadata.source_archive.member` | the path inside that zip |
+| `metadata.source_archive.sha256` | that member's bytes |
+
+**Not `media_url`.** A `media_url` means "a URL that serves exactly
+`file_size_bytes`", and `populate_archive.py` refuses a mismatch. A zip
+serves the whole pack, so writing one there would either break that
+check or disable it. The per-member sha256 does the job the byte count
+does for a direct URL, and it is checked *before* the bytes are staged —
+a pack that moved upstream fails loudly instead of quietly substituting
+different art under an unchanged manifest entry.
+
+If a pack has no public standalone download it does not go in the
+dataset (`kenney_pack_sources.NOT_PUBLISHED_STANDALONE`); that rule cost
+Characters ~50 records it could otherwise have had from the "Animated
+Characters Bundle", and re-fetchability won.
+
+```bash
+# resolve pages + zip URLs for every pack the recipes name (network)
+python3 seed/scripts/kenney_pack_sources.py resolve --packs-from-recipes
+
+# offline gate: recipes vs recorded provenance
+python3 seed/scripts/kenney_pack_sources.py check
+
+# prove every SHIPPED record reproduces from its zip (network)
+python3 seed/scripts/kenney_pack_sources.py verify-records \
+    --records seed/upgrades/balance-assets.site_a.json
+```
 
 ### Provenance: `fetched_from` vs `media_url` (#602)
 
@@ -388,14 +486,25 @@ python3 seed/scripts/kenney_hq.py build \
     --pack "$DATASETS/Kenney Game Assets All-in-1 3.6.0" \
     --out  "$DATASETS/kenney-hq-pool"
 
-# 2. copy assets + regenerate MANIFEST.json / metadata.csv for a site
+# 2. copy assets + regenerate MANIFEST.json / posts.json / metadata.csv
 python3 seed/scripts/populate_archive.py \
     --local-source    /mnt/d/Projects/unraid_management/artist-alley_dataset \
     --internet-source seed/internet-fetched \
     --hq-source       "$DATASETS/kenney-hq-pool" \
+    --pack-source     "$DATASETS/Kenney Game Assets All-in-1 3.6.0" \
     --profile         seed/profiles/studio-a.assets.json \
+    --posts           seed/profiles/studio-a.posts.json \
     --dest            "$DATASETS/site_a"
 ```
+
+**Pass `--posts`.** `aa seed` reads `posts.json` next to
+`MANIFEST.json`, and until #572 nothing staged it — it was copied by
+hand, so site_a served 584 posts against a profile holding 859 and the
+only symptom was a thinner browse wall than the dataset claimed.
+
+`--pack-source` is optional: a record whose bundle file is absent is
+downloaded from its `metadata.source_archive` zip instead, so a machine
+that has never seen the bundle can still build the site.
 
 `$DATASETS` is wherever the dataset share is mounted — it differs between
 a workstation and a CI runner, so nothing in the tooling hardcodes it. If

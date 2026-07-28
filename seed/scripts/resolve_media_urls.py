@@ -328,11 +328,21 @@ def dump(path: Path, data, fmt: tuple[int, str, bool] | None = None) -> None:
 
 
 def internet_records(doc: list[dict]) -> list[dict]:
-    """Records whose bytes came off the internet — the only ones a media
-    URL is meaningful for. Local-dataset and Kenney-pool records are
-    reproduced from their source tree, not re-downloaded."""
+    """Records a per-file media URL is meaningful for.
+
+    `fetched_from` alone no longer implies one. #572 gave every
+    Kenney-sourced record the pack PAGE as `fetched_from` — closing a
+    real attribution gap — but their bytes live inside a zip, so they
+    carry `metadata.source_archive` {url, member, sha256} instead. A
+    `media_url` must serve exactly `file_size_bytes`, which no archive
+    URL can, and pointing this gate at them would either fail 895 records
+    forever or push someone to write a zip URL into a field whose entire
+    value is that it is checkable. Those records are gated by
+    apply_upgrade.py's own source_archive post-condition.
+    """
     return [r for r in doc
-            if (r.get("metadata") or {}).get("fetched_from")]
+            if (r.get("metadata") or {}).get("fetched_from")
+            and not (r.get("metadata") or {}).get("source_archive")]
 
 
 def needs_media_url(record: dict) -> bool:

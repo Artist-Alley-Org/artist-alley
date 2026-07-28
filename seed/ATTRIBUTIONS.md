@@ -11,15 +11,25 @@ content you include.
 
 ## Aggregate license
 
-The dataset as a whole is published under
-**Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA 4.0)**.
+There is **no single aggregate license** any more.
 
-Choice rationale: CC-BY-SA is the most restrictive license among
-included sources (notably the Tux Racer / Hedgewars / OpenArena
-gameplay videos from Wikimedia, which are CC-BY-SA 4.0). Combining
-those with CC0 / CC-BY / public-domain content forces the aggregate
-license to CC-BY-SA. Redistributors must attribute every source and
-release derivative datasets under CC-BY-SA.
+The dataset was published under **CC-BY-SA 4.0**, chosen because that
+was the most restrictive license among the sources (the Tux Racer /
+Hedgewars / OpenArena gameplay videos from Wikimedia). The Pexels
+videos added in #605 and extended in #572 are covered by the **Pexels
+License**, which is free-to-use but is not a Creative Commons license
+and carries its own prohibitions (see below). A CC-BY-SA claim over the
+whole set would therefore be false.
+
+**Per-asset `license` + `attribution` in `MANIFEST.json` are
+authoritative.** Everything except the Pexels videos remains CC-BY-SA
+4.0 compatible; redistributors must attribute every source and honour
+the Pexels terms for the `videos/internet/pexels-*` files.
+
+> This paragraph lived only in the copy of this file staged on the
+> archive share. Correcting an output and not its input is how a fix
+> un-fixes itself on the next run (#675) — the repo copy is the source,
+> and `populate_archive.py` publishes it.
 
 ## Sources
 
@@ -31,8 +41,27 @@ release derivative datasets under CC-BY-SA.
     ui-pack-rpg-expansion, prototype-textures, development-essentials,
     music-jingles, voiceover-pack, kenney-fonts, animal-pack-remastered,
     pixel-line-platformer, format3d, icons
+  - Added by the per-team rebalance (#572), each drawn from the pack's
+    own free CC0 download at `kenney.nl/assets/<slug>`:
+    animal-pack, animated-characters-protagonists,
+    animated-characters-retro, animated-characters-survivors,
+    blaster-kit, brick-pack, cube-pets, cursor-pack, fish-pack,
+    flag-pack, food-kit, generic-items, holiday-kit, mini-characters,
+    monster-builder-pack, new-platformer-pack, particle-pack,
+    pattern-pack, pattern-pack-lines, planets, platformer-characters,
+    prototype-kit, ranks-pack, robot-pack, shape-characters, skyboxes,
+    splat-pack, survival-kit, toon-characters, ui-pack,
+    ui-pack-adventure, ui-pack-sci-fi
   - License: **CC0 1.0** (public domain dedication)
   - All Kenney content is dedicated to the public domain by the author
+  - Machine-readable provenance for the #572 packs — page URL, direct
+    zip URL and served byte count — is committed at
+    [`seed/upgrades/kenney-pack-sources.json`](upgrades/kenney-pack-sources.json),
+    and every record additionally names the file inside that zip plus
+    its sha256 (`metadata.source_archive`). `python3
+    seed/scripts/kenney_pack_sources.py verify-records --records
+    seed/upgrades/balance-assets.site_a.json` re-proves the whole set
+    against the live downloads.
 
 - **[PixelSpaces.io](https://pixelspaces.io/)** — UI kits + sprite packs
   - License: CC0 / free-pack equivalent (see PixelSpaces site)
@@ -74,6 +103,28 @@ release derivative datasets under CC-BY-SA.
 - **Video game references** (via Wikimedia Commons):
   - **Pong** gameplay loop (1972) — Public Domain
   - **Donkey Kong arcade** — CC-BY 2.0 (Wikimedia contributor)
+
+### Video — Pexels (Pexels License, NOT CC0 / public domain)
+
+`videos/internet/pexels-*` — **75 clips**: 30 added in #605, plus 45
+game-adjacent clips added in #572 from these searches — arcade machine,
+video game controller, neon lights abstract, particles floating, smoke
+effect black background, glitch effect screen, pixel art animation,
+keyboard gaming rgb, abstract motion background loop, sparks fire slow
+motion, esports tournament, retro gaming console.
+
+- Each clip's videographer is credited per-asset in `MANIFEST.json`
+  (`attribution`), and `metadata.fetched_from` is the Pexels page the
+  licence and the credit live on.
+- **Permitted:** free use and modification; attribution not required
+  (given anyway).
+- **Prohibited:** selling unaltered copies; redistributing on other
+  stock-photo or wallpaper platforms; use in trade marks; implying
+  endorsement by the depicted people or by Pexels.
+- **Approved for both site_a and site_b** (owner decision 2026-07-25).
+  Any "site_b only" wording elsewhere is stale — it was a #607
+  regression, corrected in #675, and is asserted against in
+  `test_dataset_upgrade.py`.
 
 ### Audio (CC0)
 
