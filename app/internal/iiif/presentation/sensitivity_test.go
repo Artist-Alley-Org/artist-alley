@@ -6,13 +6,21 @@
 // enforcement on the manifest route.
 //
 // The issue asked whether P0a (the row predicate, ADR 0063) made this
-// gate redundant. It did not, and the reason is stronger than "two
-// planes by design": the manifest route never invokes the predicate at
-// all. LoadAsset / LoadCollectionMembers read by id with `deleted_at IS
-// NULL` and nothing else, so if these in-builder checks were removed, a
-// restricted asset's full manifest would be served to any anonymous
-// caller. That is what the sabotage direction of these tests
-// demonstrates, and it is why the gate stays.
+// gate redundant. It did not — but the reason #432 gave has since been
+// fixed out from under it, and the corrected reason is worth stating.
+//
+// #432's answer was "the manifest route never invokes the predicate at
+// all": LoadAsset / LoadCollectionMembers read by id with `deleted_at
+// IS NULL` and nothing else. That was true, and it was also a bug —
+// the missing row plane is #661, and loader.go now splices the
+// predicate into every query.
+//
+// The gate still stays, on the ORIGINAL two-planes argument: the
+// AUTHENTICATED EntityAsset predicate is soft-delete only (deliberately
+// — ADR 0063), so the row plane admits a signed-in caller to a
+// restricted asset's existence and these checks are what decide the
+// anonymous manifest's contents. Remove them and the sabotage
+// direction of these tests fires.
 //
 // Pure unit tests: BuildAssetManifest takes an EntityRef and a bool, so
 // no database is involved — the assertion is on the OUTCOME (404 / stub

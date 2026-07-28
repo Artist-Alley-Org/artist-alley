@@ -130,28 +130,15 @@ ON CONFLICT (collection_id, post_id) DO UPDATE SET
 -- name: RemoveCollectionPost :exec
 DELETE FROM collection_posts WHERE collection_id = $1 AND post_id = $2;
 
--- name: ListCollectionPostsPage :many
--- Pinned posts in a collection, sort_order then added_at. Excludes
--- expired memberships and soft-deleted posts. Returns the post row
--- joined with its cover_asset for the grid render.
-SELECT cp.collection_id, cp.post_id, cp.sort_order, cp.pinned,
-       cp.expires_at, cp.added_at,
-       p.author_user_ref, p.title, p.description, p.visibility,
-       p.cover_asset_id, p.posted_at, p.like_count, p.comment_count,
-       p.created_at AS post_created_at,
-       p.updated_at AS post_updated_at
-FROM collection_posts cp
-JOIN posts p ON p.id = cp.post_id
-WHERE cp.collection_id = $1
-  AND cp.pinned = TRUE
-  AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
-  AND p.deleted_at IS NULL
-  AND (sqlc.narg('cursor_sort_order')::INTEGER IS NULL
-       OR cp.sort_order > sqlc.narg('cursor_sort_order')::INTEGER
-       OR (cp.sort_order = sqlc.narg('cursor_sort_order')::INTEGER
-           AND cp.added_at > sqlc.narg('cursor_added_at')::TIMESTAMPTZ))
-ORDER BY cp.sort_order ASC, cp.added_at ASC
-LIMIT sqlc.arg('row_limit')::INTEGER;
+-- ListCollectionPostsPage was DELETED here (#661, epic #665). It listed
+-- a collection's pinned posts with `p.deleted_at IS NULL` as its only
+-- post-side condition — no visibility rule at all — and nothing in the
+-- tree called it: no handler, no test, and its generated row/param
+-- types were referenced nowhere. An unused query that would leak every
+-- private post in a collection the day somebody wired it up is not a
+-- head start, it is a trap; deleting it is strictly better than
+-- auditing it. A future collection-posts listing must go through
+-- posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
 
 -- ---------------------------------------------------------------------------
 -- ACLs (Phase 1.7.B-7b)
