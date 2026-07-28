@@ -42,6 +42,8 @@ The suite never touches your dev database. It resets and runs against a disposab
 
 Anything that touches the public API, database schema, on-disk format, storage interface, or container topology requires an Architecture Decision Record. See [`docs/adr/`](docs/adr/) for examples — ADRs 0006 (Go backend), 0008 (storage), 0010 (permissions), and 0014 (frontend) are the most load-bearing.
 
+ADR frontmatter follows the schema in [ADR 0035](docs/adr/0035-adr-conventions.md). It is machine-read by the docs site, so run `./scripts/check-adr-frontmatter.sh` after adding or editing one — CI runs the same check on every PR that touches `docs/adr/**`.
+
 ## Code style
 
 - **Go:** `gofmt`, `go vet`, idiomatic Go. No clever metaprogramming.
