@@ -30,6 +30,19 @@
 #   5. `status` is one of the documented lifecycle values.
 #   6. Every id referenced by `related`, `supersedes` and
 #      `superseded_by` resolves to an ADR file that exists.
+#   7. The frontmatter stays inside the ADR 0035 dialect. The site
+#      does not use a YAML library — it hand-parses flat keys, block
+#      sequences and `>-` folded scalars. Valid YAML outside that
+#      dialect (flow-style `["0008"]`, inline `#` comments on the
+#      enum keys) parses fine here and means something else there.
+#
+# The rules mirror the site's `sync-adrs.mjs` as of site commit
+# e5f9bad: same required-key set, same status enum, same area enum,
+# same delimiter handling, same cross-reference errors. Where this
+# script differs it is deliberately *stricter* (quoted ids, date
+# shape, `superseded_by` references, real YAML parsing), so drift
+# surfaces here as a cheap false red rather than there as a broken
+# deploy.
 #
 # Usage:
 #   ./scripts/check-adr-frontmatter.sh            # validate all ADRs
@@ -104,17 +117,68 @@ DATE_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
 
 
 def split_frontmatter(text):
-    """Return (yaml_source, error). Exactly one of the two is None."""
-    lines = text.split('\n')
-    if not lines or lines[0].strip() != '---':
+    """Return (yaml_source, error). Exactly one of the two is None.
+
+    Delimiter handling matches the site's script exactly: it requires a
+    literal `---\\n` at byte 0 and finds the close with an indexOf for
+    `\\n---\\n`, so a `---` with trailing whitespace or a leading blank
+    line is *not* frontmatter over there either.
+    """
+    if not text.startswith('---\n'):
         return None, (
             'no YAML frontmatter block — the file must start with a `---` '
             'line (this is what broke ADR 0071)'
         )
-    for i in range(1, len(lines)):
-        if lines[i].strip() == '---':
-            return '\n'.join(lines[1:i]), None
-    return None, 'frontmatter block is never closed (missing the second `---`)'
+    end = text.find('\n---\n', 3)
+    if end < 0:
+        return None, 'frontmatter block is never closed (missing the second `---`)'
+    return text[4:end], None
+
+
+def dialect_problems(raw):
+    """Constructs that are valid YAML but that the site's parser misreads.
+
+    The site does not use a YAML library. It hand-parses the closed
+    ADR-frontmatter dialect from ADR 0035 (flat `key: value`, block
+    sequences, `>-` folded scalars). Anything outside that dialect
+    parses cleanly here and then silently means something else — or
+    nothing — over there, which is the exact shape of the bug this
+    gate exists to prevent. So the dialect is enforced, not just the
+    YAML.
+    """
+    problems = []
+    for line in raw.split('\n'):
+        if not line.strip() or line.startswith((' ', '\t')):
+            # Blank, a block-sequence item, or a folded-scalar
+            # continuation — all handled by the site's parser.
+            continue
+        if line.lstrip().startswith('#'):
+            continue
+        m = re.match(r'^(\w+):\s*(.*)$', line)
+        if not m:
+            problems.append(
+                'frontmatter line %r is outside the ADR 0035 dialect — the '
+                "site's parser skips lines it can't match and then reports "
+                'the key as missing' % line[:60]
+            )
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if value.startswith(('[', '{')) and value != '[]':
+            problems.append(
+                '`%s` uses a flow-style collection — the site\'s parser only '
+                'reads block sequences (`- "0008"` on their own lines) and '
+                '`[]` for empty' % key
+            )
+        # The site's parser does not strip inline `#` comments, so the
+        # comment text ends up *inside* the value. Harmless in prose
+        # keys, fatal on the three keys it compares exactly.
+        if key in ('id', 'status', 'area') and re.search(r'\s#', value):
+            problems.append(
+                '`%s` has an inline `#` comment — the site\'s parser does not '
+                'strip comments, so the value becomes %r and fails its enum '
+                'check' % (key, value)
+            )
+    return problems
 
 
 def id_list(value):
@@ -144,6 +208,8 @@ def check(path, known_ids):
 
     if not isinstance(meta, dict):
         return ['frontmatter must be a YAML mapping, got %s' % type(meta).__name__]
+
+    problems.extend(dialect_problems(raw))
 
     for key in REQUIRED_KEYS:
         if key not in meta or meta[key] is None or meta[key] == '':
