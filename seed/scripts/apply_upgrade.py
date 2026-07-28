@@ -95,11 +95,17 @@ HQ_ATTRIBUTION = "Kenney (kenney.nl)"
 # to the pool directory via --hq-source.
 HQ_SOURCE_ROOT = "hq"
 
-# Assets whose bytes are already staged at the destination and are not
-# re-fetchable from the recorded provenance (Pexels gives a page URL, not
-# a direct media URL). populate_archive.py treats this as a PRE-STAGED
-# root: verify presence, never copy, never drop. It is the same
-# mechanism the pre-existing `torrent_import` root uses.
+# Assets whose bytes are already staged at the destination, with no LOCAL
+# source to copy from. populate_archive.py treats this as a PRE-STAGED
+# root: verify presence, never drop. It is the same mechanism the
+# pre-existing `torrent_import` root uses.
+#
+# These records used to be a dead end on a machine without the archive
+# share, because their provenance was a Pexels *page* URL — an HTML
+# document, not bytes. They now also carry `metadata.media_url`, the
+# direct CDN URL, recorded only after a HEAD confirmed it serves exactly
+# `file_size_bytes` (#602). So "pre-staged" now means "verify, and
+# download if absent" rather than "verify or lose it".
 SITE_SOURCE_ROOT = "site"
 
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
@@ -206,12 +212,29 @@ def _composition(entry: dict) -> tuple:
     )
 
 
-def merge_added(profile: list[dict], added: list[dict]) -> int:
-    """Append records absent from the profile, with copier provenance."""
-    have = {e["id"] for e in profile}
+def merge_added(profile: list[dict], added: list[dict]) -> tuple[int, int]:
+    """Append records absent from the profile, with copier provenance.
+
+    Returns (appended, repaired). `repaired` counts records that were
+    ALREADY in the profile and gained a `metadata.media_url` from the
+    upgrade doc — see below.
+    """
+    by_id = {e["id"]: e for e in profile}
     n = 0
+    repaired = 0
     for a in added:
-        if a["id"] in have:
+        existing = by_id.get(a["id"])
+        if existing is not None:
+            # Already merged, so the append branch will never run again —
+            # which is exactly how a field added to the upgrade docs
+            # later would never reach the profiles. A provenance field
+            # that is right for new rows and absent from old ones is its
+            # own trap, so pull `media_url` forward on every run (#602).
+            # Nothing else is touched: this is a repair, not a re-merge.
+            src = (a.get("metadata") or {}).get("media_url")
+            if src and not (existing.get("metadata") or {}).get("media_url"):
+                existing.setdefault("metadata", {})["media_url"] = src
+                repaired += 1
             continue
         rec = json.loads(json.dumps(a))  # don't mutate the committed doc
         # These records were injected straight into the manifest and have
@@ -223,7 +246,7 @@ def merge_added(profile: list[dict], added: list[dict]) -> int:
             rec["source_path"] = rec["file_path"]
         profile.append(rec)
         n += 1
-    return n
+    return n, repaired
 
 
 def merge_posts(posts: list[dict], added: list[dict]) -> int:
@@ -274,10 +297,27 @@ def audit(profile: list[dict], posts: list[dict],
         e = by_id.get(a["id"])
         if e is None:
             problems.append(f"added asset {a['id']} missing from profile")
-        elif not e.get("source_path"):
+            continue
+        if not e.get("source_path"):
             problems.append(
                 f"added asset {a['id']} has no source_path — "
                 "populate_archive.py will silently skip it")
+        # A pre-staged record with no media_url is unrecoverable the
+        # moment the archive share is not there: the copier can only
+        # report it MISSING and re-assembly ends with a hole. That was
+        # the whole of #602, and it is a post-condition now, not a note.
+        meta = e.get("metadata") or {}
+        if e.get("source_root") == SITE_SOURCE_ROOT and not meta.get("media_url"):
+            problems.append(
+                f"added asset {a['id']} ({meta.get('filename')}) is pre-staged "
+                "with no metadata.media_url — its bytes cannot be re-fetched "
+                "from provenance. Run: python3 seed/scripts/"
+                "resolve_media_urls.py --write <profile>")
+        if meta.get("media_url") and not meta.get("fetched_from"):
+            problems.append(
+                f"added asset {a['id']} has media_url but lost fetched_from — "
+                "the source page is the attribution + licence evidence and "
+                "must survive alongside the byte URL")
 
     post_ids = {p["id"] for p in posts}
     for p in added_posts:
@@ -326,7 +366,7 @@ def main() -> int:
     before_assets, before_posts = len(profile), len(posts)
 
     changed, problems = apply_replacements(profile, reps)
-    n_assets = merge_added(profile, add_a)
+    n_assets, n_repaired = merge_added(profile, add_a)
     n_posts = merge_posts(posts, add_p)
     problems += audit(profile, posts, reps, add_a, add_p)
 
@@ -336,6 +376,8 @@ def main() -> int:
     print(f"assets      : {before_assets} -> {len(profile)} (+{n_assets})",
           file=sys.stderr)
     print(f"posts       : {before_posts} -> {len(posts)} (+{n_posts})",
+          file=sys.stderr)
+    print(f"media_url   : {n_repaired} existing record(s) backfilled (#602)",
           file=sys.stderr)
 
     if problems:
@@ -348,11 +390,12 @@ def main() -> int:
 
     if args.check:
         # In --check mode nothing may have needed doing.
-        drift = n_assets or n_posts
+        drift = n_assets or n_posts or n_repaired
         if drift:
             print("\nFAIL: profile is not upgraded — re-assembly would drop "
-                  f"{n_assets} assets and {n_posts} posts. Run without "
-                  "--check.", file=sys.stderr)
+                  f"{n_assets} assets and {n_posts} posts, and {n_repaired} "
+                  "record(s) are missing the media_url that makes them "
+                  "re-fetchable. Run without --check.", file=sys.stderr)
             return 1
         print("\nOK: profile already reflects the upgrade.", file=sys.stderr)
         return 0
