@@ -1340,6 +1340,16 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
                 "attribution": entry.get("attribution", ""),
                 "group_id": "",
                 "sha256": entry.get("sha256", ""),
+                # fetch_gaps.py already writes the URL it pulled the file
+                # from into the internet manifest, and this function used
+                # to drop it on the floor — every internet record reached
+                # the profile with no way back to its source. Carry both
+                # keys so a record's provenance survives assembly (#602):
+                # fetched_from is where a human looks, media_url is what a
+                # machine GETs. For these sources they are the same URL;
+                # for Pexels they are not, which is the whole point.
+                "fetched_from": entry.get("fetched_from", ""),
+                "media_url": entry.get("fetched_from", ""),
             },
             field_values={},
             external_id="",
