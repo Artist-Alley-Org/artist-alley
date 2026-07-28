@@ -127,6 +127,21 @@ where applicable, otherwise note "no-spec-impact."
   the file extension (`image/png` rather than the `image/*` wildcard it aspired
   to) (#579).
 
+### Operator-facing changes
+
+- **New capability `users.pii.read` — session IP addresses now need it.** The admin
+  view of a user's sessions (`/admin/users/{ref}/sessions`, and the "Active sessions"
+  panel on the user detail page) returned each session's raw client IP to anyone
+  holding `users.read`, while the audit log has required a dedicated
+  `system.audit.pii.read` for actor IPs since v0.5.0. Same data class, two different
+  bars — so the looser one was raised rather than the stricter one lowered. `users.read`
+  still lists the sessions, labels the devices, and revokes them; the address is
+  additionally gated on `users.pii.read`, exactly as audit gates actor IPs. `system.admin`
+  is unaffected (it satisfies every capability). **Operators who want an existing
+  non-admin role to keep seeing session IPs must grant it the new capability** — the
+  field is simply absent otherwise, never blank. Documented as a rule for every future
+  IP-bearing surface in ADR 0072 (#573).
+
 ### API
 
 - **Removed: `asset_has_image` from featured-item payloads.** It reported whether
