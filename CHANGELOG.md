@@ -29,6 +29,15 @@ where applicable, otherwise note "no-spec-impact."
   tiny preview hash, so tiles popped in from blank instead of fading up from a blur, even
   though the data existed server-side (#648).
 
+- **Audio, 3D, video, fonts and ebooks had no blur-up placeholder at all.** The tiny
+  preview hash was only ever computed when the uploaded file was itself an image, so
+  every asset whose thumbnail is a *rendered* preview — an audio waveform, a 3D
+  turntable, a video frame, a page render, a glyph specimen — had none, and its tile
+  flashed blank before the picture arrived. Most visible on audio, which is both the
+  largest group and the thinnest tile in masonry. Every preview format now computes the
+  hash from the picture it just rendered, and a one-time sweep fills it in for assets
+  already in the library — 618 of them on the reference install (#645).
+
 - **The IIIF Image API returned 404 for every asset.** Both the image and
   `info.json` endpoints gated on `assets.has_image`, a column nothing in the
   codebase ever writes, so the condition was true for every asset and the whole

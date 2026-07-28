@@ -216,7 +216,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 
 	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
-		h.extractMviewThumbBestEffort(jobCtx, p.FileHash, work.sourcePath)
+		h.extractMviewThumbBestEffort(jobCtx, p.AssetID, p.FileHash, work.sourcePath)
 		glbPath, err := h.convertMviewToGLB(jobCtx, work.sourcePath)
 		if err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.mview_convert_failed",
@@ -282,7 +282,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			usedThreeJS = true
 			posterPath := filepath.Join(renderOut, "poster.png")
 			if !posterDone {
-				if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
+				if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
 					h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.threejs_poster_fan_failed",
 						slog.String("err", err.Error()))
 				} else {
@@ -309,7 +309,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 				h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_render_failed",
 					slog.String("asset_id", p.AssetID.String()),
 					slog.String("err", err.Error()))
-			} else if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
+			} else if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
 				h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
 					slog.String("err", err.Error()))
 			} else {
@@ -328,7 +328,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
 		firstFrame := filepath.Join(framesDir, "frame_0000.png")
-		if err := h.fanRasterLadder(jobCtx, p.FileHash, firstFrame); err != nil {
+		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, firstFrame); err != nil {
 			return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
 		}
 		result.Variants = append(result.Variants, "raster")
@@ -395,7 +395,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_render_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-		} else if err := h.fanRasterLadderOpts(jobCtx, p.FileHash, isoPath, true); err != nil {
+		} else if err := h.fanRasterLadderOpts(jobCtx, p.AssetID, p.FileHash, isoPath, true); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_fan_failed",
 				slog.String("err", err.Error()))
 		} else if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", isoPath, "image/png"); err != nil {
@@ -457,7 +457,7 @@ func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir s
 // failures log a warning and return, never abort the job — the col
 // variant is a "nice to have here, the GLB conversion below produces
 // real renders on success".
-func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mviewPath string) {
+func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, assetID uuid.UUID, hash, mviewPath string) {
 	if h.variantExists(ctx, hash, "col") {
 		return
 	}
@@ -474,7 +474,7 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 			slog.String("err", err.Error()))
 		return
 	}
-	if err := h.fanThumbBytes(ctx, hash, thumb); err != nil {
+	if err := h.fanThumbBytes(ctx, assetID, hash, thumb); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_thumb_fan_failed",
 			slog.String("err", err.Error()))
 	}
@@ -554,51 +554,15 @@ func (h *ModelHandler) convertMviewToGLB(ctx context.Context, mviewPath string) 
 // fanThumbBytes decodes a JPEG and writes it through the raster
 // variant ladder. Shared by the mview path; could be repurposed by
 // any future "we already have a poster, just resize it" worker.
-func (h *ModelHandler) fanThumbBytes(ctx context.Context, hash string, jpegBytes []byte) error {
-	if h.SysConfig == nil {
-		return nil
-	}
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
+func (h *ModelHandler) fanThumbBytes(ctx context.Context, assetID uuid.UUID, hash string, jpegBytes []byte) error {
 	src, err := jpeg.Decode(bytes.NewReader(jpegBytes))
 	if err != nil {
 		return fmt.Errorf("decode thumb: %w", err)
 	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		contentType, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			// Loud-fail (was silent continue) — see col-404 sidequest.
-			// A skipped variant leaves the asset with missing thumbnails
-			// even though the job reports success; the job system already
-			// retries up to max_attempts on a returned error so a
-			// transient blip self-heals.
-			return fmt.Errorf("backend put mview variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "model", Source: "mview",
+	})
 }
 
 // stageCompanions writes every companion the asset has into the
@@ -975,8 +939,8 @@ func (h *ModelHandler) scriptPath() string {
 // Raster ladder — load frame 0, fan into col / preview / screen / hires.
 // ---------------------------------------------------------------------------
 
-func (h *ModelHandler) fanRasterLadder(ctx context.Context, hash, framePath string) error {
-	return h.fanRasterLadderOpts(ctx, hash, framePath, false)
+func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, hash, framePath string) error {
+	return h.fanRasterLadderOpts(ctx, assetID, hash, framePath, false)
 }
 
 // fanRasterLadderOpts is the overwrite-aware variant. The iso pass
@@ -984,14 +948,7 @@ func (h *ModelHandler) fanRasterLadder(ctx context.Context, hash, framePath stri
 // poster's stale col/preview/screen variants (workbench paints
 // textured models magenta-pink and the existence check would
 // otherwise refuse to replace those bytes).
-func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, hash, framePath string, overwrite bool) error {
-	if h.SysConfig == nil {
-		return nil
-	}
-	cfg, err := h.SysConfig.GetPreviews(ctx)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
+func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, assetID uuid.UUID, hash, framePath string, overwrite bool) error {
 	f, err := os.Open(framePath)
 	if err != nil {
 		return fmt.Errorf("open frame: %w", err)
@@ -1001,35 +958,11 @@ func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, hash, framePath 
 	if err != nil {
 		return fmt.Errorf("decode frame: %w", err)
 	}
-	for _, v := range cfg.Variants {
-		if v.Key == storage.VariantOriginal {
-			continue
-		}
-		if !overwrite && h.variantExists(ctx, hash, v.Key) {
-			continue
-		}
-		dst := resizeFor(src, v)
-		var buf bytes.Buffer
-		contentType, err := encodeImage(&buf, dst, v)
-		if err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.raster_encode_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
-		}
-		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			// Loud-fail (was silent continue) — see col-404 sidequest.
-			return fmt.Errorf("backend put raster variant %s: %w", v.Key, err)
-		}
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
-			ObjectHash:  hash,
-			VariantKey:  v.Key,
-			SizeBytes:   int64(buf.Len()),
-			ContentType: contentType,
-			Metadata:    []byte("{}"),
-		})
-	}
-	return nil
+	return fanToLadder(ctx, ladderInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		AssetID: assetID, Hash: hash, Src: src, Kind: "model", Source: "turntable",
+		Overwrite: overwrite,
+	})
 }
 
 // ---------------------------------------------------------------------------

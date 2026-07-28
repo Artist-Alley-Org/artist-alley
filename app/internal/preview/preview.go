@@ -47,7 +47,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.n16f.net/thumbhash"
 	xdraw "golang.org/x/image/draw"
 
 	// Decoder registrations for image.Decode.
@@ -186,7 +185,13 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 	// already paid for the decode; computing thumbhash is sub-ms on
 	// top, so this is free for any pipeline that ran the variants.
 	// Best-effort: failure here doesn't fail the job.
-	h.backfillThumbhash(ctx, p.AssetID, src)
+	//
+	// Shared with every non-raster handler since #645 — see
+	// ladder.go. This handler keeps its own variant loop (it reports
+	// generated/skipped rungs and hard-fails the job on any rung
+	// error, which the best-effort helper deliberately doesn't), but
+	// the thumbhash stamp is now one implementation for all of them.
+	setThumbhashIfMissing(ctx, h.Pool, h.Logger, "raster", p.AssetID, src)
 
 	h.markReady(ctx, p.AssetID)
 	result.DurationS = time.Since(started).Seconds()
@@ -483,25 +488,6 @@ func (h *RasterHandler) markReady(ctx context.Context, id uuid.UUID) {
 	q := assets.New(h.Pool)
 	if err := q.MarkAssetReady(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.raster.mark_ready_failed",
-			slog.String("asset_id", id.String()),
-			slog.String("err", err.Error()),
-		)
-	}
-}
-
-// backfillThumbhash sets assets.thumbhash if the row currently has
-// NULL. Best-effort — failure logs and continues.
-func (h *RasterHandler) backfillThumbhash(ctx context.Context, id uuid.UUID, src image.Image) {
-	tb := thumbhash.EncodeImage(src)
-	if len(tb) == 0 {
-		return
-	}
-	q := assets.New(h.Pool)
-	if err := q.SetAssetThumbhashIfMissing(ctx, assets.SetAssetThumbhashIfMissingParams{
-		ID:        pgtype.UUID{Bytes: id, Valid: true},
-		Thumbhash: tb,
-	}); err != nil {
-		h.Logger.LogAttrs(ctx, slog.LevelDebug, "preview.raster.thumbhash_backfill_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()),
 		)
