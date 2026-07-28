@@ -7,6 +7,8 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.7.0] — 2026-07-28 — Browse correctness, visibility security, and a real seed catalogue
+
 ### Security
 
 Four separate leaks, all found in one week and all the same underlying mistake: a
@@ -14,6 +16,9 @@ read path that wrote out the "who may see this" rule itself instead of asking th
 one component that owns it. Each copy was correct when written, then the shared rule
 moved and the copy didn't. None was caught by a test. They are grouped here because
 the pattern matters more than any one of them (#665).
+
+The last entry below is a different thing — a permission that was too broad rather
+than a rule that drifted — but it is the same data class, so it belongs here.
 
 - **Anyone signed in could read anyone else's private posts.** Adding
   `?visibility=private` to the post list returned other people's private posts —
