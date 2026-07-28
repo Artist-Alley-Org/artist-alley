@@ -18,6 +18,7 @@ need tests rather than comments.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -32,7 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import apply_upgrade as up          # noqa: E402
 import kenney_hq as hq              # noqa: E402
+import kenney_pack_sources as kps   # noqa: E402
+import pexels_gameplay as px        # noqa: E402
+import populate_archive as pa       # noqa: E402
 import resolve_media_urls as rmu    # noqa: E402
+import studio_balance as sb         # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADES = SCRIPTS.parent / "upgrades"
@@ -905,6 +910,457 @@ class TestPopulateArchiveRefetch(unittest.TestCase):
             proc, out = self._run(d, None, 32)
             self.assertEqual(proc.returncode, 1)
             self.assertIn("no metadata.media_url", proc.stderr)
+
+
+# ---------------------------------------------------------------------------
+# #572 — per-team balance
+# ---------------------------------------------------------------------------
+
+class TestStudioBalanceShape(unittest.TestCase):
+    """The committed profile must keep the shape #572 gave it.
+
+    These read the committed data, so they catch a regenerated profile
+    that lost the fill, a recipe edit that starved a team, and a future
+    addition that quietly re-concentrates the library — none of which
+    break anything loudly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.profile = json.loads(
+            (SCRIPTS.parent / "profiles" / "studio-a.assets.json")
+            .read_text(encoding="utf-8"))
+        cls.counts = sb.distribution(cls.profile)
+        cls.total = sum(cls.counts.values())
+
+    def test_no_team_is_empty_or_a_stub(self):
+        below = {t: n for t, n in self.counts.items() if n < sb.FLOOR}
+        self.assertEqual(below, {},
+                         f"teams below the floor of {sb.FLOOR}: {below}")
+
+    def test_no_team_owns_the_dataset(self):
+        over = {t: round(100 * n / self.total, 1)
+                for t, n in self.counts.items()
+                if n / self.total > sb.MAX_TEAM_SHARE}
+        self.assertEqual(over, {},
+                         f"teams above {100 * sb.MAX_TEAM_SHARE:.0f}%: {over}")
+
+    def test_every_team_in_the_catalogue_has_assets(self):
+        """A team row with no assets is the original #572 symptom."""
+        teams = {t["name"] for t in json.loads(
+            (SCRIPTS.parent / "profiles" / "dataset.teams.json")
+            .read_text(encoding="utf-8"))}
+        self.assertEqual(teams - set(self.counts), set())
+
+    def test_destination_paths_are_unique(self):
+        """Two records on one file_path is RULE 1's collision arriving
+        from the record side: everything validates, the counts are right,
+        and one of the two assets serves the other's bytes."""
+        paths = [e["file_path"] for e in self.profile if e.get("file_path")]
+        dupes = sorted({p for p in paths if paths.count(p) > 1})
+        self.assertEqual(dupes, [])
+
+
+class TestBalanceProvenance(unittest.TestCase):
+    """Every bundle-sourced record must be reconstructible from the
+    internet alone — the #602 standard, applied to the Kenney half of the
+    library, which had no internet provenance at all before #572."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.records = json.loads(
+            (UPGRADES / "balance-assets.site_a.json").read_text(encoding="utf-8"))
+        cls.posts = json.loads(
+            (UPGRADES / "balance-posts.site_a.json").read_text(encoding="utf-8"))
+
+    def test_records_exist(self):
+        self.assertGreater(len(self.records), 500)
+
+    def test_every_record_names_a_page_and_an_archive_member(self):
+        for r in self.records:
+            m = r.get("metadata") or {}
+            with self.subTest(id=r["id"]):
+                self.assertTrue(
+                    (m.get("fetched_from") or "").startswith("https://kenney.nl/assets/"),
+                    "fetched_from must be the pack page — it is the CC0 evidence")
+                sa = m.get("source_archive") or {}
+                self.assertTrue(sa.get("url", "").startswith("https://kenney.nl/"))
+                self.assertTrue(sa.get("member"))
+                self.assertRegex(sa.get("sha256", ""), r"^[0-9a-f]{64}$")
+
+    def test_no_record_claims_a_media_url(self):
+        """A zip cannot serve `file_size_bytes`, so a media_url here would
+        be a string that looks checkable and is not — the exact failure
+        #602 existed to remove."""
+        offenders = [r["id"] for r in self.records
+                     if (r.get("metadata") or {}).get("media_url")]
+        self.assertEqual(offenders, [])
+
+    def test_every_record_is_reachable_on_browse(self):
+        posted = {a for p in self.posts for a in p["asset_ids"]}
+        orphans = [r["id"] for r in self.records if r["id"] not in posted]
+        self.assertEqual(orphans, [])
+
+    def test_the_pack_provenance_doc_covers_every_recipe_pack(self):
+        recorded = {e["pack"] for e in json.loads(
+            (UPGRADES / "kenney-pack-sources.json").read_text(encoding="utf-8"))}
+        wanted = {r["pack"] for rules in sb.TEAM_RECIPES.values() for r in rules}
+        self.assertEqual(wanted - recorded, set())
+
+    def test_recipes_never_name_a_pack_with_no_public_download(self):
+        """A record whose bytes exist only inside a paid bundle cannot be
+        re-fetched, which is the whole hole this shape closes."""
+        named = {r["pack"] for rules in sb.TEAM_RECIPES.values() for r in rules}
+        self.assertEqual(named & kps.NOT_PUBLISHED_STANDALONE, set())
+
+    def test_excluded_sources_never_appear_in_the_output(self):
+        used = {r.get("balance_source") for r in self.records}
+        self.assertEqual(used & set(sb.SOURCE_EXCLUSIONS), set())
+
+
+class TestTeamCorrections(unittest.TestCase):
+    """Moving a mis-teamed record is a data fix, so it has to be exactly
+    as reversible and as idempotent as the rest of the upgrade."""
+
+    def _profile(self):
+        return [
+            {"id": "a", "team_name": "Environment",
+             "replaced_source_path": "unpacked/kenney_minimap-pack/x.png"},
+            {"id": "b", "team_name": "Environment",
+             "source_path": "unpacked/kenney_retro-fantasy-kit/y.obj"},
+            {"id": "c", "team_name": "UI",
+             "replaced_source_path": "unpacked/kenney_minimap-pack/z.png"},
+        ]
+
+    def test_only_matching_records_move(self):
+        prof = self._profile()
+        up.apply_team_corrections(prof, sb.TEAM_CORRECTIONS)
+        self.assertEqual([e["team_name"] for e in prof],
+                         ["UI", "Environment", "UI"])
+
+    def test_running_twice_moves_nothing_extra(self):
+        prof = self._profile()
+        up.apply_team_corrections(prof, sb.TEAM_CORRECTIONS)
+        second = up.apply_team_corrections(prof, sb.TEAM_CORRECTIONS)
+        self.assertEqual([n for _, n in second], [0, 0, 0])
+
+    def test_matching_uses_the_original_path_not_the_swapped_one(self):
+        """After #604 `source_path` is a pool filename, so a correction
+        keyed on it would silently match nothing."""
+        prof = [{"id": "a", "team_name": "Environment",
+                 "source_path": "2d-assets-minimap-pack-x-deadbeef-512.png",
+                 "replaced_source_path": "unpacked/kenney_minimap-pack/x.png"}]
+        up.apply_team_corrections(prof, sb.TEAM_CORRECTIONS)
+        self.assertEqual(prof[0]["team_name"], "UI")
+
+
+class TestPackRootAudit(unittest.TestCase):
+    """apply_upgrade must refuse a bundle record it cannot reconstruct."""
+
+    def _record(self, metadata):
+        return {
+            "id": "p1", "file_path": "3d/kenney-allin1/x.glb",
+            "source_root": up.PACK_SOURCE_ROOT, "source_path": "Pack/x.glb",
+            "metadata": metadata,
+        }
+
+    def _audit(self, rec):
+        posts = [{"id": "post-1", "asset_ids": [rec["id"]]}]
+        return up.audit([rec], posts, [], [rec], posts)
+
+    def test_a_complete_record_passes(self):
+        rec = self._record({
+            "filename": "x.glb",
+            "fetched_from": "https://kenney.nl/assets/pack",
+            "source_archive": {"url": "https://kenney.nl/a.zip",
+                               "member": "x.glb", "sha256": "0" * 64},
+        })
+        self.assertEqual(self._audit(rec), [])
+
+    def test_a_missing_source_archive_is_a_problem(self):
+        rec = self._record({"filename": "x.glb",
+                            "fetched_from": "https://kenney.nl/assets/pack"})
+        problems = self._audit(rec)
+        self.assertTrue(any("source_archive" in p for p in problems), problems)
+
+    def test_a_missing_page_url_is_a_problem(self):
+        rec = self._record({
+            "filename": "x.glb",
+            "source_archive": {"url": "https://kenney.nl/a.zip",
+                               "member": "x.glb", "sha256": "0" * 64},
+        })
+        problems = self._audit(rec)
+        self.assertTrue(any("fetched_from" in p for p in problems), problems)
+
+    def test_two_records_on_one_destination_is_a_problem(self):
+        rec = self._record({
+            "filename": "x.glb",
+            "fetched_from": "https://kenney.nl/assets/pack",
+            "source_archive": {"url": "https://kenney.nl/a.zip",
+                               "member": "x.glb", "sha256": "0" * 64},
+        })
+        other = json.loads(json.dumps(rec))
+        other["id"] = "p2"
+        posts = [{"id": "post-1", "asset_ids": ["p1", "p2"]}]
+        problems = up.audit([rec, other], posts, [], [rec, other], posts)
+        self.assertTrue(any("share a file_path" in p for p in problems), problems)
+
+
+class TestArchiveMemberRefetch(unittest.TestCase):
+    """Extracting one member of a remote zip, with the hash as the gate.
+
+    Served from `http.server` on 127.0.0.1 over a zip built here — no
+    network, no NAS, per the fixture rule at the top of this file.
+    """
+
+    @staticmethod
+    def _zip(path: Path, members: dict[str, bytes]) -> None:
+        import zipfile as zf
+        with zf.ZipFile(path, "w") as z:
+            for name, data in members.items():
+                z.writestr(name, data)
+
+    def _serve(self, directory):
+        handler = partial(SimpleHTTPRequestHandler, directory=str(directory))
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def test_the_member_is_extracted_when_the_hash_agrees(self):
+        payload = b"glb-bytes" * 32
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            self._zip(served / "pack.zip", {"Models/x.glb": payload,
+                                            "readme.txt": b"hi"})
+            httpd, base = self._serve(served)
+            try:
+                pa._ZIP_CACHE.clear()
+                out = Path(d) / "out" / "x.glb"
+                ok, note = pa.refetch_member(f"{base}/pack.zip", "Models/x.glb",
+                                             digest, out)
+                got = out.read_bytes() if out.is_file() else None
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertTrue(ok, note)
+        self.assertEqual(got, payload)
+
+    def test_a_changed_pack_fails_loudly_and_stages_nothing(self):
+        """The upstream pack moving under us must not silently swap the
+        art. The hash is the byte count's stand-in for an archive."""
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            self._zip(served / "pack.zip", {"Models/x.glb": b"different"})
+            httpd, base = self._serve(served)
+            try:
+                pa._ZIP_CACHE.clear()
+                out = Path(d) / "out" / "x.glb"
+                ok, note = pa.refetch_member(f"{base}/pack.zip", "Models/x.glb",
+                                             "0" * 64, out)
+                staged = out.exists()
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertFalse(ok)
+        self.assertIn("sha256 mismatch", note)
+        self.assertFalse(staged, "a mismatched member was staged anyway")
+
+    def test_an_absent_member_is_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            served = Path(d) / "served"
+            served.mkdir()
+            self._zip(served / "pack.zip", {"other.glb": b"x"})
+            httpd, base = self._serve(served)
+            try:
+                pa._ZIP_CACHE.clear()
+                ok, note = pa.refetch_member(f"{base}/pack.zip", "Models/x.glb",
+                                             "0" * 64, Path(d) / "out.glb")
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertFalse(ok)
+        self.assertIn("member not in zip", note)
+
+
+class TestCompanionsSurviveASkippedModel(unittest.TestCase):
+    """Sponza's actual bug: companions were staged only on the COPY path.
+
+    A model already present at the destination short-circuited past its
+    own siblings, so `3d/internet/Sponza.gltf` sat there naming a .bin
+    and 69 textures that were never copied — and it was the only 3D asset
+    in the instance stuck at `failed`. Matching the model's size proves
+    nothing about the 70 files beside it.
+    """
+
+    def test_a_preexisting_model_still_gets_its_siblings(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            local = d / "local"
+            (local / "3d").mkdir(parents=True)
+            (local / "metadata.csv").write_text("file_path,title\n",
+                                                encoding="utf-8")
+            model = local / "3d" / "scene.gltf"
+            model.write_text(json.dumps({
+                "buffers": [{"uri": "scene.bin"}],
+                "images": [{"uri": "tex.png"}],
+            }), encoding="utf-8")
+            (local / "3d" / "scene.bin").write_bytes(b"buffer-bytes")
+            (local / "3d" / "tex.png").write_bytes(b"texture-bytes")
+
+            dest = d / "dest"
+            (dest / "3d/internet").mkdir(parents=True)
+            # The model — and ONLY the model — is already staged.
+            (dest / "3d/internet/scene.gltf").write_bytes(model.read_bytes())
+
+            profile = d / "profile.json"
+            profile.write_text(json.dumps([{
+                "id": "m1", "asset_type": "3d",
+                "file_path": "3d/internet/scene.gltf",
+                "source_root": "local", "source_path": "3d/scene.gltf",
+                "file_extension": "gltf",
+                "file_size_bytes": model.stat().st_size,
+                "metadata": {"filename": "scene.gltf"},
+            }]), encoding="utf-8")
+
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "populate_archive.py"),
+                 "--local-source", str(local),
+                 "--internet-source", str(d / "internet"),
+                 "--profile", str(profile), "--dest", str(dest)],
+                capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue((dest / "3d/internet/scene.bin").is_file(),
+                            f"buffer not staged:\n{proc.stderr}")
+            self.assertTrue((dest / "3d/internet/tex.png").is_file(),
+                            f"texture not staged:\n{proc.stderr}")
+
+
+class TestAbsentSourceIsNotAbsentAsset(unittest.TestCase):
+    """The internet cache is gitignored and usually not on a machine that
+    already has a populated site. Reporting 58 fully-staged videos as
+    MISSING and exiting 1 is unavailable-is-not-absent again."""
+
+    def _run(self, d, staged_bytes, manifest_size):
+        d = Path(d)
+        local = d / "local"
+        local.mkdir()
+        (local / "metadata.csv").write_text("file_path,title\n", encoding="utf-8")
+        dest = d / "dest"
+        (dest / "videos/internet").mkdir(parents=True)
+        if staged_bytes is not None:
+            (dest / "videos/internet/clip.mp4").write_bytes(staged_bytes)
+        profile = d / "profile.json"
+        profile.write_text(json.dumps([{
+            "id": "v1", "asset_type": "video",
+            "file_path": "videos/internet/clip.mp4",
+            "source_root": "internet", "source_path": "videos/clip.mp4",
+            "file_extension": "mp4", "file_size_bytes": manifest_size,
+            "metadata": {"filename": "clip.mp4"},
+        }]), encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "populate_archive.py"),
+             "--local-source", str(local),
+             "--internet-source", str(d / "internet-cache"),
+             "--profile", str(profile), "--dest", str(dest)],
+            capture_output=True, text=True)
+
+    def test_a_staged_file_with_no_source_is_not_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = self._run(d, b"x" * 100, 100)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("MISSING", proc.stderr)
+
+    def test_a_short_staged_file_is_still_missing(self):
+        """The manifest's byte count is what keeps this from becoming a
+        blanket excuse."""
+        with tempfile.TemporaryDirectory() as d:
+            proc = self._run(d, b"x" * 3, 100)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("MISSING", proc.stderr)
+
+
+class TestPexelsAdditions(unittest.TestCase):
+    """The #675 regression — a licence claim scoped to one site, fixed in
+    the output and left in the inputs — must not come back in new data."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.records = json.loads(
+            (UPGRADES / "pexels-assets.site_a.json").read_text(encoding="utf-8"))
+
+    def test_both_provenance_keys_are_present(self):
+        for r in self.records:
+            m = r["metadata"]
+            with self.subTest(id=r["id"]):
+                self.assertTrue(m["fetched_from"].startswith("https://www.pexels.com/"))
+                self.assertTrue(m["media_url"].startswith("https://videos.pexels.com/"))
+                self.assertGreater(r["file_size_bytes"], 0)
+
+    def test_no_record_scopes_the_licence_to_one_site(self):
+        offenders = [r["id"] for r in self.records if "site_b only" in json.dumps(r)]
+        self.assertEqual(offenders, [])
+
+    def test_the_search_that_produced_each_record_is_recorded(self):
+        """The query list is the editorial decision; a record that does
+        not say which search found it cannot be re-derived or argued
+        with."""
+        queries = {q["q"] for q in px.QUERIES}
+        for r in self.records:
+            self.assertIn(r["metadata"].get("search_query"), queries)
+
+    def test_the_videos_land_across_teams(self):
+        teams = {r["team_name"] for r in self.records}
+        self.assertGreaterEqual(len(teams), 3, f"all in {teams}")
+
+
+class TestAliasProfilesTrackTheirSource(unittest.TestCase):
+    """`dev` and `demo` are aliases, and were written BEFORE the upgrade
+    pass — so every upgrade since #604 landed on studio-{a,b} and missed
+    its own aliases. demo shipped 971 records against studio-a's 1,007:
+    a demo re-seed would have dropped all 36 added videos silently."""
+
+    def test_demo_matches_studio_a(self):
+        p = SCRIPTS.parent / "profiles"
+        self.assertEqual(
+            json.loads((p / "demo.assets.json").read_text(encoding="utf-8")),
+            json.loads((p / "studio-a.assets.json").read_text(encoding="utf-8")))
+
+    def test_dev_matches_studio_b(self):
+        p = SCRIPTS.parent / "profiles"
+        self.assertEqual(
+            json.loads((p / "dev.assets.json").read_text(encoding="utf-8")),
+            json.loads((p / "studio-b.assets.json").read_text(encoding="utf-8")))
+
+
+class TestArchiveRecordsAreOutOfMediaUrlScope(unittest.TestCase):
+    """resolve_media_urls' gate must not fail 895 records for lacking a
+    field that cannot exist for them — nor stop checking the ones it
+    can."""
+
+    def test_a_source_archive_record_is_skipped(self):
+        doc = [{"id": "a", "metadata": {
+            "fetched_from": "https://kenney.nl/assets/ui-pack",
+            "source_archive": {"url": "https://kenney.nl/a.zip",
+                               "member": "x.png", "sha256": "0" * 64}}}]
+        self.assertEqual(rmu.internet_records(doc), [])
+
+    def test_a_plain_internet_record_is_still_checked(self):
+        doc = [{"id": "b", "metadata": {
+            "fetched_from": "https://www.pexels.com/video/x-1/"}}]
+        self.assertEqual(len(rmu.internet_records(doc)), 1)
+
+
+class TestPackPageSlugs(unittest.TestCase):
+    def test_slug_comes_off_the_pack_directory_name(self):
+        self.assertEqual(kps.page_for("UI assets/UI Pack"),
+                         "https://kenney.nl/assets/ui-pack")
+
+    def test_overrides_win(self):
+        self.assertEqual(kps.page_for("2D assets/Platformer Characters 1"),
+                         "https://kenney.nl/assets/platformer-characters")
 
 
 if __name__ == "__main__":

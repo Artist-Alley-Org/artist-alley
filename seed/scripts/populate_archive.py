@@ -66,12 +66,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import urllib.request
+import zipfile
 from pathlib import Path
 
 # Source roots whose bytes already sit at the destination. The copier
@@ -81,6 +84,56 @@ PRESTAGED_ROOTS = frozenset({"torrent_import", "site"})
 
 UA = ("artist-alley-seed-fetcher/2.0 "
       "(+https://github.com/Artist-Alley-Org/artist-alley)")
+
+# Downloaded pack zips, keyed by URL, for the archive-member re-fetch
+# below. One pack holds hundreds of records; without this a rebuild would
+# download the same 15 MB zip once per file.
+_ZIP_CACHE: dict[str, "zipfile.ZipFile"] = {}
+
+
+def refetch_member(url: str, member: str, expect_sha256: str,
+                   dest: Path) -> tuple[bool, str]:
+    """Extract one file from a remote zip into `dest` (#572).
+
+    The Kenney half of the library has no per-file URL: the bundle it
+    comes from is a paid download, and the free per-pack zips serve the
+    whole pack. So `media_url`'s contract — a URL serving exactly
+    `file_size_bytes` — cannot apply, and the record instead names the
+    zip, the member inside it, and that member's sha256. The hash does
+    the job the byte count does for a direct URL: it is what makes the
+    provenance evidence rather than a plausible-looking string, and it is
+    checked BEFORE the bytes are moved into place, so a pack that changed
+    upstream fails loudly instead of staging different art under an
+    unchanged manifest entry.
+    """
+    z = _ZIP_CACHE.get(url)
+    if z is None:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                blob = resp.read()
+        except Exception as e:
+            return False, f"zip download failed: {e}"
+        try:
+            z = zipfile.ZipFile(io.BytesIO(blob))
+        except zipfile.BadZipFile as e:
+            return False, f"not a zip: {e}"
+        _ZIP_CACHE[url] = z
+    try:
+        data = z.read(member)
+    except KeyError:
+        return False, f"member not in zip: {member}"
+    got = hashlib.sha256(data).hexdigest()
+    if got != expect_sha256:
+        return False, (f"sha256 mismatch for {member}: recorded "
+                       f"{expect_sha256[:12]}…, served {got[:12]}… — the "
+                       "pack changed upstream; re-run kenney_pack_sources.py "
+                       "resolve --force and re-emit")
+    safe_mkdir(dest.parent)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    return True, f"{len(data):,} B from {url.rsplit('/', 1)[-1]}"
 
 
 def refetch(url: str, dest: Path, expect_size: int | None) -> tuple[bool, str]:
@@ -234,8 +287,22 @@ def main() -> int:
                         help="kenney-hq pool root (where source_root='hq' resolves). "
                              "Build it with kenney_hq.py build. Required only if "
                              "the profile references HQ assets (#604).")
+    parser.add_argument("--pack-source", type=Path, default=None,
+                        help="'Kenney Game Assets All-in-1' bundle root (where "
+                             "source_root='pack' resolves, #572). Optional: "
+                             "records that name a metadata.source_archive are "
+                             "downloaded from the pack's free CC0 zip when the "
+                             "bundle is not present, so a machine without the "
+                             "archive share can still build the site.")
     parser.add_argument("--profile", required=True, type=Path,
                         help="Per-studio profile JSON (studio-a.assets.json etc.)")
+    parser.add_argument("--posts", type=Path, default=None,
+                        help="Per-studio posts JSON (studio-a.posts.json), "
+                             "staged as <dest>/posts.json — `aa seed` reads it "
+                             "next to MANIFEST.json. Optional only because "
+                             "earlier runs copied it by hand, which is how "
+                             "site_a came to serve 584 posts against a profile "
+                             "holding 859 (#572). Pass it.")
     parser.add_argument("--dest", required=True, type=Path,
                         help="Destination site directory under the archive")
     parser.add_argument("--prune", action="store_true",
@@ -255,6 +322,8 @@ def main() -> int:
     }
     if args.hq_source is not None:
         sources["hq"] = args.hq_source
+    if args.pack_source is not None:
+        sources["pack"] = args.pack_source
     if not sources["local"].is_dir():
         print(f"error: --local-source not a directory: {sources['local']}", file=sys.stderr)
         return 2
@@ -382,6 +451,17 @@ def main() -> int:
     if not args.dry_run:
         shutil.copyfile(args.profile, args.dest / "MANIFEST.json")
         print(f"copied profile → {args.dest / 'MANIFEST.json'}", file=sys.stderr)
+        if args.posts is not None:
+            shutil.copyfile(args.posts, args.dest / "posts.json")
+            print(f"copied posts   → {args.dest / 'posts.json'}", file=sys.stderr)
+        elif (args.dest / "posts.json").is_file():
+            # Loud, because the failure is silent: the seeder happily
+            # loads a stale posts.json against a fresh MANIFEST, and the
+            # only symptom is a browse wall with fewer posts than the
+            # dataset says it has.
+            print("warning: --posts not given; <dest>/posts.json is left as "
+                  "it was and may not match the profile just written",
+                  file=sys.stderr)
 
     print(f"copying {len(path_map):,} asset files", file=sys.stderr)
     copied = 0
@@ -438,24 +518,75 @@ def main() -> int:
                       file=sys.stderr)
             continue
 
-        src_file = sources[root] / source_path
-        if not src_file.is_file():
+        src_root = sources.get(root)
+        src_file = (src_root / source_path) if src_root else None
+        if src_file is None or not src_file.is_file():
+            # #572 — bundle-sourced records carry the pack's free CC0 zip
+            # plus the member path and its sha256, so an absent bundle is
+            # a download rather than a hole. Same shape as #602's
+            # media_url branch: only for records that would otherwise
+            # fail, so a run over a mounted bundle does no network I/O.
+            rec = by_dest.get(dest_rel) or {}
+            sa = (rec.get("metadata") or {}).get("source_archive") or {}
+            dest_file = args.dest / dest_rel
+            if (root == "pack" and sa.get("url") and not args.no_refetch
+                    and not args.dry_run):
+                if dest_file.is_file() and dest_file.stat().st_size > 0:
+                    skipped += 1
+                    continue
+                ok, note = refetch_member(sa["url"], sa["member"],
+                                          sa.get("sha256", ""), dest_file)
+                if ok:
+                    refetched += 1
+                    bytes_copied += dest_file.stat().st_size
+                    print(f"  REFETCHED [{root}]: {dest_rel} ({note})",
+                          file=sys.stderr)
+                    continue
+                print(f"  REFETCH FAILED [{root}]: {dest_rel} — {note}",
+                      file=sys.stderr)
+            # An absent SOURCE is not an absent ASSET. The internet cache
+            # is gitignored and routinely not present on a machine that
+            # already has a populated site; reporting 58 fully-staged
+            # videos as MISSING and exiting 1 is the same
+            # unavailable-is-not-absent confusion that makes a dropped
+            # mount look like data loss. Gated on the manifest's own byte
+            # count, so a genuinely short or wrong file still fails.
+            want = (rec or {}).get("file_size_bytes")
+            if (dest_file.is_file() and want
+                    and dest_file.stat().st_size == want):
+                preexisting += 1
+                continue
             missing += 1
             if missing <= 5:
-                print(f"  MISSING [{root}]: {source_path}", file=sys.stderr)
+                hint = ("" if root != "pack" else
+                        " — pass --pack-source <bundle>, or let the "
+                        "metadata.source_archive re-fetch handle it")
+                print(f"  MISSING [{root}]: {source_path}{hint}",
+                      file=sys.stderr)
             continue
         dest_file = args.dest / dest_rel
-        if dest_file.is_file() and dest_file.stat().st_size == src_file.stat().st_size:
+        already = (dest_file.is_file()
+                   and dest_file.stat().st_size == src_file.stat().st_size)
+        if already:
             skipped += 1
-            continue
-        if args.dry_run:
+        elif args.dry_run:
             copied += 1
             bytes_copied += src_file.stat().st_size
+        else:
+            safe_mkdir(dest_file.parent)
+            shutil.copyfile(src_file, dest_file)
+            copied += 1
+            bytes_copied += src_file.stat().st_size
+
+        # Companions run even when the MODEL was skipped (#572). They used
+        # to sit inside the copy branch, so a model already present at the
+        # destination short-circuited past its own siblings — which is
+        # exactly how Sponza came to sit in site_a as a lone .gltf naming
+        # a .bin and 69 textures that were never staged, and why it was
+        # the only 3D asset in the instance stuck at `failed`. The model
+        # matching by size proves nothing about the 70 files beside it.
+        if args.dry_run and already:
             continue
-        safe_mkdir(dest_file.parent)
-        shutil.copyfile(src_file, dest_file)
-        copied += 1
-        bytes_copied += src_file.stat().st_size
 
         # Multi-file models (#486): copy the .gltf/.obj siblings the model
         # declares (buffer, textures, .mtl) next to the destination so the
@@ -509,7 +640,7 @@ def main() -> int:
     print(f"  skipped:     {skipped:,} (already present, same size)", file=sys.stderr)
     print(f"  preexisting: {preexisting:,} (pre-staged — bytes already in place)",
           file=sys.stderr)
-    print(f"  refetched:   {refetched:,} (downloaded from metadata.media_url, #602)",
+    print(f"  refetched:   {refetched:,} (downloaded from metadata.media_url #602 / source_archive #572)",
           file=sys.stderr)
     print(f"  missing:     {missing:,} (not found in source)", file=sys.stderr)
     if args.prune:

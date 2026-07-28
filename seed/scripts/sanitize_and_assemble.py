@@ -78,6 +78,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -1695,6 +1696,21 @@ def apply_dataset_upgrade(out: Path) -> int:
         if proc.returncode != 0:
             print(f"error: upgrade pass failed for {site}", file=sys.stderr)
             return proc.returncode
+
+    # `dev` and `demo` are aliases for site_b and site_a, and they were
+    # written ABOVE — before the upgrade ran. So every upgrade since #604
+    # has landed on studio-{a,b} and silently missed its own aliases:
+    # demo.assets.json shipped 971 records where studio-a had 1,007,
+    # i.e. a demo re-seed would have quietly dropped all 36 added videos
+    # and none of the checks would have noticed, because nothing compares
+    # an alias to its source. Re-copy after the upgrade so an alias is an
+    # alias (#572).
+    for stem, alias in (("studio-a", "demo"), ("studio-b", "dev")):
+        src, dst = out / f"{stem}.assets.json", out / f"{alias}.assets.json"
+        if src.is_file():
+            shutil.copyfile(src, dst)
+            print(f"alias       : {alias}.assets.json <- {stem}.assets.json",
+                  file=sys.stderr)
     return 0
 
 
