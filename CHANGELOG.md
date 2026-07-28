@@ -9,6 +9,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixes
 
+- **Resetting the demo left stale rows pointing at content that no longer existed.**
+  `aa seed --reset` empties the content tables with `TRUNCATE ... CASCADE`, and CASCADE
+  only follows foreign keys — so any table that names its target by a *kind + id* pair
+  (which cannot have a foreign key) kept its rows while the things they referred to were
+  deleted. Notifications about vanished posts, scheduled actions queued against deleted
+  assets, workflow history for wiped assets, and featured placements for collections that
+  were no longer there all survived every reset. Follower edges were worse: nothing linked
+  them to the accounts they described, so each reset added a whole dataset's worth on top
+  of the last (149 → 298 → 447 measured across three runs) while every earlier edge pointed
+  at an account that no longer existed. A reset now finishes by deleting exactly the rows
+  whose target is gone — rows that still point at something real, such as an action
+  scheduled against the admin account, are left alone. Every such table in the database is
+  now classified explicitly, with the storage pin table deliberately exempt, and a test
+  fails if a new one is added without a decision (#569).
+
 - **Search was broken for every signed-in user.** Every authenticated query returned
   an internal error and no results. A change months earlier had removed the "featured"
   flag from collections — featuring became a placement rather than a property — but the
