@@ -137,7 +137,7 @@
         bind:value={displayName}
         disabled={!gates.display_name}
         data-testid="profile-display-name"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="100"
       />
       {#if !gates.display_name}
@@ -154,7 +154,7 @@
         disabled={!gates.bio}
         data-testid="profile-bio"
         rows="3"
-        class="mt-1 w-full resize-y rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full resize-y rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="1000"
       ></textarea>
       {#if !gates.bio}
@@ -169,7 +169,7 @@
         bind:value={avatarUrl}
         disabled={!gates.avatar_url}
         data-testid="profile-avatar-url"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="1024"
       />
       {#if !gates.avatar_url}
@@ -184,7 +184,7 @@
         bind:value={location}
         disabled={!gates.location}
         data-testid="profile-location"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="100"
       />
       {#if !gates.location}
@@ -199,7 +199,7 @@
         bind:value={websiteUrl}
         disabled={!gates.website_url}
         data-testid="profile-website-url"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="500"
       />
       {#if !gates.website_url}

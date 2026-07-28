@@ -500,7 +500,7 @@
     <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.role_label')}</h3>
     <select
       bind:value={selectedRole}
-      class="w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+      class="w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     >
       <option value="">—</option>
       {#each roles as r (r.id)}
@@ -532,7 +532,7 @@
         bind:value={statusReason}
         placeholder={t('admin.user_detail.status_reason_placeholder')}
         maxlength="500"
-        class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
 
@@ -628,7 +628,7 @@
         type="text"
         bind:value={resetReason}
         maxlength="500"
-        class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
 
@@ -668,7 +668,7 @@
             bind:value={impReason}
             maxlength="500"
             placeholder={t('admin.user_detail.impersonate_reason_placeholder')}
-            class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+            class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
         <button
@@ -730,7 +730,7 @@
               <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_capability_label')}</span>
               <select
                 bind:value={newGrantCap}
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+                class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               >
                 <option value="">—</option>
                 {#each allCaps as c (c.code)}
@@ -744,7 +744,7 @@
                 type="text"
                 bind:value={newGrantTeam}
                 placeholder={t('admin.user_detail.overrides_team_placeholder')}
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+                class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               />
             </label>
             <label class="block text-[11px]">
@@ -753,7 +753,7 @@
                 type="text"
                 bind:value={newGrantNote}
                 maxlength="500"
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+                class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               />
             </label>
             <button
@@ -798,7 +798,7 @@
               <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_capability_label')}</span>
               <select
                 bind:value={newRevokeCap}
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+                class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               >
                 <option value="">—</option>
                 {#each allCaps as c (c.code)}
@@ -812,7 +812,7 @@
                 type="text"
                 bind:value={newRevokeTeam}
                 placeholder={t('admin.user_detail.overrides_team_placeholder')}
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+                class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               />
             </label>
             <label class="block text-[11px]">
@@ -821,7 +821,7 @@
                 type="text"
                 bind:value={newRevokeNote}
                 maxlength="500"
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+                class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               />
             </label>
             <button

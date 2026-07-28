@@ -408,7 +408,7 @@
         type="url"
         required
         placeholder={t('admin.federation.form_instance_url_placeholder')}
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     <label class="block">
@@ -417,7 +417,7 @@
         bind:value={pairDisplay}
         type="text"
         maxlength="200"
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     {#if pairError}
@@ -452,7 +452,7 @@
         type="url"
         required
         placeholder={t('admin.federation.form_instance_url_placeholder')}
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     <label class="block">
@@ -462,7 +462,7 @@
         type="text"
         required
         maxlength="200"
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     <label class="block">
@@ -472,13 +472,13 @@
         required
         rows="6"
         placeholder={t('admin.federation.form_public_key_placeholder')}
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 font-mono text-xs"
       ></textarea>
     </label>
     <div class="flex gap-3">
       <label class="flex-1">
         <span class="text-xs font-medium">{t('admin.federation.form_trust_tier')}</span>
-        <select bind:value={manualTier} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm">
+        <select bind:value={manualTier} class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-2 py-1.5 text-sm">
           <option value="connected">{t('admin.federation.tier_connected')}</option>
           <option value="directory-listed">{t('admin.federation.tier_directory_listed')}</option>
           <option value="auto-sync">{t('admin.federation.tier_auto_sync')}</option>
@@ -486,7 +486,7 @@
       </label>
       <label class="flex-1">
         <span class="text-xs font-medium">{t('admin.federation.form_encryption_policy')}</span>
-        <select bind:value={manualEncryption} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm">
+        <select bind:value={manualEncryption} class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-2 py-1.5 text-sm">
           <option value="plaintext">{t('admin.federation.encryption_plaintext')}</option>
           <option value="e2e-encrypted">{t('admin.federation.encryption_e2e')}</option>
         </select>
@@ -497,7 +497,7 @@
       <input
         bind:value={manualNotes}
         type="text"
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     {#if manualError}
@@ -563,7 +563,7 @@
               <select
                 value={p.trust_tier}
                 onchange={(e) => setTier(p, (e.currentTarget as HTMLSelectElement).value as Peer['trust_tier'])}
-                class="rounded border border-border bg-surface px-1.5 py-0.5 text-xs"
+                class="rounded border border-border-strong bg-surface px-1.5 py-0.5 text-xs"
               >
                 <option value="connected">{t('admin.federation.tier_connected')}</option>
                 <option value="directory-listed">{t('admin.federation.tier_directory_listed')}</option>

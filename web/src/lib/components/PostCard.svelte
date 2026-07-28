@@ -241,6 +241,7 @@
     {compact}
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
+    titleAdjacent={detailed}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
          fallback). Hover here drives CardThumb's sprite-scrub and, in

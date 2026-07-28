@@ -117,7 +117,7 @@
       <span class="text-xs text-fg-muted">Source</span>
       <select
         bind:value={source}
-        class="rounded border border-border bg-bg p-1.5 text-fg"
+        class="rounded border border-border-strong bg-bg p-1.5 text-fg"
         data-testid="extraction-source"
       >
         {#each SOURCES as s (s.value)}
@@ -130,7 +130,7 @@
       <select
         bind:value={mode}
         disabled={!source}
-        class="rounded border border-border bg-bg p-1.5 text-fg disabled:opacity-50"
+        class="rounded border border-border-strong bg-bg p-1.5 text-fg disabled:opacity-50"
         data-testid="extraction-mode"
       >
         {#each MODES as m (m.value)}

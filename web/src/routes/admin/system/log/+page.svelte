@@ -230,7 +230,7 @@
       {#if eventTypes.length > 0}
         <select
           bind:value={filterEventType}
-          class="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value="">{t('admin.audit.filter_event_type_any')}</option>
           {#each eventTypes as et (et)}
@@ -242,7 +242,7 @@
           type="text"
           bind:value={filterEventType}
           placeholder={t('admin.audit.filter_event_type_placeholder')}
-          class="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
       {/if}
     </label>
@@ -253,7 +253,7 @@
         bind:value={filterActor}
         min="1"
         placeholder={t('admin.audit.filter_user_ref_placeholder')}
-        class="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
     <label class="block text-[11px]">
@@ -263,7 +263,7 @@
         bind:value={filterSubject}
         min="1"
         placeholder={t('admin.audit.filter_user_ref_placeholder')}
-        class="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
     <label class="block text-[11px]">
@@ -271,7 +271,7 @@
       <input
         type="datetime-local"
         bind:value={filterSince}
-        class="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
     <label class="block text-[11px]">
@@ -279,7 +279,7 @@
       <input
         type="datetime-local"
         bind:value={filterUntil}
-        class="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
   </div>

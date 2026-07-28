@@ -174,7 +174,7 @@
 <section class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-3">
   <label class="flex flex-col gap-1">
     <span class="text-xs text-fg-muted">{t('admin.activities.filter_type')}</span>
-    <select bind:value={filterType} class="rounded-md border border-border bg-surface px-2 py-1 text-sm">
+    <select bind:value={filterType} class="rounded-md border border-border-strong bg-surface px-2 py-1 text-sm">
       {#each ACTIVITY_TYPES as opt}
         <option value={opt}>{opt || t('admin.activities.filter_any')}</option>
       {/each}
@@ -183,7 +183,7 @@
 
   <label class="flex flex-col gap-1">
     <span class="text-xs text-fg-muted">{t('admin.activities.filter_kind')}</span>
-    <select bind:value={filterKind} class="rounded-md border border-border bg-surface px-2 py-1 text-sm">
+    <select bind:value={filterKind} class="rounded-md border border-border-strong bg-surface px-2 py-1 text-sm">
       {#each OBJECT_KINDS as opt}
         <option value={opt}>{opt || t('admin.activities.filter_any')}</option>
       {/each}
@@ -196,7 +196,7 @@
       bind:value={filterSource}
       type="text"
       placeholder={t('admin.activities.source_placeholder')}
-      class="w-48 rounded-md border border-border bg-surface px-2 py-1 text-sm"
+      class="w-48 rounded-md border border-border-strong bg-surface px-2 py-1 text-sm"
     />
   </label>
 
@@ -206,7 +206,7 @@
       bind:value={filterActor}
       type="number"
       placeholder={t('admin.activities.actor_placeholder')}
-      class="w-24 rounded-md border border-border bg-surface px-2 py-1 text-sm"
+      class="w-24 rounded-md border border-border-strong bg-surface px-2 py-1 text-sm"
     />
   </label>
 

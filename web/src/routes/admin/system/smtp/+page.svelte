@@ -100,16 +100,16 @@
     <div class="grid grid-cols-[1fr_8rem] gap-2">
       <label class="block">
         <span class="text-sm text-fg-muted">{t('admin.system.smtp.host')}</span>
-        <input type="text" bind:value={host} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+        <input type="text" bind:value={host} class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
       </label>
       <label class="block">
         <span class="text-sm text-fg-muted">{t('admin.system.smtp.port')}</span>
-        <input type="number" bind:value={port} min="1" max="65535" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+        <input type="number" bind:value={port} min="1" max="65535" class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
       </label>
     </div>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.encryption')}</span>
-      <select bind:value={encryption} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none">
+      <select bind:value={encryption} class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
         <option value="none">none</option>
         <option value="starttls">STARTTLS</option>
         <option value="tls">TLS</option>
@@ -117,7 +117,7 @@
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.username')}</span>
-      <input type="text" bind:value={username} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+      <input type="text" bind:value={username} class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.password')}</span>
@@ -126,13 +126,13 @@
         bind:value={password}
         placeholder={passwordSet ? t('admin.system.smtp.password_on_file') : t('admin.system.smtp.password_unset')}
         autocomplete="new-password"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <p class="mt-1 text-xs text-fg-muted">{t('admin.system.smtp.password_help')}</p>
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.from_address')}</span>
-      <input type="email" bind:value={fromAddress} placeholder="artist-alley <noreply@example.com>" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+      <input type="email" bind:value={fromAddress} placeholder="artist-alley <noreply@example.com>" class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
     </label>
 
     {#if error}
@@ -157,7 +157,7 @@
           type="email"
           bind:value={testTo}
           placeholder={t('admin.system.smtp.test_to_placeholder')}
-          class="rounded border border-border bg-bg px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+          class="rounded border border-border-strong bg-bg px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
       </label>
       <button

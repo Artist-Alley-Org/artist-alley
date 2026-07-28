@@ -106,7 +106,7 @@
   <div class="grid gap-3 sm:grid-cols-3">
     <label class="flex flex-col gap-1 text-sm">
       <span class="text-fg-muted">Status</span>
-      <select bind:value={statusFilter} class="rounded border border-border bg-surface p-2 text-fg">
+      <select bind:value={statusFilter} class="rounded border border-border-strong bg-surface p-2 text-fg">
         {#each STATUSES as s}
           <option value={s}>{s || '— all —'}</option>
         {/each}
@@ -115,7 +115,7 @@
     <label class="flex flex-col gap-1 text-sm">
       <span class="text-fg-muted">Type</span>
       <input bind:value={typeFilter} placeholder="preview.raster, ai.embed, …"
-        class="rounded border border-border bg-surface p-2 text-fg" />
+        class="rounded border border-border-strong bg-surface p-2 text-fg" />
     </label>
     <div class="flex items-end gap-2">
       <button onclick={() => load(true)} disabled={loading}

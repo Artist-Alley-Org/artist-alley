@@ -192,7 +192,7 @@
     <div class="flex flex-wrap items-end gap-3">
       <label class="flex flex-col text-sm">
         <span class="text-xs text-fg-muted">{t('admin.federation.shares.peer_label')}</span>
-        <select bind:value={peerId} class="rounded border border-border bg-bg px-3 py-2">
+        <select bind:value={peerId} class="rounded border border-border-strong bg-bg px-3 py-2">
           <option value="">{t('admin.federation.shares.peer_pick')}</option>
           {#each peers as p (p.id)}
             <option value={p.id}>{p.display_name} — {p.instance_url}</option>
@@ -206,7 +206,7 @@
       <input
         type="number"
         bind:value={grantorRef}
-        class="w-40 rounded border border-border bg-bg px-3 py-2"
+        class="w-40 rounded border border-border-strong bg-bg px-3 py-2"
         placeholder="123"
       />
     </label>
@@ -214,7 +214,7 @@
     <div class="flex flex-wrap items-end gap-3">
       <label class="flex flex-col text-sm">
         <span class="text-xs text-fg-muted">{t('admin.federation.shares.object_kind_label')}</span>
-        <select bind:value={objectKind} class="rounded border border-border bg-bg px-3 py-2">
+        <select bind:value={objectKind} class="rounded border border-border-strong bg-bg px-3 py-2">
           <option value="post">post</option>
           <option value="collection">collection</option>
           <option value="asset">asset</option>
@@ -228,7 +228,7 @@
         <input
           type="text"
           bind:value={objectId}
-          class="w-96 rounded border border-border bg-bg px-3 py-2 font-mono text-xs"
+          class="w-96 rounded border border-border-strong bg-bg px-3 py-2 font-mono text-xs"
           placeholder="00000000-0000-0000-0000-000000000000"
         />
       </label>

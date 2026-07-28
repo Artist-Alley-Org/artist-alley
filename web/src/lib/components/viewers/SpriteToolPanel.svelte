@@ -305,7 +305,7 @@
             <input
               type="color"
               bind:value={session.bgSolid}
-              class="mt-1 h-6 w-full cursor-pointer rounded border border-border bg-transparent"
+              class="mt-1 h-6 w-full cursor-pointer rounded border border-border-strong bg-transparent"
             />
           {/if}
         </div>
@@ -381,13 +381,13 @@
             <input
               type="color"
               bind:value={pendingTargetHex}
-              class="h-5 w-6 rounded border border-border"
+              class="h-5 w-6 rounded border border-border-strong"
               aria-label="Target colour"
             />
             <input
               type="text"
               bind:value={pendingTargetHex}
-              class="flex-1 rounded border border-border bg-surface px-1 py-0.5 font-mono text-[10px] text-fg"
+              class="flex-1 rounded border border-border-strong bg-surface px-1 py-0.5 font-mono text-[10px] text-fg"
               maxlength="7"
             />
             <button type="button" onclick={commitRemapPair} class="rounded border border-accent bg-accent/15 px-2 py-0.5 text-[10px] text-fg hover:bg-accent/25">Add</button>
@@ -411,7 +411,7 @@
             type="text"
             bind:value={altLabel}
             placeholder="Label (defaults to a timestamp)…"
-            class="mb-1 w-full rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+            class="mb-1 w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
           <button
             type="button"
@@ -491,7 +491,7 @@
                 <input
                   type="color"
                   bind:value={session.detectBgColor}
-                  class="h-6 w-8 cursor-pointer rounded border border-border bg-transparent"
+                  class="h-6 w-8 cursor-pointer rounded border border-border-strong bg-transparent"
                 />
                 <label class="flex flex-1 items-center gap-1 text-[10px] text-fg-muted">
                   <span>Tol</span>
@@ -500,7 +500,7 @@
                     min="0"
                     max="255"
                     bind:value={session.detectBgTolerance}
-                    class="w-12 rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+                    class="w-12 rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg"
                   />
                 </label>
               </div>
@@ -509,22 +509,22 @@
           <div class="grid grid-cols-2 gap-2">
             <label>
               <span class="mb-0.5 block text-fg-muted">Min W</span>
-              <input type="number" min="1" bind:value={session.detectMinW} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+              <input type="number" min="1" bind:value={session.detectMinW} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
             </label>
             <label>
               <span class="mb-0.5 block text-fg-muted">Min H</span>
-              <input type="number" min="1" bind:value={session.detectMinH} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+              <input type="number" min="1" bind:value={session.detectMinH} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
             </label>
             <label>
               <span class="mb-0.5 block text-fg-muted">Merge gap</span>
-              <input type="number" min="0" bind:value={session.detectMergeGap} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+              <input type="number" min="0" bind:value={session.detectMergeGap} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
             </label>
             <label>
               <span class="mb-0.5 block text-fg-muted">Sort</span>
               <select
                 bind:value={session.detectSort}
                 onchange={() => session.applySort()}
-                class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+                class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg"
               >
                 <option value="position">Position</option>
                 <option value="animationRows">Anim. rows</option>
@@ -684,12 +684,12 @@
               type="text"
               bind:value={newTagName}
               placeholder="Tag name…"
-              class="flex-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+              class="flex-1 rounded border border-border-strong bg-surface px-1.5 py-0.5 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
               onkeydown={(e) => { if (e.key === 'Enter') onSaveTag(); }}
             />
             <select
               bind:value={newTagDirection}
-              class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg"
+              class="rounded border border-border-strong bg-surface px-1.5 py-0.5 text-[10px] text-fg"
             >
               <option value="forward">→</option>
               <option value="reverse">←</option>
@@ -770,7 +770,7 @@
             step="10"
             value={curFrame.duration ?? 0}
             oninput={(e) => session.setFrameDuration(cur, Number((e.currentTarget as HTMLInputElement).value))}
-            class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+            class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg"
           />
           <span class="mt-0.5 block text-[10px] text-fg-muted">0 = use session FPS default.</span>
         </label>
@@ -786,7 +786,7 @@
             value={curFrame.note ?? ''}
             oninput={(e) => session.setFrameNote(cur, (e.currentTarget as HTMLTextAreaElement).value)}
             placeholder="Brainstorm note for this frame…"
-            class="h-12 w-full resize-none rounded border border-border bg-surface px-1.5 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+            class="h-12 w-full resize-none rounded border border-border-strong bg-surface px-1.5 py-1 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           ></textarea>
         </label>
         <!-- Phase 11 trim. Per-frame shrinks the source rect to its
@@ -944,27 +944,27 @@
         <div class="grid grid-cols-2 gap-2">
           <label>
             <span class="mb-0.5 block text-fg-muted">Cell W</span>
-            <input type="number" bind:value={session.cellW} min="0" max={session.imgW} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            <input type="number" bind:value={session.cellW} min="0" max={session.imgW} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
           </label>
           <label>
             <span class="mb-0.5 block text-fg-muted">Cell H</span>
-            <input type="number" bind:value={session.cellH} min="0" max={session.imgH} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            <input type="number" bind:value={session.cellH} min="0" max={session.imgH} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
           </label>
           <label>
             <span class="mb-0.5 block text-fg-muted">Origin X</span>
-            <input type="number" bind:value={session.originX} min="0" class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            <input type="number" bind:value={session.originX} min="0" class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
           </label>
           <label>
             <span class="mb-0.5 block text-fg-muted">Origin Y</span>
-            <input type="number" bind:value={session.originY} min="0" class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            <input type="number" bind:value={session.originY} min="0" class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
           </label>
           <label>
             <span class="mb-0.5 block text-fg-muted">Pad X</span>
-            <input type="number" bind:value={session.padX} min="0" class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            <input type="number" bind:value={session.padX} min="0" class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
           </label>
           <label>
             <span class="mb-0.5 block text-fg-muted">Pad Y</span>
-            <input type="number" bind:value={session.padY} min="0" class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            <input type="number" bind:value={session.padY} min="0" class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
           </label>
         </div>
         <div class="mt-2 flex items-center justify-between text-[10px] text-fg-muted">
@@ -988,7 +988,7 @@
                 session.rangeStart = v === '' ? 0 : Math.max(0, Math.min(total - 1, parseInt(v, 10) || 0));
                 if (session.currentFrame !== 0) session.currentFrame = 0;
               }}
-              class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+              class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg"
             />
           </label>
           <label>
@@ -1005,7 +1005,7 @@
                 session.rangeEnd = parsed === total - 1 ? null : parsed;
                 if (session.currentFrame !== 0) session.currentFrame = 0;
               }}
-              class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+              class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg"
             />
           </label>
         </div>
@@ -1131,7 +1131,7 @@
                   type="text"
                   value={s.name}
                   onchange={(e) => session.updateSlice(s.name, { ...s, name: (e.currentTarget as HTMLInputElement).value })}
-                  class="flex-1 rounded border border-border bg-surface px-1 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+                  class="flex-1 rounded border border-border-strong bg-surface px-1 py-0.5 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                 />
                 <button
                   type="button"
@@ -1158,7 +1158,7 @@
                         const v = parseInt((e.currentTarget as HTMLInputElement).value, 10) || 0;
                         session.updateSlice(s.name, { ...s, bounds: { ...s.bounds, [field.k]: v } });
                       }}
-                      class="rounded border border-border bg-surface px-1 py-0.5 text-fg"
+                      class="rounded border border-border-strong bg-surface px-1 py-0.5 text-fg"
                     />
                   </label>
                 {/each}
@@ -1179,7 +1179,7 @@
                         const pivot = v === null ? undefined : { x: v, y: s.pivot?.y ?? 0 };
                         session.updateSlice(s.name, { ...s, pivot });
                       }}
-                      class="rounded border border-border bg-surface px-1 py-0.5 text-fg"
+                      class="rounded border border-border-strong bg-surface px-1 py-0.5 text-fg"
                     />
                   </label>
                   <label class="flex flex-col">
@@ -1194,7 +1194,7 @@
                         const pivot = v === null ? undefined : { x: s.pivot?.x ?? 0, y: v };
                         session.updateSlice(s.name, { ...s, pivot });
                       }}
-                      class="rounded border border-border bg-surface px-1 py-0.5 text-fg"
+                      class="rounded border border-border-strong bg-surface px-1 py-0.5 text-fg"
                     />
                   </label>
                 </div>
@@ -1212,7 +1212,7 @@
             type="text"
             bind:value={newSliceName}
             placeholder="New slice name…"
-            class="flex-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+            class="flex-1 rounded border border-border-strong bg-surface px-1.5 py-0.5 text-[10px] text-fg focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
             onkeydown={(e) => { if (e.key === 'Enter') onAddSlice(); }}
           />
           <button
@@ -1245,11 +1245,11 @@
           <div class="grid grid-cols-2 gap-2">
             <label>
               <span class="mb-0.5 block text-fg-muted">Prev frames</span>
-              <input type="number" min="0" max="8" bind:value={session.onionPrev} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+              <input type="number" min="0" max="8" bind:value={session.onionPrev} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
             </label>
             <label>
               <span class="mb-0.5 block text-fg-muted">Next frames</span>
-              <input type="number" min="0" max="8" bind:value={session.onionNext} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+              <input type="number" min="0" max="8" bind:value={session.onionNext} class="w-full rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg" />
             </label>
           </div>
           <label class="mt-2 block">
@@ -1279,7 +1279,7 @@
         <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Export</h3>
         <label class="mb-2 flex items-center justify-between gap-2 text-[10px] text-fg-muted">
           <span>Scale</span>
-          <select bind:value={exportScale} class="w-20 rounded border border-border bg-surface px-1.5 py-0.5 text-fg">
+          <select bind:value={exportScale} class="w-20 rounded border border-border-strong bg-surface px-1.5 py-0.5 text-fg">
             <option value={1}>1×</option>
             <option value={2}>2×</option>
             <option value={4}>4×</option>

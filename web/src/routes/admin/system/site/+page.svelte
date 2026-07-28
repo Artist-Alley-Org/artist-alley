@@ -107,7 +107,7 @@
       <input
         type="text"
         bind:value={name}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         required
       />
     </label>
@@ -117,7 +117,7 @@
         type="url"
         bind:value={baseUrl}
         placeholder="https://example.com"
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <span class="mt-1 block text-xs text-fg-muted">{t('admin.system.site.base_url_help')}</span>
     </label>
@@ -148,7 +148,7 @@
         checked={publicMode}
         disabled={!canWrite || publicSaving}
         onchange={(e) => void savePublicMode(e.currentTarget.checked)}
-        class="mt-0.5 h-4 w-4 rounded border-border accent-accent disabled:cursor-not-allowed"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong accent-accent disabled:cursor-not-allowed"
       />
       <span class="text-sm">
         {t('admin.system.site.public_toggle')}

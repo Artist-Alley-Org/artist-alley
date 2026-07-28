@@ -137,13 +137,13 @@
         <input
           bind:value={scope}
           placeholder="all, asset_type:&lt;uuid&gt;, collection:&lt;uuid&gt;, embedding_model:&lt;provider&gt;/&lt;model&gt;"
-          class="w-96 rounded border border-border bg-bg p-2 text-fg"
+          class="w-96 rounded border border-border-strong bg-bg p-2 text-fg"
           data-testid="scope"
         />
       </label>
       <label class="flex flex-col gap-1 text-sm">
         <span class="text-fg-muted">Target</span>
-        <select bind:value={target} class="rounded border border-border bg-bg p-2 text-fg">
+        <select bind:value={target} class="rounded border border-border-strong bg-bg p-2 text-fg">
           <option value="both">Both</option>
           <option value="tsvector">Tsvector only</option>
           <option value="embedding">Embedding only</option>

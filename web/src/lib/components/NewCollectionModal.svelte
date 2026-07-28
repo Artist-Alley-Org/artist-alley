@@ -77,7 +77,7 @@
         type="text"
         bind:value={name}
         maxlength="200"
-        class="w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
     </label>
     <label class="block">
@@ -86,7 +86,7 @@
         bind:value={description}
         rows="3"
         maxlength="2000"
-        class="w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       ></textarea>
     </label>
     <fieldset>

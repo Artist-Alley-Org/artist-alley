@@ -215,7 +215,7 @@
         <span class="mb-0.5 block text-fg-muted">{t('admin.asset_type_detail.acl_principal_type')}</span>
         <select
           bind:value={newPrincipalType}
-          class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value="user">{principalLabel('user')}</option>
           <option value="role">{principalLabel('role')}</option>
@@ -228,14 +228,14 @@
           type="text"
           bind:value={newPrincipalId}
           placeholder={principalPlaceholder(newPrincipalType)}
-          class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
       </label>
       <label class="block text-[11px]">
         <span class="mb-0.5 block text-fg-muted">{t('admin.asset_type_detail.acl_permission')}</span>
         <select
           bind:value={newPermission}
-          class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+          class="w-full rounded border border-border-strong bg-surface-elevated px-1.5 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         >
           <option value="read">{permissionLabel('read')}</option>
           <option value="write">{permissionLabel('write')}</option>

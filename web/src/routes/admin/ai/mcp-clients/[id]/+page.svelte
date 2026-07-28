@@ -221,12 +221,12 @@
         <label class="block md:col-span-2">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_url')}</span>
           <input type="url" bind:value={edit.url}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_transport')}</span>
           <select bind:value={edit.transport}
-                  class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none">
+                  class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
             <option value="http">http</option>
             <option value="stdio">stdio</option>
           </select>
@@ -234,7 +234,7 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_privacy')}</span>
           <select bind:value={edit.privacy_class}
-                  class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none">
+                  class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
             <option value="cloud">cloud</option>
             <option value="local">local</option>
           </select>
@@ -243,7 +243,7 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_kind')}</span>
           <select bind:value={edit.auth_kind}
-                  class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none">
+                  class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none">
             <option value="none">none</option>
             <option value="bearer">bearer</option>
             <option value="header">header</option>
@@ -254,14 +254,14 @@
           <label class="block">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref')}</span>
             <input type="password" bind:value={edit.auth_secret_ref}
-                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                   class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           </label>
         {/if}
         {#if edit.auth_kind === 'header'}
           <label class="block md:col-span-2">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_header_name')}</span>
             <input type="text" bind:value={edit.auth_header_name}
-                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                   class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           </label>
         {/if}
 
@@ -273,17 +273,17 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_rate_limit_per_second')}</span>
           <input type="number" min="1" bind:value={edit.rate_limit_per_second}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_rate_limit_per_minute')}</span>
           <input type="number" min="1" bind:value={edit.rate_limit_per_minute}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_health_interval')}</span>
           <input type="number" min="10" bind:value={edit.health_check_interval_s}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
         </label>
       </div>
 
@@ -346,19 +346,19 @@
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.tool_field_name')}</span>
           <input type="text" required bind:value={newTool.tool_name}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 font-mono focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 font-mono focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.tool_field_name_hint')}</span>
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.tool_field_capability')}</span>
           <input type="text" bind:value={newTool.additional_capability} placeholder="mcp.client.images.write"
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 font-mono focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 font-mono focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.tool_field_capability_hint')}</span>
         </label>
         <label class="block">
           <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.tool_field_cost')}</span>
           <input type="number" min="0" bind:value={newTool.cost_estimate_micros}
-                 class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 focus-visible:border-border-strong focus:outline-none" />
+                 class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.tool_field_cost_hint')}</span>
         </label>
         <label class="inline-flex items-end gap-2">

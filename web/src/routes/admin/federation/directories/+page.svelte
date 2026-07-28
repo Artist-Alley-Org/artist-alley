@@ -286,7 +286,7 @@
         type="url"
         required
         placeholder={t('admin.federation.dir_url_placeholder')}
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     <label class="block">
@@ -294,7 +294,7 @@
       <input
         bind:value={subscribeNotes}
         type="text"
-        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
       />
     </label>
     {#if subscribeError}
@@ -488,7 +488,7 @@
             type="text"
             required
             maxlength="200"
-            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
           />
         </label>
         <label class="block">
@@ -498,7 +498,7 @@
             type="text"
             maxlength="100"
             placeholder={t('admin.federation.dir_publish_region_placeholder')}
-            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
           />
         </label>
         <label class="block">
@@ -507,7 +507,7 @@
             bind:value={publishDescription}
             rows="3"
             maxlength="2000"
-            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
           ></textarea>
         </label>
         <label class="block">
@@ -516,7 +516,7 @@
             bind:value={publishTagsStr}
             type="text"
             placeholder={t('admin.federation.dir_publish_tags_placeholder')}
-            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            class="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-sm"
           />
           <span class="mt-1 block text-[11px] text-fg-muted">{t('admin.federation.dir_publish_tags_help')}</span>
         </label>

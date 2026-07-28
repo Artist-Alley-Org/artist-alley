@@ -163,7 +163,7 @@
         onsubmit={(e) => { e.preventDefault(); void add(); }}>
     <label class="block text-xs">
       <span class="mb-1 block text-fg-muted">{t('admin.featured.kind')}</span>
-      <select bind:value={addKind} class="rounded border border-border bg-surface px-2 py-1 text-sm" data-testid="featured-add-kind">
+      <select bind:value={addKind} class="rounded border border-border-strong bg-surface px-2 py-1 text-sm" data-testid="featured-add-kind">
         <option value="asset">{t('admin.featured.kind_asset')}</option>
         <option value="collection">{t('admin.featured.kind_collection')}</option>
       </select>
@@ -171,7 +171,7 @@
     <label class="block flex-1 text-xs">
       <span class="mb-1 block text-fg-muted">{t('admin.featured.subject_id')}</span>
       <input type="text" bind:value={addId} placeholder={t('admin.featured.subject_id_placeholder')}
-             class="w-full rounded border border-border bg-surface px-2 py-1 font-mono text-sm" data-testid="featured-add-id" />
+             class="w-full rounded border border-border-strong bg-surface px-2 py-1 font-mono text-sm" data-testid="featured-add-id" />
     </label>
     <button type="submit" disabled={adding}
             class="rounded border border-accent bg-accent/10 px-3 py-1 text-sm font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
