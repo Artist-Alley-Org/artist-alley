@@ -280,6 +280,82 @@ func TestSetupStatus_ReportsEnvDefaults(t *testing.T) {
 	})
 }
 
+// TestSetupStatus_SelfRegistrationFlag covers #712 — /register was
+// unreachable signed-out because the root layout had no way to learn
+// whether signups are open before it decided where to send an
+// anonymous visitor. The flag rides on this endpoint (the one call the
+// layout makes before it knows about a session), mirroring the
+// operator's auth.self_registration.enabled setting.
+//
+// The second half is the more important assertion: this endpoint is
+// UNAUTHENTICATED, so only the boolean may cross it. If someone later
+// widens it to the whole SelfRegistrationConfig, the raw-body check
+// fails.
+func TestSetupStatus_SelfRegistrationFlag(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		read := func(t *testing.T) (openapi.SetupStatus, string) {
+			t.Helper()
+			resp := fx.call(t, http.MethodGet, "/setup/status", nil)
+			raw := readBody(resp)
+			var st openapi.SetupStatus
+			if err := json.Unmarshal([]byte(raw), &st); err != nil {
+				t.Fatalf("decode: %v (body %s)", err, raw)
+			}
+			return st, raw
+		}
+
+		// Restore whatever the environment had, so a dev DB shared with
+		// the running stack doesn't come out of a test run with signups
+		// silently switched on.
+		prior, err := fx.sysCfg.GetAuth(ctx)
+		if err != nil {
+			t.Fatalf("GetAuth(prior): %v", err)
+		}
+		// A plain defer, not t.Cleanup — cleanups run after
+		// withFixture's own defers, by which time the pool is closed.
+		defer func() {
+			if err := fx.sysCfg.SetAuth(ctx, prior); err != nil {
+				t.Errorf("restore auth config: %v", err)
+			}
+		}()
+
+		// Default posture: admins opt in explicitly, so a bare install
+		// reports signups closed.
+		if err := fx.sysCfg.SetAuth(ctx, sysconfig.AuthConfig{}); err != nil {
+			t.Fatalf("SetAuth(closed): %v", err)
+		}
+		if st, _ := read(t); st.SelfRegistrationEnabled {
+			t.Error("self_registration_enabled true with an unset auth config; default must be closed")
+		}
+
+		// Opt in. The other two knobs are set to non-default values so
+		// the leak check below has something to catch.
+		if err := fx.sysCfg.SetAuth(ctx, sysconfig.AuthConfig{
+			SelfRegistration: sysconfig.SelfRegistrationConfig{
+				Enabled:                  true,
+				RequireEmailVerification: true,
+				DefaultRole:              "Base",
+			},
+		}); err != nil {
+			t.Fatalf("SetAuth(open): %v", err)
+		}
+		st, raw := read(t)
+		if !st.SelfRegistrationEnabled {
+			t.Errorf("self_registration_enabled false after enabling it; body %s", raw)
+		}
+		// Public mode is a SEPARATE setting and this endpoint must not
+		// entangle them — conflating the two is the bug that hid #712.
+		if st.PublicMode {
+			t.Error("enabling self-registration must not turn public_mode on")
+		}
+		for _, leaked := range []string{"require_email_verification", "default_role"} {
+			if strings.Contains(raw, leaked) {
+				t.Errorf("unauthenticated /setup/status leaks %q: %s", leaked, raw)
+			}
+		}
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Fixture
 // ---------------------------------------------------------------------------

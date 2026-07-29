@@ -14,6 +14,7 @@ package sysconfig
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -202,6 +203,23 @@ func authToAPI(v AuthConfig) openapi.AuthConfig {
 		}
 		out.SsoProviders = append(out.SsoProviders, entry)
 	}
+
+	// #712. Both converters used to drop self_registration on the
+	// floor: the admin auth page has had the three controls since
+	// 1.19.C and posts them, but the read never returned them and the
+	// write never stored them — so the checkbox reverted on every
+	// reload and `auth.self_registration.enabled` could only ever be
+	// set by writing system_config directly. That made /register
+	// unreachable by construction, which is the other half of the bug.
+	out.SelfRegistration = &struct {
+		DefaultRole              *string `json:"default_role,omitempty"`
+		Enabled                  *bool   `json:"enabled,omitempty"`
+		RequireEmailVerification *bool   `json:"require_email_verification,omitempty"`
+	}{
+		DefaultRole:              &v.SelfRegistration.DefaultRole,
+		Enabled:                  &v.SelfRegistration.Enabled,
+		RequireEmailVerification: &v.SelfRegistration.RequireEmailVerification,
+	}
 	return out
 }
 
@@ -234,6 +252,22 @@ func apiToAuth(v openapi.AuthConfig) AuthConfig {
 			entry.Config = *p.Config
 		}
 		out.SSOProviders = append(out.SSOProviders, entry)
+	}
+
+	// #712 — see authToAPI. Full-replace, like every other field on
+	// this endpoint: an omitted block reads as the zero value, which
+	// is "signups closed". Failing closed is the right direction for a
+	// knob that opens an install to strangers.
+	if sr := v.SelfRegistration; sr != nil {
+		if sr.Enabled != nil {
+			out.SelfRegistration.Enabled = *sr.Enabled
+		}
+		if sr.RequireEmailVerification != nil {
+			out.SelfRegistration.RequireEmailVerification = *sr.RequireEmailVerification
+		}
+		if sr.DefaultRole != nil {
+			out.SelfRegistration.DefaultRole = strings.TrimSpace(*sr.DefaultRole)
+		}
 	}
 	return out
 }
