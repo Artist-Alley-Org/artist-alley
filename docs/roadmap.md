@@ -637,7 +637,7 @@ map to the milestones below.
 > | **v0.7.0** *(current)* | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) |
 > | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine: content & metadata config (#519), bulk/reprocessing maintenance (#521, partially phase-gated), and the operator toggles over them (#709, #552). Branding (#517) shipped. |
 > | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577), workflow triggers & notification rules (#520), default-view preferences (#706) |
-> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* |
+> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* — now also carries the **3D animation arc** (epic #741, ADR 0078): addressable clips, extracted rig identity, and a shared animation library |
 > | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
 > | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
 > | v0.13.0 | Privacy, audit, observability & reporting *(was v0.11.0)* |
@@ -1216,17 +1216,36 @@ whatever anchor the presenter emits to everyone in the room.
 - Blender / Houdini integrations (community-driven via the same API).
 - Webhook + presence broadcasts for studio production trackers.
 
-### 1.18.B-10 — 3D viewer (native)
-- `<model-viewer>` for glTF / GLB native — instant load, AR,
-  animations.
-- three.js loader fallbacks for OBJ (+ .mtl + texture set) and FBX.
+### 1.18.B-10 — 3D viewer (native) — SHIPPED, with corrections
+- ~~`<model-viewer>` for glTF / GLB native~~ — **not what shipped.** The
+  viewer uses the three.js loaders directly (`GLTFLoader` / `FBXLoader` /
+  `OBJLoader` + `MTLLoader`) in `ModelView.svelte`; there is no
+  `<model-viewer>` dependency. *(Corrected 2026-07-29.)*
+- three.js loaders for OBJ (+ .mtl + texture set) and FBX.
 - Marmoset Toolbag `.mview` native player (self-contained JS).
 - USDZ via Quick Look on Apple devices.
 - Camera presets, lighting picker, turntable poster generation,
   wireframe / UV inspect modes.
 
+### 1.18.B-10a — 3D animation arc (epic #741, ADR 0078) — v0.10.0
+- **Rig identity extracted at ingest** (#742) — bone-name signature, bone
+  list, per-clip name/duration/track-count. The gating item, and the only
+  one whose cost grows with the catalogue.
+- **Shared-rig clip playback** (#743) — play a clip from one asset on a
+  different, rig-compatible mesh. Small: `AnimationMixer` already binds
+  tracks to bones by name, so no transformation is involved.
+- **Cross-rig retargeting** (#744) — a **spike, not a commitment.**
+  `SkeletonUtils.retargetClip` is in no official three.js example and
+  carries standing correctness bugs. ADR 0078 keeps retargeting out of the
+  supported set, and forbids it as a silent fallback.
+- Per ADR 0076 (amended), a playing clip is **time-based media** and reuses
+  the existing transport and frame-addressing model — no second player.
+
 ### 1.18.B-11 — 3D heavy converters (worker side)
-- Blender headless → glTF for `.blend`.
+- ~~Blender headless → glTF for `.blend`~~ — **Blender was removed from the
+  image entirely** (#500/#680, image 3.64GB → 1.82GB) and is not to be
+  packaged again. Proprietary-format conversion was re-scoped to optional
+  **plugin** delivery (#499, v0.14.0) per ADR 0069. *(Corrected 2026-07-29.)*
 - FBX2glTF for cached glTF when the source format is heavy.
 - Maya `.mb` / `.ma` and 3ds Max `.max` — extract embedded preview
   where possible; full conversion gated on a licensed converter
