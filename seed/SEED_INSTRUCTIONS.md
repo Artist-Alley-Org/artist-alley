@@ -1,9 +1,32 @@
 # Seed instructions — how to populate an Artist Alley instance
 
 This document is for **operators** populating an Artist Alley instance
-with the assembled seed dataset (see `seed/scripts/sanitize_and_assemble.py`
-for how the dataset is built). The dataset lives on the archive at
-`/mnt/blackbox_archives/datasets/artist_alley/{site_a,site_b}`.
+with a seed dataset.
+
+## Getting a dataset
+
+**Use the public one.** A ready-made, studio-shaped archive is published on
+Kaggle — 1,947 assets across images, audio, 3D, video, documents and fonts,
+with owners, teams, collections, workflow states and custom fields already
+populated:
+
+> **https://www.kaggle.com/datasets/mscrnt/dam-population-seed**
+
+Download and unpack it anywhere; the directory you unpack to is the
+`--site` path below.
+
+**Or bring your own.** `aa seed` reads any directory laid out the same way —
+a `MANIFEST.json` describing each asset plus the media files it references.
+See the manifest in the Kaggle dataset for the exact shape.
+
+> **Note on licensing:** the published dataset is a mix of CC0, CC-BY,
+> public-domain, Pexels-licensed and one SCEA-licensed asset. There is no
+> single aggregate licence — each asset carries its own `license` and
+> `attribution` in `MANIFEST.json`, and `ATTRIBUTIONS.md` lists every
+> source. Honour the per-asset terms if you redistribute.
+
+The paths shown in the examples below are **one maintainer's local mounts**.
+Substitute your own — nothing here depends on those specific locations.
 
 The loader is **`aa seed`** — a subcommand of the app binary (#321).
 It writes **straight to postgres + the storage backend** via the app's
@@ -20,8 +43,11 @@ Against a running dev stack (`AA_BOOTSTRAP_DEFAULT_ADMIN=1` in
 ArtistAlleyMogul`, which owns the seeded collections):
 
 ```bash
+# wherever you unpacked the dataset
+export SEED_SITE=/path/to/dam-population-seed
+
 docker compose run --rm --no-deps \
-    -v /mnt/blackbox_archives/datasets/artist_alley/site_a:/seed/site:ro \
+    -v "$SEED_SITE:/seed/site:ro" \
     -v "$PWD/seed/profiles:/seed/profiles:ro" \
     app seed --site /seed/site --catalogue /seed/profiles
 ```

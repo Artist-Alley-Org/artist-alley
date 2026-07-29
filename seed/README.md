@@ -1,5 +1,16 @@
 # seed/ — demo + dogfood + dev-reseed dataset
 
+> **Looking to populate an instance?** You do not need this file.
+> See [`SEED_INSTRUCTIONS.md`](SEED_INSTRUCTIONS.md), or grab the
+> ready-made public dataset:
+> **https://www.kaggle.com/datasets/mscrnt/dam-population-seed**
+>
+> **This document describes how the maintainer *builds* that dataset**
+> from a private source archive. Every concrete path below is one
+> maintainer's local mount — they will not exist on your machine and are
+> shown only to make the pipeline legible. Nothing here is required to
+> use the seeder.
+
 This directory holds everything needed to populate a fresh artist-alley
 instance with a representative studio-shaped dataset. Four profiles are
 emitted from one canonical source:
@@ -23,12 +34,12 @@ after the upgrade, and `test_dataset_upgrade.py` asserts the equality
 The four profiles + supporting catalogues (users, teams, collections,
 brand workspaces, field definitions, workflow states) are produced from a
 single Python script that reads the existing 12,871-row metadata.csv at
-`/mnt/d/Projects/unraid_management/artist-alley_dataset/`.
+`$DATASET_SRC/`.
 
 ## Pipeline
 
 ```
-/mnt/d/Projects/unraid_management/artist-alley_dataset/
+$DATASET_SRC/
 ├── metadata.csv         12,871 rows, 41 cols
 ├── groups.csv           8,050 logical groups (sibling linkage)
 └── <on-disk asset tree> 21 GB raw assets
@@ -220,7 +231,7 @@ python3 seed/scripts/resolve_media_urls.py --check seed/profiles/*.assets.json
 
 # prove the round trip against the staged copies
 python3 seed/scripts/resolve_media_urls.py --refetch /tmp/out \
-    --against /mnt/<share>/datasets/artist_alley/site_a \
+    --against $SEED_SITE \
     seed/profiles/studio-a.assets.json
 ```
 
@@ -253,7 +264,7 @@ A VFX + cinematics + open-world shop. Owns the Echo + Mirror brand workspaces.
 | Project Citylight | rpg-urban-pack | Top-down urban |
 | Project Compass | minimap-pack | Open-world minimap |
 | Art Research | The-Models-Resource game rips | Cinematic reference (Mario, Sonic, MvC2) |
-| Snapdex | `/mnt/d/Projects/Snapdex/datasets/cards/` (50 cards) | Marketing reference |
+| Snapdex | a private reference set (50 cards) | Marketing reference |
 | Engine Core (subset) | development-essentials + prototype-textures + kenney-fonts + format3d + font families | Mirror-flavoured tooling |
 | Studio Library (subset) | Personal photos + Dresden Files (6 issues sampled) + reference docs | Format-coverage |
 
@@ -461,14 +472,14 @@ ASSET_TYPE_CAPS = {
 ```bash
 # Dry-run — see summary stats without writing files
 python3 seed/scripts/sanitize_and_assemble.py \
-    --source /mnt/d/Projects/unraid_management/artist-alley_dataset \
-    --out    /mnt/d/Projects/artist-alley/seed/profiles \
+    --source $DATASET_SRC \
+    --out    $REPO/seed/profiles \
     --dry-run
 
 # Actual run
 python3 seed/scripts/sanitize_and_assemble.py \
-    --source /mnt/d/Projects/unraid_management/artist-alley_dataset \
-    --out    /mnt/d/Projects/artist-alley/seed/profiles
+    --source $DATASET_SRC \
+    --out    $REPO/seed/profiles
 ```
 
 Re-running with the same inputs produces the same outputs (deterministic
@@ -488,7 +499,7 @@ python3 seed/scripts/kenney_hq.py build \
 
 # 2. copy assets + regenerate MANIFEST.json / posts.json / metadata.csv
 python3 seed/scripts/populate_archive.py \
-    --local-source    /mnt/d/Projects/unraid_management/artist-alley_dataset \
+    --local-source    $DATASET_SRC \
     --internet-source seed/internet-fetched \
     --hq-source       "$DATASETS/kenney-hq-pool" \
     --pack-source     "$DATASETS/Kenney Game Assets All-in-1 3.6.0" \
