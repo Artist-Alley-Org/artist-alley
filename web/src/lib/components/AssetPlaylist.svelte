@@ -197,52 +197,17 @@
   );
   const isTimelineKind = $derived(currentKind === 'video' || currentKind === 'audio');
 
-  // ---- Lifecycle -----------------------------------------------------------
+  // Windowed mode's top edge is pure CSS: --aa-chrome-bottom, published
+  // by the root layout from the measured chrome layer (banners +
+  // header, auto-hide folded in). See the .windowed rule at the bottom
+  // of this file, and +layout.svelte for why the layout owns it. There
+  // is deliberately no measuring code here — this component used to run
+  // its own ResizeObserver on <header> and read the header's HEIGHT,
+  // which is the chrome's bottom edge only while the header is the
+  // topmost bar; the demo banner pushed it down and the viewer's own top
+  // chrome ended up behind the navbar (#688).
 
-  // Navbar bottom tracking — keep the windowed viewer's top edge
-  // glued to the navbar's bottom even as the navbar grows (the user
-  // is planning to expand it downward for advanced search / filter
-  // panels). Written to --aa-navbar-bottom on the root and consumed
-  // by the dialog's CSS.
-  //
-  // TWO inputs, not one (#628). The ResizeObserver reports the header's
-  // HEIGHT — which is the right number only while the header is on
-  // screen. The navbar auto-hides via a chromeScroll-driven transform
-  // (translateY(-100%)), which moves its bottom edge to 0 WITHOUT
-  // changing its height, and a ResizeObserver never fires on
-  // transforms. The first version of this glue read only the height, so
-  // once the navbar slid away the variable sat stale at ~53px and the
-  // feed bled through the gap above the viewer. So the effect below
-  // combines the measured height with chromeScroll.hidden: hidden → 0
-  // (the viewer expands flush, per the layout's "maximum image real
-  // estate" intent), visible → the measured height. The observer stays,
-  // for the planned navbar-growth case; the store dependency is what
-  // makes the hide/reveal reactive.
-  //
-  // The dialog is deliberately non-modal, so the navbar hiding while
-  // the viewer is open is a NORMAL state, not an edge case.
-  let navbarObserver: ResizeObserver | undefined;
-  let navbarHeight = $state(0);
-  function trackNavbarBottom() {
-    const header = document.querySelector('header');
-    if (!header) {
-      // No header at all (auth routes) → nothing to sit below. This
-      // used to say 53px, which reserved a gap for chrome that does
-      // not exist.
-      navbarHeight = 0;
-      return;
-    }
-    const apply = () => {
-      navbarHeight = Math.round(header.getBoundingClientRect().height);
-    };
-    apply();
-    navbarObserver = new ResizeObserver(apply);
-    navbarObserver.observe(header);
-  }
-  $effect(() => {
-    const top = chromeScroll.hidden ? 0 : navbarHeight;
-    document.documentElement.style.setProperty('--aa-navbar-bottom', `${top}px`);
-  });
+  // ---- Lifecycle -----------------------------------------------------------
 
   // Audiobook auto-advance bridge — AudiobookView fires this when
   // the current track ends and there's a next sibling. We translate
@@ -278,7 +243,6 @@
       if (pref === '1') maximized = true;
       else if (pref === '0') maximized = false;
     }
-    trackNavbarBottom();
     openDialog();
     // overflow-hidden on the body only when we're covering the whole
     // viewport — windowed mode leaves the navbar interactive so the
@@ -320,7 +284,7 @@
     // Un-maximizing means "give me the chrome back" (#635). Without
     // this the button reads as broken whenever the navbar had already
     // auto-hidden before the viewer opened: windowed resolves
-    // --aa-navbar-bottom to 0 (correct, #628/#629 — there is no navbar
+    // --aa-chrome-bottom to 0 (correct, #628/#629 — there is no navbar
     // to sit below), so windowed and maximized are pixel-identical and
     // the only difference is the invisible modal/non-modal swap.
     //
@@ -348,7 +312,6 @@
 
   onDestroy(() => {
     document.body.classList.remove('overflow-hidden');
-    navbarObserver?.disconnect();
   });
 
   // Clamp the cursor if the source's items array shrinks while open
@@ -801,15 +764,18 @@
     background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(4px);
   }
-  /* Windowed: flush against the navbar bottom + viewport edges. The
-     viewer behaves like a route below the navbar — covers the
-     BrowseFooter and any other in-page chrome, leaves the navbar
-     interactive (non-modal dialog). --aa-navbar-bottom is set from
-     JS via a ResizeObserver on <header>, so when the navbar grows
-     downward later (advanced search drawer, etc.) the viewer top
-     follows it without code change. */
+  /* Windowed: flush against the bottom of the global chrome + the
+     viewport edges. The viewer behaves like a route below the chrome —
+     covers the BrowseFooter and any other in-page chrome, leaves the
+     navbar interactive (non-modal dialog). --aa-chrome-bottom is
+     published by the root layout from the measured chrome layer
+     (banners + header), so a new bar up there, a taller navbar (advanced
+     search drawer, etc.) or the scroll-away hide all move this edge with
+     no change here. Falls back to 0 for the frame before the layout's
+     effect has run — a wrong-by-a-few-pixels gap would be a magic
+     number; flush is at least a state the viewer legitimately has. */
   dialog.asset-playlist.windowed {
-    top: var(--aa-navbar-bottom, 53px);
+    top: var(--aa-chrome-bottom, 0px);
     /* The navbar's hide is animated (transition-transform duration-200
        ease-out in the layout); matching it here means the viewer's top
        edge chases the navbar instead of snapping while the navbar is
