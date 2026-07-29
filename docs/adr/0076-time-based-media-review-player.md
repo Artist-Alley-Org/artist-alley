@@ -60,9 +60,14 @@ mention a number.
 **One player component serves all time-based media, and review annotation is
 frame-scoped.**
 
-### 1. The frame is the unit of address
+### 1. The frame is the unit of address — already true, recorded here
 
-Time-based review is conducted in **frames, not seconds**. Seconds are a
+Time-based review is conducted in **frames, not seconds**. The player
+already does this: the controller carries `detectedFps`, the HUD renders
+`HH:MM:SS:FF`, stepping moves ±1 / ±10 frames, and audio runs on a
+synthetic 1000 fps rate (1 ms per "frame") so a mark in a score behaves
+identically to a mark in a shot. This section records that model rather
+than proposing it. Seconds are a
 display convenience; the frame is what a reviewer names, steps to, and draws
 on. Consequences:
 
@@ -74,10 +79,6 @@ on. Consequences:
   model rather than guessing. **Guessing a frame rate silently misplaces
   every annotation on the asset**, which is worse than declining to offer
   frame addressing.
-
-Audio has no frames. It uses the same addressing with a synthetic rate, so a
-reviewer can mark a moment in a score the same way they mark a moment in a
-shot, and the two behave identically to the code above them.
 
 ### 2. Annotations belong to a frame, not to the asset
 
