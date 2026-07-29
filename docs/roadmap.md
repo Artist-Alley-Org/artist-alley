@@ -1376,6 +1376,38 @@ Explicitly rejected from the internal reference:
 - **Smart metadata field reordering on edit** — fragile UX that
   breaks operator muscle memory.
 
+### 1.18.B-20 — Frame-scoped review annotation (ADR 0076)
+
+Epic #728. The player already unifies video + audio behind one
+transport and already addresses frames (1.18.B-1). ADR 0076 records
+that and adds the part that is missing: **annotations that belong to a
+frame**, not to the asset.
+
+Verified before scoping: `frame_number` / `frameNumber` appear nowhere
+in the codebase, so a drawing made while reviewing is not attached to
+the moment it describes.
+
+- **#729** — frame-rate trustworthiness gate. An asset whose rate cannot
+  be trusted must not present a frame index; a guessed rate silently
+  misplaces every annotation stored against it.
+- **#730** — frame-scoped annotation storage + API. The only piece with
+  no existing backend. The frame rate travels with the annotation, or it
+  is unplaceable after a rate correction or a federation hop.
+- **#731** — draw on a frame. Wires the existing brush engine
+  (`BrushCanvas`, `brushes.ts`) into the player; a review-only drawing
+  implementation is explicitly rejected.
+- **#732** — annotation markers on the scrubber. What turns a review
+  recording into a review *document*. Marker cost is bounded by frame
+  count, not annotation count.
+- **#733** — adjacent-frame stroke ghosting, so an arc drawn across six
+  frames is legible. A view setting; never stored on the annotation.
+- **#734** — stacked control rows (transport / drawing / view), fit,
+  flip, grid overlay, and comparison as the same player instantiated
+  twice against one transport.
+
+Sequencing: 729 → 730 → 731 → 732 → 733, with 734 foldable in after 729.
+
+
 ## Admin settings — fleshing out every placeholder
 
 The admin shell currently has 13 sections; most have a real surface
