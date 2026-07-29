@@ -64,6 +64,21 @@ const PUBLIC_MODE_ROUTE_IDS = new Set([
   '/search/advanced',
 ]);
 
+// Reachable without a session ONLY when the install accepts
+// self-service signups (#712).
+//
+// Deliberately its own set rather than a line in either of the two
+// above. It cannot go in ALWAYS_PUBLIC_ROUTE_IDS — a closed install
+// should not serve a signup form — and it must not ride on public
+// mode, because those are unrelated settings: public mode is "may
+// strangers read this library", self-registration is "may strangers
+// open an account here", and an operator can plausibly want either
+// without the other. Folding /register into PUBLIC_MODE_ROUTE_IDS is
+// what made this bug hard to see coming, so the two stay separate.
+//
+// Same exact-match-on-`route.id` discipline as above.
+const SELF_REGISTRATION_ROUTE_IDS = new Set(['/register']);
+
 export const ssr = false;
 export const prerender = true;
 export const trailingSlash = 'never';
@@ -88,6 +103,11 @@ export async function load({ url, route, fetch }) {
   // itself, so the worst a false here can do is send a visitor to the
   // sign-in page on an install that would have let them browse.
   const publicMode = !!setup?.public_mode;
+  // Same channel, same reasoning (#712). Absent or unreadable reads as
+  // OFF; POST /auth/register enforces the setting server-side and 403s
+  // when it is off, so a false here can only send a would-be signup to
+  // the sign-in page, never open a closed install.
+  const selfRegistration = !!setup?.self_registration_enabled;
 
   if (needsSetup && url.pathname !== '/setup') {
     throw redirect(302, '/setup');
@@ -114,7 +134,8 @@ export async function load({ url, route, fetch }) {
 
   const isPublic =
     ALWAYS_PUBLIC_ROUTE_IDS.has(route.id ?? '') ||
-    (publicMode && PUBLIC_MODE_ROUTE_IDS.has(route.id ?? ''));
+    (publicMode && PUBLIC_MODE_ROUTE_IDS.has(route.id ?? '')) ||
+    (selfRegistration && SELF_REGISTRATION_ROUTE_IDS.has(route.id ?? ''));
   if (!isPublic && !auth.user) {
     const next = url.pathname + url.search;
     const dest = next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`;
@@ -127,6 +148,7 @@ export async function load({ url, route, fetch }) {
   return {
     needsSetup,
     publicMode,
+    selfRegistration,
     authed: !!auth.user,
   };
 }

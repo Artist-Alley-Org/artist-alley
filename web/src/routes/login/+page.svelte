@@ -250,10 +250,16 @@
       </div>
     {/if}
 
-    <p class="text-center text-sm text-fg-muted">
-      {t('login.no_account')}
-      <a href="/register" class="text-accent hover:underline" data-testid="login-register-link">{t('login.create_account')}</a>
-    </p>
+    <!-- Only offered when the install actually accepts signups (#712).
+         The layout's routing gate would bounce a visitor straight back
+         here otherwise, so on a closed install this link was an
+         invitation to a round trip. -->
+    {#if page.data.selfRegistration}
+      <p class="text-center text-sm text-fg-muted">
+        {t('login.no_account')}
+        <a href="/register" class="text-accent hover:underline" data-testid="login-register-link">{t('login.create_account')}</a>
+      </p>
+    {/if}
     <p class="text-center text-xs text-fg-muted">
       {t('login.self_hosted_note')}
     </p>
