@@ -15,6 +15,11 @@
 // Every endpoint gates on `mcp.client.admin` (seeded for Admin in
 // migration 00013). Business logic lives in mcp_registry; this
 // package handles auth + OpenAPI shape mapping only.
+//
+// `auth_secret_ref` is WRITE-ONLY on this surface (#711): reads
+// return `auth_secret_set` and never the value, and a write that
+// omits or empties it keeps whatever is stored. See serverToAPI and
+// UpdateMCPClient.
 
 package mcpadmin
 
@@ -158,7 +163,13 @@ func (h *Handler) UpdateMCPClient(
 		v := string(*req.Body.AuthKind)
 		params.AuthKind = &v
 	}
-	if req.Body.AuthSecretRef != nil {
+	// Write-only merge: an omitted OR empty secret means "keep the
+	// stored one", never "clear it". nil leaves the COALESCE in
+	// UpdateServer untouched. Without the empty check, the edit form
+	// — which can no longer pre-fill the field, because the read path
+	// stops returning it — would post "" and wipe the credential on
+	// every unrelated save. That is the #708 bug shape exactly.
+	if req.Body.AuthSecretRef != nil && *req.Body.AuthSecretRef != "" {
 		v := *req.Body.AuthSecretRef
 		params.AuthSecretRef = &v
 	}
@@ -310,10 +321,15 @@ func serverToAPI(s mcpregistry.Server) openapi.MCPServer {
 		CreatedAt:            time.Time{}, // populated by row metadata in v2; v1 leaves zero
 		UpdatedAt:            time.Time{},
 	}
-	if s.AuthSecretRef != "" {
-		v := s.AuthSecretRef
-		out.AuthSecretRef = &v
-	}
+	// The stored secret is NEVER returned (#711). Despite the `_ref`
+	// name it holds the live bearer token / header value, and there
+	// is no read-back workflow for a credential — you set it, you
+	// never need it handed back — so no capability unlocks it, not
+	// even system.admin. Callers get a set-boolean, the same shape
+	// sysconfig's SMTP password has always used. Omitted, not
+	// blanked, per ADR 0072.
+	secretSet := s.AuthSecretRef != ""
+	out.AuthSecretSet = &secretSet
 	if s.AuthHeaderName != "" {
 		v := s.AuthHeaderName
 		out.AuthHeaderName = &v

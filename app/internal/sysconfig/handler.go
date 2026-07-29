@@ -224,7 +224,14 @@ func (h *Handler) UpdateSMTPConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	before, beforeErr := h.Store.GetSMTP(ctx)
+	// Load-bearing, not just audit input: apiToSMTP merges the stored
+	// password in from `before`. On a read failure, merging against a
+	// zero SMTP would blank the password on an unrelated-field save —
+	// the same class of bug as #708's font PATCH clearing the logo.
+	before, err := h.Store.GetSMTP(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get smtp for merge: %w", err)
+	}
 	smtp, err := apiToSMTP(*req.Body, before)
 	if err != nil {
 		return openapi.UpdateSMTPConfig400JSONResponse{
@@ -237,15 +244,11 @@ func (h *Handler) UpdateSMTPConfig(
 		}, nil
 	}
 	if h.Audit != nil {
-		var beforeArg any = &before
-		if beforeErr != nil {
-			beforeArg = (*SMTP)(nil)
-		}
 		actor := &id.UserRef
 		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
 			audit.EventAdminSMTPConfigUpdated,
 			nil, actor,
-			beforeArg, &smtp, nil)
+			&before, &smtp, nil)
 	}
 	return openapi.UpdateSMTPConfig200JSONResponse(smtpToAPI(smtp)), nil
 }
@@ -466,23 +469,25 @@ func (h *Handler) UpdateAIConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	before, beforeErr := h.Store.GetAI(ctx)
-	cfg := apiToAI(*req.Body)
+	// The stored config is now load-bearing, not just audit input:
+	// apiToAI merges the on-file API keys in from it. A read failure
+	// must abort rather than write a config with every key blanked.
+	before, err := h.Store.GetAI(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get ai for merge: %w", err)
+	}
+	cfg := apiToAI(*req.Body, before)
 	if err := h.Store.SetAI(ctx, cfg); err != nil {
 		return openapi.UpdateAIConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	if h.Audit != nil {
-		var beforeArg any = &before
-		if beforeErr != nil {
-			beforeArg = (*AIConfig)(nil)
-		}
 		actor := &id.UserRef
 		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
 			audit.EventAdminAIConfigUpdated,
 			nil, actor,
-			beforeArg, &cfg, nil)
+			&before, &cfg, nil)
 	}
 	return openapi.UpdateAIConfig200JSONResponse(aiToAPI(cfg)), nil
 }
