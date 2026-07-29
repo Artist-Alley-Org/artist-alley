@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import apply_upgrade as up          # noqa: E402
+import audit_uncatalogued as au     # noqa: E402
 import kenney_hq as hq              # noqa: E402
 import kenney_pack_sources as kps   # noqa: E402
 import pexels_gameplay as px        # noqa: E402
@@ -1351,6 +1352,142 @@ class TestArchiveRecordsAreOutOfMediaUrlScope(unittest.TestCase):
         doc = [{"id": "b", "metadata": {
             "fetched_from": "https://www.pexels.com/video/x-1/"}}]
         self.assertEqual(len(rmu.internet_records(doc)), 1)
+
+
+class TestUncataloguedClassification(unittest.TestCase):
+    """"Uncatalogued" is three different things (#722).
+
+    The bug this guards is a wrong ANSWER, not a crash. Ask "what is
+    uncatalogued?" with a one-hop companion walk and you over-count by
+    every OBJ texture; ask it without reading the replacements doc and
+    you get 260 files that look like never-catalogued assets but are the
+    superseded halves of a shipped upgrade. Cataloguing either kind
+    creates duplicate records for bytes that are already accounted for.
+
+    Fixture is a synthetic site in a temp dir — no archive share, per the
+    rule at the top of this file.
+    """
+
+    def _site(self, root: Path) -> Path:
+        site = root / "site"
+        (site / "images/pack").mkdir(parents=True)
+        (site / "3d/model").mkdir(parents=True)
+
+        # A catalogued OBJ whose texture is TWO hops away.
+        (site / "3d/model/thing.obj").write_text(
+            "mtllib thing.mtl\nv 0 0 0\n", encoding="utf-8")
+        (site / "3d/model/thing.mtl").write_text(
+            "newmtl m\nmap_Kd thing_diffuse.png\n", encoding="utf-8")
+        (site / "3d/model/thing_diffuse.png").write_bytes(b"tex")
+
+        # A catalogued image, a superseded original, a real orphan.
+        (site / "images/pack/kept.png").write_bytes(b"kept")
+        (site / "images/pack/old.png").write_bytes(b"old")
+        (site / "images/pack/nobody.png").write_bytes(b"nobody")
+
+        (site / "MANIFEST.json").write_text(json.dumps([
+            {"id": "a", "file_path": "3d/model/thing.obj"},
+            {"id": "b", "file_path": "images/pack/kept.png"},
+            # The record that USED to point at old.png; it moved on.
+            {"id": "c", "file_path": "images/kenney-hq/new.png"},
+        ]), encoding="utf-8")
+
+        upgrades = root / "upgrades"
+        upgrades.mkdir()
+        (upgrades / "kenney-hq-replacements.site_a.json").write_text(
+            json.dumps([{"id": "c", "old": "images/pack/old.png",
+                         "new": "images/kenney-hq/new.png", "newSize": 9}]),
+            encoding="utf-8")
+        return site
+
+    def test_the_three_kinds_are_told_apart(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            site = self._site(root)
+            orphans, companions, superseded = au.classify(
+                site, root / "upgrades", "site_a")
+            self.assertEqual(orphans, ["images/pack/nobody.png"])
+            self.assertEqual(superseded, ["images/pack/old.png"])
+            self.assertEqual(
+                sorted(companions),
+                ["3d/model/thing.mtl", "3d/model/thing_diffuse.png"])
+
+    def test_the_second_companion_hop_is_walked(self):
+        """One hop reaches the .mtl and stops, which reports the texture
+        as an orphan. That miscount is what made the gap look 200 files
+        bigger than it is."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            site = self._site(root)
+            orphans, companions, _ = au.classify(
+                site, root / "upgrades", "site_a")
+            self.assertIn("3d/model/thing_diffuse.png", companions)
+            self.assertNotIn("3d/model/thing_diffuse.png", orphans)
+
+    def test_a_reverted_replacement_is_not_reported_as_dead(self):
+        """`prune` deletes what this call returns. A path the catalogue
+        still names must never appear in it, however stale the
+        replacements doc gets."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            site = self._site(root)
+            manifest = json.loads((site / "MANIFEST.json").read_text())
+            manifest.append({"id": "d", "file_path": "images/pack/old.png"})
+            (site / "MANIFEST.json").write_text(json.dumps(manifest),
+                                                encoding="utf-8")
+            orphans, _, superseded = au.classify(
+                site, root / "upgrades", "site_a")
+            self.assertEqual(superseded, [])
+            self.assertNotIn("images/pack/old.png", orphans)
+
+    def test_no_replacements_doc_means_nothing_is_superseded(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            site = self._site(root)
+            (root / "upgrades/kenney-hq-replacements.site_a.json").unlink()
+            orphans, _, superseded = au.classify(
+                site, root / "upgrades", "site_a")
+            self.assertEqual(superseded, [])
+            self.assertIn("images/pack/old.png", orphans)
+
+
+class TestSiteAHasNoUncataloguedAssets(unittest.TestCase):
+    """The finding behind #722, asserted against the committed docs.
+
+    #722 was filed as "260 assets were never catalogued". They were: the
+    260 paths are exactly the `old` column of the site_a replacements
+    doc, so each one HAS a record — the record was repointed at a
+    kenney-hq render and the file was left on the share. Adding records
+    for them would give 260 pieces of content two entries each.
+
+    This runs off the committed upgrade docs alone, so it holds on a
+    machine that has never seen the archive.
+    """
+
+    def test_the_reported_orphans_are_all_replacement_leftovers(self):
+        reps = json.loads(
+            (UPGRADES / "kenney-hq-replacements.site_a.json").read_text())
+        old = {r["old"] for r in reps}
+        self.assertEqual(len(old), len(reps),
+                         "two replacements claim the same old file")
+        # Every superseded original is a path the profile no longer names.
+        profile = json.loads(
+            (SCRIPTS.parent / "profiles" / "studio-a.assets.json").read_text())
+        live = {e.get("file_path") for e in profile}
+        self.assertEqual(sorted(old & live), [],
+                         "a replaced record still points at its old file — "
+                         "the upgrade did not apply")
+
+    def test_every_replacement_names_the_file_it_supersedes(self):
+        """`prune` is driven entirely off this column. A replacement with
+        no `old` leaves bytes on a published share that nothing can ever
+        identify as dead."""
+        for site in ("site_a", "site_b"):
+            reps = json.loads(
+                (UPGRADES / f"kenney-hq-replacements.{site}.json").read_text())
+            missing = [r["id"] for r in reps if not r.get("old")]
+            self.assertEqual(missing, [], f"{site}: {len(missing)} "
+                             "replacement(s) do not say what they replaced")
 
 
 class TestPackPageSlugs(unittest.TestCase):

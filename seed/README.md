@@ -247,6 +247,52 @@ Rebuilding the pool needs the renderer installed once (no sudo):
 cd seed/scripts && npm install sharp
 ```
 
+### What is on the share but not in the catalogue (#722)
+
+A file on a site that no `MANIFEST.json` record names is **three
+different situations**, and answering "what is uncatalogued?" without
+separating them produces a confident wrong number every time. site_a has
+461 such files:
+
+| kind | site_a | correct response |
+|---|---|---|
+| **companion** — reachable from a catalogued `.gltf` (`images[].uri`, `buffers[].uri`) or `.obj` (`mtllib` → `.mtl` → `map_*`) | 201 | **nothing.** `Runner.applyAssetCompanions` registers these against their parent asset at seed time. A record of its own would double-count the bytes and detach the texture from its model. |
+| **superseded** — the `old` file of a #604 HQ replacement | 260 | **delete.** The record still exists; it was repointed at a `kenney-hq` render and the original was left behind. |
+| **orphan** — neither | **0** | catalogue it, via an upgrade doc (never by editing `MANIFEST.json` — see above). |
+
+The companion walk is **two hops**. Stop at `mtllib` and every OBJ
+texture reads as an orphan, which over-counts site_a's gap by ~200 files.
+`audit_uncatalogued.py` delegates to
+`populate_archive.resolve_model_companions`, the Python twin of the Go
+`format3d.ResolveCompanions` the seed runner registers with, so the
+audit cannot drift from what the running instance believes.
+
+**#722 was filed as "260 assets were never catalogued".** They were: that
+set is *exactly* the `old` column of
+`kenney-hq-replacements.site_a.json` — 260 replacements, 260 stranded
+files, byte-identical sets. `apply_upgrade.apply_replacements` repoints
+the record's `file_path`; nothing deletes the file it used to point at,
+and `populate_archive.py` only removes unwanted files under `--prune`. So
+every replacement leaves one file behind that is indistinguishable from a
+never-catalogued asset unless you read that column. Cataloguing them
+would give 260 pieces of content two records each and re-introduce what
+the upgrade removed — including a 1×1 white pixel and 169 files under
+64 px.
+
+```bash
+# classify; exit 1 only on a REAL gap
+python3 seed/scripts/audit_uncatalogued.py detect --site site_a \
+    --site-root "$DATASETS/site_a" --fail-on-orphans
+
+# delete the superseded originals (reports only, until --apply)
+python3 seed/scripts/audit_uncatalogued.py prune --site site_a \
+    --site-root "$DATASETS/site_a" --apply
+```
+
+`prune` re-derives the live `file_path` set from the manifest and refuses
+to delete anything still in it, so a reverted replacement cannot be
+turned into data loss by a stale doc.
+
 ## Studio split
 
 Two studios with deliberately overlapping but distinct identities, so the
