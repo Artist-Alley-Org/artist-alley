@@ -28,54 +28,34 @@ import { readFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-// #630 — dimensionless SVGs (no width/height/viewBox on the root; ~765
-// of the pack's 5,279 vectors) make librsvg GUESS a canvas, and the
-// guess under-measures curve extents, clipping content at render time.
-// pipes_green.svg: true extent 1440x600 units, guessed 1402x523 — a
-// 512x191 render with solid pixels running off two edges. Density can't
-// fix it: the guessed canvas scales with density, so clipped stays
-// clipped at every resolution.
+// WHAT FRAME DOES A FILE GET RENDERED INTO. All three answers, and the
+// measurement that picks between them, live in svg_frame.mjs — shared
+// with probe_render_loss.mjs so the script that CHOOSES the frame and the
+// script that VERIFIES it cannot drift apart (they had; see #685). This
+// file's job is to take that decision and produce bytes.
 //
-// The fix is search-refine-precise, for dimensionless files ONLY:
-//   1. SEARCH: patch a large negative-inclusive viewBox onto the root
-//      and render small (1024px over 8192 units = 8 units/px), then
-//      measure the content bounding box from the raw alpha channel.
-//      Negative-inclusive because "the observed clipping is
-//      positive-quadrant" is an observation, not a guarantee — content
-//      at negative coordinates is found, not assumed away. If the bbox
-//      touches the probe edge the canvas widens 4x and probes once
-//      more; still touching after that is a per-file failure, loudly.
-//   2. REFINE (#672): re-probe the region the search found, so the
-//      measurement resolution scales with the DRAWING rather than with
-//      the search canvas — see the block below.
-//   3. PRECISE: re-render with the viewBox set to the refined bbox plus
-//      a 2-probe-pixel safety margin (covers sub-probe-pixel edges), at
-//      a density chosen to land the long edge at ~2048px before the
-//      same resize-to-px the dimensioned path uses, capped at the
-//      pipeline's own 384 so a huge bbox cannot demand a gigapixel
-//      render.
+//   'declared'   the source states a canvas and the drawing fits inside
+//                it. Handed to sharp untouched — output is byte-for-byte
+//                what this script produced before #630, which is ~97% of
+//                the pool and must stay that way.
+//   'measured'   the source states no canvas at all (#630). librsvg would
+//                guess one, and its guess under-measures curve extents:
+//                pipes_green.svg spans 1440x600 units, guessed 1402x523,
+//                so solid pixels ran off two edges of the render. Density
+//                cannot fix it — the guess scales with density, so clipped
+//                stays clipped at every resolution.
+//   'overflow'   the source states a canvas AND THE CANVAS IS WRONG
+//                (#685). The Flash/Animate sprite-sheet exports carry a
+//                stale artboard: `viewBox="0 0 550 400"` over a drawing
+//                spanning 2248x1120. librsvg honours it and clips the
+//                rest, so the shipped render held 8.8% of its artwork and
+//                looked like a legitimately cropped sheet. #630 never
+//                looked, because the file "declared" a canvas.
 //
-// NEVER combine the big probe viewBox with density 384 — 8192 units at
-// 384dpi is a ~44k-pixel edge, gigabytes of RGBA. The probe density is
-// derived from the canvas so the probe is always ~1024px.
-//
-// #672 — WHY THE REFINE PASS EXISTS. The search probe spreads 1024
-// pixels over an 8192-unit canvas, so one probe pixel is 8 user units
-// and the 2-pixel safety margin is 16 user units NO MATTER HOW BIG THE
-// DRAWING IS. That is the ~1% of frame the original comment claimed
-// only when the drawing nearly fills the search canvas. The Kenney
-// splat pack's vectors span ~100 units, so 16 units became a ~15%
-// margin PER SIDE and the artwork filled 50% of its own frame — a
-// splat floating in a box on the browse grid. Re-probing the found
-// region (padded 2% so content cannot sit on the refine frame's edge)
-// puts 1024 pixels across the DRAWING, so the same 2-pixel margin is
-// ~0.2% of the long edge and the frame is tight at any extent.
-// This is the same "measure the real extent" principle as #630, applied
-// at a resolution that is actually proportionate to what is measured.
-//
-// Dimensioned SVGs — anything with a viewBox, or with both width and
-// height — take EXACTLY the code path this script always had, so their
-// output bytes are unchanged.
+// The last two both render to the drawing's measured extent, at a density
+// chosen so the long edge lands near 2048px before the same resize-to-px
+// the declared path uses, capped at 384 so a huge bbox cannot demand a
+// gigapixel render.
 
 let sharp;
 try {
@@ -88,6 +68,10 @@ try {
   );
   process.exit(3);
 }
+
+// Imported AFTER the sharp check so a missing dependency produces the
+// message above rather than this module's terser throw.
+const { pipelineFrame, withViewBox } = await import('./svg_frame.mjs');
 
 const raw = readFileSync(0, 'utf8').trim();
 if (!raw) process.exit(0);
@@ -112,109 +96,41 @@ const CONCURRENCY = 8;
 let failed = 0;
 let done = 0;
 
-/** True iff the root <svg> tag declares no viewBox and not both of
- *  width/height — the class librsvg has to guess a canvas for. */
-function isDimensionless(svgText) {
-  const m = svgText.match(/<svg\b[^>]*>/);
-  if (!m) return false; // not detectably an svg; let sharp error normally
-  const tag = m[0];
-  const hasViewBox = /\bviewBox\s*=/.test(tag);
-  const hasWH = /\bwidth\s*=/.test(tag) && /\bheight\s*=/.test(tag);
-  return !hasViewBox && !hasWH;
-}
-
-function withViewBox(svgText, vb) {
-  return svgText.replace(/<svg\b/, `<svg viewBox="${vb.join(' ')}"`);
-}
-
-/** Measure the content bounding box (in SVG user units) by rendering a
- *  probe frame over `rect` ({x, y, w, h} in user units) and scanning the
- *  alpha channel. The probe's LONG edge is always ~1024px, so one probe
- *  pixel is `max(w,h)/1024` units and the returned safety margin is two
- *  of those — proportional to the region being measured, which is the
- *  whole point of the refine pass (#672). Returns null when the frame
- *  contains no content at all. */
-async function measureBBox(svgText, rect) {
-  const probePx = 1024;
-  const units = Math.max(rect.w, rect.h);
-  const unitsPerPx = units / probePx;
-  const patched = withViewBox(svgText, [rect.x, rect.y, rect.w, rect.h]);
-  const { data, info } = await sharp(Buffer.from(patched), {
-    density: (72 * probePx) / units,
-  }).raw().toBuffer({ resolveWithObject: true });
-  let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
-  for (let y = 0; y < info.height; y++) {
-    for (let x = 0; x < info.width; x++) {
-      if (data[(y * info.width + x) * info.channels + 3] > 0) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0) return null;
-  const touchesEdge = minX === 0 || minY === 0 ||
-    maxX === info.width - 1 || maxY === info.height - 1;
-  const margin = 2 * unitsPerPx;
-  return {
-    touchesEdge,
-    x: rect.x + minX * unitsPerPx - margin,
-    y: rect.y + minY * unitsPerPx - margin,
-    w: (maxX - minX + 1) * unitsPerPx + 2 * margin,
-    h: (maxY - minY + 1) * unitsPerPx + 2 * margin,
-  };
-}
-
-/** The square, negative-inclusive search frames the first pass uses. */
-const searchRect = (origin, units) => ({ x: origin, y: origin, w: units, h: units });
-
-/** Grow a rect by `frac` of its long edge on every side. The refine probe
- *  runs over this, not over the raw search bbox, so content is guaranteed
- *  to sit off the refine frame's edges — a bbox that touched the frame
- *  would mean "possibly still clipped", which is exactly the ambiguity
- *  #630 exists to remove. */
-function padRect(rect, frac) {
-  const pad = Math.max(rect.w, rect.h) * frac;
-  return { x: rect.x - pad, y: rect.y - pad, w: rect.w + 2 * pad, h: rect.h + 2 * pad };
-}
-
 async function render({ src, dst, px }) {
   mkdirSync(dirname(dst), { recursive: true });
 
   const svgText = readFileSync(src, 'utf8');
-  if (isDimensionless(svgText)) {
-    // Search canvas 1: -2048..6144 (negative-inclusive). Canvas 2, if the
-    // content runs off the first: 4x wider.
-    let bbox = await measureBBox(svgText, searchRect(-2048, 8192));
-    if (bbox && bbox.touchesEdge) bbox = await measureBBox(svgText, searchRect(-8192, 32768));
-    if (!bbox) throw new Error('dimensionless SVG rendered no content in the probe frame');
-    if (bbox.touchesEdge) {
-      throw new Error('content exceeds a 32768-unit probe canvas; refusing to render a silently-cropped frame');
-    }
-    // REFINE (#672): re-measure at the drawing's own scale so the safety
-    // margin is proportional. A refine probe that somehow finds nothing,
-    // or finds content on its own edge, is not trusted — the search bbox
-    // is already a correct-but-loose frame, so fall back to it rather
-    // than risk a tighter frame that clips.
-    const refined = await measureBBox(svgText, padRect(bbox, 0.02));
-    if (refined && !refined.touchesEdge) bbox = refined;
+  // ONE decision, made in svg_frame.mjs so probe_render_loss.mjs measures
+  // loss against the same frame this renders into.
+  const { rect, reason, declared } = await pipelineFrame(svgText);
 
-    const longUnits = Math.max(bbox.w, bbox.h);
-    const density = Math.min(384, (72 * 2048) / longUnits);
-    await sharp(Buffer.from(withViewBox(svgText, [bbox.x, bbox.y, bbox.w, bbox.h])), { density })
+  if (reason === 'declared') {
+    // Dimensioned path — UNCHANGED, byte-for-byte, from before #630.
+    // density scales the SVG rasterisation grid. Rendering a 24px icon at
+    // the default 72dpi and then upscaling produces a blurred mess; asking
+    // libvips for a high density up front makes it rasterise the vector at
+    // the target resolution instead of resampling a small bitmap.
+    await sharp(src, { density: 384 })
       .resize({ width: px, height: px, fit: 'inside', withoutEnlargement: false })
       .png({ compressionLevel: 9 })
       .toFile(dst);
     return;
   }
 
-  // Dimensioned path — UNCHANGED, byte-for-byte, from before #630.
-  // density scales the SVG rasterisation grid. Rendering a 24px icon at
-  // the default 72dpi and then upscaling produces a blurred mess; asking
-  // libvips for a high density up front makes it rasterise the vector at
-  // the target resolution instead of resampling a small bitmap.
-  await sharp(src, { density: 384 })
+  if (reason === 'overflow') {
+    // Loud on purpose: this is a source defect being worked around, and a
+    // build that silently repairs things teaches nobody anything (#685).
+    console.error(`  reframed: ${src}\n    content extends beyond its declared ` +
+      `${declared.w}x${declared.h} canvas; rendering to the measured ` +
+      `${Math.round(rect.w)}x${Math.round(rect.h)} extent (#685)`);
+  }
+
+  // PRECISE: render the measured frame at a density that lands the long
+  // edge near 2048px before the same resize-to-px the dimensioned path
+  // uses, capped at the pipeline's own 384 so a huge bbox cannot demand a
+  // gigapixel render.
+  const density = Math.min(384, (72 * 2048) / Math.max(rect.w, rect.h));
+  await sharp(Buffer.from(withViewBox(svgText, rect)), { density })
     .resize({ width: px, height: px, fit: 'inside', withoutEnlargement: false })
     .png({ compressionLevel: 9 })
     .toFile(dst);
