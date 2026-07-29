@@ -8013,6 +8013,9 @@ paths:
         last-known health status from the per-server poller, and
         the tool-grant whitelist count.
 
+        Stored auth secrets are NOT included — each entry carries
+        `auth_secret_set` instead (#711).
+
         Requires `mcp.client.admin` capability.
       tags: [ai-admin]
       security:
@@ -8078,6 +8081,11 @@ paths:
         Partial update — only the supplied fields mutate. Use this
         to flip `enabled`, change the URL after the server moves,
         rotate auth secrets, etc.
+
+        `auth_secret_ref` is write-only: supply it to rotate the
+        stored secret, omit it (or send an empty string) to keep the
+        current one. Saving an unrelated field cannot wipe it, and
+        the response never echoes it back.
 
         Requires `mcp.client.admin`.
       tags: [ai-admin]
@@ -8208,6 +8216,14 @@ paths:
     get:
       operationId: getAIConfig
       summary: Read the AI provider configuration
+      description: |
+        Returns the provider list and default-provider selection.
+        Stored API keys are NOT included — each provider carries
+        `api_key_set` instead (#711). This endpoint gates on
+        `system.config.read`, which is deliberately weaker than the
+        `system.ai.write` needed to set a key; returning the key
+        here would have made the narrower write capability
+        meaningless.
       tags: [system]
       security:
         - cookieAuth: []
@@ -8231,6 +8247,11 @@ paths:
         AI auto-tagging / search phase wires the providers into a
         real client. API keys are stored as plain strings for now
         (admin-only table); a secrets-backend migration is planned.
+
+        `providers[*].api_key` is write-only: supply it to set or
+        rotate a key, omit it (or send an empty string) to keep the
+        stored one. Saving an unrelated field therefore cannot wipe
+        a key. The response echoes `api_key_set`, never the key.
       tags: [system]
       security:
         - cookieAuth: []
@@ -10049,7 +10070,8 @@ components:
         One registered MCP server. Each registration becomes one
         ai.Provider in the router; the operator-chosen `name` is
         the audit-dashboard identifier and the dispatcher slot key.
-      required: [id, name, url, transport, auth_kind, privacy_class, enabled,
+      required: [id, name, url, transport, auth_kind, auth_secret_set,
+                 privacy_class, enabled,
                  rate_limit_per_second, rate_limit_per_minute,
                  health_check_interval_s, created_at, updated_at]
       properties:
@@ -10058,7 +10080,16 @@ components:
         url: { type: string, minLength: 1 }
         transport: { type: string, enum: [http, stdio] }
         auth_kind: { type: string, enum: [none, bearer, header, mtls] }
-        auth_secret_ref: { type: string, nullable: true }
+        auth_secret_set:
+          type: boolean
+          readOnly: true
+          description: |
+            True when an auth secret is currently stored for this
+            server. The secret itself is NEVER returned — despite the
+            `_ref` name on the write side it holds the live bearer
+            token / header value, and a stored credential has no
+            read-back workflow, so no capability reads it back
+            (#711). Set it via POST / PATCH `auth_secret_ref`.
         auth_header_name: { type: string, nullable: true }
         privacy_class: { type: string, enum: [local, cloud] }
         enabled: { type: boolean }
@@ -10089,7 +10120,14 @@ components:
         url: { type: string, minLength: 1 }
         transport: { type: string, enum: [http, stdio], default: http }
         auth_kind: { type: string, enum: [none, bearer, header, mtls], default: none }
-        auth_secret_ref: { type: string }
+        auth_secret_ref:
+          type: string
+          format: password
+          writeOnly: true
+          description: |
+            Write-only. The bearer token / header value used to
+            authenticate to this server. Never returned on any read —
+            responses carry `auth_secret_set` instead (#711).
         auth_header_name: { type: string }
         privacy_class: { type: string, enum: [local, cloud], default: cloud }
         enabled: { type: boolean, default: false }
@@ -10106,7 +10144,15 @@ components:
         url: { type: string, minLength: 1 }
         transport: { type: string, enum: [http, stdio] }
         auth_kind: { type: string, enum: [none, bearer, header, mtls] }
-        auth_secret_ref: { type: string }
+        auth_secret_ref:
+          type: string
+          format: password
+          writeOnly: true
+          description: |
+            Write-only. Provide to set or rotate the stored auth
+            secret; omit (or send an empty string) to keep the
+            current value. Never returned on any read — responses
+            carry `auth_secret_set` instead (#711).
         auth_header_name: { type: string }
         privacy_class: { type: string, enum: [local, cloud] }
         enabled: { type: boolean }
@@ -10173,7 +10219,8 @@ components:
         AI provider configuration. Persisted under the sysconfig key
         `ai`. API keys are stored as plain strings for now (admin-
         only table; never federated); a secrets-backend migration is
-        planned.
+        planned. Keys are write-only on this surface — see
+        `providers[*].api_key` / `providers[*].api_key_set`.
       required: [providers]
       properties:
         default_provider_id:
@@ -10200,9 +10247,23 @@ components:
                 description: Override for self-hosted / proxied endpoints.
               api_key:
                 type: string
+                format: password
+                writeOnly: true
                 description: |
-                  Raw API key (interim — will move to a secrets
-                  backend reference). Sent and stored as-is.
+                  Write-only. Provide to set or rotate this provider's
+                  API key; omit (or send an empty string) on PATCH to
+                  keep the current value. The response NEVER echoes
+                  this field — read `api_key_set` instead to check
+                  whether one is on file. A stored credential has no
+                  read-back workflow, so it is not returned to any
+                  capability, `system.admin` included (#711).
+              api_key_set:
+                type: boolean
+                readOnly: true
+                description: |
+                  True when an API key is currently stored for this
+                  provider. Set by the server on GET responses;
+                  ignored if sent on PATCH.
               config:
                 type: object
                 additionalProperties: true

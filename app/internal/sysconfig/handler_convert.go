@@ -270,14 +270,32 @@ func authConfigUpdateDenial(err error401or403) openapi.UpdateAuthConfigResponseO
 // AI
 // ---------------------------------------------------------------------------
 
+// aiToAPI is the GET/PATCH-response converter — NEVER echoes a
+// provider's stored API key back. `api_key_set` reports whether one
+// is on file so the admin UI can render "key on file" plus a rotate
+// affordance, exactly as smtpToAPI does for the SMTP password.
+//
+// Why no capability unlocks the key (#711): GET gates on
+// `system.config.read` while setting a key needs `system.ai.write`,
+// so returning the key made the narrower write cap protect nothing.
+// ADR 0072 grants raw IPs to a dedicated `<area>.pii.read` because
+// an IP has a legitimate read-back workflow (abuse investigation);
+// a stored credential has none — you set it, you never need it
+// returned — so this takes 0072's field-level "omitted, not blanked"
+// mechanism without its capability. `system.admin` included.
 func aiToAPI(v AIConfig) openapi.AIConfig {
 	out := openapi.AIConfig{}
 	if v.DefaultProviderID != "" {
 		s := v.DefaultProviderID
 		out.DefaultProviderId = &s
 	}
+	// The element type is the anonymous struct oapi-codegen emits for
+	// AIConfig.providers[]. Sized-and-indexed rather than appended so
+	// that shape is spelled once — a codegen field addition otherwise
+	// has to be mirrored in two literals.
 	out.Providers = make([]struct {
 		ApiKey      *string                       `json:"api_key,omitempty"`
+		ApiKeySet   *bool                         `json:"api_key_set,omitempty"`
 		BaseUrl     *string                       `json:"base_url,omitempty"`
 		Config      *map[string]interface{}       `json:"config,omitempty"`
 		DisplayName string                        `json:"display_name"`
@@ -285,22 +303,12 @@ func aiToAPI(v AIConfig) openapi.AIConfig {
 		Id          *string                       `json:"id,omitempty"`
 		Kind        openapi.AIConfigProvidersKind `json:"kind"`
 		Model       *string                       `json:"model,omitempty"`
-	}, 0, len(v.Providers))
-	for _, p := range v.Providers {
-		entry := struct {
-			ApiKey      *string                       `json:"api_key,omitempty"`
-			BaseUrl     *string                       `json:"base_url,omitempty"`
-			Config      *map[string]interface{}       `json:"config,omitempty"`
-			DisplayName string                        `json:"display_name"`
-			Enabled     bool                          `json:"enabled"`
-			Id          *string                       `json:"id,omitempty"`
-			Kind        openapi.AIConfigProvidersKind `json:"kind"`
-			Model       *string                       `json:"model,omitempty"`
-		}{
-			DisplayName: p.DisplayName,
-			Enabled:     p.Enabled,
-			Kind:        openapi.AIConfigProvidersKind(p.Kind),
-		}
+	}, len(v.Providers))
+	for i, p := range v.Providers {
+		entry := &out.Providers[i]
+		entry.DisplayName = p.DisplayName
+		entry.Enabled = p.Enabled
+		entry.Kind = openapi.AIConfigProvidersKind(p.Kind)
 		if p.ID != "" {
 			id := p.ID
 			entry.Id = &id
@@ -313,20 +321,34 @@ func aiToAPI(v AIConfig) openapi.AIConfig {
 			b := p.BaseURL
 			entry.BaseUrl = &b
 		}
-		if p.APIKey != "" {
-			k := p.APIKey
-			entry.ApiKey = &k
-		}
+		// entry.ApiKey stays nil — omitted, never blanked.
+		set := p.APIKey != ""
+		entry.ApiKeySet = &set
 		if p.Config != nil {
 			cfg := map[string]interface{}(p.Config)
 			entry.Config = &cfg
 		}
-		out.Providers = append(out.Providers, entry)
 	}
 	return out
 }
 
-func apiToAI(v openapi.AIConfig) AIConfig {
+// apiToAI is the PATCH-input converter. Keys are merged in from the
+// stored config, matched on provider ID, whenever the caller omits or
+// sends an empty `api_key` — the same write-only-secret merge
+// apiToSMTP does. Without it, saving an unrelated field (the whole
+// provider list round-trips through one PATCH) would wipe every key,
+// which is the #708 shape: a font PATCH that cleared the logo.
+//
+// A provider arriving without an ID is new, so there is nothing to
+// merge; it keeps whatever key the body carried (possibly none).
+func apiToAI(v openapi.AIConfig, current AIConfig) AIConfig {
+	stored := make(map[string]string, len(current.Providers))
+	for _, p := range current.Providers {
+		if p.ID != "" {
+			stored[p.ID] = p.APIKey
+		}
+	}
+
 	out := AIConfig{}
 	if v.DefaultProviderId != nil {
 		out.DefaultProviderID = *v.DefaultProviderId
@@ -340,6 +362,7 @@ func apiToAI(v openapi.AIConfig) AIConfig {
 		}
 		if p.Id != nil && *p.Id != "" {
 			entry.ID = *p.Id
+			entry.APIKey = stored[entry.ID]
 		} else {
 			entry.ID = uuid.NewString()
 		}
@@ -349,7 +372,7 @@ func apiToAI(v openapi.AIConfig) AIConfig {
 		if p.BaseUrl != nil {
 			entry.BaseURL = *p.BaseUrl
 		}
-		if p.ApiKey != nil {
+		if p.ApiKey != nil && *p.ApiKey != "" {
 			entry.APIKey = *p.ApiKey
 		}
 		if p.Config != nil {
