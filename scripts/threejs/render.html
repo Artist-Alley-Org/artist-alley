@@ -3,6 +3,12 @@
 <!-- Loaded by worker.mjs in a headless Chromium (SwiftShader software     -->
 <!-- WebGL). Renders a turntable + poster + reference views in the fixed   -->
 <!-- layout the Go ModelHandler's sprite/ladder fanning consumes as-is.    -->
+<!--                                                                      -->
+<!-- The model load path and the default lighting numbers are IMPORTED     -->
+<!-- from the web app (/shared/*, served by worker.mjs), not reimplemented -->
+<!-- here — that is what makes ADR 0069's WYSIWYG claim true. See #689:    -->
+<!-- while this page had its own loader, it silently rendered every OBJ    -->
+<!-- untextured and every unlit glTF as a flat silhouette.                 -->
 <meta charset="utf-8" />
 <style>
   html, body { margin: 0; background: transparent; }
@@ -14,17 +20,29 @@
   {
     "imports": {
       "three": "/three/build/three.module.js",
-      "three/addons/": "/three/examples/jsm/"
+      "three/addons/": "/three/examples/jsm/",
+      "three/examples/jsm/": "/three/examples/jsm/"
     }
   }
 </script>
 
 <script type="module">
   import * as THREE from 'three';
-  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-  import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-  import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
   import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+  // The shared load path — the SAME module the interactive viewer
+  // (ModelView.svelte) imports. Loader dispatch, OBJ .mtl resolution and
+  // material normalisation live there; nothing about them is duplicated
+  // on this page. worker.mjs serves web/src/lib/3d/ at /shared/.
+  import { loadModel } from '/shared/modelLoader.js';
+  import {
+    DEFAULT_KEY_INTENSITY,
+    DEFAULT_FILL_INTENSITY,
+    DEFAULT_RIM_INTENSITY,
+    DEFAULT_AMBIENT_INTENSITY,
+    DEFAULT_ENV_ROUGHNESS,
+    DEFAULT_TONE_MAPPING,
+    DEFAULT_EXPOSURE,
+  } from '/shared/defaultLighting.js';
 
   // Report the actual WebGL backend so the worker log can confirm we ran
   // on SwiftShader (software) vs a real GL.
@@ -46,65 +64,6 @@
   }
   window.__glInfo = glInfo;
 
-  // Geometry-only formats (STL / PLY) hand back a BufferGeometry rather
-  // than a scene graph, so wrap it in a mesh with a neutral PBR material.
-  // Vertex colours are honoured when the file carries them (common in
-  // scanned PLY); normals are computed when it doesn't.
-  function meshFromGeometry(geometry) {
-    if (!geometry.attributes.normal) geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xcccccc,
-      roughness: 0.75,
-      metalness: 0.0,
-      vertexColors: !!geometry.attributes.color,
-      side: THREE.DoubleSide,
-    });
-    return new THREE.Mesh(geometry, material);
-  }
-
-  // Companion resolution: the model is served alongside its staged
-  // companions (the Go ModelHandler.stageCompanions writes .bin/textures
-  // next to it), so the loaders' default relative-URL resolution against
-  // the model URL just works — same as the interactive viewer.
-  //
-  // MUST stay in sync with threeJSExts in app/internal/preview/model.go —
-  // that map is the Go side's copy of this dispatch, and smoke.mjs renders
-  // a fixture per entry so drift fails the smoke, not a user's upload.
-  //
-  // glb/gltf/fbx/obj are the interactive viewer's set and stay statically
-  // imported. stl/ply/dae are render-only (they inherited Blender's
-  // thumbnails until #500 removed it) and import lazily, so a loader that
-  // fails to resolve costs only its own format instead of the whole page.
-  async function loadModel(url, ext) {
-    const e = ext.toLowerCase().replace(/^\./, '');
-    if (e === 'glb' || e === 'gltf') {
-      const g = await new Promise((res, rej) => new GLTFLoader().load(url, res, undefined, rej));
-      return g.scene;
-    }
-    if (e === 'fbx') {
-      return await new Promise((res, rej) => new FBXLoader().load(url, res, undefined, rej));
-    }
-    if (e === 'obj') {
-      return await new Promise((res, rej) => new OBJLoader().load(url, res, undefined, rej));
-    }
-    if (e === 'stl') {
-      const { STLLoader } = await import('three/addons/loaders/STLLoader.js');
-      const g = await new Promise((res, rej) => new STLLoader().load(url, res, undefined, rej));
-      return meshFromGeometry(g);
-    }
-    if (e === 'ply') {
-      const { PLYLoader } = await import('three/addons/loaders/PLYLoader.js');
-      const g = await new Promise((res, rej) => new PLYLoader().load(url, res, undefined, rej));
-      return meshFromGeometry(g);
-    }
-    if (e === 'dae') {
-      const { ColladaLoader } = await import('three/addons/loaders/ColladaLoader.js');
-      const c = await new Promise((res, rej) => new ColladaLoader().load(url, res, undefined, rej));
-      return c.scene;
-    }
-    throw new Error('unsupported ext: ' + e);
-  }
-
   function countTris(obj) {
     let t = 0;
     obj.traverse((n) => {
@@ -114,6 +73,35 @@
       }
     });
     return Math.round(t);
+  }
+
+  // Material/texture census of the loaded model, reported back in the
+  // worker's JSON so "rendered but untextured" is diagnosable from a log
+  // line instead of by eyeballing a PNG. A `map` whose image never
+  // decoded (0×0, or missing entirely) is the signature of a texture
+  // that 404'd or failed to decode — the exact class of bug #689 was.
+  function materialCensus(obj) {
+    const seen = new Set();
+    const mats = [];
+    let mapped = 0;
+    const broken = [];
+    obj.traverse((n) => {
+      if (!n.isMesh) return;
+      for (const m of (Array.isArray(n.material) ? n.material : [n.material])) {
+        if (!m || seen.has(m.uuid)) continue;
+        seen.add(m.uuid);
+        const img = m.map?.image;
+        const w = img?.width ?? 0;
+        const h = img?.height ?? 0;
+        const entry = { name: m.name || '', type: m.type, hasMap: !!m.map, mapWidth: w, mapHeight: h };
+        if (m.map) {
+          if (w > 0 && h > 0) mapped++;
+          else broken.push(m.name || m.uuid);
+        }
+        mats.push(entry);
+      }
+    });
+    return { materials: mats, mapped, broken };
   }
 
   const FOV_V = 2 * Math.atan(18 / 35) * 180 / Math.PI; // 35mm lens / 36mm sensor ≈ 54.43°
@@ -137,39 +125,55 @@
   //              workbench-magenta / iso re-fan dance is needed
   //   top/bottom: orthographic-style reference views at res×res
   // All transparent RGBA PNGs.
+  //
+  // opts.companions is [{ path, url }] for the model's staged sidecars —
+  // worker.mjs enumerates the work dir. OBJ needs it to find its .mtl;
+  // everything else resolves relatively against the served work dir.
   window.__renderAll = async function (url, ext, opts) {
     const frames = opts.frames ?? 36;
     const res = opts.res ?? 512;
     const posterRes = opts.posterRes ?? 2048;
+    const companions = opts.companions ?? [];
     const t0 = performance.now();
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(1);
     renderer.setSize(res, res, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // DEFAULT_TONE_MAPPING is the viewer's session default; the id →
+    // THREE constant mapping lives in the viewer's environments.ts,
+    // which this page can't import (TypeScript, and it pulls the whole
+    // preset machinery). Assert rather than silently diverge.
+    if (DEFAULT_TONE_MAPPING !== 'aces') {
+      throw new Error(`tone-mapping drift: defaultLighting says ${DEFAULT_TONE_MAPPING}, render.html does ACES`);
+    }
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMappingExposure = DEFAULT_EXPOSURE;
     renderer.setClearColor(0x000000, 0);
     document.getElementById('stage').appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), DEFAULT_ENV_ROUGHNESS).texture;
 
-    // Three-point rig mirroring ModelView's key/fill/rim. These
-    // intensities + the ambient floor + ACESFilmic/exposure above are
-    // the WYSIWYG reference the interactive viewer's default matches
-    // (#509, ADR 0069). KEEP IN SYNC with the viewer's source of truth:
-    // web/src/lib/3d/defaultLighting.ts (which the viewer's session
-    // DEFAULTS + ModelView ambient import). Change a number here → change
-    // it there, or the thumbnail and the viewer default drift apart.
-    const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 4, 5); scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.8); fill.position.set(-4, 1, 2); scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xffffff, 1.0); rim.position.set(0, 3, -5); scene.add(rim);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+    // Three-point rig mirroring ModelView's key/fill/rim. The
+    // intensities, the ambient floor and the tone curve are imported
+    // from the viewer's source of truth (defaultLighting.js), so the
+    // thumbnail and a freshly-opened viewer cannot drift (#509).
+    const key = new THREE.DirectionalLight(0xffffff, DEFAULT_KEY_INTENSITY);
+    key.position.set(3, 4, 5); scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, DEFAULT_FILL_INTENSITY);
+    fill.position.set(-4, 1, 2); scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffffff, DEFAULT_RIM_INTENSITY);
+    rim.position.set(0, 3, -5); scene.add(rim);
+    scene.add(new THREE.AmbientLight(0xffffff, DEFAULT_AMBIENT_INTENSITY));
 
-    const model = await loadModel(url, ext);
+    const { object: model } = await loadModel({ url, ext, companions });
     const loadedAt = performance.now();
+    const census = materialCensus(model);
+    if (census.broken.length > 0) {
+      console.error('[render] materials whose texture never decoded: ' + census.broken.join(', '));
+    }
 
     const box = new THREE.Box3().setFromObject(model);
     const size = box.getSize(new THREE.Vector3());
@@ -189,6 +193,10 @@
     const dist = fitDistance(vExt, hExt);
     cam.position.set(0, dist * Math.tan(TILT), dist);
     cam.lookAt(0, 0, 0);
+
+    // Compile up front: a shader/texture-upload failure then throws here
+    // rather than silently producing an untextured first frame.
+    renderer.compile(scene, cam);
 
     const render = () => {
       renderer.render(scene, cam);
@@ -236,7 +244,13 @@
         render_ms: Math.round(doneAt - loadedAt),
         total_ms: Math.round(doneAt - t0),
       },
-      meta: { maxDim, frames, res, posterRes, triangles: countTris(model) },
+      meta: {
+        maxDim, frames, res, posterRes,
+        triangles: countTris(model),
+        materials: census.materials,
+        texturedMaterials: census.mapped,
+        brokenTextures: census.broken,
+      },
     };
   };
 
