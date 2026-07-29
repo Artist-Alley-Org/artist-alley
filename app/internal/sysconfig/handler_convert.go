@@ -459,9 +459,37 @@ func appearanceToAPI(v AppearanceConfig) openapi.AppearanceConfig {
 		s := v.MonoFont
 		out.MonoFont = &s
 	}
+	// The active logo, as a ready-to-render URL. Absent when the
+	// install is on the shipped default — absent means "draw the
+	// bundled mark", the same contract an empty font slot has.
+	//
+	// logo_history is deliberately NOT populated here: this converter
+	// feeds the public boot payload too, and that path must neither
+	// publish the operator's older marks nor pay for an availability
+	// probe per entry. The admin surface adds it via
+	// appearanceAdminAPI.
+	if logo := v.ActiveLogoEntry(); logo != nil {
+		u := logoURL(logo.Hash)
+		out.LogoUrl = &u
+		w, hgt := logo.Width, logo.Height
+		out.LogoWidth = &w
+		out.LogoHeight = &hgt
+	}
 	return out
 }
 
+// apiToAppearance reads the CLIENT-WRITABLE fields only.
+//
+// Every logo field is read-only on this path by design. The logo is a
+// reference to stored bytes, and letting a caller name that reference
+// directly would aim the public, unauthenticated logo route at any
+// object on the install. Logos are set only by the upload and select
+// endpoints, which resolve to bytes this package validated itself.
+//
+// Because of that, callers of this function MUST carry the logo
+// forward from the existing config — see UpdateAppearanceConfig. A
+// PATCH is a whole-object replace, so a font change that dropped the
+// logo fields on the floor would silently reset the operator's brand.
 func apiToAppearance(v openapi.AppearanceConfig) AppearanceConfig {
 	out := AppearanceConfig{}
 	if v.BrandFont != nil {

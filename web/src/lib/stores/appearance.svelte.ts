@@ -44,6 +44,36 @@ const EMPTY: AppearancePicks = {
   mono_font: '',
 };
 
+/**
+ * URL of the operator-uploaded instance logo, or '' for "use the
+ * shipped default mark" (#517).
+ *
+ * Cached alongside the fonts for the same reason they are: the mark is
+ * in the navbar of every page, so reading it from localStorage on the
+ * first paint avoids a visible swap from the default logo to the
+ * operator's one after the boot fetch lands.
+ */
+const LOGO_STORAGE_KEY = 'aa_instance_logo';
+
+function readLogoCache(): string {
+  if (!browser) return '';
+  try {
+    return localStorage.getItem(LOGO_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeLogoCache(url: string): void {
+  if (!browser) return;
+  try {
+    if (url) localStorage.setItem(LOGO_STORAGE_KEY, url);
+    else localStorage.removeItem(LOGO_STORAGE_KEY);
+  } catch {
+    // localStorage may be disabled / quota'd — ignore.
+  }
+}
+
 function readCache(): AppearancePicks {
   if (!browser) return EMPTY;
   try {
@@ -99,10 +129,18 @@ class AppearanceState {
   picks = $state<AppearancePicks>({ ...EMPTY });
   loaded = $state(false);
 
+  /**
+   * URL of the operator's instance logo, or '' when the install uses
+   * the shipped default. Consumed by BrandMark, which falls back to
+   * /logo.svg — so '' is a complete, valid state, not a missing value.
+   */
+  logoUrl = $state('');
+
   /** Initial paint: apply cached picks, then refresh from /appearance. */
   init(): void {
     const cached = readCache();
     this.picks = cached;
+    this.logoUrl = readLogoCache();
     applyToDom(cached);
     void this.refresh();
   }
@@ -127,9 +165,23 @@ class AppearanceState {
       // Demo mode rides the same boot fetch — surface it so the login
       // card and read-only banner can react without a second request.
       site.setDemoMode(data.demo_mode);
+      // Absent logo_url is the shipped-default state, so normalise to
+      // '' rather than leaving a stale URL in place — an operator who
+      // reverts to the default must actually see it come back.
+      this.setLogoUrl(data.logo_url ?? '');
     } finally {
       this.loaded = true;
     }
+  }
+
+  /**
+   * Record the active instance logo. Called by the boot fetch and by
+   * the admin logo card after an upload/select/revert, so the navbar
+   * updates without a page reload.
+   */
+  setLogoUrl(url: string): void {
+    this.logoUrl = url;
+    writeLogoCache(url);
   }
 
   /** Apply a preview without persisting — used by the admin picker. */

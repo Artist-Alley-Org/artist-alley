@@ -293,7 +293,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		social:           social.NewHandler(pool, logger, cacheReg),
 		setup:            setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:         workflow.NewHandler(pool, logger, cacheReg),
-		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode),
+		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode, storageSvc),
 		i18n:             i18n.NewHandler(logger),
 		jobs:             jobs.NewHTTPHandler(jobSvc, logger),
 		jobsSvc:          jobSvc,
@@ -2060,9 +2060,13 @@ func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *ca
 // sysconfigHandlerWithAudit mirrors usersHandlerWithAudit — wires
 // the audit recorder so Phase 1.17.D's RecordChange call sites in
 // the Update* config handlers have somewhere to emit to.
-func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, cacheReg *cache.Registry, demoMode bool) *sysconfig.Handler {
+func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, cacheReg *cache.Registry, demoMode bool, storageSvc *storage.Service) *sysconfig.Handler {
 	h := sysconfig.NewHTTPHandler(pool, store, logger)
 	h.SetAuditRecorder(auditRec)
+	// #517 — the instance logo is the one setting whose value is a
+	// blob, so this handler needs the byte plane as well as the
+	// config store.
+	h.SetStorage(storageSvc)
 	// #445 — the public-mode write invalidates the auth middleware's
 	// cached read of the flag. Without this the toggle appears inert
 	// until the cache entry ages out.
@@ -3119,6 +3123,18 @@ func (s *apiServer) GetAppearanceConfig(ctx context.Context, req openapi.GetAppe
 }
 func (s *apiServer) UpdateAppearanceConfig(ctx context.Context, req openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
 	return s.sysconfigH.UpdateAppearanceConfig(ctx, req)
+}
+func (s *apiServer) UploadInstanceLogo(ctx context.Context, req openapi.UploadInstanceLogoRequestObject) (openapi.UploadInstanceLogoResponseObject, error) {
+	return s.sysconfigH.UploadInstanceLogo(ctx, req)
+}
+func (s *apiServer) SelectInstanceLogo(ctx context.Context, req openapi.SelectInstanceLogoRequestObject) (openapi.SelectInstanceLogoResponseObject, error) {
+	return s.sysconfigH.SelectInstanceLogo(ctx, req)
+}
+func (s *apiServer) DeleteInstanceLogo(ctx context.Context, req openapi.DeleteInstanceLogoRequestObject) (openapi.DeleteInstanceLogoResponseObject, error) {
+	return s.sysconfigH.DeleteInstanceLogo(ctx, req)
+}
+func (s *apiServer) GetPublicInstanceLogo(ctx context.Context, req openapi.GetPublicInstanceLogoRequestObject) (openapi.GetPublicInstanceLogoResponseObject, error) {
+	return s.sysconfigH.GetPublicInstanceLogo(ctx, req)
 }
 func (s *apiServer) GetPublicPreviewLadder(ctx context.Context, req openapi.GetPublicPreviewLadderRequestObject) (openapi.GetPublicPreviewLadderResponseObject, error) {
 	return s.sysconfigH.GetPublicPreviewLadder(ctx, req)

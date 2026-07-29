@@ -15,6 +15,7 @@
   // a deep link doesn't dead-end on a closed install.
 
   import { goto } from '$app/navigation';
+  import BrandMark from '$lib/components/BrandMark.svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
@@ -116,7 +117,7 @@
 
   <div class="w-full max-w-sm space-y-6 rounded-xl border border-white/10 bg-surface/85 p-8 shadow-2xl backdrop-blur-md">
     <div class="text-center space-y-2">
-      <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
+      <BrandMark class="mx-auto h-16 w-16" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('register.title')}</h1>
       <p class="text-sm text-fg-muted">artist-alley</p>
     </div>
