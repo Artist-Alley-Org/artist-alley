@@ -1914,12 +1914,24 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
 - **Plugin ecosystem** (Phase 1.23). WASM extension model via
   Extism. In-tree Go packages until external authors arrive.
 
+- **Sized feed slots** (epic #745, **ADR 0079**) — the placement primitive
+  underneath both ads and premium placement. A slot is a *position*, a
+  *size in grid units* (2×2), and an *ordered fill chain*; ads, promoted
+  premium posts and operator curation are **consumers**, not three
+  implementations. Load-bearing rule: an unfilled slot becomes ordinary
+  feed content, never a hole — so ADR 0030's "collapse the empty slot"
+  now applies per slot kind. Sequenced #746 (uniform grid, cheap — works
+  today) → #747 (masonry rework; a tile currently *cannot* span, per the
+  #651 append-stability trade) → #748 (wire the fill sources).
+
 - **Operator-configurable ad slots** (Phase 1.38). Opt-in surface for
   operators running public-facing community instances (fan sites,
   festival hubs, art-school portfolios) to monetize hosting via ads.
   Defined zones across feed top / between-every-Nth feed item /
   sidebar top + bottom / post-modal sidebar / footer; each zone is
-  toggled and provider-bound per instance. Providers ship for Google
+  toggled and provider-bound per instance. *In-grid 2×2 slots are a
+  separate kind, added by ADR 0079 — the zones listed here are
+  page-margin banners.* Providers ship for Google
   AdSense, Meta Audience Network, Carbon Ads, EthicalAds, and a
   custom-HTML option. Default off everywhere; AAA-internal studios
   see zero ad markup. Operator allow-lists categories (block
