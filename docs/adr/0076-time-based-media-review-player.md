@@ -101,6 +101,16 @@ of marks along the bar is itself the summary of where attention was spent.
 The scrubber therefore carries three layers: the media's own shape (waveform
 for audio, or a thumbnail strip), annotation markers, and the playhead.
 
+Markers are also a **navigation target**: jump-to-previous / jump-to-next
+annotation belongs in the transport. On a long asset with sparse notes,
+scrubbing to find the next mark is the slow path, and a reviewer working
+through feedback moves mark-to-mark rather than second-to-second.
+
+The same addressing serves **comments**, not only strokes: a comment
+carrying a frame index is a navigable review artifact, and selecting it
+moves the playhead to that frame. This is why §1 specifies that *every*
+review artifact records a frame, not just annotations.
+
 ### 4. Adjacent frames ghost behind the current one
 
 Strokes on nearby frames render behind the current frame's at reduced
@@ -129,6 +139,41 @@ Comparing two versions side by side, or wiped, is the same player instantiated
 twice against one transport — not a separate component. Their playheads are
 locked by default so a difference at a frame is a difference at the same frame.
 
+### 7. Frame accuracy is not free, and the browser does not guarantee it
+
+This is the risk that can invalidate everything above, so it is stated as a
+decision rather than left as an implementation detail.
+
+The HTML media element **does not guarantee frame-accurate seeking**. Internal
+rounding can land on the end of the previous frame rather than the start of
+the requested one. `requestVideoFrameCallback` — which the player already uses
+— runs on the main thread while compositing happens on the compositor thread,
+so it is explicitly best-effort with no strict guarantee. Safari does not
+implement it at all, and seeks to the nearest keyframe more aggressively than
+Chromium. Seek cost also varies sharply with distance from a keyframe, which
+matters because our video ships as an HLS ladder with keyframe intervals.
+
+**A frame-scoped annotation is only as trustworthy as the seek that lands on
+that frame.** If a reviewer draws on frame 178 and a later seek to 178 renders
+177, the annotation is silently on the wrong picture — a failure that looks
+like sloppy drawing rather than a bug, which makes it worse.
+
+Therefore:
+
+- The frame a stroke is stored against is the frame the player **believes it
+  displayed**, captured at draw time — never re-derived later from a
+  timestamp.
+- Round-tripping is a correctness requirement, not a nicety: seek to a stored
+  annotation's frame and the same picture must appear. This must be tested
+  against real media, on more than one browser engine.
+- Where the platform cannot deliver the guarantee, prefer degrading the
+  addressing (§1's trustworthiness gate) over presenting a frame number that
+  is confidently wrong.
+- WebCodecs is the escape hatch if element-based seeking proves insufficient.
+  Not adopted now — it is a much larger commitment — but the annotation model
+  above is deliberately independent of *how* a frame is produced, so switching
+  the decode path later does not invalidate stored annotations.
+
 ## What this explicitly rejects
 
 - **A separate video player and audio player.** Already avoided; recorded here
@@ -137,6 +182,8 @@ locked by default so a difference at a frame is a difference at the same frame.
   a frame-rate change and cannot express "the frame after this one".
 - **A review-only drawing engine.** Reuse the brush engine.
 - **Storing ghosting/opacity on the annotation.** It is a view preference.
+- **Re-deriving a stroke's frame from a timestamp after the fact.** Seek
+  rounding makes that lossy; capture the frame at draw time.
 
 ## Consequences
 
