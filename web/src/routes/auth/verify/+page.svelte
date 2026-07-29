@@ -11,6 +11,7 @@
   //   3. no token in URL → same as failure, prompts for email.
 
   import { onMount } from 'svelte';
+  import BrandMark from '$lib/components/BrandMark.svelte';
   import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
@@ -84,7 +85,7 @@
 
   <div class="w-full max-w-sm space-y-6 rounded-xl border border-white/10 bg-surface/85 p-8 shadow-2xl backdrop-blur-md">
     <div class="text-center space-y-2">
-      <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
+      <BrandMark class="mx-auto h-16 w-16" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('verify.title')}</h1>
     </div>
 

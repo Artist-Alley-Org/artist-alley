@@ -560,6 +560,21 @@ func (*PanicShim) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearan
 	panic("PanicShim: UpdateAppearanceConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// DeleteInstanceLogo panics by default; test shims override.
+func (*PanicShim) DeleteInstanceLogo(context.Context, openapi.DeleteInstanceLogoRequestObject) (openapi.DeleteInstanceLogoResponseObject, error) {
+	panic("PanicShim: DeleteInstanceLogo called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UploadInstanceLogo panics by default; test shims override.
+func (*PanicShim) UploadInstanceLogo(context.Context, openapi.UploadInstanceLogoRequestObject) (openapi.UploadInstanceLogoResponseObject, error) {
+	panic("PanicShim: UploadInstanceLogo called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SelectInstanceLogo panics by default; test shims override.
+func (*PanicShim) SelectInstanceLogo(context.Context, openapi.SelectInstanceLogoRequestObject) (openapi.SelectInstanceLogoResponseObject, error) {
+	panic("PanicShim: SelectInstanceLogo called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAuthConfig panics by default; test shims override.
 func (*PanicShim) GetAuthConfig(context.Context, openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
 	panic("PanicShim: GetAuthConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -678,6 +693,11 @@ func (*PanicShim) AdminUnlockAccount(context.Context, openapi.AdminUnlockAccount
 // GetPublicAppearance panics by default; test shims override.
 func (*PanicShim) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("PanicShim: GetPublicAppearance called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetPublicInstanceLogo panics by default; test shims override.
+func (*PanicShim) GetPublicInstanceLogo(context.Context, openapi.GetPublicInstanceLogoRequestObject) (openapi.GetPublicInstanceLogoResponseObject, error) {
+	panic("PanicShim: GetPublicInstanceLogo called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListAssetTypes panics by default; test shims override.

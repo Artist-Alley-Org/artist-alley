@@ -2001,7 +2001,24 @@
         "use_default": "Use default",
         "save": "Save appearance",
         "saved": "Appearance saved.",
-        "reset": "Reset to defaults"
+        "reset": "Reset to defaults",
+        "logo_label": "Instance logo",
+        "logo_help": "Shown in the navbar and on the sign-in page. PNG, JPEG, GIF or WebP, up to 2 MB and 1024px on the longest edge. SVG is not accepted.",
+        "logo_upload": "Upload a logo",
+        "logo_replace": "Upload a new logo",
+        "logo_uploading": "Uploading…",
+        "logo_recent": "Recent logos",
+        "logo_recent_help": "Your last 5 logos are kept so you can switch back — useful if you no longer have the original file. Uploading a sixth drops the oldest.",
+        "logo_default": "Default",
+        "logo_default_alt": "The logo that ships with Artist Alley",
+        "logo_use_default": "Use the default logo",
+        "logo_in_use": "In use",
+        "logo_select": "Use this logo",
+        "logo_unavailable": "Image no longer available",
+        "logo_unavailable_help": "This logo is still listed but its image data is missing from storage, so it cannot be used. Upload the file again to restore it.",
+        "logo_too_large": "That file is larger than 2 MB.",
+        "logo_bad_type": "That file type is not accepted. Use a PNG, JPEG, GIF or WebP image.",
+        "logo_failed": "Could not save the logo."
       }
     }
   },

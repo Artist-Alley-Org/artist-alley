@@ -33,6 +33,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/email"
+	"github.com/mscrnt/artist-alley/app/internal/storage"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -70,6 +71,13 @@ type Handler struct {
 	// InvalidatePublicMode no-ops, which in an uncached fixture is
 	// correct because the reader has no cache to stale out.
 	CacheReg *cache.Registry
+
+	// Storage is the byte plane for the instance logo (#517) — the one
+	// setting in this package whose value is a blob rather than a
+	// short string. nil-safe: unwired, the logo write endpoints refuse
+	// with a 400 and the read endpoint reports "no logo", so a fixture
+	// that doesn't exercise logos needs no storage backend.
+	Storage *storage.Service
 
 	// DemoMode mirrors config.Config.DemoMode (env AA_DEMO_MODE). When
 	// true it's surfaced on the public /appearance boot payload so the
@@ -561,7 +569,7 @@ func (h *Handler) GetAppearanceConfig(
 	if err != nil {
 		return nil, fmt.Errorf("sysconfig: get appearance: %w", err)
 	}
-	return openapi.GetAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
+	return openapi.GetAppearanceConfig200JSONResponse(h.appearanceAdminAPI(ctx, cfg)), nil
 }
 
 func (h *Handler) UpdateAppearanceConfig(
@@ -579,6 +587,14 @@ func (h *Handler) UpdateAppearanceConfig(
 	}
 	before, beforeErr := h.Store.GetAppearance(ctx)
 	cfg := apiToAppearance(*req.Body)
+	// Carry the logo forward. This endpoint is a whole-object replace
+	// and the logo fields are read-only on it, so without this an
+	// admin saving a font would silently reset the install's brand
+	// mark and orphan every pinned entry in the recent list.
+	if beforeErr == nil {
+		cfg.ActiveLogo = before.ActiveLogo
+		cfg.LogoHistory = before.LogoHistory
+	}
 	if err := h.Store.SetAppearance(ctx, cfg); err != nil {
 		return openapi.UpdateAppearanceConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
@@ -595,7 +611,7 @@ func (h *Handler) UpdateAppearanceConfig(
 			nil, actor,
 			beforeArg, &cfg, nil)
 	}
-	return openapi.UpdateAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
+	return openapi.UpdateAppearanceConfig200JSONResponse(h.appearanceAdminAPI(ctx, cfg)), nil
 }
 
 // GetPublicPreviewLadder reads the configured preview rungs (#591).
