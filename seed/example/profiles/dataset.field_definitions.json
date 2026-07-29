@@ -1,0 +1,24 @@
+[
+  {
+    "name": "pipeline_stage",
+    "label": "Pipeline stage",
+    "type": "select",
+    "options": ["Greybox", "Pass 1", "Polish", "Final", "Locked"]
+  },
+  {
+    "name": "revision_count",
+    "label": "Revisions",
+    "type": "number"
+  },
+  {
+    "name": "target_platforms",
+    "label": "Target platforms",
+    "type": "multi_select",
+    "options": ["PC", "Console", "Mobile", "All"]
+  },
+  {
+    "name": "naming_compliant",
+    "label": "Naming compliant",
+    "type": "boolean"
+  }
+]

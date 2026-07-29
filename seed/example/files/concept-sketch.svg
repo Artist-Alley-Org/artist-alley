@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" width="320" height="200">
+  <title>Concept sketch — harbour district</title>
+  <rect width="320" height="200" fill="#1b2430"/>
+  <path d="M0 150 L60 120 L120 140 L190 105 L260 130 L320 110 L320 200 L0 200 Z" fill="#2f4256"/>
+  <path d="M0 170 L80 155 L160 172 L240 158 L320 168 L320 200 L0 200 Z" fill="#3d5a75"/>
+  <circle cx="250" cy="48" r="18" fill="#e8d9a0"/>
+  <g fill="#0f161f">
+    <rect x="40" y="96" width="26" height="54"/>
+    <rect x="76" y="82" width="18" height="68"/>
+    <rect x="104" y="104" width="30" height="46"/>
+    <rect x="150" y="74" width="22" height="76"/>
+    <rect x="182" y="98" width="34" height="52"/>
+  </g>
+  <rect x="0" y="0" width="320" height="200" fill="none" stroke="#5d7fa3" stroke-width="2"/>
+</svg>

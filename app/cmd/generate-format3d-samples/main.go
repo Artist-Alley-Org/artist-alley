@@ -4,8 +4,10 @@
 // Generate procedural .md2/.md3/.mdl samples for the artist-alley
 // dataset. Run:
 //
-//	go run ./scripts/generate-format3d-samples \
-//	    --out /mnt/d/Projects/unraid_management/artist-alley_dataset/format3d
+//	go run ./scripts/generate-format3d-samples --out "$DATASET_ROOT/format3d"
+//
+// $DATASET_ROOT is wherever your source dataset lives — it differs
+// between machines, so it is an argument, never a constant.
 //
 // Each shape gets emitted as all three formats so the gallery
 // gets variety across the engine pipelines we now own natively.

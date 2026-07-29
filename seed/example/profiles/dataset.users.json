@@ -1,0 +1,20 @@
+[
+  {
+    "username": "rowan.pike",
+    "full_name": "Rowan Pike",
+    "email": "rowan.pike@example.invalid",
+    "primary_team": "Environment"
+  },
+  {
+    "username": "iris.calloway",
+    "full_name": "Iris Calloway",
+    "email": "iris.calloway@example.invalid",
+    "primary_team": "Environment"
+  },
+  {
+    "username": "devi.raman",
+    "full_name": "Devi Raman",
+    "email": "devi.raman@example.invalid",
+    "primary_team": "Audio"
+  }
+]

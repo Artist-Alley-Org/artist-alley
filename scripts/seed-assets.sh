@@ -16,7 +16,7 @@
 #                            [--shuffle]
 #
 # Examples:
-#   ./scripts/seed-assets.sh /mnt/d/Projects/Snapdex/datasets/cards --limit 200
+#   ./scripts/seed-assets.sh "$SOME_IMAGE_DIR" --limit 200
 #   AA_SESSION=$(psql ... -tA -c "SELECT session FROM user WHERE ref=1") \
 #     ./scripts/seed-assets.sh ./photos --limit 50
 #

@@ -14,8 +14,7 @@
 # POST /posts with members[].asset_id.
 #
 # Usage:
-#   AA_SESSION=$(...) python3 scripts/seed-posts.py \
-#     /mnt/d/Projects/Snapdex/datasets/cards 200
+#   AA_SESSION=$(...) python3 scripts/seed-posts.py "$SOME_IMAGE_DIR" 200
 #
 # The first positional arg is the source dir; second is the target
 # post count (default 200). Auth via AA_SESSION env or --session.

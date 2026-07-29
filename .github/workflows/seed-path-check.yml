@@ -1,0 +1,59 @@
+# Seed host-path gate.
+#
+# seed/ is published. Over 51 files it accumulated one workstation's
+# directory layout, a NAS share path, and the paths of two unrelated
+# private projects — enough for a reader to infer what else was on the
+# machine, and useless to anyone trying to seed their own instance
+# (issue #715).
+#
+# It accumulated because nothing was watching. This is the same shape of
+# gate as adr-frontmatter-check.yml: cheap, narrow, and it runs on the
+# repo that owns the files.
+#
+# See scripts/check-seed-paths.sh for exactly what is rejected, and
+# seed/README.md for what to do instead (take the root as a flag or an
+# environment variable).
+
+name: Seed path check
+
+on:
+  pull_request:
+    paths:
+      - "seed/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - ".gitignore"
+      - "app/**"
+
+concurrency:
+  group: seed-path-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate seed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The whole tracked tree every run, not just the changed files:
+      # the private-name half of the check is repo-wide by design, and
+      # a full scan is well under a second. No third-party deps — the
+      # checker is stdlib `re` over `git ls-files`.
+      #
+      # Invoked through `bash` rather than as `./script` — same as
+      # adr-frontmatter-check.yml and mdx-hazard-check.yml. The scripts
+      # in this repo are not uniformly mode 755 (core.filemode is off on
+      # the WSL checkouts they get written from), and a lost +x bit
+      # should not turn this gate into a red X for the wrong reason.
+      - name: Run checker
+        run: bash scripts/check-seed-paths.sh

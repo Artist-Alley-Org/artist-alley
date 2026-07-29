@@ -1,0 +1,13 @@
+[
+  {
+    "id": "2fd02ddc-f1cb-5773-8fb6-d06bd2f28678",
+    "name": "Harbour District",
+    "featured": true,
+    "visibility": "public"
+  },
+  {
+    "id": "e27b3834-8f52-5eff-92f6-be1c6b201402",
+    "name": "Studio Reference",
+    "visibility": "org-only"
+  }
+]

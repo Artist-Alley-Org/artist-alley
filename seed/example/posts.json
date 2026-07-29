@@ -1,0 +1,44 @@
+[
+  {
+    "id": "06250225-5778-51d0-86b3-ac35a392afda",
+    "title": "Harbour district — first pass",
+    "description": "Silhouette sketch plus the tile test it drove. Camera path still open.",
+    "asset_ids": [
+      "a57ca2f1-d252-5b12-be5a-954a982cbc72",
+      "efb9f07d-98f3-56af-8cfb-228d7de392f6"
+    ],
+    "author_username": "rowan.pike",
+    "collection_name": "Harbour District",
+    "team_name": "Environment",
+    "workflow_state": "approved",
+    "tags": ["concept", "environment"],
+    "created_at": "2026-03-09T17:00:00Z",
+    "updated_at": "2026-03-09T17:00:00Z"
+  },
+  {
+    "id": "c16896ef-3f48-5440-8b4b-39b5e6bec2a7",
+    "title": "Ambience loop test",
+    "description": "One clip, one question: does the loop point click?",
+    "asset_ids": ["2388d7ee-bf2b-513b-9ef0-4483339e1b7e"],
+    "author_username": "devi.raman",
+    "collection_name": "Harbour District",
+    "team_name": "Audio",
+    "workflow_state": "approved",
+    "tags": ["audio"],
+    "created_at": "2026-03-07T10:10:00Z",
+    "updated_at": "2026-03-07T10:10:00Z"
+  },
+  {
+    "id": "2d50f938-711a-52ff-a4c1-dd1e13e27d8c",
+    "title": "Prop blockout for review",
+    "description": "Placeholder geometry so the 3D viewer has something to open.",
+    "asset_ids": ["5e3f721c-e64f-58f5-84e5-71efb01b5b3a"],
+    "author_username": "iris.calloway",
+    "collection_name": "Harbour District",
+    "team_name": "Environment",
+    "workflow_state": "draft",
+    "tags": ["3d"],
+    "created_at": "2026-03-08T13:20:00Z",
+    "updated_at": "2026-03-08T13:20:00Z"
+  }
+]

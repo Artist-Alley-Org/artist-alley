@@ -1,0 +1,169 @@
+[
+  {
+    "id": "a57ca2f1-d252-5b12-be5a-954a982cbc72",
+    "asset_type": "image",
+    "title": "Harbour district — concept sketch",
+    "description": "First silhouette pass on the waterfront. Camera path is not locked yet, so nothing here is final.",
+    "file_path": "files/concept-sketch.svg",
+    "file_extension": "svg",
+    "sensitivity_tier": "public",
+    "archive_state": "active",
+    "owner_username": "rowan.pike",
+    "collection_name": "Harbour District",
+    "team_name": "Environment",
+    "tags": ["concept", "environment", "harbour"],
+    "workflow_state": "approved",
+    "metadata": {
+      "rights": {
+        "license": "CC0-1.0",
+        "attribution": "Artist Alley worked example"
+      }
+    },
+    "field_values": {
+      "pipeline_stage": "Greybox",
+      "revision_count": 3,
+      "target_platforms": ["PC", "Console"],
+      "naming_compliant": true
+    },
+    "review_notes": "Silhouette reads well at distance. Push the far towers back a step before the texture pass.",
+    "reviewer_username": "iris.calloway",
+    "created_at": "2026-03-02T09:14:00Z",
+    "updated_at": "2026-03-09T16:40:00Z"
+  },
+  {
+    "id": "efb9f07d-98f3-56af-8cfb-228d7de392f6",
+    "asset_type": "image",
+    "title": "Harbour district — tileset preview",
+    "description": "Flat-colour tile test used to check the atlas packing.",
+    "file_path": "files/tileset-preview.png",
+    "file_extension": "png",
+    "sensitivity_tier": "team",
+    "archive_state": "draft",
+    "owner_username": "iris.calloway",
+    "collection_name": "Harbour District",
+    "team_name": "Environment",
+    "tags": ["texture", "tileset"],
+    "workflow_state": "in_review",
+    "metadata": {
+      "rights": {
+        "license": "CC0-1.0",
+        "attribution": "Artist Alley worked example"
+      }
+    },
+    "field_values": {
+      "pipeline_stage": "Pass 1",
+      "revision_count": 1,
+      "naming_compliant": false
+    },
+    "review_notes": "",
+    "reviewer_username": "",
+    "created_at": "2026-03-04T11:02:00Z",
+    "updated_at": "2026-03-04T11:02:00Z"
+  },
+  {
+    "id": "bd3e031f-702d-5ca8-8edd-177185a2175d",
+    "asset_type": "document",
+    "title": "Harbour district — pipeline notes",
+    "description": "Blockout order, texture budget, and when to ping a reviewer.",
+    "file_path": "files/pipeline-notes.md",
+    "file_extension": "md",
+    "sensitivity_tier": "team",
+    "archive_state": "active",
+    "owner_username": "rowan.pike",
+    "collection_name": "Harbour District",
+    "team_name": "Environment",
+    "tags": ["notes", "pipeline"],
+    "workflow_state": "approved",
+    "metadata": {},
+    "field_values": {},
+    "review_notes": "",
+    "reviewer_username": "",
+    "created_at": "2026-03-02T09:20:00Z",
+    "updated_at": "2026-03-05T08:11:00Z"
+  },
+  {
+    "id": "2388d7ee-bf2b-513b-9ef0-4483339e1b7e",
+    "asset_type": "audio",
+    "title": "Harbour ambience — loop test",
+    "description": "Half-second tone used to check the audio waveform preview.",
+    "file_path": "files/ambient-loop.wav",
+    "file_extension": "wav",
+    "sensitivity_tier": "public",
+    "archive_state": "active",
+    "owner_username": "devi.raman",
+    "collection_name": "Harbour District",
+    "team_name": "Audio",
+    "tags": ["audio", "ambience"],
+    "workflow_state": "approved",
+    "metadata": {
+      "rights": {
+        "license": "CC0-1.0",
+        "attribution": "Artist Alley worked example"
+      }
+    },
+    "field_values": {
+      "pipeline_stage": "Pass 1"
+    },
+    "review_notes": "Loop point clicks. Crossfade it.",
+    "reviewer_username": "rowan.pike",
+    "created_at": "2026-03-06T14:31:00Z",
+    "updated_at": "2026-03-07T10:05:00Z"
+  },
+  {
+    "id": "5e3f721c-e64f-58f5-84e5-71efb01b5b3a",
+    "asset_type": "3d",
+    "title": "Prop blockout",
+    "description": "Single-triangle placeholder standing in for a real blockout mesh.",
+    "file_path": "files/prop-blockout.gltf",
+    "file_extension": "gltf",
+    "sensitivity_tier": "public",
+    "archive_state": "active",
+    "owner_username": "iris.calloway",
+    "collection_name": "Harbour District",
+    "team_name": "Environment",
+    "tags": ["3d", "blockout"],
+    "workflow_state": "draft",
+    "metadata": {
+      "rights": {
+        "license": "CC0-1.0",
+        "attribution": "Artist Alley worked example"
+      }
+    },
+    "field_values": {
+      "pipeline_stage": "Greybox",
+      "target_platforms": ["All"]
+    },
+    "review_notes": "",
+    "reviewer_username": "",
+    "created_at": "2026-03-08T13:00:00Z",
+    "updated_at": "2026-03-08T13:00:00Z"
+  },
+  {
+    "id": "0ddb8976-aea8-5558-92b0-0f8bac5caea4",
+    "asset_type": "image",
+    "title": "Unreleased logo mark",
+    "description": "Restricted example — a tier the browse surfaces hide from anyone without access.",
+    "file_path": "files/logo-mark.svg",
+    "file_extension": "svg",
+    "sensitivity_tier": "restricted",
+    "archive_state": "active",
+    "owner_username": "iris.calloway",
+    "collection_name": "Studio Reference",
+    "team_name": "Environment",
+    "tags": ["branding"],
+    "workflow_state": "final",
+    "metadata": {
+      "rights": {
+        "license": "CC0-1.0",
+        "attribution": "Artist Alley worked example"
+      }
+    },
+    "field_values": {
+      "naming_compliant": true
+    },
+    "review_notes": "",
+    "reviewer_username": "",
+    "created_at": "2026-02-18T15:45:00Z",
+    "updated_at": "2026-02-20T09:30:00Z"
+  }
+]

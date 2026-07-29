@@ -4,12 +4,11 @@
 # artifact on every PR + every push to a long-lived branch.
 #
 # Self-hosted only because:
-#   1. The `site_a` seed dataset lives at
-#      /mnt/blackbox_archives/datasets/artist_alley/site_a on the
-#      runner's mount. ~30 of the 133 standalone tests walk seeded
-#      posts / users / federation rows; without the dataset they
-#      fail on empty result sets, not on the regression they're
-#      meant to catch.
+#   1. The `site_a` seed dataset is on a share only the
+#      self-hosted runner mounts (SITE_A_PATH below). ~30 of the
+#      133 standalone tests walk seeded posts / users / federation
+#      rows; without the dataset they fail on empty result sets,
+#      not on the regression they're meant to catch.
 #   2. Standard docker on the self-hosted runner publishes ports
 #      normally.
 #

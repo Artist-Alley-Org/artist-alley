@@ -1,146 +1,125 @@
-# Seed instructions — how to populate an Artist Alley instance
+# Seed instructions — running `aa seed`
 
-This document is for **operators** populating an Artist Alley instance
-with the assembled seed dataset (see `seed/scripts/sanitize_and_assemble.py`
-for how the dataset is built). The dataset lives on the archive at
-`/mnt/blackbox_archives/datasets/artist_alley/{site_a,site_b}`.
+Operational reference for the loader: flags, phase order, and the things
+that have bitten people. For *what to put in the files*, see
+[SCHEMA.md](SCHEMA.md); for *where to get content*, see
+[README.md](README.md).
 
-The loader is **`aa seed`** — a subcommand of the app binary (#321).
-It writes **straight to postgres + the storage backend** via the app's
-own service layer: no running server, no admin login, no HTTP. It reads
-its `config.Load()` environment (DB creds, `AA_STORAGE_*`, keys) exactly
-like the server, so the simplest way to run it is a one-off `docker
-compose run` off the app image — same DB, same storage volume, same
-network as the instance you're seeding.
+`aa seed` is a subcommand of the app binary (#321). It writes **straight
+to Postgres and the storage backend** through the app's own service
+layer: no running server, no admin login, no HTTP. It reads its
+`config.Load()` environment — DB credentials, `AA_STORAGE_*`, keys —
+exactly like the server, so the simplest way to run it is a one-off
+`docker compose run` off the app image: same database, same storage
+volume, same network as the instance you are seeding.
 
 ## Quick start
 
-Against a running dev stack (`AA_BOOTSTRAP_DEFAULT_ADMIN=1` in
-`docker-compose.yml` gives the bootstrap admin `admin /
-ArtistAlleyMogul`, which owns the seeded collections):
+Against a running dev stack. `AA_BOOTSTRAP_DEFAULT_ADMIN=1` in
+`docker-compose.yml` creates the bootstrap admin that owns seeded
+collections.
 
 ```bash
 docker compose run --rm --no-deps \
-    -v /mnt/blackbox_archives/datasets/artist_alley/site_a:/seed/site:ro \
-    -v "$PWD/seed/profiles:/seed/profiles:ro" \
-    app seed --site /seed/site --catalogue /seed/profiles
+    -v "$PWD/seed/example:/seed/example:ro" \
+    app seed --site /seed/example --catalogue /seed/example/profiles
 ```
 
-Flags:
+Swap the two mounts for your own dataset and catalogue. Both are bind
+mounts of *host* paths — `docker compose run -v` resolves the source on
+the host daemon, which is why they are arguments and not constants.
 
-- `--site` — the populated site dir (`MANIFEST.json` + `posts.json` +
-  the asset bytes). Required.
-- `--catalogue` — the profiles dir (`seed/profiles`). Default
-  `seed/profiles`.
-- `--reset` — TRUNCATE the content tables + drop the fictional
-  (non-admin) users before loading, so a re-run starts clean. The
-  bootstrap admin + baseline lookups survive. Omit on a fresh DB.
-- `--limit-per-extension N` — keep at most N assets per file extension
-  (cascade-dropping posts that reference a cut asset). CI/dogfood use
-  `3` to shrink ~970 assets to ~45 while keeping every extension +
-  enough rows to exercise pagination.
+## Flags
 
-For the dogfood studio-b stack, `scripts/dogfood/seed.sh --site <dir>`
-wraps the same call against the `app-b` service.
+| Flag | Default | What it does |
+|---|---|---|
+| `--site` | — | **Required.** The site directory: `MANIFEST.json`, `posts.json`, and the asset bytes. |
+| `--catalogue` | `seed/profiles` | The catalogue directory: the four `dataset.*.json` files. |
+| `--reset` | off | TRUNCATE the content tables and drop the fictional (non-admin) users before loading, so a re-run starts clean. The bootstrap admin and the baseline lookups survive. Omit on a fresh database. |
+| `--limit-per-extension N` | `0` (no limit) | Keep at most N assets per file extension, cascade-dropping posts that referenced a cut asset. CI uses `3` to shrink a ~970-asset dataset to ~45 while keeping every extension and enough rows to exercise pagination. |
+| `--previews` | `true` | Enqueue a preview job per asset so the seed produces derivatives — card thumbnails, video hover sprites. `false` gives a fast metadata-only seed with no thumbnails. |
 
-## What `aa seed` does
+Jobs are enqueued at backfill priority, so a bulk seed can never preempt
+interactive work. The running app's worker pool drains them; a seed run
+against a stopped app leaves the queue full until it starts.
 
-Nine dependency-ordered phases (mirrors the retired apply.py, minus the
-HTTP round-trips and the separate timestamp-backfill pass):
+`aa seed` owns its own prerequisites — it migrates the schema and
+bootstraps the admin before loading, both idempotent and both race-safe,
+so it works against a database nothing has ever touched (#574).
 
-1. **resolveLookups** — read the baseline-seeded `workflow_states` +
-   `asset_types` and build the maps the later phases resolve against.
-   The bootstrap admin's `user.ref` is looked up here (owns collections).
-2. **applyUsers** — insert each fictional user (+ a federation keypair),
-   idempotent on username.
-3. **applyTeams** — teams + self-closure rows; slug derived from name.
+## Phases
+
+Thirteen, dependency-ordered. It exits non-zero on any phase failure,
+and that exit code is the verification gate.
+
+1. **resolveLookups** — read the baseline `workflow_states` and
+   `asset_types`, resolve the bootstrap admin's ref.
+2. **applyUsers** — insert each catalogue user plus a federation
+   keypair. Idempotent on username.
+3. **applyTeams** — teams and their self-closure rows; slug from name.
 4. **applyMemberships** — link each user to their `primary_team`.
-5. **applyFields** — custom field definitions, idempotent on code.
-6. **applyCollections** — one per project, owned by the bootstrap admin.
-7. **applyAssets** — for each MANIFEST asset: write the bytes into the
-   content-addressed store (hash), then insert the asset row + tags +
-   collection membership + typed field values. A byte-identical asset
-   the same owner already holds is collapsed by the
-   `(owner_user_ref, file_hash)` unique index — the same refusal the
-   app gives a duplicate re-upload — so site_a's one such duplicate
-   yields **970** rows, not 971 (see #339).
-8. **applyPosts** — post row + members (asset_ids) + tags + collection
-   linkage. A post whose referenced assets were all dropped (dedup or
-   `--limit-per-extension`) is skipped; site_a lands **633** posts.
-9. **applyComments** — forge a reviewer comment for each asset with
-   non-empty `review_notes`, threaded onto the first post containing
-   that asset. Deterministic comment UUID → idempotent.
+5. **applyFollows** — derived follow graph.
+6. **applyFields** — custom field definitions, idempotent on code.
+7. **applyCollections** — one per catalogue entry *that has content*,
+   owned by the bootstrap admin.
+8. **applyFeatured** — one public placement per created collection
+   flagged `featured`.
+9. **applyAssets** — bytes into the content-addressed store, then the
+   asset row, tags, collection membership, companions, typed field
+   values, preview job.
+10. **applyPosts** — post row, members, tags, collection linkage.
+11. **applyLikes** — derived.
+12. **applyComments** — a reviewer comment per asset with a
+    `review_notes` + `reviewer_username` pair, threaded onto the first
+    post containing that asset.
+13. **applyPostComments** — derived.
 
-Timestamps are written inline at insert time (each asset/post carries
-its dataset `created_at`/`updated_at` directly), so no separate backfill
-phase is needed. `aa seed` logs per-phase counts and a final
-`seed.complete` tally, and exits non-zero on any phase failure — that
-exit code is the verification gate (it replaces apply.py's
-`--strict-verify`).
+Timestamps are written inline at insert time, so there is no separate
+backfill pass. Each phase logs its counts; the run ends with a
+`seed.complete` tally.
 
-Full site_a parity: **31 users / 11 teams / 18 collections / 970 assets
-/ 633 posts / 143 comments.**
+## Wrappers
 
-## Brand workspaces — deferred per ADR 0025
-
-The dataset includes `dataset.brand_workspaces.json` (Echo + Mirror),
-but the brand-workspace API surface hasn't shipped (ADR 0025, deferred
-until post-1.22 federation work stabilises). `aa seed` doesn't create
-workspaces; posts that reference `brand_workspace` keep it in metadata,
-and the catalogue file is ready for when the feature lands.
-
-## What's where
-
-| File | Purpose |
-|---|---|
-| `app/internal/seed/` | The `aa seed` loader — Runner + phases + sqlc queries, exercised by `handler_test.go` / the Go suite (`./scripts/test.sh --go`). |
-| `app/cmd/aa/main.go` | The `seed` subcommand dispatch + flag parsing + `--reset`. |
-| `seed/profiles/dataset.users.json` | 31 fictional artists + reviewers — usernames, full names, primary team. |
-| `seed/profiles/dataset.teams.json` | 11 teams. |
-| `seed/profiles/dataset.collections.json` | 18 projects. |
-| `seed/profiles/dataset.field_definitions.json` | 12 custom field defs. |
-| `seed/profiles/dataset.workflow.json` | Documents the seed's expected workflow states (mapped onto AA's actual states at runtime). |
-| `seed/profiles/dataset.brand_workspaces.json` | Echo + Mirror — **not applied yet** (deferred). |
-| `seed/profiles/dataset.MANIFEST.json` | Dataset inventory summary (per-site expected asset counts). |
-| `<site>/MANIFEST.json` | Site-specific asset records (primary source). |
-| `<site>/posts.json` | Site-specific post records (primary source). |
-| `<site>/ATTRIBUTIONS.md` | Per-source licensing for the public dataset distribution. |
+`scripts/dogfood/seed.sh --site <dir>` runs the same call against the
+`app-b` service for the dogfood second stack.
 
 ## Operational gotchas
 
-### 1. Federation tests vs running app — mutually exclusive
+### Do not run a seed and the test suite at once
 
-`scripts/test.sh` stops the dev app container before running federation
-tests (the LISTEN/NOTIFY dispatcher can't share a database with a
-federation test manipulating it). Don't run `aa seed` concurrently with
-`scripts/test.sh` against the same target.
+`./scripts/test.sh` runs against a disposable `<dev>_test` database, but
+the federation LISTEN/NOTIFY dispatcher cannot share a database with a
+federation test manipulating it. Do not point `aa seed` at the same
+target while the suite is running.
 
-### 2. AA_MASTER_KEY must be identical across paired instances
+### Paired instances need the same `AA_MASTER_KEY`
 
-For cross-instance encrypted federation (1.22.I), the at-rest key wraps
-the per-user private keys — so site_a and site_b need the **same**
-`AA_MASTER_KEY` to decrypt each other's wrapped peer keys. Set the same
-value on both instances (an operator concern, not the seeder's).
+For cross-instance encrypted federation the at-rest key wraps each
+user's private key, so two instances that federate must share the value
+to decrypt each other's wrapped peer keys. An operator concern, not the
+seeder's.
 
-### 3. Seed-before-boot vs seed-after-boot
+### Seed before boot vs after boot
 
-Run **after** the app boots and the dispatcher's LISTEN/NOTIFY catches
-each insert naturally. Run **before** boot (fresh DB, then start the
-app) and the dispatcher's startup probe processes the whole activities
-table in one sweep — a single large "dispatch backlog" burst on first
-boot. Neither is wrong; the after-boot path matches production shape,
-the before-boot path is faster end-to-end.
+Run **after** the app boots and the dispatcher's LISTEN/NOTIFY picks up
+each insert naturally. Run **before** boot — fresh database, then start
+the app — and the dispatcher's startup probe sweeps the whole activities
+table in one burst. Neither is wrong: after-boot matches production
+shape, before-boot is faster end to end.
 
-## Things to NOT do
+### `--reset` is destructive and means it
 
-- **Don't drop Layer B from site_b.** That's the local dev set; it
-  keeps the IP/personal content. Only site_a is Layer A only.
-- **Don't hand-dedupe the catalogue by content hash.** site_a + site_b
-  deliberately carry byte-identical files for CAS dedup testing.
-  `aa seed` inserts every catalogue asset and lets the storage layer +
-  the `(owner_user_ref, file_hash)` unique index collapse same-owner
-  duplicates exactly as a real re-upload would — that's the behaviour
-  under test, not something to pre-empt.
-- **Don't follow the `external_id` field.** It's the original CSV-row
-  ID (`AA-XXXX`) — preserved as metadata; the primary key is the `id`
-  UUID.
+It truncates the content tables and deletes non-admin users. There is no
+confirmation prompt. It is for re-seeding a dev or demo instance, not
+for anything you would miss.
+
+## Where the loader lives
+
+| Path | What |
+|---|---|
+| `app/cmd/aa/main.go` | The `seed` subcommand: flag parsing, migrate, bootstrap, `--reset`. |
+| `app/internal/seed/catalogues.go` | Catalogue + manifest structs and loading. |
+| `app/internal/seed/runner.go` | Every phase. |
+| `app/internal/seed/reset.go` | What `--reset` truncates. |
+| `seed/profiles/` | The catalogue the public dataset expects. |
+| `seed/example/` | A complete, runnable worked example. |

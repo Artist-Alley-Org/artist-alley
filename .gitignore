@@ -91,9 +91,9 @@ Thumbs.db
 .docker-data/
 
 # --- Seed apply runtime state ---
-# Created by seed/scripts/apply.py, one per target instance (e.g.
-# apply-state-localhost-b.json). Local to each dogfood run; never
-# tracked.
+# Left behind by the retired HTTP-era seed loader, one per target
+# instance (e.g. apply-state-localhost-b.json). `aa seed` writes none
+# of these; the rule stays so old working copies don't surface them.
 apply-state-*.json
 
 # --- Reference-only plugin dirs (kept locally, used as blueprints) ---
@@ -137,7 +137,11 @@ app/aa-abr-extract
 /epub-tool-*.png
 /test-*.png
 /firing_squad/
-kaggle.txt
+# Root-level .txt files are local scratch — notes, pasted tokens,
+# throwaway output. None of it belongs in a public repo, and naming the
+# individual files here would defeat the point (#715). Anything genuinely
+# meant to ship goes in a subdirectory or gets `git add -f`.
+/*.txt
 .dogfood-runs
 app/.cache/
 logos/*

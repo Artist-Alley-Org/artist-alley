@@ -1,3 +1,11 @@
-# Internet-fetched cache — bytes, not source-of-truth
+# Asset bytes are not committed here. The worked example in example/ is
+# the one exception — six files, all tiny, all generated or CC0 —
+# because a template you have to assemble before you can run it is not
+# a template.
+#
+# Keep your own dataset outside the repo and point --site at it. See
+# README.md.
 internet-fetched/
+site/
+sites/
 *.tmp
