@@ -53,9 +53,19 @@ test.describe('UI-13 browse + search', () => {
 
   test('feed filter tabs are reachable', async ({ page }) => {
     await page.goto('/');
-    const tabs = ['Team', 'Trending', 'Latest', 'Following'];
+    // Two tabs, not four. `Team` and `Trending` were removed in #691/#705:
+    // they were never wired to the API — the page sent them as an undeclared
+    // `filter=` param the server ignored, so both silently returned `latest`.
+    // The server's `feed` enum has only ever been [latest, following].
+    // `Team` returns with the teams browse surface in #684.
+    const tabs = ['Latest', 'Following'];
     for (const t of tabs) {
       await expect(page.getByRole('tab', { name: t })).toBeVisible();
+    }
+    // Guard the removal too — a tab reappearing here means the UI is offering
+    // a filter the API cannot serve, which is the bug #691 fixed.
+    for (const gone of ['Team', 'Trending']) {
+      await expect(page.getByRole('tab', { name: gone })).toHaveCount(0);
     }
   });
 
