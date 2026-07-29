@@ -9945,15 +9945,7 @@ components:
               enabled: { type: boolean }
               display_name: { type: string }
               config:
-                type: object
-                additionalProperties: true
-                description: |
-                  Per-kind opaque config. For LDAP: server URL, base
-                  DN, bind credentials, search filter. For SAML: IdP
-                  metadata URL, SP entity ID, certs. For OAuth
-                  (Google/GitHub/X): client_id, client_secret,
-                  redirect_uri, scopes. Validated at use time by the
-                  integration code, not by this endpoint.
+                $ref: '#/components/schemas/SSOProviderConfig'
         self_registration:
           type: object
           description: |
@@ -9977,6 +9969,148 @@ components:
                 Role name assigned to fresh signups. Default "Base".
                 Operators can point this at a more restricted role
                 for moderated communities.
+    SSOProviderConfig:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-kind configuration for one SSO provider. Every field is
+        optional and which subset applies is decided by the provider's
+        `kind` — OAuth fields for `google`/`github`/`x`, the LDAP block
+        for `ldap`, the SAML block for `saml`.
+
+        This schema is CLOSED (`additionalProperties: false`) on
+        purpose (#718). It used to be a free-form map, which meant the
+        read path handed every stored bind password, client secret and
+        SP private key to anyone holding `system.config.read`. Naming
+        each field is what lets the three secrets be marked write-only;
+        a free-form remainder would put the leak straight back, because
+        the server cannot know which unknown key holds a credential.
+
+        Nothing consumes these values at login time yet — SSO
+        enforcement lands in a later phase. The names follow the
+        upstream protocol vocabulary (RFC 6749 for OAuth, RFC 4511 for
+        LDAP, SAML 2.0 core/bindings) so the integration code inherits
+        them rather than renaming them.
+      properties:
+        # --- OAuth 2.0 / OIDC: kind = google | github | x ---
+        client_id:
+          type: string
+          description: |
+            OAuth client identifier issued by the provider. Public by
+            definition (it travels in the authorization URL), so it is
+            returned on read.
+        client_secret:
+          type: string
+          format: password
+          writeOnly: true
+          description: |
+            Write-only. Provide to set or rotate this provider's OAuth
+            client secret; omit (or send an empty string) on PATCH to
+            keep the current value. The response NEVER echoes this
+            field — read `client_secret_set` instead to check whether
+            one is on file. A stored credential has no read-back
+            workflow, so it is not returned to any capability,
+            `system.admin` included (#718).
+        client_secret_set:
+          type: boolean
+          readOnly: true
+          description: |
+            True when an OAuth client secret is currently stored for
+            this provider. Set by the server on GET responses; ignored
+            if sent on PATCH.
+        redirect_uri:
+          type: string
+          description: |
+            Absolute callback URL registered with the provider. Blank
+            means "derive it from the site base URL".
+        scopes:
+          type: array
+          items: { type: string }
+          description: |
+            Scopes requested at authorization time. Blank means the
+            integration's per-kind default.
+        # --- LDAP: kind = ldap ---
+        server_url:
+          type: string
+          description: 'LDAP server URL, e.g. `ldaps://ldap.example.org:636`.'
+        start_tls:
+          type: boolean
+          description: |
+            Issue StartTLS on a plain `ldap://` connection. Ignored for
+            `ldaps://`, which is already wrapped.
+        base_dn:
+          type: string
+          description: 'Search base for user lookups, e.g. `ou=people,dc=example,dc=org`.'
+        bind_dn:
+          type: string
+          description: |
+            DN the server binds as to perform user searches. A DN is an
+            identifier, not a credential — returned on read. Its
+            password is `bind_password`.
+        bind_password:
+          type: string
+          format: password
+          writeOnly: true
+          description: |
+            Write-only. Password for `bind_dn`. Provide to set or
+            rotate; omit (or send an empty string) on PATCH to keep the
+            current value. The response NEVER echoes this field — read
+            `bind_password_set` instead. Not returned to any
+            capability, `system.admin` included (#718).
+        bind_password_set:
+          type: boolean
+          readOnly: true
+          description: |
+            True when a bind password is currently stored. Set by the
+            server on GET responses; ignored if sent on PATCH.
+        user_search_filter:
+          type: string
+          description: |
+            LDAP filter template for locating a user, e.g.
+            `(&(objectClass=person)(uid=%s))`. Blank means the
+            integration's default.
+        # --- SAML 2.0: kind = saml ---
+        idp_metadata_url:
+          type: string
+          description: |
+            URL of the identity provider's SAML metadata document.
+            Preferred over pasting the entity ID and certificate by
+            hand — the integration refreshes from it.
+        idp_entity_id:
+          type: string
+          description: IdP entity ID, when metadata is configured by hand.
+        idp_certificate:
+          type: string
+          description: |
+            IdP signing certificate (PEM). A certificate is public
+            material — it is published in the IdP's own metadata — so
+            it is returned on read. The service provider's PRIVATE key
+            is `sp_private_key`, which is not.
+        sp_entity_id:
+          type: string
+          description: This service provider's entity ID as registered with the IdP.
+        sp_acs_url:
+          type: string
+          description: |
+            Assertion Consumer Service URL the IdP posts to. Blank
+            means "derive it from the site base URL".
+        sp_private_key:
+          type: string
+          format: password
+          writeOnly: true
+          description: |
+            Write-only. PEM private key this service provider signs
+            SAML requests with. Provide to set or rotate; omit (or send
+            an empty string) on PATCH to keep the current value. The
+            response NEVER echoes this field — read
+            `sp_private_key_set` instead. Not returned to any
+            capability, `system.admin` included (#718).
+        sp_private_key_set:
+          type: boolean
+          readOnly: true
+          description: |
+            True when an SP private key is currently stored. Set by the
+            server on GET responses; ignored if sent on PATCH.
     AIInferenceConfig:
       type: object
       description: |
@@ -10285,12 +10419,43 @@ components:
                   provider. Set by the server on GET responses;
                   ignored if sent on PATCH.
               config:
-                type: object
-                additionalProperties: true
-                description: |
-                  Per-kind opaque config (temperature defaults,
-                  system prompts, rate limits, ...). Integration code
-                  owns the schema.
+                $ref: '#/components/schemas/AIProviderConfig'
+    AIProviderConfig:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-provider inference defaults. Closed schema, for the same
+        reason as SSOProviderConfig (#718): a free-form map on a
+        provider record is where credentials end up, and the read path
+        cannot tell an unknown key holding a rate limit from one
+        holding a token. Every field here is a tuning knob; the
+        provider's one credential is `api_key`, which is write-only.
+      properties:
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          description: Sampling temperature. Unset = the model's own default.
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Nucleus-sampling cutoff. Unset = the model's own default.
+        max_output_tokens:
+          type: integer
+          minimum: 0
+          description: Cap on generated tokens per request. 0 = no override.
+        system_prompt:
+          type: string
+          description: Prepended to every request routed to this provider.
+        request_timeout_seconds:
+          type: integer
+          minimum: 0
+          description: Per-request timeout. 0 = the client default.
+        rate_limit_rpm:
+          type: integer
+          minimum: 0
+          description: Client-side requests-per-minute ceiling. 0 = unthrottled.
     AIEditConfig:
       type: object
       description: |

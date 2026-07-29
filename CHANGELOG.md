@@ -7,6 +7,37 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Security
+
+- **SSO provider credentials are no longer readable.** `GET /admin/system/auth`
+  returned each provider's whole configuration blob verbatim — which is where the
+  OAuth client secret, the LDAP bind password and the SAML service-provider private
+  key live. Setting one of those needs `system.auth.write`; reading the endpoint only
+  needs `system.config.read`, so the narrower write capability was protecting nothing.
+  The three secrets are now write-only: the response carries `client_secret_set`,
+  `bind_password_set` and `sp_private_key_set` booleans and never the values, to any
+  capability, `system.admin` included. Everything that is not a credential still comes
+  back in full — including the OAuth client ID, the LDAP bind DN and the IdP
+  certificate, which look like secrets and are not (#718).
+
+  The blob was free-form, and that is the part that got fixed rather than patched.
+  Denylisting the field names we know today fails open on the first one somebody adds,
+  so `config` is now a closed, typed, per-kind schema — OAuth, LDAP and SAML fields
+  named after their own protocol vocabulary, with no free-form remainder in which a
+  credential could hide. The AI provider record's `config` had the identical shape and
+  is closed the same way; #711 had made its `api_key` write-only but left the map
+  beside it returned in full.
+
+  Two knock-on changes come with it. Saving the auth settings now merges each
+  provider's stored secrets in from the database when the request omits them (or sends
+  them empty), because the admin page can no longer echo back what it never received —
+  without the merge, the first display-name edit would have wiped every stored
+  credential. And a failure to read the current settings during that save now aborts
+  the write instead of being tolerated, since it is the merge input rather than only an
+  audit record. The auth page grew the per-provider fields it never had; a configured
+  secret shows as "configured" and stays untouched unless you type a new one.
+  No-spec-impact.
+
 ### Added
 
 - **Operators can set their own instance logo.** The mark in the navbar and on the
