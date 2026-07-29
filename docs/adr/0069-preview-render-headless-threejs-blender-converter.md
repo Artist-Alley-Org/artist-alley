@@ -29,6 +29,10 @@ excerpt: >-
   formats three.js cannot parse. Amended 2026-07-27 (#500): Blender is
   not packaged at all — it left the image entirely (3.64 GB → 1.82 GB)
   and returns as a plugin, so the three.js worker is the only renderer.
+  Amended 2026-07-29 (#689): "reusing the same code as the viewer" was
+  aspirational — the renderer carried its own loader and rendered every
+  OBJ and every unlit glTF untextured. The load path is now one shared
+  module both surfaces import.
 ---
 ## Context
 
@@ -88,6 +92,24 @@ converts — and only for what three.js cannot parse.**
    exactly where the Blender job wrote them today. Because it is the
    same renderer as the viewer, the thumbnail and the live view match
    (WYSIWYG).
+
+   *Amended 2026-07-29 (#689).* As shipped in #498, this was not true:
+   `scripts/threejs/render.html` **reimplemented** the viewer's loader
+   rather than importing it, and the copy had no `MTLLoader` and no
+   material-upgrade pass. Every OBJ in the catalogue therefore rendered
+   as untextured white, and every `KHR_materials_unlit` glTF as a flat
+   unlit silhouette, while the viewer showed both correctly — for two
+   releases, behind comments in both files asserting the opposite. The
+   load path (loader dispatch, OBJ `.mtl` resolution, material
+   normalisation) and the default lighting constants now live in
+   `web/src/lib/3d/modelLoader.js` and `defaultLighting.js`, which the
+   viewer imports directly and which `worker.mjs` serves to `render.html`
+   at `/shared/` (the Dockerfiles copy them next to the worker). The
+   canonical home is under `web/` because the dev web container
+   bind-mounts only `./web` — that constraint is why the code was
+   duplicated in the first place, and serving the files from the worker
+   is what dissolves it. The lesson: a comment claiming a structural
+   guarantee is worse than no comment, because it stops anyone looking.
 
 3. **Blender is demoted to a format converter, invoked only for
    formats three.js cannot parse** — the proprietary DCC scenes
@@ -197,7 +219,11 @@ ModelHandler that no longer exists.
   Cycles-vs-three.js divergence.
 - **One rendering codebase.** The viewer's loaders and scene setup are
   reused headless; a format that renders in the viewer renders in the
-  thumbnail by construction.
+  thumbnail by construction. *(Amended 2026-07-29, #689: true only
+  since the shared `modelLoader.js` landed. The smoke test now asserts
+  it — every material must arrive as `MeshStandardMaterial` and the
+  textured fixtures must render textured, because "the poster has
+  non-transparent pixels" is a check flat white geometry passes.)*
 - **Slim base image.** Blender leaves the default image. *(Amended
   2026-07-27, #500: it leaves the product entirely and becomes a
   plugin, and the dependency measured 1.3 GB rather than the ~300 MB
