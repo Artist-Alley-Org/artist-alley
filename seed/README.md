@@ -18,12 +18,10 @@ emitted from one canonical source:
 | Profile | Where it ships | Content |
 |---|---|---|
 | `demo.assets.json` | Phase 1.48 public demo sandboxes at `demo.artist-alley.org` | **Layer A only** — public-safe (Kenney CC0, PixelSpaces, Google Fonts, UISketch, internet-fetched CC-BY/CC0 samples) |
-| `studio-a.assets.json` | Phase 1.22.I-a dogfood (Mirror Studios side) | Layer A + B — full curated set, ~600 assets, ~330 MB |
-| `studio-b.assets.json` | Phase 1.22.I-a dogfood (Adventureworks side) | Layer A + B — full curated set, ~600 assets, ~610 MB |
-| `dev.assets.json` | Solo developer DB re-seed | Layer A + B unified — everything in one instance |
+| `studio-a.assets.json`, `studio-b.assets.json`, `dev.assets.json` | Local dogfood + dev re-seed only | Layer A + B. **Not distributed** — Layer B is third-party material the project does not redistribute, so these profiles are only usable by the maintainer, who has the source archive. |
 
-`demo` and `dev` are byte-for-byte **aliases** of `studio-a` and
-`studio-b`. They used to be written before the upgrade pass ran, so
+`demo` and `dev` are byte-for-byte **aliases** of the two dogfood
+profiles. They used to be written before the upgrade pass ran, so
 every upgrade since #604 landed on `studio-{a,b}` and missed its own
 aliases — `demo.assets.json` shipped 971 records against `studio-a`'s
 1,007, and a demo re-seed would have dropped all 36 added videos with
@@ -54,9 +52,9 @@ seed/profiles/
 ├── dataset.brand_workspaces.json   Echo + Mirror (the 2 promoted franchises)
 ├── dataset.field_definitions.json  12 custom field definitions
 ├── dataset.workflow.json           5 states + 6 transitions
-├── studio-a.assets.json            Mirror Studios side
-├── studio-b.assets.json            Adventureworks side
-├── dev.assets.json                 Unified set
+├── studio-a.assets.json            local dogfood peer A
+├── studio-b.assets.json            local dogfood peer B
+├── dev.assets.json                 unified local set
 └── demo.assets.json                Layer A only
               │
               │  seed/scripts/fetch_gaps.py
