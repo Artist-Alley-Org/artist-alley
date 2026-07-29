@@ -45,6 +45,31 @@ where applicable, otherwise note "no-spec-impact."
   surface (#684), where the team-scoped query gets designed once. A browser that
   remembers "Team" or "Trending" from before opens on Latest (#691).
 
+### Fixed
+
+- **Six seed images were showing a fraction of their own artwork.** The Kenney pack's
+  Flash-exported sprite sheets carry a stale artboard — `viewBox="0 0 550 400"` on a
+  drawing that actually spans 2248x1120 units — and the rasteriser honoured it, so the
+  Platformer Pack Remastered background sheet shipped holding **8.8%** of its picture
+  and the Physics Assets material sheets held 19.7%. They did not read as broken;
+  they read as a legitimately cropped sheet, which is why two prior sweeps went past
+  them. Every source that declares a canvas is now measured against what it actually
+  draws, and reframed to its real extent when the two disagree. Sources whose canvas
+  is correct — 800 of the pool's 806 — render byte-for-byte as before. `aa`'s pool
+  builder grew `--rerender` so a rasteriser fix can reach a pool that already exists,
+  instead of being skipped as "already on disk" (#685). No-spec-impact.
+
+- **`detect_cropped_renders.mjs` is retired, not retuned.** It flagged 41% of a
+  known-good pool, which trains everyone to ignore it — and that is how the above
+  survived. Swept against ground truth over 9,504 combinations of its thresholds,
+  alpha cutoff, agreeing-edge count and minimum pixel floor, **none** found all six
+  genuinely lossy files and the best precision reached anywhere was 0.043. The signal
+  is not there to be tuned: edge coverage measures a drawing's silhouette where it
+  meets the frame, and that silhouette is identical whether the frame was right or
+  cut. `seed/scripts/probe_render_loss.mjs` is the crop gate now — it compares the
+  render against the source, covers all 1,031 pool sources rather than the 806 it used
+  to, and no longer counts its own measurement boundary as lost artwork (#685).
+
 ## [v0.7.0] — 2026-07-28 — Browse correctness, visibility security, and a real seed catalogue
 
 ### Security
