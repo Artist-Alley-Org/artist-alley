@@ -629,12 +629,14 @@ map to the milestones below.
 >
 > **What changed on 2026-07-27 and why.** v0.7.0's theme was *"operator configurability + browse polish"* — two releases in one, which is why it kept growing instead of closing. It has been split: the browse half keeps v0.7.0, and **two new milestones were inserted**, shifting everything from the old v0.8.0 upward by two. No issues were reassigned in that shift; the milestones themselves were renamed, so each carried its contents with it.
 >
+> **Scope correction 2026-07-29.** v0.8.0 had drifted into a catch-all: of its 12 open issues, eight had been filed in the preceding 48 hours and assigned to it *because it was the current milestone*, not because they matched its theme. Six moved out — #706 → v0.9.0, #212 → v0.10.0, #687 → v0.19.0 (rejoining #242, which already tracks native binaries as a v1.0 prerequisite), and #683/#714/#725 → a new release-less **seed & demo data** milestone. Seed and demo-dataset work does not gate a tag and no longer inflates release scope. v0.8.0 is now six issues with one subject.
+>
 > | Milestone | Theme |
 > |---|---|
 > | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
 > | **v0.7.0** *(current)* | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) |
-> | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine (#519/#520/#521), branding (#517), feature flags (#524) |
-> | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577) |
+> | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine: content & metadata config (#519), bulk/reprocessing maintenance (#521, partially phase-gated), and the operator toggles over them (#709, #552). Branding (#517) shipped. |
+> | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577), workflow triggers & notification rules (#520), default-view preferences (#706) |
 > | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* |
 > | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
 > | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
