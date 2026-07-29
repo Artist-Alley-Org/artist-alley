@@ -105,6 +105,7 @@ correct path forward.
 | `ops` | Operability, observability, deployment |
 | `infrastructure` | Storage, federation, networking |
 | `extensibility` | Add-ons, plugins, integrations |
+| `storage` | Object storage, retention, garbage collection |
 
 Areas are used for grouping in the sidebar and as filter facets
 on the ADR index page. Adding a new area is a code change in the
