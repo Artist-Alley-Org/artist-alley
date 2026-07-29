@@ -97,6 +97,22 @@ func (h *Handler) GetSetupStatus(
 	// same setting independently, so a stale or wrong value here
 	// cannot grant access, only misdraw a page.
 	publicMode := false
+	// Whether self-service signup is open rides along for the same
+	// reason (#712): the root layout has to decide whether a signed-out
+	// visitor may stay on /register before it knows whether a session
+	// exists, and this is the one call it has already made by then.
+	// Without it /register is unreachable to the only people who would
+	// ever want it.
+	//
+	// ONLY the boolean. This endpoint is unauthenticated, so the rest
+	// of SelfRegistrationConfig — the email-verification requirement,
+	// the default role — stays behind the admin auth-settings surface.
+	//
+	// Fails to false like public mode does, and for the same reason:
+	// POST /auth/register checks the setting itself and 403s when it is
+	// off, so a wrong value here can only misdraw a page, never open a
+	// closed install.
+	selfRegistration := false
 	if h.SysConfig != nil {
 		if pm, pmErr := h.SysConfig.GetPublicMode(ctx); pmErr != nil {
 			h.Logger.LogAttrs(ctx, slog.LevelWarn, "setup.status.public_mode_read_failed",
@@ -104,12 +120,19 @@ func (h *Handler) GetSetupStatus(
 		} else {
 			publicMode = pm.Enabled
 		}
+		if a, aErr := h.SysConfig.GetAuth(ctx); aErr != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "setup.status.self_registration_read_failed",
+				slog.String("err", aErr.Error()))
+		} else {
+			selfRegistration = a.SelfRegistration.Enabled
+		}
 	}
 
 	d := h.Cfg.SetupDefaults
 	return openapi.GetSetupStatus200JSONResponse{
-		NeedsSetup: needs,
-		PublicMode: publicMode,
+		NeedsSetup:              needs,
+		PublicMode:              publicMode,
+		SelfRegistrationEnabled: selfRegistration,
 		Deployment: openapi.SetupDeploymentInfo{
 			DbHost:         h.Cfg.DBHost,
 			DbPort:         h.Cfg.DBPort,
