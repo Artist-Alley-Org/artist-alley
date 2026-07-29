@@ -2143,7 +2143,11 @@
     "dur_minutes": "{n}m",
     "dur_hours": "{n}h",
     "dur_days": "{n}d",
-    "dur_months": "{n}mo"
+    "dur_months": "{n}mo",
+    "show_password": "Show password",
+    "hide_password": "Hide password",
+    "password_shown": "Password shown",
+    "password_hidden": "Password hidden"
   },
   "login": {
     "title": "Sign in",

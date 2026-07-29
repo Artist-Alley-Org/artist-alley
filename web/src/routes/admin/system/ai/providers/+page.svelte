@@ -127,6 +127,23 @@
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.base_url')}</span>
                   <input type="url" bind:value={providers[idx].base_url} class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
                 </label>
+                <!--
+                  No reveal toggle here, deliberately (#692).
+
+                  Unlike the SMTP password — which is write-only, so
+                  the box only ever holds what the admin just typed —
+                  GET /admin/system/ai returns the stored api_key
+                  verbatim (sysconfig.aiToAPI does not redact it), so
+                  this input is PRE-FILLED with the live provider
+                  credential. A reveal button would put a working API
+                  key on screen for anyone shoulder-surfing or
+                  screen-sharing, on a page an admin opens to change
+                  an unrelated setting.
+
+                  The fix is to make this field write-only like SMTP
+                  (return `api_key_set: bool`, accept a new value only
+                  on write). Once it is, add PasswordInput here.
+                -->
                 <label>
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.api_key')}</span>
                   <input type="password" bind:value={providers[idx].api_key} class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />

@@ -89,6 +89,10 @@
   },
   "common": {
     "save": "Guardar",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "show_password": "Mostrar contraseña",
+    "hide_password": "Ocultar contraseña",
+    "password_shown": "Contraseña visible",
+    "password_hidden": "Contraseña oculta"
   }
 }
