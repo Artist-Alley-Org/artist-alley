@@ -164,7 +164,7 @@ These all expand the Layer A pool (public-safe content that could ship in site_a
 ### How to integrate downloaded torrents
 
 Same as before:
-1. Extract to a directory, e.g., `/mnt/d/Projects/unraid_management/artist-alley_dataset/torrents/<set>/`
+1. Extract to a directory, e.g., `$DATASET_SRC/torrents/<set>/`
 2. Add pattern to `SHARED_PACK_PATTERNS` in `sanitize_and_assemble.py` if Layer A
 3. Add a TRIM entry if the set is big
 4. Re-run sanitize_and_assemble.py + populate_archive.py
@@ -173,8 +173,7 @@ Same as before:
 
 These are large bulk packages that don't fit a per-file fetch pattern
 but would dramatically expand the seed if you grab them via your usual
-torrent client and drop them at `/mnt/d/Projects/unraid_management/
-artist-alley_dataset/` (or another input path we point sanitize_and_assemble
+torrent client and drop them at `$DATASET_SRC/` (or another input path we point sanitize_and_assemble
 at). Sizes are approximate.
 
 ### Audio / Audiobooks
@@ -229,7 +228,7 @@ at). Sizes are approximate.
 If you grab one of the above:
 
 1. Extract to a known directory, e.g.,
-   `/mnt/d/Projects/unraid_management/artist-alley_dataset/torrents/<set>/`
+   `$DATASET_SRC/torrents/<set>/`
 2. Add path patterns to `sanitize_and_assemble.py`'s SHARED_PACK_PATTERNS
    (Layer A torrents) or `STUDIO_B_PROJECTS` (Layer B), depending on
    whether the content is publicly redistributable.

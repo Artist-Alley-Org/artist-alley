@@ -5,7 +5,7 @@
 #
 # Self-hosted only because:
 #   1. The `site_a` seed dataset lives at
-#      /mnt/blackbox_archives/datasets/artist_alley/site_a on the
+#      the seed dataset mount on the
 #      runner's mount. ~30 of the 133 standalone tests walk seeded
 #      posts / users / federation rows; without the dataset they
 #      fail on empty result sets, not on the regression they're
@@ -232,7 +232,7 @@ jobs:
           # runner, but the daemon needs the real host path. ($PWD for
           # the catalogue works because the runner's _work dir is
           # bind-mounted at an identical host path.)
-          SITE_A_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_a
+          SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
         run: |
           docker compose run --rm --no-deps \
             -v "$SITE_A_PATH:/seed/site:ro" \

@@ -225,8 +225,8 @@ jobs:
           # `docker compose run -v` resolves the source on the host
           # daemon (the runner template maps this same host dir to
           # /datasets inside the runner).
-          SITE_A_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_a
-          SITE_B_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_b
+          SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
+          SITE_B_PATH: ${{ secrets.SEED_SITE_B_PATH }}
         run: |
           # `aa seed` (#321) writes straight to each stack's postgres +
           # storage volume via a one-off `compose run` off that stack's
