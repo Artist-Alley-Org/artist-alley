@@ -70,6 +70,10 @@
   },
   "common": {
     "save": "Enregistrer",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "show_password": "Afficher le mot de passe",
+    "hide_password": "Masquer le mot de passe",
+    "password_shown": "Mot de passe affiché",
+    "password_hidden": "Mot de passe masqué"
   }
 }
