@@ -16,6 +16,7 @@ related:
   - "0031"
   - "0034"
   - "0036"
+  - "0076"
 tags:
   - architecture
   - captions
