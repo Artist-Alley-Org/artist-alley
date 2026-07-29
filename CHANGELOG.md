@@ -7,6 +7,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Changed
+
+- **The browse feed's "Team" and "Trending" buttons are gone; the filter is now
+  Latest / Following.** Both removed buttons were decoration: neither value was ever
+  in the server's `feed` enum, so clicking them sent a query param the API ignored and
+  handed back the plain latest feed — the same posts, under a label that promised
+  something else. Nothing is lost because nothing was there. Neither returns by
+  re-adding a button: `trending` needs a ranking model (recency against engagement,
+  and how fast it decays) decided first, and `team` returns with the teams browse
+  surface (#684), where the team-scoped query gets designed once. A browser that
+  remembers "Team" or "Trending" from before opens on Latest (#691).
+
 ## [v0.7.0] — 2026-07-28 — Browse correctness, visibility security, and a real seed catalogue
 
 ### Security
