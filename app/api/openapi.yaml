@@ -9703,7 +9703,7 @@ components:
           example: "0.3.1"
     SetupStatus:
       type: object
-      required: [needs_setup, deployment, defaults, public_mode]
+      required: [needs_setup, deployment, defaults, public_mode, self_registration_enabled]
       properties:
         needs_setup:
           type: boolean
@@ -9726,6 +9726,26 @@ components:
             calls it first on every navigation, before it knows whether
             a session exists — so the flag is available at the moment
             the routing decision is made, without a second request.
+        self_registration_enabled:
+          type: boolean
+          description: |
+            True when the install accepts self-service signups. The
+            frontend reads this to decide whether a signed-out visitor
+            may reach `/register` and whether the sign-in page offers a
+            "create an account" link; `POST /auth/register` enforces the
+            same setting itself and refuses with 403 when it is off, so
+            this field is a rendering hint and never the access
+            decision.
+
+            Rides on this endpoint for the same reason `public_mode`
+            does — the routing decision is made before a session is
+            known to exist.
+
+            This is the ONLY part of the self-registration settings
+            exposed here. This endpoint is unauthenticated, so the rest
+            of the knob set (the email-verification requirement, the
+            default role) stays on the admin-only auth settings
+            surface.
     SetupDeploymentInfo:
       type: object
       required: [db_host, db_port, db_name, storage_backend]
