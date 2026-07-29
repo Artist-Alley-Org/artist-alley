@@ -13,9 +13,8 @@ import (
 const KeyAI = "ai"
 
 // AIProviderKind enumerates the AI backend integrations the app
-// supports. Like SSOProviderKind, the per-kind config schema is owned
-// by the integration code in the dedicated AI phase — this struct
-// just persists the admin's choices.
+// supports. This struct just persists the admin's choices; the
+// dedicated AI phase owns how they are applied.
 type AIProviderKind string
 
 const (
@@ -56,9 +55,29 @@ type AIProvider struct {
 	// admin-only and we'll never federate this row.
 	APIKey string `json:"api_key,omitempty"`
 
-	// Per-kind opaque config (temperature defaults, system prompts,
-	// rate limits, ...). The integration code owns the schema.
-	Config map[string]any `json:"config,omitempty"`
+	// Per-provider inference defaults.
+	Config AIProviderConfig `json:"config"`
+}
+
+// AIProviderConfig is the typed per-provider tuning block.
+//
+// Closed, like SSOProviderConfig, and for the same reason (#718): the
+// read path returns this whole block to any `system.config.read`
+// holder, so a free-form map on a provider record is a credential leak
+// waiting for the first admin who parks a token in it. #711 made the
+// provider's real credential — APIKey — write-only but left this map
+// beside it copied out verbatim. Every field here is a tuning knob;
+// there is nothing secret to redact because nothing secret can be
+// stored.
+type AIProviderConfig struct {
+	// Temperature / TopP are pointers because 0 is a meaningful
+	// setting and "unset" has to mean "the model's own default".
+	Temperature           *float32 `json:"temperature,omitempty"`
+	TopP                  *float32 `json:"top_p,omitempty"`
+	MaxOutputTokens       int      `json:"max_output_tokens,omitempty"`
+	SystemPrompt          string   `json:"system_prompt,omitempty"`
+	RequestTimeoutSeconds int      `json:"request_timeout_seconds,omitempty"`
+	RateLimitRPM          int      `json:"rate_limit_rpm,omitempty"`
 }
 
 // AIConfig is the full AI settings payload stored under KeyAI.

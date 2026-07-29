@@ -417,23 +417,28 @@ func (h *Handler) UpdateAuthConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	before, beforeErr := h.Store.GetAuth(ctx)
-	cfg := apiToAuth(*req.Body)
+	// The stored config is now load-bearing, not just audit input:
+	// apiToAuth merges each provider's on-file secrets in from it. A
+	// read failure must abort rather than write a config with every
+	// OAuth client secret, LDAP bind password and SAML private key
+	// blanked (#718). Same reasoning as UpdateAIConfig below, and the
+	// reason the previously-tolerated beforeErr is now fatal.
+	before, err := h.Store.GetAuth(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get auth for merge: %w", err)
+	}
+	cfg := apiToAuth(*req.Body, before)
 	if err := h.Store.SetAuth(ctx, cfg); err != nil {
 		return openapi.UpdateAuthConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	if h.Audit != nil {
-		var beforeArg any = &before
-		if beforeErr != nil {
-			beforeArg = (*AuthConfig)(nil)
-		}
 		actor := &id.UserRef
 		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
 			audit.EventAdminAuthConfigUpdated,
 			nil, actor,
-			beforeArg, &cfg, nil)
+			&before, &cfg, nil)
 	}
 	return openapi.UpdateAuthConfig200JSONResponse(authToAPI(cfg)), nil
 }
