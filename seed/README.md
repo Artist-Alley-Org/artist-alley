@@ -18,12 +18,10 @@ emitted from one canonical source:
 | Profile | Where it ships | Content |
 |---|---|---|
 | `demo.assets.json` | Phase 1.48 public demo sandboxes at `demo.artist-alley.org` | **Layer A only** — public-safe (Kenney CC0, PixelSpaces, Google Fonts, UISketch, internet-fetched CC-BY/CC0 samples) |
-| `studio-a.assets.json` | Phase 1.22.I-a dogfood (Mirror Studios side) | Layer A + B — full curated set, ~600 assets, ~330 MB |
-| `studio-b.assets.json` | Phase 1.22.I-a dogfood (Adventureworks side) | Layer A + B — full curated set, ~600 assets, ~610 MB |
-| `dev.assets.json` | Solo developer DB re-seed | Layer A + B unified — everything in one instance |
+| `studio-a.assets.json`, `studio-b.assets.json`, `dev.assets.json` | Local dogfood + dev re-seed only | Layer A + B. **Not distributed** — Layer B is third-party material the project does not redistribute, so these profiles are only usable by the maintainer, who has the source archive. |
 
-`demo` and `dev` are byte-for-byte **aliases** of `studio-a` and
-`studio-b`. They used to be written before the upgrade pass ran, so
+`demo` and `dev` are byte-for-byte **aliases** of the two dogfood
+profiles. They used to be written before the upgrade pass ran, so
 every upgrade since #604 landed on `studio-{a,b}` and missed its own
 aliases — `demo.assets.json` shipped 971 records against `studio-a`'s
 1,007, and a demo re-seed would have dropped all 36 added videos with
@@ -54,9 +52,9 @@ seed/profiles/
 ├── dataset.brand_workspaces.json   Echo + Mirror (the 2 promoted franchises)
 ├── dataset.field_definitions.json  12 custom field definitions
 ├── dataset.workflow.json           5 states + 6 transitions
-├── studio-a.assets.json            Mirror Studios side
-├── studio-b.assets.json            Adventureworks side
-├── dev.assets.json                 Unified set
+├── studio-a.assets.json            local dogfood peer A
+├── studio-b.assets.json            local dogfood peer B
+├── dev.assets.json                 unified local set
 └── demo.assets.json                Layer A only
               │
               │  seed/scripts/fetch_gaps.py
@@ -293,64 +291,6 @@ python3 seed/scripts/audit_uncatalogued.py prune --site site_a \
 to delete anything still in it, so a reverted replacement cannot be
 turned into data loss by a stale doc.
 
-## Studio split
-
-Two studios with deliberately overlapping but distinct identities, so the
-federation scenarios (Like, Share, Defederate, Restricted) have something
-real to act on.
-
-### Studio A — "Mirror Studios"
-
-A VFX + cinematics + open-world shop. Owns the Echo + Mirror brand workspaces.
-
-| Project | Source pack(s) | Notes |
-|---|---|---|
-| Project Mirror | light-masks-1.0 | VFX-heavy reference |
-| Project Echo | retro-fantasy-kit + retro-textures-fantasy + rpg-audio + ui-pack-rpg-expansion + kenney_music-jingles + kenney_voiceover-pack | Fantasy RPG |
-| Project Citylight | rpg-urban-pack | Top-down urban |
-| Project Compass | minimap-pack | Open-world minimap |
-| Art Research | The-Models-Resource game rips | Cinematic reference (Mario, Sonic, MvC2) |
-| Snapdex | a private reference set (50 cards) | Marketing reference |
-| Engine Core (subset) | development-essentials + prototype-textures + kenney-fonts + format3d + font families | Mirror-flavoured tooling |
-| Studio Library (subset) | Personal photos + Dresden Files (6 issues sampled) + reference docs | Format-coverage |
-
-### Studio B — "Adventureworks"
-
-A character + casual + UI shop. Owns no franchise brand workspaces, but
-participates in the shared Echo brand.
-
-| Project | Source pack(s) | Notes |
-|---|---|---|
-| Project Heroes | blocky-characters_20 | Stylized character RPG |
-| Project Zoo | animal-pack-remastered | Kids / casual |
-| Project Adventure | ui-pack-adventure | Adventure UI |
-| Project Jumpstart | pixel-line-platformer | 2D pixel platformer |
-| Project Toybox | IconKitchen-Output + icons + PixelSpaces Free Pack + PixelSpaces Full Pack + UISketch | UI kit + branding + wireframes |
-| Hearthstone Archive | hearthstone_archive/* (100 groups) | Card-game reference |
-| MTG Archive | mtg_img_archive/* (150 cards) | Card-game reference |
-| Heroes Archive | heroes/* (30 portraits across 3 heroes) | Character reference |
-| Engine Core (subset) | (different files from Mirror's subset) | Adventureworks tooling |
-| Studio Library (subset) | (different files from Mirror's subset) | Format-coverage |
-
-### Why this split
-
-- **Both studios get format diversity.** Each has images (lots), audio
-  (Kenney packs split between them), 3D (Mirror gets game-rip references;
-  Adventureworks gets Kenney 3D), video (Studio Library is split by file
-  hash), fonts (Engine Core has the font families, split between).
-- **Both have restricted content.** Each studio's Art Research / Reference
-  material is `sensitivity_tier=restricted` (community rips, internal
-  attribution) — drives Scenarios 04 + 05 of the federation regression
-  catalogue (pre-1.22.I refusal vs post-1.22.I encrypted delivery).
-- **Engine Core overlap stress-tests CAS dedup.** Both studios have
-  "Engine Core" but with non-overlapping file subsets. The handful of
-  files that appear in both with identical content hashes exercise the
-  storage-layer dedup across federation.
-- **Brand workspace ownership is asymmetric.** Studio A owns the Echo
-  brand workspace; Studio B works on Echo via the shared workspace. This
-  is the canonical "publisher + supporting studio" relationship that
-  motivates aa:Share + aa:Approve activities in the federation protocol.
-
 ## Brand workspace decision
 
 Two of the dataset's five `franchise` values get promoted to full
@@ -362,7 +302,7 @@ brand_workspaces (per [ADR 0025](../docs/adr/0025-brand-workspaces.md)):
 | **Mirror** | brand_workspace | Shippable VFX-heavy game IP — same |
 | Engine | tag (`franchise:engine`) | Internal tooling — not a customer-facing brand |
 | Reference | tag (`franchise:reference`) | Third-party reference, not our brand |
-| Snapdex | tag (`franchise:snapdex`) | External IP (Pokemon TCG), not our brand |
+| Third-party franchises | tag (`franchise:<name>`) | External IP, not our brand |
 
 The promoted workspaces become demonstrable: opening the Echo workspace
 shows the brand kit, guidelines doc, and asset library. The tag-only
@@ -389,17 +329,21 @@ Ships in the Phase 1.48 demo sandboxes that anyone can spin up at
 - Khronos glTF sample models (CC-BY, internet-fetched)
 - LibriVox audiobook samples (public domain, internet-fetched)
 
-### Layer B — local-only
+### Layer B — local-only, never published
 
-Used in dogfood + dev re-seed where you control both peers. Sources:
+Some source material is **not** publicly redistributable: third-party
+game/card IP, licensed fonts, and licensed comics. Those records are
+tagged `layer = "B"` and are used only for local dogfood and dev
+re-seeding, where the operator controls both peers.
 
-- Snapdex (TCG) — Pokemon IP (Nintendo)
-- Scryfall / Wizards of the Coast — MTG IP
-- Hearthstone (Blizzard) — Blizzard IP
-- Overwatch (Blizzard) — Blizzard IP
-- The Models Resource — community game rips
-- Type foundry license — proprietary fonts
-- Dabel Brothers Publishing — Dresden Files comics
+**Layer B never ships.** It is excluded from `site_a`, from the demo, and
+from the published dataset. This file does not enumerate it — publishing
+an inventory of material we deliberately do not distribute serves nobody,
+and the tagging is what enforces the boundary, not the list.
+
+If you are assembling your own dataset, the same discipline applies:
+tag anything you cannot redistribute and keep it out of whatever you
+publish.
 
 ## Schema mapping (CSV → AA)
 
@@ -471,12 +415,9 @@ floods.
 
 ```python
 TRIMS = {
-    "Snapdex (TCG)": 50,
-    "hearthstone": 100,
-    "mtg_img_archive": 150,
-    "heroes": 30,
+    "<source-pack-name>": 50,     # per-pack row cap
     "UISketch": 200,
-    "Dresden Files Comics": 6,
+    # … see sanitize_and_assemble.py for the live values
 }
 ```
 
