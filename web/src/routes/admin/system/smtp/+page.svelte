@@ -5,6 +5,7 @@
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import PasswordInput from '$components/PasswordInput.svelte';
 
   let host = $state('');
   let port = $state(587);
@@ -121,12 +122,11 @@
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.password')}</span>
-      <input
-        type="password"
+      <PasswordInput
         bind:value={password}
         placeholder={passwordSet ? t('admin.system.smtp.password_on_file') : t('admin.system.smtp.password_unset')}
         autocomplete="new-password"
-        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+        inputClass="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
       />
       <p class="mt-1 text-xs text-fg-muted">{t('admin.system.smtp.password_help')}</p>
     </label>

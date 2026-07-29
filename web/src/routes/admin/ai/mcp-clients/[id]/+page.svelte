@@ -253,6 +253,17 @@
         {#if edit.auth_kind === 'bearer' || edit.auth_kind === 'header'}
           <label class="block">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref')}</span>
+            <!--
+              No reveal toggle here, deliberately (#692). The register
+              form on the list page has one because it starts empty;
+              this EDIT form is pre-filled from the API (load() sets
+              edit.auth_secret_ref = found.auth_secret_ref, and
+              mcp_admin returns it unredacted), and the field holds
+              the real bearer token / header value — it is the secret
+              itself, not a reference to one, per its own hint text.
+              Revealing would disclose a live stored credential.
+              Make the read path redact it first.
+            -->
             <input type="password" bind:value={edit.auth_secret_ref}
                    class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
           </label>

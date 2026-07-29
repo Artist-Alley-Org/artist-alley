@@ -23,6 +23,7 @@
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
+  import PasswordInput from '$components/PasswordInput.svelte';
   import { t } from '$stores/lang.svelte';
 
   type Status = {
@@ -195,12 +196,11 @@
       <p class="mt-1 text-xs text-fg-muted">{t('account.twofa.regen_help')}</p>
       <form onsubmit={regenerate} class="mt-3 space-y-2">
         <label class="block text-xs text-fg-muted">{t('account.twofa.current_password')}
-          <input
-            type="password"
+          <PasswordInput
             bind:value={regenPassword}
             required
             autocomplete="current-password"
-            class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+            inputClass="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
         <button
@@ -219,12 +219,11 @@
       <p class="mt-1 text-xs text-fg-muted">{t('account.twofa.disable_help')}</p>
       <form onsubmit={disable} class="mt-3 space-y-2">
         <label class="block text-xs text-fg-muted">{t('account.twofa.current_password')}
-          <input
-            type="password"
+          <PasswordInput
             bind:value={disablePassword}
             required
             autocomplete="current-password"
-            class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+            inputClass="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
         </label>
         <button
