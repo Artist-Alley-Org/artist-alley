@@ -65,9 +65,16 @@ Concretely:
 
 1. **Acquire on reference.** Writing a hash into config takes a pin, using a
    `PinRef` whose subject identifies the configuration, not an entity.
-2. **Release on dereference.** Removing the hash — overwrite, eviction from a
-   history list, reset to default — releases that pin. Normal GC then applies:
-   if another pin remains the object lives, otherwise it becomes eligible.
+2. **Release on dereference.** Removing the hash — overwrite, or eviction from a
+   history list — releases that pin. Normal GC then applies: if another pin
+   remains the object lives, otherwise it becomes eligible.
+
+   The test is whether the **configuration as a whole** still names the hash,
+   not whether one field does. Reverting the instance logo to the shipped
+   default clears the active slot but leaves the object in the history list, so
+   the configuration still references it and the pin is **retained**. Releasing
+   it there would rot the history entry — the precise failure this rule exists
+   to prevent.
 3. **Bound the count.** A configuration holding N references pins N blobs, and
    an unbounded history is an unbounded retention leak. Every such list carries
    an explicit cap. The logo history caps at five.
