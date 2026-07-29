@@ -188,10 +188,37 @@ after, as consumers.
   unchanged: a promoted post must be one the viewer could already see, via
   `visibility.Filter` per ADR 0063. A slot must never become a way to
   surface content a caller has no right to.
-- Premium slot fill should be automatic for the account tier, not a
-  per-post decision by the artist. Making artists opt each upload into
-  promotion adds exactly the per-item friction the product exists to
-  remove.
+- **Premium fill is a metered, per-post boost — corrected 2026-07-29.**
+  This bullet originally said fill should be automatic for the account
+  tier and never a per-post decision. The operator's intent is the
+  opposite: a premium account gets a **limited quota or a credit balance**
+  and spends it to boost specific posts, not every post it publishes.
+
+  The friction argument that motivated the original wording still holds,
+  but it applies to a narrower thing than I wrote. What must be avoided is
+  a **promotion control on the upload form** — a per-upload decision taxes
+  the core flow every artist uses, which is the friction this product
+  exists to remove. A deliberate, occasional "boost this one" action taken
+  later, on a post the artist has chosen, is a different interaction and
+  is fine. Upload stays untouched; boosting is its own act.
+
+  Two consequences follow that a naive fill source would get wrong:
+
+  - **A metered fill source needs accounting**, not just eligibility. A
+    boost consumes something, so it needs a ledger, idempotency (a retried
+    render must not double-spend), and an expiry model.
+  - **Metering collides with the no-fill rule in §2, and the collision
+    needs an answer.** If a slot degrades to ordinary content, a paid
+    boost may never have rendered — yet the credit is spent. Whatever
+    resolves this (consume on impression rather than on scheduling, refund
+    on non-render, or guarantee placement before charging) is a
+    correctness and fairness question, not a UI detail, and it must be
+    decided before credits ship. **Do not let it be decided implicitly by
+    whatever the first implementation happens to do.**
+
+  Near-term scope is only that the feed **must not preclude** this: the
+  fill-source interface has to admit a metered source. The credit system
+  itself is later work.
 - Masonry gains real placement logic and a reason to move off sibling
   columns. That rework carries #651's append-stability requirement and the
   accessibility decisions taken with it — it is not a free refactor.
