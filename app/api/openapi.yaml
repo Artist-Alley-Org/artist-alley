@@ -8359,6 +8359,147 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/appearance/logo:
+    post:
+      operationId: uploadInstanceLogo
+      summary: Upload the instance logo
+      description: |
+        Replaces the operator-set instance logo with the uploaded
+        image and returns the updated appearance config.
+
+        The body is the raw image. Unlike `/storage/objects`, this
+        endpoint ignores any client-declared content type and derives
+        the stored one by decoding the bytes: the logo is served back
+        on a public, unauthenticated path, so the type it is served
+        with must never be attacker-chosen.
+
+        Accepts **raster images only** — PNG, JPEG, GIF or WebP — at
+        most 2 MiB and between 16 and 1024 pixels on each edge. SVG is
+        rejected: it is an executable document format, and safely
+        accepting one needs a sanitiser this endpoint does not have.
+
+        The bytes go into content-addressed storage under the
+        `appearance:logo` pin; the appearance config records only the
+        resulting hash. Uploading the same image twice dedups to one
+        object.
+
+        The upload becomes the active logo and is pushed onto the front
+        of the recent-logo list (`logo_history`, most-recently-used
+        first, capped at 5). If that pushes a sixth entry off the end,
+        the evicted logo's storage pin is released and its bytes become
+        eligible for the normal garbage-collection lifecycle.
+
+        Requires the `system.appearance.write` capability.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Logo stored; updated appearance config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppearanceConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      operationId: deleteInstanceLogo
+      summary: Revert to the shipped default logo
+      description: |
+        Deselects the operator's logo so the install shows the shipped
+        default mark again. Idempotent — doing this on an install that
+        is already on the default succeeds.
+
+        This does **not** delete anything. The previously active logo
+        stays in `logo_history` and stays pinned, so the operator can
+        select it again; that recoverability is the whole point of the
+        list. Bytes are only released when an entry is evicted from the
+        tail of the history by later uploads.
+
+        Requires the `system.appearance.write` capability.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Reverted to the default; updated appearance config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppearanceConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/system/appearance/logo/select:
+    post:
+      operationId: selectInstanceLogo
+      summary: Re-activate a logo from the recent list
+      description: |
+        Makes an already-uploaded logo the active one again and moves
+        it to the front of `logo_history`. This is the recovery path:
+        an operator who changed their mind, or who lost the original
+        file, can pick a previous mark back up without re-uploading it.
+
+        The hash **must already be in `logo_history`**. Selecting an
+        arbitrary hash is refused, and that refusal is deliberate: the
+        logo is served on a public unauthenticated route, so if this
+        endpoint accepted any hash an admin could aim it at any object
+        on the install — someone else's private asset included.
+        Membership in the list is proof the server itself decoded and
+        approved those exact bytes.
+
+        Moving an entry to the front reorders the list but does not
+        change its membership, so nothing is evicted and no storage pin
+        changes. To go back to the shipped default, use `DELETE` on
+        `/admin/system/appearance/logo` instead.
+
+        Requires the `system.appearance.write` capability.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hash]
+              properties:
+                hash:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                  description: |
+                    Content hash of an entry currently in
+                    `logo_history`.
+      responses:
+        "200":
+          description: Logo re-activated; updated appearance config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppearanceConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/system/public-mode:
     get:
       operationId: getPublicMode
@@ -8469,6 +8610,61 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AppearanceConfig" }
+
+  /appearance/logo:
+    get:
+      operationId: getPublicInstanceLogo
+      summary: Fetch the operator-uploaded instance logo
+      description: |
+        Streams the operator-set logo image, or **404** when none is
+        set — a 404 here is the normal, expected state of a default
+        install and means "render the shipped default mark", not an
+        error.
+
+        Unauthenticated for the same reason `/appearance` is: the logo
+        is chrome on the sign-in page, so an install that refused it
+        anonymously could not draw its own login card. Nothing is
+        disclosed by serving it — an operator who uploads an instance
+        logo is by definition publishing their branding.
+
+        `Content-Type` is the type derived when the image was decoded
+        at upload, never a client-supplied string. The response also
+        carries `X-Content-Type-Options: nosniff` and a lockdown
+        `Content-Security-Policy`, so a file that somehow got past
+        validation still cannot be rendered as an active document.
+
+        Callers should request the URL published as `logo_url` on
+        `/appearance`, which carries the content hash as `v`. Responses
+        are immutable for a given `v`, so the URL changing IS the cache
+        invalidation.
+      tags: [system]
+      security: []
+      parameters:
+        - name: v
+          in: query
+          required: false
+          description: |
+            Content hash of the logo to serve. Omit to get whichever
+            logo is currently active.
+
+            This doubles as the cache-buster and as the addressing
+            scheme for the admin picker, which renders a thumbnail per
+            entry in `logo_history`. The hash is resolved **only**
+            against that list — an unlisted hash is a 404, so this
+            cannot be used to read arbitrary objects out of storage.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: The logo image
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /previews:
     get:
@@ -10171,6 +10367,115 @@ components:
             read-only banner can render once signed in. Absent/false in
             a normal install — zero footprint when off.
           example: false
+        logo_url:
+          type: string
+          readOnly: true
+          description: |
+            URL of the operator-uploaded instance logo, or **absent**
+            when none is set — absent means "render the shipped default
+            mark", exactly as an empty font slot means "use the slot
+            default".
+
+            Read-only here. The logo is written only by
+            `POST /admin/system/appearance/logo`, which validates the
+            image bytes, and cleared only by the matching `DELETE`.
+            It is deliberately NOT settable through this object: if a
+            PATCH could name the underlying storage object, an admin
+            could point the public, unauthenticated logo route at any
+            hash on the install — including someone's private asset.
+
+            Carries a `v` content-hash parameter, so the URL changes
+            whenever the logo does and the response can be cached
+            immutably.
+          example: /api/v1/appearance/logo?v=9f2b1c4d5e6a
+        logo_width:
+          type: integer
+          readOnly: true
+          description: |
+            Intrinsic width in pixels of the uploaded logo. Published so
+            a client can reserve layout space and avoid a reflow when
+            the image lands. Absent when no logo is set.
+          example: 512
+        logo_height:
+          type: integer
+          readOnly: true
+          description: |
+            Intrinsic height in pixels of the uploaded logo. Absent when
+            no logo is set.
+          example: 512
+        logo_history:
+          type: array
+          readOnly: true
+          description: |
+            The operator's recent logos, most-recently-used first,
+            capped at 5, so a previous mark can be picked back up
+            without re-uploading it.
+
+            **Admin surface only.** Populated on
+            `GET /admin/system/appearance` and on the logo write
+            responses; deliberately absent from the public `/appearance`
+            boot payload, which needs only the active logo and must not
+            pay for the per-entry availability check on every anonymous
+            page load.
+
+            The shipped default is NOT an entry here — it is always
+            available and is represented by `logo_url` being absent.
+          items: { $ref: "#/components/schemas/InstanceLogo" }
+    InstanceLogo:
+      type: object
+      description: |
+        One entry in the operator's recent-logo list. A reference to
+        stored bytes plus what the server proved about them when they
+        were uploaded — never the image data itself.
+      required: [hash, url, content_type, width, height, size_bytes, available, active]
+      properties:
+        hash:
+          type: string
+          description: |
+            Content hash of the image. Pass this to
+            `POST /admin/system/appearance/logo/select` to re-activate
+            the entry, or as `v` on `/appearance/logo` to fetch it.
+          example: 9f2b1c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c
+        url:
+          type: string
+          description: Ready-made URL for rendering this entry's thumbnail.
+          example: /api/v1/appearance/logo?v=9f2b1c4d5e6a
+        content_type:
+          type: string
+          description: |
+            MIME type derived by decoding the image at upload time.
+          example: image/png
+        width:
+          type: integer
+          example: 512
+        height:
+          type: integer
+          example: 512
+        size_bytes:
+          type: integer
+          format: int64
+          example: 18244
+        available:
+          type: boolean
+          description: |
+            Whether the bytes are still readable from the storage
+            backend right now.
+
+            Listed entries are pinned, so this is normally `true`. It
+            can be `false` when the blob was lost outside the pin
+            system — a restored database pointed at a fresh bucket,
+            manual deletion, backend corruption. Clients MUST render
+            an unavailable entry as explicitly unavailable rather than
+            as a broken image, and MUST NOT offer it for selection:
+            "the file is gone" is exactly the situation this list
+            exists to help an operator through, so it has to be legible
+            rather than silently broken.
+          example: true
+        active:
+          type: boolean
+          description: Whether this entry is the currently applied logo.
+          example: false
+
     Locale:
       type: object
       description: |

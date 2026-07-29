@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import BrandMark from '$lib/components/BrandMark.svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
@@ -138,7 +139,7 @@
 <div class="flex-1 flex items-center justify-center px-6 py-10">
   <div class="w-full max-w-2xl space-y-8">
     <div class="text-center space-y-2">
-      <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
+      <BrandMark class="mx-auto h-16 w-16" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('setup.heading')}</h1>
       <p class="text-sm text-fg-muted">
         {t('setup.body')}

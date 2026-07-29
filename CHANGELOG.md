@@ -7,6 +7,32 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Added
+
+- **Operators can set their own instance logo.** The mark in the navbar and on the
+  sign-in page is no longer fixed to the icon that ships. Upload a PNG, JPEG, GIF or
+  WebP under `Admin → Themes & branding` and it applies everywhere immediately; the
+  shipped default returns the moment you clear it, and is always one click away
+  (#517).
+
+  The last five logos are kept so a previous mark can be picked back up without
+  re-uploading it — including when the original file is long gone, which is the case
+  the list exists for. Re-selecting one moves it to the front rather than adding a
+  duplicate, and a sixth upload drops the oldest. Every listed logo is retained in
+  storage for exactly as long as it is listed, so an entry the picker offers is an
+  entry that actually still works. If a logo's image data does go missing anyway —
+  a database restored against a fresh bucket, say — the picker says so in words and
+  refuses to apply it, rather than showing a broken thumbnail or swapping your
+  working logo for one.
+
+  Uploads are treated as hostile input, because a logo is an operator-supplied file
+  rendered on every page: the file must decode as a real raster image, its type is
+  taken from decoding it rather than from anything the browser claimed, and it is
+  capped at 2 MB and 1024px per edge. **SVG is not accepted** — it is an executable
+  document format, and accepting one safely needs a sanitiser that is its own piece
+  of work rather than a detail of this change. Rasterize vector art before uploading
+  it. No-spec-impact.
+
 ### Changed
 
 - **The browse feed's "Team" and "Trending" buttons are gone; the filter is now

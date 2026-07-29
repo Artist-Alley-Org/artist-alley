@@ -12,6 +12,7 @@
   // the picks across users + browsers + sessions.
 
   import { onMount } from 'svelte';
+  import InstanceLogoCard from '$lib/components/admin/InstanceLogoCard.svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
@@ -117,6 +118,15 @@
 {#if loading}
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else}
+  <!-- The logo sits above the font slots and outside the form: it
+       saves on its own the moment you upload or pick one, whereas the
+       fonts batch behind "Save appearance". Nesting an
+       immediately-applied control inside a deferred form is how you get
+       an operator wondering which of their changes actually landed. -->
+  <div class="mb-4 max-w-3xl">
+    <InstanceLogoCard />
+  </div>
+
   <form onsubmit={(e) => { e.preventDefault(); void save(); }} class="max-w-3xl space-y-4">
     {#each slots as s (s.slot)}
       {@const id = currentId(s.slot)}
