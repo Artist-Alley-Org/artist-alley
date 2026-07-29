@@ -10,6 +10,7 @@ related:
   - "0012"
   - "0037"
   - "0053"
+  - "0078"
 tags:
   - viewer
   - video
@@ -39,6 +40,12 @@ That unification was made in code and never written down. It is load-bearing
 enough to deserve a record: the next person adding a time-based media kind
 (image sequences, animatics, multi-track audio) needs to know the player is
 one component and that adding a second one is a regression, not a feature.
+
+*Amended 2026-07-29:* **3D animation clips are one of those kinds.** ADR 0078
+applies this decision to the 3D viewer — a playing clip has a duration, a
+playhead and a transport, so it reuses the model below rather than growing a
+parallel one. Its frame accuracy is *easier* than video's, because a clip is
+sampled from keyframe data we hold rather than decoded from an HLS stream.
 
 The second half of this decision is new. The product's stated backbone is the
 viewer, and the highest-value thing a studio does in a viewer is **review
