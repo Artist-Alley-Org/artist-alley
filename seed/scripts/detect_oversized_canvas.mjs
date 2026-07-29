@@ -12,20 +12,26 @@
 //   ~50%    content fills half its frame — a visible margin all round
 //   ~1%     a graphic marooned in a mostly-empty canvas — the #672 class
 //
-// WHY THIS AND NOT detect_cropped_renders.mjs. That script (#630) looks
-// for PARTIAL coverage of an EDGE, the signature of artwork cut off by a
-// too-small canvas. #672 is the opposite failure: artwork far SMALLER
-// than its canvas, touching no edge at all. It scores 0% on all four
-// edges and reads as perfectly healthy to the edge detector — which is
-// why the #630 sweep passed over every instance of it. The two heuristics
-// see different failures; neither subsumes the other, and the pool needs
-// both run over it.
+// WHY THIS AND NOT probe_render_loss.mjs. That script asks whether a
+// render CUT anything off, by re-rendering the source with a wider frame
+// and looking for artwork outside the original. #672 is the opposite
+// failure: artwork far SMALLER than its canvas, entirely inside the
+// frame, losing nothing — and therefore invisible to a loss probe. It is
+// also, unlike loss, a property of the PNG alone, so this script needs no
+// source and runs over a pool directory. The two see different failures;
+// neither subsumes the other, and the pool needs both run over it.
+//
+// (There was a third, detect_cropped_renders.mjs, which flagged edges
+// with 5-95% solid-pixel coverage. It was retired in #685: swept against
+// ground truth over 9,504 threshold/alpha/edge-count combinations, not
+// one of them found all six genuinely lossy pool files, and the best
+// precision any of them reached was 0.043. Edge coverage is a property of
+// the drawing's silhouette, not of whether it was cut.)
 //
 // WHY NOT BYTES PER PIXEL. Tried, and it produces false positives: the
 // Flag-pack and Pattern-pack renders compress to almost nothing because
-// they are flat colour, while measuring 100% content. Same lesson as
-// #630 — byte size is a good verifier and a terrible selector; the
-// reliable selector is structural.
+// they are flat colour, while measuring 100% content. Byte size is a good
+// verifier and a terrible selector; the reliable selector is structural.
 //
 // WHAT THIS SCRIPT CANNOT DECIDE FOR YOU. A low ratio is not by itself a
 // defect. Two different things produce one:
@@ -45,9 +51,9 @@
 // pixel of margin is invented by us — run it far stricter, `--min-ratio
 // 90`; those measure >=98% once correctly framed.
 //
-// Deliberately standalone, in the shape of detect_cropped_renders.mjs: no
-// pipeline coupling, no manifest knowledge, no dataset path baked in,
-// only sharp (already this directory's one dependency).
+// Deliberately standalone: no pipeline coupling, no manifest knowledge,
+// no dataset path baked in, only sharp (already this directory's one
+// dependency).
 //
 // Usage:
 //   node detect_oversized_canvas.mjs <dir> [--min-ratio 10]
