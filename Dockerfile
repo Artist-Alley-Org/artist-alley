@@ -170,6 +170,13 @@ COPY --from=threejs-deps /usr/local/bin/node /usr/local/bin/node
 COPY --from=threejs-deps --chown=app:app /app/threejs/node_modules /app/threejs/node_modules
 COPY --chown=app:app scripts/threejs/worker.mjs scripts/threejs/render.html \
                      scripts/threejs/smoke.mjs scripts/threejs/package.json /app/threejs/
+# The load path + lighting constants render.html imports are the web
+# app's own modules (#689) — worker.mjs serves this directory at
+# /shared/. Their canonical home is web/src/lib/3d/ because that is the
+# one directory both build worlds can reach (the dev web container
+# bind-mounts only ./web).
+COPY --chown=app:app web/src/lib/3d/modelLoader.js web/src/lib/3d/defaultLighting.js \
+                     /app/threejs/shared/
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 

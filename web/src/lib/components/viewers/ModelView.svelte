@@ -4,10 +4,13 @@
   // 3D model body for the AssetViewer.
   //
   // One unified three.js path for every supported 3D format:
-  //   * glb / gltf  → GLTFLoader (PBR-native; animations on result.animations)
-  //   * fbx         → FBXLoader  + material upgrade pass
-  //   * obj         → OBJLoader  + material upgrade pass (.mtl in 1.18.B-12c)
-  //   * mview       → Marmoset Toolbag self-contained player (1.18.B-11)
+  //   * glb / gltf / fbx / obj → $lib/3d/modelLoader.js
+  //   * mview                  → Marmoset Toolbag self-contained player (1.18.B-11)
+  //
+  // modelLoader.js is SHARED with scripts/threejs/render.html, the
+  // headless renderer behind the browse-grid thumbnail — loader choice,
+  // OBJ .mtl resolution and material normalisation happen there so the
+  // two surfaces cannot drift (#689, ADR 0069's WYSIWYG intent).
   //
   // Everything user-controllable (env / lighting / display / camera /
   // materials / animation) flows through a shared ModelSession that
@@ -182,17 +185,25 @@
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function mountThree(kind: 'glb' | 'gltf' | 'fbx' | 'obj') {
     const THREE = await import('three');
+    // The shared load path (#689) — the SAME module scripts/threejs/
+    // render.html imports for the browse-grid thumbnail, so loader
+    // choice, MTL resolution and material normalisation cannot drift
+    // between the two surfaces. Dynamically imported so `three` stays
+    // out of the main bundle.
+    const { loadModel, companionLoadingManager } = await import('$lib/3d/modelLoader.js');
 
     // ─── Companion lookup ────────────────────────────────────────────
-    // Fetch the asset's sidecar files BEFORE loading. The viewer's
+    // Fetch the asset's sidecar files BEFORE loading. The companion
     // LoadingManager rewrites every relative resource URL the loader
-    // asks for through these entries — textures, MTL, etc.
-    const companions = new Map<string, string>();
+    // asks for onto these entries — textures, MTL, etc.
+    const companions: Array<{ path: string; url: string }> = [];
     try {
       const r = await fetch(`/api/v1/assets/${asset.id}/companions`, { credentials: 'include' });
       if (r.ok) {
         const list = (await r.json()) as Array<{ id: string; path: string }>;
-        for (const c of list) companions.set(c.path, `/api/v1/assets/${asset.id}/companions/${c.id}`);
+        for (const c of list) {
+          companions.push({ path: c.path, url: `/api/v1/assets/${asset.id}/companions/${c.id}` });
+        }
       }
     } catch { /* soft fail — companions are an enhancement */ }
 
@@ -220,121 +231,26 @@
       void probe.body?.cancel();
     } catch { /* ignore */ }
 
-    const manager = new THREE.LoadingManager();
-    if (companions.size > 0) {
-      const lowerEntries = Array.from(companions, ([k, v]) => [k.toLowerCase(), v] as const);
-      manager.setURLModifier((url) => {
-        const lower = url.toLowerCase();
-        for (const [path, companionUrl] of lowerEntries) {
-          if (lower.endsWith('/' + path) || lower === path) return companionUrl;
-        }
-        const lastSlash = lower.lastIndexOf('/');
-        const basename = lastSlash >= 0 ? lower.slice(lastSlash + 1) : lower;
-        for (const [path, companionUrl] of lowerEntries) {
-          const cBasename = path.slice(path.lastIndexOf('/') + 1);
-          if (cBasename === basename) return companionUrl;
-        }
-        return url;
-      });
-    }
-
+    // ─── Load + material normalisation (shared with the thumbnail) ──
+    // Loader dispatch, OBJ's .mtl resolution and the upgrade of
+    // Phong/Basic/unlit materials to MeshStandardMaterial all live in
+    // modelLoader.js. Change them THERE so the thumbnail changes too.
+    const loaded = await loadModel({
+      url: fileUrl,
+      ext: kind,
+      companions,
+      manager: companionLoadingManager(companions),
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let model: any;
+    const model: any = loaded.object;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let rawAnimations: any[] = [];
-    if (kind === 'glb' || kind === 'gltf') {
-      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await new Promise((res, rej) => {
-        new GLTFLoader(manager).load(fileUrl, res, undefined, rej);
-      });
-      model = result.scene;
-      rawAnimations = result.animations || [];
-    } else if (kind === 'fbx') {
-      const { FBXLoader } = await import('three/examples/jsm/loaders/FBXLoader.js');
-      model = await new Promise((res, rej) => {
-        new FBXLoader(manager).load(fileUrl, res, undefined, rej);
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rawAnimations = (model as any).animations || [];
-    } else {
-      const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
-      const objLoader = new OBJLoader(manager);
-      let mtlCompanionUrl: string | null = null;
-      for (const [path, url] of companions) {
-        if (path.toLowerCase().endsWith('.mtl')) { mtlCompanionUrl = url; break; }
-      }
-      if (mtlCompanionUrl) {
-        try {
-          const { MTLLoader } = await import('three/examples/jsm/loaders/MTLLoader.js');
-          const mtlLoader = new MTLLoader(manager);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const materials: any = await new Promise((res, rej) => {
-            mtlLoader.load(mtlCompanionUrl!, res, undefined, rej);
-          });
-          materials.preload();
-          objLoader.setMaterials(materials);
-        } catch { /* OBJ still loads as untextured; upgrade gives PBR grey */ }
-      }
-      model = await new Promise((res, rej) => {
-        objLoader.load(fileUrl, res, undefined, rej);
-      });
-    }
+    const rawAnimations: any[] = loaded.animations;
 
     if (!container) return;
     const w = container.clientWidth || 800;
     const h = container.clientHeight || 600;
 
     const scene = new THREE.Scene();
-
-    // ─── Material normalisation ────────────────────────────────────
-    // FBX/OBJ produce Phong/Basic materials; neither responds to IBL.
-    // Walk the tree once and upgrade to MeshStandardMaterial.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const upgradeMaterial = (m: any): any => {
-      if (!m) {
-        return new THREE.MeshStandardMaterial({ color: 0x9a9a9a, roughness: 0.55, metalness: 0 });
-      }
-      const isStandard = m.type === 'MeshStandardMaterial' || m.type === 'MeshPhysicalMaterial';
-      if (isStandard) return m;
-      const color = m.color?.isColor ? m.color.clone() : new THREE.Color(0x9a9a9a);
-      if (color.r === 0 && color.g === 0 && color.b === 0) {
-        color.setHex(m.map ? 0xffffff : 0x9a9a9a);
-      }
-      const hasMetalness = typeof m.metalness === 'number';
-      const hasRoughness = typeof m.roughness === 'number';
-      const phongShininess = typeof m.shininess === 'number' ? m.shininess : null;
-      const derivedRoughness = phongShininess != null
-        ? Math.max(0.05, 1 - Math.sqrt(phongShininess / 100))
-        : 0.55;
-      return new THREE.MeshStandardMaterial({
-        color,
-        map: m.map ?? null,
-        normalMap: m.normalMap ?? null,
-        normalScale: m.normalScale?.clone?.() ?? new THREE.Vector2(1, 1),
-        aoMap: m.aoMap ?? null,
-        metalnessMap: m.metalnessMap ?? null,
-        roughnessMap: m.roughnessMap ?? null,
-        emissive: m.emissive?.isColor ? m.emissive.clone() : new THREE.Color(0x000000),
-        emissiveMap: m.emissiveMap ?? null,
-        roughness: hasRoughness ? m.roughness : derivedRoughness,
-        metalness: hasMetalness ? m.metalness : (m.metalnessMap ? 1 : 0),
-        transparent: m.transparent ?? false,
-        opacity: m.opacity ?? 1,
-        side: m.side ?? THREE.FrontSide,
-      });
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    model.traverse((obj: any) => {
-      if (!obj.isMesh) return;
-      if (Array.isArray(obj.material)) {
-        obj.material = obj.material.map(upgradeMaterial);
-      } else {
-        obj.material = upgradeMaterial(obj.material);
-      }
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-    });
 
     // ─── Material catalogue (for the side-panel Materials section) ─
     // Walk once after the upgrade pass, collect unique material refs,
