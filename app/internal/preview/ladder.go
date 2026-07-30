@@ -103,7 +103,16 @@ func fanToLadder(ctx context.Context, in ladderInput) error {
 			return err
 		}
 	}
-	setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	// A forced re-render replaces the stamp as well as the rungs (#760).
+	// The thumbhash is a blur of the pixels we just declared wrong, and
+	// it is what the card shows FIRST — leaving it means a corrected
+	// thumbnail fades up out of the magenta one it replaced. Everywhere
+	// else the never-overwrite rule stands; see setThumbhash*.
+	if in.Overwrite {
+		setThumbhash(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	} else {
+		setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	}
 	return nil
 }
 
@@ -217,6 +226,16 @@ func ladderDone(ctx context.Context, st *storage.Service, hash string, force boo
 // synchronous compute in CreateAsset from racing the worker, and what
 // makes the #645 backfill safe to re-run.
 func setThumbhashIfMissing(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
+	encodeThumbhash(ctx, pool, logger, kind, id, src, false)
+}
+
+// setThumbhash overwrites the stamp. Only the forced re-render path
+// calls it — see fanToLadder.
+func setThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
+	encodeThumbhash(ctx, pool, logger, kind, id, src, true)
+}
+
+func encodeThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image, overwrite bool) {
 	if pool == nil || src == nil || id == uuid.Nil {
 		return
 	}
@@ -224,11 +243,21 @@ func setThumbhashIfMissing(ctx context.Context, pool *pgxpool.Pool, logger *slog
 	if len(tb) == 0 {
 		return
 	}
-	if err := assets.New(pool).SetAssetThumbhashIfMissing(ctx, assets.SetAssetThumbhashIfMissingParams{
-		ID:        pgtype.UUID{Bytes: id, Valid: true},
-		Thumbhash: tb,
-	}); err != nil {
-		logAttrs(logger, ctx, slog.LevelDebug, "preview."+kind+".thumbhash_backfill_failed",
+	q := assets.New(pool)
+	var err error
+	if overwrite {
+		err = q.SetAssetThumbhash(ctx, assets.SetAssetThumbhashParams{
+			ID:        pgtype.UUID{Bytes: id, Valid: true},
+			Thumbhash: tb,
+		})
+	} else {
+		err = q.SetAssetThumbhashIfMissing(ctx, assets.SetAssetThumbhashIfMissingParams{
+			ID:        pgtype.UUID{Bytes: id, Valid: true},
+			Thumbhash: tb,
+		})
+	}
+	if err != nil {
+		logAttrs(logger, ctx, slog.LevelDebug, "preview."+kind+".thumbhash_stamp_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}

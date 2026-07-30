@@ -291,6 +291,17 @@ exit 0
 		t.Fatal("force=false re-rendered a complete 3D variant set")
 	}
 
+	// The state every pre-#760 3D asset is in: a blur-up placeholder
+	// encoded from the render that is about to be replaced. For a 3D
+	// asset the ladder source is the RENDER, not the uploaded bytes, so
+	// a corrected render must produce a different hash — unlike a raster
+	// asset, whose source cannot change under a stable hash.
+	staleTh := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77}
+	if _, err := rig.pool.Exec(ctx,
+		`UPDATE assets SET thumbhash = $2 WHERE id = $1`, assetID, staleTh); err != nil {
+		t.Fatalf("plant stale thumbhash: %v", err)
+	}
+
 	// --- forced: MUST re-render --------------------------------------
 	forced, _ := json.Marshal(ModelPayload{
 		AssetID: assetID, FileHash: hash, FileExtension: "glb", Force: true,
@@ -311,6 +322,12 @@ exit 0
 		if got := variantBytes(t, rig, hash, key); bytes.Equal(got, sentinel) {
 			t.Errorf("force=true left stale bytes at %q (#760)", key)
 		}
+	}
+
+	// The card paints the placeholder FIRST. Leaving it makes a
+	// corrected thumbnail fade up out of the magenta one it replaced.
+	if got := rig.thumbhashOf(t, assetID); bytes.Equal(got, staleTh) {
+		t.Error("force=true left the thumbhash encoded from the stale render (#760)")
 	}
 }
 
