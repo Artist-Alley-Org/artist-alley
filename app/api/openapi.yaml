@@ -4843,6 +4843,14 @@ paths:
     patch:
       operationId: updateField
       summary: Update a field definition (admin)
+      description: |
+        Partial update. Optimistic concurrency: pass the field's
+        last-known `updated_at` as `if_unchanged_since`; 409 if the
+        row has been edited since. Required in spirit for the options
+        editor per ADR 0012 — editing one term rewrites the whole
+        `options` document, so an unguarded write silently discards a
+        concurrent editor's curation. Omit to opt out (legacy
+        last-write-wins).
       tags: [metadata]
       security:
         - cookieAuth: []
@@ -4866,6 +4874,11 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Edited by someone else after `if_unchanged_since`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EditConflict" }
     delete:
       operationId: archiveField
       summary: Archive (soft-delete) a field definition (admin)
@@ -10961,7 +10974,15 @@ components:
         options:
           type: object
           additionalProperties: true
-          description: "Type-dependent constraints / values. Shape per ADR 0012."
+          description: |
+            Type-dependent constraints / values. Shape per ADR 0012.
+            For `select` / `multi_select`: `{"values": [...]}` where
+            each entry is a bare slug string, or an object
+            `{value, label?, status?, replaced_by?, children?}`.
+            An entry with no `status` is `active`. Entries that are
+            `deprecated` or `archived` must not be offered for new
+            values; `deprecated` ones still resolve and display on
+            assets that already carry them.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:
@@ -11049,9 +11070,31 @@ components:
       type: object
       description: "Partial update; only present fields are touched."
       properties:
+        if_unchanged_since:
+          type: string
+          format: date-time
+          description: |
+            Optimistic-concurrency guard (ADR 0012). When set, the
+            server returns 409 EditConflict and writes nothing if the
+            field's `updated_at` has moved past this value. Omit to
+            opt out of the check (legacy behaviour).
         label: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
-        options: { type: object, additionalProperties: true }
+        options:
+          type: object
+          additionalProperties: true
+          description: |
+            Type-dependent constraints. For `select` / `multi_select`
+            this is `{"values": [...]}` where each entry is either a
+            bare slug string or an object
+            `{value, label?, status?, replaced_by?, children?}`.
+            `status` is one of active | deprecated | archived and
+            defaults to `active` when absent; `replaced_by` must name
+            another slug in the same field. Entries carrying nothing
+            beyond their slug serialise back as bare strings, so
+            documents written before options had a lifecycle
+            round-trip unchanged. Options are never hard-deleted —
+            retire them with `deprecated` or `archived`.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:
