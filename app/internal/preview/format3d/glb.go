@@ -5,12 +5,74 @@ package format3d
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 
 	"github.com/qmuntal/gltf"
 	"github.com/qmuntal/gltf/modeler"
 )
+
+// GLB container constants (glTF 2.0 §4.4, little-endian).
+//
+// These duplicate qmuntal/gltf's own unexported glbHeaderMagic /
+// glbChunkJSON: the library knows the container but keeps the constants
+// private and only exposes them behind a full Document decode, which
+// eagerly resolves buffers. ReadGLBJSONChunk needs the JSON chunk and
+// nothing else, so it reads the container directly.
+const (
+	glbMagic     uint32 = 0x46546C67 // "glTF"
+	glbChunkJSON uint32 = 0x4E4F534A // "JSON"
+
+	// glbMaxJSONChunk caps how much a declared chunk length may make us
+	// allocate. A malformed or hostile header can claim 4 GiB; the JSON
+	// chunk of a real model is orders of magnitude under this.
+	glbMaxJSONChunk uint32 = 64 << 20 // 64 MiB
+)
+
+// ReadGLBJSONChunk returns the JSON chunk of a GLB (binary glTF)
+// stream — the same glTF document a .gltf file holds as plain text.
+//
+// Layout read: a 12-byte header (magic "glTF", version, total length)
+// followed by length-prefixed chunks, the first of which the spec
+// requires to be the JSON chunk. Only that chunk is read, so the BIN
+// chunk (nearly all of the file) is never pulled into memory.
+func ReadGLBJSONChunk(r io.Reader) ([]byte, error) {
+	var header struct {
+		Magic   uint32
+		Version uint32
+		Length  uint32
+	}
+	if err := binary.Read(r, binary.LittleEndian, &header); err != nil {
+		return nil, fmt.Errorf("format3d: read glb header: %w", err)
+	}
+	if header.Magic != glbMagic {
+		return nil, fmt.Errorf("format3d: not a glb (magic %#08x)", header.Magic)
+	}
+
+	var chunk struct {
+		Length uint32
+		Type   uint32
+	}
+	if err := binary.Read(r, binary.LittleEndian, &chunk); err != nil {
+		return nil, fmt.Errorf("format3d: read glb chunk header: %w", err)
+	}
+	if chunk.Type != glbChunkJSON {
+		return nil, fmt.Errorf("format3d: first glb chunk is %#08x, want JSON", chunk.Type)
+	}
+	if chunk.Length > glbMaxJSONChunk {
+		return nil, fmt.Errorf("format3d: glb json chunk too large (%d bytes)", chunk.Length)
+	}
+
+	buf := make([]byte, chunk.Length)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, fmt.Errorf("format3d: read glb json chunk: %w", err)
+	}
+	// The chunk is padded to a 4-byte boundary with trailing spaces,
+	// which encoding/json tolerates; trim anyway so callers that hash or
+	// compare the document see exactly the JSON.
+	return bytes.TrimRight(buf, " \x00"), nil
+}
 
 // WriteGLB serialises a Model as a glTF 2.0 binary stream. Layout:
 //
