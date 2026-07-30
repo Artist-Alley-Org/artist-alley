@@ -17,14 +17,26 @@ package format3d
 // / seed path can register them automatically instead of relying on the
 // uploader to attach each one by hand.
 //
-// GLB and (typically) FBX embed their resources, so they declare no
-// companions and are handled as self-contained.
+// A .glb is NOT automatically self-contained (#750). It is a binary
+// container wrapping the same glTF JSON document, so its buffers[].uri /
+// images[].uri can name external files exactly as a .gltf's can — an
+// exporter chooses whether to embed. Only parsing tells you which: 363
+// of the 374 GLBs in the seed catalogue reference external textures.
+// So GLB is parsed, and "self-contained" is a result, not an assumption.
+//
+// FBX is the same shape of question and is NOT yet answered here: it can
+// embed media in a Video node's Content property or reference it by
+// RelativeFilename, and 105 of the seed catalogue's 109 FBX files
+// reference externally. Reading that needs an FBX node parser (binary +
+// ASCII) plus a loader-side fix for the backslash-separated paths FBX
+// stores — tracked separately, not silently assumed away.
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -76,6 +88,20 @@ func ParseGLTFCompanions(gltfJSON []byte) ([]string, error) {
 		add(im.URI)
 	}
 	return out, nil
+}
+
+// ParseGLBCompanions extracts the external resource paths a GLB (binary
+// glTF) declares. A GLB wraps a glTF JSON document in a chunked binary
+// container, so this pulls the JSON chunk out and hands it to
+// ParseGLTFCompanions — same document, same rules. A GLB whose buffers
+// and images are all embedded yields none, which is the answer for 11 of
+// the 374 GLBs in the seed catalogue and an assumption for none of them.
+func ParseGLBCompanions(r io.Reader) ([]string, error) {
+	gltfJSON, err := ReadGLBJSONChunk(r)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGLTFCompanions(gltfJSON)
 }
 
 // ParseOBJMaterialLibs returns the .mtl filenames an OBJ references via
@@ -133,9 +159,12 @@ func ParseMTLTextures(mtl []byte) []string {
 
 // ResolveCompanions walks the on-disk companions of a model file and
 // returns their paths RELATIVE to the model's directory (forward-slash),
-// deterministically ordered. glTF resolves its buffer + image URIs; OBJ
-// resolves mtllib .mtl files and, recursively, the textures each .mtl
-// declares. GLB/FBX (and anything else) are self-contained → nil.
+// deterministically ordered. glTF and GLB resolve their buffer + image
+// URIs (a GLB may reference external URIs — parse to find out, #750);
+// OBJ resolves mtllib .mtl files and, recursively, the textures each
+// .mtl declares. Every other extension — including FBX, whose external
+// references are a known open gap, not a settled "self-contained" —
+// returns nil because nothing here can read them yet.
 //
 // `found` lists companions that exist on disk; `missing` lists declared
 // references whose file is absent (so the caller can log the gap without
@@ -156,6 +185,21 @@ func ResolveCompanions(mainPath string) (found []string, missing []string, err e
 		}
 		declared, err = ParseGLTFCompanions(raw)
 		if err != nil {
+			return nil, nil, err
+		}
+	case "glb":
+		// Streamed, not ReadFile: only the leading header + JSON chunk is
+		// needed, and the BIN chunk after it is the bulk of the file.
+		f, oErr := os.Open(mainPath)
+		if oErr != nil {
+			return nil, nil, fmt.Errorf("open glb: %w", oErr)
+		}
+		declared, err = ParseGLBCompanions(f)
+		f.Close()
+		if err != nil {
+			// A malformed container resolves to no companions rather than
+			// killing the caller's run; the error carries why, and the
+			// seed/ingest caller logs it per the soft-fail contract.
 			return nil, nil, err
 		}
 	case "obj":
@@ -190,7 +234,9 @@ func ResolveCompanions(mainPath string) (found []string, missing []string, err e
 			}
 		}
 	default:
-		return nil, nil, nil // GLB / FBX / etc. — self-contained
+		// No reader for this format's references (FBX, STL, PLY, DAE, ...).
+		// Not the same claim as "it has none" — see the file header.
+		return nil, nil, nil
 	}
 
 	for _, rel := range declared {

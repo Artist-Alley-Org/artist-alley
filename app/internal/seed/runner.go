@@ -567,14 +567,14 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 		r.assets[a.ID] = id
 
-		// Register multi-file companions (#486). A .gltf/.obj declares its
-		// buffer/textures/.mtl as sibling files; without companion rows the
-		// render stages nothing and the interactive viewer's
-		// GLTFLoader 404s on the .bin, so the model renders blank. Do this
-		// BEFORE the preview enqueue below so the worker finds them staged.
-		// Best-effort: a companion hiccup shouldn't fail an otherwise-good
-		// seed.
-		r.applyAssetCompanions(ctx, id, a.ID, abs, a.FileExtension)
+		// Register multi-file companions (#486, #750). A .gltf/.glb/.obj
+		// declares its buffer/textures/.mtl as sibling files; without
+		// companion rows the render stages nothing and the interactive
+		// viewer's GLTFLoader 404s on the .bin/textures, so the model
+		// renders blank or untextured. Do this BEFORE the preview enqueue
+		// below so the worker finds them staged. Best-effort: a companion
+		// hiccup shouldn't fail an otherwise-good seed.
+		r.applyAssetCompanions(ctx, id, a.ID, abs)
 
 		// Dispatch the preview job (#355). Enqueued AFTER the asset row
 		// exists — the handler resolves the asset by id — and using the
@@ -632,7 +632,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 }
 
 // applyAssetCompanions parses a seeded model's declared external
-// resources (glTF buffers[].uri / images[].uri; OBJ mtllib → MTL
+// resources (glTF/GLB buffers[].uri + images[].uri; OBJ mtllib → MTL
 // map_*) and registers each sibling that exists on disk as a companion
 // (#486). Mirrors what the HTTP AddAssetCompanion handler does — upload
 // bytes content-addressed, pin them, insert the asset+path→blob row —
@@ -640,17 +640,19 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 // calls, so the seed self-wires any complete multi-file model dropped
 // into its source tree.
 //
-// Every step is soft-fail: GLB/FBX and single-file models resolve to
-// no companions and return immediately; a missing or unreadable sibling
-// logs and is skipped so the asset still seeds (it just renders
-// untextured, which beats failing the whole seed).
-func (r *Runner) applyAssetCompanions(ctx context.Context, assetID pgtype.UUID, manifestID, mainPath, ext string) {
-	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
-	case "gltf", "obj":
-	default:
-		return // GLB / FBX / everything else — self-contained
-	}
-
+// Which extensions carry companions is ResolveCompanions' call alone.
+// This used to pre-filter on `case "gltf", "obj"`, which duplicated that
+// list and let it rot: GLB was excluded here as "self-contained" and
+// stayed excluded even once the resolver could read it, so 363 seeded
+// GLBs got zero companion rows and rendered untextured (#750). One
+// source of truth now — an extension with no declared references costs a
+// string switch and no file I/O.
+//
+// Every step is soft-fail: single-file models resolve to no companions
+// and return immediately; an unparseable model, or a missing or
+// unreadable sibling, logs and is skipped so the asset still seeds (it
+// just renders untextured, which beats failing the whole seed).
+func (r *Runner) applyAssetCompanions(ctx context.Context, assetID pgtype.UUID, manifestID, mainPath string) {
 	found, missing, err := format3d.ResolveCompanions(mainPath)
 	if err != nil {
 		r.log.Warn("seed.companion.resolve", "id", manifestID, "err", err.Error())

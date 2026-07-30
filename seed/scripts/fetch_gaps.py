@@ -1024,7 +1024,16 @@ def _fetch_gltf_companions(gap: GapAsset, target: Path, force: bool) -> list[str
     to the model, so the seed pipeline can stage them as companions. No
     hardcoded file lists — the .gltf is the source of truth. Best-effort:
     a failed sibling logs + is skipped (the model still renders, just
-    untextured). GLB and other formats are self-contained → []."""
+    untextured).
+
+    Only .gltf is handled. A .glb can reference external URIs too (#750 —
+    363 of the seed catalogue's 374 GLBs do), so this is a gap and not a
+    property of the format. It has not bitten because every GLB this
+    fetcher pulls is self-embedding: all 11 `internet`-sourced GLBs in the
+    catalogue resolve to zero companions when parsed. Add the GLB branch
+    when a fetched .glb needs siblings, using
+    format3d.ReadGLBJSONChunk's layout (see populate_archive._glb_json_chunk
+    for the Python twin) rather than assuming."""
     if target.suffix.lower() != ".gltf":
         return []
     try:

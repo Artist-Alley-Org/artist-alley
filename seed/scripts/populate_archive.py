@@ -71,6 +71,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import urllib.request
@@ -214,14 +215,58 @@ def _clean_companion_uri(uri: str) -> str | None:
     return cleaned
 
 
+def _glb_json_chunk(model_path: Path) -> dict | None:
+    """Return the glTF JSON document inside a GLB container, or None if
+    the file isn't a readable GLB (#750).
+
+    GLB layout (glTF 2.0 §4.4, little-endian): a 12-byte header — magic
+    'glTF', version, total length — then length-prefixed chunks, the
+    first of which the spec requires to be the JSON chunk. Only that
+    chunk is read; the BIN chunk after it is the bulk of the file. Python
+    twin of format3d.ReadGLBJSONChunk."""
+    try:
+        with model_path.open("rb") as f:
+            head = f.read(12)
+            if len(head) < 12:
+                return None
+            magic, _version, _total = struct.unpack("<III", head)
+            if magic != 0x46546C67:  # 'glTF'
+                return None
+            chunk = f.read(8)
+            if len(chunk) < 8:
+                return None
+            clen, ctype = struct.unpack("<II", chunk)
+            if ctype != 0x4E4F534A:  # 'JSON'
+                return None
+            if clen > 64 * 1024 * 1024:
+                return None
+            raw = f.read(clen)
+            if len(raw) < clen:
+                return None
+        doc = json.loads(raw.decode("utf-8"))
+    except (OSError, struct.error, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
 def resolve_model_companions(model_path: Path) -> list[str]:
     """Return the on-disk sibling files a multi-file model declares,
-    relative to the model's directory (#486). glTF → buffers[].uri +
-    images[].uri; OBJ → mtllib .mtl files and, recursively, the textures
-    each .mtl references. GLB/FBX are self-contained → []. Only siblings
-    that exist next to the model are returned. This is the Python twin of
+    relative to the model's directory (#486). glTF and GLB → buffers[].uri
+    + images[].uri; OBJ → mtllib .mtl files and, recursively, the textures
+    each .mtl references. Only siblings that exist next to the model are
+    returned. This is the Python twin of
     app/internal/preview/format3d.ResolveCompanions so the seed pipeline
-    stages exactly what the Go runner will register + the loaders resolve."""
+    stages exactly what the Go runner will register + the loaders resolve.
+
+    GLB is NOT self-contained by default (#750). It wraps the same glTF
+    JSON document in a binary container, so its buffer/image URIs can name
+    external files exactly as a .gltf's can. Treating it as embedded here
+    is what left 363 of the catalogue's 374 GLBs staged WITHOUT the
+    textures they name — Kenney ships one Textures/ dir per format
+    directory, and this function returning [] meant the GLB dirs' copies
+    were never copied, so the models rendered grey. FBX has the same
+    unanswered question and still returns [] — see the resolver's header.
+    """
     ext = model_path.suffix.lower().lstrip(".")
     base = model_path.parent
     declared: list[str] = []
@@ -232,15 +277,23 @@ def resolve_model_companions(model_path: Path) -> list[str]:
             seen.add(rel)
             declared.append(rel)
 
+    def add_gltf_doc(doc: dict) -> None:
+        for b in doc.get("buffers", []) or []:
+            add(_clean_companion_uri(b.get("uri", "")))
+        for im in doc.get("images", []) or []:
+            add(_clean_companion_uri(im.get("uri", "")))
+
     if ext == "gltf":
         try:
             doc = json.loads(model_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return []
-        for b in doc.get("buffers", []):
-            add(_clean_companion_uri(b.get("uri", "")))
-        for im in doc.get("images", []):
-            add(_clean_companion_uri(im.get("uri", "")))
+        add_gltf_doc(doc)
+    elif ext == "glb":
+        doc = _glb_json_chunk(model_path)
+        if doc is None:
+            return []
+        add_gltf_doc(doc)
     elif ext == "obj":
         try:
             text = model_path.read_text(encoding="utf-8", errors="replace")

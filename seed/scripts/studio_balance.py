@@ -248,9 +248,14 @@ TEAM_CORRECTIONS: list[dict] = [
 # that runs dry is covered by the next one instead of failing the build.
 #
 # `match` is a regex over the bundle-relative path INSIDE the pack dir.
-# GLB is preferred over OBJ everywhere: it is self-contained, so a model
-# cannot arrive without its material (#486 companions still work, there
-# is just nothing to resolve).
+# GLB is preferred over OBJ everywhere: one file per model instead of
+# three, so a recipe's `take` count means what it says.
+#
+# It is NOT preferred because it is self-contained — that was the reason
+# recorded here originally and it is false (#750). Kenney's GLBs name
+# their textures as external `images[].uri` exactly as the .gltf does:
+# 363 of the catalogue's 374 do, and the seed relies on #486 companion
+# resolution for them like any other multi-file model.
 
 TEAM_RECIPES: dict[str, list[dict]] = {
     "UI": [
