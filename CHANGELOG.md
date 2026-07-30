@@ -112,6 +112,21 @@ where applicable, otherwise note "no-spec-impact."
   Existing thumbnails still need the preview job re-run to pick the textures up (#750).
   No-spec-impact.
 
+- **The same was true of FBX: 105 of 109 named a texture and none of them found it.** FBX
+  keeps its texture filenames inside binary node records, which nothing had ever read, so
+  the comment saying FBX "embeds its resources" went unchallenged for the same reason the
+  GLB one did. There is now a reader for it, and a matching one in the dataset copier so
+  the texture folders actually get staged. Two subtler problems came out with it. Companion
+  paths were being stored with the backslashes FBX writes, because the code normalised them
+  with a call that does nothing on Linux — so `Textures\barrel.png` was one filename rather
+  than a folder and a file, and nothing could match it. And the thumbnail renderer asks for
+  textures by bare filename regardless of the folder they live in, so correcting the stored
+  path was necessary but not sufficient; the renderer now resolves them explicitly. Proven
+  by running the release-image smoke test with and without that step. As with the GLB fix,
+  **existing thumbnails do not change until previews are re-rendered** — they are still the
+  output of the renderer that shipped before July, which is tracked separately (#753).
+  No-spec-impact.
+
 - **Six seed images were showing a fraction of their own artwork.** The Kenney pack's
   Flash-exported sprite sheets carry a stale artboard — `viewBox="0 0 550 400"` on a
   drawing that actually spans 2248x1120 units — and the rasteriser honoured it, so the
