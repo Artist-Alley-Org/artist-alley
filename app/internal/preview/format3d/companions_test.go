@@ -241,13 +241,13 @@ func TestResolveCompanions_GLBMalformed(t *testing.T) {
 }
 
 // Extensions with no reference reader resolve to nil. This pins current
-// behaviour; it is NOT a claim that these formats embed everything. FBX
-// in particular does reference external textures (105 of the seed
-// catalogue's 109 do) and is tracked separately — see the resolver's
-// header comment.
+// behaviour; it is NOT a claim that these formats embed everything. DAE
+// in particular declares its images in <library_images> and is not read
+// yet — see the resolver's header comment. FBX used to be in this list
+// and is now parsed (#753, fbx_test.go).
 func TestResolveCompanions_NoReaderForFormat(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"model.fbx", "model.stl", "model.ply", "notes.txt"} {
+	for _, name := range []string{"model.stl", "model.ply", "model.dae", "notes.txt"} {
 		writeFile(t, filepath.Join(dir, name), "whatever")
 		found, missing, err := ResolveCompanions(filepath.Join(dir, name))
 		if err != nil {

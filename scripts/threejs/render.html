@@ -33,7 +33,7 @@
   // (ModelView.svelte) imports. Loader dispatch, OBJ .mtl resolution and
   // material normalisation live there; nothing about them is duplicated
   // on this page. worker.mjs serves web/src/lib/3d/ at /shared/.
-  import { loadModel } from '/shared/modelLoader.js';
+  import { loadModel, companionLoadingManager } from '/shared/modelLoader.js';
   import {
     DEFAULT_KEY_INTENSITY,
     DEFAULT_FILL_INTENSITY,
@@ -168,7 +168,18 @@
     rim.position.set(0, 3, -5); scene.add(rim);
     scene.add(new THREE.AmbientLight(0xffffff, DEFAULT_AMBIENT_INTENSITY));
 
-    const { object: model } = await loadModel({ url, ext, companions });
+    // Same companion-aware manager the viewer uses. Plain relative
+    // resolution against the work dir is NOT enough for every format:
+    // three.js's FBXLoader reduces `Textures\barrel.png` to its basename
+    // before requesting it (`images[id].split('\\').pop()`), so it asks
+    // the work dir for `barrel.png` while the companion is staged at
+    // `Textures/barrel.png` — a 404 and an untextured thumbnail (#753).
+    // The manager's basename fallback bridges that; for GLB and OBJ,
+    // whose loaders ask for the full relative path, it resolves to the
+    // same URL relative resolution already found.
+    const { object: model } = await loadModel({
+      url, ext, companions, manager: companionLoadingManager(companions),
+    });
     const loadedAt = performance.now();
     const census = materialCensus(model);
     if (census.broken.length > 0) {

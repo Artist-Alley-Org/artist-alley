@@ -479,6 +479,130 @@ Connections:  {
 `, 'utf8');
 }
 
+// FBX + a texture in a subdirectory — the shape 127 of the seed
+// catalogue's 131 FBX have, and the case the untextured fixture above
+// could never fail on (#753).
+//
+// Scope, precisely: this exercises the RENDERER half only. It writes
+// `Textures/checker.png` into the work dir itself and worker.mjs
+// enumerates what it finds, so nothing here calls format3d's FBX reader
+// — that side is covered by fbx_test.go against a real Kenney export.
+// What only this case can catch is the loader-side half: FBXLoader
+// reduces `Textures\checker.png` to its BASENAME before requesting it
+// (`images[id].split('\\').pop()`), so it asks the work dir for
+// `checker.png` while the file sits at `Textures/checker.png`. Plain
+// relative resolution 404s and the poster comes out untextured; the
+// companion manager's basename fallback — which render.html did not pass
+// before #753 — is what bridges it.
+//
+// Verified red-first: with the `manager:` argument removed from
+// render.html this case fails with "texture(s) bound but never decoded
+// … a 404 or a decode failure inside headless Chromium", and the other
+// nine cases stay green — so it pins the FBX path specifically and the
+// manager costs GLB/glTF/OBJ nothing.
+//
+// Backslash separators on purpose: that is what every FBX writes, and a
+// fixture using `/` would pass while the real corpus failed.
+function fbxTexturedFiles() {
+  const verts = QUAD_V.flat().join(',');
+  const idx = QUAD_TRIS.map(([a, b, c]) => `${a},${b},${~c}`).join(',');
+  const perPolyVertex = QUAD_TRIS.flat();
+  const normals = perPolyVertex.flatMap(() => [0, 0, 1]).join(',');
+  const uvs = perPolyVertex.flatMap((i) => QUAD_UV[i]).join(',');
+  return {
+    'smoke.fbx': Buffer.from(`${FBX_ASCII_GUARD}
+; FBX 7.4.0 project file — artist-alley textured-FBX smoke fixture
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+}
+Definitions:  {
+	Version: 100
+	Count: 5
+}
+Objects:  {
+	Geometry: 1000, "Geometry::quad", "Mesh" {
+		Vertices: *${QUAD_V.length * 3} {
+			a: ${verts}
+		}
+		PolygonVertexIndex: *${QUAD_TRIS.length * 3} {
+			a: ${idx}
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *${perPolyVertex.length * 3} {
+				a: ${normals}
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *${perPolyVertex.length * 2} {
+				a: ${uvs}
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 0
+			}
+		}
+	}
+	Model: 2000, "Model::quad", "Mesh" {
+		Version: 232
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Material: 3000, "Material::checker", "" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A",1,1,1
+		}
+	}
+	Texture: 4000, "Texture::checker", "" {
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::checker"
+		FileName: "Textures\\checker.png"
+		RelativeFilename: "Textures\\checker.png"
+		ModelUVTranslation: 0,0
+		ModelUVScaling: 1,1
+	}
+	Video: 5000, "Video::checker", "Clip" {
+		Type: "Clip"
+		Properties70:  {
+		}
+		UseMipMap: 0
+		Filename: "Textures\\checker.png"
+		RelativeFilename: "Textures\\checker.png"
+	}
+}
+Connections:  {
+	C: "OO",2000,0
+	C: "OO",1000,2000
+	C: "OO",3000,2000
+	C: "OP",4000,3000, "DiffuseColor"
+	C: "OO",5000,4000
+}
+`, 'utf8'),
+    'Textures/checker.png': CHECKER_PNG,
+  };
+}
+
 // The cases this image claims to render. Every LOADABLE_EXTS entry in
 // modelLoader.js appears at least once.
 //
@@ -513,6 +637,7 @@ const CASES = [
     textures: 0,
   },
   { name: 'fbx', model: 'smoke.fbx', files: () => ({ 'smoke.fbx': fbxFixture() }), textures: 0 },
+  { name: 'fbx-textured', model: 'smoke.fbx', files: fbxTexturedFiles, textures: 1 },
   { name: 'stl', model: 'smoke.stl', files: () => ({ 'smoke.stl': stlFixture() }), textures: 0 },
   { name: 'ply', model: 'smoke.ply', files: () => ({ 'smoke.ply': plyFixture() }), textures: 0 },
   { name: 'dae', model: 'smoke.dae', files: () => ({ 'smoke.dae': daeFixture() }), textures: 0 },
