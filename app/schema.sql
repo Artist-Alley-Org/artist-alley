@@ -2128,6 +2128,7 @@ CREATE TABLE public.storage_variants (
     content_type text DEFAULT 'application/octet-stream'::text NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT storage_variants_size_bytes_check CHECK ((size_bytes >= 0))
 );
 
@@ -4648,6 +4649,13 @@ CREATE INDEX storage_sweep_findings_subject_idx ON public.storage_sweep_findings
 --
 
 CREATE INDEX storage_sweep_runs_kind_started_idx ON public.storage_sweep_runs USING btree (kind, started_at DESC);
+
+
+--
+-- Name: storage_variants_updated_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_variants_updated_at_idx ON public.storage_variants USING btree (updated_at DESC);
 
 
 --

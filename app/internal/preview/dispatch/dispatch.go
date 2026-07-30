@@ -22,7 +22,10 @@
 package dispatch
 
 import (
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/archive"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
@@ -172,4 +175,85 @@ func CanPreview(ext *string) bool {
 		return true
 	}
 	return Has(ImageExts, Normalize(*ext))
+}
+
+// PreviewableExts returns every extension some handler can render, as
+// lowercase strings without a leading dot, sorted.
+//
+// Derived from CanPreview over the declared sets rather than a fresh
+// list, so it cannot drift from what the router will actually accept.
+// The caller is the bulk rebuild path, whose "no --ext given means all
+// of them" needs a concrete allowlist to hand to SQL.
+func PreviewableExts() []string {
+	seen := map[string]struct{}{}
+	for _, set := range []map[string]struct{}{
+		ImageExts, VideoExts, ModelExts, AudioExts, PDFExts, FontExts,
+		EbookExts, EPSExts, PSDExts, ComicExts, TextExts, ArchiveExts,
+	} {
+		for e := range set {
+			ext := e
+			if CanPreview(&ext) {
+				seen[ext] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for e := range seen {
+		out = append(out, e)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Payload is the JSON body EVERY preview.* job carries, on the wire and
+// in every handler. It lives here — next to the router that decides
+// which handler reads it — because producer and consumer used to
+// disagree in a way the compiler could not see: the three enqueue sites
+// (upload, "recreate previews", `aa seed`) each hand-rolled a
+// `map[string]string`, while the eleven handlers each declared their
+// own struct. Adding a field meant editing fourteen places and hoping.
+//
+// That is not hypothetical. `map[string]string{"force": "true"}` is a
+// JSON string, and a `Force bool` would reject it as a bad payload at
+// unmarshal time — a TerminalError for a control that is supposed to
+// FIX a preview. One shared type makes that a compile error instead.
+//
+// Handlers alias this type (`type ModelPayload = dispatch.Payload`)
+// rather than redeclaring it, so a new field is available to all of
+// them at once and the wire format has exactly one definition.
+type Payload struct {
+	AssetID       uuid.UUID `json:"asset_id"`
+	FileHash      string    `json:"file_hash"`
+	FileExtension string    `json:"file_extension"`
+
+	// Force re-renders variants that already exist instead of leaving
+	// them alone (#760).
+	//
+	// Every handler short-circuits on "the output is already in
+	// storage", which is what makes the steady-state re-queue nearly
+	// free — and what made "Recreate previews" a control that did
+	// nothing. An operator whose renderer just got fixed clicked it,
+	// got a 202 and a job that completed, and the thumbnail did not
+	// change, because the skip check never asked whether the bytes
+	// were STALE, only whether they were THERE.
+	//
+	// Force is the operator saying "the bytes are stale, ignore them".
+	// It never deletes: each rung is overwritten in place by an
+	// atomic backend Put, so a crash mid-render leaves the old
+	// preview intact rather than an asset with none.
+	//
+	// omitempty keeps the ordinary payload byte-identical to what
+	// shipped before, so nothing has to be re-enqueued to upgrade.
+	Force bool `json:"force,omitempty"`
+}
+
+// NewPayload builds the job body for one asset. Prefer it over a
+// struct literal at enqueue sites so a nil extension is normalised the
+// same way everywhere.
+func NewPayload(assetID uuid.UUID, hash string, ext *string, force bool) Payload {
+	e := ""
+	if ext != nil {
+		e = *ext
+	}
+	return Payload{AssetID: assetID, FileHash: hash, FileExtension: e, Force: force}
 }

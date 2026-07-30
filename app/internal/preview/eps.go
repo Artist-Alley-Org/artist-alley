@@ -42,15 +42,6 @@ import (
 // MuPDF's mutool can't render .ps; ImageMagick's `convert` wraps
 // Ghostscript anyway, so shelling out directly removes a hop.
 
-// EPSPayload — JSON body for a preview.eps job. Reuses the PDF-style
-// shape (asset_id + file_hash + file_extension) for consistency with
-// the other handlers.
-type EPSPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // EPSResult — what the worker writes back to jobs.result.
 type EPSResult struct {
 	Variants []string `json:"variants"`
@@ -124,10 +115,7 @@ func (h *EPSHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 
 	result := EPSResult{}
 
-	if h.variantExists(jobCtx, p.FileHash, "col") &&
-		h.variantExists(jobCtx, p.FileHash, "preview") &&
-		h.variantExists(jobCtx, p.FileHash, "screen") &&
-		h.variantExists(jobCtx, p.FileHash, "hires") {
+	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
 		posterPath := filepath.Join(filepath.Dir(src), "page1.png")
@@ -135,7 +123,7 @@ func (h *EPSHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			h.markFailed(jobCtx, p.AssetID, err.Error())
 			return nil, &jobs.TerminalError{Err: fmt.Errorf("preview.eps: rasterize: %w", err)}
 		}
-		if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
+		if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath, p.Force); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.eps.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -229,7 +217,7 @@ func (h *EPSHandler) rasterize(ctx context.Context, src, outPath string) error {
 	return nil
 }
 
-func (h *EPSHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
+func (h *EPSHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string, force bool) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("open poster: %w", err)
@@ -242,12 +230,8 @@ func (h *EPSHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, h
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "eps",
+		Overwrite: force,
 	})
-}
-
-func (h *EPSHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *EPSHandler) ghostscriptBin() string {

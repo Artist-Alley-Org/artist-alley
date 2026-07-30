@@ -4644,8 +4644,19 @@ paths:
         preview.3d / preview.audio / preview.pdf / preview.font /
         preview.ebook / preview.eps / preview.psd / preview.comic /
         preview.text) at PriorityHigh. The worker picks it up within
-        a tick and overwrites the existing variants when its
-        idempotency-skip logic doesn't bail.
+        a tick.
+
+        By default the job is enqueued with `force=true`, which
+        re-renders variants that already exist. Without it this
+        endpoint could not do the thing it is named for: every
+        handler skips outputs already present in storage, so the job
+        completed successfully having written nothing and the
+        thumbnail never changed.
+
+        Each rung is overwritten in place by an atomic backend
+        write — nothing is deleted first, so an interrupted
+        re-render leaves the previous preview intact rather than an
+        asset with none.
 
         Useful after attaching new companions (so a 3D model can
         re-render with its textures) or after a worker bug-fix
@@ -4658,6 +4669,19 @@ paths:
       security:
         - cookieAuth: []
         - bearerAuth: []
+      parameters:
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+            description: |
+              `true` (the default) re-renders every output, ignoring
+              what is already in storage. `false` is the cheap
+              gap-filling pass: outputs already present are left
+              alone, which is what makes a re-queue of an
+              up-to-date asset nearly free.
       responses:
         "202":
           description: Job enqueued
@@ -4665,10 +4689,18 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [job_id, job_type]
+                required: [job_id, job_type, force]
                 properties:
                   job_id: { type: string, format: uuid }
                   job_type: { type: string }
+                  force:
+                    type: boolean
+                    description: |
+                      Whether the enqueued job will re-render
+                      existing variants. Echoed back so a caller
+                      can tell a real re-render from a
+                      gap-filling pass without decoding the job
+                      payload.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":

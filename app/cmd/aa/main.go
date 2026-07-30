@@ -43,6 +43,17 @@ func main() {
 		}
 		return
 	}
+	// `aa rebuild-previews ...` re-enqueues preview jobs for existing
+	// assets with force set, so a renderer fix reaches the catalogue
+	// that predates it (#760). Enqueue-only; the server's worker pool
+	// does the work.
+	if len(os.Args) > 1 && os.Args[1] == "rebuild-previews" {
+		if err := runRebuildPreviews(os.Args[2:]); err != nil {
+			slog.Error("rebuild-previews failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		// At this point logging may already be set up; if not, fall
 		// back to stderr.
@@ -63,6 +74,11 @@ func runSeed(args []string) error {
 	previews := fs.Bool("previews", true,
 		"enqueue a preview job per asset so the seed produces derivatives "+
 			"(card thumbnails, video sprites); false = fast metadata-only seed")
+	forcePreviews := fs.Bool("force-previews", false,
+		"re-render variants that already exist instead of skipping them. "+
+			"--reset does NOT erase the content-addressed variant store, so a "+
+			"re-seed of the same dataset normally re-uses every existing render; "+
+			"use this when the renderer changed and the stored ones are stale")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -160,6 +176,7 @@ func runSeed(args []string) error {
 		AdminUsername: bootstrap.DefaultUsername,
 		Logger:        logger,
 		Previews:      *previews,
+		ForcePreviews: *forcePreviews,
 	})
 	counts, err := runner.Run(ctx)
 	if err != nil {

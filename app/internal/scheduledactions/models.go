@@ -941,6 +941,7 @@ type StorageVariant struct {
 	ContentType string             `json:"content_type"`
 	Metadata    []byte             `json:"metadata"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SystemConfig struct {

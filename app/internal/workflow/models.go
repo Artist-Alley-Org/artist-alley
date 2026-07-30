@@ -941,6 +941,7 @@ type StorageVariant struct {
 	ContentType string
 	Metadata    []byte
 	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type SystemConfig struct {
