@@ -194,6 +194,19 @@ have been generated. The user-facing `resource` row is yet another
 layer above — it owns the title, tags, permissions, comments. One
 resource maps to one or more pins.
 
+**Amended 2026-07-30 (#760):** `storage_variants` carries `updated_at`
+alongside `created_at` (migration 00019). The sketch above has only
+`created_at`, and the upsert that runs on every render never touched it
+after the first write — so the table recorded when a derived form first
+appeared and could not say whether it had since been re-derived. That is
+the wrong shape for a row whose whole subject is mutable: the same
+amendment that #620 forced on the caching bullet applies here. A variant
+under a stable object hash is *expected* to be rewritten when the
+renderer improves, and a table that cannot witness the rewrite makes
+"did the rebuild work?" unanswerable — which is exactly how a preview
+control that quietly did nothing survived three releases. `created_at`
+keeps its original meaning; `updated_at` moves on every write.
+
 ### Lifecycle / dedup semantics
 
 Bytes are **reference-counted, not user-owned**. Walking through:

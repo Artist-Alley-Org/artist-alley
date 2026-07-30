@@ -30,13 +30,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
-// FontPayload — JSON body for a preview.font job.
-type FontPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // FontResult — what the worker writes back to jobs.result.
 type FontResult struct {
 	Variants []string     `json:"variants"`
@@ -146,12 +139,9 @@ func (h *FontHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	result.Metadata = meta
 
 	cardImg := h.renderSpecimen(parsed, meta, p.FileExtension)
-	if h.variantExists(ctx, p.FileHash, "col") &&
-		h.variantExists(ctx, p.FileHash, "preview") &&
-		h.variantExists(ctx, p.FileHash, "screen") &&
-		h.variantExists(ctx, p.FileHash, "hires") {
+	if ladderDone(ctx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
-	} else if err := h.fanCardToLadder(ctx, p.AssetID, p.FileHash, cardImg); err != nil {
+	} else if err := h.fanCardToLadder(ctx, p.AssetID, p.FileHash, cardImg, p.Force); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.fan_failed",
 			slog.String("err", err.Error()))
 	} else {
@@ -304,10 +294,11 @@ func drawFallbackText(img *image.RGBA, s string, x, y int) {
 // fanCardToLadder writes the rendered specimen through the standard
 // raster ladder (col / preview / screen / hires) and stamps the
 // asset's thumbhash from it.
-func (h *FontHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, hash string, src image.Image) error {
+func (h *FontHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, hash string, src image.Image, force bool) error {
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "font",
+		Overwrite: force,
 	})
 }
 
@@ -320,11 +311,6 @@ func (h *FontHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta Fo
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
 	})
-}
-
-func (h *FontHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *FontHandler) markProcessing(ctx context.Context, id uuid.UUID) {

@@ -44,12 +44,6 @@ import (
 // grid. 7×13 px glyphs on a 1024-px-tall card fit ~70 lines of ~140
 // chars each, which is plenty of preview for a README / changelog.
 
-type TextPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // TextMetadata: line + byte counts. Reading the file once anyway,
 // surface the cheap stats.
 type TextMetadata struct {
@@ -138,14 +132,11 @@ func (h *TextHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	lines, meta := h.readPreview(body)
 	result.Metadata = meta
 
-	if h.variantExists(jobCtx, p.FileHash, "col") &&
-		h.variantExists(jobCtx, p.FileHash, "preview") &&
-		h.variantExists(jobCtx, p.FileHash, "screen") &&
-		h.variantExists(jobCtx, p.FileHash, "hires") {
+	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
 		img := h.renderCard(lines, meta)
-		if err := h.fanCardToLadder(jobCtx, p.AssetID, p.FileHash, img); err != nil {
+		if err := h.fanCardToLadder(jobCtx, p.AssetID, p.FileHash, img, p.Force); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.text.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -300,10 +291,11 @@ func (h *TextHandler) stage(ctx context.Context, hash string) ([]byte, func(), e
 	return body, func() {}, nil
 }
 
-func (h *TextHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, hash string, src image.Image) error {
+func (h *TextHandler) fanCardToLadder(ctx context.Context, assetID uuid.UUID, hash string, src image.Image, force bool) error {
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "text",
+		Overwrite: force,
 	})
 }
 
@@ -316,11 +308,6 @@ func (h *TextHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta Te
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
 	})
-}
-
-func (h *TextHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *TextHandler) markProcessing(ctx context.Context, id uuid.UUID) {

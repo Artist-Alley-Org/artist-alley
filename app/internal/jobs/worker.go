@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -277,11 +278,57 @@ func (w *Worker) report(ctx context.Context, job *Claim, result json.RawMessage,
 		}
 		return
 	}
+	w.logOutputs(ctx, job, result)
 	if err := w.Service.Complete(ctx, job.ID, w.ID, result); err != nil && !errors.Is(err, ErrLeaseLost) {
 		w.Logger.LogAttrs(ctx, slog.LevelError, "jobs.worker.report_complete_error",
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// outputSummary is the part of a handler's result JSON the worker can
+// read without knowing which handler produced it. Every preview handler
+// reports what it wrote (`generated` or `variants`) and what it left
+// alone (`skipped`); handlers that report neither decode to zero fields
+// and are not logged.
+type outputSummary struct {
+	Generated []string `json:"generated"`
+	Variants  []string `json:"variants"`
+	Skipped   []string `json:"skipped"`
+}
+
+// logOutputs states what a completed job actually produced (#760).
+//
+// A successful job used to log NOTHING, which is how "590 preview jobs,
+// all done, zero failures" came to be indistinguishable from 590 jobs
+// that skipped every output and wrote nothing at all. The handlers
+// already recorded the difference in their result JSON — it was just
+// stored in a column nobody reads and never said out loud.
+//
+// One place rather than eleven: the fields are a convention every
+// preview handler already follows, and per-handler logging is the same
+// duplication that let the skip logic drift in the first place.
+func (w *Worker) logOutputs(ctx context.Context, job *Claim, result json.RawMessage) {
+	if w.Logger == nil || len(result) == 0 {
+		return
+	}
+	var s outputSummary
+	if err := json.Unmarshal(result, &s); err != nil {
+		return
+	}
+	wrote := len(s.Generated) + len(s.Variants)
+	if wrote == 0 && len(s.Skipped) == 0 {
+		return
+	}
+	w.Logger.LogAttrs(ctx, slog.LevelInfo, "jobs.worker.outputs",
+		slog.String("job_id", job.ID.String()),
+		slog.String("job_type", string(job.Type)),
+		slog.Int("wrote", wrote),
+		slog.Int("skipped", len(s.Skipped)),
+		// The keys, not just the count: "skipped 5" does not tell an
+		// operator whether the card thumbnail was one of them.
+		slog.String("skipped_keys", strings.Join(s.Skipped, ",")),
+	)
 }
 
 // Pool spawns N workers sharing the same scope. Returns a cancel

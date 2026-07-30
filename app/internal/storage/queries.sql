@@ -25,15 +25,22 @@ WHERE hash = $1;
 -- name: UpsertVariant :exec
 -- One INSERT-or-update for the variant metadata. Variant bytes already
 -- live in the backend by the time this runs.
+--
+-- updated_at moves on EVERY write, including a re-render of bytes that
+-- were already there (#760). created_at deliberately does not: the pair
+-- is what lets an operator tell "rendered once, long ago" from
+-- "re-rendered just now", which a force-rebuild is otherwise unable to
+-- demonstrate — the bytes change on disk and the database says nothing.
 INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (object_hash, variant_key) DO UPDATE SET
     size_bytes   = EXCLUDED.size_bytes,
     content_type = EXCLUDED.content_type,
-    metadata     = EXCLUDED.metadata;
+    metadata     = EXCLUDED.metadata,
+    updated_at   = now();
 
 -- name: GetVariant :one
-SELECT object_hash, variant_key, size_bytes, content_type, metadata, created_at
+SELECT object_hash, variant_key, size_bytes, content_type, metadata, created_at, updated_at
 FROM storage_variants
 WHERE object_hash = $1 AND variant_key = $2;
 

@@ -496,11 +496,10 @@ func (h *Handler) CreateAsset(
 		// files can demote themselves once we have size at create
 		// time (the create body doesn't carry it today).
 		priority := jobs.PriorityHigh
-		payload := map[string]string{
-			"asset_id":       newID.String(),
-			"file_hash":      *fileHashPtr,
-			"file_extension": strDefault(in.FileExtension, ""),
-		}
+		// force=false: a brand-new asset has no variants to overwrite,
+		// and the skip check is what keeps a re-upload of identical
+		// bytes (same hash, same variants) nearly free.
+		payload := dispatch.NewPayload(newID, *fileHashPtr, in.FileExtension, false)
 		// Only enqueue when something can actually render this ext.
 		// Unroutable extensions fall through to preview.raster, which
 		// terminal-rejects them — a guaranteed dead job (#366). Skip
@@ -1441,11 +1440,21 @@ func (h *Handler) DownloadAssetVariant(
 // worker bug-fix lands and the user wants existing renders
 // regenerated against the new code.
 //
-// The worker's idempotency-skip logic (variant exists → skip)
-// usually short-circuits a no-op re-enqueue; explicit per-worker
-// flags (isoDone in preview.3d, etc.) decide whether the
-// re-render actually writes new bytes. Failure to enqueue is loud:
-// the caller gets a 500 rather than a silent no-op.
+// It enqueues with force=true unless the caller passes force=false
+// (#760). It previously did not, and the result was a control that
+// could not do the only thing it is named for: the job it queued hit
+// each handler's "this variant is already in storage" check, skipped
+// everything, and completed successfully. The operator got a 202, a
+// job id, a `done` job — and the same stale thumbnail. Three merged
+// renderer fixes (#689, #750, #753) were invisible on every existing
+// install for exactly this reason.
+//
+// force=false is still reachable and still useful: it is the cheap
+// "fill in whatever is missing" pass, e.g. after attaching a companion
+// to an asset whose ladder never rendered at all.
+//
+// Failure to enqueue is loud: the caller gets a 500 rather than a
+// silent no-op.
 func (h *Handler) RecreateAssetPreview(
 	ctx context.Context,
 	req openapi.RecreateAssetPreviewRequestObject,
@@ -1486,11 +1495,11 @@ func (h *Handler) RecreateAssetPreview(
 	}
 
 	jobType := jobTypeForExt(row.FileExtension)
-	payload := map[string]string{
-		"asset_id":       req.Id.String(),
-		"file_hash":      *row.FileHash,
-		"file_extension": strDefault(row.FileExtension, ""),
+	force := true
+	if req.Params.Force != nil {
+		force = *req.Params.Force
 	}
+	payload := dispatch.NewPayload(uuid.UUID(req.Id), *row.FileHash, row.FileExtension, force)
 	priority := jobs.PriorityHigh
 	jobID, err := h.Jobs.Enqueue(ctx, jobType, payload, jobs.EnqueueOpts{Priority: &priority})
 	if err != nil {
@@ -1499,6 +1508,7 @@ func (h *Handler) RecreateAssetPreview(
 	return openapi.RecreateAssetPreview202JSONResponse{
 		JobId:   openapi_types.UUID(jobID),
 		JobType: string(jobType),
+		Force:   force,
 	}, nil
 }
 

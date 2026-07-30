@@ -31,13 +31,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
-// VideoPayload is the JSON body for a preview.video job.
-type VideoPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // VideoResult — what the worker writes back to jobs.result for the
 // admin queue view.
 type VideoResult struct {
@@ -235,8 +228,8 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// when the poster itself already exists (e.g. earlier encodes
 	// pre-dating poster-derived thumbnails). The inner helpers skip
 	// what's already on the backend.
-	posterExists := h.variantExists(jobCtx, p.FileHash, "poster")
-	if err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe); err != nil {
+	posterExists := variantDone(jobCtx, h.Storage, p.FileHash, "poster", p.Force)
+	if err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe, p.Force); err != nil {
 		return nil, fmt.Errorf("preview.video: poster: %w", err)
 	}
 	if posterExists {
@@ -246,7 +239,7 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 
 	// --- HLS ladder -------------------------------------------------------
-	if h.variantExists(jobCtx, p.FileHash, "hls/master.m3u8") {
+	if variantDone(jobCtx, h.Storage, p.FileHash, "hls/master.m3u8", p.Force) {
 		result.Skipped = append(result.Skipped, "hls")
 	} else if err := h.writeHLS(jobCtx, work, p.FileHash, probe, enc); err != nil {
 		return nil, fmt.Errorf("preview.video: hls: %w", err)
@@ -255,7 +248,7 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 
 	// --- scrub sprite + VTT ----------------------------------------------
-	if h.variantExists(jobCtx, p.FileHash, "sprites.jpg") {
+	if variantDone(jobCtx, h.Storage, p.FileHash, "sprites.jpg", p.Force) {
 		result.Skipped = append(result.Skipped, "sprites")
 	} else if err := h.writeSprites(jobCtx, work, p.FileHash, probe); err != nil {
 		return nil, fmt.Errorf("preview.video: sprites: %w", err)
@@ -389,9 +382,9 @@ func parseRatio(s string) float64 {
 // Poster
 // ---------------------------------------------------------------------------
 
-func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe) error {
+func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe, force bool) error {
 	posterPath := filepath.Join(w.dir, "poster.jpg")
-	if h.variantExists(ctx, hash, "poster") {
+	if variantDone(ctx, h.Storage, hash, "poster", force) {
 		// Re-extract from source to drive the raster ladder without
 		// re-uploading the poster bytes. Fast: one I-frame seek.
 		at := 1.0
@@ -410,7 +403,7 @@ func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w wor
 		if err := runFFmpeg(cmd); err != nil {
 			return err
 		}
-		return h.writePosterVariants(ctx, assetID, hash, posterPath)
+		return h.writePosterVariants(ctx, assetID, hash, posterPath, force)
 	}
 
 	at := 1.0
@@ -439,7 +432,7 @@ func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w wor
 	// from the poster frame so videos render the same shape as images
 	// across every browse + post-detail surface. This is what makes a
 	// video card actually look like a card instead of a placeholder.
-	return h.writePosterVariants(ctx, assetID, hash, posterPath)
+	return h.writePosterVariants(ctx, assetID, hash, posterPath, force)
 }
 
 // writePosterVariants decodes the poster JPEG and runs it through the
@@ -451,7 +444,7 @@ func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w wor
 // job system retries up to max_attempts, and the alternative — a video
 // reporting success with no `col` — is the col-404 class the model
 // handler already fixed for itself.
-func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
+func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash, posterPath string, force bool) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("poster variants: open: %w", err)
@@ -464,6 +457,7 @@ func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUI
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "video", Source: "poster",
+		Overwrite: force,
 	})
 }
 
@@ -695,11 +689,6 @@ func (h *VideoHandler) ffprobeBin() string {
 		return h.FFprobePath
 	}
 	return "ffprobe"
-}
-
-func (h *VideoHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *VideoHandler) uploadFile(ctx context.Context, hash, key, path, contentType string) error {
