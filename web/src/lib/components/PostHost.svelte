@@ -469,11 +469,15 @@
   }
 
   // ── Recreate previews ─────────────────────────────────────────────
-  // Calls POST /assets/{id}/preview — worker re-enqueues the right
-  // preview.<kind> job at PriorityHigh. The worker's idempotency-
-  // skip usually short-circuits no-ops; explicit per-worker flags
-  // (isoDone in preview.3d, etc.) decide whether new bytes get
-  // written. We just kick the job off and trust the worker.
+  // Calls POST /assets/{id}/preview — the server enqueues the right
+  // preview.<kind> job at PriorityHigh with force=true (the endpoint's
+  // default), which re-renders outputs that already exist.
+  //
+  // It did not always. Until #760 the job hit each handler's "this
+  // variant is already in storage" check, skipped everything and
+  // completed successfully, so this menu item returned 202 and changed
+  // nothing — the click was a no-op wearing a success response. Do not
+  // pass force:false here without meaning it.
   let recreating = $state<Record<string, boolean>>({});
   async function recreatePreviews(assetId: string) {
     if (recreating[assetId]) return;

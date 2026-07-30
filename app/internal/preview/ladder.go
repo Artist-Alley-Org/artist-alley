@@ -72,12 +72,10 @@ type ladderInput struct {
 	// instead of leaving them alone (which is what makes a re-queue
 	// nearly free).
 	//
-	// NOTE: no caller sets this today. Its only user was the Blender
-	// isometric re-fan, which had to paint over the workbench poster's
-	// magenta bytes; that left with Blender in #500. Kept because a
-	// second writer to the same ladder is a real scenario the shared
-	// primitive should still answer — but if you are reading this
-	// looking for the code that overwrites variants, there isn't any.
+	// Set from the job payload's Force flag (#760): it is the operator
+	// saying "the rungs in storage are stale, paint over them". Without
+	// it a forced job re-renders the SOURCE and then quietly declines to
+	// write the result, which is the bug wearing a different hat.
 	Overwrite bool
 }
 
@@ -105,7 +103,16 @@ func fanToLadder(ctx context.Context, in ladderInput) error {
 			return err
 		}
 	}
-	setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	// A forced re-render replaces the stamp as well as the rungs (#760).
+	// The thumbhash is a blur of the pixels we just declared wrong, and
+	// it is what the card shows FIRST — leaving it means a corrected
+	// thumbnail fades up out of the magenta one it replaced. Everywhere
+	// else the never-overwrite rule stands; see setThumbhash*.
+	if in.Overwrite {
+		setThumbhash(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	} else {
+		setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	}
 	return nil
 }
 
@@ -170,6 +177,46 @@ func variantOnBackend(ctx context.Context, st *storage.Service, hash, key string
 	return err == nil
 }
 
+// variantDone is the ONE idempotency check every preview handler asks
+// before deciding it has nothing to do: "this output already exists AND
+// I have not been told to rebuild it".
+//
+// It replaces eleven byte-identical `func (h *XHandler) variantExists`
+// methods (#760). The duplication was not merely untidy — it was the
+// reason the force flag could not be added safely: honouring it meant
+// eleven independent edits, and any handler that was missed would have
+// gone on silently skipping while reporting success, which is precisely
+// the bug being fixed, reintroduced with a new surface. With one
+// function taking force as a REQUIRED argument, forgetting a handler is
+// a compile error rather than a phantom control.
+//
+// Backend-first for the same reason variantOnBackend is: the bytes are
+// what a request serves, and a DB row without bytes still 404s.
+func variantDone(ctx context.Context, st *storage.Service, hash, key string, force bool) bool {
+	if force {
+		return false
+	}
+	return variantOnBackend(ctx, st, hash, key)
+}
+
+// ladderAnchorRungs are the rungs whose presence a handler reads as
+// "the raster ladder already ran for this hash". They are the four the
+// frontend actually requests, so a set that is complete here is a set
+// no card or viewer will 404 on.
+var ladderAnchorRungs = []string{"col", "preview", "screen", "hires"}
+
+// ladderDone is the re-queue early exit that eight handlers spelled out
+// four lines at a time. One statement of the rule, so the force flag
+// reaches all of them at once.
+func ladderDone(ctx context.Context, st *storage.Service, hash string, force bool) bool {
+	for _, key := range ladderAnchorRungs {
+		if !variantDone(ctx, st, hash, key, force) {
+			return false
+		}
+	}
+	return true
+}
+
 // setThumbhashIfMissing encodes src into a ~30-byte thumbhash and
 // writes it onto the asset when the column is still NULL.
 //
@@ -179,6 +226,16 @@ func variantOnBackend(ctx context.Context, st *storage.Service, hash, key string
 // synchronous compute in CreateAsset from racing the worker, and what
 // makes the #645 backfill safe to re-run.
 func setThumbhashIfMissing(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
+	encodeThumbhash(ctx, pool, logger, kind, id, src, false)
+}
+
+// setThumbhash overwrites the stamp. Only the forced re-render path
+// calls it — see fanToLadder.
+func setThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
+	encodeThumbhash(ctx, pool, logger, kind, id, src, true)
+}
+
+func encodeThumbhash(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image, overwrite bool) {
 	if pool == nil || src == nil || id == uuid.Nil {
 		return
 	}
@@ -186,11 +243,21 @@ func setThumbhashIfMissing(ctx context.Context, pool *pgxpool.Pool, logger *slog
 	if len(tb) == 0 {
 		return
 	}
-	if err := assets.New(pool).SetAssetThumbhashIfMissing(ctx, assets.SetAssetThumbhashIfMissingParams{
-		ID:        pgtype.UUID{Bytes: id, Valid: true},
-		Thumbhash: tb,
-	}); err != nil {
-		logAttrs(logger, ctx, slog.LevelDebug, "preview."+kind+".thumbhash_backfill_failed",
+	q := assets.New(pool)
+	var err error
+	if overwrite {
+		err = q.SetAssetThumbhash(ctx, assets.SetAssetThumbhashParams{
+			ID:        pgtype.UUID{Bytes: id, Valid: true},
+			Thumbhash: tb,
+		})
+	} else {
+		err = q.SetAssetThumbhashIfMissing(ctx, assets.SetAssetThumbhashIfMissingParams{
+			ID:        pgtype.UUID{Bytes: id, Valid: true},
+			Thumbhash: tb,
+		})
+	}
+	if err != nil {
+		logAttrs(logger, ctx, slog.LevelDebug, "preview."+kind+".thumbhash_stamp_failed",
 			slog.String("asset_id", id.String()),
 			slog.String("err", err.Error()))
 	}

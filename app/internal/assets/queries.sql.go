@@ -1105,6 +1105,30 @@ func (q *Queries) SetAssetSensitivity(ctx context.Context, arg SetAssetSensitivi
 	return err
 }
 
+const setAssetThumbhash = `-- name: SetAssetThumbhash :exec
+UPDATE assets
+   SET thumbhash  = $2,
+       updated_at = NOW()
+ WHERE id = $1
+`
+
+type SetAssetThumbhashParams struct {
+	ID        pgtype.UUID
+	Thumbhash []byte
+}
+
+// Overwrites unconditionally. The ONLY caller is a forced re-render
+// (#760), where the operator has said the stored preview is wrong: the
+// thumbhash is a 30-byte blur of those same wrong pixels, and leaving it
+// makes a corrected card fade up from the stale image it just replaced.
+// Every other writer must keep using SetAssetThumbhashIfMissing, whose
+// NULL guard is what stops the worker racing CreateAsset's synchronous
+// compute and what makes the backfill safe to re-run.
+func (q *Queries) SetAssetThumbhash(ctx context.Context, arg SetAssetThumbhashParams) error {
+	_, err := q.db.Exec(ctx, setAssetThumbhash, arg.ID, arg.Thumbhash)
+	return err
+}
+
 const setAssetThumbhashIfMissing = `-- name: SetAssetThumbhashIfMissing :exec
 UPDATE assets
    SET thumbhash  = $2,

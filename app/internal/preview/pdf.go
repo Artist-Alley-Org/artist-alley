@@ -31,13 +31,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
-// PDFPayload — JSON body for a preview.pdf job.
-type PDFPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // PDFResult — what the worker writes back to jobs.result.
 type PDFResult struct {
 	Variants []string    `json:"variants"`
@@ -153,10 +146,7 @@ func (h *PDFHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 	}
 	result.Metadata = meta
 
-	if h.variantExists(jobCtx, p.FileHash, "col") &&
-		h.variantExists(jobCtx, p.FileHash, "preview") &&
-		h.variantExists(jobCtx, p.FileHash, "screen") &&
-		h.variantExists(jobCtx, p.FileHash, "hires") {
+	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
 		posterPath := filepath.Join(filepath.Dir(src), "page1.png")
@@ -164,7 +154,7 @@ func (h *PDFHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.pdf.render_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-		} else if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
+		} else if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath, p.Force); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.pdf.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -306,7 +296,7 @@ func (h *PDFHandler) renderFirstPage(ctx context.Context, src, outPath string) e
 	return os.Rename(actual, outPath)
 }
 
-func (h *PDFHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
+func (h *PDFHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string, force bool) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("open poster: %w", err)
@@ -322,6 +312,7 @@ func (h *PDFHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, h
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "pdf",
+		Overwrite: force,
 	})
 }
 
@@ -334,11 +325,6 @@ func (h *PDFHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta PDF
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
 	})
-}
-
-func (h *PDFHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *PDFHandler) pdftoppmBin() string {

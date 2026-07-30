@@ -79,6 +79,24 @@ type Options struct {
 	// preempt interactive work; the running app's worker pool drains
 	// them. Set false for a fast metadata-only seed.
 	Previews bool
+
+	// ForcePreviews makes those jobs re-render variants that are
+	// already in storage (#760).
+	//
+	// It exists because `--reset` and the variant store diverge BY
+	// DESIGN: variants are content-addressed and describe what is on
+	// the storage volume, so a TRUNCATE of the content tables cannot
+	// and must not erase them (see seed.Reset). Re-seeding the same
+	// dataset therefore re-enqueues a preview job per asset whose
+	// output already exists — every one of which skips.
+	//
+	// That default is correct and cheap. What was wrong was that it
+	// was SILENT: `preview.3d done: 590, failed: 0` looks identical
+	// whether 590 renders happened or none did. So the seed now
+	// reports the skip count up front (see previewSkipEstimate), and
+	// this flag is how an operator says "the renderer changed, rebuild
+	// them".
+	ForcePreviews bool
 }
 
 // Counts is the verify-phase tally.
@@ -496,7 +514,7 @@ func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
 // --- phase: assets ----------------------------------------------------
 
 func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
-	inserted, deduped, missing, queued := 0, 0, 0, 0
+	inserted, deduped, missing, queued, willSkip := 0, 0, 0, 0, 0
 	for i, a := range cat.Assets {
 		abs := filepath.Join(r.opts.SiteRoot, a.FilePath)
 		f, err := os.Open(abs)
@@ -586,13 +604,17 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		// seed from minting dead jobs for the odd unpreviewable file in
 		// the catalogue.
 		if r.opts.Previews && dispatch.CanPreview(&ext) {
+			// Count the ones whose card thumbnail is ALREADY on the
+			// storage volume before enqueueing. Without --force-previews
+			// their jobs will skip, and "queued 590" with no further
+			// detail is indistinguishable from 590 real renders — the
+			// ambiguity #760 was filed over.
+			if !r.opts.ForcePreviews && variantOnDisk(ctx, r.storage, hash, "col") {
+				willSkip++
+			}
 			if _, jErr := r.jobs.Enqueue(ctx,
 				dispatch.JobTypeForExt(&ext),
-				map[string]string{
-					"asset_id":       id.String(),
-					"file_hash":      hash,
-					"file_extension": ext,
-				},
+				dispatch.NewPayload(uuid.UUID(id.Bytes), hash, &ext, r.opts.ForcePreviews),
 				jobs.EnqueueOpts{Priority: &previewPriority},
 			); jErr != nil {
 				r.log.Warn("seed.preview.enqueue_failed", "asset", a.ID, "err", jErr.Error())
@@ -627,8 +649,34 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 	}
 	r.log.Info("seed.assets", "inserted", inserted,
-		"deduped", deduped, "missing", missing, "previews_queued", queued)
+		"deduped", deduped, "missing", missing,
+		"previews_queued", queued,
+		"previews_force", r.opts.ForcePreviews,
+		"previews_will_skip", willSkip)
+	// Say it in plain words too, on stdout, where whoever ran the seed
+	// is looking. A log line at INFO inside a JSON handler is not where
+	// an operator finds out that the renders they were waiting for are
+	// not going to happen.
+	if willSkip > 0 {
+		fmt.Printf(
+			"NOTE: %d of %d queued preview jobs will SKIP — those assets already have "+
+				"rendered variants on the storage volume, which --reset deliberately does "+
+				"not erase (they are content-addressed). Re-run with --force-previews to "+
+				"re-render them.\n", willSkip, queued)
+	}
 	return nil
+}
+
+// variantOnDisk reports whether a rendered variant is already on the
+// storage backend. Deliberately the same question the preview handlers
+// ask (backend Stat, not a storage_variants row) so the seed's estimate
+// and the worker's decision cannot disagree.
+func variantOnDisk(ctx context.Context, st *storage.Service, hash, key string) bool {
+	if st == nil {
+		return false
+	}
+	_, err := st.Backend.Stat(ctx, hash, key)
+	return err == nil
 }
 
 // applyAssetCompanions parses a seeded model's declared external

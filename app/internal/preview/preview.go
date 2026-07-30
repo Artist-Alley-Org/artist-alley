@@ -73,15 +73,6 @@ import (
 // safe; one instance per process is enough.
 var exifExtractor = exif.New()
 
-// RasterPayload is the JSON body of a preview.raster job. We carry
-// the file_hash + file_extension explicitly so an external worker
-// doesn't need to query the assets table.
-type RasterPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // RasterResult is what the handler writes back to jobs.result on
 // success. The admin UI surfaces this for diagnosis.
 type RasterResult struct {
@@ -170,7 +161,7 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 		if v.Key == storage.VariantOriginal {
 			continue
 		}
-		if h.variantExists(ctx, p.FileHash, v.Key) {
+		if variantDone(ctx, h.Storage, p.FileHash, v.Key, p.Force) {
 			result.Skipped = append(result.Skipped, v.Key)
 			continue
 		}
@@ -302,11 +293,6 @@ func mimeForExt(ext string) string {
 		return "image/webp"
 	}
 	return "application/octet-stream"
-}
-
-func (h *RasterHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *RasterHandler) writeVariant(ctx context.Context, hash string, src image.Image, v sysconfig.PreviewVariant) error {

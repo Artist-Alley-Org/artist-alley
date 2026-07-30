@@ -47,13 +47,6 @@ import (
 //
 // Both paths produce a PNG → fan through the standard raster ladder.
 
-// PSDPayload — JSON body for a preview.psd job.
-type PSDPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // PSDResult — what the worker writes back to jobs.result. `source`
 // records which extraction path produced the bytes so we can monitor
 // how often we hit each (and whether the fast embedded-thumbnail
@@ -121,10 +114,7 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 
 	result := PSDResult{}
 
-	if h.variantExists(jobCtx, p.FileHash, "col") &&
-		h.variantExists(jobCtx, p.FileHash, "preview") &&
-		h.variantExists(jobCtx, p.FileHash, "screen") &&
-		h.variantExists(jobCtx, p.FileHash, "hires") {
+	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
 		h.markReady(jobCtx, p.AssetID)
 		result.WorkS = time.Since(started).Seconds()
@@ -150,7 +140,7 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 		result.Source = "imagemagick"
 	}
 
-	if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
+	if err := h.fanPosterToLadder(jobCtx, p.AssetID, p.FileHash, posterPath, p.Force); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.psd.fan_failed",
 			slog.String("err", err.Error()))
 	} else {
@@ -357,7 +347,7 @@ func (h *PSDHandler) stage(ctx context.Context, hash, ext string) (string, func(
 	return src, cleanup, nil
 }
 
-func (h *PSDHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
+func (h *PSDHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, hash, posterPath string, force bool) error {
 	f, err := os.Open(posterPath)
 	if err != nil {
 		return fmt.Errorf("open poster: %w", err)
@@ -370,12 +360,8 @@ func (h *PSDHandler) fanPosterToLadder(ctx context.Context, assetID uuid.UUID, h
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "psd",
+		Overwrite: force,
 	})
-}
-
-func (h *PSDHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *PSDHandler) convertBin() string {
