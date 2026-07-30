@@ -114,8 +114,14 @@ function dataUrlToBuffer(u) {
 // Every staged sidecar in the work dir, as the [{ path, url }] shape
 // modelLoader.js takes — relative path (POSIX, matching what the user
 // declared at upload) plus its URL under /models/. The model file itself
-// is excluded. Textures resolve relatively without this; OBJ's .mtl does
-// not, because `mtllib` is a name OBJLoader never fetches.
+// is excluded.
+//
+// Two consumers need this list, for different reasons:
+//   * OBJ's .mtl, because `mtllib` is a name OBJLoader never fetches;
+//   * companionLoadingManager, which render.html now installs (#753).
+//     "Textures resolve relatively" is true of GLTFLoader and MTLLoader
+//     and FALSE of FBXLoader, which asks for a texture's bare basename
+//     next to the model however deep the reference actually was.
 //
 // The Go handler points --output at the work dir itself, so this runs
 // before the output subdirectories are created; a stray render artefact
