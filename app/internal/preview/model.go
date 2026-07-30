@@ -288,33 +288,47 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		h.markFailed(jobCtx, p.AssetID, err.Error())
 		return nil, fmt.Errorf("preview.model: render: %w", err)
 	}
+	// --- raster ladder: fan the poster into col / preview / screen / hires
+	//
+	// `posterDone` was read BEFORE the render (the `col` sentinel), so it
+	// means "a previous run already fanned this ladder", not "we just
+	// fanned it". The poster is the preferred source — it is the hi-res
+	// textured render — and frame 0 of the turntable is the fallback if
+	// the poster is unusable.
+	//
+	// One `raster` line in the result, reported by what actually
+	// happened. It used to report BOTH: `poster` under generated and
+	// `raster` under skipped, for the single act of fanning the ladder
+	// from the poster. An operator reading `skipped: raster` on a job
+	// that had just rewritten every rung would reasonably conclude the
+	// thumbnail had not been touched — which is the same
+	// can't-tell-what-happened complaint this change exists to answer
+	// (#760).
 	posterPath := filepath.Join(renderOut, "poster.png")
-	if !posterDone {
-		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, posterPath, p.Force); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
-				slog.String("err", err.Error()))
-		} else {
-			result.Variants = append(result.Variants, "poster")
-			posterDone = true
-		}
-	}
-	// The poster IS the textured ladder source; persist it under the
-	// iso sentinel so a re-enqueue can early-exit without re-rendering.
-	if !isoDone {
-		if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err == nil {
-			isoDone = true
-		}
-	}
-
-	// --- raster ladder: fan frame 0 into col / preview / screen / hires ---
 	if posterDone {
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
-		firstFrame := filepath.Join(framesDir, "frame_0000.png")
-		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, firstFrame, p.Force); err != nil {
-			return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
+		src := posterPath
+		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, src, p.Force); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
+				slog.String("err", err.Error()))
+			src = filepath.Join(framesDir, "frame_0000.png")
+			if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, src, p.Force); err != nil {
+				return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
+			}
 		}
 		result.Variants = append(result.Variants, "raster")
+	}
+
+	// The poster IS the textured ladder source; persist it under the
+	// iso sentinel so a re-enqueue can early-exit without re-rendering.
+	if isoDone {
+		result.Skipped = append(result.Skipped, "iso")
+	} else if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err != nil {
+		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_source_upload_failed",
+			slog.String("err", err.Error()))
+	} else {
+		result.Variants = append(result.Variants, "iso")
 	}
 
 	// --- per-frame turntable variants (CLIP training set) ----------------
@@ -354,8 +368,10 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// Blender (#500): it existed solely to repaint the magenta thumbnails
 	// Blender's workbench engine produced for textured models, and the
 	// three.js poster is already correctly textured. `iso/source.png` is
-	// still written above, as the re-enqueue sentinel.
-	result.Skipped = append(result.Skipped, "iso")
+	// still written above, as the re-enqueue sentinel — and reported
+	// there, by whether it was written. This line used to append "iso" to
+	// Skipped unconditionally, including on runs that had just uploaded
+	// it.
 
 	h.markReady(jobCtx, p.AssetID)
 	result.WorkS = time.Since(started).Seconds()
