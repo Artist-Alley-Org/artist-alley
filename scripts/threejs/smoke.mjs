@@ -493,8 +493,13 @@ Connections:  {
 // `checker.png` while the file sits at `Textures/checker.png`. Plain
 // relative resolution 404s and the poster comes out untextured; the
 // companion manager's basename fallback — which render.html did not pass
-// before #753 — is what bridges it. Delete the `manager:` argument there
-// and this case goes red.
+// before #753 — is what bridges it.
+//
+// Verified red-first: with the `manager:` argument removed from
+// render.html this case fails with "texture(s) bound but never decoded
+// … a 404 or a decode failure inside headless Chromium", and the other
+// nine cases stay green — so it pins the FBX path specifically and the
+// manager costs GLB/glTF/OBJ nothing.
 //
 // Backslash separators on purpose: that is what every FBX writes, and a
 // fixture using `/` would pass while the real corpus failed.
