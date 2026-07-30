@@ -223,6 +223,23 @@ jobs:
       # phase failure, which fails this step (replacing apply.py's
       # --strict-verify gate). The dataset + catalogue are mounted
       # in per-run; --no-deps because postgres is already up.
+      #
+      # --profile ci selects a COVERAGE-complete subset instead of the
+      # whole catalogue (#768): greedy set-cover over posts plus a depth
+      # floor, ~157 of 1,947 assets, holding every file extension, every
+      # collection that has content, and every relation class the specs
+      # assert on (companions, typed fields, tags, comments, multi-asset
+      # posts). The full seed cost ~14 minutes of this 20-minute job to
+      # feed a 3-minute suite, and its 6-minute run-to-run spread is what
+      # timed `dev` out at 20m1s. Measured locally on identical hardware
+      # and storage, fresh volumes for each run: 145s full → 30s ci.
+      #
+      # The demo keeps the full seed — see scripts/dogfood and the
+      # aa-demo runbook. This profile is a CI-only shrink.
+      #
+      # It FAILS the step if the mounted catalogue cannot supply a
+      # required coverage class, rather than seeding a fixture the suite
+      # then passes against without exercising it (ADR 0068; #750/#753).
       - name: Seed site_a via aa seed
         env:
           # HOST daemon path, NOT the runner's /datasets bind mount.
@@ -237,7 +254,7 @@ jobs:
           docker compose run --rm --no-deps \
             -v "$SITE_A_PATH:/seed/site:ro" \
             -v "$PWD/seed/profiles:/seed/profiles:ro" \
-            app seed --site /seed/site --catalogue /seed/profiles
+            app seed --site /seed/site --catalogue /seed/profiles --profile ci
 
       - name: Seed diagnostic on failure
         if: failure()

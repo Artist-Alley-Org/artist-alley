@@ -73,12 +73,16 @@ type catField struct {
 
 // manifestAsset is the subset of a MANIFEST.json entry the seeder uses.
 type manifestAsset struct {
-	ID               string          `json:"id"`
-	AssetType        string          `json:"asset_type"`
-	Title            string          `json:"title"`
-	Description      string          `json:"description"`
-	FilePath         string          `json:"file_path"`
-	FileExtension    string          `json:"file_extension"`
+	ID            string `json:"id"`
+	AssetType     string `json:"asset_type"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	FilePath      string `json:"file_path"`
+	FileExtension string `json:"file_extension"`
+	// FileSizeBytes is advisory only — the seeder writes the size it
+	// measures off disk, not this. Coverage selection reads it to
+	// prefer cheap assets over expensive ones (#768).
+	FileSizeBytes    int64           `json:"file_size_bytes"`
 	SensitivityTier  string          `json:"sensitivity_tier"`
 	ArchiveState     string          `json:"archive_state"`
 	OwnerUsername    string          `json:"owner_username"`
@@ -107,6 +111,15 @@ type manifestPost struct {
 	Tags           []string `json:"tags"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
+
+	// Coverage-selection inputs (#768). The seeder itself does not write
+	// these — applyPosts hardcodes visibility 'org-only' and state
+	// 'published' for every post — but the catalogue carries them, and
+	// the CI coverage profile selects on them so a future seeder that
+	// DOES honour them still lands a varied fixture.
+	PostKind        string `json:"post_kind"`
+	SensitivityTier string `json:"sensitivity_tier"`
+	IsMixedType     bool   `json:"is_mixed_type"`
 }
 
 type catalogues struct {
@@ -116,10 +129,15 @@ type catalogues struct {
 	Fields      []catField
 	Assets      []manifestAsset
 	Posts       []manifestPost
+
+	// SiteRoot is kept so coverage selection can reach the bytes:
+	// whether a model declares external companions is a property of the
+	// FILE, not of the manifest row (#750), so it has to be read.
+	SiteRoot string
 }
 
 func loadCatalogues(catalogueRoot, siteRoot string) (*catalogues, error) {
-	c := &catalogues{}
+	c := &catalogues{SiteRoot: siteRoot}
 	if err := loadJSON(filepath.Join(catalogueRoot, "dataset.users.json"), &c.Users); err != nil {
 		return nil, err
 	}
