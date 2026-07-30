@@ -307,15 +307,26 @@ export async function loadModel(opts) {
 
 /**
  * Build a LoadingManager that rewrites relative resource URLs onto a
- * companion list. Used by the viewer, where the model is served from
- * /api/v1/assets/<id>/file and its sidecars from
- * /api/v1/assets/<id>/companions/<companion-id> — nothing a loader can
- * derive by relative resolution. The thumbnail worker doesn't need one:
- * its companions are staged next to the model on disk under the declared
- * relative paths, so the loaders' own resolution finds them.
+ * companion list. Used by BOTH surfaces:
+ *
+ *   * the viewer, where the model is served from /api/v1/assets/<id>/file
+ *     and its sidecars from /api/v1/assets/<id>/companions/<companion-id>
+ *     — nothing a loader can derive by relative resolution;
+ *   * the thumbnail worker, whose companions ARE staged on disk under
+ *     their declared relative paths, but where relative resolution alone
+ *     still misses a format: three.js's FBXLoader reduces
+ *     `Textures\barrel.png` to its basename before requesting it, so it
+ *     asks for `barrel.png` next to the model and 404s (#753).
  *
  * Matching is longest-suffix first, then basename, both case-insensitive
  * (Windows-authored MTLs routinely disagree with the archive on case).
+ * Backslashes are normalised on both sides. Companion paths are stored
+ * POSIX-relative as of #753, so the entry side should never carry one —
+ * this is belt-and-braces for a row written before that, and for the URL
+ * side it costs one regex to stop a `Textures\x.png` request computing
+ * the whole string as its basename. Measured, FBXLoader asks for the
+ * bare basename and DAE/OBJ loaders ask for the full relative path;
+ * neither passes a separator through today.
  *
  * @param {Companion[]} companions
  * @returns {any} THREE.LoadingManager
@@ -323,9 +334,12 @@ export async function loadModel(opts) {
 export function companionLoadingManager(companions) {
   const manager = new THREE.LoadingManager();
   if (companions.length === 0) return manager;
-  const entries = companions.map((c) => ({ path: c.path.toLowerCase(), url: c.url }));
+  const entries = companions.map((c) => ({
+    path: c.path.toLowerCase().replace(/\\/g, '/'),
+    url: c.url,
+  }));
   manager.setURLModifier((/** @type {string} */ url) => {
-    const lower = url.toLowerCase();
+    const lower = url.toLowerCase().replace(/\\/g, '/');
     for (const e of entries) {
       if (lower.endsWith('/' + e.path) || lower === e.path) return e.url;
     }
