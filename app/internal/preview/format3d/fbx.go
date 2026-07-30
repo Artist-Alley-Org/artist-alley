@@ -13,8 +13,14 @@ package format3d
 // option — in which case there is no sibling file to register.
 //
 // So, exactly as for GLB (#750), whether an FBX is self-contained is a
-// per-file fact you only learn by reading it. 127 of the seed
-// catalogue's 131 FBX reference externally and none embed.
+// per-file fact you only learn by reading it. Measured over the seed
+// catalogue's 131 FBX (109 in site_a, 22 in site_b): 127 carry a
+// Video/Texture node naming a file, 0 embed a Content payload, and 126
+// yield a usable relative companion path. The 127th is site_b's
+// clyde.fbx, whose only reference is the authoring machine's
+// `C:\Users\OMISTAJA\Downloads\clyde_diffuse.png` — a real external
+// reference, but not to a sibling of the model, so it correctly resolves
+// to nothing.
 //
 // Two container encodings are read:
 //
@@ -25,7 +31,10 @@ package format3d
 //     are uint32 below version 7500 and uint64 from 7500 on — the
 //     catalogue has both (8 files at 7400, 123 at 7700), so a parser
 //     that only knows one width reads half the corpus as garbage.
-//   - ASCII. The same tree as indented `Name: args {` blocks.
+//   - ASCII. The same tree as indented `Name: args {` blocks. Every file
+//     in the catalogue is binary, so the ASCII side is covered by
+//     fixtures written to the documented layout rather than by the
+//     corpus — stated as an assumption, not a guarantee (ADR 0068).
 //
 // Deliberately NOT a filename-shaped byte regex. A regex is what
 // produced the evidence in #753 and it cannot tell a texture reference

@@ -481,15 +481,20 @@ Connections:  {
 
 // FBX + a texture in a subdirectory — the shape 127 of the seed
 // catalogue's 131 FBX have, and the case the untextured fixture above
-// could never fail on (#753). Two things only this case can catch:
+// could never fail on (#753).
 //
-//  1. the companion is only registered at all if format3d's FBX reader
-//     found `Textures\smoke.png` in the Video/Texture nodes;
-//  2. FBXLoader reduces that reference to its BASENAME before requesting
-//     it (`images[id].split('\\').pop()`), so it asks the work dir for
-//     `smoke.png` while the file is staged at `Textures/smoke.png`.
-//     Plain relative resolution 404s; the companion manager's basename
-//     fallback is what bridges it.
+// Scope, precisely: this exercises the RENDERER half only. It writes
+// `Textures/checker.png` into the work dir itself and worker.mjs
+// enumerates what it finds, so nothing here calls format3d's FBX reader
+// — that side is covered by fbx_test.go against a real Kenney export.
+// What only this case can catch is the loader-side half: FBXLoader
+// reduces `Textures\checker.png` to its BASENAME before requesting it
+// (`images[id].split('\\').pop()`), so it asks the work dir for
+// `checker.png` while the file sits at `Textures/checker.png`. Plain
+// relative resolution 404s and the poster comes out untextured; the
+// companion manager's basename fallback — which render.html did not pass
+// before #753 — is what bridges it. Delete the `manager:` argument there
+// and this case goes red.
 //
 // Backslash separators on purpose: that is what every FBX writes, and a
 // fixture using `/` would pass while the real corpus failed.

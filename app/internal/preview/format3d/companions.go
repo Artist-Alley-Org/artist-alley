@@ -26,9 +26,10 @@ package format3d
 //
 // FBX was the same shape of question and is now answered the same way
 // (#753, see fbx.go): a Video node either embeds its bytes in a Content
-// property or names a file in RelativeFilename / FileName, and 127 of
-// the seed catalogue's 131 FBX name files. Reading it needs a node walk
-// over both container encodings, so it lives in its own file.
+// property or names a file in RelativeFilename / FileName. 127 of the
+// seed catalogue's 131 FBX name a file, 126 name one that could be a
+// sibling, and 0 embed. Reading it needs a node walk over both container
+// encodings, so it lives in its own file.
 //
 // Nothing here assumes a format is self-contained. STL, PLY and DAE
 // return nil because no reader exists for their references yet, which is
@@ -310,6 +311,18 @@ func cleanCompanionURI(uri string) (string, bool) {
 	// FBXLoader does `images[id].split('\\').pop()` and asks for the bare
 	// basename. The break is on the stored-companion side, which is why
 	// the fix belongs here.
+	//
+	// Fixing it HERE rather than at the two consumption points is a
+	// deliberate choice, and it is safe because it changes nothing that
+	// already works: this function is shared with glTF/GLB/OBJ, and
+	// measured over the whole seed catalogue not one .mtl, .gltf or GLB
+	// JSON chunk writes a backslash in a URI (0 of 14,596 references
+	// across 11,078 files), nor does any asset_companions row carry one.
+	// So there is no stored data to migrate — only FBX changes behaviour.
+	// It is still the right place for the other formats: a
+	// Windows-authored MTL may legitimately write
+	// `map_Kd Textures\foo.png`, and one canonical stored form beats two
+	// consumers each remembering to normalise.
 	//
 	// The stored companion path is POSIX-relative regardless of what wrote
 	// the model.

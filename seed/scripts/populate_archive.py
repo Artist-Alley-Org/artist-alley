@@ -483,8 +483,10 @@ def resolve_model_companions(model_path: Path) -> list[str]:
     FBX was the same bug one format over (#753) and is now read the same
     way: a Video node either embeds its image in a Content property or
     names it in RelativeFilename / FileName. 127 of the catalogue's 131
-    name a file, and while this returned [] none of those files were
-    staged, so 0 of ~246 references resolved on disk.
+    name a file and 126 resolve to a sibling path (the odd one out names
+    only an authoring-machine `C:\\...` path); none embed. This function
+    returning [] is why 0 of those 246 references had their file staged.
+    Reading them stages all 246, verified against both shares.
     """
     ext = model_path.suffix.lower().lstrip(".")
     base = model_path.parent
