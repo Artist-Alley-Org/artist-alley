@@ -434,6 +434,55 @@ indirection comes with them. Until then, a document is the smaller correct thing
 - Federation: a peer receiving a field receives its option lifecycle with it, because it is the
   same document. Nothing new to design.
 
+## Correction 2026-07-30 — `values` entries are strings in practice, and this document was wrong about it
+
+**Everything above describing `options.values` as `[{value, label, children}]` describes a shape
+that no live data has ever used.** Found while implementing #737 (PR #773).
+
+Every field carrying options on `dev` stores **bare slug strings**:
+
+```
+color_space          → "sRGB"
+engine_compatibility → "Unreal 5"
+pipeline_stage       → "Greybox"
+target_platforms     → "PC"
+texture_resolution   → "256x256"
+```
+
+`jsonb_typeof(options->'values'->0)` is `string` for all five. The object form appears in this
+ADR, in `schema.sql`, and in exactly one test fixture — nowhere else. The seeder
+(`seed/runner.go`) marshals `{"values": []string}`, which is where the live shape comes from.
+
+**This cost us a production bug, and the mechanism is the point.**
+`FieldValueInput.svelte` cast `options.values` to `{value: string; label?: string}[]`, with a
+comment citing this ADR by name as its authority. Against string data every `opt.value` was
+`undefined`, so **every seeded `select` and `multi_select` rendered blank options in the
+collection editor** — while `UploadFileRow.svelte`, which read strings, worked fine. The two
+consumers disagreed for months because one trusted the document and the other trusted the data.
+
+**An ADR is the thing people read *instead of* the code. When it is wrong, it does not fail
+loudly — it gets implemented.**
+
+### The decision, restated correctly
+
+**Both shapes are valid. A `values` entry is either a bare slug string, or an object carrying
+that slug plus whatever else it needs.** Readers must accept both. Writers emit the *narrowest
+form that carries the entry's information* — a plain slug stays a plain slug, and an entry only
+becomes an object once it has a label, a `status`, a `replaced_by`, or `children`.
+
+That is what keeps untouched vocabularies byte-identical through an edit, which is the property
+that made this safe to fix without a migration.
+
+### What this changes about the amendment above
+
+The 2026-07-30 lifecycle amendment says "each entry in `values` gains an optional `status`",
+which silently assumed every entry was an object. It is still correct in substance — status and
+`replaced_by` are optional and absent means `active` — but the mechanism is now explicit: **an
+entry gains those keys by being promoted from a string to an object at the moment it needs
+one.** No migration, and a vocabulary nobody has edited still serialises as a string array.
+
+`schema.sql`'s comment carries the same wrong claim and should be corrected alongside.
+
 ## Open questions
 
 - Whether asset edit endpoints (`PATCH /assets/{id}`) should also

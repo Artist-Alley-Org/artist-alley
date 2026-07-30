@@ -40,6 +40,25 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Controlled vocabularies are editable.** The options behind a `select` or
+  `multi_select` field could only be set when the field was created — after that they were
+  frozen, and `/admin/fields` had no edit surface at all. There is one now: add a term,
+  relabel one, reorder them.
+
+  **Terms are retired, not deleted.** Deleting an option that assets already reference would
+  orphan those values, and the orphan shows up as a blank on an asset nobody touched — so the
+  editor does not offer deletion. Instead an option can be marked *deprecated*, which stops it
+  being offered for new values while everything already carrying it keeps resolving and
+  displaying normally, and it can name a successor that the editor then suggests in its place.
+  *Archived* is the harder retire, for terms that were mistakes rather than terms that were
+  superseded (#737).
+
+  Saving is now conflict-checked. Changing one term rewrites the whole vocabulary, so two
+  admins editing different terms used to silently overwrite each other — the loser never found
+  out. The save now carries the version it was based on and is rejected if the field moved
+  underneath it, offering to reload or to overwrite deliberately. Fields whose options nobody
+  has edited are left byte-for-byte as they were.
+
 - **Operators can set their own instance logo.** The mark in the navbar and on the
   sign-in page is no longer fixed to the icon that ships. Upload a PNG, JPEG, GIF or
   WebP under `Admin → Themes & branding` and it applies everywhere immediately; the
@@ -77,6 +96,17 @@ where applicable, otherwise note "no-spec-impact."
   remembers "Team" or "Trending" from before opens on Latest (#691).
 
 ### Fixed
+
+- **Every dropdown in the collection field editor was empty.** The vocabularies were
+  stored correctly and the editor could not read them: it expected each option to be an object
+  and they are stored as plain strings, so it rendered one blank row per term. The upload
+  form, which read the same data the other way, worked — which is why this survived. Both
+  now accept either form (#737).
+
+- **The admin tables were unusable on a phone.** At 390px the fields table was wider than
+  the screen with nothing to scroll it, so the overflow was not merely off-screen — it was
+  unreachable. The Save button sat at a negative x-coordinate with the document reporting no
+  horizontal overflow at all. The tables scroll now (#737).
 
 - **Masonry browse laid every tile out as a square.** The layout is supposed to respect each
   asset's real proportions, and it could not: nothing in the system had ever recorded a
