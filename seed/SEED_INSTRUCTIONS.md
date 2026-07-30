@@ -107,16 +107,40 @@ Against `site_a` (1,947 assets / 859 posts) at the default depth:
 
 | | full | `--profile ci` |
 |---|---|---|
-| assets | 1,946 | 157 |
-| posts | 847 | 101 |
-| comments | 1,887 | 193 |
-| bytes read + hashed + re-written | 4.88 GiB | 3.09 GiB |
+| assets | 1,946 | 148 |
+| posts | 847 | ~87 |
+| bytes read + hashed + re-written | 4.88 GiB | 2.89 GiB |
 | extensions | 18 / 18 | 18 / 18 |
 | collections with content | 7 / 7 | 7 / 7 |
 | coverage dimensions | 113 / 113 | 113 / 113 |
-| seed step, same machine + storage, cold volumes | 145s | 30s |
+| seed step, same machine + storage, cold volumes | 145s | ~30s |
 
 The 179-test Playwright `standalone` suite passes against both.
+
+### The depth floor is bounded by render cost, not just supply
+
+`aa seed --previews` (the default) **enqueues** preview jobs and
+returns; the app's worker pool renders them afterwards. Timing every job
+to completion against this profile before that was accounted for:
+
+| job type | jobs | total CPU | slowest |
+|---|---|---|---|
+| `preview.video` | 20 | 1141.7s | 426.6s |
+| `preview.3d` | 40 | 326.0s | 16.9s |
+| `preview.raster` | 65 | 57.1s | 11.3s |
+| all other types | 32 | 12.4s | 1.3s |
+
+Video sprite generation was **74% of all render CPU from 13% of the
+assets**, and the render tail ran for **627s after `aa seed` exited** —
+landing on whatever ran next. So video extensions get a lower floor
+(`videoExtensionFloor`) than the rest: coverage needs the extension
+present and a second asset to show it is not a fluke, not eight of them.
+Images supply the grid density the floor exists for at a thousandth of
+the cost.
+
+CI additionally waits for the preview queue to drain between the seed
+and the suite — bounded, and non-fatal on expiry. See
+`.github/workflows/ui-pr.yml`.
 
 Selection is byte-aware: among candidates that cover the same thing it
 takes the cheapest, because the seed step's wall clock goes on reading,

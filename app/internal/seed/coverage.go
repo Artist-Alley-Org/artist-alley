@@ -35,7 +35,8 @@
 //     cover is degenerate for UI work: masonry, grid and pagination
 //     specs need more than one tile per surface. So: at least K posts
 //     per collection and K assets per extension, bounded by what the
-//     catalogue actually holds.
+//     catalogue actually holds — and, for video, bounded again by what
+//     it costs to RENDER (see extensionFloor).
 //  3. Add-back for anything no post can reach, as standalone assets.
 //     site_a needs none today; a future dataset might.
 //
@@ -74,13 +75,17 @@ const (
 	ProfileCI   = "ci"
 
 	// defaultCoverageDepth sizes the CI seed. Measured against site_a
-	// (1,947 assets / 859 posts): depth 8 selects ~100 posts / 157
+	// (1,947 assets / 859 posts): depth 8 selects ~87 posts / 148
 	// assets — 8% of the catalogue — covering all 113 catalogue
 	// dimensions, every one of the 18 extensions, and all 7 collections
 	// that hold any content, while still giving every collection and
 	// every common extension enough tiles for the grid and pagination
 	// specs.
 	defaultCoverageDepth = 8
+
+	// videoExtensionFloor caps the depth floor for video extensions.
+	// See extensionFloor for the timings that set it.
+	videoExtensionFloor = 2
 )
 
 // dim is one coverage dimension: a class and a value within it.
@@ -234,6 +239,42 @@ func countLine(m map[string]int) string {
 		parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// extensionFloor bounds the per-extension depth floor by RENDER cost as
+// well as by supply.
+//
+// The floor exists for UI density — masonry, grid and pagination specs
+// need more than one tile per surface. Density is a property of the
+// catalogue as a whole, though, and the 47 PNGs supply it. Video does
+// not: each extra video buys nothing the images have not already bought,
+// and costs a sprite-generation job, which is by far the most expensive
+// work the seed creates.
+//
+// Measured before this cap existed, seeding the profile and timing every
+// job through to a fully drained queue:
+//
+//	preview.video    20 jobs  1141.7s total  (426.6s slowest)
+//	preview.3d       40 jobs   326.0s        ( 16.9s)
+//	preview.raster   65 jobs    57.1s        ( 11.3s)
+//	all other types  32 jobs    12.4s        (  1.3s)
+//
+// Video was 74% of the render CPU from 13% of the assets, and the tail
+// ran 627s past the point where `aa seed` exited. The seeder only
+// ENQUEUES — it does not wait — so that work lands on whatever runs
+// next; in CI it landed on the first 2.5 minutes of the Playwright
+// suite, as four timeouts (#768). Most of it was not even coverage: the
+// depth floor was pulling eight webm and eight mp4 where one of each is
+// what "the extension is covered" requires.
+//
+// So: video extensions get a floor of videoExtensionFloor, which is
+// still more than one (a single asset cannot show that a second one also
+// renders) and a fraction of the cost.
+func extensionFloor(depth int, assetType string) int {
+	if assetType == "video" && depth > videoExtensionFloor {
+		return videoExtensionFloor
+	}
+	return depth
 }
 
 // assetDims returns the dimensions one asset contributes. companion is
@@ -489,17 +530,20 @@ func (c *catalogues) applyCoverageProfile(depth int, log *slog.Logger) (*coverag
 	// K assets per extension, bounded by what the catalogue holds — the
 	// long tail (.md, .gif, .mkv, .mov) has exactly one asset each, and
 	// demanding K of them would be an unsatisfiable floor rather than a
-	// coverage guarantee.
+	// coverage guarantee — and bounded again by RENDER cost, see
+	// extensionFloor.
 	extAvail := map[string]int{}
 	extOrder := []string{}
+	extType := map[string]string{}
 	for _, a := range c.Assets {
 		if extAvail[a.FileExtension] == 0 {
 			extOrder = append(extOrder, a.FileExtension)
+			extType[a.FileExtension] = a.AssetType
 		}
 		extAvail[a.FileExtension]++
 	}
 	for _, ext := range extOrder {
-		want := depth
+		want := extensionFloor(depth, extType[ext])
 		if extAvail[ext] < want {
 			want = extAvail[ext]
 		}

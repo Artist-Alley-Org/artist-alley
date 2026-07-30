@@ -95,12 +95,16 @@ func covFixture(t *testing.T) *catalogues {
 	for i := 0; i < 4; i++ {
 		add(fmt.Sprintf("jpg-%d", i), "image", "jpg", "c.jpg", "Beta", "Textures", nil)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		add(fmt.Sprintf("vid-%d", i), "video", "mp4", "clip.mp4", "Alpha", "Animation",
 			func(a *manifestAsset) {
 				a.SensitivityTier = "public"
 				a.ReviewNotes = "looks good"
 				a.ReviewerUsername = "u2"
+				// Deliberately the most expensive thing in the fixture,
+				// so cheapest-first never picks a video for any reason
+				// but coverage + the video floor.
+				a.FileSizeBytes = 500 << 20
 			})
 	}
 	for i := 0; i < 4; i++ {
@@ -243,6 +247,58 @@ func TestCoverageProfile_CoversUniverseAndHoldsDepthFloor(t *testing.T) {
 	if rep.Companions < 4 {
 		t.Errorf("companion-bearing assets = %d, want >= 4 (one per container format)",
 			rep.Companions)
+	}
+}
+
+// The depth floor is bounded by render cost as well as supply. Video
+// sprite generation is 74% of the seed's total render CPU from a
+// handful of assets (one job measured at 426s), and `aa seed` enqueues
+// without waiting — so a floor that pulls in eight videos dumps that
+// work onto whatever runs next. Coverage needs the extension present,
+// not eight of it.
+func TestExtensionFloor_CapsVideoNotOthers(t *testing.T) {
+	cases := []struct {
+		depth     int
+		assetType string
+		want      int
+	}{
+		{8, "video", videoExtensionFloor},
+		{8, "image", 8},
+		{8, "3d", 8},
+		{8, "document", 8},
+		// A floor already at or below the cap is left alone — the cap
+		// bounds the floor, it does not raise it.
+		{1, "video", 1},
+		{2, "video", 2},
+	}
+	for _, c := range cases {
+		if got := extensionFloor(c.depth, c.assetType); got != c.want {
+			t.Errorf("extensionFloor(%d, %q) = %d, want %d",
+				c.depth, c.assetType, got, c.want)
+		}
+	}
+}
+
+// End-to-end through the selection: the fixture's videos are its most
+// expensive assets, so nothing but coverage and the video floor can pull
+// them in — and the floor must stop at videoExtensionFloor while a cheap
+// image extension is free to reach the full depth.
+func TestCoverageProfile_VideoFloorBoundsTheSelection(t *testing.T) {
+	c := covFixture(t)
+	rep, err := covRun(t, c, 6)
+	if err != nil {
+		t.Fatalf("coverage profile: %v\n%s", err, rep.Summary())
+	}
+	if rep.PerExtension["mp4"] == 0 {
+		t.Fatal("video extension dropped entirely — coverage lost")
+	}
+	if rep.PerExtension["mp4"] > videoExtensionFloor {
+		t.Errorf("mp4 kept %d assets, want <= %d (video floor)",
+			rep.PerExtension["mp4"], videoExtensionFloor)
+	}
+	if rep.PerExtension["png"] <= videoExtensionFloor {
+		t.Errorf("png kept %d assets — the cap must apply to video only, not to "+
+			"every extension", rep.PerExtension["png"])
 	}
 }
 
