@@ -334,6 +334,106 @@ GET    /assets/{id}/fields/{field_id}/history  — audit trail
 - Auto-extraction implementation — needs the variant generator
   scaffolding which is still deferred.
 
+## Amendment 2026-07-30 — an option has a lifecycle, and editing one is a conflict-detectable write
+
+Two gaps in the `options` model above, both invisible at today's scale (5 fields carry
+options; **zero `tree` fields exist**) and both blocking as soon as a real taxonomy arrives —
+which is what #519's taxonomy tile is for.
+
+### Gap 1: an option cannot be retired
+
+`options` holds `{"values":[{"value": slug, "label": …, "children": […]}]}`. There is no way
+to stop offering a term. Deleting one that assets already reference orphans those values;
+keeping it means the vocabulary only ever grows.
+
+**A term outliving its usefulness is not hypothetical.** A mature DAM in this space carries an
+`active` flag on its option rows, which is evidence the requirement is real rather than
+anticipated. The relevant standard is stronger still: SKOS deprecation is not a boolean — a
+deprecated concept carries *instructions on what to use in its place*.
+
+**We already implement exactly that, one level up.** `field_definition` has:
+
+```
+status                     text  CHECK (status IN ('active','deprecated','archived'))
+deprecated_replacement_id  uuid
+```
+
+**Decision: an option carries the same lifecycle its field does.** Each entry in `values` gains
+an optional `status` (defaulting to `active` when absent, so every existing document stays
+valid) and an optional `replaced_by` naming another slug in the same field.
+
+- **`active`** — offered for selection, resolves, displays.
+- **`deprecated`** — **not offered for new values**, but existing values still resolve and
+  display. Where `replaced_by` is set, the editing surface suggests the successor. This is the
+  state that makes a vocabulary maintainable: a term stops spreading without breaking the
+  assets that already carry it.
+- **`archived`** — not offered, not resolved. A hard retire, for terms that were mistakes
+  rather than terms that were superseded.
+
+We are copying **our own** in-repo pattern, not importing one. The vocabulary, the semantics
+and the replacement pointer are the ones this codebase already uses for fields, which means one
+concept to learn rather than two.
+
+**The slug indirection is what makes this cheap, and it must be preserved.** `asset_field_value`
+stores the slug, never the label, so deprecating or relabelling a term rewrites nothing on any
+asset. That is a genuine advantage over the row-per-option designs that denormalise labels onto
+records and pay a cascade on every rename — **do not trade it away** for per-row editing.
+
+### Gap 2: two admins editing one field's options clobber each other silently
+
+Changing one term rewrites the whole `options` document, so concurrent edits are last-write-wins
+and the loser is never told. For a four-option `select` that is noise. For a taxonomy of
+hundreds — the case the tile exists for — it is data loss that looks like success.
+
+**Decision: keep options in `jsonb` on the field, and make the write conflict-detectable.**
+
+Options stay a document rather than becoming rows, for reasons that are ours rather than
+inherited:
+
+1. **Federation is real.** `field_definition` already carries `origin_server_id`. Options that
+   live *in* the field travel with it for free; options as rows are a second entity needing its
+   own federation story, ordering guarantees and conflict rules. That is a large cost paid now
+   against a requirement no field currently exercises.
+2. **Zero `tree` fields exist.** The contention this solves is real but currently
+   unexercised. Moving to rows on the strength of an anticipated taxonomy is designing for a
+   shape we have not yet met.
+3. It preserves the rename-is-free property above.
+
+**But silence is the defect, not the contention.** The write path takes the field's `updated_at`
+as a precondition and rejects a stale one with a conflict rather than overwriting. Two admins
+editing different terms now get a visible, retryable failure instead of one of them quietly
+losing an afternoon's curation.
+
+**The trigger for revisiting is named, so this is a decision rather than a deferral:** when a
+single field's `options` document exceeds a few hundred entries, or when reordering a subtree
+becomes a routine operation rather than a rare one, options become rows — and the slug
+indirection comes with them. Until then, a document is the smaller correct thing.
+
+### What this amendment rejects
+
+- **A boolean `active`.** Two states cannot express "superseded by X", which is what makes a
+  vocabulary navigable as it ages.
+- **Hard-deleting an option.** It orphans stored values, and the orphan surfaces as a blank on
+  an asset nobody edited.
+- **Moving options to rows now.** Correct eventually, premature today, and it would cost the
+  federation-for-free and rename-for-free properties in exchange for contention handling that
+  a precondition check gives us for a fraction of the work.
+- **Last-write-wins with a warning in the docs.** Documentation is not a concurrency control.
+
+### Consequences
+
+- Editing surfaces must send the field's `updated_at` back and handle a conflict. Reading one
+  and writing it minutes later without re-reading is now an error rather than a silent
+  overwrite.
+- `status` and `replaced_by` are **optional** in the document, so every existing `options` value
+  remains valid with no migration and no rewrite.
+- Anything rendering a value must tolerate resolving a slug whose option is `deprecated` —
+  that is the normal case for historical data, not an error path.
+- An `archived` option can leave a stored value unresolvable. That is the intended, explicit
+  cost of a hard retire, and the surface should show the raw slug rather than a blank.
+- Federation: a peer receiving a field receives its option lifecycle with it, because it is the
+  same document. Nothing new to design.
+
 ## Open questions
 
 - Whether asset edit endpoints (`PATCH /assets/{id}`) should also
