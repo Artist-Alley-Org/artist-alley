@@ -234,6 +234,14 @@ func (h *Handler) CreateField(
 	if err != nil {
 		return nil, err
 	}
+	// Validate the controlled vocabulary at the door so a bad
+	// replaced_by or an unknown status can never reach storage.
+	optsJSON, err = normalizeOptionsDoc(optsJSON)
+	if err != nil {
+		return openapi.CreateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
 	srcJSON, err := encodeJSONOptional(in.Source)
 	if err != nil {
 		return nil, err
@@ -338,8 +346,40 @@ func (h *Handler) UpdateField(
 	}
 
 	in := req.Body
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+
+	// Load the current row straight from the DB — NOT the by-id cache.
+	// A cached updated_at could be stale, which would turn the
+	// concurrency guard below into theatre.
+	cur, err := q.GetFieldDefinitionByID(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateField404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("metadata: update load: %w", err)
+	}
+
+	// Optimistic-concurrency check (ADR 0012 amendment). Editing one
+	// option rewrites the whole options document, so an unguarded
+	// write silently discards a concurrent editor's curation. Truncate
+	// both sides to µs — Postgres stores at µs, Go marshals at ns.
+	// Caller opts in by sending the field; absent = last-write-wins.
+	if in.IfUnchangedSince != nil && cur.UpdatedAt.Valid {
+		stored := cur.UpdatedAt.Time.Truncate(time.Microsecond)
+		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
+		if !stored.Equal(sent) {
+			return openapi.UpdateField409JSONResponse{
+				Error:     "field was edited by someone else after your last load; reload and try again",
+				UpdatedAt: cur.UpdatedAt.Time,
+			}, nil
+		}
+	}
+
 	params := UpdateFieldDefinitionParams{
-		ID:                      pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		ID:                      pgID,
 		Label:                   in.Label,
 		Description:             in.Description,
 		Required:                in.Required,
@@ -362,6 +402,12 @@ func (h *Handler) UpdateField(
 		if err != nil {
 			return nil, err
 		}
+		b, err = normalizeOptionsDoc(b)
+		if err != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
 		params.Options = b
 	}
 	if in.Source != nil {
@@ -372,7 +418,6 @@ func (h *Handler) UpdateField(
 		params.Source = b
 	}
 
-	q := New(h.Pool)
 	row, err := q.UpdateFieldDefinition(ctx, params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

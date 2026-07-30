@@ -726,7 +726,11 @@ export interface FieldDef {
   label: string;
   description?: string;
   type: PendingFieldValue['type'];
-  options?: { values?: string[] };
+  // Entries under `values` are bare slugs OR option objects carrying
+  // a label and a lifecycle status — see $lib/fieldOptions, which
+  // normalises both. Typing this as `{ values?: string[] }` is what
+  // let the two option consumers drift apart.
+  options?: Record<string, unknown>;
   required?: boolean;
   display_order: number;
   display_group: string;
