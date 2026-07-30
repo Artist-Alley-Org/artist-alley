@@ -50,6 +50,78 @@ func TestParseFBXCompanions_RealBinaryExport(t *testing.T) {
 	}
 }
 
+// The embedded-media direction on the REAL container (ADR 0068's
+// "build negative fixtures from the real producer").
+//
+// The synthesised twins below cover both directions too, but they are
+// written by this file's own encoder — so on their own they leave open
+// the question the amendment is about: is "no companions" a fact about an
+// FBX, or about a blob our parser happens not to read? This test closes
+// it by taking the Kenney export byte-for-byte and injecting a real PNG
+// as a Content property on its FIRST Video node, leaving the second
+// Video, both Texture nodes and every other record untouched.
+//
+// So the expected result is not "nothing" — it is `Textures/planks.png`
+// AND NOT `Textures/barrel.png`. That assertion cannot be satisfied by a
+// parser that failed to read the container (it would error, or return
+// nothing, and either fails here): resolving planks proves the walk ran
+// the whole real tree past the injected record, and dropping barrel
+// proves the Content property is what removed it — including from the
+// Texture node that still names the file, which is where an
+// exclusion-by-Video-only implementation would leak.
+func TestParseFBXCompanions_RealExportWithEmbeddedContent(t *testing.T) {
+	orig, err := os.ReadFile(fbxRealFixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	// Sanity: the untouched file resolves both, so the injection below is
+	// the only difference between the two directions.
+	base, err := ParseFBXCompanions(bytes.NewReader(orig))
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	if want := []string{"Textures/barrel.png", "Textures/planks.png"}; !reflect.DeepEqual(base, want) {
+		t.Fatalf("baseline: got %v, want %v", base, want)
+	}
+
+	one := injectFBXContent(t, orig, onePixelPNG(t), 1)
+	got, err := ParseFBXCompanions(bytes.NewReader(one))
+	if err != nil {
+		t.Fatalf("one embedded: %v", err)
+	}
+	if want := []string{"Textures/planks.png"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("one embedded: got %v, want %v", got, want)
+	}
+
+	both := injectFBXContent(t, orig, onePixelPNG(t), 2)
+	got, err = ParseFBXCompanions(bytes.NewReader(both))
+	if err != nil {
+		t.Fatalf("both embedded: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("a fully embedded export declares no companions, got %v", got)
+	}
+}
+
+// A zero-length Content is the FBX SDK's "no embedded media" marker, not
+// embedded media. Only a payload counts.
+func TestParseFBXCompanions_EmptyContentIsNotEmbedded(t *testing.T) {
+	orig, err := os.ReadFile(fbxRealFixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	empty := injectFBXContent(t, orig, nil, 2)
+	got, err := ParseFBXCompanions(bytes.NewReader(empty))
+	if err != nil {
+		t.Fatalf("empty content: %v", err)
+	}
+	want := []string{"Textures/barrel.png", "Textures/planks.png"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func TestResolveCompanions_FBXRealExport(t *testing.T) {
 	dir := t.TempDir()
 	blob, err := os.ReadFile(fbxRealFixture)
@@ -459,6 +531,152 @@ func putFBXNum(w *bytes.Buffer, v uint64, wide bool) {
 	var b [4]byte
 	binary.LittleEndian.PutUint32(b[:], uint32(v))
 	w.Write(b[:])
+}
+
+// injectFBXContent returns `orig` with a `Content` record appended as the
+// last child of each of its first `n` Video nodes, carrying `payload`.
+//
+// A binary FBX addresses records by ABSOLUTE file offset, so inserting
+// bytes invalidates every endOffset that spans or follows the insertion
+// point. The fix-up is mechanical once you have them all: collect every
+// endOffset field's position and value from the ORIGINAL buffer, splice
+// the new record in, then rewrite each field — its position shifts by
+// delta if it sat at or after the splice, and its value shifts by delta
+// if it pointed past the splice. Nothing else in the format needs
+// touching: a nested record is not a property, so the Video's
+// numProperties and propertyListLen are unchanged, and Video already has
+// children so its terminating null record is reused.
+//
+// The 160-byte binary footer is carried along unshifted. Neither this
+// package nor three.js reads it (both walk records and stop at the
+// top-level null record), so it does not affect what either resolves —
+// but this is a fixture for reference discovery, not a claim that the
+// result would round-trip through the FBX SDK.
+func injectFBXContent(t *testing.T, orig, payload []byte, n int) []byte {
+	t.Helper()
+	version := binary.LittleEndian.Uint32(orig[23:27])
+	if version < fbxWideVersion {
+		t.Fatalf("helper assumes 64-bit offsets, fixture is v%d", version)
+	}
+	const w = 8
+	const hdr = 25
+
+	// Every endOffset field in the file, and the splice point: the
+	// terminating null record of the n'th Video node.
+	type field struct {
+		pos, val uint64
+	}
+	var fields []field
+	var videoEnds []uint64 // where each Video's child list ends
+	var walk func(off, end uint64, inVideo bool)
+	walk = func(off, end uint64, inVideo bool) {
+		for off+hdr <= end {
+			endOff := binary.LittleEndian.Uint64(orig[off:])
+			numProps := binary.LittleEndian.Uint64(orig[off+w:])
+			propLen := binary.LittleEndian.Uint64(orig[off+2*w:])
+			nameLen := uint64(orig[off+hdr-1])
+			if endOff == 0 && numProps == 0 && propLen == 0 && nameLen == 0 {
+				if inVideo {
+					videoEnds = append(videoEnds, off)
+				}
+				return
+			}
+			fields = append(fields, field{pos: off, val: endOff})
+			name := string(orig[off+hdr : off+hdr+nameLen])
+			kidsAt := off + hdr + nameLen + propLen
+			if kidsAt < endOff {
+				walk(kidsAt, endOff, name == "Video")
+			}
+			off = endOff
+		}
+	}
+	walk(fbxHeaderLen, uint64(len(orig)), false)
+	if len(videoEnds) < n {
+		t.Fatalf("fixture has %d Video nodes with children, need %d", len(videoEnds), n)
+	}
+
+	out := orig
+	// Splice from the LAST target backwards so earlier splice points stay
+	// valid; each pass re-collects nothing because the field list is
+	// rebuilt from the running buffer.
+	for i := n - 1; i >= 0; i-- {
+		out = spliceFBXRecord(t, out, videoEnds[i], fbxContentRecord(payload))
+	}
+	return out
+}
+
+// fbxContentRecord is a leaf `Content` record with one raw ('R') property.
+func fbxContentRecord(payload []byte) []byte {
+	var props bytes.Buffer
+	props.WriteByte('R')
+	var l [4]byte
+	binary.LittleEndian.PutUint32(l[:], uint32(len(payload)))
+	props.Write(l[:])
+	props.Write(payload)
+
+	const name = "Content"
+	body := 25 + len(name) + props.Len()
+	var out bytes.Buffer
+	// endOffset is patched by spliceFBXRecord once the absolute position
+	// is known; write the record-relative size for now.
+	putFBXNum(&out, uint64(body), true)
+	putFBXNum(&out, 1, true)
+	putFBXNum(&out, uint64(props.Len()), true)
+	out.WriteByte(byte(len(name)))
+	out.WriteString(name)
+	out.Write(props.Bytes())
+	return out.Bytes()
+}
+
+// spliceFBXRecord inserts `rec` at absolute offset `at` and repairs every
+// endOffset in the buffer, including the spliced record's own.
+func spliceFBXRecord(t *testing.T, buf []byte, at uint64, rec []byte) []byte {
+	t.Helper()
+	const w, hdr = 8, 25
+	delta := uint64(len(rec))
+
+	type field struct{ pos, val uint64 }
+	var fields []field
+	var walk func(off, end uint64)
+	walk = func(off, end uint64) {
+		for off+hdr <= end {
+			endOff := binary.LittleEndian.Uint64(buf[off:])
+			numProps := binary.LittleEndian.Uint64(buf[off+w:])
+			propLen := binary.LittleEndian.Uint64(buf[off+2*w:])
+			nameLen := uint64(buf[off+hdr-1])
+			if endOff == 0 && numProps == 0 && propLen == 0 && nameLen == 0 {
+				return
+			}
+			fields = append(fields, field{pos: off, val: endOff})
+			kidsAt := off + hdr + nameLen + propLen
+			if kidsAt < endOff {
+				walk(kidsAt, endOff)
+			}
+			off = endOff
+		}
+	}
+	walk(fbxHeaderLen, uint64(len(buf)))
+
+	out := make([]byte, 0, len(buf)+len(rec))
+	out = append(out, buf[:at]...)
+	out = append(out, rec...)
+	out = append(out, buf[at:]...)
+
+	// The spliced record's endOffset was written record-relative.
+	binary.LittleEndian.PutUint64(out[at:], at+delta)
+
+	for _, f := range fields {
+		pos := f.pos
+		if pos >= at {
+			pos += delta
+		}
+		val := f.val
+		if val > at {
+			val += delta
+		}
+		binary.LittleEndian.PutUint64(out[pos:], val)
+	}
+	return out
 }
 
 // onePixelPNG is real encoded PNG, not a placeholder string: the

@@ -498,11 +498,22 @@ func fbxQuoted(line string) string {
 // list: relative-first per node, embedded media excluded, cleaned and
 // de-duplicated in discovery order.
 func fbxCompanionPaths(media []*fbxMedia) []string {
-	// A Video that embeds its bytes and the Texture that applies it name
-	// the SAME file, and only the Video carries the Content. So the
-	// embedded names are collected first and then excluded everywhere —
-	// otherwise an embedded texture would still register a companion via
-	// its Texture node.
+	// Only the Video carries the Content, so an embedded image would
+	// still register a companion via the Texture node that applies it.
+	// The embedded names are therefore collected first and excluded
+	// everywhere.
+	//
+	// Pairing a Texture to its Video by FILENAME is a heuristic, and
+	// deliberately so: the authoritative link is a Connections record
+	// (`C: "OO", videoID, textureID`), and walking Connections means
+	// holding the whole object graph to resolve IDs the walk has already
+	// streamed past. Exporters write the same path into both nodes — the
+	// Kenney fixture does, and three.js reads the Video's path for
+	// exactly this reason — so the filename is a faithful key in
+	// practice. Where it is not, the cost is one staged file the loader
+	// never asks for, never a missing texture: this only ever REMOVES
+	// candidates, and only when some Video in the same file embedded an
+	// image of that name.
 	embedded := make(map[string]struct{})
 	for _, m := range media {
 		if !m.embedded {
