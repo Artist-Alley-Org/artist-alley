@@ -78,6 +78,34 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Masonry browse laid every tile out as a square.** The layout is supposed to respect each
+  asset's real proportions, and it could not: nothing in the system had ever recorded a
+  source's pixel dimensions. The `pixel_width` / `pixel_height` field definitions existed and
+  every value was null across the whole catalogue, so the estimator fell through to 1:1 for
+  every tile and masonry rendered as a plain grid. The preview pipeline now records the source
+  dimensions as it decodes — it is the only producer that runs for *every* asset type, so this
+  also covers the tiles EXIF could never describe: audio waveforms, video posters, SVG and 3D
+  turntables, which are precisely the ones that looked worst squared off (#757).
+
+  The same missing data was breaking IIIF for the entire catalogue. `info.json` is built from
+  the asset's dimensions, and a 0×0 asset is rejected as unsupported — so every IIIF request
+  had been 404-ing. It serves now. The UI test covering that endpoint had been asserting a
+  JSON content type and passing *because* of the 404, which is a test defending the bug rather
+  than the behaviour; it now asserts the IIIF media type.
+
+- **nginx kept routing to a dead container address after any recreate.** Hostnames inside an
+  `upstream` block are resolved once, when the config loads, and a `resolver` directive does
+  not change that — the `resolve` parameter that would is NGINX Plus only. So when the app
+  container came back with a different IP, nginx went on proxying to the old one. On the
+  two-instance dev stack this surfaced as the worst possible symptom: traffic for one site
+  silently served from the other, which reads as data corruption rather than a routing fault.
+  The `upstream` block is gone; `proxy_pass` now goes through a variable, which defers
+  resolution to request time (#756).
+
+  Removing the block also removes connection reuse to the app — `keepalive` cannot be
+  configured without it. That cost is recorded in the config beside the change rather than
+  left to be rediscovered.
+
 - **3D thumbnails rendered untextured while the viewer showed the materials.** ADR 0069
   chose headless three.js precisely so the browse-grid thumbnail and the interactive
   viewer would match, and both files said they shared code. They did not: the headless
