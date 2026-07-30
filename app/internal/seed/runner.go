@@ -70,6 +70,21 @@ type Options struct {
 	AdminUsername string // bootstrap admin username; owns collections
 	Logger        *slog.Logger
 
+	// Profile selects a named catalogue-shrink strategy (#768).
+	// "" = the full catalogue, which is what the demo runs. "ci" runs
+	// coverage selection: greedy set-cover over posts plus a depth
+	// floor, so every file type / relation class survives at a fraction
+	// of the scale. See coverage.go for why post-first and why it
+	// errors rather than warns on a gap.
+	Profile string
+
+	// CoverageDepth is the profile's depth floor: at least this many
+	// posts per collection and assets per extension, bounded by what
+	// the catalogue holds. It, not the cover, is what sizes the seed —
+	// minimum cover is degenerate for grid / masonry / pagination
+	// specs. 0 uses defaultCoverageDepth.
+	CoverageDepth int
+
 	// Previews enqueues a preview job per seeded asset (#355). Without
 	// it a seeded instance has originals and zero derivatives — no card
 	// thumbnails (`col`), no video hover sprites — which is what the
@@ -179,9 +194,41 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 // Run loads the catalogues + manifest and executes every phase in
 // order, returning the verify counts.
 func (r *Runner) Run(ctx context.Context) (Counts, error) {
+	// Validate the profile name BEFORE touching disk: a typo should say
+	// so, not fail thirty seconds later on something unrelated, and must
+	// never fall through to seeding the full catalogue.
+	switch r.opts.Profile {
+	case "", ProfileFull, ProfileCI:
+	default:
+		return Counts{}, fmt.Errorf("unknown seed profile %q (want %q or %q)",
+			r.opts.Profile, ProfileFull, ProfileCI)
+	}
+	// The two shrinks select on opposite axes and the extension limit
+	// runs second, so combining them would silently re-open the hole the
+	// profile exists to close: it would cascade-drop coverage-selected
+	// posts whose assets it cut. Refuse rather than produce a fixture
+	// whose coverage report is a lie.
+	if r.opts.Profile == ProfileCI && r.opts.LimitPerExt > 0 {
+		return Counts{}, errors.New(
+			"seed: --profile ci and --limit-per-extension are mutually exclusive; " +
+				"the profile's own depth floor is the extension control (--coverage-depth)")
+	}
 	cat, err := loadCatalogues(r.opts.CatalogueRoot, r.opts.SiteRoot)
 	if err != nil {
 		return Counts{}, err
+	}
+	if r.opts.Profile == ProfileCI {
+		depth := r.opts.CoverageDepth
+		if depth <= 0 {
+			depth = defaultCoverageDepth
+		}
+		rep, cErr := cat.applyCoverageProfile(depth, r.log)
+		if rep != nil {
+			fmt.Print(rep.Summary())
+		}
+		if cErr != nil {
+			return Counts{}, cErr
+		}
 	}
 	if r.opts.LimitPerExt > 0 {
 		cat.applyExtensionLimit(r.opts.LimitPerExt, r.log)

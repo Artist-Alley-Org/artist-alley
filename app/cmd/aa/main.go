@@ -70,6 +70,16 @@ func runSeed(args []string) error {
 	site := fs.String("site", "", "populated site root (MANIFEST.json + posts.json + bytes)")
 	catalogue := fs.String("catalogue", "seed/profiles", "catalogue directory (seed/profiles)")
 	limitPerExt := fs.Int("limit-per-extension", 0, "keep at most N assets per file_extension (0 = no limit)")
+	profile := fs.String("profile", seed.ProfileFull,
+		"catalogue selection profile: 'full' seeds everything (the demo path); "+
+			"'ci' selects a coverage-complete subset — greedy set-cover over posts "+
+			"plus a depth floor — and FAILS if the catalogue cannot supply a "+
+			"required coverage class rather than seeding a fixture that quietly "+
+			"cannot exercise it")
+	coverageDepth := fs.Int("coverage-depth", 0,
+		"with --profile ci: minimum posts per collection and assets per extension, "+
+			"bounded by what the catalogue holds (0 = built-in default). This, not "+
+			"the set-cover, is what sizes the seed")
 	reset := fs.Bool("reset", false, "TRUNCATE seed content tables before loading")
 	previews := fs.Bool("previews", true,
 		"enqueue a preview job per asset so the seed produces derivatives "+
@@ -173,6 +183,8 @@ func runSeed(args []string) error {
 		SiteRoot:      *site,
 		CatalogueRoot: *catalogue,
 		LimitPerExt:   *limitPerExt,
+		Profile:       *profile,
+		CoverageDepth: *coverageDepth,
 		AdminUsername: bootstrap.DefaultUsername,
 		Logger:        logger,
 		Previews:      *previews,

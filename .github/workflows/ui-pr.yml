@@ -223,6 +223,23 @@ jobs:
       # phase failure, which fails this step (replacing apply.py's
       # --strict-verify gate). The dataset + catalogue are mounted
       # in per-run; --no-deps because postgres is already up.
+      #
+      # --profile ci selects a COVERAGE-complete subset instead of the
+      # whole catalogue (#768): greedy set-cover over posts plus a depth
+      # floor, ~148 of 1,947 assets, holding every file extension, every
+      # collection that has content, and every relation class the specs
+      # assert on (companions, typed fields, tags, comments, multi-asset
+      # posts). The full seed cost ~14 minutes of this 20-minute job to
+      # feed a 3-minute suite, and its 6-minute run-to-run spread is what
+      # timed `dev` out at 20m1s. Measured locally on identical hardware
+      # and storage, fresh volumes for each run: 145s full → 30s ci.
+      #
+      # The demo keeps the full seed — see scripts/dogfood and the
+      # aa-demo runbook. This profile is a CI-only shrink.
+      #
+      # It FAILS the step if the mounted catalogue cannot supply a
+      # required coverage class, rather than seeding a fixture the suite
+      # then passes against without exercising it (ADR 0068; #750/#753).
       - name: Seed site_a via aa seed
         env:
           # HOST daemon path, NOT the runner's /datasets bind mount.
@@ -237,7 +254,7 @@ jobs:
           docker compose run --rm --no-deps \
             -v "$SITE_A_PATH:/seed/site:ro" \
             -v "$PWD/seed/profiles:/seed/profiles:ro" \
-            app seed --site /seed/site --catalogue /seed/profiles
+            app seed --site /seed/site --catalogue /seed/profiles --profile ci
 
       - name: Seed diagnostic on failure
         if: failure()
@@ -253,6 +270,81 @@ jobs:
         run: |
           npm install --no-audit
           npx playwright install --with-deps chromium
+
+      # Let the render queue drain before the suite starts (#768).
+      #
+      # `aa seed --previews` (the default) ENQUEUES preview jobs and
+      # returns; the app's worker pool renders them. Nothing here used
+      # to wait for that, and it did not need to: the 14-minute full
+      # seed enqueued incrementally, so the workers had the whole seed
+      # to drain and the queue was near-empty by the time Playwright
+      # ran.
+      #
+      # Shrinking the seed did not remove that work, it moved the tests
+      # into it. The coverage profile keeps 157 assets but necessarily
+      # keeps all four huge videos (the only .mkv, the only .mov, both
+      # .avi — 2.65 of the 3.09 GiB), and sprite generation is the most
+      # CPU-costly job in the set. Measured against this profile: one
+      # second after `aa seed` exits 53 jobs are still outstanding, and
+      # at t+137s every other preview type has finished while
+      # preview.video still has 12 pending + 2 running. The tail IS the
+      # videos. On the PR run it landed on the first ~2.5 minutes of the
+      # suite — four timeouts, then every remaining spec under a second.
+      #
+      # Scoped to `preview.%` deliberately. The recurring coordinators
+      # (email.digest, audit.retention, soft_delete.gc,
+      # scheduled_actions.reap, saved_search.notify) sit `pending` with
+      # a future `scheduled_for` for the life of the stack, so a wait on
+      # "all outstanding jobs" would never reach zero and would burn the
+      # full cap on every single run.
+      #
+      # BOUNDED, and it does not fail the job. A stuck worker must not
+      # silently eat the budget this whole change exists to protect, and
+      # it must not turn an unrelated hang into a red PR either — so on
+      # expiry we log loudly and let the suite run and speak for itself.
+      #
+      # Placed AFTER the Playwright install on purpose: that step takes
+      # ~15s and the workers are draining throughout it, so the wait
+      # only ever pays for the tail the install did not already cover.
+      - name: Wait for the preview render queue to drain
+        env:
+          DRAIN_TIMEOUT_SECONDS: "240"
+        run: |
+          q() {
+            docker compose exec -T postgres psql -U artist_alley \
+              -d artist_alley -tAc "$1" 2>/dev/null || echo ""
+          }
+          pending="status IN ('pending','running') AND type LIKE 'preview.%'"
+          outstanding="SELECT count(*) FROM jobs WHERE ${pending};"
+          breakdown="SELECT '  ' || type || ' ' || status || ' x' || count(*)
+                       FROM jobs WHERE ${pending} GROUP BY type, status ORDER BY 1;"
+
+          start=$(date +%s)
+          echo "preview queue after seed: $(q "$outstanding") job(s) outstanding"
+          q "$breakdown"
+
+          while :; do
+            left=$(q "$outstanding")
+            elapsed=$(( $(date +%s) - start ))
+            if [ "${left:-1}" = "0" ]; then
+              echo "preview queue drained after ${elapsed}s"
+              break
+            fi
+            if [ "${elapsed}" -ge "${DRAIN_TIMEOUT_SECONDS}" ]; then
+              echo "::warning::preview queue still has ${left} job(s) after ${elapsed}s" \
+                   "(cap ${DRAIN_TIMEOUT_SECONDS}s) — running the suite anyway."
+              q "$breakdown"
+              break
+            fi
+            sleep 5
+          done
+
+          # Slowest finished jobs, so the log says what the wait bought
+          # even on a clean drain.
+          q "SELECT '  slowest: ' || type || ' ' ||
+                    round(extract(epoch from (finished_at - started_at))::numeric, 1) || 's'
+               FROM jobs WHERE finished_at IS NOT NULL
+               ORDER BY (finished_at - started_at) DESC LIMIT 5;"
 
       - name: Run UI standalone suite
         env:
@@ -275,6 +367,22 @@ jobs:
             apply-state-*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      # Job-queue state on failure (#768). `docker compose logs
+      # --tail=200` is the wrong instrument for "was the worker busy
+      # while the suite ran": the app logs a line per HTTP request, so
+      # on the run that raised this question 200 lines covered ONE
+      # SECOND, two and a half minutes after the last failure. The jobs
+      # table answers it directly and in a few rows, so ask it first.
+      - name: Job queue state on failure
+        if: failure()
+        run: |
+          docker compose exec -T postgres psql -U artist_alley -d artist_alley -c \
+            "SELECT type, status, count(*),
+                    min(started_at) AS first_start, max(finished_at) AS last_finish,
+                    round(max(extract(epoch from (finished_at - started_at)))::numeric, 1)
+                      AS slowest_s
+               FROM jobs GROUP BY type, status ORDER BY type, status;" || true
 
       - name: Container logs on failure
         if: failure()
