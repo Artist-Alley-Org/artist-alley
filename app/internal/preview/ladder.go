@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.n16f.net/thumbhash"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -80,40 +81,90 @@ type ladderInput struct {
 }
 
 // fanToLadder writes every configured preview variant from one decoded
-// image, then stamps the asset's thumbhash if it has none.
+// image, then stamps that image's shape onto the asset — see
+// stampSourceShape.
 //
-// The thumbhash runs LAST and UNCONDITIONALLY — including on the
-// re-queue path where every rung already exists and nothing is
-// encoded. That is deliberate: an asset whose variants were generated
-// before #645 shipped has the bytes but not the hash, and re-running
-// its preview job is the operator's natural "fix this asset" gesture.
-// Skipping the stamp because there was no work to do would make that
+// The stamps run LAST and UNCONDITIONALLY — including on the re-queue
+// path where every rung already exists and nothing is encoded. That is
+// deliberate: an asset whose variants were generated before #645 or
+// #757 shipped has the bytes but not the facts, and re-running its
+// preview job is the operator's natural "fix this asset" gesture.
+// Skipping the stamps because there was no work to do would make that
 // gesture a no-op.
 //
-// The hash is computed from the FULL source image, not from a rung.
-// The card renders a contain rung (CardThumb picks the smallest one —
-// square `col` would "flash the wrong shape before swapping"), and the
-// placeholder has to match the shape of the picture it fades into. A
-// 2048×384 waveform hashed at source produces a wide blur that sits
-// correctly in the ~16:3 tile masonry gives it; hashed from `col` it
-// would be a square blur letterboxed inside a billboard.
+// Both are computed from the FULL source image, not from a rung. The
+// card renders a contain rung (CardThumb picks the smallest one —
+// square `col` would "flash the wrong shape before swapping"), and both
+// the placeholder and the reserved tile have to match the shape of the
+// picture that arrives. A 2048×384 waveform hashed at source produces a
+// wide blur that sits correctly in the ~16:3 tile masonry gives it;
+// hashed from `col` it would be a square blur letterboxed inside a
+// billboard, and measured from `col` it would report 1:1 — which is
+// precisely the wall of squares #757 is about.
 func fanToLadder(ctx context.Context, in ladderInput) error {
 	if in.SysConfig != nil {
 		if err := fanVariants(ctx, in); err != nil {
 			return err
 		}
 	}
+	stampSourceShape(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src, in.Overwrite)
+	return nil
+}
+
+// stampSourceShape records everything the card needs to know about the
+// ladder's SOURCE image, as opposed to its rungs: the blur-up thumbhash
+// and the pixel dimensions the tile reserves space from.
+//
+// ONE FUNCTION, TWO STAMPS, DELIBERATELY. They are the same fact —
+// "this is the shape and colour of the picture this asset shows" —
+// derived from the same decoded image at the same moment, and #645
+// (thumbhash written for rasters only) and #757 (dimensions written for
+// nobody) are the same bug twice: a per-asset property computed in one
+// handler and forgotten by the other ten. Keeping the pair in a single
+// call means a new format handler either gets both or gets neither, and
+// "neither" is a compile error the moment it forgets to call the ladder.
+//
+// Both stamps are best-effort — a preview job must not fail because a
+// placeholder or a tile height is missing — and both run even on the
+// re-queue path where every rung already existed and nothing was
+// encoded. That is the point: re-running an asset's preview job is the
+// operator's natural "fix this asset" gesture, and an asset whose
+// variants predate either stamp has the bytes but not the fact.
+func stampSourceShape(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image, overwrite bool) {
 	// A forced re-render replaces the stamp as well as the rungs (#760).
 	// The thumbhash is a blur of the pixels we just declared wrong, and
 	// it is what the card shows FIRST — leaving it means a corrected
 	// thumbnail fades up out of the magenta one it replaced. Everywhere
 	// else the never-overwrite rule stands; see setThumbhash*.
-	if in.Overwrite {
-		setThumbhash(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+	if overwrite {
+		setThumbhash(ctx, pool, logger, kind, id, src)
 	} else {
-		setThumbhashIfMissing(ctx, in.Pool, in.Logger, in.Kind, in.AssetID, in.Src)
+		setThumbhashIfMissing(ctx, pool, logger, kind, id, src)
 	}
-	return nil
+	setPixelDims(ctx, pool, logger, kind, id, src)
+}
+
+// setPixelDims records the ladder source's width and height on the
+// asset (#757).
+//
+// UNCONDITIONAL, unlike the thumbhash's if-missing default. There is no
+// operator-authored value to protect here — the write is guarded by an
+// IS DISTINCT FROM so an unchanged pair costs nothing — and a stale
+// dimension is worse than an absent one: it is what the layout reserves
+// space from before a single byte of image arrives, so a wrong pair
+// mis-sizes the tile with total confidence and never corrects. If a
+// replace-file or a renderer change altered the shape, the shape we
+// just decoded is the true one.
+func setPixelDims(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, kind string, id uuid.UUID, src image.Image) {
+	if pool == nil || src == nil || id == uuid.Nil {
+		return
+	}
+	b := src.Bounds()
+	if err := pixeldims.Record(ctx, pool, id, b.Dx(), b.Dy()); err != nil {
+		logAttrs(logger, ctx, slog.LevelDebug, "preview."+kind+".pixel_dims_failed",
+			slog.String("asset_id", id.String()),
+			slog.String("err", err.Error()))
+	}
 }
 
 // fanVariants is the ladder loop proper. Split out so fanToLadder reads

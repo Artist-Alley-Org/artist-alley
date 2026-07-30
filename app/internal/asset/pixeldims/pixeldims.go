@@ -26,15 +26,17 @@
 // it invites a full grouped scan of every field value in the install to
 // answer a question about one page.
 //
-// WHAT "NO DIMENSIONS" MEANS. NULL, deliberately — not 0. Only raster
-// assets that the EXIF pass has actually seen carry these values, and
-// the backfill selects `status = 'active'` only, so a draft raster, a
-// video, a 3D model, an audio waveform and a font all legitimately have
-// none. NULL says "unknown, decide client-side"; a 0 would have to be
-// special-cased by every consumer and reads as a real measurement in
-// logs. (iiif.PoolLookup COALESCEs to 0 for its own reasons — it needs a
-// number for info.json — and that is a choice local to IIIF, not the
-// storage contract.)
+// WHAT "NO DIMENSIONS" MEANS. NULL, deliberately — not 0. Since #757
+// every previewable format records a pair (see record.go: the preview
+// pipeline stamps the shape of the image its contain rungs are built
+// from, so a video, a font, a 3D turntable and an audio waveform all
+// carry one). What legitimately has none is an asset no preview handler
+// can render at all, and one whose preview predates #757 and has not
+// been re-rendered since. NULL says "unknown, decide client-side"; a 0
+// would have to be special-cased by every consumer and reads as a real
+// measurement in logs. (iiif.PoolLookup COALESCEs to 0 for its own
+// reasons — it needs a number for info.json — and that is a choice
+// local to IIIF, not the storage contract.)
 package pixeldims
 
 // Width / Height are the canonical field_definition codes. They mirror
