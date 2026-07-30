@@ -6,6 +6,7 @@
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import ExtractionConfigPicker from '$components/ExtractionConfigPicker.svelte';
+  import FieldEditor from '$components/FieldEditor.svelte';
 
   interface Field {
     id: string;
@@ -18,11 +19,17 @@
     display_group?: string;
     extraction_source?: string;
     extraction_mode?: string;
+    options?: Record<string, unknown>;
+    updated_at: string;
   }
 
   // Per-row toggle for the extraction picker. Keyed by field id.
   let expanded = $state<Record<string, boolean>>({});
   function toggleExtraction(id: string) { expanded[id] = !expanded[id]; }
+
+  // Per-row toggle for the field editor (label / required / options).
+  let editing = $state<Record<string, boolean>>({});
+  function toggleEdit(id: string) { editing[id] = !editing[id]; }
 
   let fields = $state<Field[]>([]);
   let loading = $state(true);
@@ -42,15 +49,19 @@
 
   onMount(() => void load());
 
-  async function load() {
-    loading = true;
+  // `silent` refreshes the rows WITHOUT flipping `loading`. Toggling
+  // loading swaps the whole table for a spinner, which destroys any
+  // open row editor — taking its unsaved state and its "saved"
+  // confirmation with it. Post-save refreshes must be silent.
+  async function load(silent = false) {
+    if (!silent) loading = true;
     try {
       const query: Record<string, string> = { status: 'active' };
       if (subjectFilter !== 'all') query.subject_kind = subjectFilter;
       const { data } = await api.GET('/fields', { params: { query } });
       fields = (data ?? []) as Field[];
     } finally {
-      loading = false;
+      if (!silent) loading = false;
     }
   }
 
@@ -221,6 +232,10 @@
 {:else if fields.length === 0}
   <p class="rounded-md bg-surface-elevated px-4 py-6 text-center text-fg-muted">{t('admin.fields.no_fields')}</p>
 {:else}
+  <!-- The row set is wider than a phone viewport. Without this the
+       overflow is unreachable rather than scrollable — the editor's
+       Save button ended up at x=-235 at 390px. -->
+  <div class="overflow-x-auto">
   <table class="w-full text-sm">
     <thead class="text-left text-xs uppercase tracking-wider text-fg-muted">
       <tr>
@@ -231,6 +246,7 @@
         <th class="py-2">{t('admin.fields.applies_to')}</th>
         <th class="py-2">{t('admin.fields.group')}</th>
         <th class="py-2">{t('admin.fields.extraction')}</th>
+        <th class="py-2">{t('admin.fields.edit')}</th>
       </tr>
     </thead>
     <tbody>
@@ -258,20 +274,55 @@
               {/if}
             </button>
           </td>
+          <td class="py-2">
+            <button
+              type="button"
+              onclick={() => toggleEdit(f.id)}
+              class="min-h-11 rounded border border-border px-2 py-0.5 text-xs text-fg-muted hover:bg-state-hover"
+              data-testid="admin-fields-edit-toggle-{f.code}"
+            >
+              {editing[f.id] ? t('common.cancel') : t('admin.fields.edit')}
+            </button>
+          </td>
         </tr>
         {#if expanded[f.id]}
           <tr class="border-t border-border/30 bg-bg-soft/40">
-            <td class="px-2 py-2" colspan="7">
-              <ExtractionConfigPicker
-                fieldId={f.id}
-                initialSource={f.extraction_source ?? ''}
-                initialMode={f.extraction_mode ?? ''}
-                onSaved={() => load()}
-              />
+            <td class="px-2 py-2" colspan="8">
+              <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
+                <ExtractionConfigPicker
+                  fieldId={f.id}
+                  initialSource={f.extraction_source ?? ''}
+                  initialMode={f.extraction_mode ?? ''}
+                  onSaved={() => load(true)}
+                />
+              </div>
+            </td>
+          </tr>
+        {/if}
+        {#if editing[f.id]}
+          <tr class="border-t border-border/30 bg-bg-soft/40">
+            <td class="px-2 py-2" colspan="8">
+              <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
+                <!-- Deliberately not keyed on updated_at: the editor
+                     re-baselines itself from its own PATCH response,
+                     and a baseline made stale by someone ELSE's write
+                     should surface as a visible conflict rather than
+                     be silently swapped underneath the operator. -->
+                <FieldEditor
+                  fieldId={f.id}
+                  fieldType={f.type}
+                  initialLabel={f.label}
+                  initialRequired={f.required}
+                  initialOptions={f.options}
+                  initialUpdatedAt={f.updated_at}
+                  onSaved={() => load(true)}
+                />
+              </div>
             </td>
           </tr>
         {/if}
       {/each}
     </tbody>
   </table>
+  </div>
 {/if}

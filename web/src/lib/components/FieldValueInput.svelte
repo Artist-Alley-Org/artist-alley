@@ -14,6 +14,7 @@
   // dirty-state tracking stays in one place.
 
   import { t } from '$stores/lang.svelte';
+  import { normalizeOptions, selectableOptions } from '$lib/fieldOptions';
 
   interface FieldDef {
     id: string;
@@ -102,13 +103,24 @@
   }
 
   // Select options come from field_definition.options.values per
-  // ADR 0012: [{value, label}]. Fall back to the value as the label
-  // if no label is set.
-  type SelectOpt = { value: string; label?: string };
-  const selectOptions: SelectOpt[] = $derived.by(() => {
-    const opts = def.options as { values?: SelectOpt[] } | undefined;
-    return opts?.values ?? [];
-  });
+  // ADR 0012. Entries are bare slug strings OR {value, label} objects
+  // — normalizeOptions handles both. This file previously assumed the
+  // object form only, which meant every seeded vocabulary (all bare
+  // strings) rendered as blank options.
+  const allOptions = $derived(normalizeOptions(def.options));
+
+  // Deprecated and archived terms are not offered for NEW values, but
+  // a value the record ALREADY holds stays in the list — dropping it
+  // would blank the field on a record nobody edited, which is exactly
+  // what ADR 0012 forbids.
+  const held = $derived(
+    def.type === 'multi_select' || def.type === 'tree'
+      ? optionsVal
+      : textVal
+        ? [textVal]
+        : [],
+  );
+  const selectOptions = $derived(selectableOptions(allOptions, held));
 </script>
 
 <div class="space-y-1">
@@ -182,7 +194,7 @@
       >
         <option value=""></option>
         {#each selectOptions as opt (opt.value)}
-          <option value={opt.value}>{opt.label ?? opt.value}</option>
+          <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
         {/each}
       </select>
     {:else if def.type === 'multi_select' || def.type === 'tree'}
@@ -199,7 +211,7 @@
         class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
         {#each selectOptions as opt (opt.value)}
-          <option value={opt.value}>{opt.label ?? opt.value}</option>
+          <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
         {/each}
       </select>
     {:else if def.type === 'reference'}

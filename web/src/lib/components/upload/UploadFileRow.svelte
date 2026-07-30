@@ -20,6 +20,7 @@
   import { upload, fieldsForAssetType } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
   import { is3DExt } from '../viewers/controller';
+  import { normalizeOptions, selectableOptions } from '$lib/fieldOptions';
 
   // True when the row's file is a 3D model — drives the companion
   // disclosure visibility. Audio / image / etc. don't need a
@@ -69,7 +70,9 @@
     label: string;
     description?: string;
     type: PendingFieldValue['type'];
-    options?: { values?: string[] };
+    // Entries are bare slugs OR {value,label,status,…} objects —
+    // normalizeOptions absorbs both. See $lib/fieldOptions.
+    options?: Record<string, unknown>;
     required?: boolean;
     display_order: number;
     display_group: string;
@@ -384,8 +387,8 @@
                         class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       >
                         <option value="">—</option>
-                        {#each (f.options?.values ?? []) as opt (opt)}
-                          <option value={opt}>{opt}</option>
+                        {#each selectableOptions(normalizeOptions(f.options), pending?.valueText ? [pending.valueText] : []) as opt (opt.value)}
+                          <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
                         {/each}
                       </select>
                     {:else if f.type === 'multi_select'}
@@ -393,8 +396,8 @@
                            UI dependency. For long option lists we'd
                            swap to a search-box later. -->
                       <div class="mt-0.5 flex flex-wrap gap-2 rounded border border-border bg-surface-elevated px-2 py-1.5">
-                        {#each (f.options?.values ?? []) as opt (opt)}
-                          {@const checked = (pending?.valueOptions ?? []).includes(opt)}
+                        {#each selectableOptions(normalizeOptions(f.options), pending?.valueOptions ?? []) as opt (opt.value)}
+                          {@const checked = (pending?.valueOptions ?? []).includes(opt.value)}
                           <label class="inline-flex items-center gap-1 text-xs">
                             <input
                               type="checkbox"
@@ -402,12 +405,12 @@
                               onchange={(e) => {
                                 const on = (e.currentTarget as HTMLInputElement).checked;
                                 const cur = new Set(pending?.valueOptions ?? []);
-                                if (on) cur.add(opt); else cur.delete(opt);
+                                if (on) cur.add(opt.value); else cur.delete(opt.value);
                                 commitField(f, { valueOptions: cur.size === 0 ? null : Array.from(cur) });
                               }}
                               class="h-3 w-3 accent-accent"
                             />
-                            {opt}
+                            {opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}
                           </label>
                         {/each}
                       </div>
