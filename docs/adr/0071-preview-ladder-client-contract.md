@@ -77,6 +77,28 @@ a client confidently requesting URLs that 404.
    as a width candidate for a contain-mode slot would letterbox or distort. The grid's
    contact-sheet mode still uses `col` directly and deliberately.
 
+6. **The ladder's SOURCE shape is recorded per asset, in `asset_field_value`** under the
+   existing `pixel_width` / `pixel_height` definitions, `set_by = 'computed'` (#757).
+
+   The client can size a tile before any byte arrives only if the server states the shape.
+   Points 1–5 tell it *which rungs exist and what they are*; none of them says *what shape
+   the picture is*, and a layout that has to wait for `naturalWidth` reflows every tile on
+   load. Masonry rendered a wall of identical squares for three merged PRs because that
+   fact had a reader, an API field, a bucketer and a CSS rule — and no writer.
+
+   **The quantity is the shape of the image the contain rungs are built from**, not "the
+   source file's pixels". Half a catalogue has no source pixels: a 3D model, a font, an
+   audio file and a plain-text document have none, yet each produces exactly one image on
+   its way through the pipeline — a turntable frame, a glyph specimen, a waveform, a
+   rendered plate — and fans it across the ladder. That image is what a card renders, so
+   its shape is what a tile reserves. A 2048×384 waveform is a 5.33:1 tile; nothing in the
+   file it came from says so.
+
+   It is **not** recorded on `storage_variants`. That table is keyed by object hash and
+   describes stored rungs, and the ladder source is not one of them — `col` is 320² for
+   everything, so a per-variant row would either need inventing for an object that does
+   not exist or would answer with the crop's shape rather than the picture's.
+
 ## Consequences
 
 - **Adding or removing a rung is an operator action with no code change.** Both sides
@@ -92,6 +114,14 @@ a client confidently requesting URLs that 404.
   1007 assets on the reference dataset have both. That is expected and not a reason to
   alias them: the distinction is what lets the client stop *guessing*, and it degrades
   correctly for partially-rendered or failed assets.
+- **A handler that never reaches the ladder never records the shape.** Eight handlers
+  short-circuit a non-forced re-queue before decoding anything (the same early exit that
+  leaves a pre-#645 thumbhash unhealed), so the backfill for those is
+  `aa rebuild-previews --force`. Raster and video are the exceptions — both reach the
+  stamp on an ordinary re-queue, so they backfill without re-encoding a single rung.
+- **The recorded pair is post-EXIF-rotation**, because the ladder source is. That is the
+  shape a viewer sees and the shape the rungs were cut from; the EXIF extractor's own
+  write is the on-disk pair, and where both have run the preview value is the better one.
 - **Related trap, recorded in ADR 0008's amendment:** a derived variant under a stable
   content hash is exactly what preview regeneration rewrites, so ladder URLs addressed by
   *asset id* are not immutable. Cache validators must derive from the stored bytes.

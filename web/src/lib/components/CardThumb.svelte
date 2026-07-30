@@ -260,16 +260,19 @@
   //   1. recorded pixel_width/pixel_height — known BEFORE any request,
   //      so the space is reserved and nothing shifts on load. This is
   //      the reason #640 waited for #618's extraction fields to exist.
+  //      Since #757 the preview pipeline records the shape of the image
+  //      the contain rungs were built from, for EVERY format it can
+  //      render — so an audio waveform (5.33:1), a video poster and a
+  //      font sheet (16:9) all land here, not just EXIF-bearing rasters.
+  //      Before that, nothing wrote these fields at all and every tile
+  //      fell to case 3.
   //   2. the loaded image's own naturalWidth/naturalHeight — exact, but
   //      only knowable after the bytes arrive, so tiles that land here
   //      DO settle into shape as they load. That is a deliberate trade
   //      against the alternative, which is being confidently square and
-  //      wrong: on this dataset only ~18% of feed covers have recorded
-  //      dimensions, and the rest are audio waveforms (~16:3), video
-  //      frames and font sheets (16:9), 3D turntables — all of which
-  //      have a genuine non-square preview that nothing has measured.
-  //      Recording the PREVIEW variant's dimensions server-side is what
-  //      would move those tiles into case 1.
+  //      wrong. What still lands here is an asset whose preview predates
+  //      #757 and has not been re-rendered since (see
+  //      `aa rebuild-previews`).
   //   3. square — no image in the tile at all (typed-doc card, icon
   //      placeholder, gated/thumbhash-only). There is no ratio to
   //      follow, and a square is what those generated tiles are drawn
