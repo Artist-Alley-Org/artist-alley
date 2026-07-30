@@ -324,9 +324,15 @@ export async function loadModel(opts) {
  * POSIX-relative as of #753, so the entry side should never carry one —
  * this is belt-and-braces for a row written before that, and for the URL
  * side it costs one regex to stop a `Textures\x.png` request computing
- * the whole string as its basename. Measured, FBXLoader asks for the
- * bare basename and DAE/OBJ loaders ask for the full relative path;
- * neither passes a separator through today.
+ * the whole string as its basename.
+ *
+ * Measured: FBXLoader asks for the bare basename (it does
+ * `images[id].split('\\').pop()` before requesting), and GLTFLoader /
+ * MTLLoader ask for the full relative path — the smoke suite's glb,
+ * gltf and obj cases stay green with and without this manager, while
+ * fbx-textured only passes with it. ColladaLoader is NOT covered: the
+ * dae smoke fixture carries no texture, so the URL-side regex is
+ * precautionary there rather than pinned.
  *
  * @param {Companion[]} companions
  * @returns {any} THREE.LoadingManager
