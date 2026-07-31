@@ -103,6 +103,33 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Yes/no fields never worked either, and one of them failed louder than blank.** A field can
+  be declared as a yes/no checkbox, and the parts of the system that write one disagreed about
+  how. Setting one on an asset stored a number, while the panel that displays it looked for the
+  words "true" and "false" — so it showed nothing. Setting one on a collection stored the words,
+  in a different place from where an asset's went. And ticking the box in the upload window sent
+  the words to a destination that only ever accepted the number, so that write was **rejected
+  outright** rather than merely rendering blank — the one part of this that would have shown a
+  user an error rather than an empty row.
+
+  Ten places, and the two that were right were the ones nobody looked at. It survived for the
+  same reason the hierarchy bug below did: no yes/no field has ever existed on a real instance,
+  so the whole path had never once been run. A number, 1 or 0, everywhere now — which is what
+  the design document said before any of the disagreeing code was written. Nothing to migrate:
+  there was no stored value anywhere, in either form (#791).
+
+  "Not set" and "no" stay different: an unset field shows nothing, a field set to no shows "No".
+
+  The test that guards this used to check only *where* a value is stored. Two writers can agree
+  on that and still disagree about what they put there, which is exactly what happened, so it
+  now drives the writers with the same input and compares what each one actually produces. The
+  list of tolerated exceptions is gone rather than emptied — an exception list is somewhere to
+  put the next one.
+
+  With this, all eleven field types agree across every writer and every screen, and the two that
+  had never been exercised end-to-end now have a test that creates one, sets it, and reads it
+  back out of the database.
+
 - **Hierarchical fields never worked, and nothing had noticed.** A field can be declared as
   a hierarchy — country / region / city — and every part of the system disagreed about where
   such a value was stored. An asset put it in one place, a collection in another, and the panel

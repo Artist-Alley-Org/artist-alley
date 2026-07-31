@@ -12,6 +12,8 @@ import {
   flattenOptions,
   selectableTreeOptions,
   VALUE_COLUMN,
+  encodeBoolean,
+  decodeBoolean,
 } from './fieldOptions';
 
 describe('normalizeOptions', () => {
@@ -219,11 +221,10 @@ describe('VALUE_COLUMN', () => {
       // (the display's old answer). One slug, in value_text.
       tree: 'value_text',
       number: 'value_num',
-      // The asset WRITE path stores 0/1 in value_num while every
-      // display reads "true"/"false" out of value_text. Same defect
-      // class as tree, tracked separately; recorded here so it is
-      // visible rather than surprising.
-      boolean: 'value_text',
+      // 1/0 in value_num, per ADR 0012. This said value_text until
+      // #791 — matching three frontend surfaces and contradicting the
+      // API, which has only ever accepted value_num for a boolean.
+      boolean: 'value_num',
       date: 'value_date',
       datetime: 'value_date',
       multi_select: 'value_options',
@@ -247,5 +248,41 @@ describe('VALUE_COLUMN', () => {
         'tree',
       ].sort(),
     );
+  });
+});
+
+describe('boolean encoding', () => {
+  // The frontend half of #791's encoding pin. Agreeing with the server
+  // on the COLUMN is not enough: three surfaces wrote and read the
+  // strings "true"/"false", and had they written those into value_num
+  // they would still have been wrong. So pin the representation, and
+  // pin it in one place every boolean surface imports.
+
+  it('writes 1 for true and 0 for false', () => {
+    expect(encodeBoolean(true)).toBe(1);
+    expect(encodeBoolean(false)).toBe(0);
+  });
+
+  it('reads 1 and 0 back, and nothing else', () => {
+    expect(decodeBoolean(1)).toBe(true);
+    expect(decodeBoolean(0)).toBe(false);
+    // The pre-#791 encoding, arriving in the numeric column.
+    expect(decodeBoolean(NaN)).toBeNull();
+    expect(decodeBoolean(2)).toBeNull();
+  });
+
+  it('distinguishes "not set" from "false"', () => {
+    // The reason this is a function and not `!!f.value_num`: 0 is
+    // falsy, so a naive truthiness test renders a set `false` and an
+    // unset field identically. A display shows "No" for one and
+    // nothing at all for the other.
+    expect(decodeBoolean(null)).toBeNull();
+    expect(decodeBoolean(undefined)).toBeNull();
+    expect(decodeBoolean(0)).toBe(false);
+  });
+
+  it('round-trips', () => {
+    expect(decodeBoolean(encodeBoolean(true))).toBe(true);
+    expect(decodeBoolean(encodeBoolean(false))).toBe(false);
   });
 });

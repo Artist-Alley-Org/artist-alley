@@ -15,6 +15,8 @@
 
   import { t } from '$stores/lang.svelte';
   import {
+    decodeBoolean,
+    encodeBoolean,
     normalizeOptions,
     selectableOptions,
     selectableTreeOptions,
@@ -86,8 +88,11 @@
     onchange({ value_num: n });
   }
   function emitBool(v: boolean) {
-    textVal = String(v);
-    onchange({ value_text: String(v) });
+    // 1/0 in value_num (ADR 0012). This emitted the string "true" /
+    // "false" into value_text until #791, which the asset write
+    // endpoint rejects outright — it has always required value_num.
+    numVal = encodeBoolean(v);
+    onchange({ value_num: numVal });
   }
   function emitDate(v: string) {
     dateVal = v;
@@ -181,7 +186,7 @@
       <label class="mt-1 flex items-center gap-2 text-sm">
         <input
           type="checkbox"
-          checked={textVal === 'true'}
+          checked={decodeBoolean(numVal) === true}
           onchange={(e) => emitBool((e.currentTarget as HTMLInputElement).checked)}
           {disabled}
           data-testid="field-input-{def.code}"

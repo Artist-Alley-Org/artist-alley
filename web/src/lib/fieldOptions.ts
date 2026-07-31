@@ -148,6 +148,11 @@ export function optionLabel(all: FieldOption[], slug: string): string {
  * `tree` is `value_text` and holds ONE option slug — the node — not a
  * path string and not the array of slugs along the path. See the
  * 2026-07-31 tree-storage amendment to ADR 0012.
+ *
+ * `boolean` is `value_num`, holding 1 or 0. This table said
+ * `value_text` until #791, matching what three frontend surfaces did
+ * and contradicting both ADR 0012 and the API — see encodeBoolean /
+ * decodeBoolean below, which every boolean surface now goes through.
  */
 export const VALUE_COLUMN: Record<string, keyof FieldValueColumns> = {
   text: 'value_text',
@@ -156,12 +161,41 @@ export const VALUE_COLUMN: Record<string, keyof FieldValueColumns> = {
   select: 'value_text',
   tree: 'value_text',
   number: 'value_num',
-  boolean: 'value_text',
+  boolean: 'value_num',
   date: 'value_date',
   datetime: 'value_date',
   multi_select: 'value_options',
   reference: 'value_ref',
 };
+
+/**
+ * A `boolean` field's value is the number 1 or 0 in `value_num` — ADR
+ * 0012's encoding, chosen so the partial index on
+ * (field_id, value_num) serves a "where flag = true" filter.
+ *
+ * Every boolean-handling surface goes through these two functions
+ * rather than spelling the encoding out again. #791 was three
+ * frontend sites each writing or reading the strings "true"/"false"
+ * in `value_text` while the API accepted only 0/1 in `value_num`: the
+ * detail panel rendered blank, and the upload modal's checkbox was
+ * rejected outright by the asset write endpoint. Agreeing on the
+ * column is not enough — "1" in value_text and 1 in value_num are
+ * different answers, and so are 1 and true.
+ */
+export function encodeBoolean(v: boolean): number {
+  return v ? 1 : 0;
+}
+
+/**
+ * Read a stored boolean back. `null` means "not set" and is distinct
+ * from `false` — a display surface renders nothing for the former and
+ * "No" for the latter.
+ */
+export function decodeBoolean(n: number | null | undefined): boolean | null {
+  if (n === 1) return true;
+  if (n === 0) return false;
+  return null;
+}
 
 export interface FieldValueColumns {
   value_text?: string | null;

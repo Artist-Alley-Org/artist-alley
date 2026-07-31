@@ -11213,6 +11213,12 @@ components:
         addresses it; the server reassembles the ancestor labels into
         `resolved_options[slug].path` on read. See the 2026-07-31
         tree-storage amendment to ADR 0012.
+
+        A `boolean` value is the number 1 or 0 in `value_num`; any
+        other number is rejected. Not the strings "true" / "false" in
+        `value_text` — that shape was what the collection path and
+        every display surface used until #791, and it was never what
+        this endpoint accepted.
       properties:
         value_text: { type: string, nullable: true }
         value_num: { type: number, nullable: true }
@@ -11275,11 +11281,15 @@ components:
         ever declared (and only ever returned) 422. The asset-side
         equivalent does return 400; the two paths differ.
 
-        The mapping matches AssetFieldValueWrite's, with one historical
-        exception: `boolean` collection values are the strings "true" /
-        "false" in `value_text`, where the asset path uses 0 / 1 in
-        `value_num`. That divergence is tracked separately; every other
-        type, `tree` included, stores in the same column on both sides.
+        The mapping matches AssetFieldValueWrite's exactly — every
+        type, `boolean` and `tree` included, stores in the same column
+        with the same encoding on both sides.
+
+        `boolean` collection values were the strings "true" / "false"
+        in `value_text` until #791, where the asset path had always
+        used 0 / 1 in `value_num`. This path now takes `value_num` and
+        rejects anything but 0 or 1, the same contract the asset side
+        enforces.
 
         A `tree` value is ONE option slug in `value_text`. Until the
         2026-07-31 tree-storage amendment to ADR 0012 this path wrote

@@ -3,7 +3,14 @@
 
 package seed
 
-import "testing"
+import (
+	"fmt"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // ---------------------------------------------------------------------------
 // The seeder's half of the storage-column pin (#778)
@@ -27,55 +34,74 @@ import "testing"
 
 func TestSeederUsesPinnedColumns(t *testing.T) {
 	// One representative raw value per type, in whatever JSON shape a
-	// dataset MANIFEST would carry.
+	// dataset MANIFEST would carry, plus the exact stored form.
+	//
+	// The stored form is pinned, not just the column (#791). The
+	// seeder is the writer that TRANSLATES — a MANIFEST carries JSON
+	// `true`, and what reaches the column is 1 — so "which column" is
+	// the smaller half of what can go wrong here. A seeder that agreed
+	// on value_num and wrote -1, or agreed on value_text and wrote
+	// "1", would still produce a dataset nothing can read.
 	cases := []struct {
 		fieldType string
 		raw       any
 		want      string
+		wantValue string
 	}{
-		{"text", "hello", "value_text"},
-		{"longtext", "hello", "value_text"},
-		{"rich_text", "hello", "value_text"},
-		{"select", "srgb", "value_text"},
+		{"text", "hello", "value_text", `"hello"`},
+		{"longtext", "hello", "value_text", `"hello"`},
+		{"rich_text", "hello", "value_text", `"hello"`},
+		{"select", "srgb", "value_text", `"srgb"`},
 		// A tree value is ONE option slug — the node — not a
 		// "europe/uk/london" path and not an array of slugs along the
 		// path. See the 2026-07-31 tree-storage amendment to ADR 0012.
-		{"tree", "london", "value_text"},
-		{"number", float64(3), "value_num"},
-		{"boolean", true, "value_num"},
+		{"tree", "london", "value_text", `"london"`},
+		{"number", float64(3), "value_num", "3"},
+		// JSON true/false becomes 1/0 in value_num — ADR 0012's
+		// encoding, and (since #791) every other writer's. The
+		// collection writer and the display read "true"/"false" out of
+		// value_text until then, so a seeded boolean was invisible.
+		{"boolean", true, "value_num", "1"},
+		{"boolean", false, "value_num", "0"},
 		// RFC3339 even for `date`: parseTime accepts nothing else, so a
 		// bare "2026-07-31" in a MANIFEST is silently dropped rather
 		// than stored. Out of scope for #778 (no `date` field has ever
 		// been seeded either) but pinned here so the next person to
 		// seed one finds out from a test instead of from missing data.
-		{"date", "2026-07-31T00:00:00Z", "value_date"},
-		{"datetime", "2026-07-31T12:00:00Z", "value_date"},
-		{"multi_select", []any{"a", "b"}, "value_options"},
-		{"reference", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "value_ref"},
+		{"date", "2026-07-31T00:00:00Z", "value_date", "2026-07-31T00:00:00Z"},
+		{"datetime", "2026-07-31T12:00:00Z", "value_date", "2026-07-31T12:00:00Z"},
+		{"multi_select", []any{"a", "b"}, "value_options", `["a" "b"]`},
+		{"reference", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "value_ref",
+			"6ba7b810-9dad-11d1-80b4-00c04fd430c8"},
 	}
 
 	for _, c := range cases {
-		t.Run(c.fieldType, func(t *testing.T) {
+		t.Run(c.fieldType+"/"+c.wantValue, func(t *testing.T) {
 			p, ok := fieldValueParams(c.fieldType, c.raw)
 			if !ok {
 				t.Fatalf("fieldValueParams(%q, %v) refused the value", c.fieldType, c.raw)
 			}
 
-			var got []string
+			var got, gotValue []string
 			if p.ValueText != nil {
 				got = append(got, "value_text")
+				gotValue = append(gotValue, strconv.Quote(*p.ValueText))
 			}
 			if p.ValueNum != nil {
 				got = append(got, "value_num")
+				gotValue = append(gotValue, strconv.FormatFloat(*p.ValueNum, 'g', -1, 64))
 			}
 			if p.ValueDate.Valid {
 				got = append(got, "value_date")
+				gotValue = append(gotValue, p.ValueDate.Time.UTC().Format(time.RFC3339))
 			}
 			if p.ValueOptions != nil {
 				got = append(got, "value_options")
+				gotValue = append(gotValue, fmt.Sprintf("%q", p.ValueOptions))
 			}
 			if p.ValueRef.Valid {
 				got = append(got, "value_ref")
+				gotValue = append(gotValue, uuid.UUID(p.ValueRef.Bytes).String())
 			}
 
 			if len(got) != 1 {
@@ -87,6 +113,11 @@ func TestSeederUsesPinnedColumns(t *testing.T) {
 					"The seeder must agree with app/internal/metadata's writers or a "+
 					"regenerated dataset lands its values in a column nothing reads (#778).",
 					c.fieldType, got[0], c.want)
+			}
+			if gotValue[0] != c.wantValue {
+				t.Errorf("seeder encodes %q(%v) as %s, want %s. "+
+					"Same column, different representation — still a value the display "+
+					"cannot read (#791).", c.fieldType, c.raw, gotValue[0], c.wantValue)
 			}
 		})
 	}

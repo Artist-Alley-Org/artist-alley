@@ -203,7 +203,7 @@ func TestTreeValueEndToEnd(t *testing.T) {
 	// Same field type, same value, same column on both sides. This is
 	// the property #778 broke, and it is worth asserting directly
 	// rather than inferring from the two halves above.
-	assertSameStoredColumn(t, pool, assetID, assetFieldID, collectionID, collFieldID)
+	assertSameStoredColumn(t, pool, assetID, assetFieldID, collectionID, collFieldID, "value_text")
 }
 
 // TestTreeAncestorRenameDoesNotRewriteValues is acceptance item 4,
@@ -354,8 +354,12 @@ func assertCollectionTreeColumns(t *testing.T, pool *pgxpool.Pool, collectionID,
 }
 
 // assertSameStoredColumn proves the invariant directly: ask each table
-// which of its value_* columns is non-NULL and require the same answer.
-func assertSameStoredColumn(t *testing.T, pool *pgxpool.Pool, assetID, assetFieldID, collectionID, collFieldID string) {
+// which of its value_* columns is non-NULL and require the same
+// answer, and that the answer is the one the type is pinned to.
+//
+// Shared with boolean_value_e2e_test.go — the two field types that
+// broke this invariant both assert it the same way.
+func assertSameStoredColumn(t *testing.T, pool *pgxpool.Pool, assetID, assetFieldID, collectionID, collFieldID, wantCol string) {
 	t.Helper()
 	const colExpr = `CASE
 		WHEN value_text    IS NOT NULL THEN 'value_text'
@@ -377,13 +381,13 @@ func assertSameStoredColumn(t *testing.T, pool *pgxpool.Pool, assetID, assetFiel
 		t.Fatalf("collection column probe: %v", err)
 	}
 	if assetCol != collCol {
-		t.Errorf("a tree value is in %s on an asset but %s on a collection — "+
+		t.Errorf("this value is in %s on an asset but %s on a collection — "+
 			"that is bug #778: the same field type stored two different ways, so a value "+
 			"written through one surface is invisible to anything reading the other",
 			assetCol, collCol)
 	}
-	if assetCol != "value_text" {
-		t.Errorf("tree value stored in %s, want value_text", assetCol)
+	if assetCol != wantCol {
+		t.Errorf("value stored in %s, want %s", assetCol, wantCol)
 	}
 }
 

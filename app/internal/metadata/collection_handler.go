@@ -490,19 +490,17 @@ func buildCollectionUpsertParams(
 	switch fieldType {
 	case "text", "longtext", "rich_text":
 		p.ValueText = body.ValueText
-	case "number":
+	case "number", "boolean":
+		// `boolean` is 0/1 in value_num, exactly as ADR 0012 specifies
+		// and exactly what handler.go's buildUpsertParams has always
+		// written on the asset side. This path wrote the strings
+		// "true"/"false" into value_text until #791, so a boolean set
+		// on a collection landed in a different column from the same
+		// field's value on an asset. The 0/1-only range is enforced by
+		// validateCollectionValueType before this runs.
 		if body.ValueNum != nil {
 			n := float64(*body.ValueNum)
 			p.ValueNum = &n
-		}
-	case "boolean":
-		// Booleans store in value_text as the literal "true"/"false"
-		// — same encoding the asset path uses (see handler.go
-		// buildUpsertParams). Keeps the storage row count stable
-		// regardless of whether the operator picks a bool or text
-		// field for a yes/no question.
-		if body.ValueText != nil {
-			p.ValueText = body.ValueText
 		}
 	case "date", "datetime":
 		if body.ValueDate != nil {
@@ -542,8 +540,15 @@ func validateCollectionValueType(fieldType string, body *openapi.CollectionField
 			return fmt.Errorf("value_num required for field type %q", fieldType)
 		}
 	case "boolean":
-		if body.ValueText == nil {
-			return fmt.Errorf("value_text (\"true\"/\"false\") required for field type %q", fieldType)
+		// Same contract as the asset side's buildUpsertParams: 0/1 in
+		// value_num, and nothing else. The range check lives here
+		// because buildCollectionUpsertParams cannot fail — the
+		// collection write path validates first and then marshals.
+		if body.ValueNum == nil {
+			return fmt.Errorf("value_num (0 or 1) required for field type %q", fieldType)
+		}
+		if v := float64(*body.ValueNum); v != 0 && v != 1 {
+			return fmt.Errorf("boolean field accepts 0 or 1 only")
 		}
 	case "date", "datetime":
 		if body.ValueDate == nil {
@@ -627,9 +632,12 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 		SetByUserRef: &callerRef,
 	}
 	switch fieldRow.Type {
-	case "text", "longtext", "rich_text", "select", "boolean", "tree":
+	case "text", "longtext", "rich_text", "select", "tree":
 		params.ValueText = valueText
-	case "number":
+	case "number", "boolean":
+		// `boolean` moved out of the value_text group in #791 — see
+		// buildCollectionUpsertParams. A seeded collection boolean is
+		// 0/1 in value_num like every other writer's.
 		params.ValueNum = valueNum
 	case "date", "datetime":
 		if valueDate != nil {

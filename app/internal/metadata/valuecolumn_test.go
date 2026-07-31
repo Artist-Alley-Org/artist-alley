@@ -4,6 +4,8 @@
 package metadata
 
 import (
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -74,33 +76,18 @@ var valueColumnFor = map[string]valueColumn{
 	"reference":    colRef,
 }
 
-// collectionValueColumnOverride records where the COLLECTION side
-// deliberately differs from the asset side.
+// There is no per-subject override table. There was one, holding a
+// single entry — `boolean`, which the collection side stored as the
+// strings "true"/"false" in value_text while the asset side stored
+// 0/1 in value_num. #791 moved the collection side onto value_num,
+// which is what ADR 0012 always specified, and the table went with it.
 //
-// There is exactly one entry, and it is not a decision this pin made:
-// the asset path has always stored booleans as 0/1 in value_num while
-// the collection path stores the strings "true"/"false" in value_text
-// — and the asset DISPLAY reads value_text, so an asset boolean
-// renders blank today. That is the same defect class as #778's tree
-// bug and, like tree, it has never been hit because no boolean field
-// has ever existed either (grep the baseline: there is no
-// `'boolean'` field_definition row).
-//
-// It is recorded rather than fixed because unifying the two encodings
-// is a write-contract change with an owner-level decision attached
-// (0/1 vs "true"/"false"), not a drift repair. Pinning it here at
-// least makes the divergence visible in code and stops it spreading:
-// any NEW divergence fails TestCollectionColumnsMatchAssetColumns.
-var collectionValueColumnOverride = map[string]valueColumn{
-	"boolean": colText,
-}
-
-func collectionValueColumnFor(fieldType string) valueColumn {
-	if c, ok := collectionValueColumnOverride[fieldType]; ok {
-		return c
-	}
-	return valueColumnFor[fieldType]
-}
+// It is not coming back as an empty map "for later". A mechanism for
+// recording deliberate divergence is an invitation to record one, and
+// the entire lesson of #778 and #791 is that a divergence which is
+// merely documented is a divergence that ships. Both surfaces read
+// valueColumnFor; a writer that disagrees fails, with nowhere to
+// register an exemption.
 
 // allFieldTypes is every type field_definition_type_check accepts.
 // Kept literal so a schema change that adds a type has to come here.
@@ -126,36 +113,41 @@ func TestValueColumnTableIsExhaustive(t *testing.T) {
 	}
 }
 
+// The one sample every writer is driven with. Fixed, not generated:
+// TestWritersAgreeOnColumnAndEncoding compares the two writers'
+// OUTPUT byte for byte, so a randomly generated UUID (or any other
+// per-call value) would report a false disagreement. Defined once so
+// the two body builders below cannot drift apart either.
+var (
+	sampleText    = "sample-slug"
+	sampleNum     = float32(1)
+	sampleDate    = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	sampleOptions = []string{"sample-slug"}
+	sampleRef     = openapi_types.UUID(uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8"))
+)
+
 // sampleAssetWrite builds a write body carrying a plausible value in
 // EVERY value_* slot, so the writer's choice of column is the writer's
 // alone — nothing is forced by the input being absent.
 func sampleAssetWrite() *openapi.AssetFieldValueWrite {
-	text := "sample-slug"
-	num := float32(1)
-	date := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	opts := []string{"sample-slug"}
-	ref := openapi_types.UUID(uuid.New())
+	opts := sampleOptions
 	return &openapi.AssetFieldValueWrite{
-		ValueText:    &text,
-		ValueNum:     &num,
-		ValueDate:    &date,
+		ValueText:    &sampleText,
+		ValueNum:     &sampleNum,
+		ValueDate:    &sampleDate,
 		ValueOptions: &opts,
-		ValueRef:     &ref,
+		ValueRef:     &sampleRef,
 	}
 }
 
 func sampleCollectionWrite() *openapi.CollectionFieldValueWrite {
-	text := "sample-slug"
-	num := float32(1)
-	date := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	opts := []string{"sample-slug"}
-	ref := openapi_types.UUID(uuid.New())
+	opts := sampleOptions
 	return &openapi.CollectionFieldValueWrite{
-		ValueText:    &text,
-		ValueNum:     &num,
-		ValueDate:    &date,
+		ValueText:    &sampleText,
+		ValueNum:     &sampleNum,
+		ValueDate:    &sampleDate,
 		ValueOptions: &opts,
-		ValueRef:     &ref,
+		ValueRef:     &sampleRef,
 	}
 }
 
@@ -250,7 +242,7 @@ func TestCollectionWriterUsesPinnedColumns(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			p := buildCollectionUpsertParams(coll, field, typ, sampleCollectionWrite(), "manual", nil)
 			wantExactlyOne(t, "collection write (buildCollectionUpsertParams)", typ,
-				collectionValueColumnFor(typ), populatedCollectionColumns(p))
+				valueColumnFor[typ], populatedCollectionColumns(p))
 		})
 	}
 }
@@ -274,7 +266,7 @@ func TestCollectionValidatorMatchesCollectionWriter(t *testing.T) {
 			opts := []string{"sample-slug"}
 			ref := openapi_types.UUID(uuid.New())
 
-			switch collectionValueColumnFor(typ) {
+			switch valueColumnFor[typ] {
 			case colText:
 				body.ValueText = &text
 			case colNum:
@@ -289,7 +281,7 @@ func TestCollectionValidatorMatchesCollectionWriter(t *testing.T) {
 
 			if err := validateCollectionValueType(typ, body); err != nil {
 				t.Errorf("validateCollectionValueType(%q) rejected the column the writer uses (%s): %v",
-					typ, collectionValueColumnFor(typ), err)
+					typ, valueColumnFor[typ], err)
 			}
 			if err := validateCollectionValueType(typ, &openapi.CollectionFieldValueWrite{}); err == nil {
 				t.Errorf("validateCollectionValueType(%q) accepted an empty body — "+
@@ -299,27 +291,169 @@ func TestCollectionValidatorMatchesCollectionWriter(t *testing.T) {
 	}
 }
 
-// TestCollectionColumnsMatchAssetColumns is the cross-surface half of
-// the pin: the same field type must land in the same column whichever
-// subject it is attached to, or a value set on a collection is
-// unreadable by anything that reads the asset way round.
+// ---------------------------------------------------------------------------
+// The cross-surface pin, over COLUMN **and** ENCODING (#791)
+// ---------------------------------------------------------------------------
 //
-// Only the documented boolean divergence is tolerated. A NEW one fails
-// here, which is precisely the check that was missing when `tree`
-// split in two.
-func TestCollectionColumnsMatchAssetColumns(t *testing.T) {
+// #778's version of this compared each writer's column against a
+// table. That is only half the invariant, and #791 is the half it
+// missed: the asset and collection writers BOTH had a defensible
+// answer for `boolean` and still disagreed, because agreeing on a
+// column says nothing about what goes in it. Two writers can both
+// pick value_num and disagree about 1 versus 1.0; both pick value_text
+// and disagree about "true" versus "1" versus "yes". Column agreement
+// is necessary and not sufficient.
+//
+// So this compares the writers to EACH OTHER, on the rendered stored
+// value, given byte-identical input. No table sits in the middle to
+// be updated on both sides at once and hide the drift — the same
+// failure mode as a doc comment that gets reworded along with the bug.
+
+func renderStored(col valueColumn, text *string, num *float64, date pgtype.Timestamptz, opts []string, ref pgtype.UUID) string {
+	switch col {
+	case colText:
+		if text == nil {
+			return "value_text=<nil>"
+		}
+		return fmt.Sprintf("value_text=%q", *text)
+	case colNum:
+		if num == nil {
+			return "value_num=<nil>"
+		}
+		return "value_num=" + strconv.FormatFloat(*num, 'g', -1, 64)
+	case colDate:
+		if !date.Valid {
+			return "value_date=<nil>"
+		}
+		return "value_date=" + date.Time.UTC().Format(time.RFC3339Nano)
+	case colOptions:
+		return fmt.Sprintf("value_options=%q", opts)
+	case colRef:
+		if !ref.Valid {
+			return "value_ref=<nil>"
+		}
+		return "value_ref=" + uuid.UUID(ref.Bytes).String()
+	}
+	return "unknown column " + string(col)
+}
+
+func assetStored(col valueColumn, p UpsertAssetFieldValueParams) string {
+	return renderStored(col, p.ValueText, p.ValueNum, p.ValueDate, p.ValueOptions, p.ValueRef)
+}
+
+func collectionStored(col valueColumn, p UpsertCollectionFieldValueParams) string {
+	return renderStored(col, p.ValueText, p.ValueNum, p.ValueDate, p.ValueOptions, p.ValueRef)
+}
+
+// TestWritersAgreeOnColumnAndEncoding is the cross-surface pin: the
+// same field type given the same value must land in the same column
+// AND in the same representation whichever subject it is attached to,
+// or a value set on a collection is unreadable by anything that reads
+// the asset way round.
+//
+// There is no exemption list. A divergence recorded as deliberate is
+// still a value nobody can read — that is what the old
+// collectionValueColumnOverride bought us, and what #791 removed.
+func TestWritersAgreeOnColumnAndEncoding(t *testing.T) {
+	asset := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	coll := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	field := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
 	for _, typ := range allFieldTypes {
-		want := valueColumnFor[typ]
-		got := collectionValueColumnFor(typ)
-		if got == want {
-			continue
-		}
-		if _, known := collectionValueColumnOverride[typ]; !known {
-			t.Errorf("field type %q: asset side stores in %s but collection side stores in %s. "+
-				"Same type, same value, two columns — that is bug #778 happening again. "+
-				"Fix the writers, or if the split is deliberate add it to "+
-				"collectionValueColumnOverride with the reason.", typ, want, got)
-		}
+		t.Run(typ, func(t *testing.T) {
+			col := valueColumnFor[typ]
+
+			ap, err := buildUpsertParams(asset, field, typ, sampleAssetWrite(), nil)
+			if err != nil {
+				t.Fatalf("asset writer refused the sample: %v", err)
+			}
+			cp := buildCollectionUpsertParams(coll, field, typ, sampleCollectionWrite(), "manual", nil)
+
+			got, want := collectionStored(col, cp), assetStored(col, ap)
+			if got != want {
+				t.Errorf("field type %q: an asset stores %s but a collection stores %s. "+
+					"Same type, same input, two encodings — a value written through one "+
+					"surface is invisible to anything reading the other (#778 for the column, "+
+					"#791 for the encoding). Fix the writers; there is no exemption list.",
+					typ, want, got)
+			}
+		})
+	}
+}
+
+// TestBooleanIsZeroOrOneInValueNum states #791's decision outright,
+// separately from the agreement check above — because two writers can
+// agree with each other and both be wrong.
+//
+// ADR 0012 has always specified `boolean -> value_num`, 0/1, so the
+// partial index on (field_id, value_num) serves a "where flag = true"
+// filter. The asset writer and the seeder complied; the collection
+// writer and every display surface drifted onto the strings
+// "true"/"false" in value_text, so a boolean rendered blank.
+//
+// The negatives matter as much as the positives: "true" in value_text
+// is the shape the drifted surfaces sent, and it must be REJECTED
+// rather than quietly stored somewhere nothing reads.
+func TestBooleanIsZeroOrOneInValueNum(t *testing.T) {
+	asset := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	coll := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	field := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
+	for _, tc := range []struct {
+		name string
+		in   float32
+		want string
+	}{
+		{"true", 1, "value_num=1"},
+		{"false", 0, "value_num=0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			num := tc.in
+			p, err := buildUpsertParams(asset, field, "boolean",
+				&openapi.AssetFieldValueWrite{ValueNum: &num}, nil)
+			if err != nil {
+				t.Fatalf("asset boolean write: %v", err)
+			}
+			if got := assetStored(colNum, p); got != tc.want {
+				t.Errorf("asset boolean %s stored %s, want %s", tc.name, got, tc.want)
+			}
+
+			body := &openapi.CollectionFieldValueWrite{ValueNum: &num}
+			if err := validateCollectionValueType("boolean", body); err != nil {
+				t.Fatalf("collection validator rejected value_num=%v: %v", tc.in, err)
+			}
+			cp := buildCollectionUpsertParams(coll, field, "boolean", body, "manual", nil)
+			if got := collectionStored(colNum, cp); got != tc.want {
+				t.Errorf("collection boolean %s stored %s, want %s", tc.name, got, tc.want)
+			}
+		})
+	}
+
+	// The drifted shape: "true" in value_text and nothing in value_num.
+	// Both writers must refuse it. Storing it would put the value in a
+	// column the reader does not consult — the bug itself.
+	drifted := "true"
+	if _, err := buildUpsertParams(asset, field, "boolean",
+		&openapi.AssetFieldValueWrite{ValueText: &drifted}, nil); err == nil {
+		t.Error(`asset boolean write accepted value_text "true" — ` +
+			"that is the pre-#791 encoding and must be rejected, not stored")
+	}
+	if err := validateCollectionValueType("boolean",
+		&openapi.CollectionFieldValueWrite{ValueText: &drifted}); err == nil {
+		t.Error(`collection boolean write accepted value_text "true" — ` +
+			"that is exactly what this path used to write (#791)")
+	}
+
+	// Out of range. NUMERIC will hold 2 happily; the contract will not.
+	two := float32(2)
+	if _, err := buildUpsertParams(asset, field, "boolean",
+		&openapi.AssetFieldValueWrite{ValueNum: &two}, nil); err == nil {
+		t.Error("asset boolean write accepted value_num=2")
+	}
+	if err := validateCollectionValueType("boolean",
+		&openapi.CollectionFieldValueWrite{ValueNum: &two}); err == nil {
+		t.Error("collection boolean write accepted value_num=2 — the range check must " +
+			"live on the collection side too, since buildCollectionUpsertParams cannot fail")
 	}
 }
 
