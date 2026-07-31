@@ -861,6 +861,17 @@ func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.A
 
 	switch fieldType {
 	case "text", "longtext", "rich_text", "select", "tree":
+		// `tree` is here for the same reason `select` is: its value is
+		// ONE vocabulary slug. It is NOT the "NA/US/CA" path string ADR
+		// 0012 originally described — storing a path would denormalise
+		// every ancestor's slug into the value and make renaming or
+		// re-parenting an ancestor a rewrite of every descendant's
+		// stored value, which is the cascade the slug indirection
+		// exists to avoid. Slugs are unique across a field's entire
+		// option tree (normalizeOptionsDoc → collectSlugs enforces it
+		// at full depth), so the leaf slug alone addresses the node and
+		// the path is derived at read time. See the 2026-07-31
+		// tree-storage amendment to ADR 0012.
 		if in.ValueText == nil {
 			return p, fmt.Errorf("field type %q requires value_text", fieldType)
 		}
@@ -1051,9 +1062,16 @@ func buildAssetValue(
 	return out
 }
 
-// resolveValueOptions turns the slugs a select / multi_select value
-// holds into the display map the API ships. Other field types hold no
-// vocabulary slug and get nothing.
+// resolveValueOptions turns the slugs a select / multi_select / tree
+// value holds into the display map the API ships. Other field types
+// hold no vocabulary slug and get nothing.
+//
+// `tree` resolves exactly like `select` — one slug out of value_text —
+// because a tree value IS a single vocabulary term; the only thing
+// that distinguishes it is that its term sits somewhere in a nested
+// options document rather than at the top level. That difference is
+// entirely resolveOptionSlugs' problem, and it shows up here only as
+// the ancestor Path this function forwards.
 func resolveValueOptions(
 	fieldType string,
 	valueText *string,
@@ -1062,7 +1080,7 @@ func resolveValueOptions(
 ) map[string]openapi.ResolvedOption {
 	var slugs []string
 	switch fieldType {
-	case "select":
+	case "select", "tree":
 		if valueText == nil || *valueText == "" {
 			return nil
 		}
@@ -1078,10 +1096,18 @@ func resolveValueOptions(
 	}
 	out := make(map[string]openapi.ResolvedOption, len(hits))
 	for slug, o := range hits {
-		out[slug] = openapi.ResolvedOption{
+		r := openapi.ResolvedOption{
 			Label:  o.Label,
 			Status: openapi.ResolvedOptionStatus(o.Status),
 		}
+		// A single-element path says nothing the label does not, so
+		// it is omitted — which keeps every flat vocabulary's response
+		// byte-identical to what it was before tree fields resolved.
+		if len(o.Path) > 1 {
+			p := o.Path
+			r.Path = &p
+		}
+		out[slug] = r
 	}
 	return out
 }

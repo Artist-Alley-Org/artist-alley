@@ -508,9 +508,15 @@ func buildCollectionUpsertParams(
 		if body.ValueDate != nil {
 			p.ValueDate = pgtype.Timestamptz{Time: *body.ValueDate, Valid: true}
 		}
-	case "select":
+	case "select", "tree":
+		// `tree` stores ONE vocabulary slug in value_text, exactly like
+		// `select` — see the 2026-07-31 tree-storage amendment to ADR
+		// 0012. It used to sit with multi_select and write
+		// value_options, which put a collection's tree value in a
+		// different column from an asset's. Nothing caught it because
+		// no tree field has ever carried a value.
 		p.ValueText = body.ValueText
-	case "multi_select", "tree":
+	case "multi_select":
 		if body.ValueOptions != nil {
 			p.ValueOptions = *body.ValueOptions
 		}
@@ -527,7 +533,7 @@ func buildCollectionUpsertParams(
 // side's value validation.
 func validateCollectionValueType(fieldType string, body *openapi.CollectionFieldValueWrite) error {
 	switch fieldType {
-	case "text", "longtext", "rich_text", "select":
+	case "text", "longtext", "rich_text", "select", "tree":
 		if body.ValueText == nil {
 			return fmt.Errorf("value_text required for field type %q", fieldType)
 		}
@@ -543,7 +549,7 @@ func validateCollectionValueType(fieldType string, body *openapi.CollectionField
 		if body.ValueDate == nil {
 			return fmt.Errorf("value_date required for field type %q", fieldType)
 		}
-	case "multi_select", "tree":
+	case "multi_select":
 		if body.ValueOptions == nil {
 			return fmt.Errorf("value_options required for field type %q", fieldType)
 		}
@@ -621,7 +627,7 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 		SetByUserRef: &callerRef,
 	}
 	switch fieldRow.Type {
-	case "text", "longtext", "rich_text", "select", "boolean":
+	case "text", "longtext", "rich_text", "select", "boolean", "tree":
 		params.ValueText = valueText
 	case "number":
 		params.ValueNum = valueNum
@@ -629,7 +635,7 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 		if valueDate != nil {
 			params.ValueDate = pgtype.Timestamptz{Time: *valueDate, Valid: true}
 		}
-	case "multi_select", "tree":
+	case "multi_select":
 		params.ValueOptions = valueOptions
 	case "reference":
 		if valueRef != nil {

@@ -86,8 +86,40 @@ type FieldOption struct {
 // because every read surface needs it and none of them holds the
 // definition.
 
+// ResolvedOption is one stored slug as a reader needs to see it: the
+// option itself plus the label path from the root of the field's
+// vocabulary down to and including the option.
+//
+// Path has one element for a flat vocabulary (select / multi_select)
+// and N elements for a node N levels deep in a `tree` field's nested
+// options. It is what lets a display surface print
+// "Europe / United Kingdom / London" while asset_field_value stores
+// nothing but `london` — see the 2026-07-31 tree-storage amendment to
+// ADR 0012.
+type ResolvedOption struct {
+	FieldOption
+	Path []string
+}
+
 // resolveOptionSlugs looks up each slug in a field's options document
-// and returns what a reader needs to display it: label and lifecycle.
+// and returns what a reader needs to display it: label, lifecycle, and
+// the ancestor label path.
+//
+// The walk descends into children. It did not always: this function
+// scanned only the top level, on the stated grounds that "nested
+// children belong to tree fields, whose values live in value_ref
+// rather than as slugs". That premise was wrong in both halves — no
+// writer has ever put a tree value in value_ref, and a tree value is
+// exactly a vocabulary slug. A nested slug therefore never resolved,
+// which is one of the ways the tree path stayed broken while nothing
+// exercised it.
+//
+// Slugs are unique across a field's whole option tree, not merely
+// within a level: normalizeOptionsDoc runs collectSlugs over the full
+// depth and rejects duplicates anywhere in it, on every create and
+// every update. That global uniqueness is what makes a bare leaf slug
+// a complete address for a node, and so what lets the stored value
+// stay a single slug rather than a path.
 //
 // Deliberately tolerant, because this is a read path serving values
 // that are already stored. A malformed options document, an unknown
@@ -100,7 +132,7 @@ type FieldOption struct {
 // picker's job is to stop offering it; a detail page's job is to
 // describe a value that exists, and blanking it would hide data from
 // the one person who could fix it.
-func resolveOptionSlugs(raw []byte, slugs []string) map[string]FieldOption {
+func resolveOptionSlugs(raw []byte, slugs []string) map[string]ResolvedOption {
 	if len(slugs) == 0 {
 		return nil
 	}
@@ -108,32 +140,28 @@ func resolveOptionSlugs(raw []byte, slugs []string) map[string]FieldOption {
 	if err != nil || len(values) == 0 {
 		return nil
 	}
-	// Flat scan over the top level, mirroring optionLabel() in
-	// fieldOptions.ts. Nested children belong to tree fields, whose
-	// values live in value_ref rather than as slugs.
-	byValue := make(map[string]FieldOption, len(values))
-	for _, o := range values {
-		v := strings.TrimSpace(o.Value)
-		if v == "" {
-			continue
+
+	want := make(map[string]struct{}, len(slugs))
+	for _, s := range slugs {
+		if s != "" {
+			want[s] = struct{}{}
 		}
-		if _, dup := byValue[v]; dup {
-			continue // first wins; normalizeOptionsDoc rejects dupes on write
-		}
-		byValue[v] = o
+	}
+	if len(want) == 0 {
+		return nil
 	}
 
-	out := make(map[string]FieldOption, len(slugs))
-	for _, s := range slugs {
-		if s == "" {
-			continue
+	out := make(map[string]ResolvedOption, len(want))
+	walkOptions(values, nil, func(o FieldOption, ancestors []string) {
+		v := strings.TrimSpace(o.Value)
+		if v == "" {
+			return
 		}
-		if _, done := out[s]; done {
-			continue
+		if _, ok := want[v]; !ok {
+			return
 		}
-		o, ok := byValue[s]
-		if !ok {
-			continue
+		if _, dup := out[v]; dup {
+			return // first wins; normalizeOptionsDoc rejects dupes on write
 		}
 		// A bare-string entry carries no label — the slug IS the
 		// display text — and no status, which means active. Fill both
@@ -144,12 +172,33 @@ func resolveOptionSlugs(raw []byte, slugs []string) map[string]FieldOption {
 		if o.Status == "" {
 			o.Status = OptionActive
 		}
-		out[s] = o
-	}
+		// Copy: ancestors is reused across the walk.
+		path := make([]string, len(ancestors), len(ancestors)+1)
+		copy(path, ancestors)
+		out[v] = ResolvedOption{FieldOption: o, Path: append(path, o.Label)}
+	})
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// walkOptions visits every option in the document depth-first, passing
+// each one the display labels of its ancestors (root first, the
+// option's own label excluded). The ancestors slice is reused between
+// calls — copy it if you keep it.
+func walkOptions(opts []FieldOption, ancestors []string, visit func(FieldOption, []string)) {
+	for _, o := range opts {
+		visit(o, ancestors)
+		if len(o.Children) == 0 {
+			continue
+		}
+		label := strings.TrimSpace(o.Label)
+		if label == "" {
+			label = strings.TrimSpace(o.Value)
+		}
+		walkOptions(o.Children, append(ancestors, label), visit)
+	}
 }
 
 // bare reports whether the option carries nothing beyond its slug and
