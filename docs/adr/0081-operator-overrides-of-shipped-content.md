@@ -1,6 +1,6 @@
 ---
 id: "0081"
-title: Operators override shipped strings and field defaults, but never shipped templates
+title: Operators override shipped strings, field defaults, and email templates — the last over a restricted context
 status: accepted
 date: 2026-07-30
 area: architecture
@@ -19,9 +19,10 @@ tags:
 excerpt: >-
   Three locked admin tiles — site text, email templates and upload defaults —
   are the same question wearing three hats: what may an operator change about
-  content that ships inside the binary? Strings and field defaults become
-  operator-editable data; email templates do not, because an operator-authored
-  template is executable content on the one channel that leaves the instance.
+  content that ships inside the binary? All three become operator-editable.
+  Templates were rejected outright at first and reinstated by the 2026-07-31
+  amendment: the hazard is Go templates invoking methods, which is fixed by
+  rendering against a flat typed view-model rather than by prohibition.
 ---
 
 ## Context
@@ -94,6 +95,11 @@ peer receiving content must not receive the operator's wording.
 
 ### 2. Email templates — no. Operators configure the variables, never the template
 
+> ⚠️ **SUPERSEDED by the 2026-07-31 amendment at the end of this document.** Templates are
+> reinstated over a restricted context. The analysis below is kept because its third leg — Go
+> templates *invoking methods* — is what the replacement design is built around; the first two
+> legs were overstated. Do not implement from this section.
+
 **Operator-authored email templates are not built, and this is a decision rather than a
 deferral.**
 
@@ -157,8 +163,8 @@ override does not: teams are local.
   "developer sees a raw key" to "operator's change does nothing and nothing says why."
 - The `defaults` tile needs `field_definition` to carry a default, and a team-scoped override
   table. Neither exists; this is the largest of the three.
-- Operators wanting genuinely custom mail will be told no. That is the intended answer, and the
-  branding fields are what makes it an acceptable one.
+- ~~Operators wanting genuinely custom mail will be told no.~~ **Withdrawn 2026-07-31** — see the
+  amendment. The branding fields remain the common case and stay worth having.
 - Three surfaces now resolve shipped-content-plus-override at read time (strings, field
   defaults, email branding). Each must cache and invalidate on write; none may resolve per row
   in a loop.
