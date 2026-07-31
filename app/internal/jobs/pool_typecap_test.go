@@ -3,8 +3,8 @@
 
 // Phase 1.14.A — per-type concurrency cap on Pool.
 //
-// Pure-Go tests of the gate logic (tryReserve / confirmReservation
-// / release) — no DB or worker spin-up needed. The full
+// Pure-Go tests of the gate logic (tryReserve / releaseReserved /
+// release) — no DB or worker spin-up needed. The full
 // integration is exercised indirectly through Worker.Run when the
 // boot wire constructs a Pool with a TypeConcurrency map.
 package jobs
