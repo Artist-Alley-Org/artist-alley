@@ -50,7 +50,7 @@ services:
     # app over the compose network by DNS anyway — so drop it. A no-op
     # for the dev/backend app (which has no host port).
     ports: !reset []
-    mem_limit: 4g
+    mem_limit: ${AA_APP_MEM_LIMIT:-6g}
 
   postgres:
     ports: !reset []
@@ -79,4 +79,4 @@ services:
     mem_limit: 256m
 
   app-b:
-    mem_limit: 4g
+    mem_limit: ${AA_APP_MEM_LIMIT:-6g}
