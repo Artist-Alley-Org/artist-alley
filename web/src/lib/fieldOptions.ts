@@ -131,6 +131,97 @@ export function selectableOptions(
 
 /** Map a stored slug to its display label, falling back to the slug. */
 export function optionLabel(all: FieldOption[], slug: string): string {
-  const hit = all.find((o) => o.value === slug);
+  const hit = flattenOptions(all).find((o) => o.value === slug);
   return hit ? hit.label : slug;
+}
+
+/**
+ * The column each field type's value lives in. ONE table, so a display
+ * surface and an editing surface cannot disagree about where to look —
+ * which is exactly what happened to `tree` (#778): the editor wrote
+ * `value_options`, the asset writer wrote `value_text`, and the detail
+ * panel read `value_ref`, so a tree value rendered empty however it
+ * had been written.
+ *
+ * Mirrors valueColumnFor in app/internal/metadata/valuecolumn_test.go.
+ *
+ * `tree` is `value_text` and holds ONE option slug — the node — not a
+ * path string and not the array of slugs along the path. See the
+ * 2026-07-31 tree-storage amendment to ADR 0012.
+ */
+export const VALUE_COLUMN: Record<string, keyof FieldValueColumns> = {
+  text: 'value_text',
+  longtext: 'value_text',
+  rich_text: 'value_text',
+  select: 'value_text',
+  tree: 'value_text',
+  number: 'value_num',
+  boolean: 'value_text',
+  date: 'value_date',
+  datetime: 'value_date',
+  multi_select: 'value_options',
+  reference: 'value_ref',
+};
+
+export interface FieldValueColumns {
+  value_text?: string | null;
+  value_num?: number | null;
+  value_date?: string | null;
+  value_options?: string[] | null;
+  value_ref?: string | null;
+}
+
+/** A vocabulary entry plus where it sits in the hierarchy. */
+export interface FlatOption extends FieldOption {
+  /** 0 for a top-level term, 1 for its children, and so on. */
+  depth: number;
+  /** Labels from the root down to and including this term. */
+  path: string[];
+}
+
+/**
+ * Walk a vocabulary depth-first into a flat list, carrying each term's
+ * depth and ancestor labels.
+ *
+ * A flat select / multi_select vocabulary comes back unchanged at
+ * depth 0, so callers do not need to know which kind they hold. A
+ * `tree` field's nested terms come back in document order, which is
+ * the order a picker should show them in.
+ *
+ * Slugs are unique across a field's WHOLE vocabulary — the server
+ * rejects a duplicate at any depth — so the flattened list never
+ * contains two entries with the same `value`.
+ */
+export function flattenOptions(
+  opts: FieldOption[],
+  depth = 0,
+  ancestors: string[] = [],
+): FlatOption[] {
+  const out: FlatOption[] = [];
+  for (const o of opts) {
+    const path = [...ancestors, o.label];
+    out.push({ ...o, depth, path });
+    if (o.children?.length) {
+      out.push(...flattenOptions(o.children, depth + 1, path));
+    }
+  }
+  return out;
+}
+
+/**
+ * The list to offer in a `tree` picker: every term at every depth,
+ * filtered by the same selectable/held rule the flat picker uses.
+ *
+ * A non-leaf term stays selectable. "Europe" is a legitimate answer
+ * when the operator does not know the city, and forbidding it would
+ * force a fake leaf under every branch.
+ */
+export function selectableTreeOptions(
+  all: FieldOption[],
+  held: string[] = [],
+): FlatOption[] {
+  const heldSet = new Set(held.filter(Boolean));
+  return flattenOptions(all).filter(
+    (o) => isSelectable(o) || (heldSet.has(o.value) && isResolvable(o)),
+  );
 }

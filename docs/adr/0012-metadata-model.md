@@ -144,11 +144,15 @@ CREATE TABLE asset_field_value (
     field_id        UUID         NOT NULL REFERENCES field_definition(id) ON DELETE CASCADE,
 
     -- Typed value columns. Exactly one is populated per type:
-    --   text/longtext/rich_text/select(single)/tree(path) -> value_text
+    --   text/longtext/rich_text/select/tree(one slug)     -> value_text
     --   number/boolean                                    -> value_num
     --   date/datetime                                     -> value_date
     --   multi_select                                      -> value_options
     --   reference                                         -> value_ref
+    --
+    -- tree said "(path)" here until the 2026-07-31 amendment below.
+    -- The column was right; the encoding was not. A tree value is ONE
+    -- option slug, never a path string.
     value_text      TEXT         NULL,
     value_num       NUMERIC      NULL,
     value_date      TIMESTAMPTZ  NULL,
@@ -215,7 +219,7 @@ background sweeper archives rows older than 1 year to cold storage
 | `datetime` | value_date | full timestamp |
 | `select` | value_text | single slug from options.values |
 | `multi_select` | value_options | set of slugs |
-| `tree` | value_text | path-string like "NA/US/CA"; unlimited depth |
+| `tree` | value_text | **one** option slug naming a node in the field's nested `options.values`; unlimited depth. NOT a path-string — see the 2026-07-31 amendment, which corrects the "NA/US/CA" encoding this row used to specify |
 | `reference` | value_ref | UUID of another asset |
 
 UI controls (radio vs dropdown, slider vs number input, datepicker
@@ -610,3 +614,130 @@ editor, rather than as a second vocabulary system.
 | retire a term | boolean `active` | **`status` + `replaced_by`** — says what to use instead |
 | merge terms | none | none |
 | standalone taxonomy admin | none | none |
+
+## Amendment 2026-07-31 (second) — where a `tree` value is stored, settled
+
+The amendment above ended by saying the three-way storage disagreement "must be settled before
+the tree admin is built". This settles it. Implemented in #778.
+
+### The disagreement was larger than the table above recorded
+
+That table named three surfaces. There were **eight**, and the sweep that found them started
+from the observation that no `tree` field has ever carried a value, so nothing had ever
+exercised any of them:
+
+| surface | did what |
+|---|---|
+| this ADR (schema comment + primitives table) | `value_text`, encoded as the path `"NA/US/CA"` |
+| `metadata/handler.go` — asset write | `value_text` |
+| `seed/runner.go` — the seeder | `value_text` |
+| `metadata/collection_handler.go` — collection write (×3: params, validator, in-tx seed) | **`value_options`** |
+| `FieldValueInput.svelte` — the only editor | **`value_options`** |
+| `PostHost.svelte` — the only display | **`value_ref`** |
+| `metadata/options.go` — `resolveOptionSlugs` | scanned only the **top level**, on the stated grounds that "nested children belong to tree fields, whose values live in `value_ref` rather than as slugs" — so no nested term ever resolved |
+| `metadata/handler.go` — `resolveValueOptions` | excluded `tree` from resolution entirely |
+| `fieldOptions.ts` — `optionLabel`, `selectableOptions` | flat scans; a nested term rendered as its raw slug and was never offered |
+
+An asset value and a collection value landed in **different columns**, and the display read a
+**third**, so a tree value rendered empty however it had been written. The two resolvers meant
+that even a correctly stored value could not have been turned into a label.
+
+### Decision 1 — `tree` is single-valued
+
+A `tree` field holds **one** value: the node selected. It is the hierarchical counterpart of
+`select`, not of `multi_select`.
+
+This keeps the three vocabulary types a coherent set — `select` is flat-and-single,
+`multi_select` is flat-and-multiple, `tree` is hierarchical-and-single — and it matches the one
+`tree` field that exists in the baseline (`country`, sourced from the IPTC tag
+`Country-PrimaryLocationName`, which is singular by definition).
+
+If a hierarchical *set* is ever needed, it arrives as a separate `multi_tree` type, exactly as
+`multi_select` sits beside `select`. Adding a type later is cheap; splitting an overloaded one
+after it holds data is not.
+
+### Decision 2 — the value is ONE SLUG in `value_text`, not a path and not an array
+
+**Storage: `value_text`, holding the slug of the selected node — `"london"`, not
+`"europe/uk/london"` and not `["europe","uk","london"]`.**
+
+The reasoning, and why both rejected options are rejected on the same grounds:
+
+- **A path string denormalises every ancestor's slug into the value.** Renaming *or
+  re-parenting* an ancestor would then require rewriting every descendant's stored row. That is
+  precisely the cascade the slug indirection exists to avoid, and the axis on which the
+  "rename a term" row in the table above claims we beat the prior art. Specifying `value_text`
+  and specifying a path were two decisions, and only the first one was right.
+
+- **An array of slugs along the path fixes the rename problem but misuses the column.**
+  `value_options` is a `TEXT[]` with a GIN index, and it means *a set*: unordered, several
+  independent values. A path is ordered and is one value. Storing one in the other overloads
+  the column's meaning for every reader and every query.
+
+- **Neither is necessary, because the ancestors are redundant.** `normalizeOptionsDoc` runs
+  `collectSlugs` over the **full depth** of the options document and rejects a duplicate slug
+  anywhere in it, on every create and every update. Slugs are therefore unique across a field's
+  entire tree, so the selected node's own slug is a **complete address**. The path is derived at
+  read time and never stored.
+
+- **`value_ref` is wrong** and was never plausible: it holds the UUID of a row. An option is an
+  entry in a jsonb document and has no identity of its own to point at.
+
+Consequences that fall out of this, all of them good:
+
+- **Ancestor rename is free, and so is re-parenting** — both are edits to the options document
+  and touch no value row. Pinned by `TestTreeAncestorRenameDoesNotRewriteValues`, which asserts
+  the stored value *and the row's `set_at`* are untouched.
+- **Full-text search is unaffected** — `rebuild_asset_search_text` already aggregates
+  `value_text`, so a tree value indexes exactly like a `select` value.
+- **A subtree query** ("everything under Europe") expands the subtree's slugs from the options
+  document and matches `value_text = ANY(...)`, served by the existing
+  `asset_field_value (field_id, value_text)` index. This is more work than a `LIKE 'europe/%'`
+  against a path, and it is the one place a path would have been cheaper — but the `LIKE` goes
+  silently *wrong* the moment a node is re-parented, and this does not.
+
+### What the API gained
+
+`ResolvedOption` grew an optional `path`: the ancestor labels from the root down to and
+including the term. Present only when the term is nested, so every flat `select` /
+`multi_select` response is byte-identical to before. It is what lets a display surface print
+"Europe / United Kingdom / London" while the record holds nothing but `london` — the same
+"the server pays the indirection cost once, for every consumer" bargain `resolved_options`
+already made.
+
+### How this is kept from happening again
+
+Six call sites drifted silently because nothing pinned the invariant. Three tests now do:
+
+- `app/internal/metadata/valuecolumn_test.go` — **behavioural** pin. It calls each writer with
+  every value column populated and observes which one comes back set, so it catches drift
+  regardless of how a switch is spelled or whether a comment was updated. It also asserts the
+  asset and collection sides agree per type.
+- `app/internal/seed/valuecolumn_test.go` — the same pin for the seeder, which lives in another
+  package and would otherwise sit outside it.
+- `app/internal/metadata/tree_value_e2e_test.go` — the end-to-end path this feature never had:
+  create the field, value it on an asset **and** a collection, then assert against the database
+  columns and against the read model the display actually consumes.
+
+### Known adjacent divergence, deliberately not fixed here
+
+`boolean` has the same defect: the **asset write path stores `0`/`1` in `value_num`** while the
+**collection write path and every display use `"true"`/`"false"` in `value_text`** — so an asset
+boolean would render blank. It has never been hit for the same reason `tree` never was: no
+`boolean` field definition exists either. It is recorded in
+`collectionValueColumnOverride` so it is visible in code and so a *new* divergence still fails
+the pin, but unifying the two encodings is a write-contract change with a real decision attached
+(`0`/`1` vs `"true"`/`"false"`) rather than a drift repair, and belongs in its own change.
+
+The same "never instantiated, therefore never exercised" condition applies to `longtext`,
+`rich_text`, `date`, `datetime` and `reference`. One concrete instance found in passing: the
+seeder's `parseTime` accepts **RFC3339 only**, so a bare `"2026-07-31"` for a `date` field is
+silently dropped rather than rejected.
+
+### Still out of scope
+
+The `tree` **admin UI** (#779). `FieldEditor.svelte` still gates its vocabulary editor on
+`select`/`multi_select`, so a tree field's nested options must be supplied through the API —
+which the API has always accepted and now round-trips correctly. `FieldValueInput.svelte` gained
+an indented flat `<select>` over the whole hierarchy, which is the minimum that makes a tree
+value settable and correct; a real tree widget comes with #779.

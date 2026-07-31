@@ -9,6 +9,9 @@ import {
   optionLabel,
   isSelectable,
   isResolvable,
+  flattenOptions,
+  selectableTreeOptions,
+  VALUE_COLUMN,
 } from './fieldOptions';
 
 describe('normalizeOptions', () => {
@@ -117,5 +120,132 @@ describe('optionLabel', () => {
 
   it('falls back to the slug for a value with no matching option', () => {
     expect(optionLabel(all, 'mystery')).toBe('mystery');
+  });
+
+  it('resolves a NESTED slug, which it previously could not', () => {
+    // optionLabel only scanned the top level, so every term below the
+    // root of a tree field's vocabulary rendered as its raw slug.
+    const vocab = normalizeOptions({
+      values: [
+        { value: 'europe', label: 'Europe', children: [{ value: 'london', label: 'London' }] },
+      ],
+    });
+    expect(optionLabel(vocab, 'london')).toBe('London');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The tree half (#778)
+// ---------------------------------------------------------------------------
+
+describe('flattenOptions', () => {
+  it('leaves a flat vocabulary flat, so callers need not know which kind they hold', () => {
+    const flat = flattenOptions(normalizeOptions({ values: ['sRGB', 'Linear'] }));
+    expect(flat.map((o) => o.value)).toEqual(['sRGB', 'Linear']);
+    expect(flat.every((o) => o.depth === 0)).toBe(true);
+    expect(flat[0].path).toEqual(['sRGB']);
+  });
+
+  it('walks a nested vocabulary depth-first carrying depth and ancestor labels', () => {
+    const opts = normalizeOptions({
+      values: [
+        {
+          value: 'europe',
+          label: 'Europe',
+          children: [
+            {
+              value: 'uk',
+              label: 'United Kingdom',
+              children: [{ value: 'london', label: 'London' }],
+            },
+          ],
+        },
+        { value: 'asia', label: 'Asia' },
+      ],
+    });
+    const flat = flattenOptions(opts);
+    expect(flat.map((o) => [o.value, o.depth])).toEqual([
+      ['europe', 0],
+      ['uk', 1],
+      ['london', 2],
+      ['asia', 0],
+    ]);
+    expect(flat[2].path).toEqual(['Europe', 'United Kingdom', 'London']);
+  });
+});
+
+describe('selectableTreeOptions', () => {
+  const vocab = normalizeOptions({
+    values: [
+      {
+        value: 'europe',
+        label: 'Europe',
+        children: [
+          { value: 'london', label: 'London' },
+          { value: 'old', label: 'Old', status: 'deprecated' },
+          { value: 'gone', label: 'Gone', status: 'archived' },
+        ],
+      },
+    ],
+  });
+
+  it('offers branches as well as leaves — a branch is a legitimate answer', () => {
+    expect(selectableTreeOptions(vocab).map((o) => o.value)).toEqual(['europe', 'london']);
+  });
+
+  it('keeps a deprecated term a record already holds, at any depth', () => {
+    // The nested case is the one that mattered: the flat picker never
+    // descended, so a held nested term silently vanished from the list.
+    expect(selectableTreeOptions(vocab, ['old']).map((o) => o.value)).toContain('old');
+  });
+
+  it('does not resurrect an archived term even when held', () => {
+    expect(selectableTreeOptions(vocab, ['gone']).map((o) => o.value)).not.toContain('gone');
+  });
+});
+
+describe('VALUE_COLUMN', () => {
+  // The pin that stops #778 recurring on the frontend: ONE table, so an
+  // editing surface and a display surface cannot disagree about which
+  // column a type's value lives in. Mirrors valueColumnFor in
+  // app/internal/metadata/valuecolumn_test.go — change one, change both.
+  it('agrees with the server on every field type', () => {
+    expect(VALUE_COLUMN).toEqual({
+      text: 'value_text',
+      longtext: 'value_text',
+      rich_text: 'value_text',
+      select: 'value_text',
+      // NOT value_options (this editor's old answer) and NOT value_ref
+      // (the display's old answer). One slug, in value_text.
+      tree: 'value_text',
+      number: 'value_num',
+      // The asset WRITE path stores 0/1 in value_num while every
+      // display reads "true"/"false" out of value_text. Same defect
+      // class as tree, tracked separately; recorded here so it is
+      // visible rather than surprising.
+      boolean: 'value_text',
+      date: 'value_date',
+      datetime: 'value_date',
+      multi_select: 'value_options',
+      reference: 'value_ref',
+    });
+  });
+
+  it('covers every type the field_definition CHECK constraint accepts', () => {
+    expect(Object.keys(VALUE_COLUMN).sort()).toEqual(
+      [
+        'boolean',
+        'date',
+        'datetime',
+        'longtext',
+        'multi_select',
+        'number',
+        'reference',
+        'rich_text',
+        'select',
+        'text',
+        'tree',
+      ].sort(),
+    );
   });
 });

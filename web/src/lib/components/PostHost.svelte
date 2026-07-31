@@ -97,7 +97,10 @@
     // the record) so a read surface like this one never needs the
     // field definition. A slug missing from the map does not resolve
     // and renders as itself.
-    resolved_options?: Record<string, { label: string; status: string }> | null;
+    resolved_options?: Record<
+      string,
+      { label: string; status: string; path?: string[] | null }
+    > | null;
   }
 
   let author = $state<UserPublic | null>(null);
@@ -434,6 +437,25 @@
       : t('common.option_deprecated', { label: opt.label });
   }
 
+  // Render a stored tree slug as its path through the hierarchy.
+  //
+  // `path` is absent for a term sitting at the top level of its
+  // vocabulary, where the label already says everything — so fall back
+  // to the same single-slug rendering `select` uses, and to the raw
+  // slug when the vocabulary no longer carries the term at all.
+  function displayTreePath(f: AssetFieldValue, slug: string): string {
+    const opt = f.resolved_options?.[slug];
+    if (!opt) return slug;
+    const label =
+      opt.status === 'active'
+        ? opt.label
+        : t('common.option_deprecated', { label: opt.label });
+    if (!opt.path?.length || opt.path.length < 2) return label;
+    // Keep the deprecation marker attached to the term itself, not to
+    // the whole path — an ancestor is not what was retired.
+    return [...opt.path.slice(0, -1), label].join(' / ');
+  }
+
   function formatFieldValue(f: AssetFieldValue): string {
     switch (f.type) {
       case 'text':
@@ -456,6 +478,16 @@
       case 'multi_select':
         return (f.value_options ?? []).map((s) => displaySlug(f, s)).join(', ');
       case 'tree':
+        // One slug in value_text, resolved to its full ancestor path so
+        // the hierarchy is visible: "Europe / United Kingdom / London".
+        //
+        // This case used to read value_ref, which no writer has ever
+        // populated for a tree field — so a tree value rendered empty
+        // regardless of which of the two columns it had been written to
+        // (#778). value_ref is for `reference`, whose value is a row's
+        // UUID; an option is an entry in a jsonb document and has no
+        // identity of its own to point at.
+        return f.value_text ? displayTreePath(f, f.value_text) : '';
       case 'reference':
         return f.value_ref ?? '';
       default:

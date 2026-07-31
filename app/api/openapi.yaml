@@ -10976,13 +10976,19 @@ components:
           additionalProperties: true
           description: |
             Type-dependent constraints / values. Shape per ADR 0012.
-            For `select` / `multi_select`: `{"values": [...]}` where
-            each entry is a bare slug string, or an object
+            For `select` / `multi_select` / `tree`: `{"values": [...]}`
+            where each entry is a bare slug string, or an object
             `{value, label?, status?, replaced_by?, children?}`.
             An entry with no `status` is `active`. Entries that are
             `deprecated` or `archived` must not be offered for new
             values; `deprecated` ones still resolve and display on
             assets that already carry them.
+
+            `children` nests the vocabulary and is what makes a field
+            of type `tree` hierarchical. Slugs must be unique across
+            the WHOLE tree, not merely within a level — the server
+            rejects a duplicate at any depth — which is what lets a
+            stored value be a single leaf slug rather than a path.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:
@@ -11084,9 +11090,9 @@ components:
           type: object
           additionalProperties: true
           description: |
-            Type-dependent constraints. For `select` / `multi_select`
-            this is `{"values": [...]}` where each entry is either a
-            bare slug string or an object
+            Type-dependent constraints. For `select` / `multi_select` /
+            `tree` this is `{"values": [...]}` where each entry is
+            either a bare slug string or an object
             `{value, label?, status?, replaced_by?, children?}`.
             `status` is one of active | deprecated | archived and
             defaults to `active` when absent; `replaced_by` must name
@@ -11141,11 +11147,11 @@ components:
             $ref: '#/components/schemas/ResolvedOption'
           description: |
             Display data for the vocabulary slugs this value holds,
-            keyed by slug. Present only for select / multi_select, and
-            only for slugs that resolve against the field's options
-            document — a slug with no entry (the vocabulary dropped it,
-            or the value predates it) is simply absent, and callers must
-            fall back to rendering the slug itself.
+            keyed by slug. Present only for select / multi_select /
+            tree, and only for slugs that resolve against the field's
+            options document — a slug with no entry (the vocabulary
+            dropped it, or the value predates it) is simply absent, and
+            callers must fall back to rendering the slug itself.
 
             asset_field_value stores the slug and never the label (ADR
             0012) precisely so relabelling a term rewrites nothing. The
@@ -11174,12 +11180,39 @@ components:
             The term's lifecycle state. A reader should mark anything
             other than active, so a value stops looking current the
             moment an operator retires the term behind it.
+        path:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: |
+            Ancestor labels from the root of the field's vocabulary down
+            to and including this term — what a `tree` value needs in
+            order to display as "Europe / United Kingdom / London" when
+            the stored value is nothing but `london`.
+
+            Absent for any term that sits at the top level, which is
+            every term in a flat select / multi_select vocabulary: a
+            one-element path would say nothing `label` does not. So a
+            caller renders `path.join(...)` when it is present and
+            `label` when it is not.
     AssetFieldValueWrite:
       type: object
       description: |
         Pass whichever value_* field matches the target field's type.
         The handler validates against field_definition.type and
         rejects mismatches with 400.
+
+        The mapping is: text / longtext / rich_text / select / tree →
+        `value_text`; number / boolean → `value_num`; date / datetime →
+        `value_date`; multi_select → `value_options`; reference →
+        `value_ref`.
+
+        A `tree` value is ONE option slug in `value_text` — the node
+        being selected — not a path string and not an array. Slugs are
+        unique across the whole option tree, so the node's own slug
+        addresses it; the server reassembles the ancestor labels into
+        `resolved_options[slug].path` on read. See the 2026-07-31
+        tree-storage amendment to ADR 0012.
       properties:
         value_text: { type: string, nullable: true }
         value_num: { type: number, nullable: true }
@@ -11237,7 +11270,21 @@ components:
       type: object
       description: |
         Pass whichever value_* field matches the target field's type.
-        Mismatches return 400 with `value_type_mismatch`.
+        Mismatches return **422** with `value_type_mismatch` — this
+        description said 400 until #778, but the operation has only
+        ever declared (and only ever returned) 422. The asset-side
+        equivalent does return 400; the two paths differ.
+
+        The mapping matches AssetFieldValueWrite's, with one historical
+        exception: `boolean` collection values are the strings "true" /
+        "false" in `value_text`, where the asset path uses 0 / 1 in
+        `value_num`. That divergence is tracked separately; every other
+        type, `tree` included, stores in the same column on both sides.
+
+        A `tree` value is ONE option slug in `value_text`. Until the
+        2026-07-31 tree-storage amendment to ADR 0012 this path wrote
+        `value_options` while the asset path wrote `value_text`, so the
+        two sides put the same field's value in different columns.
       properties:
         value_text: { type: string, nullable: true }
         value_num: { type: number, nullable: true }

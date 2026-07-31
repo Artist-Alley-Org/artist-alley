@@ -1465,6 +1465,12 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 	}
 	switch strings.ToLower(ftype) {
 	case "text", "longtext", "rich_text", "select", "tree":
+		// A `tree` value in a dataset MANIFEST is a single option slug
+		// — the leaf node — not a "NA/US/CA" path and not an array.
+		// Slugs are unique across the whole option tree, so the leaf
+		// addresses the node on its own and the ancestor path is
+		// reassembled at read time. See the 2026-07-31 tree-storage
+		// amendment to ADR 0012.
 		s := scalarString(raw)
 		p.ValueText = &s
 	case "number":
