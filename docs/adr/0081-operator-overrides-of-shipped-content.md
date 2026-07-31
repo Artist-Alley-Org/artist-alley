@@ -166,3 +166,60 @@ override does not: teams are local.
   no operator templates where they have none either; declarative defaults where they use
   executable macros. Only the first is a case of us being better by construction — the other
   two are cases of choosing a smaller surface deliberately.
+
+## Amendment 2026-07-31 — email templates are reinstated, over a restricted context
+
+**The decision above rejected operator-authored email templates outright. That was
+overstated, and the owner was right to push on it.** This amendment replaces the rejection
+with a narrower design.
+
+### What the original argument got wrong
+
+Two of the three legs were weaker than the text implied.
+
+- **"An operator-authored template can walk the data map."** True, but *we control what is in
+  the map*. The reach objection is a property of passing raw notification internals to the
+  template, not a property of letting operators write templates. Change the context and the
+  objection largely dissolves.
+- **"A capability to write is not a capability to read what sits beside it."** The ADR 0077
+  parallel is real but weaker here: the operator role that edits mail bodies is already highly
+  privileged and can very likely read the database directly. The marginal escalation is small,
+  and the original text presented it as decisive.
+
+The absence of an equivalent feature in a mature competitor was cited as supporting evidence.
+It is weak evidence about demand and none at all about safety, and it was allowed to carry more
+weight than it should.
+
+### What the original argument got right, and under-weighted
+
+**Go templates invoke methods.** `{{.Thing.Method}}` does not read a field, it *executes*. That
+is a materially different hazard from reading data, and the original text buried it under the
+exfiltration framing. It is also the leg that survives scrutiny — and it points at the fix
+rather than at a prohibition.
+
+### Decision (supersedes the rejection above)
+
+**Operators may author email templates, and templates render against a restricted context.**
+
+- The context is a **flat, typed view-model of strings and simple scalars** assembled per
+  event — never a domain object, never a struct carrying methods, never the raw notification
+  payload. `{{.Thing.Method}}` has nothing to reach because nothing in scope has methods.
+- The available fields per event are **documented and finite**, and the editing surface shows
+  them. An operator writing a template should not have to guess what is in scope.
+- A reference to something absent fails **visibly at edit time**, not silently at send time.
+  This is the same rule #774 established for strings: a lookup that quietly resolves to nothing
+  is worse than one that fails loudly.
+- Output stays contextually escaped. That was never in question.
+
+### Consequences
+
+- The `email_templates` tile is **reinstated** and is real work, not a rename. It needs the
+  per-event view-model defined and documented before any editing surface is built — that
+  definition *is* the security boundary.
+- The email-branding fields from the original decision remain worth having; they are the common
+  case and should not require writing a template to change a logo.
+- **The view-model is now a compatibility surface.** Renaming a field in it breaks operator
+  templates silently, so it needs the same lifecycle care as a public API — which is an argument
+  for keeping it small.
+- The consequence above reading *"operators wanting genuinely custom mail will be told no"* is
+  **withdrawn**.
