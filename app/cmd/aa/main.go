@@ -22,9 +22,11 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/db"
+	"github.com/mscrnt/artist-alley/app/internal/debugsrv"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	aahttp "github.com/mscrnt/artist-alley/app/internal/http"
 	"github.com/mscrnt/artist-alley/app/internal/logging"
+	"github.com/mscrnt/artist-alley/app/internal/memlimit"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
@@ -218,8 +220,37 @@ func run() error {
 		slog.String("db_name", cfg.DBName),
 	)
 
+	// Bound the Go heap to the container's own cgroup ceiling BEFORE
+	// anything starts allocating in earnest (#781). The runtime does
+	// not read cgroup limits, so without this GOGC paces from the
+	// live-heap ratio alone and the heap grows through the container
+	// limit into an OOM kill. Derived, never hardcoded — the ceiling
+	// lives in compose and differs per environment.
+	memRes := memlimit.Apply(cfg.GoMemLimitRatio)
+	if memRes.Applied {
+		logger.LogAttrs(context.Background(), slog.LevelInfo, "gomemlimit.applied",
+			slog.Int64("cgroup_limit_bytes", memRes.CgroupLimit),
+			slog.Int64("gomemlimit_bytes", memRes.Limit),
+			slog.Float64("ratio", memRes.Ratio),
+			slog.String("source", memRes.Source),
+		)
+	} else {
+		logger.LogAttrs(context.Background(), slog.LevelInfo, "gomemlimit.not_applied",
+			slog.String("reason", memRes.Source),
+		)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Opt-in pprof on its own listener — off unless AA_PPROF_ADDR is
+	// set, and never mounted on the application router. See
+	// internal/debugsrv for why the gate is structural.
+	if dbg := debugsrv.New(cfg.PprofAddr, logger); dbg.Enabled() {
+		if err := dbg.Start(ctx); err != nil {
+			return fmt.Errorf("pprof listener: %w", err)
+		}
+	}
 
 	if err := db.Migrate(ctx, cfg); err != nil {
 		return err
