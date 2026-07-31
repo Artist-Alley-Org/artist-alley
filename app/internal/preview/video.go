@@ -12,6 +12,7 @@ import (
 	"image"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -604,11 +605,66 @@ func (h *VideoHandler) uploadHLSTree(ctx context.Context, hash, hlsDir string) e
 // ---------------------------------------------------------------------------
 
 const (
-	spriteCols   = 10
-	spriteRows   = 10
-	spriteWidth  = 160
-	spriteHeight = 90
+	spriteCols = 10
+	spriteRows = 10
+
+	// spriteCellBox bounds BOTH edges of a single scrub cell. The cell
+	// is fitted inside this square with the source's aspect ratio
+	// preserved (#761), so:
+	//
+	//   16:9  -> 160x90   (identical to the pre-#761 fixed size)
+	//   9:16  -> 90x160
+	//   1:1   -> 160x160
+	//
+	// and the whole sheet is therefore bounded at 1600x1600 whatever
+	// the source shape — an ultrawide or a 1:8 panorama cannot blow the
+	// sheet out to several thousand pixels on one axis.
+	spriteCellBox = 160
+
+	// spriteFallbackW/H are the cell dimensions used only when the real
+	// sheet cannot be measured AND the probe carries no usable source
+	// dimensions. Same 16:9 cell the handler emitted unconditionally
+	// before #761.
+	spriteFallbackW = 160
+	spriteFallbackH = 90
 )
+
+// spriteCellSize fits a srcW x srcH frame inside the spriteCellBox
+// square, preserving aspect ratio.
+//
+// It mirrors what `scale=BOX:BOX:force_original_aspect_ratio=decrease:
+// force_divisible_by=2` asks ffmpeg to do, and exists as the fallback
+// for the VTT geometry when the generated sheet cannot be measured.
+// Degenerate probes (a container ffprobe reports no video stream for,
+// so Width/Height are 0) fall back to the historical 16:9 cell rather
+// than dividing by zero.
+func spriteCellSize(srcW, srcH int) (int, int) {
+	if srcW <= 0 || srcH <= 0 {
+		return spriteFallbackW, spriteFallbackH
+	}
+	cw, ch := spriteCellBox, spriteCellBox
+	if srcW >= srcH {
+		ch = int(math.Round(spriteCellBox * float64(srcH) / float64(srcW)))
+	} else {
+		cw = int(math.Round(spriteCellBox * float64(srcW) / float64(srcH)))
+	}
+	return evenCell(cw), evenCell(ch)
+}
+
+// evenCell clamps a cell edge into [2, spriteCellBox] and rounds it up
+// to an even number. Odd dimensions are rejected outright by some
+// encoders and quietly resampled by others; 2 is the floor because
+// `force_divisible_by=2` is ffmpeg's own floor for a pathological
+// aspect ratio (a 1000:1 render would otherwise compute a 0px edge).
+func evenCell(v int) int {
+	if v < 2 {
+		return 2
+	}
+	if v > spriteCellBox {
+		v = spriteCellBox
+	}
+	return v + v%2
+}
 
 func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string, probe Probe) error {
 	if probe.DurationS <= 0 {
@@ -624,11 +680,19 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 	// `select='not(mod(n,N))'` is fragile across containers; using
 	// `fps=` is more deterministic.
 	fps := 1.0 / interval
+	// The box + force_original_aspect_ratio=decrease form (#761) is
+	// deliberately NOT `scale=<computed w>:<computed h>` from the probe:
+	// ffmpeg applies the container's display matrix before the
+	// filtergraph, so a phone-shot portrait clip arrives here with
+	// probe.Width/Height of 1920x1080 (coded) but decodes as 1080x1920.
+	// Letting ffmpeg fit the real decoded frame gets rotated sources
+	// right; a probe-derived cell size would still squash them.
 	cmd := exec.CommandContext(ctx, h.ffmpegBin(),
 		"-hide_banner", "-loglevel", "error", "-y",
 		"-i", w.sourcePath,
-		"-vf", fmt.Sprintf("fps=%f,scale=%d:%d,tile=%dx%d",
-			fps, spriteWidth, spriteHeight, spriteCols, spriteRows),
+		"-vf", fmt.Sprintf(
+			"fps=%f,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,tile=%dx%d",
+			fps, spriteCellBox, spriteCellBox, spriteCols, spriteRows),
 		"-frames:v", "1",
 		"-q:v", "5",
 		spriteOut,
@@ -640,6 +704,15 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 		return err
 	}
 
+	// The VTT's cell size is MEASURED off the sheet that was just
+	// written, never recomputed from the same inputs. A stated cell
+	// size that disagrees with the real one by even a pixel makes every
+	// hover thumbnail crop a sliding, wrong region — plausible-looking
+	// on some frames and visibly wrong on others, which is harder to
+	// spot than the squash this issue started as. Measuring makes the
+	// two impossible to diverge.
+	cellW, cellH := measureSpriteCell(spriteOut, probe)
+
 	// WebVTT mapping each cell to its time range.
 	var vtt bytes.Buffer
 	vtt.WriteString("WEBVTT\n\n")
@@ -649,10 +722,10 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 		if end > probe.DurationS {
 			end = probe.DurationS
 		}
-		x := (i % spriteCols) * spriteWidth
-		y := (i / spriteCols) * spriteHeight
+		x := (i % spriteCols) * cellW
+		y := (i / spriteCols) * cellH
 		fmt.Fprintf(&vtt, "%s --> %s\nsprites.jpg#xywh=%d,%d,%d,%d\n\n",
-			vttTime(start), vttTime(end), x, y, spriteWidth, spriteHeight)
+			vttTime(start), vttTime(end), x, y, cellW, cellH)
 		if start >= probe.DurationS {
 			break
 		}
@@ -662,6 +735,29 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 		return err
 	}
 	return h.uploadFile(ctx, hash, "sprites.vtt", vttPath, "text/vtt")
+}
+
+// measureSpriteCell reads the generated sheet's real pixel dimensions
+// and divides them by the grid to get the true cell size. Falls back to
+// the probe-derived fit only if the sheet cannot be decoded or does not
+// divide cleanly into the grid — in which case the sheet is already
+// suspect and the historical geometry is the least-surprising answer.
+func measureSpriteCell(path string, probe Probe) (int, int) {
+	fallbackW, fallbackH := spriteCellSize(probe.Width, probe.Height)
+	f, err := os.Open(path)
+	if err != nil {
+		return fallbackW, fallbackH
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return fallbackW, fallbackH
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 ||
+		cfg.Width%spriteCols != 0 || cfg.Height%spriteRows != 0 {
+		return fallbackW, fallbackH
+	}
+	return cfg.Width / spriteCols, cfg.Height / spriteRows
 }
 
 func vttTime(s float64) string {

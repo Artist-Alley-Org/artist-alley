@@ -628,7 +628,7 @@
   interface SpriteCue { start: number; end: number; src: string; x: number; y: number; w: number; h: number; }
   let sprites = $state<SpriteCue[]>([]);
   let hoverSprite = $state<SpriteCue | null>(null);
-  let hoverPctX = $state(0);
+  let hoverLeftPx = $state(0);
   let hoverTime = $state(0);
   let scrubberHovering = $state(false);
   let scrubberEl: HTMLDivElement | undefined = $state();
@@ -677,7 +677,11 @@
     if (!scrubberEl) return;
     const rect = scrubberEl.getBoundingClientRect();
     const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-    hoverPctX = pct * 100;
+    // Pixel offset from the scrubber RAIL's left edge, not a percentage of
+    // the zoomed inner track. The tooltip lives outside the scroll
+    // container (it has to — see the markup), so a percentage would drift
+    // from the pointer as soon as the rail is zoomed and scrolled.
+    hoverLeftPx = e.clientX - (scrubberScrollEl?.getBoundingClientRect().left ?? rect.left);
     hoverTime = pct * controller.duration;
     hoverSprite = sprites.find((c) => hoverTime >= c.start && hoverTime < c.end) ?? null;
   }
@@ -1120,6 +1124,13 @@
        controls across video / audio / audiobook. The view itself
        just renders cover + meta + chapter-strip context. -->
   {#if controller.hasTimeline}
+    <!-- The rail wrapper exists so the hover thumbnail can escape the
+         scroll container below it. `overflow-x-auto` (added with scrubber
+         zoom) makes that container a clipping context on BOTH axes — CSS
+         forces the other axis to `auto` when one is not `visible` — and it
+         is `h-3`, so a 90-190px tall preview inside it was clipped to 12px
+         and never appeared at all. -->
+    <div class="relative">
     <div
       bind:this={scrubberScrollEl}
       class="relative h-3 overflow-x-auto overflow-y-hidden bg-zinc-900"
@@ -1186,12 +1197,16 @@
         {/if}
         <div class="absolute inset-y-0 w-px bg-white" style="left: {playheadPct}%"></div>
       </div>
-      {#if scrubberHovering && hoverSprite}
-        <div class="pointer-events-none absolute bottom-4 z-10 -translate-x-1/2 rounded border border-zinc-700 bg-black p-1 shadow-xl" style="left: {hoverPctX}%">
-          <div class="bg-zinc-950" style="width: {hoverSprite.w}px; height: {hoverSprite.h}px; background-image: url({hoverSprite.src}); background-position: -{hoverSprite.x}px -{hoverSprite.y}px;"></div>
-          <div class="mt-1 text-center font-mono text-[10px]">{controller.formatAnchor(Math.round(hoverTime * controller.fps))}</div>
-        </div>
-      {/if}
+    </div>
+    {#if scrubberHovering && hoverSprite}
+      <!-- Sized from the VTT's own `#xywh` rectangle, never from a
+           hardcoded 160x90 — the sheet's cells take the source's aspect
+           ratio (#761), so a portrait clip's preview is a portrait box. -->
+      <div class="pointer-events-none absolute bottom-4 z-30 -translate-x-1/2 rounded border border-zinc-700 bg-black p-1 shadow-xl" style="left: {hoverLeftPx}px">
+        <div class="bg-zinc-950" style="width: {hoverSprite.w}px; height: {hoverSprite.h}px; background-image: url({hoverSprite.src}); background-position: -{hoverSprite.x}px -{hoverSprite.y}px;"></div>
+        <div class="mt-1 text-center font-mono text-[10px]">{controller.formatAnchor(Math.round(hoverTime * controller.fps))}</div>
+      </div>
+    {/if}
     </div>
     <div class="flex items-center gap-3 border-t border-zinc-800 bg-zinc-950 px-3 py-2 text-sm">
       <button type="button" onclick={() => controller.stepFrames(-10)} class="px-1.5 py-0.5 hover:bg-zinc-800" title="−10 (Shift+←)">⏮</button>
