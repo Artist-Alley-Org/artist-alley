@@ -3,7 +3,7 @@ id: "0082"
 title: The Go heap is bounded by the container's own ceiling, and every environment has one
 status: accepted
 date: 2026-07-31
-area: infra
+area: infrastructure
 phases: []
 supersedes: []
 related:
