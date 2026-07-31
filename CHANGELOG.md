@@ -103,6 +103,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Hierarchical fields never worked, and nothing had noticed.** A field can be declared as
+  a hierarchy — country / region / city — and every part of the system disagreed about where
+  such a value was stored. An asset put it in one place, a collection in another, and the panel
+  that displays it read a third, so the value came back blank whichever way it had been entered.
+  Two more places could not resolve a nested term at all, having only ever looked at the top
+  level of the list.
+
+  It survived because no hierarchy has ever held a value — a fresh install ships one, wired to
+  read the country out of a photo's embedded metadata, and it had simply never fired. Settled
+  now: a value is the single term it points at, and the path above it is worked out on the way
+  out. Renaming a term, or moving one to a different parent, leaves every asset untouched (#778).
+
+  There is a test that fails if any of the eight places disagrees again.
+
 - **Five screens showed internal key names instead of English.** The AI configuration and
   AI usage pages under Admin displayed text like `admin.ai_inference.budget_hard_label` where
   their labels and help text should have been; the similar-assets panel, the collection field
