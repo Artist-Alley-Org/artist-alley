@@ -142,9 +142,13 @@ RETURNING id, code, label, description, type, options, required, searchable,
 -- per field type. Filtered to active fields (deprecated ones still
 -- return so the UI can show "this value was set on a deprecated
 -- field; please re-enter").
+-- f.options rides along so the handler can resolve a stored select
+-- slug to its label and lifecycle without a second query: the join to
+-- field_definition is already here for the code/label/type, so the
+-- column is free.
 SELECT v.field_id, v.value_text, v.value_num, v.value_date, v.value_options, v.value_ref,
        v.set_by, v.set_at, v.set_by_user_ref,
-       f.code, f.label, f.type, f.status
+       f.code, f.label, f.type, f.status, f.options
 FROM asset_field_value v
 JOIN field_definition f ON f.id = v.field_id
 WHERE v.asset_id = $1

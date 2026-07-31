@@ -79,12 +79,78 @@ type FieldOption struct {
 	Children   []FieldOption `json:"children,omitempty"`
 }
 
-// NOTE: the "which terms may be offered" / "which still resolve"
-// split lives in web/src/lib/fieldOptions.ts, because that is the only
-// place it is applied today — nothing on the server resolves a stored
-// slug to its label (see AssetFieldValue: it carries the slug and the
-// FIELD's label, never the option's). When a server-side resolver
-// lands, the predicates belong here next to the statuses.
+// NOTE: the "which terms may be offered" half of the lifecycle still
+// lives in web/src/lib/fieldOptions.ts — only an editing surface picks
+// terms, and only it holds the field definition. The "how does a
+// stored slug display" half is resolveOptionSlugs below, on the server,
+// because every read surface needs it and none of them holds the
+// definition.
+
+// resolveOptionSlugs looks up each slug in a field's options document
+// and returns what a reader needs to display it: label and lifecycle.
+//
+// Deliberately tolerant, because this is a read path serving values
+// that are already stored. A malformed options document, an unknown
+// slug, a duplicate — none of these are worth failing an asset page
+// over. Anything that does not resolve is simply absent from the
+// result, and the caller falls back to rendering the raw slug, which
+// is exactly what the surface did before resolution existed.
+//
+// An archived term still resolves here, unlike in the picker. The
+// picker's job is to stop offering it; a detail page's job is to
+// describe a value that exists, and blanking it would hide data from
+// the one person who could fix it.
+func resolveOptionSlugs(raw []byte, slugs []string) map[string]FieldOption {
+	if len(slugs) == 0 {
+		return nil
+	}
+	values, _, err := decodeOptionValues(raw)
+	if err != nil || len(values) == 0 {
+		return nil
+	}
+	// Flat scan over the top level, mirroring optionLabel() in
+	// fieldOptions.ts. Nested children belong to tree fields, whose
+	// values live in value_ref rather than as slugs.
+	byValue := make(map[string]FieldOption, len(values))
+	for _, o := range values {
+		v := strings.TrimSpace(o.Value)
+		if v == "" {
+			continue
+		}
+		if _, dup := byValue[v]; dup {
+			continue // first wins; normalizeOptionsDoc rejects dupes on write
+		}
+		byValue[v] = o
+	}
+
+	out := make(map[string]FieldOption, len(slugs))
+	for _, s := range slugs {
+		if s == "" {
+			continue
+		}
+		if _, done := out[s]; done {
+			continue
+		}
+		o, ok := byValue[s]
+		if !ok {
+			continue
+		}
+		// A bare-string entry carries no label — the slug IS the
+		// display text — and no status, which means active. Fill both
+		// in here so no caller has to know the difference.
+		if o.Label == "" {
+			o.Label = o.Value
+		}
+		if o.Status == "" {
+			o.Status = OptionActive
+		}
+		out[s] = o
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 
 // bare reports whether the option carries nothing beyond its slug and
 // so can be written back as a plain JSON string.

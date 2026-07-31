@@ -698,7 +698,7 @@ func (h *Handler) SetAssetFieldValue(
 	return openapi.SetAssetFieldValue200JSONResponse(
 		buildAssetValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
 			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
-			row.SetBy, row.SetAt, row.SetByUserRef),
+			row.SetBy, row.SetAt, row.SetByUserRef, fieldRow.Options),
 	), nil
 }
 
@@ -989,7 +989,7 @@ func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
 	return buildAssetValue(
 		r.FieldID, r.Code, r.Label, r.Type,
 		r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
-		r.SetBy, r.SetAt, r.SetByUserRef,
+		r.SetBy, r.SetAt, r.SetByUserRef, r.Options,
 	)
 }
 
@@ -997,6 +997,13 @@ func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
 // openapi.AssetFieldValue from sqlc-side columns. Used by both the
 // list path (joined rows) and the upsert path (where we have the
 // field metadata loaded separately).
+//
+// fieldOptions is the raw field_definition.options document. Both
+// callers already hold it — the list path joins field_definition
+// anyway, the upsert path loads the definition to validate against —
+// so resolving here costs no extra query and means no consumer can
+// forget to do it. That a consumer DID forget is why this exists
+// (#775): the picker resolved, the detail surface printed the slug.
 func buildAssetValue(
 	fieldID pgtype.UUID,
 	code, label, fieldType string,
@@ -1008,6 +1015,7 @@ func buildAssetValue(
 	setBy string,
 	setAt pgtype.Timestamptz,
 	setByUserRef *int64,
+	fieldOptions []byte,
 ) openapi.AssetFieldValue {
 	out := openapi.AssetFieldValue{
 		FieldId:      openapi_types.UUID(fieldID.Bytes),
@@ -1036,6 +1044,44 @@ func buildAssetValue(
 	if valueRef.Valid {
 		ref := openapi_types.UUID(valueRef.Bytes)
 		out.ValueRef = &ref
+	}
+	if resolved := resolveValueOptions(fieldType, valueText, valueOptions, fieldOptions); len(resolved) > 0 {
+		out.ResolvedOptions = &resolved
+	}
+	return out
+}
+
+// resolveValueOptions turns the slugs a select / multi_select value
+// holds into the display map the API ships. Other field types hold no
+// vocabulary slug and get nothing.
+func resolveValueOptions(
+	fieldType string,
+	valueText *string,
+	valueOptions []string,
+	fieldOptions []byte,
+) map[string]openapi.ResolvedOption {
+	var slugs []string
+	switch fieldType {
+	case "select":
+		if valueText == nil || *valueText == "" {
+			return nil
+		}
+		slugs = []string{*valueText}
+	case "multi_select":
+		slugs = valueOptions
+	default:
+		return nil
+	}
+	hits := resolveOptionSlugs(fieldOptions, slugs)
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make(map[string]openapi.ResolvedOption, len(hits))
+	for slug, o := range hits {
+		out[slug] = openapi.ResolvedOption{
+			Label:  o.Label,
+			Status: openapi.ResolvedOptionStatus(o.Status),
+		}
 	}
 	return out
 }
