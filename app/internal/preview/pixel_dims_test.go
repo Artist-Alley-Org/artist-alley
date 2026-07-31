@@ -288,6 +288,90 @@ cp `+fixture+` "$last"
 	}
 }
 
+// TestPreview_RecordsRotatedShapeForAnOrientedPhoto is the #765
+// regression, from the consumer's side.
+//
+// A phone photo shot in portrait is stored landscape with an EXIF
+// Orientation tag telling the viewer to turn it. This package's
+// architecture (asset/metadata/doc.go) never touches the source bytes —
+// the source hash has to stay stable for content-addressed dedup — so
+// the rotation is applied to the DECODED image inside the raster
+// handler, immediately before the ladder is built. Every rung, and
+// every tile a card draws, is therefore portrait.
+//
+// The EXIF extractor used to write pixel_width / pixel_height off
+// image.DecodeConfig, which reports the STORED grid: landscape. Both
+// writers aimed at the same two rows with extraction_mode='replace' and
+// no precedence rule between them, and on the upload path the extract
+// job is enqueued after the preview job — so the losing value was the
+// right one, and a portrait photo reserved a landscape tile.
+//
+// WHY THE ASSERTION IS A TRANSPOSE, NOT A NUMBER. 48x96 is only
+// meaningful next to the fixture's stored 96x48; the test states the
+// relation so a fixture regenerated at a different size still asserts
+// the right thing, and a square fixture — which would make this pass
+// for free — is rejected outright.
+func TestPreview_RecordsRotatedShapeForAnOrientedPhoto(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "asset", "metadata", "testdata",
+		"orientation_6_landscape.jpg"))
+	if err != nil {
+		t.Fatalf("load rotated fixture: %v", err)
+	}
+
+	// ── the fixture really is rotated ────────────────────────────────
+	// Asserted HERE, not assumed from the filename. A fixture that is
+	// not actually rotated passes the outcome assertion below while
+	// proving nothing, which is the failure mode #778 and #791 shipped.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("decode fixture config: %v", err)
+	}
+	if cfg.Width <= cfg.Height {
+		t.Fatalf("fixture stored grid %dx%d is not landscape — a square or portrait "+
+			"fixture makes the transpose invisible and this test vacuous (#765)",
+			cfg.Width, cfg.Height)
+	}
+	res, err := exifExtractor.Extract(t.Context(), bytes.NewReader(raw), "image/jpeg")
+	if err != nil {
+		t.Fatalf("read fixture orientation: %v", err)
+	}
+	if res.Orientation != 6 && res.Orientation != 8 {
+		t.Fatalf("fixture Orientation tag = %d — must be 6 or 8 (a quarter turn) or "+
+			"nothing transposes and the assertion below is satisfied by the bug (#765)",
+			res.Orientation)
+	}
+
+	// ── the outcome ──────────────────────────────────────────────────
+	rig := newPreviewTestRig(t)
+	id, hash := rig.seedPreviewAsset(t, "jpg", raw)
+
+	h := NewRasterHandler(rig.pool, rig.storage, rig.sysCfg, rig.logger)
+	payload, _ := json.Marshal(RasterPayload{
+		AssetID: id, FileHash: hash, FileExtension: "jpg",
+	})
+	if _, err := h.Handle(t.Context(), &jobs.Claim{
+		ID: uuid.New(), Type: jobs.TypePreviewRaster, Payload: payload,
+	}); err != nil {
+		t.Fatalf("preview.raster Handle: %v", err)
+	}
+
+	gotW, gotH := rig.pixelDimsOf(t, id)
+	if gotW != cfg.Height || gotH != cfg.Width {
+		t.Errorf("recorded %dx%d for a fixture stored %dx%d with a quarter-turn tag; "+
+			"want the transpose %dx%d. Recording the stored pair tiles a portrait "+
+			"phone photo as landscape (#765)",
+			gotW, gotH, cfg.Width, cfg.Height, cfg.Height, cfg.Width)
+	}
+	if gotW >= gotH {
+		t.Errorf("recorded pair %dx%d is not portrait — masonry reserves a landscape "+
+			"tile for an image every rung of which is portrait (#765)", gotW, gotH)
+	}
+	if by := rig.setByOf(t, id); by != pixeldims.SetBy {
+		t.Errorf("recorded set_by=%q, want %q — 'exif' would mean the pre-rotation "+
+			"writer is back (#765)", by, pixeldims.SetBy)
+	}
+}
+
 // TestPreview_RerecordsDimensionsOnForcedRebuild covers the backfill
 // vehicle. `aa rebuild-previews` (#763) enqueues force=true jobs, which
 // is how the 1946 assets that predate this change acquire dimensions —

@@ -6,8 +6,10 @@
 //
 // The dimensions are NOT a column on `assets`. They live in
 // `asset_field_value` under the `pixel_width` / `pixel_height` field
-// definitions seeded (extraction-wired) by migration 00017 for #618, and
-// they are written by the EXIF pass. Until now the only reader was IIIF
+// definitions seeded by migration 00017 for #618, and they are written
+// by [Record] from the preview pipeline — migration 00020 removed the
+// definitions' extraction wiring, so nothing else can write them
+// (#765). Until now the only reader was IIIF
 // info.json, so every card surface shipped without them and the client
 // had no way to know how tall a tile should be — masonry rendered a wall
 // of identical squares because CSS was the only thing deciding the tile

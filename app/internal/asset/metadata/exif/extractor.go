@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// Package exif is the EXIF + ICC + dimension extractor for the
-// upload-time metadata pipeline. Pure Go — no CGo dependencies —
-// using dsoprea/go-exif/v3 for the EXIF blob parse.
+// Package exif is the EXIF + ICC extractor for the upload-time
+// metadata pipeline. Pure Go — no CGo dependencies — using
+// dsoprea/go-exif/v3 for the EXIF blob parse.
 //
 // Supported formats:
 //
 //   - image/jpeg — full EXIF (APP1) + ICC (APP2 chunks) + orientation
-//   - image/png  — EXIF (eXIf chunk) + ICC (iCCP chunk) + dimensions
+//   - image/png  — EXIF (eXIf chunk) + ICC (iCCP chunk)
 //   - image/tiff — full EXIF (the container IS the EXIF root)
 //   - image/webp — EXIF (EXIF chunk) + ICC (ICCP chunk)
+//
+// NOT pixel dimensions (#765). They are recorded by the preview
+// pipeline, which decodes the ladder source AFTER applying
+// orientation — see asset/pixeldims and ADR 0071 §6. This package
+// supplies the orientation tag that rotation reads; it does not
+// supply a shape.
 //
 // HEIC / HEIF is deliberately NOT supported in this phase. The
 // only practical pure-Go HEIF container reader (jdeng/goheif)
@@ -29,13 +35,9 @@
 package exif
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg" // image.DecodeConfig coverage
-	_ "image/png"
 	"io"
 	"strconv"
 	"strings"
@@ -113,13 +115,14 @@ func (e Extractor) Extract(ctx context.Context, r io.Reader, mimeType string) (r
 		return metadata.Result{Format: mimeType}, fmt.Errorf("%w: read source: %v", metadata.ErrMalformedFile, err)
 	}
 
-	mt := strings.ToLower(mimeType)
-
 	var exifBytes []byte
 	exifBytes, err = dsopreaSearchExif(raw)
 	if err != nil {
 		if errors.Is(err, exifv3.ErrNoExif) {
-			exifBytes = nil // fall through; dimensions still attempted
+			// Not an error: a valid container may simply carry no EXIF.
+			// Fall through to the empty-Result check at the bottom,
+			// which reports ErrNoMetadata.
+			exifBytes = nil
 		} else {
 			return metadata.Result{Format: mimeType}, fmt.Errorf("%w: exif search: %v", metadata.ErrMalformedFile, err)
 		}
@@ -136,16 +139,37 @@ func (e Extractor) Extract(ctx context.Context, r io.Reader, mimeType string) (r
 		}
 	}
 
-	// Dimensions are cheap + universally available via stdlib
-	// image.DecodeConfig for jpeg / png; tiff + webp need their
-	// own registrations (registered via blank-import elsewhere in
-	// the app, but we don't depend on that here — they're best-
-	// effort, missing dimensions never fail the extraction).
-	_ = mt
-	if cfg, _, derr := image.DecodeConfig(bytes.NewReader(raw)); derr == nil {
-		out.Fields[metadata.FieldPixelWidth] = metadata.Value{Kind: metadata.ValueKindNum, Num: float64(cfg.Width)}
-		out.Fields[metadata.FieldPixelHeight] = metadata.Value{Kind: metadata.ValueKindNum, Num: float64(cfg.Height)}
-	}
+	// NO PIXEL DIMENSIONS HERE. Deliberate, and the whole of #765.
+	//
+	// This used to sniff image.DecodeConfig and write pixel_width /
+	// pixel_height. Two things were wrong with that, and only one of
+	// them is about rotation.
+	//
+	// The narrow one: DecodeConfig reports the STORED pixel grid, and
+	// this package's architecture (see ../doc.go) leaves the source's
+	// orientation tag alone and rotates at variant-render time. So for
+	// an orientation=6 phone photo the stored grid is landscape while
+	// every rendered rung — and every tile a card draws — is portrait.
+	// Whichever of the two writers ran last decided the tile's shape,
+	// and on the upload path this one runs second (the preview job is
+	// enqueued first): a portrait photo tiled as landscape.
+	//
+	// The wide one: ADR 0071 §6 defines the quantity these fields hold
+	// as the shape of the image the contain rungs are built from, NOT
+	// "the source file's pixels" — because half the catalogue has no
+	// source pixels at all. A 3D model, a font, an audio file and a
+	// plain-text document each produce exactly one image on the way
+	// through the preview pipeline, and that image's shape is what a
+	// tile reserves. A 2048x384 waveform is a 5.33:1 tile and nothing
+	// in the .ogg it came from says so. An EXIF sniff cannot answer
+	// that question for any of them, and for the formats where it CAN
+	// answer it answers pre-rotation.
+	//
+	// So the pipeline that decodes the ladder source owns the write —
+	// asset/pixeldims.Record, called from preview.stampSourceShape,
+	// set_by='computed'. This extractor keeps the tag it reads
+	// (Result.Orientation, consumed by orientation.RotateFromEXIF) and
+	// stops claiming to know a shape it only half-measures.
 
 	// ICC profile chunk-copy lives in icc.go (commit 3); this
 	// commit ships the EXIF surface only. Result.ICCProfile stays

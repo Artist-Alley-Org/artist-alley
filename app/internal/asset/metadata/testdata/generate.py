@@ -24,6 +24,10 @@ HERE = Path(__file__).parent
 
 CANVAS = (64, 64)
 
+# Deliberately non-square, and deliberately not a round multiple of the
+# square canvas: a pair that can only come from THIS fixture.
+LANDSCAPE = (96, 48)
+
 
 def base_image(color=(70, 130, 180)) -> Image.Image:
     img = Image.new("RGB", CANVAS, color)
@@ -57,6 +61,30 @@ def full_exif() -> None:
 
 def orientation(tag_value: int, name: str) -> None:
     img = base_image()
+    exif = img.getexif()
+    exif[ExifTags.Base.Orientation] = tag_value
+    save(name, img, exif)
+
+
+def orientation_landscape(tag_value: int, name: str) -> None:
+    """A fixture whose rotation is actually OBSERVABLE (#765).
+
+    The three orientation_N.jpg fixtures above are 64x64. A square
+    image rotated 90 degrees is the same size as a square image not
+    rotated, so any test asserting a WIDTH against them passes whether
+    the rotation was applied, skipped, or applied twice — which is how
+    a pre-rotation pixel_width write survived in the tree unnoticed.
+
+    This one is LANDSCAPE_W x LANDSCAPE_H stored with the tag set, so a
+    correct pipeline records the transposed pair and an incorrect one
+    records the stored pair, and the two are distinguishable.
+    """
+    w, h = LANDSCAPE
+    img = Image.new("RGB", (w, h), (70, 130, 180))
+    d = ImageDraw.Draw(img)
+    # Left third a different colour: after a 90-degree rotation this
+    # band is horizontal, so a visual check disambiguates 6 from 8.
+    d.rectangle([0, 0, w // 3, h], fill=(255, 50, 50))
     exif = img.getexif()
     exif[ExifTags.Base.Orientation] = tag_value
     save(name, img, exif)
@@ -133,6 +161,7 @@ def main() -> None:
     orientation(1, "orientation_1.jpg")
     orientation(6, "orientation_6.jpg")
     orientation(8, "orientation_8.jpg")
+    orientation_landscape(6, "orientation_6_landscape.jpg")
     with_gps()
     no_metadata()
     unicode_artist()

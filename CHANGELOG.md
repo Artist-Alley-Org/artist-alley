@@ -103,6 +103,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A portrait phone photo would have tiled as a landscape one.** Two different parts of
+  the system were writing the tile shape a browse page reserves for an image, and they
+  disagreed for exactly one kind of file: a photo taken in portrait, which cameras store
+  landscape with a tag telling the viewer to turn it. The preview pipeline recorded the
+  shape you actually see; the metadata reader recorded the shape on disk, and it wrote
+  last, so the wrong one won. Only the preview pipeline records it now (#765).
+
+  Nothing in the catalogue was visibly wrong yet — the six affected rows were test
+  images — so this is a trap removed before the first real phone photo hit it rather
+  than a repair. The shape is now measured in one place, from the same image the
+  thumbnails are built from, which is also the only place that can answer the question
+  for the half of the catalogue with no source pixels at all: a 3D model, a font, an
+  audio file and a document each produce exactly one picture on the way through, and its
+  shape is what a tile reserves. No-spec-impact.
+
 - **Portrait video previews were squashed into landscape.** The strip of thumbnails you
   scrub through was built at a fixed widescreen shape whatever the video actually was, so
   anything shot on a phone came out stretched. Thumbnails now keep the source's proportions —

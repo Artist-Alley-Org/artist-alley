@@ -95,15 +95,11 @@
  {
   "name": "pixel_width",
   "label": "Pixel width",
-  "type": "number",
-  "extraction_source": "pixel_width",
-  "extraction_mode": "replace"
+  "type": "number"
  },
  {
   "name": "pixel_height",
   "label": "Pixel height",
-  "type": "number",
-  "extraction_source": "pixel_height",
-  "extraction_mode": "replace"
+  "type": "number"
  }
 ]
