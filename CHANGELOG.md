@@ -40,6 +40,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Profiling can be turned on when something needs investigating.** Set `AA_PPROF_ADDR` and
+  the server exposes Go's standard profiling endpoints on that address — off by default, on its
+  own listener, published by no deployment file, and it warns loudly if pointed anywhere other
+  than loopback. Profile data can contain anything the process is holding, so it is deliberately
+  not something that is simply on (#781).
+
 - **Controlled vocabularies are editable.** The options behind a `select` or
   `multi_select` field could only be set when the field was created — after that they were
   frozen, and `/admin/fields` had no edit surface at all. There is one now: add a term,
@@ -96,6 +102,23 @@ where applicable, otherwise note "no-spec-impact."
   remembers "Team" or "Trending" from before opens on Latest (#691).
 
 ### Fixed
+
+- **The server could be killed by its own memory limit while building previews.** Go decides
+  when to collect garbage from how much memory is already in use, and it has no idea a container
+  limit exists — so on a machine with plenty of RAM it would let the heap grow past the
+  container's ceiling and be killed for it. Generating previews for large images is where that
+  bit: resizing one holds a scratch buffer proportional to the image's dimensions, and several
+  run at once. Symptom was the whole instance going unresponsive for a minute or two mid-render,
+  health checks included, then recovering.
+
+  The runtime is now told the container's own limit at startup, read from the container rather
+  than written down somewhere that could drift out of step with it. Requests that previously took
+  nearly five seconds during a heavy render now take a seventh of a second (#781).
+
+  The default deployment also gains a memory limit, which it never had — only the CI
+  configuration capped anything. That meant the failure was reproducible in CI and invisible to
+  operators. Override with `AA_APP_MEM_LIMIT` if your host warrants something other than the 4 GB
+  default.
 
 - **Per-job-type concurrency limits were not actually limiting anything.** An operator can
   cap how many jobs of a given kind run at once — transcription at one, video and 3D previews
