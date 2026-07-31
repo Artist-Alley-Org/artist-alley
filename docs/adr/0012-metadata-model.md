@@ -729,6 +729,11 @@ boolean would render blank. It has never been hit for the same reason `tree` nev
 the pin, but unifying the two encodings is a write-contract change with a real decision attached
 (`0`/`1` vs `"true"`/`"false"`) rather than a drift repair, and belongs in its own change.
 
+*(Closed by the boolean amendment below. The "real decision attached" reading was wrong: this
+document had already made the decision — see `boolean -> value_num` in the typed-columns comment
+and `0/1 (so we can index numerically)` in the field-type table, both written well before the
+divergence appeared. It was a drift repair after all.)*
+
 The same "never instantiated, therefore never exercised" condition applies to `longtext`,
 `rich_text`, `date`, `datetime` and `reference`. One concrete instance found in passing: the
 seeder's `parseTime` accepts **RFC3339 only**, so a bare `"2026-07-31"` for a `date` field is
@@ -741,3 +746,94 @@ The `tree` **admin UI** (#779). `FieldEditor.svelte` still gates its vocabulary 
 which the API has always accepted and now round-trips correctly. `FieldValueInput.svelte` gained
 an indented flat `<select>` over the whole hierarchy, which is the minimum that makes a tree
 value settable and correct; a real tree widget comes with #779.
+
+## Amendment 2026-07-31 (third) — `boolean` is `0`/`1` in `value_num`, on every surface
+
+**Status:** accepted. Closes #791. Implements what this document already specified; changes no
+decision.
+
+### There was no decision left to make
+
+The amendment above deferred `boolean` on the grounds that unifying the two encodings carried
+"a real decision attached (`0`/`1` vs `"true"`/`"false"`)". That reading was wrong. This
+document had answered it twice, in the original text:
+
+- the `asset_field_value` typed-columns comment: `number/boolean -> value_num`
+- the field-type primitives table: `boolean | value_num | 0/1 (so we can index numerically)`
+
+So `boolean` was never an open question. It was a **drift repair**, identical in kind to
+`tree`'s — and deferring it on the belief that it was a design call is worth recording, because
+the belief was formed by reading the *code* (a clean two-against-two split, each side internally
+coherent) without checking it against the *specification*. A tie among implementations looks
+like an unmade decision. It usually is not.
+
+### The state that shipped
+
+| site | stored `boolean` as | agreed with the ADR |
+|---|---|---|
+| `metadata/handler.go` — asset write | `value_num` `0`/`1`, rejecting anything else | yes |
+| `seed/runner.go` — asset seed | `value_num` `0`/`1` | yes |
+| `metadata/collection_handler.go` — collection write | `value_text` `"true"`/`"false"` | no |
+| `metadata/collection_handler.go` — collection create-seed | `value_text` | no |
+| `metadata/collection_handler.go` — collection validator | required `value_text` | no |
+| `web/.../PostHost.svelte` — asset display | read `value_text` | no |
+| `web/.../FieldValueInput.svelte` — collection editor | wrote `value_text` | no |
+| `web/.../upload/UploadFileRow.svelte` — upload modal | wrote `value_text` | no |
+| `web/lib/fieldOptions.ts` — the frontend's column table | `value_text` | no |
+| `openapi.yaml` — `CollectionFieldValueWrite` prose | documented the divergence as intended | no |
+
+Ten sites, not the four the split appeared to have. Two right, eight wrong — and the shape of
+the failure was worse than "renders blank" in one place: because the asset write endpoint has
+*always* required `value_num`, **the upload modal's boolean checkbox produced a rejected request
+every time it was used.** A user setting a boolean during upload got a failed field write, not a
+blank one. That path had never been exercised, so nobody found out.
+
+### Decision — `0`/`1` in `value_num`, and the range is enforced
+
+Every writer stores the number `1` or `0` in `value_num`. Any other number is rejected: `400` on
+the asset path, `422` on the collection path (the two paths' error contracts differ; see the
+tree amendment). `"true"` in `value_text` is rejected rather than stored, because storing it
+puts a value in a column no reader consults — the bug itself.
+
+`NULL` remains distinct from `0`. "Not set" and "set to false" are different states and every
+display distinguishes them: nothing renders for the former, "No" for the latter. This is the one
+part of the encoding that is easy to lose accidentally, since `0` is falsy in both Go and
+TypeScript, so it is asserted directly on both sides.
+
+No migration: no `boolean` field definition has ever existed, so no row anywhere holds a boolean
+value in either encoding.
+
+### The pin now covers ENCODING, not just column
+
+`tree`'s pin compared each writer's chosen *column* against a table. That is half the invariant,
+and `boolean` is the half it missed — the two writers each picked a defensible column and still
+disagreed, because **agreeing on a column says nothing about what goes in it**. Two writers can
+both pick `value_num` and disagree about `1` versus `1.0`; both pick `value_text` and disagree
+about `"true"` versus `"1"`. Column agreement is necessary and not sufficient.
+
+`TestWritersAgreeOnColumnAndEncoding` therefore drives the asset and collection writers with
+byte-identical input and compares their **rendered stored values** to each other. No table sits
+between them to be updated on both sides at once and hide the drift — the same failure mode as a
+doc comment reworded along with the bug it described. The seeder's pin
+(`internal/seed/valuecolumn_test.go`) gained the same treatment: it is the writer that actually
+*translates* (JSON `true` becomes `1`), so "which column" was always the smaller half of what
+could go wrong there. On the frontend, `encodeBoolean` / `decodeBoolean` in `fieldOptions.ts` are
+the single definition every boolean surface imports, with the `null`-vs-`false` distinction
+covered by tests.
+
+`collectionValueColumnOverride` — the map that recorded this divergence as deliberate — is
+**deleted**, not emptied. It held exactly one entry, this one. A mechanism for registering a
+deliberate divergence is an invitation to register one, and the lesson of both #778 and #791 is
+that a divergence which is merely *documented* is a divergence that *ships*. There is now
+nowhere to record an exemption; a writer that disagrees fails.
+
+### Where the field types stand
+
+All eleven primitives now agree across all four writers and every display surface, and the two
+that had never been exercised end-to-end (`tree`, `boolean`) both have an integration test that
+writes through the API and reads back from the columns.
+
+The "never instantiated, therefore never exercised" condition still applies to `longtext`,
+`rich_text`, `date`, `datetime` and `reference` — they *agree*, but agreement was verified by
+reading, not by driving them. The seeder's RFC3339-only `parseTime` (noted in the tree
+amendment) remains the one known concrete instance and remains open.

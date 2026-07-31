@@ -34,6 +34,7 @@
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
   import { createWhiteboardSession } from '$lib/whiteboard/session.svelte';
   import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
+  import { decodeBoolean } from '$lib/fieldOptions';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
@@ -464,8 +465,18 @@
         return (f.value_text ?? '').trim();
       case 'number':
         return f.value_num == null ? '' : String(f.value_num);
-      case 'boolean':
-        return f.value_text === 'true' ? 'Yes' : f.value_text === 'false' ? 'No' : '';
+      case 'boolean': {
+        // 1/0 in value_num (ADR 0012). This read the strings
+        // "true"/"false" out of value_text until #791, so an asset
+        // boolean — which the API only ever accepted as value_num —
+        // rendered blank whichever way it had been set.
+        //
+        // null is "not set" and stays blank; false is an answer and
+        // prints, which is why this goes through decodeBoolean rather
+        // than testing truthiness (0 is falsy).
+        const b = decodeBoolean(f.value_num);
+        return b === null ? '' : b ? t('common.yes') : t('common.no');
+      }
       case 'date':
       case 'datetime': {
         if (!f.value_date) return '';
