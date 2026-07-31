@@ -562,16 +562,44 @@ split this ADR already chose is the one the problem actually has.
 - **Promoting tags to a managed vocabulary would supersede this ADR and requires its own.** It
   is not a tile-level implementation choice and must not be made inside one.
 
-### Scope consequence — build less, not more
+### Scope — `tree` is IN, and the "no tree fields exist" argument was wrong
 
-**Zero `tree` fields exist.** Nested-option admin is therefore UI for a field type nothing
-currently uses, and shipping it now is speculative. The taxonomy tile is **substantially
-delivered by the option editor already shipped**; the remaining delta waits until a `tree` field
-exists in practice.
+An earlier draft of this amendment argued that nested-option admin should wait because **zero
+`tree` fields exist**. That reasoning is circular and is withdrawn: **nobody can create a useful
+`tree` field precisely because there is no admin to manage its options.** Absence of usage in a
+system that cannot yet produce it is not evidence against the requirement — it is a consequence
+of the gap. The prior art points the other way, and was misread here: an adjacency-list `parent`
+column and a materialised branch-path function exist in a mature product *because* real
+operators need hierarchical vocabularies.
+
+**Hierarchical field options are in scope.** The `tree` type is declared in this ADR, accepted,
+and unimplemented at the admin layer — which makes it a gap, not an open question.
+
+### What the absence actually concealed — a three-way storage disagreement
+
+Because no `tree` field has ever carried a value, nothing has exercised the `tree` path, and it
+has rotted in three different directions:
+
+| surface | stores/reads a `tree` value as |
+|---|---|
+| this ADR | `value_text` (the path) |
+| asset write path (`metadata/handler.go`) | `value_text` — **agrees** |
+| collection write path (`metadata/collection_handler.go`) | **`value_options`** |
+| detail display (`PostHost.svelte`) | **`value_ref`** |
+
+An asset-side value would write to one column, a collection-side value to another, and the
+detail panel would read a third and render empty for both.
+
+**This must be settled before the tree admin is built**, and it is the reason to build it sooner
+rather than later: the disagreement is invisible only while the feature is unusable, and it
+becomes three silent data bugs the moment an operator creates their first tree field. Whichever
+column is correct, two of the three call sites are wrong today.
+
+### Aliases
 
 The one piece with genuine standards backing is **aliases** — SKOS `altLabel` — and it belongs
-on *options*, not on tags. It arrives later as a small addition to the options document,
-reusing the same editor, rather than as a second vocabulary system.
+on *options*, not on tags. It arrives as an addition to the options document, reusing the same
+editor, rather than as a second vocabulary system.
 
 ### Where we stand relative to the prior art, now that the option editor has shipped
 
