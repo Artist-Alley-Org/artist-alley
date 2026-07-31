@@ -57,7 +57,7 @@
     try {
       const { data } = await api.GET('/admin/ai/config');
       if (!data) {
-        error = t('admin.ai_inference.load_error');
+        error = t('admin.system.ai_inference.load_error');
         return;
       }
       cfg = data as InferenceConfig;
@@ -107,13 +107,13 @@
         // 422 carries findings; show inline.
         if (response?.status === 422) {
           const apiErrObj = apiErr as { error?: string; findings?: Finding[] } | undefined;
-          error = apiErrObj?.error ?? t('admin.ai_inference.save_error');
+          error = apiErrObj?.error ?? t('admin.system.ai_inference.save_error');
           if (apiErrObj?.findings && cfg) {
             cfg = { ...cfg, findings: apiErrObj.findings };
           }
           return;
         }
-        error = (apiErr as { error?: string } | undefined)?.error ?? t('admin.ai_inference.save_error');
+        error = (apiErr as { error?: string } | undefined)?.error ?? t('admin.system.ai_inference.save_error');
         return;
       }
       cfg = data as InferenceConfig;
@@ -124,16 +124,16 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.ai_inference.title')} — {site.name}</title></svelte:head>
+<svelte:head><title>{t('admin.system.ai_inference.title')} — {site.name}</title></svelte:head>
 
-<h2 class="mb-2 text-xl font-semibold">{t('admin.ai_inference.title')}</h2>
-<p class="mb-4 max-w-2xl text-sm text-fg-muted">{t('admin.ai_inference.intro')}</p>
+<h2 class="mb-2 text-xl font-semibold">{t('admin.system.ai_inference.title')}</h2>
+<p class="mb-4 max-w-2xl text-sm text-fg-muted">{t('admin.system.ai_inference.intro')}</p>
 
 {#if loading}
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else if !cfg}
   <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger" data-testid="ai-config-load-error">
-    {error ?? t('admin.ai_inference.load_error')}
+    {error ?? t('admin.system.ai_inference.load_error')}
   </p>
 {:else}
   <form
@@ -146,8 +146,8 @@
   >
     {#if cfg.findings && cfg.findings.length > 0}
       <section class="rounded border border-warn/40 bg-warn-container px-3 py-2" data-testid="ai-config-findings">
-        <h3 class="mb-1 text-sm font-semibold text-warn">{t('admin.ai_inference.findings_heading')}</h3>
-        <p class="mb-2 text-xs text-fg-muted">{t('admin.ai_inference.findings_intro')}</p>
+        <h3 class="mb-1 text-sm font-semibold text-warn">{t('admin.system.ai_inference.findings_heading')}</h3>
+        <p class="mb-2 text-xs text-fg-muted">{t('admin.system.ai_inference.findings_intro')}</p>
         <ul class="space-y-1 text-xs">
           {#each cfg.findings as finding (finding.code + (finding.concern ?? ''))}
             <li>
@@ -162,13 +162,13 @@
 
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" bind:checked={cfg.enabled} data-testid="ai-config-enabled" class="h-4 w-4 rounded border-border-strong" />
-      <span class="font-medium">{t('admin.ai_inference.enabled_label')}</span>
+      <span class="font-medium">{t('admin.system.ai_inference.enabled_label')}</span>
     </label>
-    <p class="-mt-4 text-xs text-fg-muted">{t('admin.ai_inference.enabled_help')}</p>
+    <p class="-mt-4 text-xs text-fg-muted">{t('admin.system.ai_inference.enabled_help')}</p>
 
     <section class="space-y-3 rounded border border-border bg-surface p-4">
-      <h3 class="text-sm font-semibold">{t('admin.ai_inference.routing_section')}</h3>
-      <p class="text-xs text-fg-muted">{t('admin.ai_inference.routing_help')}</p>
+      <h3 class="text-sm font-semibold">{t('admin.system.ai_inference.routing_section')}</h3>
+      <p class="text-xs text-fg-muted">{t('admin.system.ai_inference.routing_help')}</p>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {#each CONCERNS as concern (concern)}
           <label class="block">
@@ -185,15 +185,15 @@
     </section>
 
     <section class="space-y-3 rounded border border-border bg-surface p-4">
-      <h3 class="text-sm font-semibold">{t('admin.ai_inference.fallback_section')}</h3>
-      <p class="text-xs text-fg-muted">{t('admin.ai_inference.fallback_help')}</p>
+      <h3 class="text-sm font-semibold">{t('admin.system.ai_inference.fallback_section')}</h3>
+      <p class="text-xs text-fg-muted">{t('admin.system.ai_inference.fallback_help')}</p>
       {#each CONCERNS as concern (concern)}
         <label class="block">
           <span class="text-xs text-fg-muted">{concern}</span>
           <input
             type="text"
             bind:value={fallbackText[concern]}
-            placeholder="e.g. claude, openai, ollama"
+            placeholder={t('admin.system.ai_inference.fallback_placeholder')}
             data-testid="ai-config-fallback-{concern}"
             class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
@@ -202,29 +202,29 @@
     </section>
 
     <section class="space-y-3 rounded border border-border bg-surface p-4">
-      <h3 class="text-sm font-semibold">{t('admin.ai_inference.privacy_section')}</h3>
+      <h3 class="text-sm font-semibold">{t('admin.system.ai_inference.privacy_section')}</h3>
       <label class="flex items-center gap-2 text-sm">
         <input type="checkbox" bind:checked={cfg.privacy.lock_sensitive_to_local} data-testid="ai-config-privacy-lock" class="h-4 w-4 rounded border-border-strong" />
-        <span>{t('admin.ai_inference.privacy_lock_label')}</span>
+        <span>{t('admin.system.ai_inference.privacy_lock_label')}</span>
       </label>
-      <p class="text-xs text-fg-muted">{t('admin.ai_inference.privacy_lock_help')}</p>
+      <p class="text-xs text-fg-muted">{t('admin.system.ai_inference.privacy_lock_help')}</p>
       <label class="block">
-        <span class="text-xs text-fg-muted">{t('admin.ai_inference.privacy_local_label')}</span>
+        <span class="text-xs text-fg-muted">{t('admin.system.ai_inference.privacy_local_label')}</span>
         <input
           type="text"
           bind:value={privacyLocalText}
           data-testid="ai-config-privacy-local"
           class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
-        <span class="mt-1 block text-xs text-fg-muted">{t('admin.ai_inference.privacy_local_help')}</span>
+        <span class="mt-1 block text-xs text-fg-muted">{t('admin.system.ai_inference.privacy_local_help')}</span>
       </label>
     </section>
 
     <section class="space-y-3 rounded border border-border bg-surface p-4">
-      <h3 class="text-sm font-semibold">{t('admin.ai_inference.budget_section')}</h3>
+      <h3 class="text-sm font-semibold">{t('admin.system.ai_inference.budget_section')}</h3>
       <div class="grid grid-cols-2 gap-3">
         <label class="block">
-          <span class="text-xs text-fg-muted">{t('admin.ai_inference.budget_soft_label')}</span>
+          <span class="text-xs text-fg-muted">{t('admin.system.ai_inference.budget_soft_label')}</span>
           <input
             type="number"
             bind:value={cfg.default_budget.soft_warning_usd}
@@ -232,10 +232,10 @@
             data-testid="ai-config-budget-soft"
             class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
-          <span class="mt-1 block text-xs text-fg-muted">{t('admin.ai_inference.budget_soft_help')}</span>
+          <span class="mt-1 block text-xs text-fg-muted">{t('admin.system.ai_inference.budget_soft_help')}</span>
         </label>
         <label class="block">
-          <span class="text-xs text-fg-muted">{t('admin.ai_inference.budget_hard_label')}</span>
+          <span class="text-xs text-fg-muted">{t('admin.system.ai_inference.budget_hard_label')}</span>
           <input
             type="number"
             bind:value={cfg.default_budget.hard_cap_usd}
@@ -243,7 +243,7 @@
             data-testid="ai-config-budget-hard"
             class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
           />
-          <span class="mt-1 block text-xs text-fg-muted">{t('admin.ai_inference.budget_hard_help')}</span>
+          <span class="mt-1 block text-xs text-fg-muted">{t('admin.system.ai_inference.budget_hard_help')}</span>
         </label>
       </div>
     </section>
@@ -253,7 +253,7 @@
     {/if}
     {#if saved}
       <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success" data-testid="ai-config-saved">
-        {t('admin.ai_inference.saved')}
+        {t('admin.system.ai_inference.saved')}
       </p>
     {/if}
 
@@ -263,7 +263,7 @@
       data-testid="ai-config-save"
       class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40"
     >
-      {saving ? t('common.loading') : t('admin.ai_inference.save')}
+      {saving ? t('common.loading') : t('admin.system.ai_inference.save')}
     </button>
   </form>
 {/if}

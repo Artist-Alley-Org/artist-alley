@@ -50,7 +50,7 @@
         params: { query: { billing_period: period } },
       });
       if (!data) {
-        error = t('admin.ai_usage.load_error');
+        error = t('admin.system.ai_usage.load_error');
         return;
       }
       report = data as UsageReport;
@@ -68,14 +68,14 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.ai_usage.title')} — {site.name}</title></svelte:head>
+<svelte:head><title>{t('admin.system.ai_usage.title')} — {site.name}</title></svelte:head>
 
-<h2 class="mb-2 text-xl font-semibold">{t('admin.ai_usage.title')}</h2>
-<p class="mb-4 max-w-2xl text-sm text-fg-muted">{t('admin.ai_usage.intro')}</p>
+<h2 class="mb-2 text-xl font-semibold">{t('admin.system.ai_usage.title')}</h2>
+<p class="mb-4 max-w-2xl text-sm text-fg-muted">{t('admin.system.ai_usage.intro')}</p>
 
 <div class="mb-4 flex items-end gap-3">
   <label class="block">
-    <span class="text-xs text-fg-muted">{t('admin.ai_usage.period_label')}</span>
+    <span class="text-xs text-fg-muted">{t('admin.system.ai_usage.period_label')}</span>
     <input
       type="month"
       bind:value={period}
@@ -90,26 +90,26 @@
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else if error || !report}
   <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger" data-testid="ai-usage-error">
-    {error ?? t('admin.ai_usage.load_error')}
+    {error ?? t('admin.system.ai_usage.load_error')}
   </p>
 {:else}
   <section class="mb-4 rounded border border-border bg-surface px-4 py-3" data-testid="ai-usage-total">
-    <span class="text-xs text-fg-muted">{t('admin.ai_usage.total_label')}</span>
+    <span class="text-xs text-fg-muted">{t('admin.system.ai_usage.total_label')}</span>
     <p class="mt-1 text-2xl font-semibold tabular-nums">{microsToUSD(report.total_cost_usd_micros)}</p>
   </section>
 
   {#if report.providers.length === 0}
     <p class="rounded-md bg-surface-elevated px-4 py-6 text-center text-fg-muted" data-testid="ai-usage-empty">
-      {t('admin.ai_usage.no_providers')}
+      {t('admin.system.ai_usage.no_providers')}
     </p>
   {:else}
     <table class="w-full text-sm" data-testid="ai-usage-table">
       <thead class="text-left text-xs uppercase tracking-wider text-fg-muted">
         <tr>
-          <th class="py-2">{t('admin.ai_usage.column_provider')}</th>
-          <th class="py-2 text-right">{t('admin.ai_usage.column_calls')}</th>
-          <th class="py-2 text-right">{t('admin.ai_usage.column_cost')}</th>
-          <th class="py-2">{t('admin.ai_usage.column_status')}</th>
+          <th class="py-2">{t('admin.system.ai_usage.column_provider')}</th>
+          <th class="py-2 text-right">{t('admin.system.ai_usage.column_calls')}</th>
+          <th class="py-2 text-right">{t('admin.system.ai_usage.column_cost')}</th>
+          <th class="py-2">{t('admin.system.ai_usage.column_status')}</th>
         </tr>
       </thead>
       <tbody>

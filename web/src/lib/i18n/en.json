@@ -163,6 +163,21 @@
     },
     "end_of_feed": "— end of feed —"
   },
+  "asset": {
+    "tag_source": {
+      "manual": "Operator-set tag — AI never overwrites this.",
+      "ai": "AI-generated tag — replaceable by later AI runs.",
+      "import": "Imported tag (CSV / EXIF / upstream) — AI never overwrites this."
+    },
+    "similar": {
+      "title": "Similar assets",
+      "count": "{n} found",
+      "load_error": "Couldn't load similar assets.",
+      "embedding_pending": "Embedding pending — check back after the indexer catches up.",
+      "empty": "No similar assets in your library yet.",
+      "distance_label": "cosine distance: {d}"
+    }
+  },
   "card": {
     "tools": {
       "row_label": "Quick actions",
@@ -1560,30 +1575,6 @@
       "options_conflict_reload": "Reload theirs",
       "options_conflict_overwrite": "Overwrite with mine"
     },
-    "collection_fields": {
-      "section_title": "Custom fields",
-      "no_fields": "No collection fields defined. Admins can add them under Fields & metadata.",
-      "save": "Save fields",
-      "saved": "Custom fields saved.",
-      "save_error": "Failed to save one or more fields.",
-      "locked_hint": "You don't have permission to edit this field.",
-      "required_marker": "required"
-    },
-    "asset": {
-      "tag_source": {
-        "manual": "Operator-set tag — AI never overwrites this.",
-        "ai": "AI-generated tag — replaceable by later AI runs.",
-        "import": "Imported tag (CSV / EXIF / upstream) — AI never overwrites this."
-      },
-      "similar": {
-        "title": "Similar assets",
-        "count": "{n} found",
-        "load_error": "Couldn't load similar assets.",
-        "embedding_pending": "Embedding pending — check back after the indexer catches up.",
-        "empty": "No similar assets in your library yet.",
-        "distance_label": "cosine distance: {d}"
-      }
-    },
     "asset_types": {
       "title": "Asset types",
       "intro": "The catalogue of asset types known to this instance. Click a row to manage its per-type ACL (Phase 1.17.F-bis). Defining the full editor (rename, icon, allowed extensions) lands in a follow-up phase.",
@@ -1787,6 +1778,7 @@
         "routing_help": "Which provider handles each task by default. The router falls back through the chain below on transient or rate-limit errors.",
         "fallback_section": "Fallback chains",
         "fallback_help": "Comma-separated provider names. The router walks them in order; permanent / budget / privacy errors short-circuit (no fallback).",
+        "fallback_placeholder": "e.g. claude, openai, ollama",
         "privacy_section": "Privacy",
         "privacy_lock_label": "Lock sensitive assets to local providers",
         "privacy_lock_help": "When on, assets at sensitivity tier 'restricted' or 'embargo' route only to providers in the local list below. Cloud providers never see their bytes.",
@@ -2379,6 +2371,15 @@
     "whiteboard": "Whiteboard…",
     "annotate": "Annotate… (soon)",
     "compare": "Compare versions… (soon)"
+  },
+  "collection_fields": {
+    "section_title": "Custom fields",
+    "no_fields": "No collection fields defined. Admins can add them under Fields & metadata.",
+    "save": "Save fields",
+    "saved": "Custom fields saved.",
+    "save_error": "Failed to save one or more fields.",
+    "locked_hint": "You don't have permission to edit this field.",
+    "required_marker": "required"
   },
   "collection_picker": {
     "title_single": "Add to collection",
