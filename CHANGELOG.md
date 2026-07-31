@@ -103,6 +103,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Portrait video previews were squashed into landscape.** The strip of thumbnails you
+  scrub through was built at a fixed widescreen shape whatever the video actually was, so
+  anything shot on a phone came out stretched. Thumbnails now keep the source's proportions —
+  including the case that matters most in practice, a clip whose file says it is landscape and
+  which plays portrait because of how the camera recorded it (#761).
+
+  The same squash was happening on the browse grid, where hovering a video card scrubs through
+  the same strip.
+
+  **And in the viewer, the hover preview was not appearing at all** — it was being clipped to
+  the height of the scrub bar itself, twelve pixels, ever since the scrubber gained zoom. It is
+  a separate fix, and it is why the problem looked like it only affected the grid.
+
+  Existing videos keep their old thumbnails until their previews are rebuilt.
+
 - **Yes/no fields never worked either, and one of them failed louder than blank.** A field can
   be declared as a yes/no checkbox, and the parts of the system that write one disagreed about
   how. Setting one on an asset stored a number, while the panel that displays it looked for the
