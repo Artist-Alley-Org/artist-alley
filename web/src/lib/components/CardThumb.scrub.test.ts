@@ -30,7 +30,8 @@
 // regression a truthy check would wave through.
 
 import { render, fireEvent } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
 import AssetCard from './AssetCard.svelte';
 import type { CardAsset } from './cardAsset';
 
@@ -73,6 +74,38 @@ async function unhoverCard(container: HTMLElement) {
   const link = container.querySelector('a[href^="/assets/"]');
   await fireEvent.mouseLeave(link!);
 }
+
+/** jsdom's `Image` never fetches, so the card's sheet measurement can
+ *  never resolve on its own. Swap in a loader that reports the size the
+ *  test names, which is how a real sheet of that shape would behave. */
+function stubSpriteSheetSize(naturalWidth: number, naturalHeight: number) {
+  class FakeImage {
+    naturalWidth = 0;
+    naturalHeight = 0;
+    onload: (() => void) | null = null;
+    #src = '';
+    get src() {
+      return this.#src;
+    }
+    set src(v: string) {
+      this.#src = v;
+      this.naturalWidth = naturalWidth;
+      this.naturalHeight = naturalHeight;
+      queueMicrotask(() => this.onload?.());
+    }
+  }
+  vi.stubGlobal('Image', FakeImage);
+}
+
+/** Let the stubbed load callback and the resulting state update land. */
+async function flushSpriteLoad() {
+  await new Promise((r) => queueMicrotask(() => r(null)));
+  await tick();
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('CardThumb sprite scrub (#595)', () => {
   it('renders no sprite layer at rest', () => {
@@ -123,6 +156,57 @@ describe('CardThumb sprite scrub (#595)', () => {
       spriteLayer(container),
       'a still image has no sprite sheet; hovering must not request one (#471 zero-404s)',
     ).toBeNull();
+  });
+
+  it('sizes the scrub box to the sheet the server actually generated (#761)', async () => {
+    // Sprite cells stopped being a fixed 16:9 in #761 — the sheet is now
+    // fitted to the source, so a portrait clip's cells are portrait. The
+    // card used to paint them into a hardcoded `aspect-video` box, which
+    // reintroduced the exact squash the backend fix removed, just one
+    // layer up.
+    //
+    // The grid is 10x10, so the sheet's aspect ratio IS the cell's; the
+    // card measures the image rather than trusting recorded pixel dims
+    // (which are the coded frame size, wrong for a rotated phone clip).
+    // jsdom never loads images, so the loader is stubbed to report a
+    // 900x1600 sheet — a real portrait sheet, per the Go-side
+    // TestWriteSprites_RealFFmpeg.
+    stubSpriteSheetSize(900, 1600);
+
+    const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
+    await hoverCard(container);
+    await flushSpriteLoad();
+
+    const layer = spriteLayer(container);
+    expect(layer, 'video tile should mount a sprite layer on hover').toBeTruthy();
+    // 900/1600 — portrait, not 16:9.
+    expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(900 / 1600, 4);
+    // A portrait cell is bound by the tile's HEIGHT and pillarboxed;
+    // width-bound would overflow the square slot.
+    expect(layer!.className).toContain('h-full');
+    expect(layer!.className).not.toContain('w-full');
+  });
+
+  it('keeps the landscape scrub box width-bound at 16:9 (#761 no-regression)', async () => {
+    stubSpriteSheetSize(1600, 900);
+
+    const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
+    await hoverCard(container);
+    await flushSpriteLoad();
+
+    const layer = spriteLayer(container);
+    expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(16 / 9, 4);
+    expect(layer!.className).toContain('w-full');
+  });
+
+  it('falls back to 16:9 before the sheet has reported its size', async () => {
+    // No stub: the image never loads, which is also the real first-paint
+    // state. The box must not collapse to zero height while it waits.
+    const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
+    await hoverCard(container);
+
+    const layer = spriteLayer(container);
+    expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(16 / 9, 4);
   });
 
   it('degrades silently when the extension is unknown', async () => {
