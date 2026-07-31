@@ -11686,16 +11686,28 @@ components:
             not reflow as 72 images arrive (#640).
 
             Not a column on `assets` — the value lives in
-            `asset_field_value` under the extraction-wired `pixel_width`
-            field definition seeded for #618, and is projected here.
-            Null is the honest answer for everything the EXIF pass has
-            not seen: a draft raster (the backfill selects
-            `status = 'active'`), and every non-raster kind — video, 3D,
-            audio, fonts, documents. Those still HAVE a preview with a
-            real aspect ratio (an audio waveform is ~16:3, a video frame
-            16:9); it is simply not recorded anywhere yet, so the client
-            falls back to measuring the image once it loads. Recording
-            preview-variant dimensions is what would close that gap.
+            `asset_field_value` under the `pixel_width` field definition
+            seeded for #618, and is projected here.
+
+            The quantity is the shape of the image the preview ladder's
+            contain rungs are built from, NOT the source file's pixels
+            (ADR 0071 §6). For a raster the two coincide with one
+            deliberate refinement: the ladder source is the
+            EXIF-ROTATED image, so an orientation=6 phone photo reports
+            the portrait shape a viewer sees rather than the landscape
+            grid stored on disk. For everything with no source pixels at
+            all — a 3D model, a font, an audio file, a plain-text
+            document — it is the shape of the one image that kind
+            produces on its way through the pipeline: a turntable frame,
+            a glyph specimen, a waveform, a rendered plate. A 2048x384
+            waveform is a 5.33:1 tile and nothing in the `.ogg` says so.
+
+            Null therefore means only "no preview render has recorded a
+            shape for this asset yet" — a draft (the render selects
+            `status = 'active'`), a kind no preview handler can render
+            at all, or an asset whose preview predates #757 and has not
+            been re-rendered. The client falls back to measuring the
+            image once it loads.
         pixel_height:
           type: integer
           format: int32

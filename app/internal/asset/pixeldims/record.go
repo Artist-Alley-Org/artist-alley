@@ -34,12 +34,22 @@ import (
 // For a raster the two definitions coincide, with one deliberate
 // refinement: the ladder source is the EXIF-ROTATED image, so an
 // orientation=6 phone photo records the portrait shape the viewer
-// actually sees rather than the landscape shape stored on disk. The
-// EXIF extractor writes the on-disk pair (it reads DecodeConfig, which
-// predates the rotation); when both have run, last-writer-wins. The
-// preview value is the better one for every consumer we have — masonry
-// sizes the tile it draws, and IIIF's info.json describes the rungs it
-// serves, and both are post-rotation.
+// actually sees rather than the landscape shape stored on disk. That is
+// the right value for every consumer we have — masonry sizes the tile it
+// draws, IIIF's info.json describes the rungs it serves, and both are
+// post-rotation.
+//
+// THIS IS THE ONLY WRITER, as of #765. The EXIF extractor used to write
+// the on-disk pair here too, from image.DecodeConfig, which reports the
+// stored grid and so disagrees with this one for exactly the rotated
+// photos the refinement above exists for. Nothing arbitrated: both
+// definitions carried extraction_mode='replace', the applier's mode
+// check reads presence and never set_by (ADR 0012's "skip if
+// set_by='manual'" rule was written but never implemented), and on the
+// upload path the extract job is enqueued after the preview job — so
+// the stored grid was the last writer and won. Migration 00020 removed
+// the definitions' extraction_source, so the route is gone as well as
+// the caller.
 //
 // WHY NOT storage_variants.metadata. It is per-object-hash, and the
 // quantity is not a property of any stored variant: `col` is 320x320

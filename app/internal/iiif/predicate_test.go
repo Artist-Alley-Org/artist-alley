@@ -73,23 +73,36 @@ func iiifPool(t *testing.T) *pgxpool.Pool {
 // which is precisely the fixture pattern that hid the gap for a
 // release: the suite exercised a schema state no real install had, so
 // info.json 404ed everywhere while every test passed. Migration 00017
-// provides the rows, wired; if they are missing here, THAT is the bug,
-// and the loud failure is the point.
+// provides the rows; if they are missing here, THAT is the bug, and the
+// loud failure is the point.
+//
+// It no longer asserts extraction_source either (#765). The wiring was
+// removed on purpose: these two fields are COMPUTED by the preview
+// pipeline off the ladder source, not extracted from a file, and an
+// extraction route to them is what let the EXIF extractor overwrite a
+// rotated photo's shape with its pre-rotation stored grid. What IIIF
+// needs from the schema is the row and its code — that is what the
+// dimension join resolves — so that is what this asserts.
 func ensurePixelFields(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	one := func(code string) uuid.UUID {
 		var id uuid.UUID
-		var source string
+		var source, ftype string
 		err := pool.QueryRow(context.Background(),
-			`SELECT id, extraction_source FROM field_definition WHERE code = $1`,
-			code).Scan(&id, &source)
+			`SELECT id, extraction_source, type FROM field_definition WHERE code = $1`,
+			code).Scan(&id, &source, &ftype)
 		if err != nil {
 			t.Fatalf("field definition %s missing — migration 00017 should seed "+
 				"it; tests must not create it themselves (#618): %v", code, err)
 		}
-		if source == "" {
-			t.Fatalf("field definition %s exists but is UNWIRED "+
-				"(extraction_source = '') — the state #618 exists to remove", code)
+		if ftype != "number" {
+			t.Fatalf("field definition %s has type %q, want number — the dimension "+
+				"join reads value_num (#618)", code, ftype)
+		}
+		if source != "" {
+			t.Fatalf("field definition %s is extraction-wired to %q — migration 00020 "+
+				"unwires it, because an extractor reports the STORED grid and this "+
+				"field holds the shape of the rotated ladder source (#765)", code, source)
 		}
 		return id
 	}
