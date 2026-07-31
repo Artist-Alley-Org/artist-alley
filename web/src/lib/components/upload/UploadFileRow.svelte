@@ -20,7 +20,12 @@
   import { upload, fieldsForAssetType } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
   import { is3DExt } from '../viewers/controller';
-  import { normalizeOptions, selectableOptions } from '$lib/fieldOptions';
+  import {
+    decodeBoolean,
+    encodeBoolean,
+    normalizeOptions,
+    selectableOptions,
+  } from '$lib/fieldOptions';
 
   // True when the row's file is a 3D model — drives the companion
   // disclosure visibility. Audio / image / etc. don't need a
@@ -351,14 +356,24 @@
                         class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       />
                     {:else if f.type === 'boolean'}
+                      <!--
+                        1/0 in valueNum (ADR 0012). This checkbox wrote
+                        the strings "true"/"false" into valueText until
+                        #791, which the upload store posts as
+                        value_text — and the asset write endpoint has
+                        always required value_num for a boolean, so
+                        every attempt to set one during upload was
+                        rejected outright rather than merely rendering
+                        blank.
+                      -->
                       <label class="mt-0.5 inline-flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
-                          checked={pending?.valueText === 'true'}
-                          onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLInputElement).checked ? 'true' : 'false' })}
+                          checked={decodeBoolean(pending?.valueNum) === true}
+                          onchange={(e) => commitField(f, { valueNum: encodeBoolean((e.currentTarget as HTMLInputElement).checked) })}
                           class="h-4 w-4 accent-accent"
                         />
-                        <span class="text-fg-muted">{pending?.valueText === 'true' ? t('common.yes') : t('common.no')}</span>
+                        <span class="text-fg-muted">{decodeBoolean(pending?.valueNum) === true ? t('common.yes') : t('common.no')}</span>
                       </label>
                     {:else if f.type === 'date'}
                       <input
