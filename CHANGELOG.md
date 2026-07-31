@@ -97,6 +97,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Per-job-type concurrency limits were not actually limiting anything.** An operator can
+  cap how many jobs of a given kind run at once — transcription at one, video and 3D previews
+  at two — precisely because those are the jobs heavy enough to hurt a machine when several run
+  together. The check and the counter were separated: a worker asked "is there room?", and the
+  answer was only recorded once the job had been claimed. Every worker that asked during that
+  window got the same stale answer and the same yes, so the real ceiling was however many
+  workers happened to be polling — not the configured number. Observed in the wild: five
+  concurrent 3D renders against a limit of two. The reservation is now taken at the moment the
+  check passes, so a limit of two means two (#777).
+
+  The old comment described this as a window that "can let one extra job through." A test that
+  releases sixteen workers into it against a limit of two saw **all sixteen** admitted.
+
 - **Vocabulary values showed their internal slug instead of their label.** A term is
   stored by slug so that renaming it is free and rewrites nothing on any asset — but only the
   editing screens ever turned that slug back into the label, because they happen to load the
