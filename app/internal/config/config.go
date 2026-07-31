@@ -40,6 +40,27 @@ type Config struct {
 	LogLevel  string // debug / info / warn / error
 	LogFormat string // json (default) or text
 
+	// Profiling. PprofAddr is empty by default, which disables the
+	// pprof listener entirely — no port bound, no handlers reachable.
+	// Set it to expose net/http/pprof on a SEPARATE listener from the
+	// application router; 127.0.0.1:6060 is the recommended value, so
+	// the profiler is reachable via `docker compose exec` but not from
+	// the compose network. A heap profile carries live object contents
+	// (tokens, file bytes, DB rows) — see internal/debugsrv.
+	PprofAddr string
+
+	// GoMemLimitRatio is the fraction of the container's cgroup memory
+	// ceiling handed to the Go runtime as GOMEMLIMIT at boot. The Go
+	// runtime does not read cgroup limits on its own, so without this
+	// the collector paces from the live-heap ratio alone (GOGC) and
+	// grows straight through the container ceiling into an OOM kill.
+	//
+	// 0 disables the derivation and leaves the runtime default in
+	// place — the switch used to profile the unbounded behaviour
+	// deliberately. An explicit GOMEMLIMIT in the environment always
+	// wins over the derived value. See internal/memlimit.
+	GoMemLimitRatio float64
+
 	// Auth — must match the PHP side exactly during the transition
 	// since both worlds hash passwords with the same pepper. Pulled
 	// from the same config value the legacy PHP reads as $scramble_key.
@@ -135,6 +156,8 @@ func Load() (Config, error) {
 		DBConnMaxLifetime: envDuration("AA_DB_CONN_MAX_LIFETIME", time.Hour),
 		LogLevel:          envStr("AA_LOG_LEVEL", "info"),
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
+		PprofAddr:         envStr("AA_PPROF_ADDR", ""),
+		GoMemLimitRatio:   envFloat("AA_GOMEMLIMIT_RATIO", 0.9),
 		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
 
 		BootstrapAdminPath:    envStr("AA_BOOTSTRAP_ADMIN_PATH", "/var/lib/artist-alley"),
@@ -207,6 +230,18 @@ func envInt(key string, def int) int {
 		panic(fmt.Sprintf("config: %s=%q is not a valid int", key, v))
 	}
 	return n
+}
+
+func envFloat(key string, def float64) float64 {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		panic(fmt.Sprintf("config: %s=%q is not a valid float", key, v))
+	}
+	return f
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

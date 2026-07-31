@@ -76,6 +76,22 @@ services:
       # set AA_STORAGE_BACKEND=s3 and ignore this.
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
       TZ: ${TZ:-UTC}
+    # Memory ceiling for the app container (#781).
+    #
+    # This is deliberately set on the BASE stack, not only under the CI
+    # resource override. Previously CI capped the app at 4g and the
+    # default/production stack capped it at nothing, and that silent
+    # difference was the actual defect: the preview pipeline's unbounded
+    # heap growth could only ever be observed in CI, where it showed up
+    # as an OOM kill, while the same growth on an uncapped host just
+    # expanded until the whole machine was under pressure — degrading
+    # every other container instead of the one at fault.
+    #
+    # The Go side derives GOMEMLIMIT from whatever value lands here (see
+    # app/internal/memlimit), so this number is the single place the
+    # ceiling is stated. Raise it for an instance with a big catalogue
+    # and heavy preview concurrency; the runtime follows automatically.
+    mem_limit: ${AA_APP_MEM_LIMIT:-4g}
     volumes:
       - aa-storage:/var/lib/aa-storage
     depends_on:
@@ -258,6 +274,10 @@ services:
       AA_BOOTSTRAP_DEFAULT_ADMIN: "1"
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
       TZ: ${TZ:-UTC}
+    # Same ceiling as `app` — this runs the identical binary and the
+    # identical preview pipeline, so leaving it uncapped would recreate
+    # exactly the asymmetry #781 removes.
+    mem_limit: ${AA_APP_MEM_LIMIT:-4g}
     volumes:
       - aa-storage-b:/var/lib/aa-storage
     depends_on:
