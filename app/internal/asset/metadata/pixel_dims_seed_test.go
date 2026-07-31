@@ -1,24 +1,51 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// #618 — pixel_width / pixel_height must be SEEDED AND WIRED, and the
-// wiring is the part that matters: the extractor routes values through
+// #618 → #765 — pixel_width / pixel_height must be SEEDED, and must NOT
+// be extraction-wired.
+//
+// #618's version of this file asserted the opposite: extraction_source
+// non-empty, because the EXIF extractor was the only producer and the
+// mapping query
 //
 //	SELECT id, extraction_source, extraction_mode
 //	  FROM field_definition WHERE extraction_source != '';
 //
-// so a definition with the default '' extraction_source routes nothing —
-// the backfill reports success, asset_field_value stays empty, and
-// info.json 404s exactly as if the definition did not exist. #621 made
-// the extractor RUN (0 → 192 eligible); this makes its output LAND.
+// routes nothing without it. #757 gave the fields their real producer —
+// the preview pipeline, which measures the ladder SOURCE — and left the
+// extractor's write in place beside it. Two writers, one pair of rows,
+// extraction_mode='replace' on both, and no precedence rule anywhere:
+// the applier's only check is "is a value present", never set_by, so
+// ADR 0012's written-but-unimplemented "skip if set_by='manual'" rule
+// never applied. On the upload path the extract job is enqueued after
+// the preview job, so the extractor wrote last and won.
 //
-// THE FIXTURE RULE IS THE POINT OF THIS FILE. The reason this gap
-// survived a release is that IIIF's own tests call ensurePixelFields and
-// create the definitions themselves, exercising a schema state no real
-// install has ever had. Nothing here creates a field definition. These
-// tests run against artist_alley_test, which is built from the embedded
-// migrations and nothing else — if migration 00017 does not provide the
-// wired rows, they fail, which is the entire assertion.
+// It won with the WRONG NUMBER. image.DecodeConfig reports the stored
+// pixel grid, and this subsystem deliberately leaves the source bytes
+// (and their orientation tag) untouched, rotating at variant-render
+// time — so for an orientation=6 phone photo the extractor's pair is
+// the transpose of what every rung and every tile actually shows. ADR
+// 0071 §6 names the quantity these rows hold: the shape of the image the
+// contain rungs are built from, which for a font, a waveform or a
+// turntable is the ONLY image there is and has nothing to do with source
+// pixels at all.
+//
+// So #765 removed the extractor's write and migration 00020 removed its
+// route. What this file now pins is the pair of facts that keeps the
+// definitions useful without letting the second writer back:
+//
+//   - the migration provides both rows, typed number, resolvable by code
+//     (dropping them re-404s every info.json — #618);
+//   - the extract path writes NEITHER of them, whatever it is handed;
+//   - a value recorded the way production records it reaches IIIF.
+//
+// THE FIXTURE RULE IS STILL THE POINT OF THIS FILE. The reason the #618
+// gap survived a release is that IIIF's own tests call ensurePixelFields
+// and created the definitions themselves, exercising a schema state no
+// real install has ever had. Nothing here creates a field definition.
+// These tests run against artist_alley_test, built from the embedded
+// migrations and nothing else — if the migrations do not provide the
+// rows in the right state, they fail, which is the entire assertion.
 
 package metadata_test
 
@@ -26,8 +53,9 @@ import (
 	"bytes"
 	"context"
 	"image"
-	"image/color"
-	"image/png"
+	_ "image/jpeg" // DecodeConfig for the fixture-shape assertion
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -36,45 +64,48 @@ import (
 
 	metadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
+	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
-// TestMigrationProvidesWiredPixelDimensionDefinitions is acceptance #2,
-// with the sharpened clause: extraction_source NON-EMPTY, not merely
-// that rows exist. A row with ” here reproduces today's failure shape
-// byte for byte, so existence alone proves nothing.
-func TestMigrationProvidesWiredPixelDimensionDefinitions(t *testing.T) {
+// TestMigrationProvidesUnwiredPixelDimensionDefinitions replaces #618's
+// TestMigrationProvidesWired… and inverts its central clause.
+//
+// The row must exist and be typed number — IIIF's dimension join and
+// pixeldims.SelectColumnsSQL both resolve it by code and read value_num,
+// so a missing or mistyped row 404s info.json and blanks every masonry
+// tile exactly as #618 described.
+//
+// The row must NOT be extraction-wired. extraction_source is the
+// mapping from a canonical extractor field to a definition, and pointing
+// one at these two says "any extractor that reports a pixel_width may
+// write this row" — the sentence #765 retracts. The value is computed
+// off the rotated ladder source; no extractor can see that image.
+func TestMigrationProvidesUnwiredPixelDimensionDefinitions(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 
 	for _, code := range []string{"pixel_width", "pixel_height"} {
-		var source, mode, ftype string
+		var source, ftype string
 		err := pool.QueryRow(ctx, `
-			SELECT extraction_source, extraction_mode, type
+			SELECT extraction_source, type
 			  FROM field_definition WHERE code = $1`, code).
-			Scan(&source, &mode, &ftype)
+			Scan(&source, &ftype)
 		if err != nil {
 			t.Fatalf("%s: definition missing from the migrated schema — the seed "+
 				"does not provide it and IIIF's dimension join cannot match: %v", code, err)
 		}
-		if source == "" {
-			t.Errorf("%s exists but extraction_source is EMPTY — the mapping query "+
-				"filters WHERE extraction_source != '', so this routes nothing and "+
-				"is indistinguishable from the row not existing (#618)", code)
-		}
-		if source != code {
-			t.Errorf("%s: extraction_source = %q, want the extractor's canonical "+
-				"name %q (metadata.FieldPixelWidth/Height)", code, source, code)
-		}
-		if mode != "replace" {
-			t.Errorf("%s: extraction_mode = %q, want 'replace' — dimensions are a "+
-				"fact about the bytes; skip_if_set would freeze stale values "+
-				"across a re-render or replace-file", code, mode)
-		}
 		if ftype != "number" {
 			t.Errorf("%s: type = %q, want number (feeds value_num, which the IIIF "+
-				"lookup reads)", code, ftype)
+				"lookup and the browse projection read)", code, ftype)
+		}
+		if source != "" {
+			t.Errorf("%s: extraction_source = %q, want EMPTY. A route here lets an "+
+				"extractor's pre-rotation stored grid overwrite the preview "+
+				"pipeline's post-rotation measurement, and nothing arbitrates "+
+				"between them — extraction_mode is 'replace' and the applier never "+
+				"reads set_by (#765, ADR 0071 §6)", code, source)
 		}
 	}
 }
@@ -158,51 +189,157 @@ func (w testFailureWriter) RecordExtractionFailure(_ context.Context, p metadata
 	return nil
 }
 
-func TestPixelDimensionsFlowFromExtractorToIIIF(t *testing.T) {
+// readPixelDims returns the recorded pair and its provenance, or
+// found=false when no row exists. Reads by field_definition CODE, the
+// way pixeldims.SelectColumnsSQL and IIIF's join do.
+func readPixelDims(t *testing.T, pool *pgxpool.Pool, assetID uuid.UUID) (w, h int, setBy string, found bool) {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT f.code, v.value_num::INT, v.set_by
+		  FROM asset_field_value v
+		  JOIN field_definition f ON f.id = v.field_id
+		 WHERE v.asset_id = $1 AND f.code IN ('pixel_width', 'pixel_height')`, assetID)
+	if err != nil {
+		t.Fatalf("read pixel dims: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code, by string
+		var num int
+		if err := rows.Scan(&code, &num, &by); err != nil {
+			t.Fatalf("scan pixel dims: %v", err)
+		}
+		found = true
+		setBy = by
+		if code == "pixel_width" {
+			w = num
+		} else {
+			h = num
+		}
+	}
+	return w, h, setBy, found
+}
+
+// TestExtractPathNeverWritesPixelDimensions is the #765 regression, run
+// through the REAL pieces: the real EXIF extractor, the real applier,
+// and the migration's own extraction config — no in-test field
+// definitions, no hand-built Result.
+//
+// The fixture is stored landscape with an orientation=6 tag, so the
+// extractor's old DecodeConfig sniff would report 96x48 while the
+// displayed image, every rung, and every tile are 48x96. The asset
+// starts with the correct pair already recorded the way production
+// records it, which is the true starting state on the upload path (the
+// preview job is enqueued first). Before this fix the applier
+// overwrote it — extraction_mode is 'replace' and nothing consults
+// set_by — and a portrait photo tiled as landscape.
+func TestExtractPathNeverWritesPixelDimensions(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 
-	// A real PNG with a deliberately odd size, generated in-test.
-	const wantW, wantH = 123, 77
-	img := image.NewRGBA(image.Rect(0, 0, wantW, wantH))
-	for i := range img.Pix {
-		img.Pix[i] = 200
-	}
-	img.Set(3, 3, color.RGBA{R: 80, G: 120, B: 20, A: 255})
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		t.Fatalf("encode png: %v", err)
+	raw, err := os.ReadFile(filepath.Join("testdata", "orientation_6_landscape.jpg"))
+	if err != nil {
+		t.Fatalf("load rotated fixture: %v", err)
 	}
 
-	assetID := seedAsset(t, pool) // active, public, jpg-shaped fixture with a file hash
+	// The fixture must actually be rotated, asserted before anything
+	// depends on it. A square or untagged fixture makes every assertion
+	// below pass for the wrong reason.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("decode fixture config: %v", err)
+	}
+	if cfg.Width <= cfg.Height {
+		t.Fatalf("fixture stored grid %dx%d is not landscape — nothing distinguishes "+
+			"the stored pair from the displayed pair (#765)", cfg.Width, cfg.Height)
+	}
+	storedW, storedH := cfg.Width, cfg.Height
+	displayedW, displayedH := storedH, storedW
 
-	// Real extractor over the real bytes.
 	var ex exif.Extractor
-	result, err := ex.Extract(ctx, bytes.NewReader(buf.Bytes()), "image/png")
+	result, err := ex.Extract(ctx, bytes.NewReader(raw), "image/jpeg")
 	if err != nil && err != metadata.ErrNoMetadata {
 		t.Fatalf("extract: %v", err)
 	}
-
-	// Real applier over the migration-provided config. If 00017's rows
-	// were missing or unwired, ListExtractionConfig routes nothing and
-	// the IIIF assertion below fails — which is the point.
-	applier := metadata.NewApplier(
-		testConfigReader{pool}, testValueReader{pool},
-		testValueWriter{pool}, testFailureWriter{t},
-	)
-	summary, err := applier.Apply(ctx, metadata.AssetRef{ID: assetID, MimeType: "image/png"}, result)
-	if err != nil {
-		t.Fatalf("apply: %v", err)
+	if result.Orientation != 6 {
+		t.Fatalf("fixture Orientation tag = %d, want 6 — the transposition under "+
+			"test does not happen without it (#765)", result.Orientation)
 	}
+
+	assetID := seedAsset(t, pool) // active, public, jpg-shaped fixture with a file hash
 	t.Cleanup(func() {
 		// Cleanup runs after the test's context is cancelled, so this
 		// keeps its own plain Background context (#622 class).
 		_, _ = pool.Exec(context.Background(),
 			`DELETE FROM asset_field_value WHERE asset_id = $1`, assetID)
 	})
-	if len(summary.FieldsSet) == 0 {
-		t.Fatal("applier set zero fields — extraction config routed nothing; " +
-			"the definitions are missing or unwired (#618)")
+
+	// The preview pipeline got there first, as it does on upload.
+	if err := pixeldims.Record(ctx, pool, assetID, displayedW, displayedH); err != nil {
+		t.Fatalf("pixeldims.Record: %v", err)
+	}
+
+	// Real applier over the migration-provided extraction config.
+	applier := metadata.NewApplier(
+		testConfigReader{pool}, testValueReader{pool},
+		testValueWriter{pool}, testFailureWriter{t},
+	)
+	if _, err := applier.Apply(ctx,
+		metadata.AssetRef{ID: assetID, MimeType: "image/jpeg"}, result); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	gotW, gotH, setBy, found := readPixelDims(t, pool, assetID)
+	if !found {
+		t.Fatal("the extract pass removed the recorded dimensions entirely")
+	}
+	if gotW == storedW && gotH == storedH {
+		t.Fatalf("after the extract pass the asset records the STORED grid %dx%d "+
+			"instead of the displayed %dx%d — the EXIF writer is back, and a "+
+			"portrait phone photo reserves a landscape tile (#765)",
+			gotW, gotH, displayedW, displayedH)
+	}
+	if gotW != displayedW || gotH != displayedH {
+		t.Errorf("recorded %dx%d, want the displayed pair %dx%d", gotW, gotH, displayedW, displayedH)
+	}
+	if setBy != pixeldims.SetBy {
+		t.Errorf("set_by = %q, want %q — the extract path claimed provenance over a "+
+			"number it did not measure (#765)", setBy, pixeldims.SetBy)
+	}
+
+	// And the extractor did not merely lose the tie — it never entered
+	// it. Nothing routes a pixel dimension through extraction any more.
+	if _, ok := result.Fields[metadata.FieldPixelWidth]; ok {
+		t.Error("extractor emitted pixel_width; it must not (#765)")
+	}
+	if _, ok := result.Fields[metadata.FieldPixelHeight]; ok {
+		t.Error("extractor emitted pixel_height; it must not (#765)")
+	}
+}
+
+// TestRecordedPixelDimensionsReachIIIF keeps the #618 end-to-end whose
+// producer changed. info.json 404s an asset with no recorded dimensions
+// (BuildInfo returns ErrUnsupportedAsset on 0x0), so removing the EXIF
+// writer without a working replacement path would re-open that hole.
+// The write here is the production one — pixeldims.Record, which is what
+// preview.stampSourceShape calls — against the definitions the migration
+// provides and nothing this test created.
+func TestRecordedPixelDimensionsReachIIIF(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+
+	// A deliberately odd, deliberately non-square pair: a constant or a
+	// transposition is visible in the failure message.
+	const wantW, wantH = 123, 77
+
+	assetID := seedAsset(t, pool)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM asset_field_value WHERE asset_id = $1`, assetID)
+	})
+
+	if err := pixeldims.Record(ctx, pool, assetID, wantW, wantH); err != nil {
+		t.Fatalf("pixeldims.Record: %v", err)
 	}
 
 	// The exact consumer this exists for: IIIF's lookup.
