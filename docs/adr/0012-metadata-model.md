@@ -524,3 +524,61 @@ to fix it.
   explicit `/assets/{id}/fields/{field_id}` PUT. Convenience vs.
   consistency; default to convenient + delegate to the field PUT
   handler internally.
+
+## Amendment 2026-07-31 — the taxonomy question is closed: tags stay flat, hierarchy stays in `tree`
+
+Recorded because this decision has now been re-derived three times from scratch. **It was
+already correct; what was missing was a written confirmation, so it kept getting re-opened.**
+
+### The question
+
+Epic #519's taxonomy tile is described as *"tag hierarchy, aliases, merge tools."* That
+phrasing implies promoting `asset_tag` into a managed vocabulary with parents, aliases and
+merge operations — which contradicts this ADR, where tags are *"a degenerate multi-value text
+field"* and hierarchy belongs to the `tree` **field type**.
+
+So: extend the field-options model, or promote tags?
+
+### The evidence
+
+A mature DAM in this market — twenty years, the same operator persona — has **none of the three
+things the tile names**. No merge tooling for either options or keywords. No standalone
+taxonomy, thesaurus or vocabulary admin surface. Its keyword table carries **no parent and no
+alias column** at all; its answer to vocabulary drift is prevention, phonetic tolerance and
+frequency ranking rather than cleanup. Hierarchy in that system lives on the *field option*
+row, attached to a field, exactly where this ADR put it.
+
+That is not a reason to do what they do. It is evidence that the requirement behind "tag
+hierarchy and merge tooling" is far weaker than the tile's phrasing suggests, and that the
+split this ADR already chose is the one the problem actually has.
+
+### Decision
+
+**Unchanged, and now confirmed rather than assumed.**
+
+- **Tags stay flat.** No parent, no alias, no merge tooling on `asset_tag`.
+- **Hierarchy stays in the `tree` field type**, as nested entries in the field's `options`
+  document, reusing the lifecycle and conflict-detection the option editor already has.
+- **Promoting tags to a managed vocabulary would supersede this ADR and requires its own.** It
+  is not a tile-level implementation choice and must not be made inside one.
+
+### Scope consequence — build less, not more
+
+**Zero `tree` fields exist.** Nested-option admin is therefore UI for a field type nothing
+currently uses, and shipping it now is speculative. The taxonomy tile is **substantially
+delivered by the option editor already shipped**; the remaining delta waits until a `tree` field
+exists in practice.
+
+The one piece with genuine standards backing is **aliases** — SKOS `altLabel` — and it belongs
+on *options*, not on tags. It arrives later as a small addition to the options document,
+reusing the same editor, rather than as a second vocabulary system.
+
+### Where we stand relative to the prior art, now that the option editor has shipped
+
+| axis | prior art | here |
+|---|---|---|
+| rename a term | cascades across denormalised copies | **free** — the value stores the slug |
+| delete a term in use | permitted, unguarded, though a use count is displayed | **not offered at all** |
+| retire a term | boolean `active` | **`status` + `replaced_by`** — says what to use instead |
+| merge terms | none | none |
+| standalone taxonomy admin | none | none |
