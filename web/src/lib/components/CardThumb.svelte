@@ -344,6 +344,37 @@
     }, 120);
     return () => clearInterval(iv);
   });
+
+  // Video scrub cells are no longer a fixed 16:9 (#761) — the sheet is
+  // now fitted to the source, so a portrait clip has portrait cells and
+  // a hardcoded `aspect-video` box would squash them exactly the way the
+  // old fixed 160x90 sheet did.
+  //
+  // The ratio is MEASURED off the sheet we're already painting rather
+  // than taken from the asset's recorded pixel_width/pixel_height: the
+  // grid is square (10 cols x 10 rows), so the sheet's aspect ratio IS
+  // the cell's, and a measurement cannot drift from the image it
+  // describes. Recorded pixel dims are the coded frame size, which is
+  // wrong for a rotated phone clip — the same trap the backend avoids.
+  let spriteAspect = $state<number | null>(null);
+  $effect(() => {
+    if (!hovering || !isVideo || !spriteUrl) return;
+    // Same URL the background-image request uses, so this is a cache
+    // hit rather than a second download.
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        spriteAspect = img.naturalWidth / img.naturalHeight;
+      }
+    };
+    img.src = spriteUrl;
+    return () => {
+      img.onload = null;
+    };
+  });
+  // 16:9 until the sheet reports otherwise — the common case, and the
+  // pre-#761 behaviour.
+  const spriteCellRatio = $derived(spriteAspect ?? 16 / 9);
 </script>
 
 <!--
@@ -457,12 +488,15 @@
     />
     {#if hasSpriteScrub && hovering}
       {#if isVideo}
-        <!-- Video scrub: 16:9 sprite cells letterboxed in the 1:1 slot on
-             a black backdrop, so the cell renders at native ratio. -->
-        <div class="pointer-events-none absolute inset-0 bg-black/95 transition-opacity duration-150">
+        <!-- Video scrub: the sprite cell letterboxed (or pillarboxed) in
+             the slot on a black backdrop, so it renders at its native
+             ratio whatever shape the source is (#761). A landscape cell
+             is width-bound and centred vertically — the pre-#761 layout;
+             a portrait cell is height-bound and centred horizontally. -->
+        <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/95 transition-opacity duration-150">
           <div
-            class="absolute left-0 right-0 top-1/2 aspect-video -translate-y-1/2 bg-no-repeat"
-            style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+            class="bg-no-repeat {spriteCellRatio >= 1 ? 'w-full' : 'h-full'}"
+            style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
           ></div>
         </div>
       {:else}
