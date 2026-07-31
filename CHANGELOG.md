@@ -103,6 +103,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Five screens showed internal key names instead of English.** The AI configuration and
+  AI usage pages under Admin displayed text like `admin.ai_inference.budget_hard_label` where
+  their labels and help text should have been; the similar-assets panel, the collection field
+  editor and the tag-source tooltips in the viewer had the same problem. The wording had been
+  written all along — the screens were simply asking for it under the wrong name. Forty-six
+  strings, now resolving (#774).
+
+  Spanish and French translations moved with them, so nothing regressed to English.
+
+  The reason this survived: the test meant to catch it only checked that text was *marked for
+  translation*, never that the translation existed — so a screen asking for a name nothing
+  answered to passed cleanly. It now checks that every requested name resolves, which is what
+  turned up two of the five screens nobody had reported.
+
 - **The server could be killed by its own memory limit while building previews.** Go decides
   when to collect garbage from how much memory is already in use, and it has no idea a container
   limit exists — so on a machine with plenty of RAM it would let the heap grow past the
