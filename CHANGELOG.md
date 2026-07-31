@@ -97,6 +97,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Vocabulary values showed their internal slug instead of their label.** A term is
+  stored by slug so that renaming it is free and rewrites nothing on any asset — but only the
+  editing screens ever turned that slug back into the label, because they happen to load the
+  field definition to build their dropdown. Everywhere else, including the post and asset
+  detail panels most people actually read, the raw slug came through. Labels now resolve on
+  the server, so every surface gets them and none has to know a controlled vocabulary is
+  involved. A term with no label of its own still shows its slug, unchanged (#775).
+
+  This also completes the deprecation marking added above: a retired term now reads as
+  deprecated on the detail panel, not only inside the picker.
+
+- **Long metadata values were unreadable on a phone.** The detail panel's two-column
+  layout gave the value column roughly two characters at 390px, so `N/A` broke across lines.
+  It stacks below the small breakpoint now (#775).
+
 - **Every dropdown in the collection field editor was empty.** The vocabularies were
   stored correctly and the editor could not read them: it expected each option to be an object
   and they are stored as plain strings, so it rendered one blank row per term. The upload
