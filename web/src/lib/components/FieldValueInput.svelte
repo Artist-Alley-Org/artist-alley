@@ -14,7 +14,11 @@
   // dirty-state tracking stays in one place.
 
   import { t } from '$stores/lang.svelte';
-  import { normalizeOptions, selectableOptions } from '$lib/fieldOptions';
+  import {
+    normalizeOptions,
+    selectableOptions,
+    selectableTreeOptions,
+  } from '$lib/fieldOptions';
 
   interface FieldDef {
     id: string;
@@ -113,14 +117,24 @@
   // a value the record ALREADY holds stays in the list — dropping it
   // would blank the field on a record nobody edited, which is exactly
   // what ADR 0012 forbids.
+  //
+  // `tree` reads its held value from textVal, not optionsVal: a tree
+  // value is one slug in value_text, the same as `select`. This
+  // component used to group it with multi_select and emit
+  // value_options, which put a collection's tree value in a different
+  // column from an asset's and made it unreadable by the detail
+  // surface either way (#778).
   const held = $derived(
-    def.type === 'multi_select' || def.type === 'tree'
-      ? optionsVal
-      : textVal
-        ? [textVal]
-        : [],
+    def.type === 'multi_select' ? optionsVal : textVal ? [textVal] : [],
   );
   const selectOptions = $derived(selectableOptions(allOptions, held));
+
+  // The tree picker offers every term at every depth — a branch is a
+  // legitimate answer, not just a leaf — indented so the hierarchy is
+  // legible in a plain <select>. A dedicated tree widget is #779; this
+  // is the minimum that makes the value settable and correct.
+  const treeOptions = $derived(selectableTreeOptions(allOptions, held));
+  const INDENT = '    ';
 </script>
 
 <div class="space-y-1">
@@ -197,7 +211,24 @@
           <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
         {/each}
       </select>
-    {:else if def.type === 'multi_select' || def.type === 'tree'}
+    {:else if def.type === 'tree'}
+      <select
+        bind:value={textVal}
+        onchange={(e) => emitSelect((e.currentTarget as HTMLSelectElement).value)}
+        {disabled}
+        data-testid="field-input-{def.code}"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value=""></option>
+        {#each treeOptions as opt (opt.value)}
+          <option value={opt.value} title={opt.path.join(' / ')}>
+            {INDENT.repeat(opt.depth)}{opt.status === 'active'
+              ? opt.label
+              : t('common.option_deprecated', { label: opt.label })}
+          </option>
+        {/each}
+      </select>
+    {:else if def.type === 'multi_select'}
       <select
         multiple
         size={Math.min(selectOptions.length || 4, 6)}

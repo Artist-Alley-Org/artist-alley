@@ -285,7 +285,13 @@ func TestResolveValueOptionsOnlyResolvesVocabularyTypes(t *testing.T) {
 	if got := resolveValueOptions("multi_select", nil, []string{"sRGB", "Linear"}, doc); len(got) != 2 {
 		t.Errorf("multi_select: want 2 resolved, got %v", got)
 	}
-	for _, typ := range []string{"text", "longtext", "rich_text", "number", "date", "datetime", "boolean", "tree", "reference"} {
+	// `tree` resolves too, out of value_text, exactly like select. This
+	// list used to include it — a leftover from when nothing agreed on
+	// where a tree value lived, so nothing resolved one.
+	if got := resolveValueOptions("tree", &text, nil, doc); len(got) != 1 || got["sRGB"].Label != "sRGB" {
+		t.Errorf("tree: want sRGB resolved out of value_text, got %v", got)
+	}
+	for _, typ := range []string{"text", "longtext", "rich_text", "number", "date", "datetime", "boolean", "reference"} {
 		if got := resolveValueOptions(typ, &text, []string{"sRGB"}, doc); got != nil {
 			t.Errorf("%s: want no resolution, got %v", typ, got)
 		}
