@@ -11134,6 +11134,46 @@ components:
           enum: [manual, exif, iptc, xmp, api, import, computed]
         set_at: { type: string, format: date-time }
         set_by_user_ref: { type: integer, format: int64, nullable: true }
+        resolved_options:
+          type: object
+          nullable: true
+          additionalProperties:
+            $ref: '#/components/schemas/ResolvedOption'
+          description: |
+            Display data for the vocabulary slugs this value holds,
+            keyed by slug. Present only for select / multi_select, and
+            only for slugs that resolve against the field's options
+            document — a slug with no entry (the vocabulary dropped it,
+            or the value predates it) is simply absent, and callers must
+            fall back to rendering the slug itself.
+
+            asset_field_value stores the slug and never the label (ADR
+            0012) precisely so relabelling a term rewrites nothing. The
+            cost of that indirection is that a reader has to resolve;
+            this map is where the server pays it, once, for every
+            consumer, so no display surface has to hold the field
+            definition just to print a value.
+    ResolvedOption:
+      type: object
+      required: [label, status]
+      description: |
+        One controlled-vocabulary term as a reader needs to see it.
+        Note there is no `value` — the map key is the slug.
+      properties:
+        label:
+          type: string
+          description: |
+            Display text. Equal to the slug when the term carries no
+            explicit label, which is the case for every option written
+            in the bare-string form (see ADR 0012's 2026-07-30
+            correction) — so a caller can always render this directly.
+        status:
+          type: string
+          enum: [active, deprecated, archived]
+          description: |
+            The term's lifecycle state. A reader should mark anything
+            other than active, so a value stops looking current the
+            moment an operator retires the term behind it.
     AssetFieldValueWrite:
       type: object
       description: |

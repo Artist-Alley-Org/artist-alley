@@ -92,6 +92,12 @@
     value_ref?: string | null;
     set_by: string;
     set_at: string;
+    // Display data for the vocabulary slugs this value holds, keyed by
+    // slug. The server resolves it (ADR 0012 keeps only the slug on
+    // the record) so a read surface like this one never needs the
+    // field definition. A slug missing from the map does not resolve
+    // and renders as itself.
+    resolved_options?: Record<string, { label: string; status: string }> | null;
   }
 
   let author = $state<UserPublic | null>(null);
@@ -412,6 +418,22 @@
     return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
   }
 
+  // Render one stored vocabulary slug the way a reader should see it.
+  //
+  // Falls back to the slug whenever the server could not resolve it,
+  // which covers a term dropped from the vocabulary and — far more
+  // commonly — an option written in the bare-string form, where the
+  // slug IS the display text. Anything not active is marked with the
+  // same string the picker uses, so a term stops looking current on
+  // the detail surface the moment an operator retires it.
+  function displaySlug(f: AssetFieldValue, slug: string): string {
+    const opt = f.resolved_options?.[slug];
+    if (!opt) return slug;
+    return opt.status === 'active'
+      ? opt.label
+      : t('common.option_deprecated', { label: opt.label });
+  }
+
   function formatFieldValue(f: AssetFieldValue): string {
     switch (f.type) {
       case 'text':
@@ -427,13 +449,12 @@
         if (!f.value_date) return '';
         const d = new Date(f.value_date);
         if (isNaN(d.getTime())) return '';
-        if (f.field_code === 'pokemon_release_date') return String(d.getUTCFullYear());
         return f.type === 'date' ? d.toLocaleDateString() : d.toLocaleString();
       }
       case 'select':
-        return f.value_text ?? '';
+        return f.value_text ? displaySlug(f, f.value_text) : '';
       case 'multi_select':
-        return (f.value_options ?? []).join(', ');
+        return (f.value_options ?? []).map((s) => displaySlug(f, s)).join(', ');
       case 'tree':
       case 'reference':
         return f.value_ref ?? '';
@@ -890,14 +911,29 @@
               <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f) !== '').length})</span>
             </span>
           </summary>
-          <dl class="mt-3 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
+          <!-- Two columns only where there is room for them. The
+               value column is 1fr next to a max-content label, so on
+               a phone-width sidebar it collapses to a couple of
+               characters and wraps every value one letter per line.
+               Below sm the pair stacks instead. -->
+          <dl
+            class="mt-3 grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-[max-content_1fr]"
+            data-testid="post-metadata"
+          >
             {#each currentFields as f (f.field_id)}
               {@const val = formatFieldValue(f)}
               {#if val}
-                <dt class="truncate text-fg-muted" title={f.field_label || f.field_code}>
+                <dt
+                  class="mt-2 truncate text-fg-muted first:mt-0 sm:mt-0"
+                  title={f.field_label || f.field_code}
+                >
                   {f.field_label || f.field_code}
                 </dt>
-                <dd class="min-w-0 break-words text-fg" class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}>
+                <dd
+                  class="min-w-0 break-words text-fg"
+                  class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}
+                  data-testid="post-field-{f.field_code}"
+                >
                   {val}
                 </dd>
               {/if}

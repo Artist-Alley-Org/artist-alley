@@ -483,6 +483,40 @@ one.** No migration, and a vocabulary nobody has edited still serialises as a st
 
 `schema.sql`'s comment carries the same wrong claim and should be corrected alongside.
 
+## Amendment 2026-07-31 — the slug is resolved on the server, not by each reader
+
+Slug indirection is the whole point of this ADR: `asset_field_value` stores the slug and never
+the label, so relabelling a term is free and rewrites nothing. That stays. But the label has to
+be resolved *somewhere*, and until #775 the only places that did it were the editing surfaces —
+because they happen to load the field definition in order to build a picker.
+
+Every other reader printed the raw slug. Shipping option labels and deprecation in #737 made
+that visible and wrong: a term an operator had relabelled or deprecated still rendered as its
+bare slug on the post/asset detail surface, which is the surface most people actually read.
+
+**Decision: the server resolves.** `AssetFieldValue` gained `resolved_options` — a map from each
+slug the value holds to `{label, status}` — assembled in `buildAssetValue`, the single helper
+both the list and the upsert path already go through. Both callers already hold the options
+document (the list query joins `field_definition` for the code/label/type anyway; the upsert path
+loads the definition to validate against), so this costs no extra query and no extra join.
+
+The alternative — every consumer fetches `/fields` and resolves client-side — was rejected on
+the evidence: a consumer *did* forget, and that is exactly the bug. A read surface should not
+have to know a controlled vocabulary exists in order to print a value.
+
+Two properties the resolver must keep:
+
+- **An entry that does not resolve is simply absent from the map, and the caller renders the raw
+  slug.** Unknown term, malformed document, no `values` key — all degrade to the pre-resolution
+  behaviour rather than to a blank.
+- **A bare-string entry resolves to itself.** It carries no label, so the slug *is* the display
+  text. Since that is the form every live field uses, getting this wrong would blank the entire
+  catalogue.
+
+Archived terms still resolve here, unlike in the picker. Suppressing an archived term stops it
+being *offered*; blanking a value that already holds it just hides data from the one person able
+to fix it.
+
 ## Open questions
 
 - Whether asset edit endpoints (`PATCH /assets/{id}`) should also

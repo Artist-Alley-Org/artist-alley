@@ -194,6 +194,111 @@ func TestOptionsDocPreservesSiblingKeys(t *testing.T) {
 	}
 }
 
+// TestResolveOptionSlugsHandlesTheBareStringForm is the acceptance
+// case that matters most: every options-carrying field on a live
+// instance today stores bare slug strings, which carry no label at
+// all. Resolution must hand back the slug as the label rather than an
+// empty string, or the fix for #775 blanks the whole catalogue it was
+// meant to make readable.
+func TestResolveOptionSlugsHandlesTheBareStringForm(t *testing.T) {
+	doc := []byte(`{"values":["sRGB","Linear","Raw","N/A"]}`)
+
+	got := resolveOptionSlugs(doc, []string{"sRGB", "Raw"})
+	if len(got) != 2 {
+		t.Fatalf("want 2 resolved, got %d (%v)", len(got), got)
+	}
+	for _, slug := range []string{"sRGB", "Raw"} {
+		o, ok := got[slug]
+		if !ok {
+			t.Fatalf("slug %q did not resolve", slug)
+		}
+		if o.Label != slug {
+			t.Errorf("slug %q: want label %q (the slug itself), got %q", slug, slug, o.Label)
+		}
+		if o.Status != OptionActive {
+			t.Errorf("slug %q: absent status must mean active, got %q", slug, o.Status)
+		}
+	}
+}
+
+// TestResolveOptionSlugsReadsLabelsAndLifecycle covers the object
+// form, which is what an operator's edits in /admin/fields produce.
+func TestResolveOptionSlugsReadsLabelsAndLifecycle(t *testing.T) {
+	doc := []byte(`{"values":[
+		{"value":"srgb","label":"sRGB"},
+		{"value":"raw","label":"Raw","status":"deprecated","replaced_by":"srgb"},
+		{"value":"gone","label":"Gone","status":"archived"}
+	]}`)
+
+	got := resolveOptionSlugs(doc, []string{"srgb", "raw", "gone"})
+	if len(got) != 3 {
+		t.Fatalf("want 3 resolved, got %d (%v)", len(got), got)
+	}
+	if got["srgb"].Label != "sRGB" || got["srgb"].Status != OptionActive {
+		t.Errorf("srgb: got %+v", got["srgb"])
+	}
+	if got["raw"].Label != "Raw" || got["raw"].Status != OptionDeprecated {
+		t.Errorf("raw: got %+v", got["raw"])
+	}
+	// Archived still resolves on a read path — the picker's job is to
+	// stop offering it, not to blank a value already stored.
+	if got["gone"].Label != "Gone" || got["gone"].Status != OptionArchived {
+		t.Errorf("gone: got %+v", got["gone"])
+	}
+}
+
+// TestResolveOptionSlugsOmitsWhatItCannotResolve pins the fallback
+// contract: an absent entry means "render the raw slug", so an unknown
+// term, a malformed document and a non-vocabulary document must all
+// degrade to no entry rather than to an empty label.
+func TestResolveOptionSlugsOmitsWhatItCannotResolve(t *testing.T) {
+	cases := []struct{ name, doc, slug string }{
+		{"unknown slug", `{"values":["sRGB"]}`, "mystery"},
+		{"no values key", `{"min":0,"max":10}`, "sRGB"},
+		{"empty document", `{}`, "sRGB"},
+		{"null", `null`, "sRGB"},
+		{"malformed values", `{"values":{"not":"an array"}}`, "sRGB"},
+		{"not json at all", `nonsense`, "sRGB"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveOptionSlugs([]byte(c.doc), []string{c.slug}); len(got) != 0 {
+				t.Errorf("want nothing resolved, got %v", got)
+			}
+		})
+	}
+	if got := resolveOptionSlugs([]byte(`{"values":["sRGB"]}`), nil); got != nil {
+		t.Errorf("no slugs must resolve to nil, got %v", got)
+	}
+}
+
+// TestResolveValueOptionsOnlyResolvesVocabularyTypes keeps the map off
+// values that hold no slug — a text field's value_text is prose, not a
+// term, and must never be looked up in a vocabulary.
+func TestResolveValueOptionsOnlyResolvesVocabularyTypes(t *testing.T) {
+	doc := []byte(`{"values":["sRGB","Linear"]}`)
+	text := "sRGB"
+
+	if got := resolveValueOptions("select", &text, nil, doc); len(got) != 1 || got["sRGB"].Label != "sRGB" {
+		t.Errorf("select: want sRGB resolved, got %v", got)
+	}
+	if got := resolveValueOptions("multi_select", nil, []string{"sRGB", "Linear"}, doc); len(got) != 2 {
+		t.Errorf("multi_select: want 2 resolved, got %v", got)
+	}
+	for _, typ := range []string{"text", "longtext", "rich_text", "number", "date", "datetime", "boolean", "tree", "reference"} {
+		if got := resolveValueOptions(typ, &text, []string{"sRGB"}, doc); got != nil {
+			t.Errorf("%s: want no resolution, got %v", typ, got)
+		}
+	}
+	empty := ""
+	if got := resolveValueOptions("select", &empty, nil, doc); got != nil {
+		t.Errorf("empty select value: want nil, got %v", got)
+	}
+	if got := resolveValueOptions("select", nil, nil, doc); got != nil {
+		t.Errorf("nil select value: want nil, got %v", got)
+	}
+}
+
 func sameJSON(t *testing.T, a, b string) bool {
 	t.Helper()
 	var av, bv any
