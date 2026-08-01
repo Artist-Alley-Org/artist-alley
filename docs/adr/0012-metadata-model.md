@@ -269,9 +269,14 @@ of truth, no consistency drift.
 - `field_definition.code` is the stable cross-peer identifier.
   Globally unique within an instance (DB constraint); admins
   coordinate across peers by adopting the same slugs.
-- `field_set_id` groups related fields into an export/import unit.
+- ~~`field_set_id` groups related fields into an export/import unit.
   Operators publish a `field_set` JSON to share with peers; peers
-  import to adopt identical field schemas.
+  import to adopt identical field schemas.~~ **Column removed 2026-08-01
+  (#738).** It was never written to, no FK existed, and no export/import
+  path referenced it. **The REQUIREMENT is real and was not rejected** —
+  see ADR 0083, which records why the persisted set was the wrong shape
+  (an export unit is a list of field codes chosen at export time, not
+  stored state) and settles what may travel between peers.
 - `field_definition.origin_server_id` records which peer authored a
   definition (federation prep — used by sync layer when it lands).
 - `asset_field_value` carries no federation metadata of its own;
