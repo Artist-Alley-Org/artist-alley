@@ -424,6 +424,47 @@ func (r *Runner) applyMemberships(ctx context.Context, cat *catalogues) error {
 // --- phase: fields ----------------------------------------------------
 
 func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
+	// BIND THE FIELDS THAT ALREADY EXIST FIRST (#820).
+	//
+	// applyAssetFields resolves a manifest's field code against
+	// r.fields and drops anything it cannot find as
+	// `seed.field.unknown_code`. r.fields used to be built from
+	// cat.Fields alone — the 20 studio codes in
+	// dataset.field_definitions.json — so the nine codes the
+	// MIGRATIONS ship were absent from it even though their rows were
+	// sitting in field_definition, and a manifest value for `country`
+	// or `keywords` was thrown away with a warning that read like a
+	// typo in the manifest.
+	//
+	// That was invisible until #812: `aa seed --reset` used to TRUNCATE
+	// field_definition, so on a seeded instance those rows genuinely did
+	// not exist and "unknown code" was the truth. Since #812 they
+	// survive the reset, the rows are there, and the map was simply not
+	// looking at the table.
+	//
+	// Every existing definition is bound, not just the shipped ones. A
+	// code the seed can write is "a field this install has", and there
+	// is no principled line between a row a migration inserted, a row an
+	// operator created and a row a federation peer minted — all three
+	// are fields, and a manifest naming one means the same thing. This
+	// does not weaken the unknown_code check: a code that matches no row
+	// at all is still dropped and still warned about, which is the
+	// manifest typo the warning is for.
+	//
+	// The catalogue loop below then runs over the top and REPLACES the
+	// entry for any code it also declares, so its type-mismatch
+	// detection (existing row's type wins over the JSON's) is unchanged.
+	existing, err := r.q.SeedListFields(ctx)
+	if err != nil {
+		return fmt.Errorf("list existing fields: %w", err)
+	}
+	for _, f := range existing {
+		r.fields[f.Code] = fieldMeta{id: f.ID, typ: f.Type}
+	}
+	if len(existing) > 0 {
+		r.log.Info("seed.fields.preexisting", "count", len(existing))
+	}
+
 	for _, f := range cat.Fields {
 		opts := []byte("{}")
 		if len(f.Options) > 0 {
