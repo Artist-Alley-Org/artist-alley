@@ -618,6 +618,121 @@ func TestResolvedPathOmittedForFlatVocabularies(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The defaults writer joins the pin (#793)
+// ---------------------------------------------------------------------------
+//
+// An upload default is a THIRD writer of asset_field_value, and a third
+// writer with its own opinion about which column a type uses is exactly
+// what #778 cost us the first two times. So it is pinned the same way:
+// drive it, observe which param came back populated, compare to the
+// table AND to the asset writer byte for byte.
+//
+// In practice the defaults path cannot disagree, because it resolves a
+// default into an AssetFieldValueWrite and hands it to buildUpsertParams
+// — the same function the manual PUT uses. That is the design, and this
+// test is what stops a future "small optimisation" from replacing it
+// with a switch statement that looks equivalent.
+
+// defaultForColumn builds a literal FieldDefault carrying the shared
+// sample in the column the pin names for this type, so the two writers
+// are given byte-identical input.
+func defaultForColumn(col valueColumn) FieldDefault {
+	d := FieldDefault{Kind: DefaultKindLiteral}
+	switch col {
+	case colText:
+		v := sampleText
+		d.ValueText = &v
+	case colNum:
+		v := float64(sampleNum)
+		d.ValueNum = &v
+	case colDate:
+		v := sampleDate
+		d.ValueDate = &v
+	case colOptions:
+		d.ValueOptions = append([]string(nil), sampleOptions...)
+	case colRef:
+		v := uuid.UUID(sampleRef)
+		d.ValueRef = &v
+	}
+	return d
+}
+
+func TestDefaultsWriterUsesPinnedColumns(t *testing.T) {
+	asset := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	field := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
+	for _, typ := range allFieldTypes {
+		t.Run(typ, func(t *testing.T) {
+			col := valueColumnFor[typ]
+			def := defaultForColumn(col)
+
+			write, ok := ResolveFieldDefault(typ, def, DefaultResolveContext{})
+			if !ok {
+				t.Fatalf("a literal default for %q did not resolve", typ)
+			}
+			p, err := buildUpsertParams(asset, field, typ, write, nil)
+			if err != nil {
+				t.Fatalf("defaults write (%q): %v", typ, err)
+			}
+			wantExactlyOne(t, "defaults write (ResolveFieldDefault → buildUpsertParams)",
+				typ, col, populatedAssetColumns(p))
+
+			// And byte-identical to what the manual path stores, given
+			// the same value — a default that renders differently is a
+			// value the asset page shows one way and the default
+			// editor shows another.
+			ap, err := buildUpsertParams(asset, field, typ, sampleAssetWrite(), nil)
+			if err != nil {
+				t.Fatalf("asset writer refused the sample: %v", err)
+			}
+			if got, want := assetStored(col, p), assetStored(col, ap); got != want {
+				t.Errorf("field type %q: a default stores %s but a manual write stores %s. "+
+					"Same type, same input, two encodings (#778 for the column, #791 for the encoding)",
+					typ, got, want)
+			}
+		})
+	}
+}
+
+// TestDefaultContextTargetsMatchThePin is the other half: a CONTEXT
+// default names no column, so the mapping from context to storage shape
+// has to agree with valueColumnFor or `current_date` would resolve into
+// value_text on a datetime field and vanish.
+func TestDefaultContextTargetsMatchThePin(t *testing.T) {
+	asset := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	field := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
+	rc := DefaultResolveContext{
+		UserDisplay: "Ada Lovelace",
+		TeamName:    "Textures",
+		Now:         sampleDate,
+	}
+
+	var covered int
+	for _, typ := range allFieldTypes {
+		for _, ctxName := range ContextsForFieldType(typ) {
+			covered++
+			t.Run(typ+"/"+string(ctxName), func(t *testing.T) {
+				write, ok := ResolveFieldDefault(typ,
+					FieldDefault{Kind: DefaultKindContext, Context: ctxName}, rc)
+				if !ok {
+					t.Fatalf("context %q did not resolve for %q with a fully-populated context", ctxName, typ)
+				}
+				p, err := buildUpsertParams(asset, field, typ, write, nil)
+				if err != nil {
+					t.Fatalf("context %q for %q: %v", ctxName, typ, err)
+				}
+				wantExactlyOne(t, "context default", typ, valueColumnFor[typ], populatedAssetColumns(p))
+			})
+		}
+	}
+	if covered == 0 {
+		t.Fatal("no field type accepts any context value — ContextsForFieldType " +
+			"is returning nothing and the whole context half of ADR 0081 §3 is dead code")
+	}
+}
+
 func assertPath(t *testing.T, where string, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

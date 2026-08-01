@@ -609,6 +609,15 @@ type FederationUserKey struct {
 	RotatedByUserRef *int64
 }
 
+type FieldDefaultOverride struct {
+	FieldID          pgtype.UUID
+	TeamID           pgtype.UUID
+	DefaultValue     []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	UpdatedByUserRef *int64
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string
@@ -635,6 +644,7 @@ type FieldDefinition struct {
 	SubjectKind             string
 	ExtractionSource        string
 	ExtractionMode          string
+	DefaultValue            []byte
 }
 
 type GooseDbVersion struct {
