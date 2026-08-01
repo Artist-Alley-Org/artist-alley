@@ -1566,6 +1566,7 @@
       "options_saved": "Field saved.",
       "options_save_error": "Failed to save the field.",
       "options_type_note": "A {type} field has no option list.",
+      "options_nested_readonly": "Nested terms are shown but cannot be edited here yet. Editing the branch above keeps them exactly as they are.",
       "options_conflict_heading": "Someone else edited this field",
       "options_conflict_body": "Your changes were not saved. Reload to see theirs, or save again to overwrite them.",
       "options_conflict_reload": "Reload theirs",

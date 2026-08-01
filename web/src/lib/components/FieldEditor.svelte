@@ -44,7 +44,13 @@
   } = $props();
 
   const STATUSES: OptionStatus[] = ['active', 'deprecated', 'archived'];
-  const hasVocabulary = fieldType === 'select' || fieldType === 'multi_select';
+  // `tree` belongs here (#820). It was excluded, so the editor told the
+  // operator "a tree field has no option list" — of the one shipped
+  // tree field, `country`, whose whole vocabulary is its option list.
+  // The claim was true of the DATA until #820 gave country a
+  // vocabulary; it was never true of the TYPE.
+  const hasVocabulary =
+    fieldType === 'select' || fieldType === 'multi_select' || fieldType === 'tree';
 
   let label = $state(initialLabel);
   let required = $state(initialRequired);
@@ -70,6 +76,14 @@
   // Only active siblings make sense as a successor — pointing a
   // deprecation at another deprecation just moves the problem.
   const successorChoices = $derived(opts.filter((o) => o.status === 'active'));
+
+  // A tree's nested terms are DISPLAYED but not editable here. The
+  // controls below are indexed against the top level (`opts[i]`), so
+  // wiring them to a child would need a path rather than an index —
+  // a real tree editor, tracked under epic #519. Showing the branches
+  // without their leaves would be worse than either: `country` would
+  // read as a five-term vocabulary when it has twenty-nine.
+  const nestedReadOnly = $derived(opts.some((o) => (o.children?.length ?? 0) > 0));
 
   function addOption() {
     const slug = newSlug.trim();
@@ -290,9 +304,47 @@
               class="min-h-11 min-w-11 rounded border border-border px-2 text-fg-muted hover:bg-state-hover disabled:opacity-30"
             >↓</button>
           </div>
+
+          {#if o.children?.length}
+            <!--
+              Nested terms, read-only (#820). A tree value is stored as
+              a single LEAF slug (ADR 0012's tree amendment), so these
+              are the terms an asset actually holds — hiding them would
+              make the vocabulary look five terms deep when it is
+              twenty-nine. They round-trip untouched: serializeOptions
+              recurses into `children`, so saving a label change on the
+              parent preserves every leaf.
+            -->
+            <ul
+              class="mt-1 w-full space-y-1 border-l border-border pl-3"
+              data-testid="field-option-children-{o.value}"
+            >
+              {#each o.children as c (c.value)}
+                <li
+                  class="flex items-baseline gap-2 text-sm"
+                  class:opacity-70={c.status !== 'active'}
+                  data-testid="field-option-child-{c.value}"
+                >
+                  <span class="font-mono text-xs text-fg-muted">{c.value}</span>
+                  <span>{c.label}</span>
+                  {#if c.status !== 'active'}
+                    <span class="text-xs text-fg-muted"
+                      >({t(`admin.fields.options_status_${c.status}`)})</span
+                    >
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </li>
       {/each}
     </ul>
+
+    {#if nestedReadOnly}
+      <p class="text-xs text-fg-muted" data-testid="field-options-nested-note">
+        {t('admin.fields.options_nested_readonly')}
+      </p>
+    {/if}
 
     <div class="flex flex-wrap items-end gap-2">
       <label class="w-full min-w-0 sm:flex-1">
