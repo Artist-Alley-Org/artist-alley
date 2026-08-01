@@ -804,18 +804,28 @@ const (
 	// is fitted inside this square with the source's aspect ratio
 	// preserved (#761), so:
 	//
-	//   16:9  -> 240x136  (135 is odd; force_divisible_by=2 lifts it)
-	//   9:16  -> 136x240
+	//   16:9  -> 240x134 or 240x136 (see below)
+	//   9:16  -> 134x240 or 136x240
 	//   1:1   -> 240x240
 	//
 	// and the whole sheet is therefore bounded at 2400x2400 whatever
 	// the source shape — an ultrawide or a 1:8 panorama cannot blow the
 	// sheet out to several thousand pixels on one axis.
 	//
+	// The 16:9 short edge is not a fixed number: it computes to 135,
+	// which is odd, and `force_divisible_by=2` resolves that per ffmpeg
+	// BUILD — 5.1 (the runtime image) rounds down to 134, 6.1 rounds up
+	// to 136, same filter, same source. Nothing downstream may assume
+	// either: the VTT measures the sheet that was written (#796) rather
+	// than recomputing it, and the frontend measures it again off the
+	// image it paints.
+	//
 	// 240, not 160 (#811): the card shows a 320px still and swaps it for
 	// this cell on hover, so a 160px cell was visibly softer than the
-	// image it replaced. 240 buys 1.5x linear resolution for ~1.7x the
-	// sheet bytes; matching the still at 320 would have cost ~4x, and
+	// image it replaced. Measured over a 51-sheet seed, 240 buys 1.5x
+	// linear resolution for 1.8x the sheet bytes — JPEG does not scale
+	// with pixel count, so this came in under the 2.25x the decision
+	// budgeted. Matching the still at 320 would have cost ~4x, and
 	// motion masks the remaining gap.
 	spriteCellBox = 240
 
