@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -436,6 +437,134 @@ func TestFieldCatalogue_AgreesWithShippedTypes(t *testing.T) {
 			t.Errorf("catalogue types %q as %q, but the migrations ship it as %q. The "+
 				"catalogue entry binds to the shipped row, so the seed would write every "+
 				"value against the wrong type (#812).", f.Name, f.Type, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------
+// Binding a definition the CATALOGUE does not mention (#820)
+// ---------------------------------------------------------------------
+
+// applyFields built r.fields from dataset.field_definitions.json alone,
+// so the map held exactly the catalogue's codes. The nine codes the
+// MIGRATIONS ship were absent from it even though the rows were sitting
+// in field_definition, and applyAssetFields threw every manifest value
+// naming one away as `seed.field.unknown_code` — a warning that reads
+// like a typo in the manifest and was in fact a hole in the map.
+//
+// Invisible until #812: `aa seed --reset` used to TRUNCATE
+// field_definition, so on a seeded instance the rows genuinely were
+// gone and "unknown code" was the truth. Since #812 they survive, and
+// #820's whole point — seeding values for credit / copyright /
+// capture_date / keywords / country — cannot land without this.
+func TestApplyFields_BindsDefinitionsTheCatalogueDoesNotDeclare(t *testing.T) {
+	pool := openCompanionTestPool(t)
+	ctx := context.Background()
+
+	suffix := strconv.FormatInt(time.Now().UnixNano()%1e9, 36)
+	// Stand-in for a shipped definition: exists in the table, absent
+	// from the catalogue.
+	unlisted := "aa820_unlisted_" + suffix
+	newDropTestField(t, pool, unlisted, "text")
+	// And one the catalogue DOES declare, so the two paths are exercised
+	// against the same runner.
+	listed := "aa820_listed_" + suffix
+
+	var buf bytes.Buffer
+	r := NewRunner(pool, nil, Options{Logger: captureLogger(&buf)})
+	cat := &catalogues{Fields: []catField{{Name: listed, Label: "Listed", Type: "text"}}}
+	if err := r.applyFields(ctx, cat); err != nil {
+		t.Fatalf("applyFields: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM field_definition WHERE code = $1`, listed)
+	})
+
+	fm, ok := r.fields[unlisted]
+	if !ok {
+		t.Fatalf("applyFields did not bind %q — it exists in field_definition but the "+
+			"catalogue does not declare it, so every manifest value for it would be "+
+			"dropped as seed.field.unknown_code (#820)", unlisted)
+	}
+	if fm.typ != "text" {
+		t.Errorf("bound %q as %q, want the ROW's type `text`", unlisted, fm.typ)
+	}
+	if _, ok := r.fields[listed]; !ok {
+		t.Errorf("preloading the existing definitions lost the catalogue's own %q", listed)
+	}
+
+	// A code that matches NO row is still unknown. Preloading must not
+	// turn the manifest-typo warning into a no-op. No asset row needed:
+	// the drop happens before any insert.
+	assetID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if err := r.applyAssetFields(ctx, assetID, map[string]any{
+		"aa820_definitely_not_a_field_" + suffix: "x",
+	}); err != nil {
+		t.Fatalf("applyAssetFields: %v", err)
+	}
+	if n := r.fieldDrops.total(dropUnknownCode); n != 1 {
+		t.Errorf("a code matching no row at all recorded %d unknown_code drops, want 1. "+
+			"Binding every existing definition must not weaken the typo check. Log:\n%s",
+			n, buf.String())
+	}
+}
+
+// The two COMPUTED fields must have no seeded values (#820, corrected).
+//
+// pixel_width / pixel_height are written by the preview pipeline
+// (pixeldims.Record, preview/ladder.go) and by nothing else. #765
+// deliberately UNWIRED them from extraction so the pipeline is their
+// single writer; #820's first measurement read them as "0 values" only
+// because that run had previews disabled. A manifest entry or
+// catalogue default for either would put a second writer back and
+// re-open the exact defect #765 closed — and it would be invisible,
+// because both writers produce a plausible number.
+//
+// Asserted over the in-repo catalogue and manifests, which is where a
+// second writer would be introduced. The NAS MANIFESTs no test can
+// reach carry the same risk; this is the half that is checkable.
+func TestSeedNeverWritesComputedPixelDimensions(t *testing.T) {
+	computed := map[string]bool{"pixel_width": true, "pixel_height": true}
+
+	for _, f := range loadFieldCatalogue(t) {
+		if !computed[f.Name] {
+			continue
+		}
+		// The catalogue entry itself is fine and load-bearing (#812
+		// pins the type agreement). What must not exist is a VALUE.
+		if len(f.Options) > 0 {
+			t.Errorf("catalogue gives computed field %q a vocabulary; it is a number "+
+				"written by the preview pipeline", f.Name)
+		}
+	}
+
+	for _, path := range []string{
+		"../../../seed/profiles/studio-a.assets.json",
+		"../../../seed/profiles/studio-b.assets.json",
+		"../../../seed/profiles/demo.assets.json",
+		"../../../seed/profiles/dev.assets.json",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var assets []struct {
+			ID          string         `json:"id"`
+			FieldValues map[string]any `json:"field_values"`
+		}
+		if err := json.Unmarshal(b, &assets); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, a := range assets {
+			for code := range a.FieldValues {
+				if computed[code] {
+					t.Errorf("%s: asset %s carries a seeded %q. That field is written by "+
+						"the preview pipeline and by nothing else (#765) — a seeded value "+
+						"makes the seed a second writer, and neither value is wrong-looking "+
+						"enough to notice.", path, a.ID, code)
+				}
+			}
 		}
 	}
 }
