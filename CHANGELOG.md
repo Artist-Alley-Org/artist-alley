@@ -40,6 +40,26 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A field can now be a hierarchy, and the sample library exercises every kind of field
+  there is.** Fields come in eleven kinds — plain text, long text, formatted text, numbers,
+  yes/no, dates, timestamps, pick-one and pick-many lists, a hierarchical category, and a
+  pointer to another asset. Six of those had never carried a value in any sample library, and
+  the hierarchical kind could not even be *described* in one: the file that defines the sample
+  fields could only express a flat list of choices, so a category with sub-categories was
+  unwritable. That is fixed, and the sample library now defines and fills all eleven (#808).
+
+  The sample media was regenerated to match: every video trimmed to two minutes, keeping its
+  format and audio and subtitle tracks intact, and a deliberately rotated photograph added so
+  that orientation handling is exercised by something real rather than by a square test image
+  no camera would produce (#805).
+
+  **This immediately paid for itself.** Filling in kinds of field that had never held data
+  exposed four faults that no test could have found, because the situations they occur in did
+  not exist: a malformed pointer was being stored as an empty value rather than rejected;
+  formatted text is displayed as raw markup; a date is shown a day early for anyone west of
+  UTC; and a pointer shows an internal identifier instead of the thing it points at. The first
+  is fixed, and the other three are now tracked.
+
 - **Fields can fill themselves in.** A field can carry a default that is applied when an
   asset is uploaded, and a team can override that default for its own uploads — so a studio's
   work lands tagged as that studio's without anyone typing it. A default is either a fixed value
