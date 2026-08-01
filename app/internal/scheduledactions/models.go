@@ -628,7 +628,6 @@ type FieldDefinition struct {
 	Required                bool               `json:"required"`
 	Searchable              bool               `json:"searchable"`
 	AppliesTo               []int64            `json:"applies_to"`
-	FieldSetID              pgtype.UUID        `json:"field_set_id"`
 	ReadCapability          *string            `json:"read_capability"`
 	WriteCapability         *string            `json:"write_capability"`
 	DisplayOrder            int32              `json:"display_order"`

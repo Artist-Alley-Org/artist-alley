@@ -42,6 +42,124 @@ per-field capability gates, append-only history triggers, federation
 provenance via `origin_server_id`. No design changes against
 implementation reality.
 
+## Amendment (2026-07-31) — `field_set_id` is removed (#738)
+
+**One part of the original decision did not hold: `field_set_id`.**
+It is dropped from `field_definition` by migration
+`00022_drop_field_definition_field_set_id.sql`, together with its
+three `openapi.yaml` schema entries, its column in every `metadata`
+sqlc query, and the `/field_sets` API surface sketched below. The
+declarations further down this ADR are **historical** — read them
+with this amendment.
+
+### What it actually was
+
+Declared as `field_set_id UUID NULL -- for bundling (export/import)`,
+with the federation intent recorded below: operators publish a
+`field_set` JSON, peers import it to adopt identical field schemas.
+
+In fourteen months it never acquired a producer, a consumer, a
+foreign key, an index, or a referent — **there has never been a
+`field_set` table for it to point at.** Verified on a live instance:
+15 of 15 `field_definition` rows `NULL`, and the only foreign key on
+the table is `deprecated_replacement_id`.
+
+### Why it is removed rather than completed
+
+1. **The consumer was never designed, not merely unbuilt.**
+   Federation transports no metadata whatsoever. The activity
+   catalogue in `app/internal/federation/vocab.go` carries ~25 verbs
+   and none of them is a field-definition or field-value verb; the
+   outbox resolver projects no metadata onto an object. None of the
+   four federation ADRs written *after* this one — 0007, 0042, 0043,
+   0049 — mentions field sets, which is the clearest evidence that
+   the idea was not carried forward by the people designing the
+   thing it was prep for.
+
+2. **It is not the bulk-import/export epic's dependency either.**
+   #521 and ADR 0019 are about ingesting and dumping **assets**
+   (CSV rows, folder trees, contact sheets). Neither references
+   `field_set` anywhere. The column was speculative from the start.
+
+3. **The grouping it is mistaken for already exists, twice.**
+   `display_group` groups fields for the UI and is populated;
+   `applies_to` scopes them by asset type and is populated. A
+   persisted set would be a third grouping axis that must be kept
+   consistent with the other two while granting no capability
+   either of them does not already grant.
+
+4. **An export unit does not need to be persisted state.** This is
+   the substantive design correction. Exporting N field definitions
+   to JSON needs an endpoint that takes a list of field codes — not
+   a row that fields point at. Persisting the set buys only a saved
+   selection, at the cost of a consistency burden and a second
+   answer to "which fields belong together".
+
+Keeping the column was therefore worse than neutral: it encoded the
+wrong shape and actively misled. #738 was opened to *build the
+`field_set` table* precisely because the column looked like intent —
+which would have moved the dangling reference up one level and left
+it just as unwritten. Compare #579 / migration `00016`
+(`assets.has_image`), a writerless column four consumers read as
+though it meant something. This one had no consumers yet. Dropping
+it now is what keeps it that way.
+
+### If schema exchange is built later, build this instead
+
+Recorded so the shape does not have to be re-derived, and so the
+next attempt does not reach for a stored set:
+
+- **Transport:** `POST /fields/export` takes `{"codes": [...]}` and
+  returns a versioned envelope; `POST /fields/import` consumes one.
+  No entity, no `field_set_id`, no migration.
+- **In the envelope** (the portable description of a field):
+  `code`, `label`, `description`, `type`, `subject_kind`,
+  `required`, `searchable`, `display_group`, `display_order`, and
+  the `options` **values** (`value` + `label`, and `children` for
+  trees).
+- **Excluded, and why each is excluded** — everything here names
+  something that exists only on the sending instance, so carrying it
+  would either fail on import or silently bind the receiver to the
+  sender's world:
+  - `id`, `created_at`/`updated_at`, `created_by_user_ref`,
+    `updated_by_user_ref` — local identity and local audit.
+    `code` is the cross-instance identifier, per § Federation model.
+  - `origin_server_id` — set by the *receiver* on import, never
+    copied from the payload; otherwise provenance lies.
+  - `applies_to` — local `asset_type` BIGINT refs. Meaningless on a
+    peer, and numerically valid enough to bind to the *wrong* type.
+  - `read_capability` / `write_capability` — local capability codes.
+    Importing them would silently widen or narrow access on the
+    receiver's instance, which is the worst possible failure mode
+    for a schema import.
+  - `extraction_source` / `extraction_mode` — wiring into the
+    sender's extraction pipeline. A peer adopting `pipeline_stage`
+    wants the type and the options; it does not want the sender's
+    EXIF/IPTC bindings firing against its own uploads.
+  - `default_value` and the `field_default_override` table (#803,
+    migration `00021`) — team-scoped defaults keyed on teams that do
+    not exist on the receiver. **Bundle-level defaults are a
+    separate and larger feature; a field-schema envelope must not
+    grow into one.**
+  - per-option `status` / `replaced_by` (#737) — option *lifecycle*
+    is the local operator's editorial history, not part of the
+    vocabulary being adopted. Import the live options; do not import
+    the sender's deprecations.
+  - `deprecated_replacement_id` — a local UUID, and it may point at
+    a field outside the exported selection.
+- **Collision is the normal case, not an edge case.** `code` is
+  unique per instance and this ADR tells admins to adopt the same
+  slugs across peers, so importing `pipeline_stage` onto an instance
+  that already has `pipeline_stage` is the expected path. The rule
+  must be **reject the whole import by default** and return a
+  per-field diff; the operator then chooses per field to skip, to
+  overwrite, or to import under a new code. **Never merge silently
+  and never auto-overwrite** — a schema import that quietly mutates
+  a field an operator's assets already depend on is worse than no
+  import feature at all, because the damage is invisible until a
+  query returns the wrong rows. A whole-import reject also keeps the
+  operation atomic, so a half-adopted schema is unreachable.
+
 ## Context
 
 ADR 0011 ships `assets.metadata jsonb` as an extensibility safety
@@ -101,7 +219,8 @@ CREATE TABLE field_definition (
     required                    BOOLEAN      NOT NULL DEFAULT FALSE,
     searchable                  BOOLEAN      NOT NULL DEFAULT TRUE,
     applies_to                  BIGINT[]     NOT NULL DEFAULT '{}',  -- asset_type refs; empty = all
-    field_set_id                UUID         NULL,                    -- for bundling (export/import)
+    -- REMOVED 2026-07-31 by migration 00022 — see the amendment above.
+    -- field_set_id             UUID         NULL,                    -- for bundling (export/import)
 
     -- Permissions: capability codes from auth system.
     -- NULL means "any user with read/write access to the parent asset."
@@ -269,9 +388,13 @@ of truth, no consistency drift.
 - `field_definition.code` is the stable cross-peer identifier.
   Globally unique within an instance (DB constraint); admins
   coordinate across peers by adopting the same slugs.
-- `field_set_id` groups related fields into an export/import unit.
+- ~~`field_set_id` groups related fields into an export/import unit.
   Operators publish a `field_set` JSON to share with peers; peers
-  import to adopt identical field schemas.
+  import to adopt identical field schemas.~~ **Withdrawn 2026-07-31
+  (#738).** The column never had a producer, a consumer or a
+  referent, and federation transports no metadata for it to
+  describe. See the amendment above for why, and for the envelope
+  shape to use if schema exchange is built later.
 - `field_definition.origin_server_id` records which peer authored a
   definition (federation prep — used by sync layer when it lands).
 - `asset_field_value` carries no federation metadata of its own;
@@ -287,9 +410,10 @@ PATCH  /fields/{id}                     — admin: update (label, options, statu
 DELETE /fields/{id}                     — admin: archive (sets status, doesn't drop data)
 POST   /fields/{id}/deprecate           — admin: deprecate with replacement_id
 
-GET    /field_sets                      — list bundles
-POST   /field_sets/import               — load a field-set JSON (federation peer share)
-GET    /field_sets/{id}/export          — export for peer adoption
+                                        (the three /field_sets routes
+                                         sketched here were never built
+                                         and are withdrawn — see the
+                                         amendment above)
 
 GET    /assets/{id}/fields              — all field values for an asset
 PUT    /assets/{id}/fields/{field_id}   — set/replace a field value
@@ -315,8 +439,10 @@ GET    /assets/{id}/fields/{field_id}/history  — audit trail
   doesn't allocate a `node` row.
 - Field versioning means renames don't lose data; deprecated fields
   redirect on read.
-- Federation-aware from day one via stable codes + field-set
-  bundles.
+- Federation-aware from day one via stable codes. (The field-set
+  bundles originally claimed here were withdrawn in 2026-07-31's
+  amendment; stable `code` remains the cross-peer identifier and is
+  the part that carried its weight.)
 
 **Negative:**
 - More moving parts than the original `assets.metadata jsonb` blob.

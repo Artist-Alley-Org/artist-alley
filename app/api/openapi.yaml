@@ -11087,7 +11087,6 @@ components:
           type: array
           items: { type: integer, format: int64 }
           description: "Resource type refs this field applies to. Empty = all. Ignored when subject_kind = 'collection'."
-        field_set_id: { type: string, format: uuid, nullable: true }
         read_capability: { type: string, nullable: true }
         write_capability: { type: string, nullable: true }
         display_order: { type: integer }
@@ -11211,7 +11210,6 @@ components:
         applies_to:
           type: array
           items: { type: integer, format: int64 }
-        field_set_id: { type: string, format: uuid, nullable: true }
         read_capability: { type: string, nullable: true }
         write_capability: { type: string, nullable: true }
         display_order: { type: integer, default: 100 }
@@ -11277,7 +11275,6 @@ components:
         applies_to:
           type: array
           items: { type: integer, format: int64 }
-        field_set_id: { type: string, format: uuid, nullable: true }
         read_capability: { type: string, nullable: true }
         write_capability: { type: string, nullable: true }
         display_order: { type: integer }

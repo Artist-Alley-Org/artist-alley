@@ -932,10 +932,6 @@
             "title": "Field options",
             "blurb": "Controlled vocabularies for select / multiselect fields."
           },
-          "field_sets": {
-            "title": "Field sets",
-            "blurb": "Bundle related fields for reuse across types."
-          },
           "taxonomy": {
             "title": "Tag taxonomy",
             "blurb": "Tag hierarchy, aliases, and merge tools."
