@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -348,4 +349,93 @@ func newDropTestField(t *testing.T, pool *pgxpool.Pool, code, ftype string) pgty
 		_, _ = pool.Exec(c, `DELETE FROM field_definition WHERE id = $1`, id)
 	})
 	return id
+}
+
+// ---------------------------------------------------------------------
+// Binding to an EXISTING definition (#812)
+// ---------------------------------------------------------------------
+
+// Since the reset stopped truncating field_definition, a catalogue
+// entry whose code matches a shipped definition binds to that row
+// instead of creating one — SeedInsertField is ON CONFLICT (code) DO
+// NOTHING and applyFields recovers via SeedGetFieldByCode. The type
+// then has to come from the ROW, because the row is what decides which
+// value_* column applyAssetFields writes.
+//
+// Registering the CATALOGUE's type instead is invisible to every count:
+// the field exists, the seed reports the right number of definitions,
+// and each value is either written into the wrong column or discarded
+// as value_rejected. So this asserts the bound type and the warning,
+// not a row count.
+func TestApplyFields_BindsToExistingRowsType(t *testing.T) {
+	pool := openCompanionTestPool(t)
+	ctx := context.Background()
+
+	code := "aa812_bind_" + strconv.FormatInt(time.Now().UnixNano()%1e9, 36)
+	// The definition that already exists — stand-in for a shipped one.
+	newDropTestField(t, pool, code, "datetime")
+
+	var buf bytes.Buffer
+	r := NewRunner(pool, nil, Options{Logger: captureLogger(&buf)})
+
+	// The catalogue disagrees: `date` where the row says `datetime`.
+	cat := &catalogues{Fields: []catField{{Name: code, Label: "Bound", Type: "date"}}}
+	if err := r.applyFields(ctx, cat); err != nil {
+		t.Fatalf("applyFields: %v", err)
+	}
+
+	fm, ok := r.fields[code]
+	if !ok {
+		t.Fatalf("applyFields did not register %q at all", code)
+	}
+	if fm.typ != "datetime" {
+		t.Errorf("applyFields registered %q as %q; it bound to a `datetime` row, so every "+
+			"value would be coerced against the wrong type", code, fm.typ)
+	}
+
+	recs := recordsWithMsg(t, &buf, "seed.field.type_mismatch")
+	if len(recs) != 1 {
+		t.Errorf("a catalogue/row type disagreement logged %d warnings, want 1. Log:\n%s",
+			len(recs), buf.String())
+	}
+	if n := r.fieldDrops.total(dropTypeMismatch); n != 1 {
+		t.Errorf("tally counted %d type mismatches, want 1", n)
+	}
+
+	// A matching type must NOT warn — otherwise every shipped code the
+	// catalogue also declares (pixel_width, pixel_height) would cry wolf
+	// on every seed.
+	var buf2 bytes.Buffer
+	r2 := NewRunner(pool, nil, Options{Logger: captureLogger(&buf2)})
+	same := &catalogues{Fields: []catField{{Name: code, Label: "Bound", Type: "datetime"}}}
+	if err := r2.applyFields(ctx, same); err != nil {
+		t.Fatalf("applyFields (matching type): %v", err)
+	}
+	if n := r2.fieldDrops.total(dropTypeMismatch); n != 0 {
+		t.Errorf("a catalogue entry that AGREES with the existing row reported %d "+
+			"mismatches. Log:\n%s", n, buf2.String())
+	}
+}
+
+// The seed catalogue and the shipped catalogue overlap on
+// pixel_width / pixel_height, and #812 makes that overlap load-bearing:
+// the shipped rows now survive `--reset`, so those two entries bind
+// rather than insert. A type change on either side would be a silent
+// mis-write, so pin the agreement in the one place both are visible.
+func TestFieldCatalogue_AgreesWithShippedTypes(t *testing.T) {
+	shipped := map[string]string{
+		"pixel_width":  "number",
+		"pixel_height": "number",
+	}
+	for _, f := range loadFieldCatalogue(t) {
+		want, ok := shipped[f.Name]
+		if !ok {
+			continue
+		}
+		if f.Type != want {
+			t.Errorf("catalogue types %q as %q, but the migrations ship it as %q. The "+
+				"catalogue entry binds to the shipped row, so the seed would write every "+
+				"value against the wrong type (#812).", f.Name, f.Type, want)
+		}
+	}
 }
