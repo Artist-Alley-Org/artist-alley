@@ -809,9 +809,12 @@ func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, h
 // ---------------------------------------------------------------------------
 
 const (
-	modelSpriteCols       = 6
-	modelSpriteRows       = 6
-	modelSpriteCell       = 160 // px per cell; 36 cells × 160 = 960² sprite sheet
+	modelSpriteCols = 6
+	modelSpriteRows = 6
+	// px per cell; a 6×6 grid × 240 = 1440² sprite sheet. 240 rather than
+	// 160 (#811) so the turntable is not visibly softer than the 320px
+	// still the card swaps out when you hover it.
+	modelSpriteCell       = 240
 	modelTurntableSeconds = 4.0
 )
 

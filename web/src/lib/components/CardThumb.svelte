@@ -348,7 +348,9 @@
   // Video scrub cells are no longer a fixed 16:9 (#761) — the sheet is
   // now fitted to the source, so a portrait clip has portrait cells and
   // a hardcoded `aspect-video` box would squash them exactly the way the
-  // old fixed 160x90 sheet did.
+  // old fixed-size sheet did. Nothing here knows the cell's pixel size —
+  // the backend has already moved it once (160 -> 240, #811) and this
+  // component did not need touching, which is the property to keep.
   //
   // The ratio is MEASURED off the sheet we're already painting rather
   // than taken from the asset's recorded pixel_width/pixel_height: the
