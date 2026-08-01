@@ -40,6 +40,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Fields can fill themselves in.** A field can carry a default that is applied when an
+  asset is uploaded, and a team can override that default for its own uploads — so a studio's
+  work lands tagged as that studio's without anyone typing it. A default is either a fixed value
+  or one of a short list the server works out for itself, like whoever is uploading or today's
+  date. There is no scripting: a default is a value, not a formula (#793).
+
+  It never overwrites anything. A value you typed stays, and so does one read out of the file
+  itself — a default only fills a blank. A field offering a retired option cannot be given that
+  option as its default.
+
 - **Profiling can be turned on when something needs investigating.** Set `AA_PPROF_ADDR` and
   the server exposes Go's standard profiling endpoints on that address — off by default, on its
   own listener, published by no deployment file, and it warns loudly if pointed anywhere other
