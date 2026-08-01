@@ -1200,8 +1200,10 @@
     </div>
     {#if scrubberHovering && hoverSprite}
       <!-- Sized from the VTT's own `#xywh` rectangle, never from a
-           hardcoded 160x90 — the sheet's cells take the source's aspect
-           ratio (#761), so a portrait clip's preview is a portrait box. -->
+           hardcoded cell size — the sheet's cells take the source's
+           aspect ratio (#761), so a portrait clip's preview is a
+           portrait box, and the cell's pixel size is free to move (it
+           went 160 -> 240 in #811 with no change here). -->
       <div class="pointer-events-none absolute bottom-4 z-30 -translate-x-1/2 rounded border border-zinc-700 bg-black p-1 shadow-xl" style="left: {hoverLeftPx}px">
         <div class="bg-zinc-950" style="width: {hoverSprite.w}px; height: {hoverSprite.h}px; background-image: url({hoverSprite.src}); background-position: -{hoverSprite.x}px -{hoverSprite.y}px;"></div>
         <div class="mt-1 text-center font-mono text-[10px]">{controller.formatAnchor(Math.round(hoverTime * controller.fps))}</div>

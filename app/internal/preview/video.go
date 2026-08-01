@@ -804,21 +804,29 @@ const (
 	// is fitted inside this square with the source's aspect ratio
 	// preserved (#761), so:
 	//
-	//   16:9  -> 160x90   (identical to the pre-#761 fixed size)
-	//   9:16  -> 90x160
-	//   1:1   -> 160x160
+	//   16:9  -> 240x136  (135 is odd; force_divisible_by=2 lifts it)
+	//   9:16  -> 136x240
+	//   1:1   -> 240x240
 	//
-	// and the whole sheet is therefore bounded at 1600x1600 whatever
+	// and the whole sheet is therefore bounded at 2400x2400 whatever
 	// the source shape — an ultrawide or a 1:8 panorama cannot blow the
 	// sheet out to several thousand pixels on one axis.
-	spriteCellBox = 160
+	//
+	// 240, not 160 (#811): the card shows a 320px still and swaps it for
+	// this cell on hover, so a 160px cell was visibly softer than the
+	// image it replaced. 240 buys 1.5x linear resolution for ~1.7x the
+	// sheet bytes; matching the still at 320 would have cost ~4x, and
+	// motion masks the remaining gap.
+	spriteCellBox = 240
 
 	// spriteFallbackW/H are the cell dimensions used only when the real
 	// sheet cannot be measured AND the probe carries no usable source
-	// dimensions. Same 16:9 cell the handler emitted unconditionally
-	// before #761.
-	spriteFallbackW = 160
-	spriteFallbackH = 90
+	// dimensions. The 16:9 fit of the box — the shape the handler emitted
+	// unconditionally before #761 — DERIVED from spriteCellBox rather
+	// than written out, so raising the box cannot leave a stale cell
+	// behind here (it very nearly did in #811).
+	spriteFallbackW = spriteCellBox
+	spriteFallbackH = spriteCellBox * 9 / 16
 )
 
 // spriteCellSize fits a srcW x srcH frame inside the spriteCellBox
@@ -832,7 +840,10 @@ const (
 // than dividing by zero.
 func spriteCellSize(srcW, srcH int) (int, int) {
 	if srcW <= 0 || srcH <= 0 {
-		return spriteFallbackW, spriteFallbackH
+		// evenCell here too: the derived 16:9 fit of the box is not
+		// guaranteed to be even (240 -> 135), and an odd cell edge is the
+		// one thing every other path in this file rules out.
+		return evenCell(spriteFallbackW), evenCell(spriteFallbackH)
 	}
 	cw, ch := spriteCellBox, spriteCellBox
 	if srcW >= srcH {
