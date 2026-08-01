@@ -292,7 +292,6 @@ func (h *Handler) CreateField(
 		Required:         boolOr(in.Required, false),
 		Searchable:       boolOr(in.Searchable, true),
 		AppliesTo:        int64SliceOr(in.AppliesTo, []int64{}),
-		FieldSetID:       uuidFromOpenAPIPtr(in.FieldSetId),
 		ReadCapability:   in.ReadCapability,
 		WriteCapability:  in.WriteCapability,
 		DisplayOrder:     int32Or(in.DisplayOrder, 100),
@@ -407,7 +406,6 @@ func (h *Handler) UpdateField(
 		Required:                in.Required,
 		Searchable:              in.Searchable,
 		AppliesTo:               appliesToOrNil(in.AppliesTo),
-		FieldSetID:              uuidFromOpenAPIPtr(in.FieldSetId),
 		ReadCapability:          in.ReadCapability,
 		WriteCapability:         in.WriteCapability,
 		DisplayOrder:            int32PtrOpt(in.DisplayOrder),
@@ -1030,10 +1028,6 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		UpdatedAt:        r.UpdatedAt.Time,
 		ExtractionSource: &r.ExtractionSource,
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
-	}
-	if r.FieldSetID.Valid {
-		v := openapi_types.UUID(r.FieldSetID.Bytes)
-		def.FieldSetId = &v
 	}
 	if r.DeprecatedReplacementID.Valid {
 		v := openapi_types.UUID(r.DeprecatedReplacementID.Bytes)

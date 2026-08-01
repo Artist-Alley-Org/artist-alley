@@ -1614,7 +1614,6 @@ CREATE TABLE public.field_definition (
     required boolean DEFAULT false NOT NULL,
     searchable boolean DEFAULT true NOT NULL,
     applies_to bigint[] DEFAULT '{}'::bigint[] NOT NULL,
-    field_set_id uuid,
     read_capability text,
     write_capability text,
     display_order integer DEFAULT 100 NOT NULL,

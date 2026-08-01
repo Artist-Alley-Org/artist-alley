@@ -15,7 +15,7 @@
 -- visible by default; deprecated fields can still hold values on
 -- existing rows, so hiding them would drop live data from the editor.
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -34,7 +34,7 @@ ORDER BY display_group, display_order, code;
 -- Like ListFieldDefinitions but only fields whose applies_to is
 -- empty (applies to all) OR contains the given asset_type ref.
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -47,7 +47,7 @@ ORDER BY display_group, display_order, code;
 
 -- name: GetFieldDefinitionByID :one
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -56,7 +56,7 @@ FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -66,12 +66,12 @@ FROM field_definition WHERE code = $1;
 -- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
-    applies_to, field_set_id, read_capability, write_capability,
+    applies_to, read_capability, write_capability,
     display_order, display_group, source, status,
     created_by_user_ref, updated_by_user_ref, subject_kind, default_value
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17)
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
+          applies_to, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -89,7 +89,6 @@ UPDATE field_definition SET
     required                  = COALESCE(sqlc.narg('required'),                  required),
     searchable                = COALESCE(sqlc.narg('searchable'),                searchable),
     applies_to                = COALESCE(sqlc.narg('applies_to'),                applies_to),
-    field_set_id              = COALESCE(sqlc.narg('field_set_id'),              field_set_id),
     read_capability           = COALESCE(sqlc.narg('read_capability'),           read_capability),
     write_capability          = COALESCE(sqlc.narg('write_capability'),          write_capability),
     display_order             = COALESCE(sqlc.narg('display_order'),             display_order),
@@ -108,7 +107,7 @@ UPDATE field_definition SET
     updated_by_user_ref       = sqlc.narg('updated_by_user_ref')
 WHERE id = sqlc.arg('id')
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
+          applies_to, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -133,7 +132,7 @@ UPDATE field_definition
        updated_by_user_ref = $4
  WHERE id = $1
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
+          applies_to, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
