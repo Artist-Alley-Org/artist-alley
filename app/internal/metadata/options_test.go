@@ -28,7 +28,7 @@ func TestOptionsDocRoundTripsPreLifecycleDocuments(t *testing.T) {
 		`{"min":0,"max":10}`,
 	}
 	for _, in := range live {
-		out, err := normalizeOptionsDoc([]byte(in))
+		out, err := NormalizeOptionsDoc([]byte(in))
 		if err != nil {
 			t.Fatalf("normalize(%s): unexpected error %v", in, err)
 		}
@@ -152,7 +152,7 @@ func TestOptionsDocRejectsBadDocuments(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := normalizeOptionsDoc([]byte(tc.doc))
+			_, err := NormalizeOptionsDoc([]byte(tc.doc))
 			if err == nil {
 				t.Fatalf("expected rejection of %s", tc.doc)
 			}
@@ -172,7 +172,7 @@ func TestOptionsDocAcceptsCrossReferences(t *testing.T) {
 		`{"values":[{"value":"a","children":["b"]},{"value":"c","status":"deprecated","replaced_by":"b"}]}`,
 	}
 	for _, d := range docs {
-		if _, err := normalizeOptionsDoc([]byte(d)); err != nil {
+		if _, err := NormalizeOptionsDoc([]byte(d)); err != nil {
 			t.Errorf("normalize(%s): %v", d, err)
 		}
 	}
@@ -181,7 +181,7 @@ func TestOptionsDocAcceptsCrossReferences(t *testing.T) {
 // TestOptionsDocPreservesSiblingKeys — a vocabulary edit must not drop
 // whatever else the type keeps in options.
 func TestOptionsDocPreservesSiblingKeys(t *testing.T) {
-	out, err := normalizeOptionsDoc([]byte(`{"values":["a"],"allow_custom":true}`))
+	out, err := NormalizeOptionsDoc([]byte(`{"values":["a"],"allow_custom":true}`))
 	if err != nil {
 		t.Fatalf("normalize: %v", err)
 	}

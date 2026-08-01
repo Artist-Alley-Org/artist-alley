@@ -236,7 +236,7 @@ func (h *Handler) CreateField(
 	}
 	// Validate the controlled vocabulary at the door so a bad
 	// replaced_by or an unknown status can never reach storage.
-	optsJSON, err = normalizeOptionsDoc(optsJSON)
+	optsJSON, err = NormalizeOptionsDoc(optsJSON)
 	if err != nil {
 		return openapi.CreateField400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
@@ -422,7 +422,7 @@ func (h *Handler) UpdateField(
 		if err != nil {
 			return nil, err
 		}
-		b, err = normalizeOptionsDoc(b)
+		b, err = NormalizeOptionsDoc(b)
 		if err != nil {
 			return openapi.UpdateField400JSONResponse{
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
@@ -927,7 +927,7 @@ func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.A
 		// re-parenting an ancestor a rewrite of every descendant's
 		// stored value, which is the cascade the slug indirection
 		// exists to avoid. Slugs are unique across a field's entire
-		// option tree (normalizeOptionsDoc → collectSlugs enforces it
+		// option tree (NormalizeOptionsDoc → collectSlugs enforces it
 		// at full depth), so the leaf slug alone addresses the node and
 		// the path is derived at read time. See the 2026-07-31
 		// tree-storage amendment to ADR 0012.
