@@ -40,6 +40,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The built-in Country and Keywords fields now come with a starting vocabulary.** Both
+  shipped with an empty list of choices, which for a pick-list is the same as not working:
+  Country was a hierarchy with nothing in it, and Keywords had nothing to pick. Country now
+  offers a two-level starting set — continent, then country — and Keywords a short list of
+  general-purpose terms. Both are explicitly starting points for an operator to extend or
+  prune, not an authority (#820).
+
+  Country entries are stored under their standard two-letter ISO country codes rather than
+  invented names, so a value recorded on one site means the same thing on any other site it
+  travels to.
+
+  Along the way, two related gaps were fixed: loading sample content could not attach values
+  to any of the built-in fields (only to the fields the sample library itself defines), and
+  the field admin could not display a hierarchical field's choices at all — it showed "a tree
+  field has no option list" even when one existed. Editing nested entries is still to come
+  (#825), and the system does not yet reject a value that isn't in a field's vocabulary
+  (#824).
+
 - **A field can now be a hierarchy, and the sample library exercises every kind of field
   there is.** Fields come in eleven kinds — plain text, long text, formatted text, numbers,
   yes/no, dates, timestamps, pick-one and pick-many lists, a hierarchical category, and a
