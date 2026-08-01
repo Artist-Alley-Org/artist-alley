@@ -16,7 +16,7 @@
 -- existing rows, so hiding them would drop live data from the editor.
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -35,7 +35,7 @@ ORDER BY display_group, display_order, code;
 -- empty (applies to all) OR contains the given asset_type ref.
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -48,7 +48,7 @@ ORDER BY display_group, display_order, code;
 -- name: GetFieldDefinitionByID :one
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -57,7 +57,7 @@ FROM field_definition WHERE id = $1;
 -- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -67,12 +67,12 @@ FROM field_definition WHERE code = $1;
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, read_capability, write_capability,
-    display_order, display_group, source, status,
+    display_order, display_group, status,
     created_by_user_ref, updated_by_user_ref, subject_kind, default_value
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
-          display_order, display_group, source, status,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value;
@@ -93,7 +93,6 @@ UPDATE field_definition SET
     write_capability          = COALESCE(sqlc.narg('write_capability'),          write_capability),
     display_order             = COALESCE(sqlc.narg('display_order'),             display_order),
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
-    source                    = COALESCE(sqlc.narg('source'),                    source),
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
@@ -108,7 +107,7 @@ UPDATE field_definition SET
 WHERE id = sqlc.arg('id')
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
-          display_order, display_group, source, status,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value;
@@ -133,7 +132,7 @@ UPDATE field_definition
  WHERE id = $1
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
-          display_order, display_group, source, status,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value;

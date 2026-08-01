@@ -121,13 +121,29 @@ func TestShippedFieldCatalogue_FreshInstallContents(t *testing.T) {
 
 	// code -> type | subject_kind | display_group | extraction_source
 	want := map[string]string{
-		"title":        "text|asset|core|",
-		"description":  "longtext|asset|core|",
-		"keywords":     "multi_select|asset|core|",
-		"credit":       "text|asset|rights|",
-		"copyright":    "text|asset|rights|",
-		"capture_date": "datetime|asset|technical|",
-		"country":      "tree|asset|general|",
+		// Wired by 00025 (#813), each to a real metadata.CanonicalField.
+		// A name that is not one routes NOTHING and says nothing about
+		// it, so these four strings are load-bearing; the constants they
+		// must equal are pinned in
+		// asset/metadata.TestShippedWiring_NamesRealCanonicalFields.
+		"capture_date": "datetime|asset|technical|capture_datetime",
+		"copyright":    "text|asset|rights|xmp_rights",
+		"credit":       "text|asset|rights|iptc_credit",
+		"country":      "tree|asset|general|iptc_country",
+
+		// Deliberately unwired, both with a recorded IPTC intent.
+		//
+		// `keywords` is multi_select, and the extraction applier has no
+		// value_options column to write — wiring it would leave the
+		// field visibly empty while the logs claimed success. It waits
+		// on #789; the applier refuses the wiring if anyone tries.
+		//
+		// `title` mirrors assets.title, and which of the two owns the
+		// concept is #822's open question, not extraction's.
+		"title":       "text|asset|core|",
+		"keywords":    "multi_select|asset|core|",
+		"description": "longtext|asset|core|",
+
 		// Unwired by 00020: these two are COMPUTED by the preview
 		// pipeline, never extracted (#765). A non-empty
 		// extraction_source here would re-open that defect.

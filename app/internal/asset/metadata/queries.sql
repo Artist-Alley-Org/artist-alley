@@ -96,6 +96,10 @@ SELECT id, scope, total, processed, succeeded, failed,
 -- Powers the ExtractionConfig cache. Returns every field
 -- definition that's wired to an extraction source. Read on every
 -- extract job (via the cache); invalidated on field-def writes.
-SELECT id, extraction_source, extraction_mode
+--
+-- type + options are part of the config, not decoration: the applier
+-- refuses a type it has no column for (multi_select) and resolves a
+-- select / tree value against options before writing the slug.
+SELECT id, extraction_source, extraction_mode, type, options
   FROM field_definition
  WHERE extraction_source != '';

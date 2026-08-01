@@ -11091,11 +11091,6 @@ components:
         write_capability: { type: string, nullable: true }
         display_order: { type: integer }
         display_group: { type: string }
-        source:
-          type: object
-          additionalProperties: true
-          nullable: true
-          description: "Auto-extraction source, e.g. {\"type\":\"exif\",\"tag\":\"DateTimeOriginal\"}."
         extraction_source:
           type: string
           description: |
@@ -11214,7 +11209,6 @@ components:
         write_capability: { type: string, nullable: true }
         display_order: { type: integer, default: 100 }
         display_group: { type: string, default: general }
-        source: { type: object, additionalProperties: true, nullable: true }
         default_value:
           allOf:
             - $ref: "#/components/schemas/FieldDefault"
@@ -11279,7 +11273,6 @@ components:
         write_capability: { type: string, nullable: true }
         display_order: { type: integer }
         display_group: { type: string }
-        source: { type: object, additionalProperties: true, nullable: true }
         status:
           type: string
           enum: [active, deprecated, archived]
