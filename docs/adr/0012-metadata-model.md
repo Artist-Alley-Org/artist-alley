@@ -58,8 +58,9 @@ Declared as `field_set_id UUID NULL -- for bundling (export/import)`,
 with the federation intent recorded below: operators publish a
 `field_set` JSON, peers import it to adopt identical field schemas.
 
-In fourteen months it never acquired a producer, a consumer, a
-foreign key, an index, or a referent — **there has never been a
+In the ~2 months since this ADR (2026-05-26; the baseline's
+`field_definition` rows are stamped 2026-06-06) it never acquired a
+producer, a consumer, a foreign key, an index, or a referent — **there has never been a
 `field_set` table for it to point at.** Verified on a live instance:
 15 of 15 `field_definition` rows `NULL`, and the only foreign key on
 the table is `deprecated_replacement_id`.
