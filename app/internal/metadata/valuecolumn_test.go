@@ -569,7 +569,7 @@ func TestNestedSlugsMustBeUniqueTreeWide(t *testing.T) {
 			{"value":"london","label":"London, UK"}
 		]}
 	]}`)
-	if _, err := normalizeOptionsDoc(dupAcrossLevels); err == nil {
+	if _, err := NormalizeOptionsDoc(dupAcrossLevels); err == nil {
 		t.Error("a slug duplicated across levels was accepted — " +
 			"tree-wide slug uniqueness is what makes a bare leaf slug a complete address")
 	}
@@ -580,7 +580,7 @@ func TestNestedSlugsMustBeUniqueTreeWide(t *testing.T) {
 			{"value":"london","label":"London again"}
 		]}
 	]}`)
-	if _, err := normalizeOptionsDoc(dupInBranch); err == nil {
+	if _, err := NormalizeOptionsDoc(dupInBranch); err == nil {
 		t.Error("a slug duplicated within one branch was accepted")
 	}
 }

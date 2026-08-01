@@ -52,6 +52,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -429,6 +430,22 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			b, err := json.Marshal(map[string]any{"values": f.Options})
 			if err != nil {
 				return err
+			}
+			// Same validation + canonicalisation the admin write path
+			// runs (metadata handler, create and update). The seed is
+			// NOT trusted input just because it lives in the repo: the
+			// catalogue is hand-edited, and the invariant that matters
+			// most here — slugs unique across the whole option tree —
+			// is exactly the one a human adding a `tree` branch breaks
+			// by copy-paste. Break it and values resolve to the wrong
+			// node with no error anywhere (ADR 0012, tree amendment).
+			//
+			// Fatal, not warn-only, unlike the per-value drops below: a
+			// bad catalogue is a repo defect that every seed of every
+			// instance would inherit, not one manifest row.
+			b, err = metadata.NormalizeOptionsDoc(b)
+			if err != nil {
+				return fmt.Errorf("field %s options: %w", f.Name, err)
 			}
 			opts = b
 		}
@@ -819,13 +836,21 @@ func companionExt(rel string) string {
 // definition, or fix the slug), a rejected value is a bad value (fix the
 // manifest, or widen the coercion).
 //
-// Warn-only on purpose. There is in-repo precedent for strictness — the
-// `ci` coverage profile errors rather than warns on a gap (coverage.go)
-// — but both seed manifests currently carry six codes whose definitions
-// have not landed yet (#808), so every asset hits the unknown-code
-// branch by design. Making it fatal today breaks the seed and therefore
-// CI. Once #808 lands and the seed is clean, promoting unknown-code to a
-// hard error under ProfileCI is the sensible follow-up.
+// Warn-only, for now. There is in-repo precedent for strictness — the
+// `ci` coverage profile errors rather than warns on a gap (coverage.go).
+// The reason not to be strict was that both seed manifests carried six
+// codes with no definition, so every asset hit the unknown-code branch
+// by design and a hard error would have broken the seed and therefore
+// CI. #808 added those six definitions and a full site_a seed now
+// reports unknown_code=0 / value_rejected=0, so the blocker is gone:
+// promoting unknown-code to a hard error under ProfileCI is the
+// sensible follow-up, and this comment is the record that it is now
+// possible.
+//
+// Note the catalogue's OWN validity is already fatal — applyFields
+// runs metadata.NormalizeOptionsDoc and returns the error. The
+// asymmetry is deliberate: a broken catalogue is one repo defect every
+// instance inherits, a dropped value is one row of one manifest.
 const (
 	dropUnknownCode   = "unknown_code"
 	dropValueRejected = "value_rejected"

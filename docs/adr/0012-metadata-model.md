@@ -815,11 +815,18 @@ The reasoning, and why both rejected options are rejected on the same grounds:
   independent values. A path is ordered and is one value. Storing one in the other overloads
   the column's meaning for every reader and every query.
 
-- **Neither is necessary, because the ancestors are redundant.** `normalizeOptionsDoc` runs
+- **Neither is necessary, because the ancestors are redundant.** `NormalizeOptionsDoc` runs
   `collectSlugs` over the **full depth** of the options document and rejects a duplicate slug
   anywhere in it, on every create and every update. Slugs are therefore unique across a field's
   entire tree, so the selected node's own slug is a **complete address**. The path is derived at
   read time and never stored.
+
+  That uniqueness is load-bearing enough that there is exactly **one** enforcement path for it.
+  `NormalizeOptionsDoc` is exported (#808) and the seed catalogue loader calls the same
+  function, rather than parsing option documents on its own — decoding a `FieldOption` is free,
+  which is precisely the trap: a writer that only unmarshals gets a document that parses but was
+  never checked, and a duplicate slug in a hand-edited catalogue then resolves values to the
+  wrong node with no error anywhere.
 
 - **`value_ref` is wrong** and was never plausible: it holds the UUID of a row. An option is an
   entry in a jsonb document and has no identity of its own to point at.

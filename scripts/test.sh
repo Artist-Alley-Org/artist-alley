@@ -228,9 +228,18 @@ docker run --rm \
 # because an inner N-second cap under -race -p 1 contention is an
 # arbitrary second bound that fires on loaded runners and replaces the
 # real error ("which query was slow") with `context deadline exceeded`.
+#
+# seed/profiles is mounted read-only alongside app/ because the seed
+# catalogue is an INPUT to the code under test, not a fixture the code
+# ships: applyFields reads dataset.field_definitions.json verbatim, so
+# a hand-edit that breaks it (a duplicate option slug, a renamed tree
+# node) is a defect no amount of testing app/ alone can see. Mounting
+# it is what lets TestFieldCatalogue_* check the real file rather than
+# a second copy of it that could drift.
 if ! docker run --rm \
     --network "$NET" \
     -v "${ROOT}/app:/src/app" \
+    -v "${ROOT}/seed:/src/seed:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \
