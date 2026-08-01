@@ -753,13 +753,25 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			if !r.opts.ForcePreviews && variantOnDisk(ctx, r.storage, hash, "col") {
 				willSkip++
 			}
-			if _, jErr := r.jobs.Enqueue(ctx,
-				dispatch.JobTypeForExt(&ext),
-				dispatch.NewPayload(uuid.UUID(id.Bytes), hash, &ext, r.opts.ForcePreviews),
-				jobs.EnqueueOpts{Priority: &previewPriority},
-			); jErr != nil {
-				r.log.Warn("seed.preview.enqueue_failed", "asset", a.ID, "err", jErr.Error())
-			} else {
+			// PlanForExt, so a seeded video gets its cheap poster job
+			// alongside the full ladder (#818). On a seed this is the
+			// difference between a browse grid that fills in as the run
+			// proceeds and one that stays blank behind 74%-of-CPU video
+			// encodes. `queued` still counts assets, not jobs.
+			payload := dispatch.NewPayload(uuid.UUID(id.Bytes), hash, &ext, r.opts.ForcePreviews)
+			enqueued := 0
+			for _, step := range dispatch.PlanForExt(&ext, previewPriority) {
+				priority := step.Priority
+				if _, jErr := r.jobs.Enqueue(ctx, step.Type, payload,
+					jobs.EnqueueOpts{Priority: &priority},
+				); jErr != nil {
+					r.log.Warn("seed.preview.enqueue_failed", "asset", a.ID,
+						"job_type", string(step.Type), "err", jErr.Error())
+					continue
+				}
+				enqueued++
+			}
+			if enqueued > 0 {
 				queued++
 			}
 		}

@@ -150,6 +150,46 @@ func JobTypeForExt(ext *string) jobs.JobType {
 	return jobs.TypePreviewRaster
 }
 
+// Step is one job an enqueue site should insert for an asset, with the
+// priority the router thinks it deserves.
+type Step struct {
+	Type     jobs.JobType
+	Priority int
+}
+
+// PlanForExt is what an enqueue site asks instead of JobTypeForExt when
+// it is about to actually insert rows: the ordered set of preview jobs
+// for ext, given the baseline priority that site uses for "a person is
+// waiting on this".
+//
+// For every format but video the plan is one step at the caller's own
+// priority, exactly as before.
+//
+// Video splits (#818). The cheap poster job takes the caller's priority
+// because it is the one that makes the card appear, and the full ladder
+// drops to PriorityBackfil because nothing on screen is waiting for it:
+// a video with a poster and a thumbhash looks finished, and the HLS
+// rungs matter at the moment someone presses play, not at the moment
+// the grid paints. Enqueued in this order so that at equal priority —
+// which is what a bulk rebuild produces, since it already runs
+// everything at PriorityBackfil — ClaimJob's `ORDER BY priority,
+// enqueued_at` still drains the posters first.
+//
+// The plan lives HERE, next to the extension sets, for the reason the
+// package exists: four sites enqueue preview work (upload, recreate,
+// `aa seed`, bulk rebuild) and a routing rule that any one of them
+// spells out for itself is a routing rule that drifts.
+func PlanForExt(ext *string, base int) []Step {
+	full := JobTypeForExt(ext)
+	if full != jobs.TypePreviewVideo {
+		return []Step{{Type: full, Priority: base}}
+	}
+	return []Step{
+		{Type: jobs.TypePreviewVideoPoster, Priority: base},
+		{Type: full, Priority: jobs.PriorityBackfil},
+	}
+}
+
 // CanPreview reports whether SOME handler will actually produce a
 // preview for ext. It is the guard the enqueue path needs (#366).
 //

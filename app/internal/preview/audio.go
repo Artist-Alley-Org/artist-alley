@@ -275,14 +275,23 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// Cheap re-queue path: if every variant already exists, skip
 	// the (cheap) waveform render.
 	//
-	// Note this is the one preview handler whose re-queue never
-	// reaches fanToLadder, so it is also the one whose re-queue does
-	// NOT heal a missing thumbhash (#645). Healing existing assets is
-	// the thumbhash-backfill job's remit, not this short-circuit's —
-	// re-rendering a waveform on every requeue to recover a 30-byte
-	// hash would be the wrong trade.
+	// This handler's re-queue never reaches fanToLadder, so nothing on
+	// this path stamps the thumbhash the ladder step would have. That
+	// used to be left to the thumbhash-backfill sweep on the correct
+	// grounds that re-rendering a waveform to recover 30 bytes is the
+	// wrong trade — and it still is. healThumbhashOnSkip does not
+	// re-render; it reads a rung already in storage, which is what the
+	// sweep does, for the one asset this job is already holding (#827).
 	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "audio",
+		})
 	} else {
 		wavePath := filepath.Join(filepath.Dir(src), "wave.png")
 		if err := h.renderWaveform(jobCtx, src, wavePath); err != nil {

@@ -229,14 +229,19 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// when the poster itself already exists (e.g. earlier encodes
 	// pre-dating poster-derived thumbnails). The inner helpers skip
 	// what's already on the backend.
-	posterExists := variantDone(jobCtx, h.Storage, p.FileHash, "poster", p.Force)
-	if err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe, p.Force); err != nil {
+	//
+	// On an install running the cheap poster job (#818) this is normally
+	// the skip branch: preview.video.poster has already put the poster
+	// and the whole raster ladder in place by the time this job is
+	// claimed, and the expensive handler must not render either again.
+	rendered, err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe, p.Force)
+	if err != nil {
 		return nil, fmt.Errorf("preview.video: poster: %w", err)
 	}
-	if posterExists {
-		result.Skipped = append(result.Skipped, "poster")
-	} else {
+	if rendered {
 		result.Variants = append(result.Variants, "poster")
+	} else {
+		result.Skipped = append(result.Skipped, "poster")
 	}
 
 	// --- HLS ladder -------------------------------------------------------
@@ -251,6 +256,11 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// --- scrub sprite + VTT ----------------------------------------------
 	if variantDone(jobCtx, h.Storage, p.FileHash, "sprites.jpg", p.Force) {
 		result.Skipped = append(result.Skipped, "sprites")
+		// The sheet and its cue file are written together and are
+		// useless apart, so the sentinel's reconcile has to cover both
+		// (#827) — otherwise a healed install has a row for the pixels
+		// and none for the geometry that reads them.
+		variantDone(jobCtx, h.Storage, p.FileHash, "sprites.vtt", false)
 	} else if err := h.writeSprites(jobCtx, work, p.FileHash, probe); err != nil {
 		return nil, fmt.Errorf("preview.video: sprites: %w", err)
 	} else {
@@ -383,77 +393,259 @@ func parseRatio(s string) float64 {
 // Poster
 // ---------------------------------------------------------------------------
 
-func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe, force bool) error {
-	posterPath := filepath.Join(w.dir, "poster.jpg")
+// posterCandidateFractions are the points in a clip, as fractions of
+// its duration, that the poster is drawn from — in order of preference.
+//
+// A FRACTION, NOT A FIXED OFFSET (#810). The old rule was `at := 1.0`,
+// with the fraction used only as a short-clip guard, so on anything
+// longer than four seconds the poster was always the frame one second
+// in. One second into a film is the fade-in. Measured mean luma at
+// t=1.0s across the seed dataset: sintel-2010-1080p.mkv 0.0 — a
+// literally black card — tears-of-steel 15.0, big-buck-bunny 49.3,
+// xonotic 93.0, which is why gameplay capture looked fine and films did
+// not. Ten percent in is past every title card we have.
+//
+// Three of them because one is a guess. The extras are only ever
+// visited when the first lands somewhere dark; see selectPoster.
+var posterCandidateFractions = []float64{0.10, 0.25, 0.50}
+
+// posterThumbnailFrames is the window the ffmpeg `thumbnail` filter
+// scores at each candidate offset. It buffers this many frames, picks
+// the one furthest from their average histogram, and emits it — which is
+// what turns "the frame that happens to be at 10%" into "the most
+// distinctive frame near 10%", at the cost of decoding the window.
+//
+// 60 is ~2.5 seconds at 24fps: wide enough to step over a cut or a
+// dissolve, narrow enough that the decode stays well under a second for
+// 1080p. It is deliberately not the 100 the sprite sheet uses — that
+// grid samples the whole clip and can afford to; this runs in the cheap
+// poster job whose entire justification is finishing fast.
+const posterThumbnailFrames = 60
+
+// posterMinMeanLuma is the mean luminance, on 0..1, below which a
+// candidate frame is treated as "the card would look broken" and the
+// next offset is tried.
+//
+// 16/255. Above it sit every deliberately dark frame we measured
+// (tears-of-steel's t=1.0s frame is 15.0/255, i.e. just under — which is
+// the right side of the line for a frame that reads as black on a
+// browse grid). Below it is a fade, a slate, or a letterboxed gap.
+const posterMinMeanLuma = 16.0 / 255.0
+
+// posterPick is the outcome of selectPoster: the chosen frame, where it
+// came from, and how bright it turned out.
+type posterPick struct {
+	path  string
+	img   image.Image
+	atS   float64
+	luma  float64
+	tries int
+}
+
+// writePoster puts a poster frame on the backend and fans the raster
+// ladder from it. Reports whether it actually rendered one.
+func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe, force bool) (bool, error) {
 	if variantDone(ctx, h.Storage, hash, "poster", force) {
-		// Re-extract from source to drive the raster ladder without
-		// re-uploading the poster bytes. Fast: one I-frame seek.
-		at := 1.0
-		if probe.DurationS > 0 && probe.DurationS < 4 {
-			at = probe.DurationS * 0.1
+		// The poster bytes already exist, but the raster ladder may not
+		// — an encode predating poster-derived thumbnails has one and
+		// not the other — so the ladder still has to run.
+		//
+		// It runs from the STORED poster, read back, rather than from a
+		// fresh extract of the source. Re-extracting was cheap and
+		// wrong: it is not guaranteed to return the same frame (with
+		// #810's selection it frequently will not), so the `col` a card
+		// shows would drift away from the `poster` the player shows for
+		// the same asset, from one requeue to the next, with nothing
+		// re-uploaded to explain it.
+		src, err := decodeStoredVariant(ctx, h.Storage, hash, "poster", defaultMaxVariantBytes)
+		if err == nil {
+			return false, h.writePosterVariants(ctx, assetID, hash, src, force)
 		}
-		cmd := exec.CommandContext(ctx, h.ffmpegBin(),
-			"-hide_banner", "-loglevel", "error", "-y",
-			"-ss", fmt.Sprintf("%.3f", at),
-			"-i", w.sourcePath,
-			"-frames:v", "1",
-			"-vf", "scale='min(4096,iw)':'-2'",
-			"-q:v", "2",
-			posterPath,
-		)
-		if err := runFFmpeg(cmd); err != nil {
-			return err
-		}
-		return h.writePosterVariants(ctx, assetID, hash, posterPath, force)
+		// Unreadable poster bytes — the backend has something under the
+		// key that will not decode. Fall through and render a new one.
+		logAttrs(h.Logger, ctx, slog.LevelWarn, "preview.video.poster_readback_failed",
+			slog.String("file_hash", hash),
+			slog.String("err", err.Error()))
 	}
 
-	at := 1.0
-	if probe.DurationS > 0 && probe.DurationS < 4 {
-		at = probe.DurationS * 0.1
+	pick, err := h.selectPoster(ctx, w, probe)
+	if err != nil {
+		return false, err
 	}
-	cmd := exec.CommandContext(ctx, h.ffmpegBin(),
-		"-hide_banner", "-loglevel", "error", "-y",
-		"-ss", fmt.Sprintf("%.3f", at),
-		"-i", w.sourcePath,
-		"-frames:v", "1",
-		// Cap at 4096 so we have headroom for `hires`; the sysconfig
-		// variant ladder downsamples from there.
-		"-vf", "scale='min(4096,iw)':'-2'",
-		"-q:v", "2",
-		posterPath,
-	)
-	if err := runFFmpeg(cmd); err != nil {
-		return err
-	}
-	if err := h.uploadFile(ctx, hash, "poster", posterPath, "image/jpeg"); err != nil {
-		return err
+	logAttrs(h.Logger, ctx, slog.LevelDebug, "preview.video.poster_selected",
+		slog.String("file_hash", hash),
+		slog.Float64("at_s", pick.atS),
+		slog.Float64("mean_luma", pick.luma),
+		slog.Int("tries", pick.tries))
+
+	if err := h.uploadFile(ctx, hash, "poster", pick.path, "image/jpeg"); err != nil {
+		return false, err
 	}
 
 	// Drive the raster variant ladder (col / preview / screen / hires)
 	// from the poster frame so videos render the same shape as images
 	// across every browse + post-detail surface. This is what makes a
 	// video card actually look like a card instead of a placeholder.
-	return h.writePosterVariants(ctx, assetID, hash, posterPath, force)
+	return true, h.writePosterVariants(ctx, assetID, hash, pick.img, force)
 }
 
-// writePosterVariants decodes the poster JPEG and runs it through the
-// shared ladder step, which writes each rung and stamps the asset's
-// thumbhash from the poster frame. Rungs already on the backend are
-// skipped — re-runs are cheap.
+// selectPoster extracts the best poster frame it can find and returns it
+// decoded.
 //
-// A failed Put here now fails the job (it used to log + continue). The
-// job system retries up to max_attempts, and the alternative — a video
-// reporting success with no `col` — is the col-404 class the model
-// handler already fixed for itself.
-func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash, posterPath string, force bool) error {
-	f, err := os.Open(posterPath)
+// The rule is "a representative frame near a fraction of the duration,
+// and not a black one". ffmpeg's `thumbnail` filter supplies the first
+// half — it scores a window of frames and hands back the most
+// distinctive — and it is the right tool, but it is not sufficient on
+// its own: it picks the best frame in the window it is given, and a
+// window that lies entirely inside a fade-from-black contains no good
+// frame to pick. So the offsets are walked in order and the mean
+// luminance of each result decides whether to stop.
+//
+// The measurement is free of extra process spawns: the JPEG has to be
+// decoded anyway to drive the ladder, so the check reads the image that
+// was already going to be decoded.
+//
+// A clip that is dark ALL THE WAY THROUGH — night footage, a black-slug
+// intro across the first half — still gets a poster: the brightest
+// candidate seen wins once the list runs out. Refusing to produce one
+// would trade a dark card for no card.
+func (h *VideoHandler) selectPoster(ctx context.Context, w workDir, probe Probe) (posterPick, error) {
+	offsets := posterOffsets(probe.DurationS)
+	var best posterPick
+	var lastErr error
+	for i, at := range offsets {
+		path := filepath.Join(w.dir, fmt.Sprintf("poster-%d.jpg", i))
+		if err := h.extractFrame(ctx, w.sourcePath, path, at); err != nil {
+			lastErr = err
+			continue
+		}
+		img, err := decodeImageFile(path)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		pick := posterPick{path: path, img: img, atS: at, luma: meanLuma(img), tries: i + 1}
+		if pick.luma > best.luma || best.img == nil {
+			best = pick
+		}
+		if pick.luma >= posterMinMeanLuma {
+			best.tries = i + 1
+			return best, nil
+		}
+	}
+	if best.img == nil {
+		if lastErr == nil {
+			lastErr = errors.New("no candidate offsets")
+		}
+		return posterPick{}, fmt.Errorf("poster: no usable frame: %w", lastErr)
+	}
+	best.tries = len(offsets)
+	return best, nil
+}
+
+// posterOffsets turns a duration into the ordered seek points to try.
+//
+// A zero or absent duration (a container ffprobe could not measure)
+// falls back to the start of the file: the thumbnail filter still scans
+// forward from there, so the result is "the most distinctive of the
+// first 60 frames" rather than "frame 0", which is the best available
+// answer when there is no duration to take a fraction of.
+func posterOffsets(durationS float64) []float64 {
+	if durationS <= 0 {
+		return []float64{0}
+	}
+	out := make([]float64, 0, len(posterCandidateFractions))
+	for _, f := range posterCandidateFractions {
+		out = append(out, durationS*f)
+	}
+	return out
+}
+
+// extractFrame writes one JPEG from the source at the given offset.
+//
+// `-ss` before `-i` is an input seek — ffmpeg jumps to the preceding
+// keyframe rather than decoding from zero, which is what keeps this
+// affordable on a feature-length source.
+func (h *VideoHandler) extractFrame(ctx context.Context, sourcePath, outPath string, at float64) error {
+	return runFFmpeg(exec.CommandContext(ctx, h.ffmpegBin(),
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-ss", fmt.Sprintf("%.3f", at),
+		"-i", sourcePath,
+		// thumbnail first, then scale: the filter's histogram scoring
+		// should see the frames as shot. Cap at 4096 so `hires` has
+		// headroom; the sysconfig variant ladder downsamples from there.
+		"-vf", fmt.Sprintf("thumbnail=%d,scale='min(4096,iw)':'-2'", posterThumbnailFrames),
+		"-frames:v", "1",
+		"-q:v", "2",
+		outPath,
+	))
+}
+
+// meanLuma is the average Rec.601 luminance of an image, on 0..1.
+//
+// Subsampled: a 4096px poster is 8M+ pixels and image.At is an interface
+// call per pixel, so a full pass would cost more than the ffmpeg run it
+// is checking. ~4096 samples on a regular grid is far more than enough
+// to tell "black card" from "picture" — the distinction this exists to
+// draw is between 0.0 and 0.2, not between 0.19 and 0.20.
+func meanLuma(img image.Image) float64 {
+	if img == nil {
+		return 0
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return 0
+	}
+	const samplesPerAxis = 64
+	stepX := max(1, w/samplesPerAxis)
+	stepY := max(1, h/samplesPerAxis)
+	var sum float64
+	var n int
+	for y := b.Min.Y; y < b.Max.Y; y += stepY {
+		for x := b.Min.X; x < b.Max.X; x += stepX {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			sum += (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(bl)) / 65535.0
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / float64(n)
+}
+
+// decodeImageFile decodes a file the handler just wrote.
+func decodeImageFile(path string) (image.Image, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("poster variants: open: %w", err)
+		return nil, err
 	}
 	defer f.Close()
-	src, _, err := image.Decode(f)
+	img, _, err := image.Decode(f)
 	if err != nil {
-		return fmt.Errorf("poster variants: decode: %w", err)
+		return nil, fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+	}
+	return img, nil
+}
+
+// writePosterVariants runs the poster frame through the shared ladder
+// step, which writes each rung and stamps the asset's thumbhash and
+// pixel dimensions from it. Rungs already on the backend are skipped —
+// and, since #827, reconciled — so re-runs are cheap.
+//
+// Takes the DECODED image, not a path: both callers already hold one
+// (the render path decoded it to measure its luminance, the skip path
+// decoded it out of storage), and decoding a 4096px JPEG twice to keep a
+// path-shaped signature is not a trade worth making.
+//
+// A failed Put here fails the job (it used to log + continue). The job
+// system retries up to max_attempts, and the alternative — a video
+// reporting success with no `col` — is the col-404 class the model
+// handler already fixed for itself.
+func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash string, src image.Image, force bool) error {
+	if src == nil {
+		return errors.New("poster variants: nil source image")
 	}
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,

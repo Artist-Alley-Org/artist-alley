@@ -72,6 +72,23 @@ const (
 	TypePreviewText    JobType = "preview.text"
 	TypePreviewArchive JobType = "preview.archive"
 
+	// TypePreviewVideoPoster is the cheap front half of preview.video:
+	// one frame, the raster ladder, the thumbhash, and stop (#818).
+	//
+	// It exists because preview.video is the most expensive job in the
+	// system — measured at 74% of render CPU, capped at concurrency 2 —
+	// and until it finished a video had NO poster and NO thumbhash,
+	// because both are written inside it. A bulk upload therefore left a
+	// long tail of cards that were not "loading", they were blank. The
+	// work that makes a card appear is a single seek and a JPEG; the
+	// work that makes it play is an HLS ladder, and there is no reason
+	// for the first to queue behind the second.
+	//
+	// Both jobs are enqueued together (see dispatch.PlanForExt) and both
+	// are idempotent on the same (hash, variant_key) pairs, so whichever
+	// runs second finds the poster already there and skips it.
+	TypePreviewVideoPoster JobType = "preview.video.poster"
+
 	// Audiobook background work — async because ffmpeg concat /
 	// AAX decryption are minutes-per-hour-of-audio operations
 	// that have no business blocking the upload response. Both

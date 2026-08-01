@@ -141,6 +141,14 @@ func (h *FontHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	cardImg := h.renderSpecimen(parsed, meta, p.FileExtension)
 	if ladderDone(ctx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(ctx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "font",
+		})
 	} else if err := h.fanCardToLadder(ctx, p.AssetID, p.FileHash, cardImg, p.Force); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.fan_failed",
 			slog.String("err", err.Error()))

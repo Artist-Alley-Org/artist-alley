@@ -537,13 +537,20 @@ func (h *Handler) CreateAsset(
 		// terminal-rejects them — a guaranteed dead job (#366). Skip
 		// instead; the asset still uploads fine, it just has no preview.
 		if dispatch.CanPreview(in.FileExtension) {
-			if _, err := h.Jobs.Enqueue(ctx, jobTypeForExt(in.FileExtension), payload, jobs.EnqueueOpts{
-				Priority: &priority,
-			}); err != nil {
-				h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
-					slog.String("asset_id", newID.String()),
-					slog.String("err", err.Error()),
-				)
+			// PlanForExt, not jobTypeForExt: a video gets a cheap poster
+			// job at this priority plus the full ladder behind it
+			// (#818), everything else gets the single job it always got.
+			for _, step := range dispatch.PlanForExt(in.FileExtension, priority) {
+				stepPriority := step.Priority
+				if _, err := h.Jobs.Enqueue(ctx, step.Type, payload, jobs.EnqueueOpts{
+					Priority: &stepPriority,
+				}); err != nil {
+					h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
+						slog.String("asset_id", newID.String()),
+						slog.String("job_type", string(step.Type)),
+						slog.String("err", err.Error()),
+					)
+				}
 			}
 		} else {
 			h.Logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.no_preview_for_ext",
@@ -818,16 +825,6 @@ func isPgUniqueViolation(err error) bool {
 	return false
 }
 
-// jobTypeForExt picks the preview-job type for a given file extension.
-// preview.raster handles still images; preview.video runs the HLS
-// pipeline; preview.3d runs the headless three.js turntable renderer. Other
-// formats (audio/svg/pdf/font) land in follow-ups.
-// jobTypeForExt delegates to the shared dispatch map (#355): the
-// upload path, `aa seed`, and the preview handlers all read one set,
-// so they can never drift apart.
-func jobTypeForExt(ext *string) jobs.JobType {
-	return dispatch.JobTypeForExt(ext)
-}
 
 // ---------------------------------------------------------------------------
 // GetAsset
@@ -1526,16 +1523,28 @@ func (h *Handler) RecreateAssetPreview(
 		}, nil
 	}
 
-	jobType := jobTypeForExt(row.FileExtension)
 	force := true
 	if req.Params.Force != nil {
 		force = *req.Params.Force
 	}
 	payload := dispatch.NewPayload(uuid.UUID(req.Id), *row.FileHash, row.FileExtension, force)
 	priority := jobs.PriorityHigh
-	jobID, err := h.Jobs.Enqueue(ctx, jobType, payload, jobs.EnqueueOpts{Priority: &priority})
-	if err != nil {
-		return nil, fmt.Errorf("assets: enqueue preview re-render: %w", err)
+
+	// A video plans two jobs (#818): the poster refreshes in seconds so
+	// the operator sees their "recreate" land, the ladder follows. The
+	// response reports the LAST step — the full job — because that is
+	// the one whose completion means the asset is actually rebuilt, and
+	// it is what a caller polling the returned id is waiting to see.
+	steps := dispatch.PlanForExt(row.FileExtension, priority)
+	var jobID uuid.UUID
+	var jobType jobs.JobType
+	for _, step := range steps {
+		stepPriority := step.Priority
+		id, err := h.Jobs.Enqueue(ctx, step.Type, payload, jobs.EnqueueOpts{Priority: &stepPriority})
+		if err != nil {
+			return nil, fmt.Errorf("assets: enqueue preview re-render: %w", err)
+		}
+		jobID, jobType = id, step.Type
 	}
 	return openapi.RecreateAssetPreview202JSONResponse{
 		JobId:   openapi_types.UUID(jobID),

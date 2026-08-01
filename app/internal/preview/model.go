@@ -238,6 +238,17 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	isoDone := variantDone(jobCtx, h.Storage, p.FileHash, "iso/source.png", p.Force)
 	if posterDone && spritesDone && framesDone && viewsDone && isoDone {
 		result.Skipped = append(result.Skipped, "col", "sprites", "frames", "views", "iso")
+		// The sentinel above asks about `col` but not the other three
+		// ladder rungs, so those rows are still missing after a
+		// split-brain restore even though every rung's bytes are there.
+		reconcileLadderRows(jobCtx, h.Storage, p.FileHash)
+		// Nothing was rendered, so nothing reached the ladder step that
+		// stamps the blur-up placeholder. Read a rung back rather than
+		// spin up a three.js turntable to recover 30 bytes (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "model",
+		})
 		h.markReady(jobCtx, p.AssetID)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
