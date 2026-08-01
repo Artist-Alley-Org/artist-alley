@@ -419,6 +419,46 @@ func (q *Queries) InsertObject(ctx context.Context, arg InsertObjectParams) erro
 	return err
 }
 
+const insertVariantIfMissing = `-- name: InsertVariantIfMissing :execrows
+INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (object_hash, variant_key) DO NOTHING
+`
+
+type InsertVariantIfMissingParams struct {
+	ObjectHash  string
+	VariantKey  string
+	SizeBytes   int64
+	ContentType string
+	Metadata    []byte
+}
+
+// Heals the metadata plane's record of bytes that are demonstrably on
+// the backend (#827).
+//
+// DO NOTHING, not DO UPDATE, and deliberately NOT a reuse of
+// UpsertVariant: this runs on the SKIP path of every preview job, where
+// the row is normally already correct. UpsertVariant moves updated_at on
+// every write, and updated_at is precisely what tells an operator
+// "re-rendered just now" from "rendered once, long ago" — a reconcile
+// that touched it would erase that signal on every requeue, for nothing.
+//
+// The affected-row count says whether this call actually inserted, so
+// the caller can distinguish a healed split-brain row from a no-op.
+func (q *Queries) InsertVariantIfMissing(ctx context.Context, arg InsertVariantIfMissingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertVariantIfMissing,
+		arg.ObjectHash,
+		arg.VariantKey,
+		arg.SizeBytes,
+		arg.ContentType,
+		arg.Metadata,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const latestSweepRun = `-- name: LatestSweepRun :one
 SELECT id, kind, status, cursor, objects_scanned, findings_count,
        started_at, finished_at, error, triggered_by_user_ref

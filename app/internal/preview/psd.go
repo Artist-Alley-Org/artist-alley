@@ -116,6 +116,14 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 
 	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "psd",
+		})
 		h.markReady(jobCtx, p.AssetID)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)

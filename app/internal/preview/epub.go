@@ -155,6 +155,14 @@ func (h *EPUBHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	if len(coverBytes) > 0 {
 		if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 			result.Skipped = append(result.Skipped, "raster")
+			// The rungs were already there, so nothing was rendered and
+			// nothing reached the ladder step that normally stamps the
+			// blur-up placeholder. Read one back instead of re-rendering
+			// (#827).
+			healThumbhashOnSkip(jobCtx, ladderInput{
+				Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+				AssetID: p.AssetID, Hash: p.FileHash, Kind: "ebook",
+			})
 		} else if err := h.fanCoverToLadder(jobCtx, p.AssetID, p.FileHash, coverBytes, p.Force); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.ebook.fan_failed",
 				slog.String("asset_id", p.AssetID.String()),

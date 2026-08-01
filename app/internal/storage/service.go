@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
@@ -37,6 +38,13 @@ type Service struct {
 	// to the backend. Empty = os.TempDir(). For multi-GB uploads
 	// this must point at a partition with sufficient free space.
 	TempDir string
+
+	// Logger is optional and used only for best-effort operations
+	// whose failure must not fail the caller — today, the split-brain
+	// reconcile (#827). Nil is fine everywhere; every use goes through
+	// a nil check, because Service is constructed bare in a lot of
+	// tests and a background heal is not worth a panic.
+	Logger *slog.Logger
 }
 
 // NewService constructs a storage Service with sensible defaults.

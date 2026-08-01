@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 )
 
 // assetTypeFor decides which row in asset_types a new upload lands
@@ -201,16 +202,16 @@ func TestJobTypeForExt(t *testing.T) {
 	}
 	for _, c := range cases {
 		ext := c.ext
-		got := jobTypeForExt(&ext)
+		got := dispatch.JobTypeForExt(&ext)
 		if got != c.want {
-			t.Errorf("jobTypeForExt(%q) = %q, want %q", c.ext, got, c.want)
+			t.Errorf("dispatch.JobTypeForExt(%q) = %q, want %q", c.ext, got, c.want)
 		}
 	}
 }
 
 func TestJobTypeForExt_NilDefault(t *testing.T) {
-	if got := jobTypeForExt(nil); got != jobs.TypePreviewRaster {
-		t.Errorf("jobTypeForExt(nil) = %q, want %q", got, jobs.TypePreviewRaster)
+	if got := dispatch.JobTypeForExt(nil); got != jobs.TypePreviewRaster {
+		t.Errorf("dispatch.JobTypeForExt(nil) = %q, want %q", got, jobs.TypePreviewRaster)
 	}
 }
 
@@ -253,7 +254,7 @@ func TestNeedsProcessing_RoundtripsToRealJobType(t *testing.T) {
 		// And the job type it routes to must be something a real
 		// handler is registered for (any non-raster preview type is
 		// fine; raster is the fallback).
-		if jobTypeForExt(&e) == "" {
+		if dispatch.JobTypeForExt(&e) == "" {
 			t.Errorf("needsProcessing(%q) = true but jobTypeForExt returns empty", ext)
 		}
 	}

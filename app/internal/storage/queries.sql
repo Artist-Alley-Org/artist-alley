@@ -210,3 +210,20 @@ SELECT EXISTS (
     SELECT 1 FROM storage_variants
     WHERE object_hash = $1 AND variant_key = $2
 )::BOOLEAN;
+
+-- name: InsertVariantIfMissing :execrows
+-- Heals the metadata plane's record of bytes that are demonstrably on
+-- the backend (#827).
+--
+-- DO NOTHING, not DO UPDATE, and deliberately NOT a reuse of
+-- UpsertVariant: this runs on the SKIP path of every preview job, where
+-- the row is normally already correct. UpsertVariant moves updated_at on
+-- every write, and updated_at is precisely what tells an operator
+-- "re-rendered just now" from "rendered once, long ago" — a reconcile
+-- that touched it would erase that signal on every requeue, for nothing.
+--
+-- The affected-row count says whether this call actually inserted, so
+-- the caller can distinguish a healed split-brain row from a no-op.
+INSERT INTO storage_variants (object_hash, variant_key, size_bytes, content_type, metadata)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (object_hash, variant_key) DO NOTHING;

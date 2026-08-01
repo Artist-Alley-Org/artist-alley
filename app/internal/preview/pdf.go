@@ -148,6 +148,14 @@ func (h *PDFHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 
 	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "pdf",
+		})
 	} else {
 		posterPath := filepath.Join(filepath.Dir(src), "page1.png")
 		if err := h.renderFirstPage(jobCtx, src, posterPath); err != nil {

@@ -103,19 +103,35 @@ func runRebuildPreviews(args []string) error {
 	if *dryRun {
 		verb = "would enqueue"
 	}
-	fmt.Printf("%s %d preview job(s) across %d matching asset(s); force=%v\n",
-		verb, rep.Enqueued, rep.Matched, *force)
+	// Assets and jobs are no longer the same number: a video plans two
+	// (the cheap poster job plus the full ladder, #818). Print both
+	// rather than one under the other's name.
+	fmt.Printf("%s %d preview job(s) across %d asset(s), from %d matching row(s); force=%v\n",
+		verb, rep.Jobs(), rep.Enqueued, rep.Matched, *force)
 	if storageSvc != nil {
 		if *force {
 			fmt.Printf("  %d of them already have a rendered `col` variant — those renders "+
 				"will be REPLACED\n", rep.Stale)
 		} else {
+			// Deliberately not "and change nothing" any more. Since #827
+			// a skip reconciles: it writes back any storage_variants row
+			// that went missing while the bytes survived, and stamps a
+			// thumbhash the ladder never got to. On a healthy install
+			// that is a no-op; on one restored from a backup it is the
+			// whole repair.
 			fmt.Printf("  %d of them already have a rendered `col` variant — with force=false "+
-				"those jobs will SKIP and change nothing\n", rep.Stale)
+				"those jobs will not re-render, but they WILL reconcile any missing "+
+				"storage_variants row and thumbhash (#827)\n", rep.Stale)
 		}
 	}
 	for _, ext := range rep.ExtensionsSorted() {
 		fmt.Printf("  %-6s %d\n", ext, rep.PerExt[ext])
+	}
+	if len(rep.PerJobType) > 1 {
+		fmt.Println("  by job type:")
+		for _, t := range rep.JobTypesSorted() {
+			fmt.Printf("    %-22s %d\n", t, rep.PerJobType[t])
+		}
 	}
 	if rep.Failed > 0 {
 		fmt.Printf("  %d asset(s) failed to enqueue\n", rep.Failed)

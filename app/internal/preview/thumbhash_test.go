@@ -552,13 +552,12 @@ func TestThumbhash_TransparentWaveformKeepsItsSilhouetteInAlpha(t *testing.T) {
 	}
 }
 
-// candidateVariantKeys must prefer the CONTAIN rungs (aspect-preserving,
+// ladderReadbackKeys must prefer the CONTAIN rungs (aspect-preserving,
 // which is what the card actually renders) over the square `col` crop,
 // smallest first, and must always end with `col` as the fallback.
 func TestThumbhashBackfill_PrefersContainRungOverColCrop(t *testing.T) {
 	rig := newPreviewTestRig(t)
-	h := NewThumbhashBackfillHandler(rig.pool, rig.storage, rig.sysCfg, rig.logger)
-	keys := h.candidateVariantKeys(t.Context())
+	keys := ladderReadbackKeys(t.Context(), rig.sysCfg)
 	if len(keys) < 2 {
 		t.Fatalf("expected contain rungs plus the col fallback, got %v", keys)
 	}
