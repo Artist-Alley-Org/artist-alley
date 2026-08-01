@@ -99,6 +99,28 @@ func (r RebuildReport) ExtensionsSorted() []string {
 	return out
 }
 
+// JobTypesSorted returns the job types present in PerJobType, sorted.
+func (r RebuildReport) JobTypesSorted() []string {
+	out := make([]string, 0, len(r.PerJobType))
+	for t := range r.PerJobType {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Jobs is the number of QUEUE ROWS the sweep created, as opposed to
+// Enqueued, which counts assets. The two diverged when video started
+// planning two jobs per asset (#818) and an operator sizing a rebuild
+// needs the first number, not the second.
+func (r RebuildReport) Jobs() int {
+	n := 0
+	for _, c := range r.PerJobType {
+		n += c
+	}
+	return n
+}
+
 // Rebuild enqueues a preview job per matching asset.
 //
 // It does NOT delete anything. Each handler overwrites its outputs in
@@ -151,27 +173,41 @@ func Rebuild(
 			continue
 		}
 		ext := dispatch.Normalize(*row.FileExtension)
-		jobType := dispatch.JobTypeForExt(&ext)
+		steps := dispatch.PlanForExt(&ext, jobs.PriorityBackfil)
 		if opts.Storage != nil && variantOnBackend(ctx, opts.Storage, *row.FileHash, "col") {
 			rep.Stale++
 		}
 		if opts.DryRun {
 			rep.Enqueued++
 			rep.PerExt[ext]++
-			rep.PerJobType[string(jobType)]++
+			for _, step := range steps {
+				rep.PerJobType[string(step.Type)]++
+			}
 			continue
 		}
-		priority := jobs.PriorityBackfil
-		if _, err := jobsSvc.Enqueue(ctx, jobType,
-			dispatch.NewPayload(uuid.UUID(row.ID.Bytes), *row.FileHash, &ext, opts.Force),
-			jobs.EnqueueOpts{Priority: &priority},
-		); err != nil {
+		// Enqueued counts ASSETS, PerJobType counts JOBS. They stopped
+		// agreeing when video started planning two (#818), and the two
+		// questions an operator asks a rebuild report — "how much of my
+		// library did this sweep" and "how much work did it make" — want
+		// different answers.
+		payload := dispatch.NewPayload(uuid.UUID(row.ID.Bytes), *row.FileHash, &ext, opts.Force)
+		enqueued := 0
+		for _, step := range steps {
+			priority := step.Priority
+			if _, err := jobsSvc.Enqueue(ctx, step.Type, payload,
+				jobs.EnqueueOpts{Priority: &priority},
+			); err != nil {
+				continue
+			}
+			enqueued++
+			rep.PerJobType[string(step.Type)]++
+		}
+		if enqueued == 0 {
 			rep.Failed++
 			continue
 		}
 		rep.Enqueued++
 		rep.PerExt[ext]++
-		rep.PerJobType[string(jobType)]++
 	}
 	return rep, nil
 }

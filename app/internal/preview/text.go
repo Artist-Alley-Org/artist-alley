@@ -134,6 +134,14 @@ func (h *TextHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 
 	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "text",
+		})
 	} else {
 		img := h.renderCard(lines, meta)
 		if err := h.fanCardToLadder(jobCtx, p.AssetID, p.FileHash, img, p.Force); err != nil {

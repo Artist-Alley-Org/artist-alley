@@ -79,6 +79,10 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		return nil, fmt.Errorf("storage backend: %w", err)
 	}
 	storageSvc := storage.NewService(backend, pool)
+	// The worker process is where the split-brain reconcile fires
+	// (#827) and where its "healed a row nobody recorded" line is the
+	// only signal a restored-backup install ever gets.
+	storageSvc.Logger = logger
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "storage.ready",
 		slog.String("backend", backend.Name()),
 	)
@@ -212,6 +216,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 
 	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewVideoPosterHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewModelHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewAudioHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewPDFHandler(pool, storageSvc, sysCfg, logger))

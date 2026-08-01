@@ -4,14 +4,10 @@
 package preview
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"image"
-	"io"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,14 +66,16 @@ type ThumbhashBackfillResult struct {
 // instead: one small GET, one decode, one UPDATE.
 //
 // WHICH VARIANT IT READS. Not `col`, even though `col` is what the
-// population query keys on. `col` is a 320² centre-CROP; the card
-// renders a CONTAIN rung and sizes its masonry tile from that rung's
-// aspect ratio (#640/#646), so a hash taken from the square crop would
-// paint a square blur inside a 16:3 audio tile and then snap. The sweep
-// picks the smallest contain rung the install's ladder defines and only
-// falls back to `col` if no contain rung is on the backend. That also
-// makes the sweep agree with the live pipeline, which hashes the
-// full-resolution render.
+// population query keys on — see loadRenderedLadderImage, which owns
+// that choice and is shared with the per-asset heal on the preview
+// handlers' skip path (#827), so the two can never disagree about which
+// rung best represents an asset.
+//
+// KNOWN LIMIT, and the reason that per-asset heal exists: the population
+// below is DB-first. On an install whose storage_variants rows went
+// missing while the bytes survived, this sweep selects nothing at all —
+// there is no `col` row to match — and reports a clean run over an
+// install where every asset needs it.
 //
 // Idempotent and re-runnable: the population excludes anything that
 // already has a hash, and the write is SetAssetThumbhashIfMissing,
@@ -134,7 +132,7 @@ func (h *ThumbhashBackfillHandler) Handle(ctx context.Context, job *jobs.Claim) 
 			cursor = row.ID
 			result.Scanned++
 			id := uuid.UUID(row.ID.Bytes)
-			src, err := h.loadRenderedPreview(ctx, row.FileHash)
+			src, err := loadRenderedLadderImage(ctx, h.Storage, h.SysConfig, row.FileHash, h.MaxVariantBytes)
 			if err != nil {
 				result.Failed++
 				logAttrs(h.Logger, ctx, slog.LevelWarn, "preview.thumbhash_backfill.load_failed",
@@ -213,67 +211,6 @@ func (h *ThumbhashBackfillHandler) listPage(ctx context.Context, after pgtype.UU
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// loadRenderedPreview downloads and decodes the best rendered rung for
-// the hash: the smallest CONTAIN rung the ladder defines, falling back
-// to `col`. See the handler doc for why contain beats col here.
-func (h *ThumbhashBackfillHandler) loadRenderedPreview(ctx context.Context, hash string) (image.Image, error) {
-	if hash == "" {
-		return nil, fmt.Errorf("asset has no file_hash")
-	}
-	for _, key := range h.candidateVariantKeys(ctx) {
-		img, err := h.decodeVariant(ctx, hash, key)
-		if err == nil {
-			return img, nil
-		}
-	}
-	return nil, fmt.Errorf("no decodable rendered preview for hash %s", hash)
-}
-
-// candidateVariantKeys is the ordered list of rungs to try. Read from
-// the install's configured ladder rather than hardcoded, so an operator
-// who renamed or retuned their rungs still gets a backfill (#610's
-// trap, server side). `col` is appended last as the universal fallback.
-func (h *ThumbhashBackfillHandler) candidateVariantKeys(ctx context.Context) []string {
-	keys := []string{}
-	if h.SysConfig != nil {
-		if cfg, err := h.SysConfig.GetPreviews(ctx); err == nil {
-			contain := make([]sysconfig.PreviewVariant, 0, len(cfg.Variants))
-			for _, v := range cfg.Variants {
-				if v.Key == storage.VariantOriginal || v.Fit != sysconfig.PreviewFitContain {
-					continue
-				}
-				contain = append(contain, v)
-			}
-			sort.Slice(contain, func(i, j int) bool { return contain[i].MaxDim < contain[j].MaxDim })
-			for _, v := range contain {
-				keys = append(keys, v.Key)
-			}
-		}
-	}
-	return append(keys, "col")
-}
-
-// decodeVariant reads one rung off the backend and decodes it.
-func (h *ThumbhashBackfillHandler) decodeVariant(ctx context.Context, hash, key string) (image.Image, error) {
-	rc, info, err := h.Storage.Download(ctx, hash, key)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	if info != nil && info.Size > h.MaxVariantBytes {
-		return nil, fmt.Errorf("variant %s too large: %d bytes", key, info.Size)
-	}
-	blob, err := io.ReadAll(io.LimitReader(rc, h.MaxVariantBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	img, _, err := image.Decode(bytes.NewReader(blob))
-	if err != nil {
-		return nil, fmt.Errorf("decode variant %s: %w", key, err)
-	}
-	return img, nil
 }
 
 // Compile-time assertion.
