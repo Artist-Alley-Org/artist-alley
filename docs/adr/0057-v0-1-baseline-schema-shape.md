@@ -180,8 +180,8 @@ The baseline pre-seeds the constant data every fresh boot needs:
 - 7 `workflow_states` + 11 `workflow_transitions` (asset workflow
   DAG)
 - 13 `field_definition` rows (title, description, credit,
-  copyright, capture_date, keywords, country + the 6 metadata
-  extraction field defs added in append migrations)
+  copyright, capture_date, keywords, country + 6 more — see the
+  2026-08-01 amendment for what those six actually were)
 - 1 `federation_dispatch_state` singleton (id=1 CHECK enforced;
   seeded so the outbox dispatcher can find its cursor from the
   first tick)
@@ -234,6 +234,47 @@ audit confirmed no plpgsql function was created, altered, and
 re-created across the chain. All 27 functions live in
 `00001_baseline_v1.sql`'s original definitions; the squash
 inherits them unchanged.
+
+## Amendment — 2026-08-01: six of the baseline's field definitions were captured fixtures (#812)
+
+The inventory above described the baseline's 13 `field_definition` rows as "seven
+editorial fields plus the 6 metadata extraction field defs added in append
+migrations". That was wrong in both halves, and the error mattered: it read as
+"the baseline ships thirteen considered defaults", which is why nobody looked at
+them again.
+
+All 13 rows are in the **baseline itself**; no append migration contributed to
+that count. And the six beyond the editorial seven were not extraction field
+definitions. They were **test fixtures the fold captured** — `mcoltest_fedguard`,
+`ctest_fedguard`, `mtv_text`, `mtv_due`, `mtv_score`, `mtv_tags`, every one of
+them carrying `created_by_user_ref = 420000`, a user ref no install has, from the
+same dump already known to have captured dev secrets into `system_config`. They
+shipped to every operator as "Text Field", "Score", "Due", "Tags" and two copies
+of "Fed Guard".
+
+Migration `00023_drop_folded_field_definition_fixtures.sql` removes them. The
+seven editorial fields **stay**: they are a considered default catalogue, and
+their IPTC/XMP/EXIF `source` mappings are the same ones ResourceSpace ships in
+`dbstruct/data_resource_type_field.txt`. Shipping an opinionated default catalogue
+is normal.
+
+A fresh install's field catalogue is therefore **nine** rows — the seven, plus
+`pixel_width` / `pixel_height` from migration 00017. That set is now named
+explicitly in `app/internal/db/shippedfields.go` and pinned by
+`TestShippedFieldCatalogue_*`, because it is also the keep-list `aa seed --reset`
+sweeps against: before #812 the reset TRUNCATEd `field_definition`, so no dev, CI
+or demo instance had ever run the catalogue production ships.
+
+Two follow-ups this amendment does **not** settle: `country` is typed `tree` where
+RS types its equivalent as a node-backed keyword list (a divergence to revisit
+deliberately, with its own migration), and the `source` column those seven declare
+their extraction intent in is still read by nothing (#813).
+
+**The re-fold lesson.** `system_config` is scrubbed on a re-fold because it is
+known to capture secrets. `field_definition` was not, and it captured fixtures.
+Any future baseline fold should treat every table a test can write to as
+contaminated until inspected — the scrub list is not "the tables that hold
+credentials".
 
 ## References
 

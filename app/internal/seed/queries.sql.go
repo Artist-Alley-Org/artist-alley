@@ -174,14 +174,24 @@ func (q *Queries) SeedGetCommentParentInfo(ctx context.Context, id pgtype.UUID) 
 }
 
 const seedGetFieldByCode = `-- name: SeedGetFieldByCode :one
-SELECT id FROM field_definition WHERE code = $1
+SELECT id, type FROM field_definition WHERE code = $1
 `
 
-func (q *Queries) SeedGetFieldByCode(ctx context.Context, code string) (pgtype.UUID, error) {
+type SeedGetFieldByCodeRow struct {
+	ID   pgtype.UUID
+	Type string
+}
+
+// Recovery path for SeedInsertField's ON CONFLICT DO NOTHING. `type`
+// is selected alongside the id because the row the catalogue binds to
+// may be typed differently from the catalogue entry that bound to it
+// (#812): the seed must write values against the type the COLUMN
+// actually has, not the one the JSON claims.
+func (q *Queries) SeedGetFieldByCode(ctx context.Context, code string) (SeedGetFieldByCodeRow, error) {
 	row := q.db.QueryRow(ctx, seedGetFieldByCode, code)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+	var i SeedGetFieldByCodeRow
+	err := row.Scan(&i.ID, &i.Type)
+	return i, err
 }
 
 const seedGetTeamBySlug = `-- name: SeedGetTeamBySlug :one
