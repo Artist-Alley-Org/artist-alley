@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -185,49 +186,62 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	}
 	defer rc.Close()
 
-	// Pick the right extractor. Failure here = unsupported format
-	// — record + return TERMINAL so the worker doesn't retry.
-	var ext Extractor
+	// Collect EVERY extractor that supports the type, not the first.
+	// See merge.go's header for why the first-wins dispatch this
+	// replaced meant no JPEG was ever read for IPTC or XMP.
+	var supporting []Extractor
 	for _, e := range h.extractors {
 		if e.Supports(mimeType) {
-			ext = e
-			break
+			supporting = append(supporting, e)
 		}
 	}
-	if ext == nil {
+	if len(supporting) == 0 {
 		h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format",
 			fmt.Sprintf("no registered extractor for %q", mimeType), "")
 		h.recordResult(mimeType, ResultUnsupportedFormat)
 		return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
 	}
 
-	result, extErr := ext.Extract(ctx, rc, mimeType)
+	// Buffer the source once. Every extractor io.ReadAll's its reader
+	// anyway, so this is the same peak memory as the single-extractor
+	// path used and one read of storage instead of N.
+	src, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, fmt.Errorf("metadata.extract: read source: %w", err)
+	}
+
+	parts, hardFailures, extErr := h.runExtractors(ctx, asset, mimeType, src, supporting)
 	if extErr != nil {
-		switch {
-		case errors.Is(extErr, ErrNoMetadata):
-			// Normal outcome; no failure row.
+		// Unknown error class from some extractor — treat as transient
+		// + let the job framework retry per its backoff policy. Don't
+		// record a failure row yet (avoid spamming the queue for a
+		// transient error that the next retry might resolve).
+		return nil, fmt.Errorf("metadata.extract: %w", extErr)
+	}
+
+	// NO extractor came back with a Result. If one failed hard, that
+	// classification is the job's outcome; otherwise every extractor
+	// said ErrNoMetadata, which is the ordinary "valid file, nothing
+	// in it" case — not a failure, and no row.
+	//
+	// The condition is "no extractor SUCCEEDED", not "the merged
+	// Result is empty": an extractor that returns cleanly with no
+	// fields is a successful read of a file that has none, and it went
+	// through Apply before this fan-out existed. Skipping Apply for it
+	// would quietly change the counter classification of every such
+	// asset from success to no_metadata.
+	if len(parts) == 0 {
+		if len(hardFailures) > 0 {
+			h.recordResult(mimeType, hardFailures[0])
+		} else {
 			h.recordResult(mimeType, ResultNoMetadata)
-			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
-		case errors.Is(extErr, ErrUnsupportedFormat):
-			h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format", extErr.Error(), "")
-			h.recordResult(mimeType, ResultUnsupportedFormat)
-			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
-		case errors.Is(extErr, ErrMalformedFile):
-			h.recordFailure(ctx, asset.ID, mimeType, "malformed_file", extErr.Error(), "")
-			h.recordResult(mimeType, ResultMalformedFile)
-			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
-		case errors.Is(extErr, ErrLibraryPanic):
-			h.recordFailure(ctx, asset.ID, mimeType, "library_panic", extErr.Error(), "")
-			h.recordResult(mimeType, ResultLibraryError)
-			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
-		default:
-			// Unknown error class — treat as transient + let the
-			// job framework retry per its backoff policy. Don't
-			// record a failure row yet (avoid spamming the queue
-			// for a transient error that the next retry might
-			// resolve).
-			return nil, fmt.Errorf("metadata.extract: %w", extErr)
 		}
+		return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
+	}
+
+	result := MergeResults(parts)
+	if result.Format == "" {
+		result.Format = mimeType
 	}
 
 	// Apply the extracted values + record per-field failures.
@@ -281,6 +295,71 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 		FailureCount:            len(summary.FailureRows),
 	}
 	return jsonMarshalIgnoreErr(out), nil
+}
+
+// runExtractors runs every supporting extractor over the same source
+// bytes and returns their Results in registration order.
+//
+// Error handling is per extractor, which is the substantive change
+// from the single-extractor dispatch. Three of the four sentinel
+// classes are now ROUTINE rather than fatal: a JPEG with EXIF and no
+// IPTC makes the IPTC extractor return ErrNoMetadata, and a JPEG whose
+// XMP packet is truncated makes the XMP extractor return
+// ErrMalformedFile — neither is a reason to discard what the other
+// extractors read. So each is recorded against its own extractor and
+// the walk continues; only the aggregate outcome (see the caller)
+// decides the job's classification.
+//
+// An UNKNOWN error class still aborts. That class means "we don't know
+// what went wrong", the job framework's answer to which is to retry
+// the whole job, and retrying half of one is not a thing the framework
+// can express.
+//
+// Returns the per-extractor Results, the hard-failure classifications
+// in the order they occurred, and a non-nil error only for the abort
+// case.
+func (h *ExtractJobHandler) runExtractors(
+	ctx context.Context,
+	asset AssetRef,
+	mimeType string,
+	src []byte,
+	supporting []Extractor,
+) ([]SourcedResult, []ExtractionResult, error) {
+	var (
+		parts        []SourcedResult
+		hardFailures []ExtractionResult
+	)
+	for _, e := range supporting {
+		res, err := e.Extract(ctx, bytes.NewReader(src), mimeType)
+		if err == nil {
+			parts = append(parts, SourcedResult{Source: e.Name(), Result: res})
+			continue
+		}
+		switch {
+		case errors.Is(err, ErrNoMetadata):
+			// This extractor's namespace is simply absent from the
+			// file. The overwhelmingly common case once more than one
+			// extractor runs — no failure row, no log.
+		case errors.Is(err, ErrUnsupportedFormat):
+			// Supports() said yes and Extract() said no. A real
+			// disagreement inside one extractor, worth a row, but
+			// scoped to that extractor.
+			h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format",
+				fmt.Sprintf("%s: %s", e.Name(), err.Error()), "")
+			hardFailures = append(hardFailures, ResultUnsupportedFormat)
+		case errors.Is(err, ErrMalformedFile):
+			h.recordFailure(ctx, asset.ID, mimeType, "malformed_file",
+				fmt.Sprintf("%s: %s", e.Name(), err.Error()), "")
+			hardFailures = append(hardFailures, ResultMalformedFile)
+		case errors.Is(err, ErrLibraryPanic):
+			h.recordFailure(ctx, asset.ID, mimeType, "library_panic",
+				fmt.Sprintf("%s: %s", e.Name(), err.Error()), "")
+			hardFailures = append(hardFailures, ResultLibraryError)
+		default:
+			return nil, nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+	}
+	return parts, hardFailures, nil
 }
 
 // recordFailure is a soft-error helper — if the failure-recording

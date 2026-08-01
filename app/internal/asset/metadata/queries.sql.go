@@ -200,7 +200,7 @@ func (q *Queries) InsertMetadataBackfillRun(ctx context.Context, arg InsertMetad
 }
 
 const listExtractionEnabledFieldDefinitions = `-- name: ListExtractionEnabledFieldDefinitions :many
-SELECT id, extraction_source, extraction_mode
+SELECT id, extraction_source, extraction_mode, type, options
   FROM field_definition
  WHERE extraction_source != ''
 `
@@ -209,11 +209,17 @@ type ListExtractionEnabledFieldDefinitionsRow struct {
 	ID               pgtype.UUID
 	ExtractionSource string
 	ExtractionMode   string
+	Type             string
+	Options          []byte
 }
 
 // Powers the ExtractionConfig cache. Returns every field
 // definition that's wired to an extraction source. Read on every
 // extract job (via the cache); invalidated on field-def writes.
+//
+// type + options are part of the config, not decoration: the applier
+// refuses a type it has no column for (multi_select) and resolves a
+// select / tree value against options before writing the slug.
 func (q *Queries) ListExtractionEnabledFieldDefinitions(ctx context.Context) ([]ListExtractionEnabledFieldDefinitionsRow, error) {
 	rows, err := q.db.Query(ctx, listExtractionEnabledFieldDefinitions)
 	if err != nil {
@@ -223,7 +229,13 @@ func (q *Queries) ListExtractionEnabledFieldDefinitions(ctx context.Context) ([]
 	var items []ListExtractionEnabledFieldDefinitionsRow
 	for rows.Next() {
 		var i ListExtractionEnabledFieldDefinitionsRow
-		if err := rows.Scan(&i.ID, &i.ExtractionSource, &i.ExtractionMode); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExtractionSource,
+			&i.ExtractionMode,
+			&i.Type,
+			&i.Options,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

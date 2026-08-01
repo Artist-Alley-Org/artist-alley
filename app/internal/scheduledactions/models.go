@@ -632,7 +632,6 @@ type FieldDefinition struct {
 	WriteCapability         *string            `json:"write_capability"`
 	DisplayOrder            int32              `json:"display_order"`
 	DisplayGroup            string             `json:"display_group"`
-	Source                  []byte             `json:"source"`
 	Status                  string             `json:"status"`
 	DeprecatedReplacementID pgtype.UUID        `json:"deprecated_replacement_id"`
 	OriginServerID          pgtype.UUID        `json:"origin_server_id"`

@@ -4775,8 +4775,13 @@ type metaConfigAdapter struct {
 }
 
 func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmetadata.FieldExtractionConfig, error) {
+	// type + options ride along because the applier's write is
+	// type-dependent: a multi_select target is refused outright (no
+	// column in the extraction path holds one) and a select / tree
+	// target stores a vocabulary SLUG resolved out of options, not the
+	// label the file carried.
 	rows, err := a.pool.Query(ctx, `
-		SELECT id, extraction_source, extraction_mode
+		SELECT id, extraction_source, extraction_mode, type, options
 		  FROM field_definition
 		 WHERE extraction_source != ''
 	`)
@@ -4787,17 +4792,21 @@ func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmet
 	out := []assetmetadata.FieldExtractionConfig{}
 	for rows.Next() {
 		var (
-			id     pgtype.UUID
-			source string
-			mode   string
+			id        pgtype.UUID
+			source    string
+			mode      string
+			fieldType string
+			options   []byte
 		)
-		if err := rows.Scan(&id, &source, &mode); err != nil {
+		if err := rows.Scan(&id, &source, &mode, &fieldType, &options); err != nil {
 			return nil, err
 		}
 		out = append(out, assetmetadata.FieldExtractionConfig{
-			FieldID: uuid.UUID(id.Bytes),
-			Source:  assetmetadata.CanonicalField(source),
-			Mode:    assetmetadata.ExtractionMode(mode),
+			FieldID:   uuid.UUID(id.Bytes),
+			Source:    assetmetadata.CanonicalField(source),
+			Mode:      assetmetadata.ExtractionMode(mode),
+			FieldType: fieldType,
+			Options:   options,
 		})
 	}
 	return out, rows.Err()

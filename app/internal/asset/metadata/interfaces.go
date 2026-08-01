@@ -56,6 +56,19 @@ type Result struct {
 	// each Value before the applier writes it.
 	Fields map[CanonicalField]Value
 
+	// FieldSources records WHICH extractor produced each entry in
+	// Fields, keyed identically — the [Extractor.Name] of whichever
+	// implementation emitted it ("exif" / "iptc" / "xmp" / "pdf" /
+	// "raw"). It is what asset_field_value.set_by is written from.
+	//
+	// A single extractor's own Result leaves this nil; [MergeResults]
+	// fills it as it folds each extractor's Result into the combined
+	// one, which is the only place that knows which extractor a Value
+	// came from. The applier falls back to [SetByExtraction] for any
+	// key absent here, so a hand-built Result in a test still writes
+	// a truthful — if unspecific — provenance rather than a wrong one.
+	FieldSources map[CanonicalField]string
+
 	// ICCProfile is the source's colour profile bytes if present.
 	// Variant pipeline writes these byte-for-byte into every
 	// derived variant so print colour stays accurate.
@@ -214,6 +227,22 @@ type FieldExtractionConfig struct {
 	// Default (when row exists with empty mode) is "skip_if_set"
 	// — the conservative choice that never clobbers operator work.
 	Mode ExtractionMode
+
+	// FieldType is field_definition.type. The applier needs it for
+	// two things the extraction path cannot do without it: refusing a
+	// field whose value does not fit the three columns extraction can
+	// write (multi_select, reference), and recognising the two types
+	// whose value is a vocabulary slug rather than the extracted text
+	// (select, tree). Empty means "unknown" and is treated as
+	// writable free text, which is what every pre-existing caller
+	// that does not set it expects.
+	FieldType string
+
+	// Options is field_definition.options verbatim. Carries the
+	// controlled vocabulary for select / tree fields, against which
+	// an extracted LABEL is resolved to the SLUG that actually gets
+	// stored. Nil for every other type.
+	Options []byte
 }
 
 // ExtractionMode is the enum stored in

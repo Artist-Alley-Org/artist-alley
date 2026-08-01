@@ -632,7 +632,6 @@ type FieldDefinition struct {
 	WriteCapability         *string
 	DisplayOrder            int32
 	DisplayGroup            string
-	Source                  []byte
 	Status                  string
 	DeprecatedReplacementID pgtype.UUID
 	OriginServerID          pgtype.UUID
