@@ -101,5 +101,92 @@
   "name": "pixel_height",
   "label": "Pixel height",
   "type": "number"
+ },
+ {
+  "name": "production_notes",
+  "label": "Production notes",
+  "type": "longtext"
+ },
+ {
+  "name": "usage_rights",
+  "label": "Usage rights",
+  "type": "rich_text"
+ },
+ {
+  "name": "license_expires",
+  "label": "License expires",
+  "type": "date"
+ },
+ {
+  "name": "ingested_at",
+  "label": "Ingested at",
+  "type": "datetime"
+ },
+ {
+  "name": "derived_from",
+  "label": "Derived from",
+  "type": "reference"
+ },
+ {
+  "name": "production_area",
+  "label": "Production area",
+  "type": "tree",
+  "options": [
+   {
+    "value": "art",
+    "label": "Art",
+    "children": [
+     {
+      "value": "environment",
+      "label": "Environment",
+      "children": [
+       { "value": "environment-architecture", "label": "Architecture" },
+       { "value": "environment-props", "label": "Props" },
+       { "value": "environment-terrain", "label": "Terrain" }
+      ]
+     },
+     {
+      "value": "character",
+      "label": "Character",
+      "children": [
+       { "value": "character-models", "label": "Models" },
+       { "value": "character-textures", "label": "Textures" }
+      ]
+     },
+     {
+      "value": "ui",
+      "label": "UI",
+      "children": [
+       { "value": "ui-icons", "label": "Icons" },
+       { "value": "ui-type", "label": "Type" }
+      ]
+     }
+    ]
+   },
+   {
+    "value": "audio",
+    "label": "Audio",
+    "children": [
+     { "value": "audio-music", "label": "Music" },
+     { "value": "audio-sfx", "label": "SFX" },
+     { "value": "audio-voice", "label": "Voice" }
+    ]
+   },
+   {
+    "value": "film",
+    "label": "Film",
+    "children": [
+     { "value": "film-footage", "label": "Footage" },
+     { "value": "film-documentary", "label": "Documentary" }
+    ]
+   },
+   {
+    "value": "publication",
+    "label": "Publication",
+    "children": [
+     { "value": "publication-comics", "label": "Comics" }
+    ]
+   }
+  ]
  }
 ]

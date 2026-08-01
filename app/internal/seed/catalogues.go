@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 )
 
 type catUser struct {
@@ -56,10 +58,22 @@ type catCollection struct {
 }
 
 type catField struct {
-	Name    string   `json:"name"` // federation-stable code
-	Label   string   `json:"label"`
-	Type    string   `json:"type"`
-	Options []string `json:"options"`
+	Name  string `json:"name"` // federation-stable code
+	Label string `json:"label"`
+	Type  string `json:"type"`
+	// Options is the field's controlled vocabulary, in exactly the
+	// model the API accepts (metadata.FieldOption): either a bare slug
+	// string or the full object, and nested via children.
+	//
+	// It used to be []string, which is the entry shape all fourteen
+	// pre-existing definitions use and which round-trips unchanged
+	// through FieldOption's Unmarshal/Marshal pair. But bare strings
+	// cannot express hierarchy, so a `tree` definition was not
+	// WRITABLE from this catalogue at all — which is why no seeded
+	// instance had ever had one, and why the three-way disagreement
+	// about where a tree value is stored (#778) survived undetected:
+	// the fixture that would have caught it could not be built.
+	Options []metadata.FieldOption `json:"options"`
 	// Extraction wiring (#618). extraction_source must be one of the
 	// extractor's CanonicalField names or the definition routes nothing:
 	// the mapping query filters WHERE extraction_source != '', so an

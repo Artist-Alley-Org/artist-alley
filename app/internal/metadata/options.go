@@ -115,7 +115,7 @@ type ResolvedOption struct {
 // exercised it.
 //
 // Slugs are unique across a field's whole option tree, not merely
-// within a level: normalizeOptionsDoc runs collectSlugs over the full
+// within a level: NormalizeOptionsDoc runs collectSlugs over the full
 // depth and rejects duplicates anywhere in it, on every create and
 // every update. That global uniqueness is what makes a bare leaf slug
 // a complete address for a node, and so what lets the stored value
@@ -161,7 +161,7 @@ func resolveOptionSlugs(raw []byte, slugs []string) map[string]ResolvedOption {
 			return
 		}
 		if _, dup := out[v]; dup {
-			return // first wins; normalizeOptionsDoc rejects dupes on write
+			return // first wins; NormalizeOptionsDoc rejects dupes on write
 		}
 		// A bare-string entry carries no label — the slug IS the
 		// display text — and no status, which means active. Fill both
@@ -328,14 +328,25 @@ func checkOptions(opts []FieldOption, all map[string]FieldOption, path string) e
 	return nil
 }
 
-// normalizeOptionsDoc validates an incoming options document and
+// NormalizeOptionsDoc validates an incoming options document and
 // re-encodes it canonically. Documents with no values key (number
 // constraints, empty objects) pass through untouched.
 //
 // Validation is deliberately shape-level only: it does not require a
 // select field to have any options, because a field is routinely
 // created before its vocabulary is filled in.
-func normalizeOptionsDoc(raw []byte) ([]byte, error) {
+//
+// Exported (#808) so the seed catalogue goes through the SAME checks
+// the admin write path runs — tree-wide slug uniqueness above all.
+// Decoding a document is free once FieldOption is exported, and that
+// is the trap: a caller who only unmarshals gets a document that
+// parses but was never checked. ADR 0012's tree amendment stores a
+// value as one leaf slug and relies on slugs being unique across the
+// whole tree for that leaf to be a complete address, so a duplicate
+// slug in a hand-edited catalogue resolves values to the WRONG node,
+// silently. Two enforcement paths for one invariant is how they
+// diverge; there is one.
+func NormalizeOptionsDoc(raw []byte) ([]byte, error) {
 	values, rest, err := decodeOptionValues(raw)
 	if errors.Is(err, errNoValues) {
 		return raw, nil
