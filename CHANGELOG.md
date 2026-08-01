@@ -133,6 +133,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A new installation starts with a small set of ready-made fields, and re-loading the
+  sample library no longer deletes them.** Every installation has always been created with
+  a handful of standard fields — title, description, credit, copyright, capture date,
+  keywords, country, and the two that record an image's pixel dimensions. But loading the
+  sample library wiped them and put its own fields in their place, so the arrangement an
+  operator actually starts from was the one nobody ever ran. Loading sample content now
+  adds to that set instead of replacing it (#812).
+
+  **Six fields that were never meant to ship have been removed.** They came in with the
+  original database snapshot — leftovers from testing, carrying a user reference no
+  installation has — and appeared to every operator as *Text Field*, *Score*, *Due*,
+  *Tags*, and two called *Fed Guard*. They are gone, along with any values recorded against
+  them.
+
+  A companion note for anyone tracking the details: the history of past edits to a field's
+  value was never being cleared when its asset or field was removed, so it accumulated
+  indefinitely. That is now cleaned up as well.
+
 - **A seed run now says when it throws a field value away.** Loading a catalogue could
   discard a value in two different situations — the file named a field that does not
   exist, or it carried something that field's type cannot hold — and both were silent.
