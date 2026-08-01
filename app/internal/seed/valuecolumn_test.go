@@ -63,12 +63,16 @@ func TestSeederUsesPinnedColumns(t *testing.T) {
 		// value_text until then, so a seeded boolean was invisible.
 		{"boolean", true, "value_num", "1"},
 		{"boolean", false, "value_num", "0"},
-		// RFC3339 even for `date`: parseTime accepts nothing else, so a
-		// bare "2026-07-31" in a MANIFEST is silently dropped rather
-		// than stored. Out of scope for #778 (no `date` field has ever
-		// been seeded either) but pinned here so the next person to
-		// seed one finds out from a test instead of from missing data.
+		// A `date` field takes both spellings as of #807: the bare
+		// calendar date lands at midnight UTC, and RFC3339 keeps
+		// working. Before that, parseTime accepted RFC3339 only and a
+		// bare "2026-07-31" in a MANIFEST was DISCARDED WITHOUT A WORD
+		// — the drop this pin used to document rather than prevent.
 		{"date", "2026-07-31T00:00:00Z", "value_date", "2026-07-31T00:00:00Z"},
+		{"date", "2026-07-31", "value_date", "2026-07-31T00:00:00Z"},
+		// `datetime` is deliberately NOT widened: a datetime field
+		// handed a bare date lost its time of day upstream, which is a
+		// defect worth reporting. See TestFieldValueParams_RejectsBadValues.
 		{"datetime", "2026-07-31T12:00:00Z", "value_date", "2026-07-31T12:00:00Z"},
 		{"multi_select", []any{"a", "b"}, "value_options", `["a" "b"]`},
 		{"reference", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "value_ref",
@@ -76,7 +80,7 @@ func TestSeederUsesPinnedColumns(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		t.Run(c.fieldType+"/"+c.wantValue, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%v", c.fieldType, c.raw), func(t *testing.T) {
 			p, ok := fieldValueParams(c.fieldType, c.raw)
 			if !ok {
 				t.Fatalf("fieldValueParams(%q, %v) refused the value", c.fieldType, c.raw)
