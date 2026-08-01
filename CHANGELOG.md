@@ -40,6 +40,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A freshly uploaded video shows its picture in seconds, not after the whole transcode.**
+  Making a video ready to stream is the most expensive work in the system, and until now a
+  video card showed nothing at all — not even the blurred placeholder — until every bit of
+  that work finished. Grabbing one good frame takes under two seconds, so that now happens
+  first, on its own fast track, and the heavy streaming work follows behind at a lower
+  priority. Uploading a batch of videos shows pictures appearing within moments while the
+  transcodes queue up (#818).
+
+  **Film covers stop being black frames.** The cover image used to be whatever was exactly
+  one second into the video — for anything that opens with a fade from black, that is a black
+  frame, and several films' cards were literally solid black. The cover is now chosen by
+  scanning for a representative frame and checking it is actually bright enough to see,
+  looking deeper into the video if the opening is dark (#810).
+
+  **Restoring a database backup no longer blanks every card.** Databases and stored files are
+  backed up on different schedules, and restoring an older database left the system holding
+  thousands of finished renders it had no record of — so it announced no previews, showed
+  placeholders everywhere, and every background job reported success. It now notices renders
+  it already has and records them, repairing itself on the next pass instead of staying
+  broken silently (#827).
+
 - **The information written inside a photo now actually gets read — all of it, not just the
   first kind found.** A photo usually carries several layers of embedded information: what the
   camera recorded (exposure, capture time), what an editor or newsroom added (credit, country),

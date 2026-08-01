@@ -125,3 +125,14 @@ a client confidently requesting URLs that 404.
 - **Related trap, recorded in ADR 0008's amendment:** a derived variant under a stable
   content hash is exactly what preview regeneration rewrites, so ladder URLs addressed by
   *asset id* are not immutable. Cache validators must derive from the stored bytes.
+
+## Amendment 2026-08-02 — the announcement flags are DB-first BY DESIGN, and reconcile keeps them truthful (#829)
+
+`preview_available` / `ladder_available` are answered from `storage_variants` rows, not
+from backend stats — that is load-bearing for the zero-console-404 contract (the server
+must be able to answer cheaply on every list row) and is not changed. What #829 adds is
+the missing half of the bargain: the **render/skip path now heals the rows** (ADR 0008's
+amendment), so a restored backup or any bytes-without-rows state converges back to
+truthful announcements on the next requeue instead of deadlocking every card into the
+placeholder. Serving itself was and remains backend-first (`Download → Backend.Get`);
+only the announcements were ever at risk.

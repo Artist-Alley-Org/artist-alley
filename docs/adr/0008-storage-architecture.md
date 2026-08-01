@@ -356,3 +356,21 @@ follow-up commits without blocking the frontend.
    (HLS bitrates the install no longer serves). Tracking
    `last_accessed_at` on variants is the data needed; deferred until
    we have real usage patterns.
+
+## Amendment 2026-08-02 — the registry row is healed, not trusted (#829)
+
+The variant registry (`storage_variants`) and the backend bytes can diverge: restoring a
+DB backup while the storage volume is intact leaves **bytes without rows**. The preview
+skip check is deliberately backend-first (`Backend.Stat` — bytes are what a request
+serves), but until PR #829 the skip path never wrote the row it had just proven
+unnecessary to re-render, while `preview_available` reads the **row** (ADR 0071). Result,
+reproduced live: every job green, every card permanently blurred (785 derived rows for
+1,947 assets).
+
+**The contract now:** a skip **reconciles** — the row is upserted from the `Stat`
+(content type healed by key extension where one exists, sniffed for ladder rungs, since
+the FS backend cannot store one), and the asset thumbhash is backfilled from a stored
+rung when NULL. Backend-first stays the source of truth for *existence*; the DB is a
+*record* of it, and the record self-heals on the next render pass. Note the 3D handler's
+sentinel needed its own reconcile — a handler whose done-check asks about fewer rungs
+than the frontend requests heals fewer rows than the frontend needs.
