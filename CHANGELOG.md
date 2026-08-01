@@ -40,6 +40,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The information written inside a photo now actually gets read — all of it, not just the
+  first kind found.** A photo usually carries several layers of embedded information: what the
+  camera recorded (exposure, capture time), what an editor or newsroom added (credit, country),
+  and what the rights holder attached (a copyright statement). The system only ever read the
+  first layer it recognised, which in practice meant the camera's — the other two were parsed
+  by code that no upload could ever reach. Now every layer is read, and each is kept separate
+  and labelled with where it came from (#800).
+
+  Four of the built-in fields fill themselves in from those layers on upload: capture date,
+  credit, copyright, and country. Two rules keep this trustworthy. **A value a person chose is
+  never overwritten** — automatic extraction only fills fields that are empty. And **a country
+  name found inside a photo is stored as its standard two-letter code** by matching it against
+  the field's vocabulary; a name that matches nothing is reported as unresolved rather than
+  guessed at or stored raw (#799, #813).
+
+  Under the hood, a leftover column that once described this wiring but was never read is gone,
+  so there is now exactly one place that says where a field's automatic values come from (#813).
+
 - **The built-in Country and Keywords fields now come with a starting vocabulary.** Both
   shipped with an empty list of choices, which for a pick-list is the same as not working:
   Country was a hierarchy with nothing in it, and Keywords had nothing to pick. Country now
