@@ -804,21 +804,39 @@ const (
 	// is fitted inside this square with the source's aspect ratio
 	// preserved (#761), so:
 	//
-	//   16:9  -> 160x90   (identical to the pre-#761 fixed size)
-	//   9:16  -> 90x160
-	//   1:1   -> 160x160
+	//   16:9  -> 240x134 or 240x136 (see below)
+	//   9:16  -> 134x240 or 136x240
+	//   1:1   -> 240x240
 	//
-	// and the whole sheet is therefore bounded at 1600x1600 whatever
+	// and the whole sheet is therefore bounded at 2400x2400 whatever
 	// the source shape — an ultrawide or a 1:8 panorama cannot blow the
 	// sheet out to several thousand pixels on one axis.
-	spriteCellBox = 160
+	//
+	// The 16:9 short edge is not a fixed number: it computes to 135,
+	// which is odd, and `force_divisible_by=2` resolves that per ffmpeg
+	// BUILD — 5.1 (the runtime image) rounds down to 134, 6.1 rounds up
+	// to 136, same filter, same source. Nothing downstream may assume
+	// either: the VTT measures the sheet that was written (#796) rather
+	// than recomputing it, and the frontend measures it again off the
+	// image it paints.
+	//
+	// 240, not 160 (#811): the card shows a 320px still and swaps it for
+	// this cell on hover, so a 160px cell was visibly softer than the
+	// image it replaced. Measured over a 51-sheet seed, 240 buys 1.5x
+	// linear resolution for 1.8x the sheet bytes — JPEG does not scale
+	// with pixel count, so this came in under the 2.25x the decision
+	// budgeted. Matching the still at 320 would have cost ~4x, and
+	// motion masks the remaining gap.
+	spriteCellBox = 240
 
 	// spriteFallbackW/H are the cell dimensions used only when the real
 	// sheet cannot be measured AND the probe carries no usable source
-	// dimensions. Same 16:9 cell the handler emitted unconditionally
-	// before #761.
-	spriteFallbackW = 160
-	spriteFallbackH = 90
+	// dimensions. The 16:9 fit of the box — the shape the handler emitted
+	// unconditionally before #761 — DERIVED from spriteCellBox rather
+	// than written out, so raising the box cannot leave a stale cell
+	// behind here (it very nearly did in #811).
+	spriteFallbackW = spriteCellBox
+	spriteFallbackH = spriteCellBox * 9 / 16
 )
 
 // spriteCellSize fits a srcW x srcH frame inside the spriteCellBox
@@ -832,7 +850,10 @@ const (
 // than dividing by zero.
 func spriteCellSize(srcW, srcH int) (int, int) {
 	if srcW <= 0 || srcH <= 0 {
-		return spriteFallbackW, spriteFallbackH
+		// evenCell here too: the derived 16:9 fit of the box is not
+		// guaranteed to be even (240 -> 135), and an odd cell edge is the
+		// one thing every other path in this file rules out.
+		return evenCell(spriteFallbackW), evenCell(spriteFallbackH)
 	}
 	cw, ch := spriteCellBox, spriteCellBox
 	if srcW >= srcH {
