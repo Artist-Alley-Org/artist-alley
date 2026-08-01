@@ -581,6 +581,15 @@ func (s metaShim) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRequ
 func (s metaShim) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	return s.h.SetFieldExtraction(ctx, req)
 }
+func (s metaShim) ListFieldDefaultOverrides(ctx context.Context, req openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
+	return s.h.ListFieldDefaultOverrides(ctx, req)
+}
+func (s metaShim) SetFieldDefaultOverride(ctx context.Context, req openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error) {
+	return s.h.SetFieldDefaultOverride(ctx, req)
+}
+func (s metaShim) DeleteFieldDefaultOverride(ctx context.Context, req openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error) {
+	return s.h.DeleteFieldDefaultOverride(ctx, req)
+}
 func (s metaShim) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.h.GetAssetFields(ctx, req)
 }

@@ -261,6 +261,27 @@ func (h *Handler) CreateField(
 		subject = parsed
 	}
 
+	// The default is validated against the options document the SAME
+	// request is storing, not against whatever the row held a moment
+	// ago — otherwise a field created with its vocabulary and its
+	// default in one call could only ever be rejected.
+	var defaultJSON []byte
+	if in.DefaultValue != nil {
+		if subject != SubjectAsset {
+			return openapi.CreateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "upload defaults apply to asset fields only; this field describes a collection",
+				},
+			}, nil
+		}
+		defaultJSON, err = encodeFieldDefault(string(in.Type), optsJSON, in.DefaultValue)
+		if err != nil {
+			return openapi.CreateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+	}
+
 	q := New(h.Pool)
 	row, err := q.CreateFieldDefinition(ctx, CreateFieldDefinitionParams{
 		Code:             code,
@@ -280,6 +301,7 @@ func (h *Handler) CreateField(
 		Status:           "active",
 		CreatedByUserRef: &id.UserRef,
 		SubjectKind:      string(subject),
+		DefaultValue:     defaultJSON,
 	})
 	if err != nil {
 		// Most likely a duplicate code violating the UNIQUE
@@ -416,6 +438,42 @@ func (h *Handler) UpdateField(
 			return nil, err
 		}
 		params.Source = b
+	}
+
+	// A default is validated against the options document this request
+	// LANDS ON, not the one already stored: an operator retiring a term
+	// and moving the default off it in one PATCH must succeed, and one
+	// retiring the term the default still names must fail. Reading
+	// params.Options first (falling back to the stored document when the
+	// request does not touch options) is what makes both true.
+	if in.ClearDefault != nil && *in.ClearDefault {
+		if in.DefaultValue != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either default_value or clear_default, not both",
+				},
+			}, nil
+		}
+		params.ClearDefault = true
+	} else if in.DefaultValue != nil {
+		if cur.SubjectKind != string(SubjectAsset) {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "upload defaults apply to asset fields only; this field describes a collection",
+				},
+			}, nil
+		}
+		opts := cur.Options
+		if params.Options != nil {
+			opts = params.Options
+		}
+		b, err := encodeFieldDefault(cur.Type, opts, in.DefaultValue)
+		if err != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		params.DefaultValue = b
 	}
 
 	row, err := q.UpdateFieldDefinition(ctx, params)
@@ -816,6 +874,9 @@ var _ interface {
 	SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error)
 	ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error)
 	GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error)
+	ListFieldDefaultOverrides(context.Context, openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error)
+	SetFieldDefaultOverride(context.Context, openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error)
+	DeleteFieldDefaultOverride(context.Context, openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error)
 } = (*Handler)(nil)
 
 // uuidString returns the canonical text form of a pgtype.UUID. Used
@@ -989,6 +1050,9 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		if err := json.Unmarshal(r.Source, &m); err == nil {
 			def.Source = &m
 		}
+	}
+	if d := apiFieldDefault(r.DefaultValue); d != nil {
+		def.DefaultValue = d
 	}
 	return def
 }

@@ -1135,6 +1135,21 @@ func (*PanicShim) UpdateField(context.Context, openapi.UpdateFieldRequestObject)
 	panic("PanicShim: UpdateField called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListFieldDefaultOverrides panics by default; test shims override.
+func (*PanicShim) ListFieldDefaultOverrides(context.Context, openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
+	panic("PanicShim: ListFieldDefaultOverrides called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DeleteFieldDefaultOverride panics by default; test shims override.
+func (*PanicShim) DeleteFieldDefaultOverride(context.Context, openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error) {
+	panic("PanicShim: DeleteFieldDefaultOverride called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetFieldDefaultOverride panics by default; test shims override.
+func (*PanicShim) SetFieldDefaultOverride(context.Context, openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error) {
+	panic("PanicShim: SetFieldDefaultOverride called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // SetFieldExtraction panics by default; test shims override.
 func (*PanicShim) SetFieldExtraction(context.Context, openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	panic("PanicShim: SetFieldExtraction called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

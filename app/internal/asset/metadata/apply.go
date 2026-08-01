@@ -36,9 +36,36 @@ type FieldValueSnapshot struct {
 	ValueText *string
 	ValueNum  *float64
 	ValueDate *time.Time
+	// SetBy is the row's provenance — the asset_field_value column of
+	// the same name.
+	//
+	// It is here because skip_if_set cannot be decided on PRESENCE
+	// alone once upload defaults exist (#793). ADR 0012 always
+	// specified the skip in terms of provenance ("skip if set_by =
+	// manual"); what shipped read only "is a value there", and nothing
+	// noticed because until now every value on an asset had been put
+	// there by a person or by an extractor. A default is neither. Left
+	// as a presence check, a default written at creation would make
+	// extraction skip the field forever — the default outranking the
+	// extraction, which is the inverse of ADR 0081 §3, on the 13 of 15
+	// live field definitions that use skip_if_set.
+	SetBy string
 	// Multi-value / ref fields aren't covered by Phase 1.18.A-2
 	// extractors (no EXIF tags map to them); shape stays minimal.
 }
+
+// SetByDefault is the provenance an upload default writes. Mirrors
+// metadata.SetByDefault, duplicated rather than imported for the same
+// reason JobTypeExtract is duplicated in the assets package: this
+// package sits below the API-facing metadata package and importing it
+// would close a cycle.
+const SetByDefault = "default"
+
+// isPlaceholder reports whether a present value is one nothing has
+// actually chosen — a default sitting there waiting to be improved on.
+// Extraction may overwrite one of these even under skip_if_set; it may
+// not overwrite anything else.
+func (s FieldValueSnapshot) isPlaceholder() bool { return s.SetBy == SetByDefault }
 
 // FieldValueWriter persists ONE extraction-derived value. Production
 // implementation wraps the metadata package's UpsertAssetFieldValue
@@ -152,8 +179,15 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 			current, present = c, p
 		}
 
-		// skip_if_set: don't overwrite an operator-set value.
-		if fc.Mode == ExtractionModeSkipIfSet && present {
+		// skip_if_set: don't overwrite a value someone CHOSE.
+		//
+		// The check is on provenance, not presence. An upload default
+		// is present and chosen by nobody, so extraction is free to
+		// improve on it — that is what makes ADR 0081 §3's
+		// `extracted > team default > field default` true rather than
+		// backwards. Everything else present stays: a human's edit, an
+		// import, a computed dimension.
+		if fc.Mode == ExtractionModeSkipIfSet && present && !current.isPlaceholder() {
 			summary.FieldsSkippedMode = append(summary.FieldsSkippedMode, fc.Source)
 			continue
 		}
@@ -162,7 +196,16 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 		// re-writing the same value. Skips the audit row + the
 		// federation outbox event. Critical for backfill
 		// idempotency + peer-extraction convergence.
-		if present && valuesEqual(current, normalized) {
+		//
+		// A placeholder is exempt even when the values match, because
+		// the VALUE is not the only thing being corrected — the
+		// provenance is. A row reading "a default put this here" when
+		// the file itself says the same thing is a row that will keep
+		// inviting the next extraction to re-examine it. Letting the
+		// write through once relabels it, and every pass after that
+		// takes this short-circuit normally, so idempotency is
+		// preserved after a single converging write.
+		if present && !current.isPlaceholder() && valuesEqual(current, normalized) {
 			summary.FieldsSkippedNoChange = append(summary.FieldsSkippedNoChange, fc.Source)
 			continue
 		}

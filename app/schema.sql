@@ -733,7 +733,7 @@ CREATE TABLE public.asset_field_value (
     set_by text DEFAULT 'manual'::text NOT NULL,
     set_at timestamp with time zone DEFAULT now() NOT NULL,
     set_by_user_ref bigint,
-    CONSTRAINT asset_field_value_set_by_check CHECK ((set_by = ANY (ARRAY['manual'::text, 'exif'::text, 'iptc'::text, 'xmp'::text, 'api'::text, 'import'::text, 'computed'::text])))
+    CONSTRAINT asset_field_value_set_by_check CHECK ((set_by = ANY (ARRAY['manual'::text, 'exif'::text, 'iptc'::text, 'xmp'::text, 'api'::text, 'import'::text, 'computed'::text, 'default'::text])))
 );
 
 
@@ -1630,10 +1630,25 @@ CREATE TABLE public.field_definition (
     subject_kind text DEFAULT 'asset'::text NOT NULL,
     extraction_source text DEFAULT ''::text NOT NULL,
     extraction_mode text DEFAULT 'skip_if_set'::text NOT NULL,
+    default_value jsonb,
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
+);
+
+
+--
+-- Name: field_default_override; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.field_default_override (
+    field_id uuid NOT NULL,
+    team_id uuid NOT NULL,
+    default_value jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by_user_ref bigint
 );
 
 
@@ -2850,6 +2865,14 @@ ALTER TABLE ONLY public.federation_shares
 
 ALTER TABLE ONLY public.federation_user_keys
     ADD CONSTRAINT federation_user_keys_pkey PRIMARY KEY (user_ref, version);
+
+
+--
+-- Name: field_default_override field_default_override_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.field_default_override
+    ADD CONSTRAINT field_default_override_pkey PRIMARY KEY (field_id, team_id);
 
 
 --

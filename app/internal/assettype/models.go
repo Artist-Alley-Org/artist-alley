@@ -609,6 +609,15 @@ type FederationUserKey struct {
 	RotatedByUserRef *int64 `json:"rotated_by_user_ref"`
 }
 
+type FieldDefaultOverride struct {
+	FieldID          pgtype.UUID        `json:"field_id"`
+	TeamID           pgtype.UUID        `json:"team_id"`
+	DefaultValue     []byte             `json:"default_value"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	UpdatedByUserRef *int64             `json:"updated_by_user_ref"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`
@@ -635,6 +644,7 @@ type FieldDefinition struct {
 	SubjectKind             string             `json:"subject_kind"`
 	ExtractionSource        string             `json:"extraction_source"`
 	ExtractionMode          string             `json:"extraction_mode"`
+	DefaultValue            []byte             `json:"default_value"`
 }
 
 type GooseDbVersion struct {

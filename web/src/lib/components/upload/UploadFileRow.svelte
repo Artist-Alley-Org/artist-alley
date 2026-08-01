@@ -16,7 +16,10 @@
   // exists. Closed by default to keep the row compact; expanding
   // lazy-loads the field defs for the asset_type.
 
-  import type { UploadRow, PendingFieldValue } from '$stores/upload.svelte';
+  // FieldDef comes from the store rather than being re-declared here.
+  // It was declared in both places, so #793's `default_value` landed
+  // on one copy and the row kept type-checking against the other.
+  import type { UploadRow, PendingFieldValue, FieldDef } from '$stores/upload.svelte';
   import { upload, fieldsForAssetType } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
   import { is3DExt } from '../viewers/controller';
@@ -24,8 +27,28 @@
     decodeBoolean,
     encodeBoolean,
     normalizeOptions,
+    optionLabel,
     selectableOptions,
   } from '$lib/fieldOptions';
+  import { describeDefault, CONTEXT_KEYS } from '$lib/fieldDefaults';
+
+  // What the server will put on this field if the artist leaves it
+  // alone. Shown, never pre-filled: pre-filling would send the value
+  // back as set_by='manual', which tells the extraction pipeline a
+  // person chose it and stops anything from ever improving on it.
+  // Every default shown here is a decision this row did not have to
+  // make — which is the entire point of the feature.
+  function defaultHint(f: FieldDef): string {
+    if (!f.default_value) return '';
+    const vocab = normalizeOptions(f.options);
+    return describeDefault(
+      f.default_value,
+      f.type,
+      (slug) => optionLabel(vocab, slug),
+      (c) => t(CONTEXT_KEYS[c]),
+      (on) => t(on ? 'common.yes' : 'common.no'),
+    );
+  }
 
   // True when the row's file is a 3D model — drives the companion
   // disclosure visibility. Audio / image / etc. don't need a
@@ -68,20 +91,6 @@
   let metaFields = $state<FieldDef[] | null>(null);
   let metaLoading = $state(false);
   let metaError = $state<string | null>(null);
-
-  interface FieldDef {
-    id: string;
-    code: string;
-    label: string;
-    description?: string;
-    type: PendingFieldValue['type'];
-    // Entries are bare slugs OR {value,label,status,…} objects —
-    // normalizeOptions absorbs both. See $lib/fieldOptions.
-    options?: Record<string, unknown>;
-    required?: boolean;
-    display_order: number;
-    display_group: string;
-  }
 
   async function toggleMeta() {
     metaOpen = !metaOpen;
@@ -329,8 +338,17 @@
                 <legend class="text-[10px] uppercase tracking-wider text-fg-muted">{g.group}</legend>
                 {#each g.fields as f (f.id)}
                   {@const pending = row.fieldValues.get(f.id)}
+                  {@const hint = defaultHint(f)}
                   <label class="block">
-                    <span class="block text-xs text-fg-muted">{f.label}</span>
+                    <span class="block text-xs text-fg-muted">
+                      {f.label}
+                      {#if hint && !pending}
+                        <span
+                          class="ml-1 rounded bg-surface-elevated px-1 py-0.5 text-[10px] text-fg-muted"
+                          data-testid="upload-field-default-{f.code}"
+                        >{t('upload.file_row.field_default_hint', { value: hint })}</span>
+                      {/if}
+                    </span>
                     {#if f.type === 'text' || f.type === 'rich_text'}
                       <input
                         type="text"

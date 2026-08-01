@@ -123,6 +123,10 @@ a sandbox story, an explicit capability, and an audit trail. It does not arrive 
 
 ### 3. Upload defaults — yes, declarative only, never an expression language
 
+> ⚠️ **The precedence paragraph below was wrong, and the "target collection" context value does
+> not exist. Both are corrected by the 2026-07-31 defaults amendment at the end of this
+> document.** Everything else in this section shipped as written.
+
 A field may carry a default that is applied when an asset is created, and a team may override
 that default for its own uploads. **This is the highest-value of the three tiles**, because it
 is the wedge: every default correctly applied is a decision an artist does not have to make at
@@ -146,9 +150,9 @@ boundary, and it turns every future change to the host language into a migration
 file is a solved problem with a home. Defaults answer "what should this be when nothing else
 says," not "what can be computed."
 
-**Precedence is fixed and shallow**, so a value's origin is always explainable:
+~~**Precedence is fixed and shallow**, so a value's origin is always explainable:
 extracted > team default > field default > empty. A default never overwrites a value that is
-already set, and never overwrites an extracted one.
+already set, and never overwrites an extracted one.~~ **Superseded — see the amendment.**
 
 **Defaults federate with their field**, because they are part of the field definition. A team
 override does not: teams are local.
@@ -229,3 +233,136 @@ rather than at a prohibition.
   for keeping it small.
 - The consequence above reading *"operators wanting genuinely custom mail will be told no"* is
   **withdrawn**.
+
+## Amendment 2026-07-31 — the defaults precedence chain, corrected against the mechanism (#793)
+
+Section 3 stated a precedence the existing machinery delivers **backwards**, and named a context
+value the creation path cannot see. Both are corrected here. The rest of §3 — declarative only,
+two shapes, no macro column, active terms only, federate with the field but not the override —
+shipped exactly as written.
+
+### What §3 got wrong, and why it mattered
+
+§3 said: `extracted > team default > field default > empty`, and *"a default never overwrites a
+value that is already set, and never overwrites an extracted one."*
+
+The second half was already true and stayed true. The first half was not implementable as
+written, because **the extraction applier's `skip_if_set` rule tests presence, not provenance**:
+
+```go
+// app/internal/asset/metadata/apply.go, before #793
+if fc.Mode == ExtractionModeSkipIfSet && present { skip }
+```
+
+Write a default at asset creation and the value is *present*. Extraction then skips it. So the
+default would have outranked the extraction it is supposed to yield to — and **thirteen of the
+fifteen live field definitions are `skip_if_set`**, so that inversion would have been the normal
+case rather than a corner. ADR 0012 always specified this skip in terms of provenance ("skip if
+`set_by = 'manual'`"); what shipped read only "is a value there", and nothing noticed because
+until now every value on an asset had been put there by a person or by an extractor.
+
+Two related documents also need reading with this in mind. Migration `00020` had already
+recorded the same gap in passing — *"the applier's only mode check is 'is a value present',
+never `set_by`"* — as a contributing cause of the pixel-dimension defect, without generalising
+it. And `#799` was filed as *"provenance is wrong AND the manual-skip rule is unimplemented"*;
+its claim that the applier "never skips" is not right — `skip_if_set` does skip, it is simply
+**coarser** than ADR 0012 specifies, never consulting `set_by`. #793 owns the precedence chain;
+#799 keeps the narrower question of which *extractor name* gets recorded.
+
+### Decision: a default carries its own provenance
+
+`asset_field_value.set_by` gains **`default`**, and the applier's skip becomes a provenance
+check:
+
+```go
+if fc.Mode == ExtractionModeSkipIfSet && present && !current.isPlaceholder() { skip }
+```
+
+A value marked `default` is the one thing nobody chose. Extraction may improve on it;
+everything else present — `manual`, `exif`, `iptc`, `xmp`, `api`, `import`, `computed` — stays
+protected exactly as before. The skip's exemption is *widened by one value*, not removed.
+
+**The alternative — apply defaults after extraction — was considered and rejected.** It changes
+ordering rather than comparison, so it needs no migration, and it fails for a plainer reason:
+extraction is an async job enqueued post-commit and **only for six image extensions**
+(`jpg jpeg png tif tiff webp`). A default on a `.glb`, a `.pdf`, a `.wav` or a `.txt` would
+never be applied at all, because nothing downstream ever runs. It would also make the upload
+modal unable to say truthfully what an asset is about to carry, which is the artist-facing half
+of the feature. A default has to be there when nothing else says otherwise — and "nothing else
+ever runs" is the most common form of that.
+
+The equal-value short-circuit is exempted for placeholders too. A default that happens to match
+what the file says is still labelled "nobody chose this"; letting one write through relabels it,
+and every pass after that takes the short-circuit normally, so backfill idempotency survives
+after a single converging write.
+
+### The corrected chain
+
+```
+a value already on the row      never touched — the defaults writer is
+                                INSERT … ON CONFLICT DO NOTHING, so this
+                                holds regardless of call order
+extraction (skip_if_set)        may overwrite a `default`, nothing else
+the uploader's team override    when exactly one applies
+the field's own default
+nothing
+```
+
+`replace`-mode extraction is unchanged: it overwrites regardless of provenance, which is what it
+has always meant.
+
+Note what this makes explicit that §3 left out: **a human's edit outranks extraction** under
+`skip_if_set`. §3's chain started at "extracted" and never mentioned manual values, which is
+part of why the mechanism's actual shape went unexamined.
+
+### `target collection` is removed from the closed set
+
+§3 listed "the target team or collection" as context values. The collection is not
+implementable and is dropped: `POST /assets` has **no collection in scope at all** — collection
+membership is a separate, later write. A menu entry the resolver can never answer is a setting
+that appears to work and does nothing, which is the failure mode #774 established we do not
+ship.
+
+The set that exists is `uploading_user`, `uploading_team`, `current_date`. Each names one
+storage column, and a context whose column does not match the field's type is rejected on write
+with a message naming the ones that would fit.
+
+### The team of an upload
+
+`assets.team_id` exists but **nothing on the upload path writes it** — `AssetCreate` has no
+`team_id` and `CreateAsset` never sets one. So a team override is resolved from the uploader's
+**direct** team memberships, not from the asset's team and not through `team_closure` (an
+ancestor team is a permission scope, not a place someone uploads to).
+
+When more than one of the uploader's teams overrides the same field there is no correct answer,
+so none is invented: both overrides are discarded and the field's own default applies. That is
+deliberately not resolved by an `ORDER BY` on team name or creation date — a rule that picks
+confidently and unpredictably is worse for an operator than one that steps back to the value
+everyone agreed on. `uploading_team` follows the same rule and simply does not resolve when the
+team is ambiguous; an unresolvable context applies **nothing**, never a blank or a zero.
+
+### Storage
+
+The default document is `jsonb` on `field_definition.default_value`, plus a
+`field_default_override (field_id, team_id)` table with real FKs and `ON DELETE CASCADE`.
+
+The apply path renders a default into the same `AssetFieldValueWrite` the manual `PUT` takes and
+hands it to the same `buildUpsertParams`, so **the column a default lands in cannot diverge from
+the column a manual value lands in** — by construction, not by a second switch statement kept in
+step by hand. `app/internal/metadata/valuecolumn_test.go` pins it for all eleven field types and
+compares the two writers' output byte for byte, which is the guard that stops a future
+"simplification" from reintroducing the #778 / #791 class.
+
+### Consequences
+
+- `asset_field_value_set_by_check` grows a value, so this is a migration on a CHECK constraint
+  (`00021`). `asset_field_value_history.set_by` carries no constraint and needed none;
+  `collection_field_value` is untouched, because collections are not created by upload.
+- `AssetFieldValue.set_by` on the wire grows `default`. `AssetFieldValueWrite.set_by`
+  deliberately does **not**: a value a caller chose to send is by definition not one nobody
+  chose, so `default` is the one provenance a client cannot claim.
+- The upload modal **shows** a field's default and never pre-fills it. Pre-filling would send
+  the value back as `set_by='manual'`, telling the pipeline a person chose it and stopping
+  anything from ever improving on it — the same inversion by a different route.
+- **§3's precedence sentence is retracted, not merely annotated.** Leaving it standing would be
+  worse than the bug it described, because the next person would implement from it.

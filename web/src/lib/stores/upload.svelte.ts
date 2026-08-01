@@ -25,6 +25,7 @@
 import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
 import type { components } from '$api/schema';
+import type { FieldDefault } from '$lib/fieldDefaults';
 
 type AssetCreate = components['schemas']['AssetCreate'];
 
@@ -734,6 +735,17 @@ export interface FieldDef {
   required?: boolean;
   display_order: number;
   display_group: string;
+  // The upload default the server will apply if this field is left
+  // alone (#793). Carried so the row can SAY so — a default the
+  // artist cannot see is a decision made on their behalf without
+  // telling them, which is a different thing from one they did not
+  // have to make.
+  //
+  // Deliberately not pre-filled into row.fieldValues: a value the
+  // artist did not choose must not be sent as set_by='manual', or the
+  // extraction pipeline will treat it as a decision and never improve
+  // on it.
+  default_value?: FieldDefault | null;
 }
 
 /**

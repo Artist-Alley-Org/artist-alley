@@ -2748,6 +2748,15 @@ func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRe
 func (s *apiServer) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	return s.metadata.SetFieldExtraction(ctx, req)
 }
+func (s *apiServer) ListFieldDefaultOverrides(ctx context.Context, req openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
+	return s.metadata.ListFieldDefaultOverrides(ctx, req)
+}
+func (s *apiServer) SetFieldDefaultOverride(ctx context.Context, req openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error) {
+	return s.metadata.SetFieldDefaultOverride(ctx, req)
+}
+func (s *apiServer) DeleteFieldDefaultOverride(ctx context.Context, req openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error) {
+	return s.metadata.DeleteFieldDefaultOverride(ctx, req)
+}
 func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.metadata.GetAssetFields(ctx, req)
 }
@@ -4803,12 +4812,17 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 		valText *string
 		valNum  *float64
 		valDate pgtype.Timestamptz
+		setBy   string
 	)
+	// set_by rides along because the applier's skip_if_set rule is a
+	// provenance check, not a presence check (#793). Selecting the
+	// three value columns and not this one is what made a default
+	// indistinguishable from a human's edit.
 	err := a.pool.QueryRow(ctx, `
-		SELECT value_text, value_num, value_date
+		SELECT value_text, value_num, value_date, set_by
 		  FROM asset_field_value
 		 WHERE asset_id = $1 AND field_id = $2
-	`, assetID, fieldID).Scan(&valText, &valNum, &valDate)
+	`, assetID, fieldID).Scan(&valText, &valNum, &valDate, &setBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return assetmetadata.FieldValueSnapshot{}, false, nil
@@ -4818,6 +4832,7 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 	out := assetmetadata.FieldValueSnapshot{
 		ValueText: valText,
 		ValueNum:  valNum,
+		SetBy:     setBy,
 	}
 	if valDate.Valid {
 		t := valDate.Time

@@ -48,6 +48,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
@@ -453,6 +454,37 @@ func (h *Handler) CreateAsset(
 			}
 			tags = append(tags, t)
 		}
+	}
+
+	// Upload defaults (#793, ADR 0081 §3). Inside the tx, so an asset
+	// is never observable without the values its field definitions say
+	// it should be born with.
+	//
+	// This is the artist-friction wedge: every default that lands here
+	// is a decision nobody had to make at upload time. The values are
+	// written with set_by='default', which is what lets the async
+	// extraction job overwrite them later without also overwriting
+	// anything a person chose.
+	//
+	// A failure is logged and swallowed rather than rolled back. A
+	// default is a convenience; refusing an upload because one field
+	// definition carries a document the resolver dislikes would trade a
+	// missing convenience for a lost file.
+	if applied, dErr := metadata.ApplyAssetDefaults(ctx, tx, metadata.ApplyDefaultsParams{
+		AssetID:   uuid.UUID(row.ID.Bytes),
+		AssetType: in.AssetType,
+		UserRef:   id.UserRef,
+		Now:       row.CreatedAt.Time,
+	}); dErr != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.defaults.error",
+			slog.String("asset_id", uuid.UUID(row.ID.Bytes).String()),
+			slog.String("err", dErr.Error()),
+		)
+	} else if len(applied) > 0 {
+		h.Logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.defaults.applied",
+			slog.String("asset_id", uuid.UUID(row.ID.Bytes).String()),
+			slog.Int("count", len(applied)),
+		)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

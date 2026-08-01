@@ -7,6 +7,9 @@
   import { t } from '$stores/lang.svelte';
   import ExtractionConfigPicker from '$components/ExtractionConfigPicker.svelte';
   import FieldEditor from '$components/FieldEditor.svelte';
+  import FieldDefaultEditor from '$components/FieldDefaultEditor.svelte';
+  import { describeDefault, typeSupportsDefault, CONTEXT_KEYS, type FieldDefault } from '$lib/fieldDefaults';
+  import { normalizeOptions, optionLabel } from '$lib/fieldOptions';
 
   interface Field {
     id: string;
@@ -20,7 +23,27 @@
     extraction_source?: string;
     extraction_mode?: string;
     options?: Record<string, unknown>;
+    default_value?: FieldDefault | null;
     updated_at: string;
+  }
+
+  // Per-row toggle for the upload-default editor. Keyed by field id.
+  let defaulting = $state<Record<string, boolean>>({});
+  function toggleDefault(id: string) { defaulting[id] = !defaulting[id]; }
+
+  // What the row's button says. A field with a default should say what
+  // it is without being opened — the operator's question is almost
+  // always "which fields default, and to what".
+  function defaultSummary(f: Field): string {
+    if (!f.default_value) return '';
+    const vocab = normalizeOptions(f.options);
+    return describeDefault(
+      f.default_value,
+      f.type,
+      (slug) => optionLabel(vocab, slug),
+      (c) => t(CONTEXT_KEYS[c]),
+      (on) => t(on ? 'common.yes' : 'common.no'),
+    );
   }
 
   // Per-row toggle for the extraction picker. Keyed by field id.
@@ -246,6 +269,7 @@
         <th class="py-2">{t('admin.fields.applies_to')}</th>
         <th class="py-2">{t('admin.fields.group')}</th>
         <th class="py-2">{t('admin.fields.extraction')}</th>
+        <th class="py-2">{t('admin.fields.default')}</th>
         <th class="py-2">{t('admin.fields.edit')}</th>
       </tr>
     </thead>
@@ -275,6 +299,24 @@
             </button>
           </td>
           <td class="py-2">
+            {#if f.subject_kind === 'asset' && typeSupportsDefault(f.type)}
+              <button
+                type="button"
+                onclick={() => toggleDefault(f.id)}
+                class="min-h-11 rounded border border-border px-2 py-0.5 text-xs text-fg-muted hover:bg-state-hover"
+                data-testid="admin-fields-default-toggle-{f.code}"
+              >
+                {#if f.default_value}
+                  {defaultSummary(f) || t('admin.fields.default_set')}
+                {:else}
+                  — {t('admin.fields.default_none')} —
+                {/if}
+              </button>
+            {:else}
+              <span class="text-xs text-fg-muted">—</span>
+            {/if}
+          </td>
+          <td class="py-2">
             <button
               type="button"
               onclick={() => toggleEdit(f.id)}
@@ -287,7 +329,7 @@
         </tr>
         {#if expanded[f.id]}
           <tr class="border-t border-border/30 bg-bg-soft/40">
-            <td class="px-2 py-2" colspan="8">
+            <td class="px-2 py-2" colspan="9">
               <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
                 <ExtractionConfigPicker
                   fieldId={f.id}
@@ -299,9 +341,24 @@
             </td>
           </tr>
         {/if}
+        {#if defaulting[f.id]}
+          <tr class="border-t border-border/30 bg-bg-soft/40">
+            <td class="px-2 py-2" colspan="9">
+              <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
+                <FieldDefaultEditor
+                  fieldId={f.id}
+                  fieldType={f.type}
+                  initialDefault={f.default_value}
+                  initialOptions={f.options}
+                  onSaved={() => load(true)}
+                />
+              </div>
+            </td>
+          </tr>
+        {/if}
         {#if editing[f.id]}
           <tr class="border-t border-border/30 bg-bg-soft/40">
-            <td class="px-2 py-2" colspan="8">
+            <td class="px-2 py-2" colspan="9">
               <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
                 <!-- Deliberately not keyed on updated_at: the editor
                      re-baselines itself from its own PATCH response,

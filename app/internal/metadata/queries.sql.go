@@ -99,14 +99,14 @@ INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, field_set_id, read_capability, write_capability,
     display_order, display_group, source, status,
-    created_by_user_ref, updated_by_user_ref, subject_kind
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17)
+    created_by_user_ref, updated_by_user_ref, subject_kind, default_value
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, field_set_id, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode
+          subject_kind, extraction_source, extraction_mode, default_value
 `
 
 type CreateFieldDefinitionParams struct {
@@ -127,6 +127,7 @@ type CreateFieldDefinitionParams struct {
 	Status           string
 	CreatedByUserRef *int64
 	SubjectKind      string
+	DefaultValue     []byte
 }
 
 func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefinitionParams) (FieldDefinition, error) {
@@ -148,6 +149,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		arg.Status,
 		arg.CreatedByUserRef,
 		arg.SubjectKind,
+		arg.DefaultValue,
 	)
 	var i FieldDefinition
 	err := row.Scan(
@@ -176,6 +178,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.SubjectKind,
 		&i.ExtractionSource,
 		&i.ExtractionMode,
+		&i.DefaultValue,
 	)
 	return i, err
 }
@@ -207,6 +210,23 @@ type DeleteCollectionFieldValueParams struct {
 func (q *Queries) DeleteCollectionFieldValue(ctx context.Context, arg DeleteCollectionFieldValueParams) error {
 	_, err := q.db.Exec(ctx, deleteCollectionFieldValue, arg.CollectionID, arg.FieldID)
 	return err
+}
+
+const deleteFieldDefaultOverride = `-- name: DeleteFieldDefaultOverride :execrows
+DELETE FROM field_default_override WHERE field_id = $1 AND team_id = $2
+`
+
+type DeleteFieldDefaultOverrideParams struct {
+	FieldID pgtype.UUID
+	TeamID  pgtype.UUID
+}
+
+func (q *Queries) DeleteFieldDefaultOverride(ctx context.Context, arg DeleteFieldDefaultOverrideParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFieldDefaultOverride, arg.FieldID, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAssetFieldValue = `-- name: GetAssetFieldValue :one
@@ -288,13 +308,28 @@ func (q *Queries) GetCollectionFieldValue(ctx context.Context, arg GetCollection
 	return i, err
 }
 
+const getDefaultUserDisplay = `-- name: GetDefaultUserDisplay :one
+SELECT COALESCE(NULLIF(fullname, ''), username, '')::TEXT AS display
+FROM "user" WHERE ref = $1
+`
+
+// Display name for the `uploading_user` context value. fullname when
+// the user set one, username otherwise — the same fallback every other
+// surface shows, so a default matches what the byline says.
+func (q *Queries) GetDefaultUserDisplay(ctx context.Context, ref int64) (string, error) {
+	row := q.db.QueryRow(ctx, getDefaultUserDisplay, ref)
+	var display string
+	err := row.Scan(&display)
+	return display, err
+}
+
 const getFieldDefinitionByCode = `-- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition WHERE code = $1
 `
 
@@ -327,6 +362,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.SubjectKind,
 		&i.ExtractionSource,
 		&i.ExtractionMode,
+		&i.DefaultValue,
 	)
 	return i, err
 }
@@ -337,7 +373,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition WHERE id = $1
 `
 
@@ -370,8 +406,157 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.SubjectKind,
 		&i.ExtractionSource,
 		&i.ExtractionMode,
+		&i.DefaultValue,
 	)
 	return i, err
+}
+
+const getTeamForDefaultOverride = `-- name: GetTeamForDefaultOverride :one
+SELECT id, slug, name FROM teams WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetTeamForDefaultOverrideRow struct {
+	ID   pgtype.UUID
+	Slug string
+	Name string
+}
+
+func (q *Queries) GetTeamForDefaultOverride(ctx context.Context, id pgtype.UUID) (GetTeamForDefaultOverrideRow, error) {
+	row := q.db.QueryRow(ctx, getTeamForDefaultOverride, id)
+	var i GetTeamForDefaultOverrideRow
+	err := row.Scan(&i.ID, &i.Slug, &i.Name)
+	return i, err
+}
+
+const insertAssetFieldValueIfAbsent = `-- name: InsertAssetFieldValueIfAbsent :execrows
+INSERT INTO asset_field_value (
+    asset_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at
+) VALUES (
+    $1, $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    'default', NOW()
+)
+ON CONFLICT (asset_id, field_id) DO NOTHING
+`
+
+type InsertAssetFieldValueIfAbsentParams struct {
+	AssetID      pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+}
+
+// The defaults writer. ON CONFLICT DO NOTHING makes "a default never
+// overwrites a value that is already set" a property of the STATEMENT
+// rather than of the order the caller happens to do things in. The
+// caller today runs at asset creation, where by construction there is
+// nothing to overwrite; encoding the rule here means a future caller
+// (a re-apply action, a backfill) cannot reintroduce the clobber by
+// being placed differently in the sequence.
+//
+// set_by is hard-wired to 'default' — this statement exists only for
+// the defaults path, and a provenance the applier can recognise is the
+// whole reason it can tell "a default is sitting here" from "a human
+// typed this".
+func (q *Queries) InsertAssetFieldValueIfAbsent(ctx context.Context, arg InsertAssetFieldValueIfAbsentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertAssetFieldValueIfAbsent,
+		arg.AssetID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const listAssetDefaultCandidates = `-- name: ListAssetDefaultCandidates :many
+
+SELECT f.id, f.code, f.type, f.options, f.default_value,
+       o.team_id, o.default_value AS override_value
+FROM field_definition f
+LEFT JOIN field_default_override o
+       ON o.field_id = f.id
+      AND o.team_id = ANY($1::UUID[])
+WHERE f.subject_kind = 'asset'
+  AND f.status = 'active'
+  AND (cardinality(f.applies_to) = 0 OR $2::BIGINT = ANY(f.applies_to))
+  AND (f.default_value IS NOT NULL OR o.default_value IS NOT NULL)
+ORDER BY f.code
+`
+
+type ListAssetDefaultCandidatesParams struct {
+	TeamIds []pgtype.UUID
+	Rt      int64
+}
+
+type ListAssetDefaultCandidatesRow struct {
+	ID            pgtype.UUID
+	Code          string
+	Type          string
+	Options       []byte
+	DefaultValue  []byte
+	TeamID        pgtype.UUID
+	OverrideValue []byte
+}
+
+// ---------------------------------------------------------------------------
+// Upload defaults (#793) — ADR 0081 §3
+// ---------------------------------------------------------------------------
+// Every asset field that carries a default OR has one overridden by a
+// team the uploader belongs to, for the asset type being created.
+//
+// The LEFT JOIN is what makes both halves of the precedence chain
+// readable in ONE query: a field with only a field default comes back
+// once with a NULL override, a field a team has overridden comes back
+// with the override alongside, and a field whose ONLY default is a team
+// override still comes back (the WHERE accepts either side). Emitting
+// one row per matching override rather than picking a winner in SQL is
+// deliberate — Go can then see that two of the uploader's teams both
+// override the same field, which is the case that has no correct answer
+// and must not be silently resolved by an ORDER BY.
+//
+// applies_to is honoured here: a field that does not apply to this asset
+// type has no business defaulting onto it.
+func (q *Queries) ListAssetDefaultCandidates(ctx context.Context, arg ListAssetDefaultCandidatesParams) ([]ListAssetDefaultCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listAssetDefaultCandidates, arg.TeamIds, arg.Rt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssetDefaultCandidatesRow
+	for rows.Next() {
+		var i ListAssetDefaultCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Type,
+			&i.Options,
+			&i.DefaultValue,
+			&i.TeamID,
+			&i.OverrideValue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAssetFieldValueHistory = `-- name: ListAssetFieldValueHistory :many
@@ -596,6 +781,93 @@ func (q *Queries) ListCollectionFieldValues(ctx context.Context, collectionID pg
 	return items, nil
 }
 
+const listDefaultTeamsForUser = `-- name: ListDefaultTeamsForUser :many
+SELECT t.id, t.name
+FROM team_memberships m
+JOIN teams t ON t.id = m.team_id
+WHERE m.user_ref = $1
+  AND t.deleted_at IS NULL
+ORDER BY t.name, t.id
+`
+
+type ListDefaultTeamsForUserRow struct {
+	ID   pgtype.UUID
+	Name string
+}
+
+// The uploader's DIRECT team memberships. Not the closure: an ancestor
+// team is a permission scope, not a place someone uploads to, and
+// expanding it would make a parent team's override apply to uploads it
+// never sees.
+func (q *Queries) ListDefaultTeamsForUser(ctx context.Context, userRef int64) ([]ListDefaultTeamsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listDefaultTeamsForUser, userRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDefaultTeamsForUserRow
+	for rows.Next() {
+		var i ListDefaultTeamsForUserRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldDefaultOverrides = `-- name: ListFieldDefaultOverrides :many
+SELECT o.field_id, o.team_id, t.slug AS team_slug, t.name AS team_name,
+       o.default_value, o.created_at, o.updated_at, o.updated_by_user_ref
+FROM field_default_override o
+JOIN teams t ON t.id = o.team_id
+WHERE o.field_id = $1 AND t.deleted_at IS NULL
+ORDER BY t.name, t.id
+`
+
+type ListFieldDefaultOverridesRow struct {
+	FieldID          pgtype.UUID
+	TeamID           pgtype.UUID
+	TeamSlug         string
+	TeamName         string
+	DefaultValue     []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	UpdatedByUserRef *int64
+}
+
+func (q *Queries) ListFieldDefaultOverrides(ctx context.Context, fieldID pgtype.UUID) ([]ListFieldDefaultOverridesRow, error) {
+	rows, err := q.db.Query(ctx, listFieldDefaultOverrides, fieldID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldDefaultOverridesRow
+	for rows.Next() {
+		var i ListFieldDefaultOverridesRow
+		if err := rows.Scan(
+			&i.FieldID,
+			&i.TeamID,
+			&i.TeamSlug,
+			&i.TeamName,
+			&i.DefaultValue,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.UpdatedByUserRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFieldDefinitions = `-- name: ListFieldDefinitions :many
 
 SELECT id, code, label, description, type, options, required, searchable,
@@ -603,7 +875,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -669,6 +941,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.SubjectKind,
 			&i.ExtractionSource,
 			&i.ExtractionMode,
+			&i.DefaultValue,
 		); err != nil {
 			return nil, err
 		}
@@ -686,7 +959,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -731,6 +1004,7 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.SubjectKind,
 			&i.ExtractionSource,
 			&i.ExtractionMode,
+			&i.DefaultValue,
 		); err != nil {
 			return nil, err
 		}
@@ -800,7 +1074,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode
+          subject_kind, extraction_source, extraction_mode, default_value
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -847,6 +1121,7 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.SubjectKind,
 		&i.ExtractionSource,
 		&i.ExtractionMode,
+		&i.DefaultValue,
 	)
 	return i, err
 }
@@ -867,15 +1142,22 @@ UPDATE field_definition SET
     source                    = COALESCE($12,                    source),
     status                    = COALESCE($13,                    status),
     deprecated_replacement_id = COALESCE($14, deprecated_replacement_id),
+    -- default_value needs a CLEAR path, which COALESCE cannot express:
+    -- passing NULL means "leave it alone" everywhere else in this
+    -- statement, so "remove the default" would be unsayable. The
+    -- explicit boolean makes removal a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    default_value             = CASE WHEN $15::BOOLEAN THEN NULL
+                                     ELSE COALESCE($16, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $15
-WHERE id = $16
+    updated_by_user_ref       = $17
+WHERE id = $18
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, field_set_id, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode
+          subject_kind, extraction_source, extraction_mode, default_value
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -893,6 +1175,8 @@ type UpdateFieldDefinitionParams struct {
 	Source                  []byte
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
+	ClearDefault            bool
+	DefaultValue            []byte
 	UpdatedByUserRef        *int64
 	ID                      pgtype.UUID
 }
@@ -917,6 +1201,8 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.Source,
 		arg.Status,
 		arg.DeprecatedReplacementID,
+		arg.ClearDefault,
+		arg.DefaultValue,
 		arg.UpdatedByUserRef,
 		arg.ID,
 	)
@@ -947,6 +1233,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.SubjectKind,
 		&i.ExtractionSource,
 		&i.ExtractionMode,
+		&i.DefaultValue,
 	)
 	return i, err
 }
@@ -1086,6 +1373,42 @@ func (q *Queries) UpsertCollectionFieldValue(ctx context.Context, arg UpsertColl
 		&i.SetBy,
 		&i.SetAt,
 		&i.SetByUserRef,
+	)
+	return i, err
+}
+
+const upsertFieldDefaultOverride = `-- name: UpsertFieldDefaultOverride :one
+INSERT INTO field_default_override (field_id, team_id, default_value, updated_by_user_ref)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (field_id, team_id) DO UPDATE
+   SET default_value = EXCLUDED.default_value,
+       updated_at = NOW(),
+       updated_by_user_ref = EXCLUDED.updated_by_user_ref
+RETURNING field_id, team_id, default_value, created_at, updated_at, updated_by_user_ref
+`
+
+type UpsertFieldDefaultOverrideParams struct {
+	FieldID          pgtype.UUID
+	TeamID           pgtype.UUID
+	DefaultValue     []byte
+	UpdatedByUserRef *int64
+}
+
+func (q *Queries) UpsertFieldDefaultOverride(ctx context.Context, arg UpsertFieldDefaultOverrideParams) (FieldDefaultOverride, error) {
+	row := q.db.QueryRow(ctx, upsertFieldDefaultOverride,
+		arg.FieldID,
+		arg.TeamID,
+		arg.DefaultValue,
+		arg.UpdatedByUserRef,
+	)
+	var i FieldDefaultOverride
+	err := row.Scan(
+		&i.FieldID,
+		&i.TeamID,
+		&i.DefaultValue,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UpdatedByUserRef,
 	)
 	return i, err
 }
