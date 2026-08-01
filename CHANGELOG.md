@@ -40,6 +40,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Hover slideshows are twice as sharp.** Hovering a video or 3D model plays a little
+  slideshow of frames; those frames were generated at half the resolution of the still
+  image they replace, so the moment you hovered, the picture went soft. The frames are
+  now half again larger, which removes most of the visible blur, while the number of
+  frames — the smoothness — is unchanged. The extra storage this costs came in under
+  what was budgeted when the trade was approved (#811).
+
 - **A freshly uploaded video shows its picture in seconds, not after the whole transcode.**
   Making a video ready to stream is the most expensive work in the system, and until now a
   video card showed nothing at all — not even the blurred placeholder — until every bit of
