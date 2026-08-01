@@ -72,9 +72,23 @@ the table is `deprecated_replacement_id`.
    and none of them is a field-definition or field-value verb; the
    outbox resolver projects no metadata onto an object. None of the
    four federation ADRs written *after* this one — 0007, 0042, 0043,
-   0049 — mentions field sets, which is the clearest evidence that
-   the idea was not carried forward by the people designing the
-   thing it was prep for.
+   0049 — mentions field sets.
+
+   > ⚠️ **Corrected 2026-08-01 — see ADR 0083.** This paragraph
+   > originally concluded that the silence of those four ADRs was
+   > "the clearest evidence that the idea was not carried forward by
+   > the people designing the thing it was prep for." That reads an
+   > **absence of a decision as a decision against**, and the author
+   > of the federation design says otherwise: peers exchanging field
+   > schemas is wanted, and simply has not been built.
+   >
+   > The removal still stands — the column was unwritten, unreferenced
+   > and the wrong shape regardless. But the requirement is live, not
+   > rejected, and it is already concrete: per ADR 0053 a federated
+   > IIIF manifest can span two instances **today**, each rendering
+   > its own canvases' metadata from field definitions nothing has
+   > ever reconciled. ADR 0083 records the requirement and carries
+   > forward this amendment's envelope and collision analysis.
 
 2. **It is not the bulk-import/export epic's dependency either.**
    #521 and ADR 0019 are about ingesting and dumping **assets**
