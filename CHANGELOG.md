@@ -113,6 +113,30 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A seed run now says when it throws a field value away.** Loading a catalogue could
+  discard a value in two different situations — the file named a field that does not
+  exist, or it carried something that field's type cannot hold — and both were silent.
+  The run reported success, the field was simply missing afterwards, and any check that
+  counted rows agreed that everything was fine. A seeded instance could therefore be
+  quietly missing data that nobody had any way to notice.
+
+  Both cases now report themselves, and they report themselves *differently*, because
+  the two need different fixes: one is a mismatch between the catalogue and the
+  definitions, the other is a bad value. A run ends with a plain-language note saying
+  how many values were dropped and which fields they belonged to. A single misconfigured
+  field no longer floods the log either — a few examples are shown, while the count
+  stays exact (#807).
+
+  A date field also accepts an ordinary calendar date now, such as `2026-03-14`.
+  Previously it required a full timestamp and would discard anything else — without
+  saying so, which is precisely the trap above.
+
+  While fixing this, one worse case turned up: a reference field given a malformed
+  identifier was not being discarded at all. It was accepted, and stored a value that
+  was empty in every respect — a field that reads as "deliberately set to nothing"
+  rather than as absent, and the one shape a row count cannot detect. It is now refused
+  like any other bad value.
+
 - **A portrait phone photo would have tiled as a landscape one.** Two different parts of
   the system were writing the tile shape a browse page reserves for an image, and they
   disagreed for exactly one kind of file: a photo taken in portrait, which cameras store
