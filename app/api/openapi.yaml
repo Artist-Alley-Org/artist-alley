@@ -4941,6 +4941,98 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /fields/{id}/default-overrides:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listFieldDefaultOverrides
+      summary: Team overrides of this field's upload default (admin)
+      description: |
+        Every team that overrides this field's `default_value` for its
+        own uploads. Field defaults federate with their field; team
+        overrides do not — a team is local to the instance.
+      tags: [metadata, admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The team overrides, ordered by team name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FieldDefaultOverride" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /fields/{id}/default-overrides/{team_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: team_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setFieldDefaultOverride
+      summary: Set one team's override of a field's upload default (admin)
+      description: |
+        Validated exactly as the field's own default is: against the
+        field's type, and for a vocabulary field against the live
+        options document, where a `deprecated` or `archived` term is
+        rejected. An override that could not apply is never stored.
+      tags: [metadata, admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldDefault" }
+      responses:
+        "200":
+          description: The stored override.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldDefaultOverride" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteFieldDefaultOverride
+      summary: Remove one team's override of a field's upload default (admin)
+      description: |
+        The team falls back to the field's own default, if it has one.
+      tags: [metadata, admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/fields:
     parameters:
       - name: id
@@ -11022,8 +11114,82 @@ components:
           type: string
           enum: [active, deprecated, archived]
         deprecated_replacement_id: { type: string, format: uuid, nullable: true }
+        default_value:
+          allOf:
+            - $ref: "#/components/schemas/FieldDefault"
+          nullable: true
+          description: |
+            Applied when an asset is created and this field would
+            otherwise be empty. `null` = no default. Federates with the
+            field definition; per-team overrides live at
+            `/fields/{id}/default-overrides` and do not.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    FieldDefault:
+      type: object
+      required: [kind]
+      description: |
+        A declarative upload default (ADR 0081 §3). Exactly one of two
+        shapes, discriminated by `kind`, and never an expression:
+
+          * `literal` — a value in whichever `value_*` member this
+            field's type uses (the same mapping `AssetFieldValueWrite`
+            documents). Populating any other member is a 400: the value
+            would land in a column nothing reads.
+          * `context` — a name from a closed set the server resolves at
+            creation time. The operator picks from a menu; nothing they
+            write is evaluated.
+
+        For `select` / `multi_select` / `tree`, a literal slug must
+        exist in the field's `options` and be `active`. A `deprecated`
+        or `archived` term is rejected on write, because a default is
+        the fastest way to spread a term you have just retired.
+
+        When a value must genuinely be COMPUTED rather than chosen, that
+        is what `extraction_source` / `extraction_mode` are for. A
+        default answers "what should this be when nothing else says".
+      properties:
+        kind:
+          type: string
+          enum: [literal, context]
+        value_text: { type: string, nullable: true }
+        value_num: { type: number, nullable: true }
+        value_date: { type: string, format: date-time, nullable: true }
+        value_options:
+          type: array
+          items: { type: string }
+          nullable: true
+        value_ref: { type: string, format: uuid, nullable: true }
+        context:
+          type: string
+          enum: [uploading_user, uploading_team, current_date]
+          description: |
+            Required when `kind` is `context`, forbidden otherwise.
+
+              * `uploading_user` — the uploader's display name. Text
+                types only.
+              * `uploading_team` — the name of the team the upload
+                belongs to. Text types only. Not applied when the
+                uploader belongs to no team, or to more than one.
+              * `current_date` — creation time. Date types only; a
+                `date` field gets the day, a `datetime` the instant.
+
+            The set is closed. It carries no "target collection"
+            because `POST /assets` has no collection in scope — see the
+            2026-07-31 defaults amendment to ADR 0081.
+    FieldDefaultOverride:
+      type: object
+      required: [field_id, team_id, team_slug, team_name, default_value, created_at, updated_at]
+      description: "One team's override of a field's upload default."
+      properties:
+        field_id: { type: string, format: uuid }
+        team_id: { type: string, format: uuid }
+        team_slug: { type: string }
+        team_name: { type: string }
+        default_value: { $ref: "#/components/schemas/FieldDefault" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by_user_ref: { type: integer, format: int64, nullable: true }
     FieldDefinitionCreate:
       type: object
       required: [code, label, type]
@@ -11051,6 +11217,11 @@ components:
         display_order: { type: integer, default: 100 }
         display_group: { type: string, default: general }
         source: { type: object, additionalProperties: true, nullable: true }
+        default_value:
+          allOf:
+            - $ref: "#/components/schemas/FieldDefault"
+          nullable: true
+          description: "Upload default. Validated against `type` and `options` on write."
     FieldExtractionConfig:
       type: object
       description: |
@@ -11116,6 +11287,18 @@ components:
           type: string
           enum: [active, deprecated, archived]
         deprecated_replacement_id: { type: string, format: uuid, nullable: true }
+        default_value:
+          allOf:
+            - $ref: "#/components/schemas/FieldDefault"
+          nullable: true
+          description: |
+            Sets this field's upload default. Omit to leave it alone.
+            Use `clear_default: true` to remove it — a partial update
+            cannot express "remove" by sending null, because null is
+            already "leave alone" for every other property here.
+        clear_default:
+          type: boolean
+          description: "Remove this field's upload default. Mutually exclusive with `default_value`."
     AssetFieldValue:
       type: object
       required: [field_id, field_code, type, set_by, set_at]
@@ -11137,7 +11320,15 @@ components:
         value_ref: { type: string, format: uuid, nullable: true }
         set_by:
           type: string
-          enum: [manual, exif, iptc, xmp, api, import, computed]
+          enum: [manual, exif, iptc, xmp, api, import, computed, default]
+          description: |
+            Where this value came from. `default` means an upload
+            default put it here and nothing has improved on it since —
+            extraction is free to overwrite it, and a human editing the
+            field replaces it with `manual`. It is the one provenance a
+            client cannot claim: `AssetFieldValueWrite.set_by` has no
+            `default` member, because a value a caller chose to send is
+            by definition not one nobody chose.
         set_at: { type: string, format: date-time }
         set_by_user_ref: { type: integer, format: int64, nullable: true }
         resolved_options:

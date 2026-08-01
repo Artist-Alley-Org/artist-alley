@@ -19,7 +19,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -38,7 +38,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -51,7 +51,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -60,7 +60,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -68,14 +68,14 @@ INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, field_set_id, read_capability, write_capability,
     display_order, display_group, source, status,
-    created_by_user_ref, updated_by_user_ref, subject_kind
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17)
+    created_by_user_ref, updated_by_user_ref, subject_kind, default_value
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, field_set_id, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode;
+          subject_kind, extraction_source, extraction_mode, default_value;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -97,6 +97,13 @@ UPDATE field_definition SET
     source                    = COALESCE(sqlc.narg('source'),                    source),
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
+    -- default_value needs a CLEAR path, which COALESCE cannot express:
+    -- passing NULL means "leave it alone" everywhere else in this
+    -- statement, so "remove the default" would be unsayable. The
+    -- explicit boolean makes removal a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    default_value             = CASE WHEN sqlc.arg('clear_default')::BOOLEAN THEN NULL
+                                     ELSE COALESCE(sqlc.narg('default_value'), default_value) END,
     updated_at                = NOW(),
     updated_by_user_ref       = sqlc.narg('updated_by_user_ref')
 WHERE id = sqlc.arg('id')
@@ -105,7 +112,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode;
+          subject_kind, extraction_source, extraction_mode, default_value;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -130,7 +137,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode;
+          subject_kind, extraction_source, extraction_mode, default_value;
 
 -- ---------------------------------------------------------------------------
 -- asset_field_value — the actual values
@@ -296,3 +303,105 @@ WHERE subject_kind = 'collection'
   AND status = 'active'
   AND required = TRUE
 ORDER BY display_order ASC, label ASC;
+
+-- ---------------------------------------------------------------------------
+-- Upload defaults (#793) — ADR 0081 §3
+-- ---------------------------------------------------------------------------
+
+-- name: ListAssetDefaultCandidates :many
+-- Every asset field that carries a default OR has one overridden by a
+-- team the uploader belongs to, for the asset type being created.
+--
+-- The LEFT JOIN is what makes both halves of the precedence chain
+-- readable in ONE query: a field with only a field default comes back
+-- once with a NULL override, a field a team has overridden comes back
+-- with the override alongside, and a field whose ONLY default is a team
+-- override still comes back (the WHERE accepts either side). Emitting
+-- one row per matching override rather than picking a winner in SQL is
+-- deliberate — Go can then see that two of the uploader's teams both
+-- override the same field, which is the case that has no correct answer
+-- and must not be silently resolved by an ORDER BY.
+--
+-- applies_to is honoured here: a field that does not apply to this asset
+-- type has no business defaulting onto it.
+SELECT f.id, f.code, f.type, f.options, f.default_value,
+       o.team_id, o.default_value AS override_value
+FROM field_definition f
+LEFT JOIN field_default_override o
+       ON o.field_id = f.id
+      AND o.team_id = ANY(sqlc.arg('team_ids')::UUID[])
+WHERE f.subject_kind = 'asset'
+  AND f.status = 'active'
+  AND (cardinality(f.applies_to) = 0 OR sqlc.arg('rt')::BIGINT = ANY(f.applies_to))
+  AND (f.default_value IS NOT NULL OR o.default_value IS NOT NULL)
+ORDER BY f.code;
+
+-- name: ListDefaultTeamsForUser :many
+-- The uploader's DIRECT team memberships. Not the closure: an ancestor
+-- team is a permission scope, not a place someone uploads to, and
+-- expanding it would make a parent team's override apply to uploads it
+-- never sees.
+SELECT t.id, t.name
+FROM team_memberships m
+JOIN teams t ON t.id = m.team_id
+WHERE m.user_ref = $1
+  AND t.deleted_at IS NULL
+ORDER BY t.name, t.id;
+
+-- name: GetDefaultUserDisplay :one
+-- Display name for the `uploading_user` context value. fullname when
+-- the user set one, username otherwise — the same fallback every other
+-- surface shows, so a default matches what the byline says.
+SELECT COALESCE(NULLIF(fullname, ''), username, '')::TEXT AS display
+FROM "user" WHERE ref = $1;
+
+-- name: ListFieldDefaultOverrides :many
+SELECT o.field_id, o.team_id, t.slug AS team_slug, t.name AS team_name,
+       o.default_value, o.created_at, o.updated_at, o.updated_by_user_ref
+FROM field_default_override o
+JOIN teams t ON t.id = o.team_id
+WHERE o.field_id = $1 AND t.deleted_at IS NULL
+ORDER BY t.name, t.id;
+
+-- name: UpsertFieldDefaultOverride :one
+INSERT INTO field_default_override (field_id, team_id, default_value, updated_by_user_ref)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (field_id, team_id) DO UPDATE
+   SET default_value = EXCLUDED.default_value,
+       updated_at = NOW(),
+       updated_by_user_ref = EXCLUDED.updated_by_user_ref
+RETURNING field_id, team_id, default_value, created_at, updated_at, updated_by_user_ref;
+
+-- name: DeleteFieldDefaultOverride :execrows
+DELETE FROM field_default_override WHERE field_id = $1 AND team_id = $2;
+
+-- name: GetTeamForDefaultOverride :one
+SELECT id, slug, name FROM teams WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: InsertAssetFieldValueIfAbsent :execrows
+-- The defaults writer. ON CONFLICT DO NOTHING makes "a default never
+-- overwrites a value that is already set" a property of the STATEMENT
+-- rather than of the order the caller happens to do things in. The
+-- caller today runs at asset creation, where by construction there is
+-- nothing to overwrite; encoding the rule here means a future caller
+-- (a re-apply action, a backfill) cannot reintroduce the clobber by
+-- being placed differently in the sequence.
+--
+-- set_by is hard-wired to 'default' — this statement exists only for
+-- the defaults path, and a provenance the applier can recognise is the
+-- whole reason it can tell "a default is sitting here" from "a human
+-- typed this".
+INSERT INTO asset_field_value (
+    asset_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at
+) VALUES (
+    $1, $2,
+    sqlc.narg('value_text'),
+    sqlc.narg('value_num'),
+    sqlc.narg('value_date'),
+    sqlc.narg('value_options'),
+    sqlc.narg('value_ref'),
+    'default', NOW()
+)
+ON CONFLICT (asset_id, field_id) DO NOTHING;
