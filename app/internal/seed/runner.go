@@ -44,6 +44,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -151,6 +152,10 @@ type Runner struct {
 	collections map[string]pgtype.UUID // name -> id
 	assets      map[string]pgtype.UUID // manifest id -> asset id (inserted only)
 	posts       map[string]pgtype.UUID // post id -> post id (inserted only)
+
+	// asset field values applyAssetFields threw away, per reason per
+	// code (#807). Summarised at the end of the asset phase.
+	fieldDrops *fieldDropTally
 }
 
 type fieldMeta struct {
@@ -188,6 +193,7 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		collections: map[string]pgtype.UUID{},
 		assets:      map[string]pgtype.UUID{},
 		posts:       map[string]pgtype.UUID{},
+		fieldDrops:  newFieldDropTally(),
 	}
 }
 
@@ -695,6 +701,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			r.log.Info("seed.assets.progress", "processed", i+1, "inserted", inserted)
 		}
 	}
+	r.logFieldDrops()
 	r.log.Info("seed.assets", "inserted", inserted,
 		"deduped", deduped, "missing", missing,
 		"previews_queued", queued,
@@ -797,6 +804,158 @@ func companionExt(rel string) string {
 	return strings.TrimPrefix(filepath.Ext(rel), ".")
 }
 
+// --- dropped field values (#807) --------------------------------------
+//
+// applyAssetFields discards a value in two places, and until #807 both
+// spellings of "discard" were the same bare `continue`. A malformed
+// value and a code that was never defined produced identical output —
+// none — so the seed reported success, the field was simply absent, and
+// every downstream check that counts rows agreed with itself. That is
+// the "green suite over a state production cannot reach" class, except
+// here the seed MANUFACTURES the unreachable state.
+//
+// Both drops now warn, and they warn DIFFERENTLY, because the fixes are
+// different: an unknown code is a schema/catalogue mismatch (add the
+// definition, or fix the slug), a rejected value is a bad value (fix the
+// manifest, or widen the coercion).
+//
+// Warn-only on purpose. There is in-repo precedent for strictness — the
+// `ci` coverage profile errors rather than warns on a gap (coverage.go)
+// — but both seed manifests currently carry six codes whose definitions
+// have not landed yet (#808), so every asset hits the unknown-code
+// branch by design. Making it fatal today breaks the seed and therefore
+// CI. Once #808 lands and the seed is clean, promoting unknown-code to a
+// hard error under ProfileCI is the sensible follow-up.
+const (
+	dropUnknownCode   = "unknown_code"
+	dropValueRejected = "value_rejected"
+)
+
+// fieldDropLogLimit caps the per-asset detail warnings emitted for any
+// one (reason, code) pair. A single misconfigured field is ~1,900
+// identical lines against site_a, which buries every other warning the
+// run produced — and the operator learns nothing from line 900 that
+// line 1 did not already say. A handful of examples name the code, the
+// type and an offending value; the end-of-phase summary carries the
+// true totals.
+const fieldDropLogLimit = 3
+
+// fieldDropTally counts discarded field values per reason per code.
+type fieldDropTally struct {
+	byReason map[string]map[string]int // reason -> code -> dropped
+	logged   map[string]int            // reason + "|" + code -> warnings emitted
+}
+
+func newFieldDropTally() *fieldDropTally {
+	return &fieldDropTally{
+		byReason: map[string]map[string]int{},
+		logged:   map[string]int{},
+	}
+}
+
+// record counts one drop and reports whether the caller should emit a
+// detail warning for it (see fieldDropLogLimit).
+func (t *fieldDropTally) record(reason, code string) bool {
+	codes, ok := t.byReason[reason]
+	if !ok {
+		codes = map[string]int{}
+		t.byReason[reason] = codes
+	}
+	codes[code]++
+	key := reason + "|" + code
+	if t.logged[key] >= fieldDropLogLimit {
+		return false
+	}
+	t.logged[key]++
+	return true
+}
+
+func (t *fieldDropTally) total(reason string) int {
+	n := 0
+	for _, c := range t.byReason[reason] {
+		n += c
+	}
+	return n
+}
+
+// offenders renders the worst codes for a reason as "code=n, code=n",
+// heaviest first and ties broken by code so the line is reproducible.
+func (t *fieldDropTally) offenders(reason string, limit int) string {
+	codes := t.byReason[reason]
+	if len(codes) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(codes))
+	for c := range codes {
+		keys = append(keys, c)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if codes[keys[i]] != codes[keys[j]] {
+			return codes[keys[i]] > codes[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	if limit > 0 && len(keys) > limit {
+		keys = keys[:limit]
+	}
+	parts := make([]string, 0, len(keys))
+	for _, c := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", c, codes[c]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// dropValueRepr renders the offending value for a warning: enough to
+// recognise which manifest entry is wrong, bounded so a long rich_text
+// body cannot own the log line.
+func dropValueRepr(raw any) string {
+	if raw == nil {
+		return "<nil>"
+	}
+	s := fmt.Sprintf("%v", raw)
+	// Rune-bounded, not byte-bounded: a manifest value is arbitrary
+	// text, and slicing mid-rune would put a replacement character in
+	// the log where the operator is trying to read a value.
+	const max = 120
+	if utf8.RuneCountInString(s) > max {
+		return string([]rune(s)[:max]) + "…"
+	}
+	return s
+}
+
+// logFieldDrops closes the asset phase with the part an operator
+// actually reads. Always logged — zeros are the evidence the check ran
+// — with a plain-words stdout NOTE when something was actually dropped,
+// same reasoning as the preview-skip note above: a WARN inside a JSON
+// handler is not where whoever ran the seed finds out.
+func (r *Runner) logFieldDrops() {
+	unknown := r.fieldDrops.total(dropUnknownCode)
+	rejected := r.fieldDrops.total(dropValueRejected)
+	r.log.Info("seed.field.drops",
+		"unknown_code", unknown,
+		"value_rejected", rejected,
+		"unknown_code_by_code", r.fieldDrops.offenders(dropUnknownCode, 10),
+		"value_rejected_by_code", r.fieldDrops.offenders(dropValueRejected, 10))
+	if unknown == 0 && rejected == 0 {
+		return
+	}
+	fmt.Printf(
+		"NOTE: %d asset field values were DROPPED and are absent from the seeded "+
+			"database.\n", unknown+rejected)
+	if unknown > 0 {
+		fmt.Printf(
+			"  %d had no field definition for their code (add the definition, or fix "+
+				"the slug in the manifest): %s\n",
+			unknown, r.fieldDrops.offenders(dropUnknownCode, 10))
+	}
+	if rejected > 0 {
+		fmt.Printf(
+			"  %d carried a value the field's declared type could not accept (see the "+
+				"seed.field.value_rejected warnings for examples): %s\n",
+			rejected, r.fieldDrops.offenders(dropValueRejected, 10))
+	}
+}
+
 func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals map[string]any) error {
 	if len(vals) == 0 {
 		return nil
@@ -810,10 +969,28 @@ func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals
 	for _, code := range codes {
 		fm, ok := r.fields[code]
 		if !ok {
+			// No definition carries this code. A schema/catalogue
+			// mismatch, NOT a bad value — the two used to share one
+			// silent `continue` and were indistinguishable (#807).
+			if r.fieldDrops.record(dropUnknownCode, code) {
+				r.log.Warn("seed.field.unknown_code",
+					"code", code,
+					"asset_id", uuidString(assetID),
+					"value", dropValueRepr(vals[code]))
+			}
 			continue
 		}
 		params, ok := fieldValueParams(fm.typ, vals[code])
 		if !ok {
+			// The code is defined; the VALUE could not be coerced into
+			// the column its declared type writes.
+			if r.fieldDrops.record(dropValueRejected, code) {
+				r.log.Warn("seed.field.value_rejected",
+					"code", code,
+					"type", fm.typ,
+					"asset_id", uuidString(assetID),
+					"value", dropValueRepr(vals[code]))
+			}
 			continue
 		}
 		params.AssetID = assetID
@@ -1093,6 +1270,26 @@ func parseTime(s string) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// dateOnlyLayout is the calendar date a `date`-typed field accepts in
+// addition to RFC3339. Midnight UTC, matching what the API's own date
+// writer stores.
+const dateOnlyLayout = "2006-01-02"
+
+// parseDateValue parses a `date` field's manifest value: RFC3339 first
+// (unchanged, so every existing timestamp keeps working), then the bare
+// calendar date. Used ONLY for `date` — see fieldValueParams for why
+// `datetime` stays strict.
+func parseDateValue(s string) pgtype.Timestamptz {
+	if ts := parseTime(s); ts.Valid {
+		return ts
+	}
+	t, err := time.Parse(dateOnlyLayout, s)
 	if err != nil {
 		return pgtype.Timestamptz{}
 	}
@@ -1485,7 +1682,21 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 			n = 1
 		}
 		p.ValueNum = &n
-	case "date", "datetime":
+	case "date":
+		// A `date` field takes the obvious spelling — "2026-03-14" —
+		// as well as a full RFC3339 timestamp (#807). It used to take
+		// RFC3339 only, so the obvious spelling was DISCARDED without a
+		// word; the only reason #805's manifests avoided it is that
+		// their author read parseTime first.
+		p.ValueDate = parseDateValue(scalarString(raw))
+		if !p.ValueDate.Valid {
+			return p, false
+		}
+	case "datetime":
+		// Deliberately NOT widened to the bare date. A datetime field
+		// handed a date has lost its time of day somewhere upstream,
+		// which is worth reporting rather than papering over with
+		// midnight UTC.
 		p.ValueDate = parseTime(scalarString(raw))
 		if !p.ValueDate.Valid {
 			return p, false
@@ -1507,7 +1718,16 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 		}
 		p.ValueOptions = opts
 	case "reference":
-		p.ValueRef = parseUUID(scalarString(raw))
+		// An unparseable UUID used to fall through as ACCEPTED, which
+		// wrote a row with every value column NULL — a field that reads
+		// as "set to nothing" rather than as absent, and the one drop
+		// shape that even a row count could not catch (#807). Refuse it
+		// so the caller warns.
+		ref := parseUUID(scalarString(raw))
+		if !ref.Valid {
+			return p, false
+		}
+		p.ValueRef = ref
 	default:
 		s := scalarString(raw)
 		p.ValueText = &s
