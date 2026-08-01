@@ -628,7 +628,6 @@ type FieldDefinition struct {
 	Required                bool
 	Searchable              bool
 	AppliesTo               []int64
-	FieldSetID              pgtype.UUID
 	ReadCapability          *string
 	WriteCapability         *string
 	DisplayOrder            int32

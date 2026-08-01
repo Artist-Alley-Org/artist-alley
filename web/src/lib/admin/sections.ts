@@ -75,7 +75,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'fields',         status: 'live',   href: '/admin/fields' },
       { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures', cap: 'system.metadata_extraction.read' },
       { key: 'field_options',  status: 'future', phase: '1.17' },
-      { key: 'field_sets',     status: 'future', phase: '1.17' },
+      // `field_sets` removed 2026-07-31 (#738). The tile promised
+      // "bundle related fields for reuse across types", which
+      // `display_group` + `applies_to` already do; the underlying
+      // field_definition.field_set_id column is dropped by migration
+      // 00022 and ADR 0012 is amended with the reasoning.
       { key: 'taxonomy',       status: 'future', phase: '1.18' },
       { key: 'site_text',      status: 'future', phase: '1.18' },
       { key: 'email_templates', status: 'future', phase: '1.18' },

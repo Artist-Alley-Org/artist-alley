@@ -97,12 +97,12 @@ func (q *Queries) ArchiveFieldDefinition(ctx context.Context, arg ArchiveFieldDe
 const createFieldDefinition = `-- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
-    applies_to, field_set_id, read_capability, write_capability,
+    applies_to, read_capability, write_capability,
     display_order, display_group, source, status,
     created_by_user_ref, updated_by_user_ref, subject_kind, default_value
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17)
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
+          applies_to, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -118,7 +118,6 @@ type CreateFieldDefinitionParams struct {
 	Required         bool
 	Searchable       bool
 	AppliesTo        []int64
-	FieldSetID       pgtype.UUID
 	ReadCapability   *string
 	WriteCapability  *string
 	DisplayOrder     int32
@@ -140,7 +139,6 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		arg.Required,
 		arg.Searchable,
 		arg.AppliesTo,
-		arg.FieldSetID,
 		arg.ReadCapability,
 		arg.WriteCapability,
 		arg.DisplayOrder,
@@ -162,7 +160,6 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.Required,
 		&i.Searchable,
 		&i.AppliesTo,
-		&i.FieldSetID,
 		&i.ReadCapability,
 		&i.WriteCapability,
 		&i.DisplayOrder,
@@ -325,7 +322,7 @@ func (q *Queries) GetDefaultUserDisplay(ctx context.Context, ref int64) (string,
 
 const getFieldDefinitionByCode = `-- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -346,7 +343,6 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.Required,
 		&i.Searchable,
 		&i.AppliesTo,
-		&i.FieldSetID,
 		&i.ReadCapability,
 		&i.WriteCapability,
 		&i.DisplayOrder,
@@ -369,7 +365,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 
 const getFieldDefinitionByID = `-- name: GetFieldDefinitionByID :one
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -390,7 +386,6 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.Required,
 		&i.Searchable,
 		&i.AppliesTo,
-		&i.FieldSetID,
 		&i.ReadCapability,
 		&i.WriteCapability,
 		&i.DisplayOrder,
@@ -871,7 +866,7 @@ func (q *Queries) ListFieldDefaultOverrides(ctx context.Context, fieldID pgtype.
 const listFieldDefinitions = `-- name: ListFieldDefinitions :many
 
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -925,7 +920,6 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.Required,
 			&i.Searchable,
 			&i.AppliesTo,
-			&i.FieldSetID,
 			&i.ReadCapability,
 			&i.WriteCapability,
 			&i.DisplayOrder,
@@ -955,7 +949,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 
 const listFieldDefinitionsForAssetType = `-- name: ListFieldDefinitionsForAssetType :many
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
+       applies_to, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -988,7 +982,6 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.Required,
 			&i.Searchable,
 			&i.AppliesTo,
-			&i.FieldSetID,
 			&i.ReadCapability,
 			&i.WriteCapability,
 			&i.DisplayOrder,
@@ -1070,7 +1063,7 @@ UPDATE field_definition
        updated_by_user_ref = $4
  WHERE id = $1
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
+          applies_to, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -1105,7 +1098,6 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.Required,
 		&i.Searchable,
 		&i.AppliesTo,
-		&i.FieldSetID,
 		&i.ReadCapability,
 		&i.WriteCapability,
 		&i.DisplayOrder,
@@ -1134,26 +1126,25 @@ UPDATE field_definition SET
     required                  = COALESCE($4,                  required),
     searchable                = COALESCE($5,                searchable),
     applies_to                = COALESCE($6,                applies_to),
-    field_set_id              = COALESCE($7,              field_set_id),
-    read_capability           = COALESCE($8,           read_capability),
-    write_capability          = COALESCE($9,          write_capability),
-    display_order             = COALESCE($10,             display_order),
-    display_group             = COALESCE($11,             display_group),
-    source                    = COALESCE($12,                    source),
-    status                    = COALESCE($13,                    status),
-    deprecated_replacement_id = COALESCE($14, deprecated_replacement_id),
+    read_capability           = COALESCE($7,           read_capability),
+    write_capability          = COALESCE($8,          write_capability),
+    display_order             = COALESCE($9,             display_order),
+    display_group             = COALESCE($10,             display_group),
+    source                    = COALESCE($11,                    source),
+    status                    = COALESCE($12,                    status),
+    deprecated_replacement_id = COALESCE($13, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $15::BOOLEAN THEN NULL
-                                     ELSE COALESCE($16, default_value) END,
+    default_value             = CASE WHEN $14::BOOLEAN THEN NULL
+                                     ELSE COALESCE($15, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $17
-WHERE id = $18
+    updated_by_user_ref       = $16
+WHERE id = $17
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
+          applies_to, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
@@ -1167,7 +1158,6 @@ type UpdateFieldDefinitionParams struct {
 	Required                *bool
 	Searchable              *bool
 	AppliesTo               []int64
-	FieldSetID              pgtype.UUID
 	ReadCapability          *string
 	WriteCapability         *string
 	DisplayOrder            *int32
@@ -1193,7 +1183,6 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.Required,
 		arg.Searchable,
 		arg.AppliesTo,
-		arg.FieldSetID,
 		arg.ReadCapability,
 		arg.WriteCapability,
 		arg.DisplayOrder,
@@ -1217,7 +1206,6 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.Required,
 		&i.Searchable,
 		&i.AppliesTo,
-		&i.FieldSetID,
 		&i.ReadCapability,
 		&i.WriteCapability,
 		&i.DisplayOrder,
