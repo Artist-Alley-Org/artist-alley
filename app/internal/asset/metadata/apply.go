@@ -75,14 +75,22 @@ type FieldValueWriter interface {
 }
 
 // WriteAssetFieldValueParams is the typed input to
-// [FieldValueWriter.WriteAssetFieldValue]. SetBy is wired to
-// "exif" so the existing audit-history feed surfaces the
-// extraction provenance.
+// [FieldValueWriter.WriteAssetFieldValue].
 type WriteAssetFieldValueParams struct {
 	AssetID uuid.UUID
 	FieldID uuid.UUID
 	Value   Value
-	SetBy   string // "exif" / "iptc" / "xmp" / "operator"
+
+	// SetBy is the NAME OF THE EXTRACTOR that produced this value —
+	// "exif" / "iptc" / "xmp" / "pdf" / "raw", from
+	// [Result.FieldSources], or [SetByExtraction] when the Result
+	// carries no provenance.
+	//
+	// It lands on asset_field_value.set_by, feeds the audit-history
+	// panel, and — since #793 — is read back by skip_if_set, which
+	// makes it load-bearing rather than decorative: a value's
+	// provenance decides whether a later extraction may replace it.
+	SetBy string
 }
 
 // FailureWriter records one extraction_failure row for the admin
@@ -143,29 +151,48 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 			continue // operator wired this field but the source had no value for it
 		}
 
+		// Refuse a field type extraction cannot write. Checked BEFORE
+		// validation because the value being well-formed is beside the
+		// point when there is no column to put it in — see
+		// writableFieldTypes for why this is enforced rather than
+		// trusted.
+		if fc.FieldType != "" && !writableFieldTypes[fc.FieldType] {
+			a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
+				fmt.Sprintf("field type %q cannot be written by extraction: "+
+					"the applier carries value_text / value_num / value_date only, "+
+					"and a %s value needs a column none of those is",
+					fc.FieldType, fc.FieldType))
+			continue
+		}
+
 		// Validate.
 		normalized, vErr := ValidateValue(extracted, 0)
 		if vErr != nil {
-			summary.FieldsSkippedValid = append(summary.FieldsSkippedValid, fc.Source)
-			fr := FailureRecord{
-				Format:    result.Format,
-				ErrorKind: "validation",
-				Message:   vErr.Error(),
-				Field:     fc.Source,
-				RawValue:  rawDisplayValue(extracted),
-			}
-			summary.FailureRows = append(summary.FailureRows, fr)
-			if a.failures != nil {
-				_ = a.failures.RecordExtractionFailure(ctx, RecordExtractionFailureParams{
-					AssetID:   asset.ID,
-					Format:    fr.Format,
-					ErrorKind: fr.ErrorKind,
-					Message:   fr.Message,
-					FieldKey:  fr.Field,
-					RawValue:  fr.RawValue,
-				})
-			}
+			a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted, vErr.Error())
 			continue
+		}
+
+		// Resolve a controlled-vocabulary value from the LABEL a file
+		// carries to the SLUG the column stores. On no match nothing
+		// is written — a label we have no term for is not a value, and
+		// storing it raw would produce a row that renders plausibly
+		// and addresses nothing. See vocabulary.go.
+		if vocabularyFieldTypes[fc.FieldType] {
+			if normalized.Kind != ValueKindText {
+				a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
+					fmt.Sprintf("field type %q takes a vocabulary slug, "+
+						"but the extracted value is not text", fc.FieldType))
+				continue
+			}
+			slug, ok := resolveVocabularySlug(fc.Options, normalized.Text)
+			if !ok {
+				a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
+					fmt.Sprintf("no term in this field's vocabulary matches %q "+
+						"(matching is on label or slug, case-insensitive); "+
+						"add the term or correct the file", normalized.Text))
+				continue
+			}
+			normalized.Text = slug
 		}
 
 		// Read current value (for equal-value + skip_if_set checks).
@@ -220,7 +247,14 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 				AssetID: asset.ID,
 				FieldID: fc.FieldID,
 				Value:   normalized,
-				SetBy:   "exif", // refine to "iptc"/"xmp" in 1.18.A-3
+				// The provenance of the value being written, from the
+				// extractor that produced it (#799). This was the
+				// constant "exif" — five extractors fanning into one
+				// applier, every one of them recorded as the first.
+				// An IPTC credit line and an XMP rights statement both
+				// claimed to be EXIF, which is a lie the audit history
+				// keeps and no reader can detect.
+				SetBy: result.sourceFor(fc.Source),
 			}); err != nil {
 				return summary, fmt.Errorf("metadata.Apply: write %s: %w", fc.Source, err)
 			}
@@ -229,6 +263,49 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 	}
 
 	return summary, nil
+}
+
+// reject records ONE field as not-written: it goes in the summary's
+// skipped-by-validation list and gets an extraction_failure row so the
+// operator can see, at /admin/extraction-failures, both the value that
+// was in the file and why it did not become a value on the asset.
+//
+// The three callers are the validator, the unwritable-type refusal and
+// the unresolved-vocabulary-term drop. They share a shape — a field
+// the operator deliberately wired, carrying a value the file
+// deliberately supplied, that we are declining to store — and the
+// operator needs the same information about all three. error_kind is
+// "validation" for each because the extraction_failure CHECK
+// constraint admits five kinds and that is the one that means "we read
+// this and would not write it"; the message carries the distinction.
+func (a *DefaultApplier) reject(
+	ctx context.Context,
+	summary *ApplySummary,
+	asset AssetRef,
+	format string,
+	field CanonicalField,
+	raw Value,
+	message string,
+) {
+	summary.FieldsSkippedValid = append(summary.FieldsSkippedValid, field)
+	fr := FailureRecord{
+		Format:    format,
+		ErrorKind: "validation",
+		Message:   message,
+		Field:     field,
+		RawValue:  rawDisplayValue(raw),
+	}
+	summary.FailureRows = append(summary.FailureRows, fr)
+	if a.failures != nil {
+		_ = a.failures.RecordExtractionFailure(ctx, RecordExtractionFailureParams{
+			AssetID:   asset.ID,
+			Format:    fr.Format,
+			ErrorKind: fr.ErrorKind,
+			Message:   fr.Message,
+			FieldKey:  fr.Field,
+			RawValue:  fr.RawValue,
+		})
+	}
 }
 
 // valuesEqual reports whether the extracted Value matches the

@@ -242,11 +242,6 @@ func (h *Handler) CreateField(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
-	srcJSON, err := encodeJSONOptional(in.Source)
-	if err != nil {
-		return nil, err
-	}
-
 	// subject_kind discriminator (Phase 1.9.B). Defaults to asset for
 	// callers that don't supply one — preserves the pre-1.9.B
 	// "everything is an asset field" semantics.
@@ -296,7 +291,6 @@ func (h *Handler) CreateField(
 		WriteCapability:  in.WriteCapability,
 		DisplayOrder:     int32Or(in.DisplayOrder, 100),
 		DisplayGroup:     strOr(in.DisplayGroup, "general"),
-		Source:           srcJSON,
 		Status:           "active",
 		CreatedByUserRef: &id.UserRef,
 		SubjectKind:      string(subject),
@@ -430,14 +424,6 @@ func (h *Handler) UpdateField(
 		}
 		params.Options = b
 	}
-	if in.Source != nil {
-		b, err := json.Marshal(*in.Source)
-		if err != nil {
-			return nil, err
-		}
-		params.Source = b
-	}
-
 	// A default is validated against the options document this request
 	// LANDS ON, not the one already stored: an operator retiring a term
 	// and moving the default off it in one PATCH must succeed, and one
@@ -1039,12 +1025,6 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 			def.Options = &m
 		}
 	}
-	if len(r.Source) > 0 && string(r.Source) != "null" {
-		var m map[string]any
-		if err := json.Unmarshal(r.Source, &m); err == nil {
-			def.Source = &m
-		}
-	}
 	if d := apiFieldDefault(r.DefaultValue); d != nil {
 		def.DefaultValue = d
 	}
@@ -1201,13 +1181,6 @@ func historyRowToAPI(r AssetFieldValueHistory) openapi.FieldValueHistoryEntry {
 func encodeJSON(m *map[string]any, fallback string) ([]byte, error) {
 	if m == nil || len(*m) == 0 {
 		return []byte(fallback), nil
-	}
-	return json.Marshal(*m)
-}
-
-func encodeJSONOptional(m *map[string]any) ([]byte, error) {
-	if m == nil || len(*m) == 0 {
-		return nil, nil
 	}
 	return json.Marshal(*m)
 }

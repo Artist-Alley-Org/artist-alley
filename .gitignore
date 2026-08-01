@@ -136,6 +136,7 @@ app/aa-abr-extract
 /model-*.png
 /epub-tool-*.png
 /test-*.png
+/admin-fields-*.png
 /firing_squad/
 kaggle.txt
 .dogfood-runs

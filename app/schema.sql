@@ -1618,7 +1618,6 @@ CREATE TABLE public.field_definition (
     write_capability text,
     display_order integer DEFAULT 100 NOT NULL,
     display_group text DEFAULT 'general'::text NOT NULL,
-    source jsonb,
     status text DEFAULT 'active'::text NOT NULL,
     deprecated_replacement_id uuid,
     origin_server_id uuid,

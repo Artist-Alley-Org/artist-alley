@@ -98,12 +98,12 @@ const createFieldDefinition = `-- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, read_capability, write_capability,
-    display_order, display_group, source, status,
+    display_order, display_group, status,
     created_by_user_ref, updated_by_user_ref, subject_kind, default_value
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
-          display_order, display_group, source, status,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value
@@ -122,7 +122,6 @@ type CreateFieldDefinitionParams struct {
 	WriteCapability  *string
 	DisplayOrder     int32
 	DisplayGroup     string
-	Source           []byte
 	Status           string
 	CreatedByUserRef *int64
 	SubjectKind      string
@@ -143,7 +142,6 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		arg.WriteCapability,
 		arg.DisplayOrder,
 		arg.DisplayGroup,
-		arg.Source,
 		arg.Status,
 		arg.CreatedByUserRef,
 		arg.SubjectKind,
@@ -164,7 +162,6 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.WriteCapability,
 		&i.DisplayOrder,
 		&i.DisplayGroup,
-		&i.Source,
 		&i.Status,
 		&i.DeprecatedReplacementID,
 		&i.OriginServerID,
@@ -323,7 +320,7 @@ func (q *Queries) GetDefaultUserDisplay(ctx context.Context, ref int64) (string,
 const getFieldDefinitionByCode = `-- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -347,7 +344,6 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.WriteCapability,
 		&i.DisplayOrder,
 		&i.DisplayGroup,
-		&i.Source,
 		&i.Status,
 		&i.DeprecatedReplacementID,
 		&i.OriginServerID,
@@ -366,7 +362,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 const getFieldDefinitionByID = `-- name: GetFieldDefinitionByID :one
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -390,7 +386,6 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.WriteCapability,
 		&i.DisplayOrder,
 		&i.DisplayGroup,
-		&i.Source,
 		&i.Status,
 		&i.DeprecatedReplacementID,
 		&i.OriginServerID,
@@ -867,7 +862,7 @@ const listFieldDefinitions = `-- name: ListFieldDefinitions :many
 
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -924,7 +919,6 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.WriteCapability,
 			&i.DisplayOrder,
 			&i.DisplayGroup,
-			&i.Source,
 			&i.Status,
 			&i.DeprecatedReplacementID,
 			&i.OriginServerID,
@@ -950,7 +944,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 const listFieldDefinitionsForAssetType = `-- name: ListFieldDefinitionsForAssetType :many
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, read_capability, write_capability,
-       display_order, display_group, source, status,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value
@@ -986,7 +980,6 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.WriteCapability,
 			&i.DisplayOrder,
 			&i.DisplayGroup,
-			&i.Source,
 			&i.Status,
 			&i.DeprecatedReplacementID,
 			&i.OriginServerID,
@@ -1064,7 +1057,7 @@ UPDATE field_definition
  WHERE id = $1
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
-          display_order, display_group, source, status,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value
@@ -1102,7 +1095,6 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.WriteCapability,
 		&i.DisplayOrder,
 		&i.DisplayGroup,
-		&i.Source,
 		&i.Status,
 		&i.DeprecatedReplacementID,
 		&i.OriginServerID,
@@ -1130,22 +1122,21 @@ UPDATE field_definition SET
     write_capability          = COALESCE($8,          write_capability),
     display_order             = COALESCE($9,             display_order),
     display_group             = COALESCE($10,             display_group),
-    source                    = COALESCE($11,                    source),
-    status                    = COALESCE($12,                    status),
-    deprecated_replacement_id = COALESCE($13, deprecated_replacement_id),
+    status                    = COALESCE($11,                    status),
+    deprecated_replacement_id = COALESCE($12, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $14::BOOLEAN THEN NULL
-                                     ELSE COALESCE($15, default_value) END,
+    default_value             = CASE WHEN $13::BOOLEAN THEN NULL
+                                     ELSE COALESCE($14, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $16
-WHERE id = $17
+    updated_by_user_ref       = $15
+WHERE id = $16
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
-          display_order, display_group, source, status,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value
@@ -1162,7 +1153,6 @@ type UpdateFieldDefinitionParams struct {
 	WriteCapability         *string
 	DisplayOrder            *int32
 	DisplayGroup            *string
-	Source                  []byte
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1187,7 +1177,6 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.WriteCapability,
 		arg.DisplayOrder,
 		arg.DisplayGroup,
-		arg.Source,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1210,7 +1199,6 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.WriteCapability,
 		&i.DisplayOrder,
 		&i.DisplayGroup,
-		&i.Source,
 		&i.Status,
 		&i.DeprecatedReplacementID,
 		&i.OriginServerID,
