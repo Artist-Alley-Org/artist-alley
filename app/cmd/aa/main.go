@@ -82,7 +82,7 @@ func runSeed(args []string) error {
 		"with --profile ci: minimum posts per collection and assets per extension, "+
 			"bounded by what the catalogue holds (0 = built-in default). This, not "+
 			"the set-cover, is what sizes the seed")
-	reset := fs.Bool("reset", false, "TRUNCATE seed content tables before loading")
+	reset := fs.Bool("reset", false, "clear seed content before loading: the content tables are truncated, and the tables that hold BOTH seeded and shipped/operator rows (field_definition, notifications, scheduled_actions, …) are swept for rows the truncate orphaned. The shipped field catalogue and the bootstrap admin survive")
 	previews := fs.Bool("previews", true,
 		"enqueue a preview job per asset so the seed produces derivatives "+
 			"(card thumbnails, video sprites); false = fast metadata-only seed")

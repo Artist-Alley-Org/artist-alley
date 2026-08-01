@@ -449,6 +449,11 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			}
 			opts = b
 		}
+		// typ is the type values for this code will be WRITTEN as. It
+		// starts as the catalogue's and is replaced by the existing
+		// row's below when the insert binds to one, because the column
+		// the value lands in is chosen by the row, not by the JSON.
+		typ := f.Type
 		id, err := r.q.SeedInsertField(ctx, SeedInsertFieldParams{
 			Code:             f.Name,
 			Label:            f.Label,
@@ -458,14 +463,39 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			ExtractionMode:   f.ExtractionMode,
 		})
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				id, err = r.q.SeedGetFieldByCode(ctx, f.Name)
-			}
-			if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("create field %s: %w", f.Name, err)
 			}
+			// ON CONFLICT (code) DO NOTHING returned no row: a
+			// definition with this code already exists. Since #812 that
+			// is the NORMAL case for a code the migrations ship —
+			// `aa seed --reset` no longer truncates field_definition, so
+			// pixel_width/pixel_height are always already there.
+			//
+			// Binding to the existing row is right. Trusting the
+			// CATALOGUE's type for it is not: applyAssetFields picks the
+			// value column from fieldMeta.typ, so a catalogue entry
+			// declaring `date` against a `datetime` row would have every
+			// value written into the wrong column — or silently dropped
+			// as value_rejected — while the field count still looked
+			// correct. No row count can see it, which is the same shape
+			// as the reference NULL-row bug (#809).
+			existing, getErr := r.q.SeedGetFieldByCode(ctx, f.Name)
+			if getErr != nil {
+				return fmt.Errorf("create field %s: %w", f.Name, getErr)
+			}
+			id = existing.ID
+			if existing.Type != f.Type {
+				typ = existing.Type
+				if r.fieldDrops.record(dropTypeMismatch, f.Name) {
+					r.log.Warn("seed.field.type_mismatch",
+						"code", f.Name,
+						"catalogue_type", f.Type,
+						"existing_type", existing.Type)
+				}
+			}
 		}
-		r.fields[f.Name] = fieldMeta{id: id, typ: f.Type}
+		r.fields[f.Name] = fieldMeta{id: id, typ: typ}
 	}
 	r.log.Info("seed.fields", "count", len(r.fields))
 	return nil
@@ -854,6 +884,20 @@ func companionExt(rel string) string {
 const (
 	dropUnknownCode   = "unknown_code"
 	dropValueRejected = "value_rejected"
+
+	// dropTypeMismatch is counted per FIELD, not per value: it is
+	// recorded once by applyFields when a catalogue entry binds to an
+	// existing definition of a different type (#812). It rides the same
+	// tally because it belongs on the same summary line — the tally is
+	// what an operator reads to find out that the catalogue and the
+	// database disagree — and because record()'s per-code log limit is
+	// exactly the throttling this needs too.
+	//
+	// It does not itself drop anything. The seed proceeds using the
+	// EXISTING row's type, so the values land in the right column; what
+	// gets reported is that the catalogue is lying about a field, which
+	// is a repo defect to fix rather than a bad manifest row.
+	dropTypeMismatch = "type_mismatch"
 )
 
 // fieldDropLogLimit caps the per-asset detail warnings emitted for any
@@ -956,11 +1000,21 @@ func dropValueRepr(raw any) string {
 func (r *Runner) logFieldDrops() {
 	unknown := r.fieldDrops.total(dropUnknownCode)
 	rejected := r.fieldDrops.total(dropValueRejected)
+	mistyped := r.fieldDrops.total(dropTypeMismatch)
 	r.log.Info("seed.field.drops",
 		"unknown_code", unknown,
 		"value_rejected", rejected,
+		"type_mismatch", mistyped,
 		"unknown_code_by_code", r.fieldDrops.offenders(dropUnknownCode, 10),
-		"value_rejected_by_code", r.fieldDrops.offenders(dropValueRejected, 10))
+		"value_rejected_by_code", r.fieldDrops.offenders(dropValueRejected, 10),
+		"type_mismatch_by_code", r.fieldDrops.offenders(dropTypeMismatch, 10))
+	if mistyped > 0 {
+		fmt.Printf(
+			"NOTE: %d catalogue field(s) declare a type the EXISTING definition does not "+
+				"have; the seed used the existing type. Fix the type in "+
+				"seed/profiles/dataset.field_definitions.json, or migrate the definition: %s\n",
+			mistyped, r.fieldDrops.offenders(dropTypeMismatch, 10))
+	}
 	if unknown == 0 && rejected == 0 {
 		return
 	}

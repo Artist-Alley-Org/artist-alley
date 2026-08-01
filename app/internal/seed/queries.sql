@@ -173,7 +173,12 @@ ON CONFLICT (code) DO NOTHING
 RETURNING id;
 
 -- name: SeedGetFieldByCode :one
-SELECT id FROM field_definition WHERE code = $1;
+-- Recovery path for SeedInsertField's ON CONFLICT DO NOTHING. `type`
+-- is selected alongside the id because the row the catalogue binds to
+-- may be typed differently from the catalogue entry that bound to it
+-- (#812): the seed must write values against the type the COLUMN
+-- actually has, not the one the JSON claims.
+SELECT id, type FROM field_definition WHERE code = $1;
 
 -- name: SeedInsertCollection :one
 -- Stable id from dataset.collections.json; owner is the bootstrap

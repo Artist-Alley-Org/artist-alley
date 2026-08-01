@@ -48,6 +48,16 @@
 -- carries the same two definitions (dataset.field_definitions.json +
 -- seed.SeedInsertField's extraction columns) so a reseed reinstates
 -- them wired. Both halves land together in #618.
+--
+-- CORRECTION 2026-08-01 (#812): the NOTE above is no longer true and is
+-- kept only so the reasoning reads in order. `aa seed --reset` no longer
+-- truncates field_definition — it SWEEPS it against the shipped-code
+-- registry in app/internal/db/shippedfields.go, and pixel_width /
+-- pixel_height are on that registry, so these two rows now survive a
+-- reset. The dataset catalogue still lists them; since #812 those
+-- entries BIND to the rows this migration inserted rather than creating
+-- new ones. (The extraction wiring this migration applies was
+-- subsequently withdrawn by 00020 — these are computed, not extracted.)
 
 -- +goose Up
 INSERT INTO public.field_definition
