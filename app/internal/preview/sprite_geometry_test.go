@@ -134,10 +134,23 @@ func TestSpriteCellSize(t *testing.T) {
 		srcW, srcH   int
 		wantW, wantH int
 	}{
-		// Every number below is what real ffmpeg emits for the same
-		// source at spriteCellBox=240, checked against
-		// TestWriteSprites_RealFFmpeg — 16:9 lands on 135, which is odd,
-		// so `force_divisible_by=2` and evenCell both take it to 136.
+		// These are what spriteCellSize computes: fit the box, then round
+		// the edge UP to even.
+		//
+		// They are deliberately NOT claimed to be byte-identical to
+		// ffmpeg's own output. At spriteCellBox=160 every case here was
+		// exact, so the question never came up; at 240 a 16:9 source
+		// computes 135, and which even neighbour `force_divisible_by=2`
+		// picks turns out to be ffmpeg-VERSION dependent — 5.1 (the
+		// runtime image) rounds down to 134, 6.1 rounds up to 136, on the
+		// same filter string and the same source. Measured on a real
+		// stack while verifying #811.
+		//
+		// That is precisely why the VTT measures the generated sheet
+		// (#796) instead of recomputing the cell from the probe: this
+		// function is the fallback for when there is no sheet to measure,
+		// and being a pixel off on a path that is already degraded beats
+		// pinning the suite to one ffmpeg build.
 		{"16:9 1080p", 1920, 1080, 240, 136},
 		{"16:9 720p", 1280, 720, 240, 136},
 		{"portrait 9:16", 1080, 1920, 136, 240},
@@ -274,8 +287,9 @@ func TestWriteSprites_VTTDescribesTheSheetOnDisk(t *testing.T) {
 		sheetW, sheetH int
 		probe          Probe
 	}{
-		// What the new filter really produces for a 1080x1920 source —
-		// confirmed by TestWriteSprites_RealFFmpeg below.
+		// The shim writes a sheet of the size the TEST names, so these are
+		// plausible real sheets rather than derived ones. Portrait first,
+		// because that is the shape #761 was about.
 		{"portrait", 1360, 2400, Probe{DurationS: 30, Width: 1080, Height: 1920}},
 		// The common case.
 		{"landscape", 2400, 1360, Probe{DurationS: 30, Width: 1920, Height: 1080}},
@@ -292,6 +306,10 @@ func TestWriteSprites_VTTDescribesTheSheetOnDisk(t *testing.T) {
 		// and not yet re-rendered: the VTT must describe the bytes that
 		// exist, not the constant the binary now carries.
 		{"pre-#811 sheet", 1600, 900, Probe{DurationS: 30, Width: 1920, Height: 1080}},
+		// The same 16:9 source as "landscape", but the height ffmpeg 5.1
+		// actually produces (1340, cell 240x134) rather than the 1360 of
+		// ffmpeg 6.1. Both are real; the handler must not care which.
+		{"landscape, other ffmpeg rounding", 2400, 1340, Probe{DurationS: 30, Width: 1920, Height: 1080}},
 	}
 
 	for _, tc := range cases {
@@ -400,17 +418,25 @@ func TestWriteSprites_RealFFmpeg(t *testing.T) {
 	// full 10x10 grid.
 	const durationS = 25
 
+	// The assertions are on the SHAPE of the sheet, not on two literal
+	// numbers, because the numbers are not portable (#811). A 16:9 source
+	// in a 240 box computes 240x135, and `force_divisible_by=2` resolves
+	// that odd edge differently per ffmpeg build: 5.1 (the runtime image)
+	// produces a 2400x1340 sheet, 6.1 produces 2400x1360, same filter
+	// string, same source. Pinning either number turns this test into a
+	// report on which ffmpeg the runner has.
+	//
+	// What must hold on every build is what the frontend actually
+	// depends on: the box bounds both axes, the long edge is the box, the
+	// cell keeps the source's aspect ratio, and the VTT tiles the sheet
+	// exactly. All four are checked below.
 	cases := []struct {
-		name                   string
-		srcW, srcH             int
-		wantSheetW, wantSheetH int
+		name       string
+		srcW, srcH int
 	}{
-		// 16:9 into a 240 box computes 240x135; `force_divisible_by=2`
-		// takes the odd edge to 136, so the sheet is 2400x1360 and NOT
-		// the 2400x1350 the arithmetic suggests (#811).
-		{"landscape 16:9", 640, 360, 2400, 1360},
-		{"portrait 9:16", 360, 640, 1360, 2400},
-		{"square", 480, 480, 2400, 2400},
+		{"landscape 16:9", 640, 360},
+		{"portrait 9:16", 360, 640},
+		{"square", 480, 480},
 	}
 
 	for _, tc := range cases {
@@ -437,10 +463,6 @@ func TestWriteSprites_RealFFmpeg(t *testing.T) {
 			}
 
 			sheetW, sheetH := decodeSheetSize(t, filepath.Join(work.dir, "sprites.jpg"))
-			if sheetW != tc.wantSheetW || sheetH != tc.wantSheetH {
-				t.Fatalf("a %dx%d source produced a %dx%d sheet, want %dx%d",
-					tc.srcW, tc.srcH, sheetW, sheetH, tc.wantSheetW, tc.wantSheetH)
-			}
 
 			vtt, err := os.ReadFile(filepath.Join(work.dir, "sprites.vtt"))
 			if err != nil {
@@ -463,9 +485,16 @@ func TestWriteSprites_RealFFmpeg(t *testing.T) {
 				t.Errorf("a %dx%d source (AR %.4f) produced %dx%d cells (AR %.4f) — squashed",
 					tc.srcW, tc.srcH, srcAR, cellW, cellH, cellAR)
 			}
-			// And the box really is the bound on both axes.
+			// The box bounds both axes, and the source's LONG edge is
+			// spent in full — a cell that fits but wastes half the box is
+			// the regression this issue was about.
 			if cellW > spriteCellBox || cellH > spriteCellBox {
 				t.Errorf("%dx%d cell escapes the %dpx box", cellW, cellH, spriteCellBox)
+			}
+			if long := max(cellW, cellH); long != spriteCellBox {
+				t.Errorf("a %dx%d source produced a %dx%d cell — the long edge is %d, "+
+					"not the %dpx box, so the sheet is smaller than it was asked for",
+					tc.srcW, tc.srcH, cellW, cellH, long, spriteCellBox)
 			}
 
 			t.Logf("%dx%d source -> %dx%d sheet, %dx%d cells", tc.srcW, tc.srcH, sheetW, sheetH, cellW, cellH)
