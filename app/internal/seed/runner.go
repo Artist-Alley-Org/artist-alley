@@ -55,6 +55,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -1801,7 +1802,11 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 		// reassembled at read time. See the 2026-07-31 tree-storage
 		// amendment to ADR 0012.
 		s := scalarString(raw)
-		p.ValueText = &s
+		// SeedInsertAssetFieldValue goes straight at the table, so no
+		// handler gate runs on a seeded value. The read side sanitises
+		// regardless (#816), but a dataset should not be able to leave
+		// a live payload sitting in a column either.
+		p.ValueText = richtext.SanitizeValueText(strings.ToLower(ftype), &s)
 	case "number":
 		f, ok := raw.(float64)
 		if !ok {

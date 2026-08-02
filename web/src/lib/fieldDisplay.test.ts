@@ -321,16 +321,99 @@ describe('formatFieldValue — resolved_options behaviour is unchanged', () => {
   });
 });
 
-// ── #816's boundary: this PR must not move it ───────────────────────
+// ── #816's boundary: rich_text renders as markup ────────────────────
+//
+// This block used to pin the opposite — that rich_text came back as
+// escaped source — and it held that line until the sanitisation
+// boundary was decided. It is decided: the SERVER sanitises, on write
+// and on read (app/internal/richtext), and the API's guarantee is that
+// rich_text HTML on the wire is already policy-clean. So the formatter
+// hands the caller an `html` descriptor and the caller {@html}s it.
+//
+// There is deliberately no client-side scrub, and these cases are
+// written so nobody adds one by mistake: the formatter is asserted to
+// pass the server's HTML through UNCHANGED. A test that expected
+// `<script>` to disappear here would be quietly asserting a second
+// sanitiser into existence, and two sanitisers is one policy too many.
 
-describe('formatFieldValue — rich_text stays escaped text', () => {
-  it('returns the source as plain text with no href', () => {
-    // The contract change to { text, href? } deliberately carries no
-    // component/markup descriptor. Rendering rich_text as markup is
-    // #816's sprint and needs a sanitiser boundary designed for it.
-    const src = '# Heading\n\n<b>bold</b> & <script>alert(1)</script>';
-    const v = value({ type: 'rich_text', value_text: src });
-    expect(formatFieldValue(v, t)).toEqual({ text: src });
+describe('formatFieldValue — rich_text renders as markup', () => {
+  it('returns the server HTML on `html`, with a plain reading on `text`', () => {
+    const v = value({
+      type: 'rich_text',
+      value_text: '<p>Cleared for <strong>internal</strong> use.</p>',
+    });
+    expect(formatFieldValue(v, t)).toEqual({
+      html: '<p>Cleared for <strong>internal</strong> use.</p>',
+      text: 'Cleared for internal use.',
+    });
+  });
+
+  it('never emits an href — a rich_text link lives inside the markup', () => {
+    const v = value({
+      type: 'rich_text',
+      value_text: '<p><a href="https://example.test/" rel="noopener noreferrer">terms</a></p>',
+    });
+    expect(formatFieldValue(v, t).href).toBeUndefined();
+  });
+
+  it('passes the server payload through byte-for-byte', () => {
+    // The single most important case in this file. If this ever starts
+    // failing because someone made the expectation "safer", read the
+    // block comment above: sanitising here would be the second policy.
+    const src = '<p>a &amp; b</p><ul><li>one</li><li>two</li></ul>';
+    expect(formatFieldValue(value({ type: 'rich_text', value_text: src }), t).html).toBe(src);
+  });
+
+  it('trims, and treats an empty or markup-only value as unset', () => {
+    expect(formatFieldValue(value({ type: 'rich_text', value_text: '  <p>x</p>  ' }), t)).toEqual({
+      html: '<p>x</p>',
+      text: 'x',
+    });
+    for (const empty of ['', '   ', '<p></p>', '<br>']) {
+      expect(formatFieldValue(value({ type: 'rich_text', value_text: empty }), t)).toEqual({
+        text: '',
+      });
+    }
+    expect(formatFieldValue(value({ type: 'rich_text', value_text: null }), t)).toEqual({
+      text: '',
+    });
+  });
+
+  it('decodes entities for the plain reading without double-decoding', () => {
+    // `text` feeds the field count and the "is this set" test, and is
+    // always interpolated. It is legibility, never a safety boundary.
+    const v = value({ type: 'rich_text', value_text: '<p>a &amp;lt; b</p>' });
+    expect(formatFieldValue(v, t).text).toBe('a &lt; b');
+  });
+});
+
+// The types that must NOT have gained a markup descriptor. rich_text
+// is the one field type whose value is markup; an `html` appearing on
+// any other type is a second {@html} surface nobody designed.
+describe('formatFieldValue — no other type emits html', () => {
+  it('leaves every non-rich_text value without an html descriptor', () => {
+    const cases: Partial<AssetFieldValue>[] = [
+      { type: 'text', value_text: '<b>x</b>' },
+      { type: 'longtext', value_text: '<b>x</b>' },
+      { type: 'select', value_text: 'slug' },
+      { type: 'tree', value_text: 'slug' },
+      { type: 'multi_select', value_options: ['a', 'b'] },
+      { type: 'number', value_num: 1 },
+      { type: 'boolean', value_num: 1 },
+      { type: 'date', value_date: '2026-01-01T00:00:00Z' },
+      { type: 'datetime', value_date: '2026-01-01T00:00:00Z' },
+      { type: 'reference', value_ref: 'a-1' },
+    ];
+    for (const c of cases) {
+      expect(formatFieldValue(value(c), t).html, `type ${c.type}`).toBeUndefined();
+    }
+  });
+
+  it('keeps `text` and `longtext` as literal source, tags and all', () => {
+    const src = 'a < b && <div>kept</div>';
+    for (const type of ['text', 'longtext'] as const) {
+      expect(formatFieldValue(value({ type, value_text: src }), t)).toEqual({ text: src });
+    }
   });
 });
 
