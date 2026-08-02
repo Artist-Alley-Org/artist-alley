@@ -985,3 +985,62 @@ The "never instantiated, therefore never exercised" condition still applies to `
 `rich_text`, `date`, `datetime` and `reference` — they *agree*, but agreement was verified by
 reading, not by driving them. The seeder's RFC3339-only `parseTime` (noted in the tree
 amendment) remains the one known concrete instance and remains open.
+
+## Amendment 2026-08-02 — a vocabulary can be open, and open means the WRITE POLICY differs
+
+**PR #846 / issue #830 (part A of #789).** The 2026-07-30 amendment gave options a lifecycle
+and #824/#841 closed the write path around it: a value naming a term the field does not offer
+is refused with a 422, always. That is the right rule for `country` and the wrong rule for
+`keywords` — the field whose vocabulary is *supposed* to grow from the material. This amendment
+records the sanctioned way past the gate.
+
+### The flag, not a twelfth type
+
+`field_definition.open_vocabulary boolean NOT NULL DEFAULT false` (migration 00028). An open
+vocabulary is a `multi_select` in storage, rendering, search and federation; it differs only in
+what a write does with an unknown term. Modelling that as a new field type would have put a
+twelfth arm in every type-switch in the codebase to express a difference none of those switches
+care about. The column is legal on every type and **honoured only for `multi_select`**; the
+narrowing lives in one Go function (`openVocabularyApplies`) rather than a CHECK constraint, so
+opening `select` later is a decision, not a migration.
+
+### What a write does on an open field
+
+Each incoming term is matched against the vocabulary — **slug or label, case-insensitive,
+whitespace-trimmed, full depth, archived excluded** (the same matching the extraction resolver
+already used, now the rule on both paths). A match stores the existing canonical slug: "Character"
+and "character" are one term, which is the owner's stated requirement. A true miss **creates** the
+term — slugified input as `value`, trimmed original as `label` — and stores its slug. Lifecycle
+still applies: openness is about terms the field does not *have*, not terms it has *retired*, so
+choosing a deprecated term afresh is refused exactly as on a closed field, and a mint whose slug
+would collide with an archived term's slug is refused rather than resurrecting or shadowing it.
+
+### Atomicity — the part that made this an amendment
+
+Term creation rewrites the whole options document, the same last-write-wins hazard the
+2026-07-30 amendment recorded for the admin editor — except here it would fire on an ordinary
+value save. The creation therefore runs **inside the value-write transaction** with
+`SELECT … FOR UPDATE` on the field row, re-resolving against the locked document rather than the
+caller's LRU copy (which can be one write old — resolving against a stale copy is how a term gets
+minted twice). Two concurrent writes minting different terms both survive; this is pinned by a
+two-goroutine test against a real database. The flag itself is also read from the locked row, so
+a cached `true` that an admin has since turned off cannot mint. The residual race — the admin
+editor's whole-document PATCH does not take this lock — remains the 2026-07-30 amendment's known
+gap; closing it means moving the editor onto the same lock.
+
+### Extraction can finally write the field
+
+The applier gains a multi-value path (`value_options` end-to-end): IPTC 2:25's comma-joined set
+is split, each term matched-or-minted through the *same* creation routine as the API path, with
+`set_by` naming the extractor (`iptc`). Idempotence is set-equality on canonical slugs, order-
+insensitive, so backfills converge. `keywords ← iptc_keywords` is wired in migration 00028 itself
+— wiring is data, and the migration that makes a wiring safe is the one that turns it on (00025's
+precedent, whose own comment had recorded exactly this gap). Two rules stay deliberately strict:
+extraction into a *closed* multi_select records a failure row per unknown term rather than
+minting, and **field defaults stay closed even on open fields** — a defaults editor silently
+growing a vocabulary is surprising in a way a value write is not.
+
+Extraction writes now also append to the value history — the `FieldValueWriter` contract had
+always *claimed* history-in-one-tx and the implementation had never written any, so every
+extraction-set value carried a blank audit trail. The comment now matches the code because the
+code was fixed, not the comment.
