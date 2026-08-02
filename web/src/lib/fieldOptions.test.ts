@@ -17,6 +17,17 @@ import {
   findOption,
   slugify,
   resolveTerm,
+  allOptionSlugs,
+  childrenAtPath,
+  containsPath,
+  insertOptionAtPath,
+  moveDestinations,
+  moveOptionWithinSiblings,
+  optionAtPath,
+  removeOptionAtPath,
+  reparentOption,
+  updateOptionAtPath,
+  type FieldOption,
 } from './fieldOptions';
 
 describe('normalizeOptions', () => {
@@ -422,5 +433,372 @@ describe('findOption', () => {
     // Which is how a picker tells a term being CREATED from one that
     // already exists.
     expect(findOption(vocab, 'atlantis')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path-addressed editing (#779 / #825)
+// ---------------------------------------------------------------------------
+
+/**
+ * `country` as migration 00024 ships it: 24 nations under 5 continents,
+ * object-form entries, exactly two levels. Copied rather than
+ * approximated because the hazard these tests exist for is a LEAF
+ * COUNT, and a three-term stand-in cannot express it.
+ */
+const COUNTRY = {
+  values: [
+    {
+      value: 'africa',
+      label: 'Africa',
+      children: [
+        { value: 'eg', label: 'Egypt' },
+        { value: 'ke', label: 'Kenya' },
+        { value: 'ma', label: 'Morocco' },
+        { value: 'ng', label: 'Nigeria' },
+        { value: 'za', label: 'South Africa' },
+      ],
+    },
+    {
+      value: 'americas',
+      label: 'Americas',
+      children: [
+        { value: 'ar', label: 'Argentina' },
+        { value: 'br', label: 'Brazil' },
+        { value: 'ca', label: 'Canada' },
+        { value: 'mx', label: 'Mexico' },
+        { value: 'us', label: 'United States' },
+      ],
+    },
+    {
+      value: 'asia',
+      label: 'Asia',
+      children: [
+        { value: 'cn', label: 'China' },
+        { value: 'in', label: 'India' },
+        { value: 'jp', label: 'Japan' },
+        { value: 'kr', label: 'South Korea' },
+        { value: 'sg', label: 'Singapore' },
+      ],
+    },
+    {
+      value: 'europe',
+      label: 'Europe',
+      children: [
+        { value: 'fr', label: 'France' },
+        { value: 'de', label: 'Germany' },
+        { value: 'it', label: 'Italy' },
+        { value: 'nl', label: 'Netherlands' },
+        { value: 'es', label: 'Spain' },
+        { value: 'se', label: 'Sweden' },
+        { value: 'gb', label: 'United Kingdom' },
+      ],
+    },
+    {
+      value: 'oceania',
+      label: 'Oceania',
+      children: [
+        { value: 'au', label: 'Australia' },
+        { value: 'nz', label: 'New Zealand' },
+      ],
+    },
+  ],
+};
+
+/** Every slug in a SERIALISED document, at any depth, in order. */
+function serialisedSlugs(opts: FieldOption[]): string[] {
+  const walk = (entries: unknown[]): string[] =>
+    entries.flatMap((e) => {
+      if (typeof e === 'string') return [e];
+      const o = e as { value: string; children?: unknown[] };
+      return [o.value, ...(o.children ? walk(o.children) : [])];
+    });
+  return walk(serializeOptions(opts));
+}
+
+const LEAVES = [
+  'eg', 'ke', 'ma', 'ng', 'za',
+  'ar', 'br', 'ca', 'mx', 'us',
+  'cn', 'in', 'jp', 'kr', 'sg',
+  'fr', 'de', 'it', 'nl', 'es', 'se', 'gb',
+  'au', 'nz',
+];
+
+describe('path addressing', () => {
+  const vocab = normalizeOptions(COUNTRY);
+
+  it('resolves a term by its index path at any depth', () => {
+    expect(optionAtPath(vocab, [3])?.value).toBe('europe');
+    expect(optionAtPath(vocab, [3, 6])?.value).toBe('gb');
+    expect(optionAtPath(vocab, [3, 99])).toBeUndefined();
+    // The empty path addresses the root LIST, not a term.
+    expect(optionAtPath(vocab, [])).toBeUndefined();
+  });
+
+  it('hands back the sibling list a path sits in, root included', () => {
+    expect(childrenAtPath(vocab, []).map((o) => o.value)).toEqual([
+      'africa', 'americas', 'asia', 'europe', 'oceania',
+    ]);
+    expect(childrenAtPath(vocab, [4]).map((o) => o.value)).toEqual(['au', 'nz']);
+    expect(childrenAtPath(vocab, [4, 0])).toEqual([]);
+  });
+
+  it('reports containment, which is the whole cycle guard', () => {
+    expect(containsPath([3], [3, 6])).toBe(true);
+    expect(containsPath([3], [3])).toBe(true); // a node contains itself
+    expect(containsPath([3], [4])).toBe(false);
+    expect(containsPath([3, 6], [3])).toBe(false); // a child does not contain its parent
+    // The root contains everything — which is why "top level" is
+    // always a legal destination and never filtered out.
+    expect(containsPath([], [0, 1])).toBe(true);
+  });
+
+  it('carries an index path out of flattenOptions', () => {
+    const flat = flattenOptions(vocab);
+    expect(flat.find((o) => o.value === 'gb')?.indexPath).toEqual([3, 6]);
+    expect(flat.find((o) => o.value === 'africa')?.indexPath).toEqual([0]);
+  });
+
+  it('collects every slug tree-wide, which is the uniqueness rule', () => {
+    const slugs = allOptionSlugs(vocab);
+    expect(slugs.size).toBe(29); // 5 continents + 24 nations
+    expect(slugs.has('gb')).toBe(true);
+    expect(slugs.has('europe')).toBe(true);
+  });
+});
+
+describe('updateOptionAtPath', () => {
+  // THE #825 PIN. A flat editor wired carelessly to a nested document
+  // writes back the branch it edited and drops everything under it —
+  // silently, because the branch it edited looks right afterwards.
+  // Assert the LEAF COUNT, not the edit.
+  it('a parent-only edit leaves all 24 leaves in place', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const next = updateOptionAtPath(vocab, [3], (o) => ({ ...o, label: 'Europe (EU)' }));
+
+    expect(optionAtPath(next, [3])?.label).toBe('Europe (EU)');
+    const slugs = serialisedSlugs(next);
+    for (const leaf of LEAVES) {
+      expect(slugs, `leaf ${leaf} was dropped by a parent-only edit`).toContain(leaf);
+    }
+    expect(slugs.filter((s) => LEAVES.includes(s))).toHaveLength(24);
+  });
+
+  it('relabels a leaf without touching its slug — the value keeps resolving', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const next = updateOptionAtPath(vocab, [3, 6], (o) => ({ ...o, label: 'Great Britain' }));
+    expect(optionAtPath(next, [3, 6])).toEqual({
+      value: 'gb',
+      label: 'Great Britain',
+      status: 'active',
+    });
+    expect(findOption(next, 'gb')?.label).toBe('Great Britain');
+    expect(allOptionSlugs(next).has('gb')).toBe(true);
+  });
+
+  it('does not mutate the document it was given', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const before = JSON.stringify(serializeOptions(vocab));
+    updateOptionAtPath(vocab, [3, 6], (o) => ({ ...o, status: 'archived' }));
+    expect(JSON.stringify(serializeOptions(vocab))).toBe(before);
+  });
+
+  it('sets a lifecycle on a deep node, and it survives serialisation', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const next = updateOptionAtPath(vocab, [3, 6], (o) => ({
+      ...o,
+      status: 'deprecated' as const,
+      replaced_by: 'fr',
+    }));
+    const round = normalizeOptions({ values: serializeOptions(next) });
+    const gb = findOption(round, 'gb');
+    expect(gb?.status).toBe('deprecated');
+    expect(gb?.replaced_by).toBe('fr');
+    // And a deprecated leaf stops being offered without vanishing.
+    expect(selectableTreeOptions(round).map((o) => o.value)).not.toContain('gb');
+    expect(selectableTreeOptions(round, ['gb']).map((o) => o.value)).toContain('gb');
+  });
+});
+
+describe('insertOptionAtPath', () => {
+  const vocab = normalizeOptions(COUNTRY);
+  const node = { value: 'ie', label: 'Ireland', status: 'active' as const };
+
+  it('appends a child under a branch', () => {
+    const next = insertOptionAtPath(vocab, [3], Infinity, node);
+    expect(childrenAtPath(next, [3]).map((o) => o.value)).toEqual([
+      'fr', 'de', 'it', 'nl', 'es', 'se', 'gb', 'ie',
+    ]);
+  });
+
+  it('inserts a sibling at a position rather than at the end', () => {
+    const next = insertOptionAtPath(vocab, [3], 1, node);
+    expect(childrenAtPath(next, [3]).map((o) => o.value)).toEqual([
+      'fr', 'ie', 'de', 'it', 'nl', 'es', 'se', 'gb',
+    ]);
+  });
+
+  it('inserts at the top level for the root path', () => {
+    const next = insertOptionAtPath(vocab, [], Infinity, {
+      value: 'antarctica',
+      label: 'Antarctica',
+      status: 'active',
+    });
+    expect(next.map((o) => o.value)).toEqual([
+      'africa', 'americas', 'asia', 'europe', 'oceania', 'antarctica',
+    ]);
+  });
+
+  it('gives a childless leaf its first child', () => {
+    const next = insertOptionAtPath(vocab, [3, 6], Infinity, {
+      value: 'sct',
+      label: 'Scotland',
+      status: 'active',
+    });
+    expect(childrenAtPath(next, [3, 6]).map((o) => o.value)).toEqual(['sct']);
+    // Depth is not capped — the server does not cap it either, so a
+    // client-only limit would make a legal catalogue uneditable.
+    expect(flattenOptions(next).find((o) => o.value === 'sct')?.depth).toBe(2);
+  });
+});
+
+describe('moveOptionWithinSiblings', () => {
+  const vocab = normalizeOptions(COUNTRY);
+
+  it('reorders siblings at depth without leaving the branch', () => {
+    const next = moveOptionWithinSiblings(vocab, [3, 6], -1);
+    expect(childrenAtPath(next, [3]).map((o) => o.value)).toEqual([
+      'fr', 'de', 'it', 'nl', 'es', 'gb', 'se',
+    ]);
+    // Every other branch is untouched.
+    expect(childrenAtPath(next, [0]).map((o) => o.value)).toEqual(['eg', 'ke', 'ma', 'ng', 'za']);
+  });
+
+  it('reorders the top level, which is what the flat editor always did', () => {
+    const next = moveOptionWithinSiblings(vocab, [0], 1);
+    expect(next.map((o) => o.value)).toEqual(['americas', 'africa', 'asia', 'europe', 'oceania']);
+  });
+
+  it('is a no-op past either end of the sibling list', () => {
+    expect(moveOptionWithinSiblings(vocab, [0], -1)).toBe(vocab);
+    expect(moveOptionWithinSiblings(vocab, [3, 6], 1)).toBe(vocab);
+  });
+});
+
+describe('reparentOption', () => {
+  it('moves a leaf to another branch, slug and all', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const next = reparentOption(vocab, [3, 6], [1]); // gb → Americas
+    expect(childrenAtPath(next, [3]).map((o) => o.value)).toEqual([
+      'fr', 'de', 'it', 'nl', 'es', 'se',
+    ]);
+    expect(childrenAtPath(next, [1]).map((o) => o.value)).toEqual([
+      'ar', 'br', 'ca', 'mx', 'us', 'gb',
+    ]);
+    // The slug did not change, so nothing an asset stores changed.
+    expect(findOption(next, 'gb')?.label).toBe('United Kingdom');
+    expect(allOptionSlugs(next).size).toBe(29);
+    // And the picker still offers it, at its new depth.
+    expect(selectableTreeOptions(next).map((o) => o.value)).toContain('gb');
+  });
+
+  it('promotes a leaf to the top level', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const next = reparentOption(vocab, [3, 6], []);
+    expect(next.map((o) => o.value)).toEqual([
+      'africa', 'americas', 'asia', 'europe', 'oceania', 'gb',
+    ]);
+    expect(flattenOptions(next).find((o) => o.value === 'gb')?.depth).toBe(0);
+  });
+
+  it('carries a whole subtree, not just the node', () => {
+    const vocab = normalizeOptions(COUNTRY);
+    const next = reparentOption(vocab, [3], [4]); // Europe under Oceania
+    expect(childrenAtPath(next, [3]).map((o) => o.value)).toEqual(['au', 'nz', 'europe']);
+    expect(childrenAtPath(next, [3, 2]).map((o) => o.value)).toEqual([
+      'fr', 'de', 'it', 'nl', 'es', 'se', 'gb',
+    ]);
+    expect(allOptionSlugs(next).size).toBe(29);
+  });
+
+  it('lands in the right slot when the destination sits AFTER the source', () => {
+    // The index-adjustment case. Moving africa (index 0) under
+    // oceania (index 4) — after the removal oceania is index 3, and an
+    // unadjusted insert would splice the subtree under europe instead.
+    const vocab = normalizeOptions(COUNTRY);
+    const next = reparentOption(vocab, [0], [4]);
+    expect(next.map((o) => o.value)).toEqual(['americas', 'asia', 'europe', 'oceania']);
+    expect(childrenAtPath(next, [3]).map((o) => o.value)).toEqual(['au', 'nz', 'africa']);
+    expect(childrenAtPath(next, [2]).map((o) => o.value)).toEqual([
+      'fr', 'de', 'it', 'nl', 'es', 'se', 'gb',
+    ]);
+  });
+
+  it('REFUSES a move into the node’s own subtree', () => {
+    // The document would otherwise splice europe into itself: every
+    // slug below it duplicated or orphaned, and NormalizeOptionsDoc
+    // would reject the save with a duplicate that is hard to trace
+    // back to the gesture that caused it.
+    const vocab = normalizeOptions(COUNTRY);
+    expect(reparentOption(vocab, [3], [3, 6])).toBe(vocab);
+    expect(reparentOption(vocab, [3], [3])).toBe(vocab);
+  });
+
+  it('never duplicates or loses a slug, whichever way it is driven', () => {
+    let vocab = normalizeOptions(COUNTRY);
+    vocab = reparentOption(vocab, [3, 6], [0]); // gb → Africa
+    vocab = reparentOption(vocab, [0, 5], []); // gb → top level
+    vocab = reparentOption(vocab, [5], [2, 0]); // gb → under China
+    const slugs = flattenOptions(vocab).map((o) => o.value);
+    expect(new Set(slugs).size).toBe(slugs.length);
+    expect(slugs).toHaveLength(29);
+    expect(findOption(vocab, 'gb')?.label).toBe('United Kingdom');
+  });
+});
+
+describe('moveDestinations', () => {
+  const vocab = normalizeOptions(COUNTRY);
+
+  it('excludes the node itself and everything under it', () => {
+    const dests = moveDestinations(vocab, [3]).map((o) => o.value);
+    expect(dests).not.toContain('europe');
+    for (const child of ['fr', 'de', 'it', 'nl', 'es', 'se', 'gb']) {
+      expect(dests, `${child} is inside the moving subtree`).not.toContain(child);
+    }
+    expect(dests).toContain('africa');
+    expect(dests).toContain('us');
+  });
+
+  it('offers a leaf every other term in the vocabulary', () => {
+    const dests = moveDestinations(vocab, [3, 6]);
+    expect(dests.map((o) => o.value)).not.toContain('gb');
+    expect(dests).toHaveLength(28); // 29 terms minus gb itself
+    // Including its current parent — re-picking it moves the term to
+    // the end of the branch, which is a reorder, not an error.
+    expect(dests.map((o) => o.value)).toContain('europe');
+  });
+});
+
+describe('removeOptionAtPath', () => {
+  // Not reachable from the UI — options are never hard-deleted (ADR
+  // 0012) — but it is the first half of every reparent, so its
+  // behaviour is load-bearing.
+  const vocab = normalizeOptions(COUNTRY);
+
+  it('hands back the removed subtree intact', () => {
+    const { options, removed } = removeOptionAtPath(vocab, [3]);
+    expect(removed?.value).toBe('europe');
+    expect(removed?.children).toHaveLength(7);
+    expect(options.map((o) => o.value)).toEqual(['africa', 'americas', 'asia', 'oceania']);
+  });
+
+  it('drops the children key when the last child goes', () => {
+    const { options } = removeOptionAtPath(removeOptionAtPath(vocab, [4, 0]).options, [4, 0]);
+    expect(optionAtPath(options, [4])?.value).toBe('oceania');
+    expect(optionAtPath(options, [4])?.children).toBeUndefined();
+    // Which means it serialises back to the narrowest form.
+    expect(serializeOptions([optionAtPath(options, [4])!])).toEqual([
+      { value: 'oceania', label: 'Oceania' },
+    ]);
   });
 });

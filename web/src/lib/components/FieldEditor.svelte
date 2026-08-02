@@ -2,13 +2,31 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <!--
   Edits one field definition — its label, whether it is required, and
-  (for select / multi_select) its controlled vocabulary. ADR 0012 plus
-  its 2026-07-30 amendment.
+  (for select / multi_select / tree) its controlled vocabulary. ADR 0012
+  plus its 2026-07-30 and 2026-07-31 amendments.
+
+  Every vocabulary control is PATH-addressed (#779/#825), so it reaches
+  a term at any depth. Before this, the controls were indexed against
+  the top level, which made a `tree` field's nested terms visible and
+  read-only: an operator could see `gb / United Kingdom` under `europe`
+  and could not relabel, retire, reparent or extend it. A flat
+  vocabulary is just the depth-0 case of the same renderer rather than a
+  second code path that can drift from this one.
 
   Deletion is deliberately absent: hard-deleting an option orphans the
   values assets already store, and the orphan surfaces as a blank on an
   asset nobody edited. Retire a term with `deprecated` (stops being
-  offered, keeps resolving) or `archived` (hard retire) instead.
+  offered, keeps resolving) or `archived` (hard retire) instead. That
+  holds at every depth — a leaf is retired exactly like a top-level
+  term, because a `tree` value is a leaf slug and the same orphan is
+  available.
+
+  Reparenting is safe to offer without a data migration because a tree
+  value stores ONE slug and slugs are unique across the whole
+  vocabulary: the term keeps resolving wherever it sits. The move is a
+  destination PICKER rather than a drag: nested-list drag-and-drop is
+  hostile to a coarse pointer at 390px, and the operation has to be
+  tappable.
 
   The save is conflict-detectable — it sends the `updated_at` the row
   was loaded with as `if_unchanged_since` and surfaces a 409 rather
@@ -19,9 +37,19 @@
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import {
+    allOptionSlugs,
+    childrenAtPath,
+    flattenOptions,
+    insertOptionAtPath,
+    moveDestinations,
+    moveOptionWithinSiblings,
     normalizeOptions,
+    reparentOption,
     serializeOptions,
+    slugify,
+    updateOptionAtPath,
     type FieldOption,
+    type OptionPath,
     type OptionStatus,
   } from '$lib/fieldOptions';
 
@@ -54,6 +82,12 @@
   const hasVocabulary =
     fieldType === 'select' || fieldType === 'multi_select' || fieldType === 'tree';
 
+  // Nesting controls are offered on `tree` alone. A select field with
+  // children is not a smaller tree — selectableOptions never descends,
+  // so a child added to one would be a term no picker ever offers.
+  // Offering the control there would be offering a way to lose work.
+  const isTree = fieldType === 'tree';
+
   // open_vocabulary is legal on any type and HONOURED on multi_select
   // only (openVocabularyApplies, app/internal/metadata/open_vocabulary.go).
   // The toggle is therefore offered on multi_select and nowhere else:
@@ -77,6 +111,16 @@
   let conflict = $state(false);
   let newSlug = $state('');
 
+  // At most one inline add-form and one move-picker are open at a
+  // time. Both are anchored to a PATH rather than a slug: a new term
+  // has no slug until it is confirmed, and "after this node" is a
+  // position, not a term.
+  type PendingAdd = { parentPath: OptionPath; index: number; anchor: string; kind: 'child' | 'sibling' };
+  let adding = $state<PendingAdd | null>(null);
+  let addText = $state('');
+  let addError = $state('');
+  let moving = $state<OptionPath | null>(null);
+
   let snapshot = $state(JSON.stringify(serializeOptions(normalizeOptions(initialOptions))));
   let labelSnapshot = $state(initialLabel);
   let requiredSnapshot = $state(initialRequired);
@@ -88,55 +132,145 @@
       openVocab !== openVocabSnapshot,
   );
 
-  // Only active siblings make sense as a successor — pointing a
-  // deprecation at another deprecation just moves the problem.
-  const successorChoices = $derived(opts.filter((o) => o.status === 'active'));
+  // Only active terms make sense as a successor — pointing a
+  // deprecation at another deprecation just moves the problem. The
+  // whole vocabulary is eligible, not just the top level: a retired
+  // leaf's replacement is usually another leaf. (The server accepts
+  // any existing slug; the narrowing is this editor's, deliberately.)
+  const successorChoices = $derived(flattenOptions(opts).filter((o) => o.status === 'active'));
 
-  // A tree's nested terms are DISPLAYED but not editable here. The
-  // controls below are indexed against the top level (`opts[i]`), so
-  // wiring them to a child would need a path rather than an index —
-  // a real tree editor, tracked under epic #519. Showing the branches
-  // without their leaves would be worse than either: `country` would
-  // read as a five-term vocabulary when it has twenty-nine.
-  const nestedReadOnly = $derived(opts.some((o) => (o.children?.length ?? 0) > 0));
+  // Tree-wide, which is the rule NormalizeOptionsDoc enforces. For a
+  // flat vocabulary this is the same set as the top level, so the
+  // select / multi_select behaviour is unchanged.
+  const takenSlugs = $derived(allOptionSlugs(opts));
+
+  const keyOf = (p: OptionPath) => p.join('.');
+  const samePath = (a: OptionPath | null, b: OptionPath) => a !== null && keyOf(a) === keyOf(b);
+
+  /** The slug a typed term would be stored as, previewed live. */
+  const addSlug = $derived(slugify(addText));
+
+  /**
+   * A term whose DISPLAY TEXT is already taken, somewhere in the tree.
+   *
+   * Advisory, not a block. Two terms may legitimately read the same at
+   * different points in a hierarchy — Georgia the country and Georgia
+   * the state — and the server allows it, because uniqueness is a rule
+   * about slugs. But the label is how a term is matched on the
+   * extraction and open-vocabulary paths (resolveTerm, mirroring
+   * metadata.indexVocabulary), where first-writer-wins: the second
+   * "Egypt" would never be the one a typed value resolves to. That is
+   * worth saying out loud and not worth refusing.
+   */
+  const addLabelClash = $derived.by(() => {
+    const typed = addText.trim().toLowerCase();
+    if (!typed) return undefined;
+    return flattenOptions(opts).find((o) => o.label.trim().toLowerCase() === typed);
+  });
 
   function addOption() {
-    const slug = newSlug.trim();
-    if (!slug) return;
-    if (opts.some((o) => o.value === slug)) {
+    const raw = newSlug.trim();
+    if (!raw) return;
+    // A tree term is named, not slugged: the operator types "United
+    // Kingdom" and the stored value is `united-kingdom`, mirroring what
+    // the open-vocabulary mint does server-side. A flat field keeps
+    // taking the slug verbatim — that is the control operators of the
+    // five shipped select fields already know.
+    const slug = isTree ? slugify(raw) : raw;
+    if (!slug) {
+      error = t('admin.fields.options_add_unslugabble');
+      return;
+    }
+    if (takenSlugs.has(slug)) {
       error = t('admin.fields.options_duplicate', { slug });
       return;
     }
-    opts = [...opts, { value: slug, label: slug, status: 'active' }];
+    opts = [...opts, { value: slug, label: raw === slug ? slug : raw, status: 'active' }];
     newSlug = '';
     error = '';
   }
 
-  function move(i: number, delta: number) {
-    const j = i + delta;
-    if (j < 0 || j >= opts.length) return;
-    const next = [...opts];
-    [next[i], next[j]] = [next[j], next[i]];
-    opts = next;
+  function setLabel(path: OptionPath, next: string) {
+    opts = updateOptionAtPath(opts, path, (o) => ({ ...o, label: next }));
   }
 
-  function setStatus(i: number, status: OptionStatus) {
-    const next = [...opts];
-    next[i] = { ...next[i], status };
-    // A successor only means anything on a retired term.
-    if (status === 'active') delete next[i].replaced_by;
-    opts = next;
+  function move(path: OptionPath, delta: number) {
+    opts = moveOptionWithinSiblings(opts, path, delta);
   }
 
-  function setReplacedBy(i: number, slug: string) {
-    const next = [...opts];
-    if (slug) next[i] = { ...next[i], replaced_by: slug };
-    else {
-      next[i] = { ...next[i] };
-      delete next[i].replaced_by;
+  function setStatus(path: OptionPath, status: OptionStatus) {
+    opts = updateOptionAtPath(opts, path, (o) => {
+      const next = { ...o, status };
+      // A successor only means anything on a retired term.
+      if (status === 'active') delete next.replaced_by;
+      return next;
+    });
+  }
+
+  function setReplacedBy(path: OptionPath, slug: string) {
+    opts = updateOptionAtPath(opts, path, (o) => {
+      const next = { ...o };
+      if (slug) next.replaced_by = slug;
+      else delete next.replaced_by;
+      return next;
+    });
+  }
+
+  function beginAdd(path: OptionPath, kind: 'child' | 'sibling', anchor: string) {
+    moving = null;
+    addText = '';
+    addError = '';
+    adding =
+      kind === 'child'
+        ? { parentPath: path, index: Infinity, anchor, kind }
+        : { parentPath: path.slice(0, -1), index: path[path.length - 1] + 1, anchor, kind };
+  }
+
+  function confirmAdd() {
+    if (!adding) return;
+    const raw = addText.trim();
+    if (!raw) return;
+    const slug = slugify(raw);
+    if (!slug) {
+      addError = t('admin.fields.options_add_unslugabble');
+      return;
     }
-    opts = next;
+    if (takenSlugs.has(slug)) {
+      addError = t('admin.fields.options_duplicate', { slug });
+      return;
+    }
+    opts = insertOptionAtPath(opts, adding.parentPath, adding.index, {
+      value: slug,
+      label: raw === slug ? slug : raw,
+      status: 'active',
+    });
+    adding = null;
+    addText = '';
+    addError = '';
   }
+
+  function cancelAdd() {
+    adding = null;
+    addText = '';
+    addError = '';
+  }
+
+  function beginMove(path: OptionPath) {
+    adding = null;
+    moving = samePath(moving, path) ? null : path;
+  }
+
+  function moveTo(dest: OptionPath) {
+    if (!moving) return;
+    opts = reparentOption(opts, moving, dest);
+    moving = null;
+  }
+
+  // Everything the moving node may land under, plus the top level.
+  // Its own subtree is absent — that is the self-nesting guard, and
+  // filtering the list is stronger than refusing the submit because
+  // the operator is never shown a destination that does not work.
+  const moveOptions = $derived(moving ? moveDestinations(opts, moving) : []);
 
   // Discard the local edits and adopt the server's current state.
   // Offered on a conflict as the alternative to overwriting.
@@ -162,6 +296,8 @@
     conflict = false;
     error = '';
     savedMsg = '';
+    cancelAdd();
+    moving = null;
     onSaved();
   }
 
@@ -198,6 +334,11 @@
         return;
       }
       if (apiErr || !data) {
+        // The server's own words when it has any. NormalizeOptionsDoc
+        // rejects with a message that names the offending term
+        // ("duplicate option value \"gb\"") and swallowing it for a
+        // house string would leave the operator hunting a term the
+        // server already identified.
         error = (apiErr as { error?: string } | undefined)?.error ?? t('admin.fields.options_save_error');
         return;
       }
@@ -218,12 +359,251 @@
       requiredSnapshot = saved.required;
       openVocabSnapshot = openVocab;
       savedMsg = t('admin.fields.options_saved');
+      cancelAdd();
+      moving = null;
       onSaved();
     } finally {
       saving = false;
     }
   }
 </script>
+
+<!--
+  One row, at any depth. Recursive: a term's children render through
+  this same snippet, so a leaf gets the identical controls its
+  grandparent has.
+-->
+{#snippet optionRow(o: FieldOption, path: OptionPath)}
+  {@const siblings = childrenAtPath(opts, path.slice(0, -1))}
+  {@const i = path[path.length - 1]}
+  <li
+    class="min-w-0 rounded border border-border bg-surface p-2"
+    class:opacity-70={o.status !== 'active'}
+    data-testid="field-option-row-{o.value}"
+  >
+    <div class="flex flex-wrap items-end gap-2">
+      <span class="w-full font-mono text-xs text-fg-muted sm:w-auto">{o.value}</span>
+
+      <label class="w-full min-w-0 sm:flex-1">
+        <span class="block text-xs text-fg-muted">{t('admin.fields.options_label')}</span>
+        <input
+          type="text"
+          value={o.label}
+          oninput={(e) => setLabel(path, (e.currentTarget as HTMLInputElement).value)}
+          data-testid="field-option-label-{o.value}"
+          class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+        />
+      </label>
+
+      <label class="min-w-0 flex-1 sm:flex-none">
+        <span class="block text-xs text-fg-muted">{t('admin.fields.options_status')}</span>
+        <select
+          value={o.status}
+          onchange={(e) => setStatus(path, (e.currentTarget as HTMLSelectElement).value as OptionStatus)}
+          data-testid="field-option-status-{o.value}"
+          class="mt-0.5 w-full max-w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none sm:w-auto"
+        >
+          {#each STATUSES as s (s)}
+            <option value={s}>{t(`admin.fields.options_status_${s}`)}</option>
+          {/each}
+        </select>
+      </label>
+
+      {#if o.status !== 'active'}
+        <label class="min-w-0 flex-1 sm:flex-none">
+          <span class="block text-xs text-fg-muted">{t('admin.fields.options_replaced_by')}</span>
+          <select
+            value={o.replaced_by ?? ''}
+            onchange={(e) => setReplacedBy(path, (e.currentTarget as HTMLSelectElement).value)}
+            data-testid="field-option-replaced-by-{o.value}"
+            class="mt-0.5 w-full max-w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none sm:w-auto"
+          >
+            <option value="">{t('admin.fields.options_replaced_by_none')}</option>
+            {#each successorChoices as c (c.value)}
+              {#if c.value !== o.value}
+                <option value={c.value}>{c.path.join(' / ')}</option>
+              {/if}
+            {/each}
+          </select>
+        </label>
+      {/if}
+
+      <div class="flex flex-wrap gap-1">
+        <button
+          type="button"
+          onclick={() => move(path, -1)}
+          disabled={i === 0}
+          aria-label={t('admin.fields.options_move_up')}
+          data-testid="field-option-up-{o.value}"
+          class="min-h-11 min-w-11 rounded border border-border px-2 text-fg-muted hover:bg-state-hover disabled:opacity-30"
+        >↑</button>
+        <button
+          type="button"
+          onclick={() => move(path, 1)}
+          disabled={i === siblings.length - 1}
+          aria-label={t('admin.fields.options_move_down')}
+          data-testid="field-option-down-{o.value}"
+          class="min-h-11 min-w-11 rounded border border-border px-2 text-fg-muted hover:bg-state-hover disabled:opacity-30"
+        >↓</button>
+        {#if isTree}
+          <button
+            type="button"
+            onclick={() => beginAdd(path, 'child', o.label)}
+            aria-label={t('admin.fields.options_add_child_aria', { label: o.label })}
+            data-testid="field-option-add-child-{o.value}"
+            class="min-h-11 min-w-11 rounded border border-border px-2 text-xs text-fg-muted hover:bg-state-hover"
+          >{t('admin.fields.options_add_child')}</button>
+          <button
+            type="button"
+            onclick={() => beginAdd(path, 'sibling', o.label)}
+            aria-label={t('admin.fields.options_add_sibling_aria', { label: o.label })}
+            data-testid="field-option-add-sibling-{o.value}"
+            class="min-h-11 min-w-11 rounded border border-border px-2 text-xs text-fg-muted hover:bg-state-hover"
+          >{t('admin.fields.options_add_sibling')}</button>
+          <button
+            type="button"
+            onclick={() => beginMove(path)}
+            aria-label={t('admin.fields.options_move_aria', { label: o.label })}
+            aria-expanded={samePath(moving, path)}
+            data-testid="field-option-move-{o.value}"
+            class="min-h-11 min-w-11 rounded border border-border px-2 text-xs text-fg-muted hover:bg-state-hover"
+          >{t('admin.fields.options_move')}</button>
+        {/if}
+      </div>
+    </div>
+
+    {#if samePath(moving, path)}
+      <!--
+        Destination picker. A flat, indented list of every term the
+        node may sit under — its own subtree is not in it, so the
+        move that would splice the subtree into itself cannot be
+        chosen. Buttons, not a drag: this has to work with a thumb.
+      -->
+      <div
+        class="mt-2 rounded border border-border-strong bg-bg-soft p-2"
+        data-testid="field-option-move-picker"
+      >
+        <p class="text-xs text-fg-muted">
+          {t('admin.fields.options_move_heading', { label: o.label })}
+        </p>
+        <div class="mt-1 flex flex-col gap-1">
+          <button
+            type="button"
+            onclick={() => moveTo([])}
+            data-testid="field-option-move-dest-root"
+            class="min-h-11 rounded border border-border bg-surface px-2 py-1 text-left text-sm hover:bg-state-hover"
+          >{t('admin.fields.options_move_root')}</button>
+          {#each moveOptions as d (d.value)}
+            <button
+              type="button"
+              onclick={() => moveTo(d.indexPath)}
+              data-testid="field-option-move-dest-{d.value}"
+              style="padding-left: {0.5 + d.depth * 0.75}rem"
+              class="min-h-11 rounded border border-border bg-surface py-1 pr-2 text-left text-sm hover:bg-state-hover"
+            >{d.label}</button>
+          {/each}
+        </div>
+        <button
+          type="button"
+          onclick={() => (moving = null)}
+          data-testid="field-option-move-cancel"
+          class="mt-1 min-h-11 rounded border border-border bg-surface px-2 py-1 text-sm"
+        >{t('common.cancel')}</button>
+      </div>
+    {/if}
+
+    {#if o.children?.length || (adding?.kind === 'child' && keyOf(adding.parentPath) === keyOf(path))}
+      <ul class="mt-2 w-full space-y-2 border-l border-border pl-3">
+        {#each o.children ?? [] as c, j (c.value)}
+          {@render optionRow(c, [...path, j])}
+          {@render siblingSlot(path, j + 1)}
+        {/each}
+        {#if adding?.kind === 'child' && keyOf(adding.parentPath) === keyOf(path)}
+          <li>{@render addForm()}</li>
+        {/if}
+      </ul>
+    {/if}
+  </li>
+{/snippet}
+
+<!--
+  The gap between two siblings, where a "+ beside" form appears. It has
+  to render in the PARENT's list rather than inside the anchor row: a
+  new sibling drawn inside the box of the term it sits next to reads as
+  a child, and the operator finds out it was not one only after saving.
+-->
+{#snippet siblingSlot(parentPath: OptionPath, index: number)}
+  {#if adding?.kind === 'sibling' && keyOf(adding.parentPath) === keyOf(parentPath) && adding.index === index}
+    <li>{@render addForm()}</li>
+  {/if}
+{/snippet}
+
+<!--
+  The inline new-term form. One instance, rendered wherever it is
+  anchored: a per-node form would be twenty-nine hidden inputs on
+  `country` and twenty-nine ways to leave one half-filled.
+-->
+{#snippet addForm()}
+  <div class="mt-2 rounded border border-border-strong bg-bg-soft p-2" data-testid="field-option-inline-add">
+    <label class="block">
+      <span class="block text-xs text-fg-muted">
+        {adding?.kind === 'child'
+          ? t('admin.fields.options_add_child_label', { label: adding?.anchor ?? '' })
+          : t('admin.fields.options_add_sibling_label', { label: adding?.anchor ?? '' })}
+      </span>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        type="text"
+        bind:value={addText}
+        autofocus
+        oninput={() => (addError = '')}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            confirmAdd();
+          }
+          if (e.key === 'Escape') cancelAdd();
+        }}
+        placeholder={t('admin.fields.options_add_term_placeholder')}
+        data-testid="field-option-inline-add-input"
+        class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+      />
+    </label>
+    {#if addSlug}
+      <p class="mt-1 font-mono text-xs text-fg-muted" data-testid="field-option-inline-add-slug">
+        {t('admin.fields.options_add_slug_preview', { slug: addSlug })}
+      </p>
+    {/if}
+    {#if addLabelClash && addLabelClash.value !== addSlug}
+      <p class="mt-1 text-xs text-warning" data-testid="field-option-inline-add-warning">
+        {t('admin.fields.options_add_label_taken', {
+          label: addLabelClash.label,
+          slug: addLabelClash.value,
+        })}
+      </p>
+    {/if}
+    {#if addError}
+      <p role="alert" class="mt-1 text-xs text-danger" data-testid="field-option-inline-add-error">
+        {addError}
+      </p>
+    {/if}
+    <div class="mt-1 flex flex-wrap gap-2">
+      <button
+        type="button"
+        onclick={confirmAdd}
+        disabled={!addText.trim()}
+        data-testid="field-option-inline-add-confirm"
+        class="min-h-11 rounded border border-border bg-surface px-3 py-1.5 text-sm disabled:opacity-40"
+      >{t('admin.fields.options_add')}</button>
+      <button
+        type="button"
+        onclick={cancelAdd}
+        data-testid="field-option-inline-add-cancel"
+        class="min-h-11 rounded border border-border bg-surface px-3 py-1.5 text-sm"
+      >{t('common.cancel')}</button>
+    </div>
+  </div>
+{/snippet}
 
 <div
   class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3 text-sm"
@@ -267,6 +647,11 @@
 
   {#if hasVocabulary}
     <p class="text-xs text-fg-muted">{t('admin.fields.options_help')}</p>
+    {#if isTree}
+      <p class="text-xs text-fg-muted" data-testid="field-options-tree-help">
+        {t('admin.fields.options_tree_help')}
+      </p>
+    {/if}
 
     {#if opts.length === 0}
       <p class="text-xs text-fg-muted" data-testid="field-options-empty">
@@ -276,115 +661,10 @@
 
     <ul class="space-y-2">
       {#each opts as o, i (o.value)}
-        <li
-          class="flex flex-wrap items-end gap-2 rounded border border-border bg-surface p-2"
-          class:opacity-70={o.status !== 'active'}
-          data-testid="field-option-row-{o.value}"
-        >
-          <span class="w-full font-mono text-xs text-fg-muted sm:w-auto">{o.value}</span>
-
-          <label class="w-full min-w-0 sm:flex-1">
-            <span class="block text-xs text-fg-muted">{t('admin.fields.options_label')}</span>
-            <input
-              type="text"
-              bind:value={o.label}
-              data-testid="field-option-label-{o.value}"
-              class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
-            />
-          </label>
-
-          <label class="min-w-0 flex-1 sm:flex-none">
-            <span class="block text-xs text-fg-muted">{t('admin.fields.options_status')}</span>
-            <select
-              value={o.status}
-              onchange={(e) => setStatus(i, (e.currentTarget as HTMLSelectElement).value as OptionStatus)}
-              data-testid="field-option-status-{o.value}"
-              class="mt-0.5 w-full max-w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none sm:w-auto"
-            >
-              {#each STATUSES as s (s)}
-                <option value={s}>{t(`admin.fields.options_status_${s}`)}</option>
-              {/each}
-            </select>
-          </label>
-
-          {#if o.status !== 'active'}
-            <label class="min-w-0 flex-1 sm:flex-none">
-              <span class="block text-xs text-fg-muted">{t('admin.fields.options_replaced_by')}</span>
-              <select
-                value={o.replaced_by ?? ''}
-                onchange={(e) => setReplacedBy(i, (e.currentTarget as HTMLSelectElement).value)}
-                data-testid="field-option-replaced-by-{o.value}"
-                class="mt-0.5 w-full max-w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none sm:w-auto"
-              >
-                <option value="">{t('admin.fields.options_replaced_by_none')}</option>
-                {#each successorChoices as c (c.value)}
-                  {#if c.value !== o.value}
-                    <option value={c.value}>{c.label}</option>
-                  {/if}
-                {/each}
-              </select>
-            </label>
-          {/if}
-
-          <div class="flex gap-1">
-            <button
-              type="button"
-              onclick={() => move(i, -1)}
-              disabled={i === 0}
-              aria-label={t('admin.fields.options_move_up')}
-              data-testid="field-option-up-{o.value}"
-              class="min-h-11 min-w-11 rounded border border-border px-2 text-fg-muted hover:bg-state-hover disabled:opacity-30"
-            >↑</button>
-            <button
-              type="button"
-              onclick={() => move(i, 1)}
-              disabled={i === opts.length - 1}
-              aria-label={t('admin.fields.options_move_down')}
-              data-testid="field-option-down-{o.value}"
-              class="min-h-11 min-w-11 rounded border border-border px-2 text-fg-muted hover:bg-state-hover disabled:opacity-30"
-            >↓</button>
-          </div>
-
-          {#if o.children?.length}
-            <!--
-              Nested terms, read-only (#820). A tree value is stored as
-              a single LEAF slug (ADR 0012's tree amendment), so these
-              are the terms an asset actually holds — hiding them would
-              make the vocabulary look five terms deep when it is
-              twenty-nine. They round-trip untouched: serializeOptions
-              recurses into `children`, so saving a label change on the
-              parent preserves every leaf.
-            -->
-            <ul
-              class="mt-1 w-full space-y-1 border-l border-border pl-3"
-              data-testid="field-option-children-{o.value}"
-            >
-              {#each o.children as c (c.value)}
-                <li
-                  class="flex items-baseline gap-2 text-sm"
-                  class:opacity-70={c.status !== 'active'}
-                  data-testid="field-option-child-{c.value}"
-                >
-                  <span class="font-mono text-xs text-fg-muted">{c.value}</span>
-                  <span>{c.label}</span>
-                  {#if c.status !== 'active'}
-                    <span class="text-xs text-fg-muted"
-                      >({t(`admin.fields.options_status_${c.status}`)})</span
-                    >
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </li>
+        {@render optionRow(o, [i])}
+        {@render siblingSlot([], i + 1)}
       {/each}
     </ul>
-
-    {#if nestedReadOnly}
-      <p class="text-xs text-fg-muted" data-testid="field-options-nested-note">
-        {t('admin.fields.options_nested_readonly')}
-      </p>
-    {/if}
 
     <div class="flex flex-wrap items-end gap-2">
       <label class="w-full min-w-0 sm:flex-1">
@@ -398,7 +678,9 @@
               addOption();
             }
           }}
-          placeholder={t('admin.fields.options_add_placeholder')}
+          placeholder={isTree
+            ? t('admin.fields.options_add_term_placeholder')
+            : t('admin.fields.options_add_placeholder')}
           data-testid="field-option-new"
           class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
         />
