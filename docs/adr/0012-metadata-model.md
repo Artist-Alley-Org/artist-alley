@@ -1056,3 +1056,15 @@ to the server's matching or slugify must change the client mirror in the same PR
 deliberately emits the RAW text for a term being created, never a pre-slugified form: the
 server mints the label from what it receives, and sending the slug would name the keyword
 `macro-detail` instead of "Macro Detail".
+
+### Addendum 2026-08-02 (second) — tree editing ships; depth stays deliberately uncapped (#779/#853)
+
+The tree editor implements this ADR's amended model with no new structural decisions beyond
+one worth recording: **tree depth is uncapped on both sides.** The server never enforced a
+maximum and the editor does not invent one — a client-only cap would make a legal catalogue
+uneditable, which is the same expressed-vs-obtained trap this document keeps warning about.
+Reparent and relabel confirm the model's promise in practice: values address terms by
+tree-wide-unique slug, so moving or renaming a term never touches a stored value. The
+editor-save-vs-mint race is now a DETECTED conflict (the mint path bumps `updated_at`, so a
+stale editor baseline 409s) — narrowing the 2026-07-30 amendment's last-write-wins gap to
+editor-vs-editor only.
