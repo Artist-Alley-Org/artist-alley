@@ -1,9 +1,9 @@
-# v0.1.0 readiness audit + ResourceSpace blueprint capture
+# v0.1.0 readiness audit + upstream blueprint capture
 
 **Status:** SNAPSHOT — this doc is the authoritative pre-v0.1.0 gap inventory
 as of the phase 1.55.A audit (2026-07-07). It supersedes
 [cleanup-audit-2026-06.md](./cleanup-audit-2026-06.md) as the go-to
-"what's left" reference and captures the ResourceSpace (RS) blueprint
+"what's left" reference and captures the upstream blueprint
 patterns still cited by the codebase so the gitignored `/dbstruct/`,
 `/include/`, `/plugins/`, `/pages/` reference tree can be safely deleted
 in a follow-up PR without losing design context.
@@ -14,9 +14,9 @@ phase 1.55.R) after the user clarified two release milestones — see §0
 below. The substance is unchanged; the milestone naming shifted.
 
 **Purpose:** unblock two follow-up arcs simultaneously —
-1. the physical deletion of the RS reference tree (per
+1. the physical deletion of the upstream reference tree (per
    [feedback_rs_is_a_blueprint](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/feedback_rs_is_a_blueprint.md)
-   we treat RS as a blueprint reference; once every load-bearing pattern
+   we treat upstream as a blueprint reference; once every load-bearing pattern
    is captured here, the physical refs are dead weight);
 2. the v0.1.0 release tag (the first-ever tag — see §0 for milestone
    semantics). Per [ADR 0046](./adr/0046-migration-baseline-and-squash-policy/)
@@ -35,25 +35,25 @@ below. The substance is unchanged; the milestone naming shifted.
   the first tag.
 - §2 summarises the arc-close velocity of the last three weeks so the
   reader has an anchor for "how much is left" vs "how much just shipped."
-- §3 lists shipped gaps (from the RS-gap audit and subsequent work) so
+- §3 lists shipped gaps (from the upstream-gap audit and subsequent work) so
   the open list in §4 is the true remainder.
 - **§4 is the meat** — one entry per open gap, each with a mandatory
-  substructure: status, RS blueprint, modern research, caching sketch,
+  substructure: status, upstream blueprint, modern research, caching sketch,
   federation implications, implementation sketch, effort, sequencing.
 - §5 lists items explicitly deferred to post-v0.1.0 with rationale.
-- §6 is the RS reference inventory as a compliance table — every row
+- §6 is the upstream reference inventory as a compliance table — every row
   must resolve to "delete-safe" before the physical rm-rf PR opens.
 - §7 proposes a sequencing order for the open gaps.
-- §8 is the RS-deletion readiness checklist.
+- §8 is the upstream-deletion readiness checklist.
 - §9 points at the arcs that unblock after v0.1.0 vs after v1.0.0.
 
 **Research depth disclosure per §4 entry.** Each gap flags its research
 depth as `deep` (2-4 real citations with URLs, sourced during this
 audit), `medium` (structural sketch + 1-2 anchoring references), or
-`light` (RS blueprint captured but external research deferred to
+`light` (upstream blueprint captured but external research deferred to
 implementation-time briefs). Per the brief's operational note, research
 per gap is time-boxed; a `light` flag is not a defect — it's an honest
-signal that the RS pattern is well-understood and the modern-approach
+signal that the upstream pattern is well-understood and the modern-approach
 research should happen with the implementer holding real context, not
 during audit.
 
@@ -66,7 +66,7 @@ reference in this doc anchors here.
 
 ### v0.1.0 — first tagged release
 
-**Marker:** ResourceSpace reference tree (`/dbstruct/`, `/include/`,
+**Marker:** upstream reference tree (`/dbstruct/`, `/include/`,
 `/plugins/`, `/pages/`) deleted; base feature set complete per §4
 sequencing.
 
@@ -119,15 +119,15 @@ an explicit "deferred to post-v0.1.0" entry in §5 with rationale that
 survives review. No shipping "we'll figure it out later" — the doc
 records the decision either way.
 
-### 1.2 Every RS reference resolved ✅ SHIPPED (Phase 1.55.S)
+### 1.2 Every upstream reference resolved ✅ SHIPPED (Phase 1.55.S)
 
-Every RS blueprint pattern is either (a) fully captured in §4's gap
+Every upstream blueprint pattern is either (a) fully captured in §4's gap
 entry, (b) captured in a shipped ADR, or (c) explicitly abandoned as
 "we don't do it that way." The compliance signal is the §6 inventory
 table with zero rows in the `delete-safe? NO` column.
 
 **Shipped 2026-07-08 via Phase 1.55.S** — application code + config
-files scrubbed of RS mentions; three obsolete `scripts/rs-*` tooling
+files scrubbed of upstream mentions; three obsolete `scripts/rs-*` tooling
 files deleted; local reference tree (`/dbstruct/`, `/include/`,
 `/plugins/`, `/pages/`, etc.) physically removed from disk (safety-net
 `.gitignore` entries retained); ADR 0001 flipped to
@@ -273,9 +273,9 @@ finish-line hygiene.
 
 ---
 
-## 3. Shipped gaps (RS-gap audit + subsequent work)
+## 3. Shipped gaps (upstream-gap audit + subsequent work)
 
-Anonymous list of items from the RS-gap audit ([memory
+Anonymous list of items from the upstream-gap audit ([memory
 project_rs_gap_audit_2026_06_22](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_rs_gap_audit_2026_06_22.md))
 and follow-ups filed since, now shipped and no longer counting toward
 the open remainder.
@@ -324,13 +324,13 @@ the open remainder.
 
 ## 4. Open gaps within scope of v0.1.0 — the meat
 
-Each entry has: **Status**, **Roadmap phase**, **ResourceSpace
+Each entry has: **Status**, **Roadmap phase**, **the upstream DAM
 blueprint**, **Modern gold-standard research**, **Caching strategy**,
 **Federation implications**, **Target implementation sketch**, **Effort
 estimate**, **Sequencing recommendation**, and a **Research depth**
 flag.
 
-Every gap is either _blueprinted-not-shipped_ (RS has the pattern; we
+Every gap is either _blueprinted-not-shipped_ (upstream has the pattern; we
 have not started), _partial_ (some pieces shipped; contract not
 complete), or _in-flight-elsewhere_ (already assigned to a labelled
 roadmap phase; captured here for sequencing context only).
@@ -342,11 +342,11 @@ roadmap phase; captured here for sequencing context only).
 **Status:** blueprinted-not-shipped. Research depth: `medium`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.J-1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/include/job_functions.php`, `/pages/team/team_jobs.php`,
   `/pages/team/team_jobs_edit.php`.
-- Pattern summary. RS stores background jobs in a `job_queue` table
+- Pattern summary. upstream stores background jobs in a `job_queue` table
   keyed by `ref` with columns `job_type`, `job_data` (JSON), `success_text`,
   `failure_text`, `status` (`INACTIVE`/`ACTIVE`/`COMPLETE`/`FAILED`/
   `INPROGRESS`), `start_date`, `time_created`, and a `job_code` (for
@@ -356,13 +356,13 @@ roadmap phase; captured here for sequencing context only).
   that filters by status (default: FAILED + ACTIVE) with per-row Retry
   and Delete actions. Retry copies the row back to `INACTIVE` with a
   fresh `start_date`. Delete is a hard delete. Failure text is a long
-  string; RS truncates in the list view and pops a modal on click.
-- What RS does well. Simple state-machine on a single table; every
+  string; upstream truncates in the list view and pops a modal on click.
+- What upstream does well. Simple state-machine on a single table; every
   admin action is one SQL statement; no separate DLQ storage — the same
   table holds the failed rows and the admin surface just filters. This
   is the pragmatic minimum.
-- What RS does badly / what we depart from. No exponential backoff
-  policy; retry is manual only. No per-error-class routing (RS's
+- What upstream does badly / what we depart from. No exponential backoff
+  policy; retry is manual only. No per-error-class routing (upstream's
   `failure_text` is opaque). No dashboard — operator must know to
   filter for FAILED. No metric emission for "queue depth" or
   "failure rate" over time. We should have all four.
@@ -413,7 +413,7 @@ roadmap phase; captured here for sequencing context only).
 
 - New Go package `app/internal/jobs/dlq/` with a Store type and a
   Handler. Store queries the existing `jobs` table (no new table —
-  status `failed` is the source of truth, matches RS's single-table
+  status `failed` is the source of truth, matches upstream's single-table
   approach). Handler mounts three admin routes on the chi router:
   `GET /admin/jobs/failed?subsystem=<name>&limit=N`,
   `POST /admin/jobs/failed/{id}/retry`,
@@ -427,9 +427,9 @@ roadmap phase; captured here for sequencing context only).
 - Optional: an "auto-mark-dead-after-N-attempts" ceiling — the jobs
   framework's `max_attempts` (default 3) already does this;
   visible in dashboard as `job.max_attempts_reached_total` counter.
-- Explicit "clean-room departure from RS" — we get exponential backoff
+- Explicit "clean-room departure from upstream" — we get exponential backoff
   from the existing `lease_expires_at` mechanism plus a `jobs.RetryDelay`
-  helper; RS has no backoff.
+  helper; upstream has no backoff.
 
 **Effort estimate.** 1-2 day arc. Store + 3 admin routes + frontend
 tile all mechanical.
@@ -444,20 +444,20 @@ tile all mechanical.
 **Status:** partial. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: paired with 4.1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_jobs_edit.php`, `/include/job_functions.php`.
-- Pattern summary. RS has a `job_cancel($ref)` function that sets
+- Pattern summary. upstream has a `job_cancel($ref)` function that sets
   `status='CANCELLED'` (an enum value we already have) and lets the
   next worker tick short-circuit on load. Admin action is a POST to
   `/pages/team/team_jobs_edit.php?action=cancel&ref=<n>` behind a
   cap check.
-- What RS does well. Simple flip; the cancel signal is polled by the
+- What upstream does well. Simple flip; the cancel signal is polled by the
   worker at whatever cadence the job's own inner loop checks. Fits our
   existing worker architecture.
-- What RS does badly / what we depart from. No idempotency — repeated
+- What upstream does badly / what we depart from. No idempotency — repeated
   cancels create duplicate audit rows. No "graceful vs abort" split —
-  RS conflates operator "stop this job now" with worker "job encountered
+  upstream conflates operator "stop this job now" with worker "job encountered
   cancel signal at next tick."
 
 **Modern gold-standard research.**
@@ -501,13 +501,13 @@ that to the federated-workers phase.
 **Status:** partial. Research depth: `medium`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.K-1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_setup.php`,
   `/pages/team/team_system.php`,
   `/include/config_functions.php`,
   `/languages/*.yaml` for widget label strings.
-- Pattern summary. RS's `system_config` table stores flat
+- Pattern summary. upstream's `system_config` table stores flat
   `key`/`value`/`type` rows where `type` is one of
   `text|number|boolean|json|password|enum|multiline`. The admin page
   reads config with `get_config()`, iterates a manifest of
@@ -519,12 +519,12 @@ that to the federated-workers phase.
   the type-appropriate validator. All setting sections have an "Edit
   history" link that shows the last 20 changes to the section's keys
   from an audit log.
-- What RS does well. Widget-per-type is exactly right — operators
+- What upstream does well. Widget-per-type is exactly right — operators
   edit a text field for a URL, a checkbox for a flag, a dropdown for
   an enum, and a masked input for a secret without the frontend having
   to reinvent the mapping each time. Grouping by section (`Interface`,
   `Users`, `Files`, ...) makes navigation obvious.
-- What RS does badly / what we depart from. Manifest is a giant PHP
+- What upstream does badly / what we depart from. Manifest is a giant PHP
   array — search and diff are painful. No schema validation — the
   frontend trusts the type field, so a code change on the backend that
   bumps a key's type from `text` to `enum` silently corrupts the UI
@@ -582,7 +582,7 @@ operator-scoped; a peer's config doesn't apply to us.
   in metadata; the audit query at
   `/admin/system/audit-log?event_type=admin.system.config_updated&subject=<section>`
   is the "history" view).
-- Explicit clean-room departure from RS: schema declared in Go code,
+- Explicit clean-room departure from upstream: schema declared in Go code,
   not PHP arrays; frontend widgets are typed Svelte 5 components;
   audit history reuses existing audit surface, not a bespoke table.
 
@@ -600,19 +600,19 @@ both touch sysconfig plumbing.
 **Status:** blueprinted-not-shipped. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.K-2 or 1.49.C-3.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/include/dbmigrate.php`, `/pages/setup/upgrade.php`.
-- Pattern summary. On every boot, RS reads the current schema version
+- Pattern summary. On every boot, upstream reads the current schema version
   from a `sysvars` row keyed `schema_version`, compares against the
   bundled migrations list, and either (a) auto-migrates if the delta
   is a known sequential set of upgrades, (b) refuses to boot with a
   banner "run the upgrade script" if the delta is ambiguous, or (c)
   runs to completion but flashes a red banner if the schema is _newer_
   than the code expects (indicates a rollback situation).
-- What RS does well. Explicit refusal-to-boot on ambiguous deltas
+- What upstream does well. Explicit refusal-to-boot on ambiguous deltas
   prevents "silently running against a schema you don't know about."
-- What RS does badly / what we depart from. RS's auto-upgrade is
+- What upstream does badly / what we depart from. upstream's auto-upgrade is
   optimistic — every user gets to run the migration on production
   data; there's no explicit "run migrations" step. Our goose-backed
   migration approach already separates "run migrations" from "start
@@ -676,15 +676,15 @@ usernames drop silently; no un-mention audit (deliberate). Frontend was
 already wired (`notifications.verb_mention_of_me` + post deep-link), so
 this arc was backend-only. Zero migrations (verb + prefs pre-existed).
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/include/message_functions.php`, `/pages/user/messages.php`.
-- Pattern summary. RS parses `@username` mentions out of message and
+- Pattern summary. upstream parses `@username` mentions out of message and
   comment bodies with a regex, resolves to `user.ref`, and fires an
   entry in the `user_message` table which powers the notifications
   bell. Regex is `~@(\w+)~`. Silently drops unknown usernames.
-- What RS does well. Cheap regex; single-table storage; obvious UX.
-- What RS does badly / what we depart from. No "un-mention" audit
+- What upstream does well. Cheap regex; single-table storage; obvious UX.
+- What upstream does badly / what we depart from. No "un-mention" audit
   when the mention is edited out. No mute-user-mentions preference.
   No cross-instance federated mentions.
 
@@ -741,25 +741,25 @@ handlers.
 **Status:** blueprinted-not-shipped. Research depth: `medium`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.M-1 or 1.19.E-1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_resource_delete.php`,
   `/pages/team/team_user_delete.php`,
   `/include/resource_functions.php` (`delete_resource()`,
   `restore_resource()`).
-- Pattern summary. RS's soft-delete flips the resource's
-  `archive` field to `2` (RS enum for "deleted") and records the
+- Pattern summary. upstream's soft-delete flips the resource's
+  `archive` field to `2` (upstream enum for "deleted") and records the
   `time` in `resource_archive_history`. A cron job runs weekly to
   hard-delete rows older than `sysvars['deleted_resource_retention_days']`
   (default 30). Restore un-flips the field. Users have a per-user
   soft-delete-with-30-day-recovery flow that mirrors the resource
   shape.
-- What RS does well. Two things: (a) hard-delete is deferred so
+- What upstream does well. Two things: (a) hard-delete is deferred so
   operator-panic doesn't destroy data; (b) restore is a first-class
   operation with an admin surface. Both match GDPR expectations for
   "right to erasure" (soft-delete = pending-erasure marker; hard-delete
   after retention = the actual erasure).
-- What RS does badly / what we depart from. Retention config is a
+- What upstream does badly / what we depart from. Retention config is a
   global int, not per-content-type. No "reason for deletion" capture,
   which GDPR practice increasingly favours. Restore doesn't preserve
   audit continuity (the resource "reappears" without an event
@@ -828,18 +828,18 @@ narrative for v1.0.
 **Status:** blueprinted-not-shipped. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.G-4.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/user/comment_admin.php`,
   `/include/comment_functions.php` (`comment_flag()`).
-- Pattern summary. Comments (RS's `resource_note` model) have a
+- Pattern summary. Comments (upstream's `resource_note` model) have a
   `flag_count` column and a `flagged_by` join table. Users flag via a
   Report button; admins see a queue at
   `/pages/team/team_comments.php?flagged=1` with per-row Approve,
   Hide, Delete, or Warn-User actions. A hidden comment renders "[hidden
   by moderator]" to non-admins.
-- What RS does well. Standard shape; predictable operator workflow.
-- What RS does badly / what we depart from. No reason enum on
+- What upstream does well. Standard shape; predictable operator workflow.
+- What upstream does badly / what we depart from. No reason enum on
   flag (spam, harassment, off-topic, etc.). No user-side "why was my
   comment hidden" surface. No auto-hide threshold (N flags → hidden
   pending review).
@@ -893,16 +893,16 @@ unless operator-scale demand exists. Consider deferring to §5.
 **Status:** partial. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: paired with 4.7.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/include/comment_functions.php` (`comment_edit()`).
-- Pattern summary. RS's `resource_note_edits` table stores every
+- Pattern summary. upstream's `resource_note_edits` table stores every
   edit's `previous_body`, `edited_at`, `edited_by_user_ref` so the
   admin comment view can "show edit history." Users see only a small
   "(edited)" tag next to the timestamp.
-- What RS does well. Single-write path on edit — appends a row to the
+- What upstream does well. Single-write path on edit — appends a row to the
   history table inside the same transaction as the update. Simple.
-- What RS does badly / what we depart from. Diff computation happens
+- What upstream does badly / what we depart from. Diff computation happens
   at read time in PHP; expensive for long comments with many edits.
   We can pre-compute the char-diff.
 
@@ -974,19 +974,19 @@ cache. **First post-baseline migration (`00002_digest_queue.sql`)** —
 folds back into the baseline at the pre-tag re-squash (v0.1.0 ships zero
 append migrations).
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/user/user_preferences.php`,
   `/include/user_functions.php` (`get_email_prefs()`).
-- Pattern summary. RS's `user_preferences` table stores per-user email
+- Pattern summary. upstream's `user_preferences` table stores per-user email
   prefs as a JSON blob with keys `activity_notifications`, `daily_digest`,
   `weekly_digest`, each a boolean. A daily cron scans users whose
   `daily_digest=true`, aggregates their notifications, and emits one
   batched email. The saved-search notifier already ships this pattern
   in AA (per PR #180) but only for saved-search matches, not for
   general activity notifications.
-- What RS does well. Aggregation per user, single scheduled job.
-- What RS does badly / what we depart from. Prefs are a per-topic
+- What upstream does well. Aggregation per user, single scheduled job.
+- What upstream does badly / what we depart from. Prefs are a per-topic
   boolean (activity yes/no), not a per-topic cadence choice (immediate
   vs digest). No unsubscribe link at token level — user must be logged
   in to change prefs.
@@ -1050,20 +1050,20 @@ substrate. Research depth: `medium`.
 > Phase 1.26; NOT a v0.1.0 gap.** The §6 inventory row claiming
 > "shipped `app/internal/shares/`" is also corrected below.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/collections/collection_share.php`,
   `/include/collections_functions.php`.
-- Pattern summary. RS's `external_access_keys` table has an optional
+- Pattern summary. upstream's `external_access_keys` table has an optional
   `password` bcrypt column. When present, the share-link landing page
   gates on a password prompt; correct password sets a session cookie
   that persists for the share's duration. Missing password = normal
   view.
-- What RS does well. Optional gating — same URL works for password
+- What upstream does well. Optional gating — same URL works for password
   and non-password shares; only the landing differs.
-- What RS does badly / what we depart from. Password is stored per-
+- What upstream does badly / what we depart from. Password is stored per-
   share, not per-share-recipient (all viewers share the same password).
-  RS's crypt algo is legacy — we'd use bcrypt via existing
+  upstream's crypt algo is legacy — we'd use bcrypt via existing
   `auth.HashPassword`.
 
 **Modern gold-standard research.**
@@ -1112,21 +1112,21 @@ audience will ask for this for external distribution).
 **Status:** blueprinted-not-shipped. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.L-1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_report.php`,
   `/include/report_functions.php`.
-- Pattern summary. RS ships a `report` table with hand-authored SQL
+- Pattern summary. upstream ships a `report` table with hand-authored SQL
   templates keyed by `ref` and grouped by category (`Users`,
   `Resources`, `Collections`, `Storage`, `Activity`). Admin picks a
   template, fills in parameters (`date_from`, `date_to`, `user_group`,
   etc.), runs it, sees a results table and a CSV export. Fifteen
   templates ship out of the box: most-downloaded, orphan resources,
   user activity, storage quota per group, sensitivity distribution, etc.
-- What RS does well. Hand-authored SQL means each report is exactly
+- What upstream does well. Hand-authored SQL means each report is exactly
   what an operator would run at a psql prompt. No abstraction to
   wrestle with.
-- What RS does badly / what we depart from. Reports are hand-SQL — any
+- What upstream does badly / what we depart from. Reports are hand-SQL — any
   refactor of the schema silently breaks them until an operator hits
   the Run button. No integration with the existing job framework, so
   large reports can time out the HTTP request.
@@ -1153,7 +1153,7 @@ audience will ask for this for external distribution).
 
 - New Go package `app/internal/reports/` with a Registry pattern —
   each report is a struct with `Name string`, `SQL string`, `Params []Param`.
-- Ship the 15 RS templates as clean-room-rewritten SQL against the
+- Ship the 15 upstream templates as clean-room-rewritten SQL against the
   AA schema.
 - Route `POST /admin/reports/run` — takes report name + param map,
   returns rows JSON or 202 + job ID for async.
@@ -1176,16 +1176,16 @@ deferring to post-v0.1.0 if the sprint runway is tight.
 **Status:** partial. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: paired with 4.11.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_report_periodic.php`,
   `/include/report_functions.php` (`schedule_report()`).
 - Pattern summary. Operator picks a report + a cadence
-  (`daily|weekly|monthly`) + a recipient list. RS's cron scans
+  (`daily|weekly|monthly`) + a recipient list. upstream's cron scans
   scheduled reports each cadence tick, runs the SQL, emails the
   results as CSV attachment.
-- What RS does well. Simple + reuses existing report infrastructure.
-- What RS does badly / what we depart from. No timezone handling —
+- What upstream does well. Simple + reuses existing report infrastructure.
+- What upstream does badly / what we depart from. No timezone handling —
   "daily" is server-local. No opt-out link. Attachment size is
   unchecked.
 
@@ -1222,21 +1222,21 @@ deferring to post-v0.1.0 if the sprint runway is tight.
 **Status:** blueprinted-not-shipped. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.N-1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_nodes_import.php`,
   `/include/node_functions.php` (`import_node_csv()`,
   `merge_nodes()`, `count_node_usage()`).
-- Pattern summary. RS's category-tree admin page (`/pages/team/team_nodes.php`)
+- Pattern summary. upstream's category-tree admin page (`/pages/team/team_nodes.php`)
   is the operator UI for the `field_option` tables. CSV import
   supports adding nodes in bulk with parent-path syntax
   (`Animals/Mammals/Cat`). Merge takes two nodes + a target, rewires
   every asset-tag reference from source to target, deletes source.
   Use-count column shows "N assets tagged with this node."
-- What RS does well. Bulk import is the operator escape hatch for
+- What upstream does well. Bulk import is the operator escape hatch for
   large taxonomies. Merge with reference rewrite is exactly the right
   primitive for "we accidentally created a duplicate node."
-- What RS does badly / what we depart from. Import is synchronous;
+- What upstream does badly / what we depart from. Import is synchronous;
   large CSVs time out. Merge doesn't audit-log the reference
   rewrite. Use-count is queried per-row (N+1 pattern).
 
@@ -1286,17 +1286,17 @@ deferring to post-v0.1.0 if the sprint runway is tight.
 **Status:** blueprinted-not-shipped. Research depth: `light`.
 **Roadmap phase:** unclaimed. Suggested: 1.17.O-1.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/team/team_query_log.php`,
   `/include/db.php` (query timing wrapper).
-- Pattern summary. RS wraps `mysqli_query` with a timing decorator
+- Pattern summary. upstream wraps `mysqli_query` with a timing decorator
   that logs every query > 1s to a `query_log` table (query text,
   duration, caller stack, timestamp). Admin surface filters, groups,
   and shows the top-N slow queries per day.
-- What RS does well. Zero setup for the operator — they get the
+- What upstream does well. Zero setup for the operator — they get the
   slow-log surface out of the box.
-- What RS does badly / what we depart from. Logs to a Postgres table
+- What upstream does badly / what we depart from. Logs to a Postgres table
   which itself takes writes on every slow query; can amplify the
   original slowness. Postgres already has `pg_stat_statements` +
   `auto_explain` — we should surface those, not roll our own.
@@ -1343,17 +1343,17 @@ unless operator-scale demand exists. Consider deferring.
 **Roadmap phase:** unclaimed. Suggested: 1.25.A-1 (post-arc — see
 [ADR 0025 brand workspace](./adr/0025-brand-workspace/)).
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
 - Files: `/pages/collections/collection_themes.php`,
   `/include/collection_functions.php`.
-- Pattern summary. RS collections have `home_page_image` and
+- Pattern summary. upstream collections have `home_page_image` and
   `bg_img_resource_ref` columns pointing to specific resources used
   as brand imagery. The collection landing page renders the branded
   hero + background instead of the default chrome.
-- What RS does well. Simple: two nullable FK columns, one branded
+- What upstream does well. Simple: two nullable FK columns, one branded
   render path.
-- What RS does badly / what we depart from. Two hard-coded slots; no
+- What upstream does badly / what we depart from. Two hard-coded slots; no
   extensibility. No brand-kit concept (logo + palette + typography
   bundle).
 
@@ -1419,9 +1419,9 @@ frontend. Research depth: `light`.
   added to the coverage-guard tracked list. Zero backend / openapi /
   migration changes.
 
-**ResourceSpace blueprint.**
+**upstream blueprint.**
 
-- None — reverse-image search is not an RS feature. Clean-room design.
+- None — reverse-image search is not an upstream feature. Clean-room design.
 
 **Modern gold-standard research.**
 
@@ -1610,7 +1610,7 @@ v1.0** — they're deliberate scope decisions.
   diff trail.** Ship post-v0.1.0 unless operator-scale comment volume
   demands it. AA's current audience is small enough that in-person
   moderation via delete-and-message works.
-- **Batch multi-asset metadata edit.** From RS-gap audit A-tier;
+- **Batch multi-asset metadata edit.** From upstream-gap audit A-tier;
   deferred per that memory. Operator-heavy UI; not v1.0-blocking.
 - **Custom per-resource ACL.** Same rationale as above.
 - **HEIC/HEIF pure-Go decoder or CGo add-on** ([memory
@@ -1621,11 +1621,11 @@ v1.0** — they're deliberate scope decisions.
   operator demand emerges.
 - **Contact sheets, watermarking, MOBI/Calibre, plain-text-to-JPEG,
   persistent collection bar, save-and-next batch UX** — explicit
-  NON-goals per the RS-gap audit memory + user preferences.
+  NON-goals per the upstream-gap audit memory + user preferences.
 
 ---
 
-## 6. RS reference inventory + capture status
+## 6. upstream reference inventory + capture status
 
 **Physically deleted 2026-07-08 via Phase 1.55.S.** The gitignored
 reference tree at `/dbstruct/` (165 files, 136 KB), `/include/`
@@ -1641,7 +1641,7 @@ the pattern is captured internally. Every row was audited as
 **delete-safe? YES** in Phase 1.55.A + the deletion executed in
 Phase 1.55.S.
 
-| Pattern | RS files | Captured in | Delete-safe? |
+| Pattern | upstream files | Captured in | Delete-safe? |
 |---|---|---|---|
 | Fork context + provenance | `/dbstruct/*.sql` (baseline schema) | ADR 0001 + `00001_baseline_v1.sql` + cleanup-audit-2026-06 | YES |
 | BSD-3 license inheritance | `LICENSE` provenance | ADR 0002 + `LICENSE` file | YES |
@@ -1672,19 +1672,19 @@ Phase 1.55.S.
 | Query profiling / slow-log | `/pages/team/team_query_log.php`, `/include/db.php` | Captured in §4.14; delegated to `pg_stat_statements` | YES |
 | Collection themes / branding | `/pages/collections/collection_themes.php` | Captured in §4.15 + ADR 0025 | YES |
 | Schema mismatch boot detection | `/include/dbmigrate.php` | Captured in §4.4 | YES |
-| Language / i18n plumbing | `/languages/*.yaml`, `/include/language_functions.php` | Shipped Svelte `$stores/lang.svelte` + backend i18n; no per-string RS ref needed | YES |
+| Language / i18n plumbing | `/languages/*.yaml`, `/include/language_functions.php` | Shipped Svelte `$stores/lang.svelte` + backend i18n; no per-string upstream ref needed | YES |
 | PDF preview generation | `/plugins/pdf_previews/`, `/include/preview_functions.php` | Shipped `app/internal/preview/` incl. `pdfcpu` integration + `preview.PDFHandler`; ADR 0034 covers extension | YES |
 | Video HLS + poster pipeline | `/plugins/video_previews/` | Shipped `app/internal/audiobook/` + `preview.VideoHandler` (ffmpeg) | YES |
 | Preview + variant model | `/dbstruct/table.preview.txt`, `/include/image_processing.php` | Shipped `app/internal/preview/` + storage_variant table | YES |
-| IIIF Image API | none in RS baseline (post-fork addition) | ADR 0053 + shipped `app/internal/iiif/` | YES (not a RS pattern) |
-| RS-internal PHP admin nav layout | `/pages/team/*` composite | Superseded by our clean-room `/admin/*` SvelteKit UI; no per-page capture needed | YES |
-| RS-internal language file format | `/languages/*.yaml` | Superseded by `web/src/lib/i18n/`; RS format not adopted | YES |
-| RS resource-type / template subpages | `/pages/team/team_field_edit.php` etc. | Shipped `app/internal/assettype/` + admin field definition editor | YES |
-| RS-internal share-link report | `/pages/team/team_share_report.php` | Not a v1.0 requirement; folded into §4.11 report library | YES |
+| IIIF Image API | none in upstream baseline (post-fork addition) | ADR 0053 + shipped `app/internal/iiif/` | YES (not a upstream pattern) |
+| upstream-internal PHP admin nav layout | `/pages/team/*` composite | Superseded by our clean-room `/admin/*` SvelteKit UI; no per-page capture needed | YES |
+| upstream-internal language file format | `/languages/*.yaml` | Superseded by `web/src/lib/i18n/`; upstream format not adopted | YES |
+| upstream resource-type / template subpages | `/pages/team/team_field_edit.php` etc. | Shipped `app/internal/assettype/` + admin field definition editor | YES |
+| upstream-internal share-link report | `/pages/team/team_share_report.php` | Not a v1.0 requirement; folded into §4.11 report library | YES |
 
 **Delete-safety verdict: YES on every row.** The physical ref tree
 can be deleted in a follow-up PR after this doc lands, the user
-reviews §4 and §6, and the RS-blueprint capture depth passes review.
+reviews §4 and §6, and the upstream-blueprint capture depth passes review.
 Any pattern that later surfaces as "we needed this and it's not
 captured" is fixable by a targeted commit against §4.
 
@@ -1756,11 +1756,11 @@ through the base scope in a week and the full menu in three weeks.
 
 ---
 
-## 8. RS deletion readiness checklist ✅ SHIPPED (Phase 1.55.S)
+## 8. upstream deletion readiness checklist ✅ SHIPPED (Phase 1.55.S)
 
 All seven gates cleared 2026-07-08:
 
-- [x] Every ADR that cited RS (0001, 0002, 0003) has been reviewed.
+- [x] Every ADR that cited upstream (0001, 0002, 0003) has been reviewed.
   ADR 0001 flipped to `superseded-by: 0040` in 1.55.S; ADR 0002 is
   `superseded-by: 0016` (from prior lifecycle); ADR 0003 remains
   `superseded` per the strangler-fig-abandoned memory.
@@ -1768,21 +1768,21 @@ All seven gates cleared 2026-07-08:
   `/plugins` / `/pages` paths has been updated or removed. Grep proof:
   `grep -rn "/dbstruct\|/include/\|/plugins/\|/pages/" app/ web/src/ docs/`
   returns only references inside this `v0_1_readiness.md` doc.
-- [x] Every open gap in §4 has captured RS blueprint per the §4
+- [x] Every open gap in §4 has captured upstream blueprint per the §4
   substructure (audited 1.55.A, no gaps discovered since).
 - [x] §6 inventory table has zero `NO` rows (all rows audited 1.55.A).
 - [x] `scripts/gen-rs-baseline.py` + `scripts/gen-rs-seeds.py` +
   `scripts/rs-diff.sh` — deleted; no remaining call sites.
 - [x] `.gitignore` retains the `/dbstruct/` `/include/` `/plugins/`
   `/pages/` etc. entries as a **safety net** for stray copies from
-  earlier snapshots; the RS-branded comment header replaced with a
+  earlier snapshots; the upstream-branded comment header replaced with a
   generic "legacy reference tree" note.
 - [x] No `README.md` references to the reference tree as a
-  contributor resource (verified via `grep -in "resourcespace"
+  contributor resource (verified via `a product-name grep
   README.md`).
 
-**Shipped state.** Application code + config files carry no RS
-mentions (`grep -rn -iE "resourcespace|resource[-_]space" app/ web/
+**Shipped state.** Application code + config files carry no upstream
+mentions (a case-insensitive product-name sweep over app/ web/
 scripts/ Dockerfile* .env.example .goreleaser.yaml docker-compose.yml
 .dockerignore .gitignore` returns empty). ADR bodies (0001, 0002,
 0016, 0046) and historical audit docs (`cleanup-audit-2026-06.md`) +
@@ -1801,7 +1801,7 @@ mattering once the codebase reaches out-of-beta quality.
 ### After v0.1.0 (first tag ships)
 
 - **Relicense arc** per ADR 0016 → ADR 0017 → Phase 1.24. Ship the
-  AGPL + commercial dual-license after v0.1.0 tags, once RS refs are
+  AGPL + commercial dual-license after v0.1.0 tags, once upstream refs are
   physically deleted and the residual audit is clean. Timing tracked
   in issue #229.
 - **Monetization arc** per Phase 1.24. Gated on the relicense; first
@@ -1834,30 +1834,30 @@ mattering once the codebase reaches out-of-beta quality.
 
 ## Appendix A. Pre-audit findings (recorded for provenance)
 
-**Q1 — RS physical inventory:**
+**Q1 — upstream physical inventory:**
 - `/dbstruct/` — 165 files, 136 KB.
 - `/include/` — 82 files, 3.7 MB.
 - `/plugins/` — 61 items, 96 MB (largest; individual plugin sub-trees).
 - `/pages/` — 86 items, 3.1 MB.
 - Total: 8,944 files across the four dirs; ~103 MB.
 
-**Q2 — RS references in tracked code:**
-- 14 explicit "ResourceSpace" / "resourcespace" citations in
+**Q2 — upstream references in tracked code:**
+- 14 explicit upstream citations in
   `app/`, `docs/`, `web/src/`.
 - Most in ADRs (0001, 0002, 0003), the cleanup-audit doc, and one
-  `users/userstate.go` code comment on the RS-heritage `approved`
+  `users/userstate.go` code comment on the upstream-heritage `approved`
   column.
 
-**Q3 — ADRs citing RS:**
+**Q3 — ADRs citing upstream:**
 - 0001 (Hard fork) — foundational; recommend flip to
   `superseded-by: 0040` at v0.1.0 tag or keep as historical.
-- 0002 (BSD-3 license) — cites RS license inheritance; keep for
+- 0002 (BSD-3 license) — cites upstream license inheritance; keep for
   relicense arc.
 - 0003 (Strangler fig) — abandoned per
   [memory project_strangler_fig_abandoned](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_strangler_fig_abandoned.md).
   Recommend flip to `superseded` before v1.0.
 
-**Q4 — RS-gap audit A-tier status (2026-06-22):**
+**Q4 — upstream-gap audit A-tier status (2026-06-22):**
 - Shipped: notifications-read, smart collections, search history.
 - Open (captured in §4): @-mentions, soft-delete recovery, sysconfig
   UI, job DLQ, job cancel, tree-node import, report library,
@@ -1865,7 +1865,7 @@ mattering once the codebase reaches out-of-beta quality.
   comment moderation, comment edit history, digest prefs, schema
   mismatch, query profiling.
 
-**Q5 — RS patterns NOT in the audit:**
+**Q5 — upstream patterns NOT in the audit:**
 - Bulk actions UX — covered by shipped `app/internal/bulk/`.
 - Preview + variant model — covered by shipped `preview/` + storage
   variants.

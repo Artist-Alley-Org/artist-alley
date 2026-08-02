@@ -182,7 +182,7 @@ first-ever tagged release. Seventeen sub-phases, 2026-07-07 → 2026-07-11.
 | **1.55.A** | 07-07 | Master release-readiness audit (`docs/v0_1_readiness.md`) — exit criteria, gap inventory, sequencing |
 | **1.55.B** | 07-08 | Hygiene bundle — oapi-codegen pinned, MDX hazard gate, schema-freshness boot detection, baseline verification |
 | **1.55.R** | 07-08 | v0.1.0 milestone rename pass — recalibrated "v1.0.0" language to "v0.1.0" |
-| **1.55.S** | 07-08 | ResourceSpace sanitization + physical reference-tree deletion |
+| **1.55.S** | 07-08 | Upstream sanitization + physical reference-tree deletion |
 | **1.55.T** | 07-09 | Release-candidate dry runs |
 | **1.55.T-2** | 07-09 | Docker-only distribution + all-green rc9 dry-run |
 | **1.55.U-1** | 07-08 | Schema + cache audit report (0 MUST / 23 SHOULD / 11 NICE) |
@@ -216,7 +216,7 @@ on every row, sequencing proposal (base v0.1.0 scope ~9 days;
 full menu ~17-22 days), 7-gate RS deletion readiness checklist,
 post-milestone arc pointers (split v0.1.0 vs v1.0.0). **Unblocks two follow-up arcs:**
 (a) physical deletion of the ~102 MB gitignored `/dbstruct/` +
-`/include/` + `/plugins/` + `/pages/` ResourceSpace reference tree
+`/include/` + `/plugins/` + `/pages/` upstream reference tree
 (§6 confirms every pattern is captured internally); (b) the
 AGPL + commercial relicense arc per ADR 0016 → 0017 direction,
 gated on this audit + Phase 1.24. **Recommended next sub-phase**
@@ -270,7 +270,7 @@ checklist all seven gates cleared. ADR 0002 skipped for a
 pending-review pointer (already `superseded_by: 0016` from prior
 lifecycle; redundant). Local `/dbstruct/` `/include/` `/plugins/`
 `/pages/` physically removed from disk; `.gitignore` entries
-retained as safety net. `grep -rn -iE "resourcespace|resource[-_]space"`
+retained as safety net. a case-insensitive product-name pattern sweep
 in application code + config now returns empty; deliberate
 historical mentions retained in ADR bodies + `cleanup-audit-2026-06.md`
 + this readiness doc's §6 inventory + memory files. Closes #231.
