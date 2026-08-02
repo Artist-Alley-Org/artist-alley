@@ -378,3 +378,22 @@ jobs:
         uses: ./.github/actions/compose-cleanup
         with:
           profiles: --profile dogfood
+
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # Best-effort: alerting must never mask the real failure state.
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "DISCORD_WEBHOOK_ALERTS not set; skipping"; exit 0; }
+          payload=$(jq -n --arg url "$RUN_URL" '{
+            embeds: [{
+              title: "Nightly dogfood run FAILED",
+              url: $url,
+              description: "One or more scenarios failed — run link above. If ALL scenarios failed at once, suspect the transient peer-loss flake and re-run once before digging.",
+              color: 15548997
+            }]
+          }')
+          curl -sf -H "Content-Type: application/json" -d "$payload" "$WEBHOOK" \
+            || echo "::warning::Discord alert failed"
