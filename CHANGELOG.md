@@ -216,6 +216,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Dates stop being a day early, and "derived from" names the actual asset.** A field that
+  holds a calendar date (like a licence expiry) was being converted into the viewer's timezone,
+  so anyone west of UTC saw the previous day. Calendar dates now display exactly as recorded,
+  in the unambiguous `2026-10-22` form; fields that hold a real moment in time (like an ingest
+  timestamp) still show in local time. And a field that points at another asset now shows that
+  asset's title as a clickable link instead of an internal identifier — pointing at something
+  that was later deleted degrades gracefully rather than breaking the panel (#815, #817).
+
 - **Hovering a short clip no longer scrolls through blank frames.** The hover slideshow
   always stepped through a hundred frames, however many the clip actually had. A five-second
   video only has about twenty-five, so three quarters of the hover was empty black — and
