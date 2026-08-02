@@ -217,6 +217,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewVideoPosterHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewGifHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewModelHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewAudioHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewPDFHandler(pool, storageSvc, sysCfg, logger))

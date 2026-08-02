@@ -11651,6 +11651,7 @@ components:
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
          title, asset_type, status, preview_available, ladder_available,
+         scrub_available,
          file_hash, file_extension, thumbhash, pixel_width, pixel_height]
       properties:
         collection_id: { type: string, format: uuid }
@@ -11701,6 +11702,14 @@ components:
             content plane. Identical contract to Asset.ladder_available —
             see there for why this is computed from config rather than
             from the default rung list.
+        scrub_available:
+          type: boolean
+          description: |
+            True iff a servable `sprites.vtt` cue file exists for this
+            member asset AND the caller passes the content plane.
+            Identical contract to Asset.scrub_available — a collection
+            member renders through the same CardThumb as every other
+            surface, so it needs the same hover-scrub gate (#835).
         pixel_width:
           type: integer
           format: int32
@@ -11753,7 +11762,7 @@ components:
       # silently lost its video/3D badges and sprite-scrub previews.
       required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
                  file_hash, file_extension, thumbhash, ladder_available,
-                 pixel_width, pixel_height]
+                 scrub_available, pixel_width, pixel_height]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -11844,6 +11853,31 @@ components:
             none of it, so today the two are nearly co-extensive; they
             diverge exactly where it matters — assets whose raster pass
             partly failed, and any future partial-ladder state.
+        scrub_available:
+          type: boolean
+          description: |
+            True iff a servable `sprites.vtt` cue file exists for this
+            asset AND the caller passes the content plane. Same ADR 0064
+            contract as `preview_available` — a restricted asset reports
+            false rather than 403.
+
+            This is the hover-scrub gate (#835). The card's scrub used to
+            be licensed by FILE EXTENSION — "this is an mp4, therefore it
+            has a sheet" — which is a guess about storage made from a
+            filename. It is wrong in both directions: a video whose
+            expensive `preview.video` job has not drained yet has a `col`
+            (the cheap poster job, #818) and no sheet, and the card
+            requested one anyway and 404'd; and a format that DOES have a
+            sheet but was not on the hardcoded list — an animated GIF
+            since #832 — could never scrub no matter what was in storage.
+
+            `sprites.vtt` and not `sprites.jpg` because the cue file is
+            what the client actually reads: it declares how many cells
+            the sheet really contains, which is not cols×rows for a clip
+            too short to fill the grid. Both are written together by
+            every producer (`preview.video`, `preview.3d`,
+            `preview.gif`), so either would answer "is there a sheet",
+            but only one answers "can I drive from it".
         thumbhash:
           type: string
           nullable: true

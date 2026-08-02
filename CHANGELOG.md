@@ -40,6 +40,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Animated GIFs now play their hover slideshow, and their thumbnail is a frame worth
+  looking at.** A GIF was treated as a still picture: the system decoded the first frame,
+  made a thumbnail out of it, and stopped. For a screen recording the first frame is
+  usually the empty window before anything happens, so a library of animated GIFs showed a
+  library of blank rectangles — and hovering one did nothing, because the little slideshow
+  of frames that videos and 3D models get was never generated. Animated GIFs now get both:
+  a thumbnail chosen the same careful way a video's is (a representative frame from a
+  tenth of the way in, skipped forward if that one is nearly black) and the full hover
+  slideshow. Still GIFs are unaffected and cost nothing extra — the system checks whether
+  the file actually moves before doing any of the expensive work (#832).
+
 - **Hover slideshows are twice as sharp.** Hovering a video or 3D model plays a little
   slideshow of frames; those frames were generated at half the resolution of the still
   image they replace, so the moment you hovered, the picture went soft. The frames are
@@ -196,6 +207,19 @@ where applicable, otherwise note "no-spec-impact."
   remembers "Team" or "Trending" from before opens on Latest (#691).
 
 ### Fixed
+
+- **Hovering a short clip no longer scrolls through blank frames.** The hover slideshow
+  always stepped through a hundred frames, however many the clip actually had. A five-second
+  video only has about twenty-five, so three quarters of the hover was empty black — and
+  the shorter the clip, the more of it was nothing. The card now plays exactly the frames
+  that exist. Nothing needs regenerating: the information was already stored alongside every
+  slideshow, the card simply was not reading it (#835).
+
+  Two related things fall out of the same change. The slideshow is no longer switched on by
+  file extension — the card now asks the server whether this particular asset has one — so a
+  video whose full processing has not finished yet stops requesting frames that are not there
+  (previously a silent failed request), and any format that grows a slideshow later works
+  with no further change. Animated GIFs are the first beneficiary (see #832 above).
 
 - **A new installation starts with a small set of ready-made fields, and re-loading the
   sample library no longer deletes them.** Every installation has always been created with

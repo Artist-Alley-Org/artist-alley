@@ -159,6 +159,7 @@
     hasFileHash={!!asset.file_hash}
     previewAvailable={asset.preview_available}
     ladderAvailable={asset.ladder_available}
+    scrubAvailable={asset.scrub_available}
     sizesHint={tileSizes}
     {hovering}
     {framed}

@@ -70,6 +70,10 @@
      *  srcset (#502) — the API row carries it, so pass it through rather
      *  than letting the tile fall back to the square `col` crop. */
     ladder_available?: boolean;
+    /** A `sprites.vtt` hover-scrub cue file exists (#835). The gate the
+     *  card's hover preview now reads instead of guessing from the file
+     *  extension; the CollectionResource row carries it. */
+    scrub_available?: boolean;
     /** Recorded source dimensions (#640) — the masonry tile's aspect
      *  ratio, carried by the CollectionResource row. */
     pixel_width?: number | null;
@@ -135,6 +139,7 @@
       created_at: m.asset_created_at ?? m.added_at,
       preview_available: !!m.preview_available,
       ladder_available: !!m.ladder_available,
+      scrub_available: !!m.scrub_available,
       // #640 — the masonry tile's aspect ratio. The annotation above is
       // what forced this line to be written; without it the member tiles
       // would silently have gone back to being squares in masonry while

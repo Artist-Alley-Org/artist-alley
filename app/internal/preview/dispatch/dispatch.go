@@ -51,6 +51,18 @@ var (
 		"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
 	}
 
+	// GifExts routes to preview.gif (#832). Deliberately a SUBSET of
+	// ImageExts rather than a move out of it: a GIF is an image to every
+	// consumer that is not the preview router — `assetTypeFor` puts it in
+	// the Image category, `isImageExt` licenses the image-only editor
+	// surfaces, `needsProcessing` marks it for a derivative — and pulling
+	// it out of ImageExts to express "does not use preview.raster" would
+	// have silently reclassified every GIF in the library as type-0.
+	//
+	// Only JobTypeForExt reads this, and it reads it FIRST, so the one
+	// thing that changes is which handler the bytes land in.
+	GifExts = map[string]struct{}{"gif": {}}
+
 	// VideoExts — anything we'd want a poster frame + hover sprite for.
 	VideoExts = map[string]struct{}{
 		"mp4": {}, "mov": {}, "mkv": {}, "webm": {}, "avi": {},
@@ -124,6 +136,10 @@ func JobTypeForExt(ext *string) jobs.JobType {
 	}
 	e := Normalize(*ext)
 	switch {
+	// GIF before ImageExts' raster fallback — it is in both sets and the
+	// first match wins (#832).
+	case Has(GifExts, e):
+		return jobs.TypePreviewGif
 	case Has(VideoExts, e):
 		return jobs.TypePreviewVideo
 	case Has(ModelExts, e):
