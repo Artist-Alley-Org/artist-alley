@@ -11340,6 +11340,44 @@ components:
             this map is where the server pays it, once, for every
             consumer, so no display surface has to hold the field
             definition just to print a value.
+        resolved_reference:
+          $ref: '#/components/schemas/ResolvedReference'
+    ResolvedReference:
+      type: object
+      required: [id, title]
+      description: |
+        The asset a `reference` value points at, as a reader needs to
+        see it. Present only for `reference` values whose `value_ref`
+        resolves to an asset this caller may see.
+
+        **Absent is meaningful and load-bearing**: it means the target
+        did not resolve — soft-deleted, or a dangling ref to a row that
+        no longer exists. A client MUST fall back to rendering the bare
+        `value_ref` UUID and MUST NOT treat the absence as an error.
+        Degrading to the id keeps the panel intact and leaks nothing:
+        the id was already on the record the caller is reading.
+
+        This mirrors `resolved_options` exactly, and for the same
+        reason (#775): the row carrying the value already joins the row
+        carrying the display text, so the server pays the resolution
+        once for every consumer rather than letting each display
+        surface print a raw UUID.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            The target asset's id. Equal to the enclosing value's
+            `value_ref` — repeated here so a client holding a
+            `resolved_reference` never has to reach back out of it to
+            build the `/assets/{id}` link.
+        title:
+          type: string
+          description: |
+            The target asset's title. May be the empty string —
+            `assets.title` defaults to `''` and nothing requires an
+            uploader to set one — so a client renders the id when this
+            is blank rather than an empty link.
     ResolvedOption:
       type: object
       required: [label, status]

@@ -34,7 +34,7 @@
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
   import { createWhiteboardSession } from '$lib/whiteboard/session.svelte';
   import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
-  import { decodeBoolean } from '$lib/fieldOptions';
+  import { formatFieldValue, type AssetFieldValue } from '$lib/fieldDisplay';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
@@ -80,29 +80,10 @@
     post_count: number;
   }
 
-  interface AssetFieldValue {
-    field_id: string;
-    field_code: string;
-    field_label?: string;
-    type: 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
-        | 'date' | 'datetime' | 'select' | 'multi_select' | 'tree' | 'reference';
-    value_text?: string | null;
-    value_num?: number | null;
-    value_date?: string | null;
-    value_options?: string[] | null;
-    value_ref?: string | null;
-    set_by: string;
-    set_at: string;
-    // Display data for the vocabulary slugs this value holds, keyed by
-    // slug. The server resolves it (ADR 0012 keeps only the slug on
-    // the record) so a read surface like this one never needs the
-    // field definition. A slug missing from the map does not resolve
-    // and renders as itself.
-    resolved_options?: Record<
-      string,
-      { label: string; status: string; path?: string[] | null }
-    > | null;
-  }
+  // AssetFieldValue + the formatter that reads it live in
+  // $lib/fieldDisplay — display logic with no component state, and
+  // (the reason it moved out) the only place a unit test can reach the
+  // timezone and reference-resolution rules. See that module.
 
   let author = $state<UserPublic | null>(null);
   let liked = $state(false);
@@ -420,90 +401,6 @@
   function initials(name: string): string {
     const parts = name.trim().split(/\s+/).slice(0, 2);
     return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
-  }
-
-  // Render one stored vocabulary slug the way a reader should see it.
-  //
-  // Falls back to the slug whenever the server could not resolve it,
-  // which covers a term dropped from the vocabulary and — far more
-  // commonly — an option written in the bare-string form, where the
-  // slug IS the display text. Anything not active is marked with the
-  // same string the picker uses, so a term stops looking current on
-  // the detail surface the moment an operator retires it.
-  function displaySlug(f: AssetFieldValue, slug: string): string {
-    const opt = f.resolved_options?.[slug];
-    if (!opt) return slug;
-    return opt.status === 'active'
-      ? opt.label
-      : t('common.option_deprecated', { label: opt.label });
-  }
-
-  // Render a stored tree slug as its path through the hierarchy.
-  //
-  // `path` is absent for a term sitting at the top level of its
-  // vocabulary, where the label already says everything — so fall back
-  // to the same single-slug rendering `select` uses, and to the raw
-  // slug when the vocabulary no longer carries the term at all.
-  function displayTreePath(f: AssetFieldValue, slug: string): string {
-    const opt = f.resolved_options?.[slug];
-    if (!opt) return slug;
-    const label =
-      opt.status === 'active'
-        ? opt.label
-        : t('common.option_deprecated', { label: opt.label });
-    if (!opt.path?.length || opt.path.length < 2) return label;
-    // Keep the deprecation marker attached to the term itself, not to
-    // the whole path — an ancestor is not what was retired.
-    return [...opt.path.slice(0, -1), label].join(' / ');
-  }
-
-  function formatFieldValue(f: AssetFieldValue): string {
-    switch (f.type) {
-      case 'text':
-      case 'longtext':
-      case 'rich_text':
-        return (f.value_text ?? '').trim();
-      case 'number':
-        return f.value_num == null ? '' : String(f.value_num);
-      case 'boolean': {
-        // 1/0 in value_num (ADR 0012). This read the strings
-        // "true"/"false" out of value_text until #791, so an asset
-        // boolean — which the API only ever accepted as value_num —
-        // rendered blank whichever way it had been set.
-        //
-        // null is "not set" and stays blank; false is an answer and
-        // prints, which is why this goes through decodeBoolean rather
-        // than testing truthiness (0 is falsy).
-        const b = decodeBoolean(f.value_num);
-        return b === null ? '' : b ? t('common.yes') : t('common.no');
-      }
-      case 'date':
-      case 'datetime': {
-        if (!f.value_date) return '';
-        const d = new Date(f.value_date);
-        if (isNaN(d.getTime())) return '';
-        return f.type === 'date' ? d.toLocaleDateString() : d.toLocaleString();
-      }
-      case 'select':
-        return f.value_text ? displaySlug(f, f.value_text) : '';
-      case 'multi_select':
-        return (f.value_options ?? []).map((s) => displaySlug(f, s)).join(', ');
-      case 'tree':
-        // One slug in value_text, resolved to its full ancestor path so
-        // the hierarchy is visible: "Europe / United Kingdom / London".
-        //
-        // This case used to read value_ref, which no writer has ever
-        // populated for a tree field — so a tree value rendered empty
-        // regardless of which of the two columns it had been written to
-        // (#778). value_ref is for `reference`, whose value is a row's
-        // UUID; an option is an entry in a jsonb document and has no
-        // identity of its own to point at.
-        return f.value_text ? displayTreePath(f, f.value_text) : '';
-      case 'reference':
-        return f.value_ref ?? '';
-      default:
-        return '';
-    }
   }
 
   // Lifecycle housekeeping the shell doesn't own (the host owns body
@@ -951,7 +848,7 @@
                 <polyline points="9 18 15 12 9 6" />
               </svg>
               {t('post_host.metadata_heading')}
-              <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f) !== '').length})</span>
+              <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f, t).text !== '').length})</span>
             </span>
           </summary>
           <!-- Two columns only where there is room for them. The
@@ -964,8 +861,8 @@
             data-testid="post-metadata"
           >
             {#each currentFields as f (f.field_id)}
-              {@const val = formatFieldValue(f)}
-              {#if val}
+              {@const val = formatFieldValue(f, t)}
+              {#if val.text}
                 <dt
                   class="mt-2 truncate text-fg-muted first:mt-0 sm:mt-0"
                   title={f.field_label || f.field_code}
@@ -977,7 +874,23 @@
                   class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}
                   data-testid="post-field-{f.field_code}"
                 >
-                  {val}
+                  <!-- href is set only for a value that points at an
+                       in-app route (a resolved reference). Everything
+                       else renders exactly as it did before the
+                       contract changed — including rich_text, which
+                       stays escaped text until #816 designs its
+                       boundary. -->
+                  {#if val.href}
+                    <a
+                      href={val.href}
+                      class="underline decoration-fg-muted/40 underline-offset-2 transition-colors hover:decoration-fg"
+                      data-testid="post-field-link-{f.field_code}"
+                    >
+                      {val.text}
+                    </a>
+                  {:else}
+                    {val.text}
+                  {/if}
                 </dd>
               {/if}
             {/each}

@@ -401,6 +401,35 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 	return i, err
 }
 
+const getReferencedAsset = `-- name: GetReferencedAsset :one
+SELECT a.id, a.title
+FROM assets a
+WHERE a.id = $1 AND a.deleted_at IS NULL
+`
+
+type GetReferencedAssetRow struct {
+	ID    pgtype.UUID
+	Title string
+}
+
+// The resolve-one counterpart of ListAssetFieldValues' LEFT JOIN, for
+// the upsert path — which returns a single AssetFieldValue and has no
+// join to ride along on.
+//
+// It exists so SetAssetFieldValue's 200 body carries the same
+// resolved_reference the list path does. #775 is the precedent and the
+// warning: buildAssetValue was created because one consumer resolved
+// and another printed the slug, and shipping a DTO field that only one
+// of two endpoints ever populates rebuilds that exact asymmetry.
+//
+// Same visibility rule as the join, for the same reason (see above).
+func (q *Queries) GetReferencedAsset(ctx context.Context, id pgtype.UUID) (GetReferencedAssetRow, error) {
+	row := q.db.QueryRow(ctx, getReferencedAsset, id)
+	var i GetReferencedAssetRow
+	err := row.Scan(&i.ID, &i.Title)
+	return i, err
+}
+
 const getTeamForDefaultOverride = `-- name: GetTeamForDefaultOverride :one
 SELECT id, slug, name FROM teams WHERE id = $1 AND deleted_at IS NULL
 `
@@ -600,28 +629,38 @@ const listAssetFieldValues = `-- name: ListAssetFieldValues :many
 
 SELECT v.field_id, v.value_text, v.value_num, v.value_date, v.value_options, v.value_ref,
        v.set_by, v.set_at, v.set_by_user_ref,
-       f.code, f.label, f.type, f.status, f.options
+       f.code, f.label, f.type, f.status, f.options,
+       r.id AS ref_asset_id,
+       -- COALESCE rather than a bare r.title: sqlc infers a LEFT-joined
+       -- NOT NULL column as non-nullable and would scan a NULL into a
+       -- string. Presence is carried by ref_asset_id.Valid instead,
+       -- which is unambiguous — and an empty title is a real state
+       -- (assets.title DEFAULT '') that the client renders as the id.
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
 FROM asset_field_value v
 JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
 WHERE v.asset_id = $1
 ORDER BY f.display_group, f.display_order, f.code
 `
 
 type ListAssetFieldValuesRow struct {
-	FieldID      pgtype.UUID
-	ValueText    *string
-	ValueNum     *float64
-	ValueDate    pgtype.Timestamptz
-	ValueOptions []string
-	ValueRef     pgtype.UUID
-	SetBy        string
-	SetAt        pgtype.Timestamptz
-	SetByUserRef *int64
-	Code         string
-	Label        string
-	Type         string
-	Status       string
-	Options      []byte
+	FieldID       pgtype.UUID
+	ValueText     *string
+	ValueNum      *float64
+	ValueDate     pgtype.Timestamptz
+	ValueOptions  []string
+	ValueRef      pgtype.UUID
+	SetBy         string
+	SetAt         pgtype.Timestamptz
+	SetByUserRef  *int64
+	Code          string
+	Label         string
+	Type          string
+	Status        string
+	Options       []byte
+	RefAssetID    pgtype.UUID
+	RefAssetTitle string
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +675,24 @@ type ListAssetFieldValuesRow struct {
 // slug to its label and lifecycle without a second query: the join to
 // field_definition is already here for the code/label/type, so the
 // column is free.
+//
+// The LEFT JOIN to assets does the same job for `reference` values
+// (#817): value_ref stores a bare UUID, so without it every reference
+// field renders as a raw id. One join, no extra round trip, no N+1 —
+// and because it is a LEFT join, a value that does not resolve simply
+// yields NULLs and the handler omits resolved_reference.
+//
+// `r.deleted_at IS NULL` IS THE VISIBILITY RULE, not an incidental
+// tidy-up. It is exactly visibility.Predicate for (EntityAsset,
+// authenticated) — see ADR 0063/0064: a title is row-plane metadata,
+// and for an authenticated caller the asset row predicate is
+// soft-delete and nothing else. The anonymous branch of that predicate
+// (status/sensitivity/processing) is deliberately NOT reproduced here
+// because it is unreachable: GetAssetFields 401s a nil identity, so no
+// anonymous caller ever executes this query. reference_value_e2e_test.go
+// asserts both halves of that claim, so if the authenticated predicate
+// ever tightens (#210's sensitivity rule) or this endpoint is ever
+// opened to anonymous callers, the test fails and points here.
 func (q *Queries) ListAssetFieldValues(ctx context.Context, assetID pgtype.UUID) ([]ListAssetFieldValuesRow, error) {
 	rows, err := q.db.Query(ctx, listAssetFieldValues, assetID)
 	if err != nil {
@@ -660,6 +717,8 @@ func (q *Queries) ListAssetFieldValues(ctx context.Context, assetID pgtype.UUID)
 			&i.Type,
 			&i.Status,
 			&i.Options,
+			&i.RefAssetID,
+			&i.RefAssetTitle,
 		); err != nil {
 			return nil, err
 		}
