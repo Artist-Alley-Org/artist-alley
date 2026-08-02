@@ -1044,3 +1044,15 @@ Extraction writes now also append to the value history — the `FieldValueWriter
 always *claimed* history-in-one-tx and the implementation had never written any, so every
 extraction-set value carried a blank audit trail. The comment now matches the code because the
 code was fixed, not the comment.
+
+### Addendum 2026-08-02 — the picker previews with the server's own matching (#831/#851)
+
+The entry UX ships a client-side `resolveTerm`/`slugify` (web/src/lib/fieldOptions.ts) that
+mirrors the server's resolver: same slug-or-label case/whitespace-insensitive match, same
+slugify, same archived-slug-collision refusal. This is a deliberate two-implementation
+invariant of the same class as the writers-agree pin above — **what the combobox previews
+("create «Neon Skyline» → neon-skyline") must equal what the server stores** — and any change
+to the server's matching or slugify must change the client mirror in the same PR. The client
+deliberately emits the RAW text for a term being created, never a pre-slugified form: the
+server mints the label from what it receives, and sending the slug would name the keyword
+`macro-detail` instead of "Macro Detail".
