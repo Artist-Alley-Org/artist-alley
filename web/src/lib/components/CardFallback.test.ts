@@ -42,6 +42,7 @@ function asset(overrides: Partial<CardAsset> = {}): CardAsset {
     // `col`, so no byte request is made and there is nothing to show.
     preview_available: false,
     ladder_available: false,
+    scrub_available: false,
     pixel_width: null,
     pixel_height: null,
     ...overrides,

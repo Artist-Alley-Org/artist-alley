@@ -89,6 +89,29 @@ const (
 	// runs second finds the poster already there and skips it.
 	TypePreviewVideoPoster JobType = "preview.video.poster"
 
+	// TypePreviewGif renders GIFs (#832).
+	//
+	// A GIF is two formats wearing one extension. A still one is a
+	// raster and wants nothing preview.raster does not already do; an
+	// animated one is a short silent video and wants the hover-scrub
+	// sheet every other moving format gets. Routing by extension can
+	// only pick one of those, and it picked "raster" — so every
+	// animated GIF in the library rendered its FIRST FRAME and stopped,
+	// which for a screen capture is a blank window.
+	//
+	// The split is made by the HANDLER, not the router, because the
+	// router is extension-only by construction (dispatch.PlanForExt has
+	// four callers and none of them can afford to open the bytes). The
+	// handler already has the file staged, so counting image descriptors
+	// costs it a byte scan.
+	//
+	// A separate type rather than a branch inside preview.raster: raster
+	// is the one handler family that is entirely Go-native, and teaching
+	// it to shell out to ffmpeg would put a binary dependency in the
+	// path of every JPEG in the system. This type also gets its own
+	// concurrency cap (migration 00027), which a branch could not.
+	TypePreviewGif JobType = "preview.gif"
+
 	// Audiobook background work — async because ffmpeg concat /
 	// AAX decryption are minutes-per-hour-of-audio operations
 	// that have no business blocking the upload response. Both
