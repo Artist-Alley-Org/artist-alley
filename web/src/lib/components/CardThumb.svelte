@@ -8,9 +8,9 @@
   // forked. This is the one thumbnail treatment every asset-showing
   // surface renders — browse + profile + post-by-asset (via PostCard) and
   // the profile asset section + collections + asset detail (via
-  // AssetCard) — so the RS-style presentation lands everywhere at once.
+  // AssetCard) — so the gallery presentation lands everywhere at once.
   //
-  // RS thumbnail pattern (pages/search_views/thumbs.php): the artwork is
+  // Gallery-matte thumbnail pattern: the artwork is
   // LETTERBOXED on a neutral matte inside a framed panel — never cropped —
   // so mixed-aspect art reads like a gallery wall. The previous treatment
   // painted the thumbhash as a `bg-cover` backdrop, so a contained image
