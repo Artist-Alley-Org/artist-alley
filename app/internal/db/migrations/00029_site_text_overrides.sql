@@ -26,9 +26,12 @@
 -- Nothing here federates. Site text is instance identity — how THIS
 -- installation speaks — so there is no origin/remote bookkeeping on the
 -- table, by design rather than by omission.
+--
+-- Plain DDL, so no StatementBegin/End markers — those exist for plpgsql
+-- bodies whose semicolons goose would otherwise split on.
 
 -- +goose Up
--- +goose StatementBegin
+
 CREATE TABLE IF NOT EXISTS public.site_text (
     key                 text        NOT NULL,
     language            text        NOT NULL,
@@ -39,7 +42,6 @@ CREATE TABLE IF NOT EXISTS public.site_text (
     updated_by_user_ref bigint      REFERENCES public."user"(ref) ON DELETE SET NULL,
     CONSTRAINT site_text_pkey PRIMARY KEY (key, language)
 );
--- +goose StatementEnd
 
 -- No secondary index, deliberately. The only read is "the whole map",
 -- rebuilt wholesale on invalidation and served from the process cache
@@ -48,6 +50,5 @@ CREATE TABLE IF NOT EXISTS public.site_text (
 -- filtered read this API does not have.
 
 -- +goose Down
--- +goose StatementBegin
+
 DROP TABLE IF EXISTS public.site_text;
--- +goose StatementEnd
