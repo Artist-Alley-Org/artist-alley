@@ -737,10 +737,25 @@ func (h *Handler) SetAssetFieldValue(
 		return nil, fmt.Errorf("metadata: commit: %w", err)
 	}
 
+	// Resolve the reference target for the response body, so this
+	// endpoint's AssetFieldValue matches the list path's (see
+	// buildAssetValue). One extra read, only for a reference field
+	// that actually points somewhere, after the write has committed —
+	// a failure here degrades to the bare id rather than failing a
+	// write that already succeeded.
+	var ref resolvedRef
+	if fieldRow.Type == "reference" && row.ValueRef.Valid {
+		if target, refErr := New(h.Pool).GetReferencedAsset(ctx, row.ValueRef); refErr == nil {
+			ref = resolvedRef{ID: target.ID, Title: target.Title}
+		} else if !errors.Is(refErr, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("metadata: resolve reference: %w", refErr)
+		}
+	}
+
 	return openapi.SetAssetFieldValue200JSONResponse(
 		buildAssetValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
 			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
-			row.SetBy, row.SetAt, row.SetByUserRef, fieldRow.Options),
+			row.SetBy, row.SetAt, row.SetByUserRef, fieldRow.Options, ref),
 	), nil
 }
 
@@ -1039,7 +1054,23 @@ func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
 		r.FieldID, r.Code, r.Label, r.Type,
 		r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
 		r.SetBy, r.SetAt, r.SetByUserRef, r.Options,
+		resolvedRef{ID: r.RefAssetID, Title: r.RefAssetTitle},
 	)
+}
+
+// resolvedRef is the target of a `reference` value, as the query
+// layer hands it over: the LEFT JOIN in ListAssetFieldValues, or the
+// GetReferencedAsset lookup on the upsert path.
+//
+// An invalid ID means "did not resolve" and is the ONLY presence
+// signal — Title cannot serve as one, because an asset with no title
+// is a perfectly ordinary row (assets.title defaults to empty). Not
+// resolving covers a soft-deleted target and a dangling ref alike;
+// both degrade the same way, to the bare value_ref the client already
+// holds.
+type resolvedRef struct {
+	ID    pgtype.UUID
+	Title string
 }
 
 // buildAssetValue is the single helper for assembling an
@@ -1053,6 +1084,13 @@ func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
 // so resolving here costs no extra query and means no consumer can
 // forget to do it. That a consumer DID forget is why this exists
 // (#775): the picker resolved, the detail surface printed the slug.
+//
+// ref is the same idea one type further on (#817): a `reference`
+// value stores a bare UUID, and every read surface that printed it
+// raw was printing an id at a human. Both callers supply it — the
+// list path off its LEFT JOIN, the upsert path off GetReferencedAsset
+// — so, as with fieldOptions, the two endpoints cannot disagree about
+// what a reference value looks like on the wire.
 func buildAssetValue(
 	fieldID pgtype.UUID,
 	code, label, fieldType string,
@@ -1065,6 +1103,7 @@ func buildAssetValue(
 	setAt pgtype.Timestamptz,
 	setByUserRef *int64,
 	fieldOptions []byte,
+	ref resolvedRef,
 ) openapi.AssetFieldValue {
 	out := openapi.AssetFieldValue{
 		FieldId:      openapi_types.UUID(fieldID.Bytes),
@@ -1096,6 +1135,15 @@ func buildAssetValue(
 	}
 	if resolved := resolveValueOptions(fieldType, valueText, valueOptions, fieldOptions); len(resolved) > 0 {
 		out.ResolvedOptions = &resolved
+	}
+	// Gate on fieldType as well as ref.ID so a stray value_ref left on
+	// a non-reference field cannot start emitting a resolved target —
+	// the same narrowness resolveValueOptions applies to its own types.
+	if fieldType == "reference" && ref.ID.Valid {
+		out.ResolvedReference = &openapi.ResolvedReference{
+			Id:    openapi_types.UUID(ref.ID.Bytes),
+			Title: ref.Title,
+		}
 	}
 	return out
 }
