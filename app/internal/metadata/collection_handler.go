@@ -147,9 +147,11 @@ func (h *Handler) SetCollectionFieldValue(
 	if fieldRow.SubjectKind != string(SubjectCollection) {
 		field := fieldRow.Code
 		return openapi.SetCollectionFieldValue422JSONResponse{
-			Error:  fmt.Sprintf("field %q is not a collection field", fieldRow.Code),
-			Reason: openapi.FieldNotForCollection,
-			Field:  &field,
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  fmt.Sprintf("field %q is not a collection field", fieldRow.Code),
+				Reason: openapi.FieldNotForCollection,
+				Field:  &field,
+			},
 		}, nil
 	}
 
@@ -166,9 +168,11 @@ func (h *Handler) SetCollectionFieldValue(
 	if vErr := validateCollectionValueType(fieldRow.Type, req.Body); vErr != nil {
 		field := fieldRow.Code
 		return openapi.SetCollectionFieldValue422JSONResponse{
-			Error:  vErr.Error(),
-			Reason: openapi.ValueTypeMismatch,
-			Field:  &field,
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  vErr.Error(),
+				Reason: openapi.ValueTypeMismatch,
+				Field:  &field,
+			},
 		}, nil
 	}
 
@@ -194,6 +198,29 @@ func (h *Handler) SetCollectionFieldValue(
 	hadOld := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("metadata: load previous: %w", err)
+	}
+
+	// Controlled-vocabulary gate (#824) — the SAME call the asset
+	// writer makes, on the same helper, so a collection cannot accept a
+	// slug an asset refuses. Placed after the snapshot because the
+	// lifecycle half of the rule needs the held value, which prev
+	// already is.
+	var held []string
+	if hadOld {
+		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
+	}
+	var incomingOptions []string
+	if req.Body.ValueOptions != nil {
+		incomingOptions = *req.Body.ValueOptions
+	}
+	if rej := checkVocabulary(
+		fieldRow.Type, fieldRow.Options,
+		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions),
+		held,
+	); rej != nil {
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: rejectionBody(fieldRow.Code, rej),
+		}, nil
 	}
 
 	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(

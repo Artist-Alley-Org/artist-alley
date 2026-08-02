@@ -289,8 +289,16 @@ func TestAssetFieldValueLifecycle(t *testing.T) {
 	dateFieldID := mustCreateField(t, router, map[string]any{
 		"code": "mtv_due", "label": "Due", "type": "datetime",
 	})
+	// The vocabulary is not decoration. This fixture defined a
+	// multi_select with NO options and then wrote "alpha"/"beta" to it,
+	// which the write path accepted because it never checked membership
+	// (#824). It is also a state production cannot reach: a
+	// multi_select with an empty vocabulary renders as an empty picker,
+	// so no operator can put a value in it. Give the field the terms a
+	// real one would have, and the test exercises the real path.
 	multiFieldID := mustCreateField(t, router, map[string]any{
 		"code": "mtv_tags", "label": "Tags", "type": "multi_select",
+		"options": map[string]any{"values": []any{"alpha", "beta", "gamma"}},
 	})
 
 	// Insert a throwaway asset (we don't go through /assets to keep
