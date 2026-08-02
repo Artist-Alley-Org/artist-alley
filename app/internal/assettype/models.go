@@ -643,6 +643,8 @@ type FieldDefinition struct {
 	ExtractionSource        string             `json:"extraction_source"`
 	ExtractionMode          string             `json:"extraction_mode"`
 	DefaultValue            []byte             `json:"default_value"`
+	// When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).
+	OpenVocabulary bool `json:"open_vocabulary"`
 }
 
 type GooseDbVersion struct {

@@ -131,17 +131,19 @@ func TestShippedFieldCatalogue_FreshInstallContents(t *testing.T) {
 		"credit":       "text|asset|rights|iptc_credit",
 		"country":      "tree|asset|general|iptc_country",
 
-		// Deliberately unwired, both with a recorded IPTC intent.
-		//
-		// `keywords` is multi_select, and the extraction applier has no
-		// value_options column to write — wiring it would leave the
-		// field visibly empty while the logs claimed success. It waits
-		// on #789; the applier refuses the wiring if anyone tries.
-		//
-		// `title` mirrors assets.title, and which of the two owns the
-		// concept is #822's open question, not extraction's.
+		// Wired by 00028 (#830). `keywords` was deliberately unwired
+		// through 00025 for a reason that has since been fixed: the
+		// applier carried value_text / value_num / value_date and had
+		// no path to value_options, so wiring it would have left the
+		// field visibly empty while the logs claimed success. The
+		// applier now writes a set, and the field is OPEN, so a keyword
+		// the vocabulary does not have is created rather than dropped.
+		"keywords": "multi_select|asset|core|iptc_keywords",
+
+		// Still deliberately unwired: `title` mirrors assets.title, and
+		// which of the two owns the concept is #822's open question,
+		// not extraction's.
 		"title":       "text|asset|core|",
-		"keywords":    "multi_select|asset|core|",
 		"description": "longtext|asset|core|",
 
 		// Unwired by 00020: these two are COMPUTED by the preview
@@ -193,6 +195,34 @@ func TestShippedFieldCatalogue_FreshInstallContents(t *testing.T) {
 				"not know about. Add it here AND to shippedFields, or drop it from the "+
 				"migration — a definition every operator gets is a product decision.", code)
 		}
+	}
+
+	// Which fields a fresh install lets VALUES grow (#830). Pinned
+	// separately from the shape above because it is a different kind of
+	// decision: the shape says what a field is, this says how strict it
+	// is about what may be written into it. Opening a curated
+	// vocabulary — `country`, say — would let one misspelled file put a
+	// nonsense term in every operator's catalogue, which is exactly the
+	// thing #824 closed and is not something to arrive at by accident.
+	openRows, err := sqlDB.QueryContext(t.Context(),
+		`SELECT code FROM field_definition WHERE open_vocabulary ORDER BY code`)
+	if err != nil {
+		t.Fatalf("read open_vocabulary: %v", err)
+	}
+	defer openRows.Close()
+	var open []string
+	for openRows.Next() {
+		var code string
+		if err := openRows.Scan(&code); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		open = append(open, code)
+	}
+	if err := openRows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(open) != 1 || open[0] != "keywords" {
+		t.Errorf("fields shipping with an open vocabulary = %v, want [keywords]", open)
 	}
 }
 

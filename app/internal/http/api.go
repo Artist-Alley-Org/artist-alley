@@ -785,7 +785,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		metaLookup := metaAssetAdapter{pool: pool}
 		metaCfg := metaConfigAdapter{pool: pool}
 		metaValues := metaValueReaderAdapter{pool: pool}
-		metaWriter := metaValueWriterAdapter{pool: pool}
+		metaWriter := metaValueWriterAdapter{pool: pool, meta: s.metadata, logger: logger}
 		metaFailures := metaFailureAdapter{pool: pool}
 		metaApplier := assetmetadata.NewApplier(metaCfg, metaValues, metaWriter, metaFailures)
 		// Phase 1.18.A-2 follow-up B (commit 2) — extraction
@@ -4776,12 +4776,16 @@ type metaConfigAdapter struct {
 
 func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmetadata.FieldExtractionConfig, error) {
 	// type + options ride along because the applier's write is
-	// type-dependent: a multi_select target is refused outright (no
-	// column in the extraction path holds one) and a select / tree
-	// target stores a vocabulary SLUG resolved out of options, not the
-	// label the file carried.
+	// type-dependent: a select / tree / multi_select target stores a
+	// vocabulary SLUG resolved out of options, not the label the file
+	// carried, and a reference target is refused outright.
+	//
+	// open_vocabulary decides what happens to a term the vocabulary
+	// does not have — dropped with a failure row on a closed field,
+	// created on an open one (#830). Without it here the applier cannot
+	// tell the two apart.
 	rows, err := a.pool.Query(ctx, `
-		SELECT id, extraction_source, extraction_mode, type, options
+		SELECT id, extraction_source, extraction_mode, type, options, open_vocabulary
 		  FROM field_definition
 		 WHERE extraction_source != ''
 	`)
@@ -4797,16 +4801,18 @@ func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmet
 			mode      string
 			fieldType string
 			options   []byte
+			open      bool
 		)
-		if err := rows.Scan(&id, &source, &mode, &fieldType, &options); err != nil {
+		if err := rows.Scan(&id, &source, &mode, &fieldType, &options, &open); err != nil {
 			return nil, err
 		}
 		out = append(out, assetmetadata.FieldExtractionConfig{
-			FieldID:   uuid.UUID(id.Bytes),
-			Source:    assetmetadata.CanonicalField(source),
-			Mode:      assetmetadata.ExtractionMode(mode),
-			FieldType: fieldType,
-			Options:   options,
+			FieldID:        uuid.UUID(id.Bytes),
+			Source:         assetmetadata.CanonicalField(source),
+			Mode:           assetmetadata.ExtractionMode(mode),
+			FieldType:      fieldType,
+			Options:        options,
+			OpenVocabulary: open,
 		})
 	}
 	return out, rows.Err()
@@ -4821,17 +4827,23 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 		valText *string
 		valNum  *float64
 		valDate pgtype.Timestamptz
+		valOpts []string
 		setBy   string
 	)
 	// set_by rides along because the applier's skip_if_set rule is a
 	// provenance check, not a presence check (#793). Selecting the
 	// three value columns and not this one is what made a default
 	// indistinguishable from a human's edit.
+	//
+	// value_options joins them with #830. Without it a multi_select
+	// row read back empty, so skip_if_set never fired and the
+	// equal-value short-circuit never hit — every extraction pass over
+	// the same file would have rewritten the same keywords.
 	err := a.pool.QueryRow(ctx, `
-		SELECT value_text, value_num, value_date, set_by
+		SELECT value_text, value_num, value_date, value_options, set_by
 		  FROM asset_field_value
 		 WHERE asset_id = $1 AND field_id = $2
-	`, assetID, fieldID).Scan(&valText, &valNum, &valDate, &setBy)
+	`, assetID, fieldID).Scan(&valText, &valNum, &valDate, &valOpts, &setBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return assetmetadata.FieldValueSnapshot{}, false, nil
@@ -4839,9 +4851,10 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 		return assetmetadata.FieldValueSnapshot{}, false, err
 	}
 	out := assetmetadata.FieldValueSnapshot{
-		ValueText: valText,
-		ValueNum:  valNum,
-		SetBy:     setBy,
+		ValueText:    valText,
+		ValueNum:     valNum,
+		ValueOptions: valOpts,
+		SetBy:        setBy,
 	}
 	if valDate.Valid {
 		t := valDate.Time
@@ -4852,39 +4865,127 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 
 type metaValueWriterAdapter struct {
 	pool *pgxpool.Pool
+	// meta is held only for cache invalidation: a write that CREATES a
+	// vocabulary term has changed a field definition, and every cached
+	// copy of that definition — including the extraction-config list
+	// this very pipeline reads — is now one write old.
+	meta   *metadata.Handler
+	logger *slog.Logger
 }
 
+// WriteAssetFieldValue persists one extraction-derived value.
+//
+// Bypasses the metadata.Handler HTTP shape (which checks identity
+// caps) and goes at the sqlc queries directly — extraction is
+// system-owned, there is no caller identity to check against. It does
+// NOT bypass the transaction the API path uses, and since #830 it runs
+// the same three statements in it:
+//
+//	term creation (open vocabularies only) → upsert → history append
+//
+// One transaction because they are one fact. Two would let an asset
+// end up holding a slug for a term that no longer exists, or an audit
+// row describing a write that rolled back.
 func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p assetmetadata.WriteAssetFieldValueParams) error {
-	// Direct UPSERT — bypass the metadata.Handler HTTP shape
-	// (which checks identity caps). Extraction is system-owned;
-	// there's no caller identity to check against.
-	var (
-		valText *string
-		valNum  *float64
-		valDate pgtype.Timestamptz
-	)
+	pgAsset := pgtype.UUID{Bytes: p.AssetID, Valid: true}
+	pgField := pgtype.UUID{Bytes: p.FieldID, Valid: true}
+
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("metadata extraction: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := metadata.New(tx)
+
+	upsert := metadata.UpsertAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+		SetBy:   p.SetBy,
+	}
+	var created []string
 	switch p.Value.Kind {
 	case assetmetadata.ValueKindText:
 		s := p.Value.Text
-		valText = &s
+		upsert.ValueText = &s
 	case assetmetadata.ValueKindNum:
 		n := p.Value.Num
-		valNum = &n
+		upsert.ValueNum = &n
 	case assetmetadata.ValueKindTime:
-		valDate = pgtype.Timestamptz{Time: p.Value.Time, Valid: true}
+		upsert.ValueDate = pgtype.Timestamptz{Time: p.Value.Time, Valid: true}
+	case assetmetadata.ValueKindTextList:
+		upsert.ValueOptions = p.Value.Options
+		if p.OpenVocabulary {
+			// Entries the applier could not resolve are still the
+			// file's own words. This turns them into terms — under a
+			// row lock, against the LIVE options document, so two
+			// concurrent extract jobs adding different keywords to the
+			// same field both keep theirs.
+			res, ensureErr := metadata.EnsureOpenVocabularyTerms(ctx, q, pgField, p.Value.Options)
+			if ensureErr != nil {
+				return fmt.Errorf("metadata extraction: vocabulary: %w", ensureErr)
+			}
+			upsert.ValueOptions = res.Slugs
+			created = res.Created
+		}
 	}
-	_, err := a.pool.Exec(ctx, `
-		INSERT INTO asset_field_value
-		    (asset_id, field_id, value_text, value_num, value_date, set_by, set_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT (asset_id, field_id) DO UPDATE SET
-		    value_text = EXCLUDED.value_text,
-		    value_num  = EXCLUDED.value_num,
-		    value_date = EXCLUDED.value_date,
-		    set_by     = EXCLUDED.set_by,
-		    set_at     = NOW()
-	`, p.AssetID, p.FieldID, valText, valNum, valDate, p.SetBy)
-	return err
+
+	// The previous value, for the audit row's old_value. Read inside
+	// the tx and before the upsert, which is the only order in which
+	// it is the value being replaced.
+	var oldJSON []byte
+	prev, err := q.GetAssetFieldValue(ctx, metadata.GetAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+	})
+	switch {
+	case err == nil:
+		oldJSON, _ = metadata.ValueRowJSON(prev.ValueText, prev.ValueNum, prev.ValueDate,
+			prev.ValueOptions, prev.ValueRef, p.FieldType)
+	case errors.Is(err, pgx.ErrNoRows):
+		// First value on this field. old_value stays NULL.
+	default:
+		return fmt.Errorf("metadata extraction: load previous: %w", err)
+	}
+
+	row, err := q.UpsertAssetFieldValue(ctx, upsert)
+	if err != nil {
+		return fmt.Errorf("metadata extraction: upsert: %w", err)
+	}
+
+	// The audit history. It is the ONLY surface on which an operator
+	// can see that `iptc` and not a person put a value on an asset, so
+	// an extraction that writes silently is an extraction nobody can
+	// review. changed_by_user_ref stays NULL: no human did this.
+	newJSON, _ := metadata.ValueRowJSON(row.ValueText, row.ValueNum, row.ValueDate,
+		row.ValueOptions, row.ValueRef, p.FieldType)
+	if err := q.AppendAssetFieldValueHistory(ctx, metadata.AppendAssetFieldValueHistoryParams{
+		AssetID:  pgAsset,
+		FieldID:  pgField,
+		OldValue: oldJSON,
+		NewValue: newJSON,
+		SetBy:    p.SetBy,
+	}); err != nil {
+		return fmt.Errorf("metadata extraction: append history: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("metadata extraction: commit: %w", err)
+	}
+
+	if len(created) > 0 && a.meta != nil {
+		// After the commit — a cache dropped before the write lands
+		// repopulates with the pre-write document.
+		a.meta.InvalidateFieldVocabulary(ctx, pgField)
+		if a.logger != nil {
+			a.logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
+				slog.String("source", "extraction"),
+				slog.String("field_id", uuid.UUID(pgField.Bytes).String()),
+				slog.Int("count", len(created)),
+				slog.String("terms", strings.Join(created, ",")),
+			)
+		}
+	}
+	return nil
 }
 
 // metaExtractEnqueuer adapts jobs.Service into the

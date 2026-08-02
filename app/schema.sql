@@ -1629,11 +1629,19 @@ CREATE TABLE public.field_definition (
     extraction_source text DEFAULT ''::text NOT NULL,
     extraction_mode text DEFAULT 'skip_if_set'::text NOT NULL,
     default_value jsonb,
+    open_vocabulary boolean DEFAULT false NOT NULL,
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
 );
+
+
+--
+-- Name: COLUMN field_definition.open_vocabulary; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.open_vocabulary IS 'When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).';
 
 
 --

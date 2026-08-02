@@ -293,6 +293,19 @@ func ValidateFieldDefault(fieldType string, options []byte, d FieldDefault) erro
 // Only the wording is local: this path can say what a DEFAULT may
 // name, which is more useful to an operator editing a field definition
 // than the generic value-path message.
+//
+// # Defaults stay CLOSED on an open vocabulary (#830)
+//
+// This calls checkVocabulary directly and NOT openOrCheckVocabulary,
+// so a default naming a term the field does not have is refused even
+// when the field creates terms for ordinary values. That is
+// deliberate. Everywhere else the accept-and-create branch fires,
+// somebody is describing one record and the term they typed is about
+// that record; here they are editing the field definition itself, in a
+// form that also has a full options editor two controls away. Minting
+// a term as a side effect of typing in the default box would be a
+// vocabulary change nobody asked for, made in the one place where
+// asking for it explicitly is easiest.
 func validateDefaultSlugs(fieldType string, options []byte, d FieldDefault) error {
 	slugs := vocabularySlugs(fieldType, d.ValueText, d.ValueOptions)
 	rej := checkVocabulary(fieldType, options, slugs, nil)
