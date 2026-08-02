@@ -232,7 +232,7 @@ describe('formatFieldValue — resolved_options behaviour is unchanged', () => {
     expect(formatFieldValue(v, t).text).toBe('sRGB (deprecated)');
   });
 
-  it('multi_select joins resolved labels', () => {
+  it('multi_select joins resolved labels AND exposes them as parts', () => {
     const v = value({
       type: 'multi_select',
       value_options: ['a', 'b'],
@@ -241,7 +241,52 @@ describe('formatFieldValue — resolved_options behaviour is unchanged', () => {
         b: { label: 'Beta', status: 'active' },
       },
     });
-    expect(formatFieldValue(v, t)).toEqual({ text: 'Alpha, Beta' });
+    // `text` is unchanged — the flat rendering stays authoritative, so
+    // a caller that only wants a string (and the "has this field got a
+    // value" test, which is `text !== ''`) keeps working. `parts` is
+    // additive, for a surface that can render a set as a set.
+    expect(formatFieldValue(v, t)).toEqual({ text: 'Alpha, Beta', parts: ['Alpha', 'Beta'] });
+  });
+
+  it('multi_select parts carry the deprecation marker per term', () => {
+    const v = value({
+      type: 'multi_select',
+      value_options: ['a', 'b'],
+      resolved_options: {
+        a: { label: 'Alpha', status: 'active' },
+        b: { label: 'Beta', status: 'deprecated' },
+      },
+    });
+    expect(formatFieldValue(v, t).parts).toEqual(['Alpha', 'Beta (deprecated)']);
+  });
+
+  it('an empty multi_select is still empty', () => {
+    // parts=[] with text='' — the caller's `if (val.text)` guard is
+    // what keeps an unset field out of the panel, and adding parts
+    // must not smuggle an empty chip row past it.
+    const v = value({ type: 'multi_select', value_options: [] });
+    expect(formatFieldValue(v, t)).toEqual({ text: '', parts: [] });
+  });
+
+  it('no other type emits parts', () => {
+    // The chip renderer branches on `parts`, so any type that grew one
+    // by accident would silently start rendering as chips.
+    const types = [
+      'text', 'longtext', 'rich_text', 'number', 'boolean',
+      'date', 'datetime', 'select', 'tree', 'reference',
+    ] as const;
+    for (const type of types) {
+      const v = value({
+        type,
+        value_text: 'x',
+        value_num: 1,
+        value_date: '2026-01-01T00:00:00Z',
+        value_ref: 'r-1',
+        resolved_options: { x: { label: 'X', status: 'active' } },
+        resolved_reference: { id: 'r-1', title: 'Ref' },
+      });
+      expect(formatFieldValue(v, t).parts, type).toBeUndefined();
+    }
   });
 
   it('tree renders the full ancestor path', () => {

@@ -31,6 +31,7 @@
     initialLabel,
     initialRequired,
     initialOptions,
+    initialOpenVocabulary = false,
     initialUpdatedAt,
     onSaved = () => {},
   }: {
@@ -39,6 +40,7 @@
     initialLabel: string;
     initialRequired: boolean;
     initialOptions: Record<string, unknown> | undefined;
+    initialOpenVocabulary?: boolean;
     initialUpdatedAt: string;
     onSaved?: () => void;
   } = $props();
@@ -52,8 +54,19 @@
   const hasVocabulary =
     fieldType === 'select' || fieldType === 'multi_select' || fieldType === 'tree';
 
+  // open_vocabulary is legal on any type and HONOURED on multi_select
+  // only (openVocabularyApplies, app/internal/metadata/open_vocabulary.go).
+  // The toggle is therefore offered on multi_select and nowhere else:
+  // a control that saves a value the server ignores is a control that
+  // lies, and a disabled one on `select` would advertise a setting the
+  // operator can never reach. Opening `select` — or `tree`, which has
+  // to decide WHERE a new term lands — widens one function server-side
+  // and this condition with it.
+  const canOpenVocabulary = fieldType === 'multi_select';
+
   let label = $state(initialLabel);
   let required = $state(initialRequired);
+  let openVocab = $state(initialOpenVocabulary);
   let opts = $state<FieldOption[]>(normalizeOptions(initialOptions));
   // Baseline for the optimistic-concurrency guard. Re-based (not
   // reset) after a save so consecutive edits keep working.
@@ -67,10 +80,12 @@
   let snapshot = $state(JSON.stringify(serializeOptions(normalizeOptions(initialOptions))));
   let labelSnapshot = $state(initialLabel);
   let requiredSnapshot = $state(initialRequired);
+  let openVocabSnapshot = $state(initialOpenVocabulary);
   const dirty = $derived(
     JSON.stringify(serializeOptions(opts)) !== snapshot ||
       label !== labelSnapshot ||
-      required !== requiredSnapshot,
+      required !== requiredSnapshot ||
+      openVocab !== openVocabSnapshot,
   );
 
   // Only active siblings make sense as a successor — pointing a
@@ -132,15 +147,18 @@
       updated_at: string;
       label: string;
       required: boolean;
+      open_vocabulary?: boolean;
       options?: Record<string, unknown>;
     };
     opts = normalizeOptions(cur.options);
     label = cur.label;
     required = cur.required;
+    openVocab = cur.open_vocabulary === true;
     baseline = cur.updated_at;
     snapshot = JSON.stringify(serializeOptions(opts));
     labelSnapshot = cur.label;
     requiredSnapshot = cur.required;
+    openVocabSnapshot = openVocab;
     conflict = false;
     error = '';
     savedMsg = '';
@@ -162,6 +180,10 @@
       // Only vocabulary types carry a values document; sending one for
       // a number field would overwrite its min/max constraints.
       if (hasVocabulary) body.options = { values: serializeOptions(opts) };
+      // Only sent where it means something. PATCH is partial, so
+      // omitting the key on a `text` field leaves the column alone
+      // rather than writing a false the operator never chose.
+      if (canOpenVocabulary) body.open_vocabulary = openVocab;
       const { data, error: apiErr, response } = await api.PATCH('/fields/{id}', {
         params: { path: { id: fieldId } },
         body: body as never,
@@ -183,15 +205,18 @@
         updated_at: string;
         label: string;
         required: boolean;
+        open_vocabulary?: boolean;
         options?: Record<string, unknown>;
       };
       baseline = saved.updated_at;
       opts = normalizeOptions(saved.options);
       label = saved.label;
       required = saved.required;
+      openVocab = saved.open_vocabulary === true;
       snapshot = JSON.stringify(serializeOptions(opts));
       labelSnapshot = saved.label;
       requiredSnapshot = saved.required;
+      openVocabSnapshot = openVocab;
       savedMsg = t('admin.fields.options_saved');
       onSaved();
     } finally {
@@ -224,6 +249,21 @@
       <span>{t('admin.fields.edit_required')}</span>
     </label>
   </div>
+
+  {#if canOpenVocabulary}
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={openVocab}
+        data-testid="field-edit-open-vocabulary"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.open_vocabulary')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.open_vocabulary_help')}</span>
+      </span>
+    </label>
+  {/if}
 
   {#if hasVocabulary}
     <p class="text-xs text-fg-muted">{t('admin.fields.options_help')}</p>

@@ -29,6 +29,9 @@
     required: boolean;
     display_group?: string;
     options?: Record<string, unknown>;
+    /** Passed straight to the field renderer; drives whether a
+        multi_select offers to create the term typed into it (#830). */
+    open_vocabulary?: boolean;
     write_capability?: string | null;
   }
 

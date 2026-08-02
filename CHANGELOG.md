@@ -9,6 +9,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **postcss bumped past a path-traversal advisory.** The web build's copy of `postcss`
+  was 8.5.17, which auto-loads source maps in a way that can be pointed at files outside
+  the project. Build-time only — nothing shipped to a browser was affected, and an
+  instance running artist-alley was never exposed — but it is a dependency of the tool
+  that produces what does ship. Now 8.5.25 (#848). No-spec-impact.
+
 - **SSO provider credentials are no longer readable.** `GET /admin/system/auth`
   returned each provider's whole configuration blob verbatim — which is where the
   OAuth client secret, the LDAP bind password and the SAML service-provider private
@@ -39,6 +45,34 @@ where applicable, otherwise note "no-spec-impact."
   No-spec-impact.
 
 ### Added
+
+- **You can now type a keyword in.** The previous entry taught the server to accept a
+  keyword it had never seen; nothing in the interface could send it one. Upload's metadata
+  panel drew every multi-pick field as a list of tick boxes over the terms that already
+  existed, and a collection's fields used a plain multi-select list — both of which can
+  only ever re-send a term the field already had. So the one field designed to grow could
+  only be grown from the admin screen, one term at a time, which is the workflow that made
+  the feature necessary in the first place.
+
+  Both places now use a search box with chips. Type, and it narrows the terms on offer as
+  you go, matching on the display name or the stored form and ignoring case and stray
+  spaces — the same rule the server applies when it saves, so what the box offers is what
+  actually gets stored. Typing `LANDSCAPE` where `landscape` exists offers you the keyword
+  you already have. On an open field, a term that genuinely matches nothing gets an
+  explicit **Create "…"** row showing the stored form it will take. Nothing is ever created
+  because you pressed Enter near it — a vocabulary that grows by accident is how a
+  catalogue ends up with *sunset*, *Sunset* and *sunsets* meaning one thing. Closed fields
+  never offer to create anything, and say plainly when a term is retired rather than
+  showing an empty list. The box is keyboard-driven (arrows, Enter, Escape, Backspace to
+  drop the last chip) and sized for a thumb.
+
+  A field is marked as an open vocabulary from **Fields & metadata → edit**, where
+  multi-pick fields grew a *Let values add new terms* toggle. It appears on multi-pick
+  fields only, because that is the only type the server honours it on.
+
+  On a post, multi-pick values now read as separate chips instead of one comma-joined
+  line — a set displayed as a sentence is a set in which no individual term is findable
+  (#831).
 
 - **Keywords can grow — by typing one, and from the files themselves.** `Keywords` shipped
   with a fixed list of 17 terms and no way to add an 18th except the admin options editor,
@@ -241,6 +275,20 @@ where applicable, otherwise note "no-spec-impact."
   remembers "Team" or "Trending" from before opens on Latest (#691).
 
 ### Fixed
+
+- **An upload no longer reports success when the server refused your metadata.** Per-file
+  field values are written after the asset exists, and the upload modal sent those writes
+  without ever looking at the answer. Every refusal — a term the field does not offer, a
+  value in the wrong shape, a server error — was discarded, and the upload went on to
+  report success while the value silently went nowhere. The comment excusing it said you
+  could set the value from the asset page later; there is no asset edit page yet, so what
+  was actually being dropped was dropped for good.
+
+  Refusals are now read and shown on the file's row, one line per field, naming the field
+  and saying what was wrong with it — and submitting stops so you can see them, rather
+  than clearing the screen that was reporting the problem. Fix the value and submit again.
+  Every field is still attempted, so one bad value shows you the rest of the problems
+  instead of hiding them behind the first (#843).
 
 - **A value that isn't one of a field's choices is now rejected instead of silently stored.**
   Writing to a pick-list, multi-pick, or hierarchical field with a term that isn't in the

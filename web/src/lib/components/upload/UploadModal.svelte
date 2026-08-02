@@ -99,14 +99,25 @@
       </button>
     </header>
 
-    <!-- Body — single column on mobile, two-column on desktop. The
-         file list (left) and the compose form (right) scroll
-         independently so a long queue doesn't push the compose form
-         off-screen. -->
-    <div class="flex flex-1 flex-col overflow-hidden lg:flex-row">
+    <!-- Body — single column on mobile, two-column on desktop.
+         On DESKTOP the file list (left) and the compose form (right)
+         scroll independently, so a long queue doesn't push the compose
+         form off-screen.
+         On MOBILE they must not. Stacked, "independent scrollers" gave
+         the file column `flex-1` against a compose column sized to its
+         own 760px of content: the file list — the thing the modal is
+         FOR — was squeezed to a 41-pixel scroll window at 390px, and
+         anything a file row opened downward (the metadata disclosure,
+         and the vocabulary picker's dropdown inside it) was clipped
+         away by that window entirely. So below `lg` the body is one
+         ordinary scroll and the columns are plain blocks. Measured on
+         dev before and after: the 41px is what shipped, not something
+         #831 introduced — but #831 is what made it unusable rather
+         than merely cramped. -->
+    <div class="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
       <!-- Left column: drop zone + file rows. Takes 60% of the width
            on desktop, full width on smaller viewports. -->
-      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-b border-border p-5 lg:basis-3/5 lg:border-b-0 lg:border-r">
+      <div class="flex flex-col gap-3 border-b border-border p-5 lg:min-h-0 lg:flex-1 lg:basis-3/5 lg:overflow-y-auto lg:border-b-0 lg:border-r">
         <button
           type="button"
           onclick={() => pickerEl?.click()}
@@ -124,6 +135,7 @@
           type="file"
           multiple
           class="hidden"
+          data-testid="upload-file-input"
           onchange={handlePicked}
         />
 
@@ -142,7 +154,7 @@
 
       <!-- Right column: post compose + thumbnail picker. Independent
            scroll so the file list and compose form never fight. -->
-      <div class="flex min-h-0 flex-col gap-4 overflow-y-auto p-5 lg:basis-2/5 lg:min-w-[28rem]">
+      <div class="flex flex-col gap-4 p-5 lg:min-h-0 lg:basis-2/5 lg:min-w-[28rem] lg:overflow-y-auto">
         <PostComposeForm />
 
         {#if upload.compose.enabled}
@@ -150,7 +162,7 @@
         {/if}
 
         {#if upload.composeError}
-          <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
+          <p role="alert" data-testid="upload-compose-error" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
             {upload.composeError}
           </p>
         {/if}
@@ -178,6 +190,7 @@
           type="button"
           onclick={handleSubmit}
           disabled={submitDisabled}
+          data-testid="upload-submit"
           class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent shadow transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:bg-accent/40"
         >
           {upload.composeBusy ? t('common.saving') : submitLabel}

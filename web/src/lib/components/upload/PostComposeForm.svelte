@@ -88,6 +88,7 @@
     <input
       type="checkbox"
       bind:checked={upload.compose.enabled}
+      data-testid="upload-compose-enabled"
       class="h-4 w-4 rounded border-border-strong accent-accent"
     />
     <span class="font-medium text-fg">{t('upload.compose.toggle')}</span>
