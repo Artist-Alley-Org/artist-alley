@@ -260,10 +260,9 @@ func EnsureOpenVocabularyTerms(
 // themselves, for the same reason checkVocabulary is shared — a rule
 // with two implementations is a rule that will be fixed in one of them.
 //
-// Returns the slugs the row must store (canonical, deduped), the slugs
-// this write minted, and a rejection when the write may not proceed.
-// MUST be called inside the write's transaction: a rejection rolls the
-// created terms back with the value.
+// Returns what the write settled on (see [vocabularyWrite]) and a
+// rejection when it may not proceed. MUST be called inside the write's
+// transaction: a rejection rolls the created terms back with the value.
 //
 // An open field still gets checkVocabulary, run against the LIVE
 // document rather than the caller's cached one. That is not belt and
@@ -278,26 +277,49 @@ func openOrCheckVocabulary(
 	field FieldDefinition,
 	incoming []string,
 	held []string,
-) (slugs []string, created []string, rej *slugRejection, err error) {
+) (vocabularyWrite, *slugRejection, error) {
+	out := vocabularyWrite{Slugs: incoming, Options: field.Options}
 	if !openVocabularyApplies(field.Type, field.OpenVocabulary) || len(incoming) == 0 {
-		return incoming, nil, checkVocabulary(field.Type, field.Options, incoming, held), nil
+		return out, checkVocabulary(field.Type, field.Options, incoming, held), nil
 	}
 	res, err := EnsureOpenVocabularyTerms(ctx, qTx, field.ID, incoming)
 	if err != nil {
 		var mintRej *slugRejection
 		if errors.As(err, &mintRej) {
-			return nil, nil, mintRej, nil
+			return out, mintRej, nil
 		}
-		return nil, nil, nil, err
+		return out, nil, err
 	}
 	if len(res.Slugs) == 0 {
 		// Every term was whitespace. buildUpsertParams has already
 		// refused an EMPTY value_options, so getting here means the
 		// client sent something that looked like a value and was not
 		// one — writing it would leave a multi_select row holding NULL.
-		return nil, nil, &slugRejection{Slug: incoming[0]}, nil
+		return out, &slugRejection{Slug: incoming[0]}, nil
 	}
-	return res.Slugs, res.Created, checkVocabulary(field.Type, res.Options, res.Slugs, held), nil
+	out = vocabularyWrite{Slugs: res.Slugs, Created: res.Created, Options: res.Options}
+	return out, checkVocabulary(field.Type, res.Options, res.Slugs, held), nil
+}
+
+// vocabularyWrite is what one value write's vocabulary pass settled on.
+type vocabularyWrite struct {
+	// Slugs is what the row must store: canonical, deduped, in the
+	// order the terms arrived.
+	Slugs []string
+	// Created lists the slugs this write minted. Non-empty means the
+	// field definition changed and its caches must be dropped.
+	Created []string
+	// Options is the options document as it stands AFTER this write —
+	// the caller's copy when nothing was created, the freshly written
+	// one when something was.
+	//
+	// The response body is built from it rather than from the field row
+	// the handler loaded, because that row predates the terms this very
+	// write created: resolving against it returns every term EXCEPT the
+	// new ones, and a client rendering the response would show the raw
+	// slug `macro-detail` where the label "Macro Detail" belongs, until
+	// something forced a refetch.
+	Options []byte
 }
 
 // vocabularyIndex is a field's option tree flattened into the two

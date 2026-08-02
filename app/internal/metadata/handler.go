@@ -771,7 +771,7 @@ func (h *Handler) SetAssetFieldValue(
 	if hadOld {
 		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
 	}
-	slugs, created, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
+	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
 		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held)
 	if err != nil {
 		return nil, err
@@ -787,7 +787,7 @@ func (h *Handler) SetAssetFieldValue(
 	// Skipping this is how "Sunset" ends up in value_options next to
 	// the `sunset` term it was supposed to become.
 	if fieldRow.Type == "multi_select" {
-		upsert.ValueOptions = slugs
+		upsert.ValueOptions = vocab.Slugs
 	}
 
 	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
@@ -820,13 +820,13 @@ func (h *Handler) SetAssetFieldValue(
 	// including the one the extraction pipeline holds. After the commit,
 	// because a cache dropped before the write lands is a cache that
 	// repopulates with the pre-write document.
-	if len(created) > 0 {
+	if len(vocab.Created) > 0 {
 		h.InvalidateFieldVocabulary(ctx, pgField)
 		if h.Logger != nil {
 			h.Logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
 				slog.String("field", fieldRow.Code),
-				slog.Int("count", len(created)),
-				slog.String("terms", strings.Join(created, ",")),
+				slog.Int("count", len(vocab.Created)),
+				slog.String("terms", strings.Join(vocab.Created, ",")),
 			)
 		}
 	}
@@ -849,7 +849,11 @@ func (h *Handler) SetAssetFieldValue(
 	return openapi.SetAssetFieldValue200JSONResponse(
 		buildAssetValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
 			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
-			row.SetBy, row.SetAt, row.SetByUserRef, fieldRow.Options, ref),
+			// vocab.Options, not fieldRow.Options: on a write that
+			// created a term, the row the handler loaded predates it,
+			// and the response would resolve every term except the new
+			// one. See vocabularyWrite.Options.
+			row.SetBy, row.SetAt, row.SetByUserRef, vocab.Options, ref),
 	), nil
 }
 

@@ -135,6 +135,21 @@ func TestOpenVocabulary_NovelTermIsCreated(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("value_options = %v, want %v — the row stores slugs, never raw input", got, want)
 	}
+
+	// The response must resolve the term it just created. The handler
+	// loaded the field definition BEFORE the write, so building the body
+	// from that copy returns every term except the new one — and a
+	// client rendering straight from the response shows the raw slug
+	// where the label belongs until something forces a refetch.
+	resolved, _ := body["resolved_options"].(map[string]any)
+	entry, _ := resolved["sunset-over-water"].(map[string]any)
+	if entry == nil {
+		t.Fatalf("the write that created the term did not resolve it in its own "+
+			"response; resolved_options = %v", resolved)
+	}
+	if entry["label"] != "Sunset Over Water" {
+		t.Errorf("resolved label = %v, want %q", entry["label"], "Sunset Over Water")
+	}
 }
 
 // Casing and stray whitespace are not new terms. Three spellings of one

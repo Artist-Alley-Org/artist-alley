@@ -163,6 +163,11 @@ func walkVocabulary(raw []json.RawMessage, want string) (string, bool) {
 //
 // Duplicates are collapsed on the resolved form, so "Sunset, sunset"
 // is one term.
+//
+// Re-parses the options document once per term rather than indexing it,
+// which is the right trade at this size: a keyword list is a handful of
+// entries and this runs once per field per asset. Index it when a
+// profiler says to, not before.
 func resolveTermList(optionsJSON []byte, joined string) (terms, unresolved []string) {
 	seen := make(map[string]struct{})
 	for _, raw := range splitTermList(joined) {

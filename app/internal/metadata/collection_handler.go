@@ -215,7 +215,7 @@ func (h *Handler) SetCollectionFieldValue(
 	if req.Body.ValueOptions != nil {
 		incomingOptions = *req.Body.ValueOptions
 	}
-	slugs, created, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
+	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
 		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held)
 	if err != nil {
 		return nil, err
@@ -229,7 +229,7 @@ func (h *Handler) SetCollectionFieldValue(
 	// asset path rewrites its upsert params. Here the params are built
 	// from req.Body a line below, so the normalisation lands on the body.
 	if fieldRow.Type == "multi_select" {
-		req.Body.ValueOptions = &slugs
+		req.Body.ValueOptions = &vocab.Slugs
 	}
 
 	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(
@@ -264,15 +264,15 @@ func (h *Handler) SetCollectionFieldValue(
 	// Cache evict + broadcast. Best-effort — a NOTIFY failure logs
 	// but doesn't propagate, matching invalidateField behavior.
 	h.invalidateCollectionValues(ctx, pgCollection)
-	if len(created) > 0 {
+	if len(vocab.Created) > 0 {
 		// The vocabulary grew; see the asset path for why this is after
 		// the commit and why it drops the extraction cache too.
 		h.InvalidateFieldVocabulary(ctx, pgField)
 		if h.Logger != nil {
 			h.Logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
 				slog.String("field", fieldRow.Code),
-				slog.Int("count", len(created)),
-				slog.String("terms", strings.Join(created, ",")),
+				slog.Int("count", len(vocab.Created)),
+				slog.String("terms", strings.Join(vocab.Created, ",")),
 			)
 		}
 	}
