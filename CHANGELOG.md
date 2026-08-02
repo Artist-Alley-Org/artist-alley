@@ -216,6 +216,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A value that isn't one of a field's choices is now rejected instead of silently stored.**
+  Writing to a pick-list, multi-pick, or hierarchical field with a term that isn't in the
+  field's vocabulary used to succeed — the bogus value was stored, never resolved to a label,
+  and displayed as a raw code forever. It now gets a clear rejection naming the field and the
+  offending term. Retired terms follow the same rule the editor already uses: they can't be
+  newly chosen, but a record that already holds one keeps it, and editing *other* parts of
+  that record isn't blocked by it (#824).
+
 - **Dates stop being a day early, and "derived from" names the actual asset.** A field that
   holds a calendar date (like a licence expiry) was being converted into the viewer's timezone,
   so anyone west of UTC saw the previous day. Calendar dates now display exactly as recorded,
