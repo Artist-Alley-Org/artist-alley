@@ -332,6 +332,10 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
     // up. Since #835 the ratio comes off the cue rect directly rather
     // than being inferred from the sheet's shape — those agree only
     // while the grid is square.
+    //
+    // THE RATIO IS THE ASSERTION, in every mode. Which axis it binds is
+    // the mode's business (#834, below); what must never happen is the
+    // box claiming a ratio the cue did not declare.
     stubCueFetch(vtt(100, 10, 90, 160));
     stubSpriteSheetSize(900, 1600);
 
@@ -343,23 +347,191 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
     expect(layer, 'video tile should mount a sprite layer on hover').toBeTruthy();
     // 90/160 — portrait, not 16:9.
     expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(90 / 160, 4);
-    // A portrait cell is bound by the tile's HEIGHT and pillarboxed;
-    // width-bound would overflow the square slot.
-    expect(layer!.className).toContain('h-full');
-    expect(layer!.className).not.toContain('w-full');
   });
 
-  it('keeps the landscape scrub box width-bound at 16:9 (#761 no-regression)', async () => {
-    stubCueFetch(vtt(100, 10, 160, 90));
-    stubSpriteSheetSize(1600, 900);
+  // ── Scrub fit matches the still's fit (#834) ──────────────────────
+  //
+  // THE DEFECT, measured on the browse grid before the fix: a 1920x818
+  // video's STILL is the 320x320 `col` rung painted `object-cover` into
+  // a 367x367 tile — an exact fill with no band. The band was the SCRUB:
+  // it letterboxed the 2.35:1 cue cell to `w-full` inside that square
+  // tile over `bg-black/95`, so 109px of opaque black sat above and
+  // below a 161px strip — 57% of the tile — and hovering swapped one
+  // framing for a completely different one.
+  //
+  // The issue read that black as a wrongly-shaped still. It was not.
+  // Both layers were internally consistent; they simply disagreed, and
+  // in grid the still is the one that is right (a contact sheet fills,
+  // #561/#588). So the scrub follows `fill`, exactly as the <img> does.
+  describe('scrub fit follows the tile mode (#834)', () => {
+    it('COVERS the square grid tile — a landscape cell binds height', async () => {
+      // Grid is `fill`. A 16:9 cell bound to `w-full` in a square tile
+      // is the band; bound to `h-full` it overflows the width, the
+      // frame's overflow-hidden clips it, and what shows is the same
+      // centred middle square `col` already shows.
+      stubCueFetch(vtt(100, 10, 160, 90));
+      stubSpriteSheetSize(1600, 900);
 
-    const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
-    await hoverCard(container);
-    await flushScrub();
+      const { container } = render(AssetCard, {
+        asset: asset({ file_extension: 'mp4' }),
+        mode: 'grid',
+      });
+      await hoverCard(container);
+      await flushScrub();
 
-    const layer = spriteLayer(container);
-    expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(16 / 9, 4);
-    expect(layer!.className).toContain('w-full');
+      const layer = spriteLayer(container);
+      expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(16 / 9, 4);
+      expect(
+        layer!.className,
+        'a landscape cell must bind HEIGHT to cover a square tile — w-full is the black band',
+      ).toContain('h-full');
+      expect(layer!.className).not.toContain('w-full');
+    });
+
+    it('COVERS the square grid tile — a portrait cell binds width', async () => {
+      stubCueFetch(vtt(100, 10, 90, 160));
+      stubSpriteSheetSize(900, 1600);
+
+      const { container } = render(AssetCard, {
+        asset: asset({ file_extension: 'mp4' }),
+        mode: 'grid',
+      });
+      await hoverCard(container);
+      await flushScrub();
+
+      const layer = spriteLayer(container);
+      expect(layer!.className).toContain('w-full');
+      expect(layer!.className).not.toContain('h-full');
+    });
+
+    it('still CONTAINS outside grid, so a rotated clip is never cropped (#761)', async () => {
+      // Masonry is not a contact sheet — it sizes each tile to its own
+      // artwork and shows the whole work. The pre-#834 contain branch is
+      // unchanged there: landscape binds width, portrait binds height.
+      stubCueFetch(vtt(100, 10, 160, 90));
+      stubSpriteSheetSize(1600, 900);
+
+      const { container } = render(AssetCard, {
+        asset: asset({ file_extension: 'mp4' }),
+        mode: 'masonry',
+      });
+      await hoverCard(container);
+      await flushScrub();
+
+      const layer = spriteLayer(container);
+      expect(parseFloat(layer!.style.aspectRatio)).toBeCloseTo(16 / 9, 4);
+      expect(layer!.className).toContain('w-full');
+      expect(layer!.className).not.toContain('h-full');
+    });
+
+    it('letterboxes onto the MATTE, not black, where a box still shows', async () => {
+      // The still letterboxes onto `bg-thumb-matte` in every contain
+      // mode. `bg-black/95` was a second, different backdrop for the
+      // same job, which is what made the two states look like different
+      // components rather than two frames of one.
+      stubCueFetch(vtt(100, 10, 90, 160));
+      stubSpriteSheetSize(900, 1600);
+
+      const { container } = render(AssetCard, {
+        asset: asset({ file_extension: 'mp4' }),
+        mode: 'masonry',
+      });
+      await hoverCard(container);
+      await flushScrub();
+
+      const box = spriteLayer(container)!.parentElement!;
+      expect(box.className).toContain('bg-thumb-matte');
+      expect(box.className).not.toContain('bg-black');
+    });
+
+    it('draws no backdrop at all in grid — nothing of it can show', async () => {
+      stubCueFetch(vtt(100, 10, 160, 90));
+      stubSpriteSheetSize(1600, 900);
+
+      const { container } = render(AssetCard, {
+        asset: asset({ file_extension: 'mp4' }),
+        mode: 'grid',
+      });
+      await hoverCard(container);
+      await flushScrub();
+
+      const box = spriteLayer(container)!.parentElement!;
+      expect(box.className).not.toContain('bg-black');
+      expect(box.className).not.toContain('bg-thumb-matte');
+    });
+  });
+
+  // ── prefers-reduced-motion (#837) ─────────────────────────────────
+  describe('prefers-reduced-motion (#837)', () => {
+    /** jsdom has no matchMedia at all, so the component's optional call
+     *  yields undefined and no-motion is the default. Give it a real one
+     *  that answers the query the way the test names. */
+    function stubReducedMotion(reduce: boolean) {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: reduce && query.includes('prefers-reduced-motion: reduce'),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }));
+    }
+
+    it('mounts no scrub at all — the poster still IS the static frame', async () => {
+      // Freezing the scrub on cue 0 was the obvious reading and is the
+      // wrong one: cue 0 is the clip's opening frame and films open on
+      // black, so it renders a black tile. The poster underneath is
+      // already a chosen representative frame (#818/#829), so the
+      // correct "single representative frame" is the one the card is
+      // showing before the pointer arrives.
+      stubReducedMotion(true);
+      stubCueFetch(vtt(100, 10, 240, 134));
+      stubSpriteSheetSize(2400, 1340);
+
+      const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
+      await hoverCard(container);
+      await flushScrub();
+
+      expect(spriteLayer(container)).toBeNull();
+      expect(
+        container.querySelector('img'),
+        'suppressing the scrub must leave the poster visible — a hover that blanks the tile is not the fix',
+      ).toBeTruthy();
+    });
+
+    it('downloads neither the cue file nor the sheet when motion is reduced', async () => {
+      // The preference should cost less, not the same. Both halves are
+      // gated, so a reduced-motion visitor never pays for a scrub they
+      // will not see.
+      stubReducedMotion(true);
+      stubCueFetch(vtt(100, 10, 240, 134));
+      stubSpriteSheetSize(2400, 1340);
+
+      const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
+      await hoverCard(container);
+      await flushScrub();
+
+      expect(fetch, 'no scrub means no cue fetch').not.toHaveBeenCalled();
+    });
+
+    it('still cycles when motion is not reduced', async () => {
+      // The control. Without it the test above passes just as well
+      // against a card whose scrub is broken outright.
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      stubReducedMotion(false);
+      stubCueFetch(vtt(100, 10, 240, 134));
+      stubSpriteSheetSize(2400, 1340);
+
+      const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
+      await hoverCard(container);
+      await flushScrub();
+
+      const positions = new Set<string>();
+      for (let i = 0; i < 20; i++) {
+        positions.add(spriteLayer(container)!.style.backgroundPosition);
+        vi.advanceTimersByTime(120);
+        await tick();
+      }
+      expect(positions.size).toBe(20);
+    });
   });
 
   it('paints nothing while the cue file is still in flight', async () => {
