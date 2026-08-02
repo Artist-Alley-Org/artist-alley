@@ -10,8 +10,8 @@
 // auth fixtures. The current locale stays at the default initial
 // state ('' / DEFAULT_LOCALE).
 
-import { describe, expect, it } from 'vitest';
-import { lang, t } from './lang.svelte';
+import { afterEach, describe, expect, it } from 'vitest';
+import { lang, shippedStrings, t } from './lang.svelte';
 
 describe('t() lookup', () => {
   it('resolves a known en.json key to its English string', () => {
@@ -89,5 +89,91 @@ describe('lang.resolved + lang.locales', () => {
   it('defaults resolved to a concrete locale code (never empty)', () => {
     expect(lang.resolved).toBeTruthy();
     expect(typeof lang.resolved).toBe('string');
+  });
+});
+
+// Operator string overrides (#794, ADR 0081 §1).
+//
+// These PIN THE FALLBACK RULE, which is the part of the feature most
+// likely to be "simplified" into being wrong. Overrides are set on the
+// singleton directly — populating them normally means a network fetch,
+// and the merge under test lives in t(), not in the fetch.
+describe('t() with operator overrides', () => {
+  const origLocale = lang.resolved;
+  const origOverrides = lang.overrides;
+
+  afterEach(() => {
+    lang.resolved = origLocale;
+    lang.overrides = origOverrides;
+  });
+
+  it('prefers an override for the active locale over the shipped string', () => {
+    const shipped = t('nav.upload');
+    lang.overrides = { en: { 'nav.upload': 'Send us a file' } };
+    expect(t('nav.upload')).toBe('Send us a file');
+    expect(t('nav.upload')).not.toBe(shipped);
+  });
+
+  it('falls back to the shipped string when the override is removed', () => {
+    const shipped = t('nav.upload');
+    lang.overrides = { en: { 'nav.upload': 'Send us a file' } };
+    lang.overrides = {};
+    expect(t('nav.upload')).toBe(shipped);
+  });
+
+  it('interpolates {vars} inside an override', () => {
+    lang.overrides = { en: { 'user_menu.signed_in_as': 'Hello, {username}!' } };
+    expect(t('user_menu.signed_in_as', { username: 'alice' })).toBe('Hello, alice!');
+  });
+
+  it('scopes an override to its own locale', () => {
+    lang.overrides = { es: { 'nav.upload': 'Subir archivo' } };
+    // Active locale is en — the es override must not reach it.
+    lang.resolved = 'en';
+    expect(t('nav.upload')).not.toBe('Subir archivo');
+    lang.resolved = 'es';
+    expect(t('nav.upload')).toBe('Subir archivo');
+  });
+
+  // The chosen fallback rule, stated as two tests because it has two
+  // halves and only one of them is obvious.
+  it('lets an en override back a locale that does not translate the key', () => {
+    // A key en has and es does not, so es was ALREADY rendering the
+    // English string. Changing what that English string says must
+    // change what es renders. Picked dynamically because es.json grows
+    // as #289 progresses and a hardcoded key would silently stop
+    // testing this rung the day it got translated.
+    const es = shippedStrings('es');
+    const untranslated = Object.keys(shippedStrings('en')).find((k) => es[k] === undefined);
+    expect(untranslated).toBeTruthy();
+
+    lang.resolved = 'es';
+    lang.overrides = { en: { [untranslated as string]: 'BACKED BY EN' } };
+    expect(t(untranslated as string)).toBe('BACKED BY EN');
+  });
+
+  it('does NOT let an en override outrank a real translation', () => {
+    // A key es DOES translate. An English override must not silently
+    // un-translate the Spanish UI — the override replaces the string
+    // it sits beside, not the one below it.
+    const esKey = Object.keys(shippedStrings('es'))[0];
+    expect(esKey).toBeTruthy();
+    const esShipped = shippedStrings('es')[esKey];
+
+    lang.resolved = 'es';
+    lang.overrides = { en: { [esKey]: 'ENGLISH OVERRIDE' } };
+    expect(t(esKey)).toBe(esShipped);
+  });
+});
+
+describe('shippedStrings()', () => {
+  it('returns the flattened catalogue the admin page lists', () => {
+    const en = shippedStrings('en');
+    expect(en['nav.upload']).toBeTruthy();
+    expect(Object.keys(en).length).toBeGreaterThan(1000);
+  });
+
+  it('returns an empty map for an unknown locale rather than throwing', () => {
+    expect(shippedStrings('zz')).toEqual({});
   });
 });

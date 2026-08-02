@@ -81,7 +81,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // field_definition.field_set_id column is dropped by migration
       // 00022 and ADR 0012 is amended with the reasoning.
       { key: 'taxonomy',       status: 'future', phase: '1.18' },
-      { key: 'site_text',      status: 'future', phase: '1.18' },
+      // Gated on the WRITE cap, not a read cap (#794). The GET is
+      // anonymous — the strings are the UI itself — so the page never
+      // 403s on load; what it 403s on is every action. A tile that
+      // opens to a list of buttons the caller cannot press is worse
+      // than a tile they do not see.
+      { key: 'site_text',      status: 'live',   href: '/admin/site-text', cap: 'system.config.write' },
       { key: 'email_templates', status: 'future', phase: '1.18' },
       { key: 'featured',       status: 'live',   href: '/admin/content/featured', cap: 'featured.read' },
       { key: 'defaults',       status: 'future', phase: '1.18' },

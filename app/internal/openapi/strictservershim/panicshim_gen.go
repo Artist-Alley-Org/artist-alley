@@ -1290,6 +1290,21 @@ func (*PanicShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestO
 	panic("PanicShim: GetSetupStatus called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetSiteText panics by default; test shims override.
+func (*PanicShim) GetSiteText(context.Context, openapi.GetSiteTextRequestObject) (openapi.GetSiteTextResponseObject, error) {
+	panic("PanicShim: GetSiteText called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DeleteSiteText panics by default; test shims override.
+func (*PanicShim) DeleteSiteText(context.Context, openapi.DeleteSiteTextRequestObject) (openapi.DeleteSiteTextResponseObject, error) {
+	panic("PanicShim: DeleteSiteText called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetSiteText panics by default; test shims override.
+func (*PanicShim) SetSiteText(context.Context, openapi.SetSiteTextRequestObject) (openapi.SetSiteTextResponseObject, error) {
+	panic("PanicShim: SetSiteText called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // UploadStorageObject panics by default; test shims override.
 func (*PanicShim) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
 	panic("PanicShim: UploadStorageObject called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

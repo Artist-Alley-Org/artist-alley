@@ -71,6 +71,10 @@ const TRACKED_FILES = [
   'src/routes/admin/teams/+page.svelte',
   'src/routes/admin/teams/[id]/+page.svelte',
   'src/routes/admin/asset-types/+page.svelte',
+  // The site-text override page (#794). Tracked from the day it lands:
+  // a page whose whole subject is operator-editable wording has no
+  // business shipping hardcoded English of its own.
+  'src/routes/admin/site-text/+page.svelte',
   'src/routes/admin/asset-types/[ref]/+page.svelte',
   'src/routes/admin/system/log/+page.svelte',
   'src/routes/admin/system/license/+page.svelte',

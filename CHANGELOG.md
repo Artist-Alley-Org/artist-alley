@@ -46,6 +46,31 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Any wording the interface ships with can now be changed without forking.** Every
+  visible string came from a catalogue compiled into the build, so an operator who
+  wanted "Collections" to read "Libraries" — or who simply wanted to fix confusing
+  wording — had to fork the project and rebuild it. Admin → Content → **Site text**
+  lists all ~2,150 strings beside what they ship as, with search, a "changed only"
+  filter, and a Revert on anything you have touched. Changes take effect on the next
+  page load, including for signed-out visitors, and including on a second instance
+  sharing the database — no restart anywhere (#794, ADR 0081 §1).
+
+  An override is stored per string *and per language*, so changing an English label
+  cannot silently un-translate a Spanish one. An English change does still back a
+  locale that has no translation for that string, because that locale was already
+  rendering the English text. Overrides are plain text — they are never rendered as
+  HTML, which stays exclusive to rich-text fields (ADR 0085).
+
+  A change naming a string that does not exist is **refused, not quietly stored**: the
+  save fails and names the key it could not find. That is the one behaviour this
+  feature could not ship without — an override that appears to save and then does
+  nothing is worse than no override at all, and is exactly the failure #774 fixed for
+  the strings themselves. The server enforces it against a copy of the shipped
+  catalogue embedded in the binary, so it holds for anything calling the API directly,
+  not just the admin page. Per-group wording and federation of any of this are
+  deliberately out (ADR 0081 §1): site text is how *this* install speaks.
+  No-spec-impact.
+
 - **A rich-text field renders as formatted text.** `rich_text` is the one field type
   whose entire purpose is formatting, and it was the one type that lost it: a value of
   `<p>Cleared for <strong>internal</strong> use.</p>` appeared on the post metadata panel
