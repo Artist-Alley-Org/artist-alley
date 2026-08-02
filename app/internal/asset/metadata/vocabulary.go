@@ -222,7 +222,7 @@ func quoteTerms(terms []string) string {
 //
 // `multi_select` was on the wrong side of this line until #830.
 // `keywords` is the case that mattered — its IPTC mapping is real
-// (2:25 → iptc_keywords, the mapping ResourceSpace ships too) — and it
+// (2:25 → iptc_keywords, the mapping mature DAMs ship too) — and it
 // stayed unwired because [FieldValueSnapshot] and
 // [WriteAssetFieldValueParams] carried value_text / value_num /
 // value_date and there was no path from extraction to value_options at
