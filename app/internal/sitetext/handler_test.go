@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +69,7 @@ func TestSetSiteText_RejectsAnonymous(t *testing.T) {
 
 func TestSetSiteText_RejectsWithoutConfigWrite(t *testing.T) {
 	fx := setup(t)
-	ctx := identity(context.Background(), "system.config.read")
+	ctx := fx.identity(context.Background(), "system.config.read")
 	resp, err := fx.http.SetSiteText(ctx, setReq(realKey, "en", "Add"))
 	if err != nil {
 		t.Fatalf("SetSiteText: %v", err)
@@ -80,7 +81,7 @@ func TestSetSiteText_RejectsWithoutConfigWrite(t *testing.T) {
 
 func TestSetSiteText_SystemAdminIsSufficient(t *testing.T) {
 	fx := setup(t)
-	ctx := identity(context.Background(), "system.admin")
+	ctx := fx.identity(context.Background(), "system.admin")
 	resp, err := fx.http.SetSiteText(ctx, setReq(realKey, "en", "Send us a file"))
 	if err != nil {
 		t.Fatalf("SetSiteText: %v", err)
@@ -99,7 +100,7 @@ func TestSetSiteText_SystemAdminIsSufficient(t *testing.T) {
 // ambiguity ADR 0081 cites #774 for.
 func TestSetSiteText_UnknownKeyIs422NamingTheKey(t *testing.T) {
 	fx := setup(t)
-	ctx := identity(context.Background(), "system.config.write")
+	ctx := fx.identity(context.Background(), "system.config.write")
 	const bogus = "nav.uploadd"
 
 	resp, err := fx.http.SetSiteText(ctx, setReq(bogus, "en", "whatever"))
@@ -131,7 +132,7 @@ func TestSetSiteText_UnknownKeyIs422NamingTheKey(t *testing.T) {
 // would return the pre-write map until the process restarted.
 func TestWriteThenReadWithoutRestart(t *testing.T) {
 	fx := setup(t)
-	ctx := identity(context.Background(), "system.config.write")
+	ctx := fx.identity(context.Background(), "system.config.write")
 
 	// Warm the cache so the test proves invalidation rather than a
 	// cold miss. Without this read, the assertion below would pass
@@ -140,7 +141,7 @@ func TestWriteThenReadWithoutRestart(t *testing.T) {
 		t.Fatalf("warm read: %v", err)
 	}
 
-	if _, err := fx.domain.Set(ctx, realKey, "en", "Send us a file", nil); err != nil {
+	if _, err := fx.domain.Set(ctx, realKey, "en", "Send us a file", &fx.userRef); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	all, err := fx.domain.All(ctx)
@@ -170,7 +171,7 @@ func TestWriteThenReadWithoutRestart(t *testing.T) {
 // would silently disappear if somebody "simplified" the table.
 func TestLocaleScoping(t *testing.T) {
 	fx := setup(t)
-	ctx := identity(context.Background(), "system.config.write")
+	ctx := fx.identity(context.Background(), "system.config.write")
 
 	if _, err := fx.domain.Set(ctx, realKey, "es", "Subir", nil); err != nil {
 		t.Fatalf("Set es: %v", err)
@@ -189,7 +190,7 @@ func TestLocaleScoping(t *testing.T) {
 
 func TestDeleteSiteText_MissingIs404(t *testing.T) {
 	fx := setup(t)
-	ctx := identity(context.Background(), "system.config.write")
+	ctx := fx.identity(context.Background(), "system.config.write")
 	resp, err := fx.http.DeleteSiteText(ctx, openapi.DeleteSiteTextRequestObject{
 		Key:    realKey,
 		Params: openapi.DeleteSiteTextParams{Language: "fr"},
@@ -272,9 +273,10 @@ func TestCrossInstanceInvalidation(t *testing.T) {
 // --- fixture -------------------------------------------------------------
 
 type fixture struct {
-	pool   *pgxpool.Pool
-	domain *sitetext.Handler
-	http   *sitetext.HTTPHandler
+	pool    *pgxpool.Pool
+	domain  *sitetext.Handler
+	http    *sitetext.HTTPHandler
+	userRef int64
 }
 
 func setup(t *testing.T) *fixture {
@@ -288,7 +290,40 @@ func setup(t *testing.T) *fixture {
 	domain := sitetext.NewHandler(pool, sitetext.NewCache(reg, logger), logger)
 	t.Cleanup(func() { cleanup(t, pool) })
 	cleanup(t, pool)
-	return &fixture{pool: pool, domain: domain, http: sitetext.NewHTTPHandler(domain, logger)}
+	return &fixture{
+		pool:    pool,
+		domain:  domain,
+		http:    sitetext.NewHTTPHandler(domain, logger),
+		userRef: fixtureUser(t, pool),
+	}
+}
+
+// fixtureUser inserts a throwaway operator.
+//
+// A REAL ref, not a made-up 1: site_text.updated_by_user_ref carries a
+// foreign key, and a synthetic ref made the write fail with a 23503
+// that had nothing to do with what the test was asserting. Attributing
+// the edit to somebody who exists is also what production does.
+func fixtureUser(t *testing.T, pool *pgxpool.Pool) int64 {
+	t.Helper()
+	username := "sitetext-test-" + randSuffix()
+	var ref int64
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO "user" (username, fullname, approved) VALUES ($1, $2, 1) RETURNING ref`,
+		username, "Site Text Test Operator",
+	).Scan(&ref); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM site_text WHERE updated_by_user_ref = $1`, ref)
+		_, _ = pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, ref)
+	})
+	return ref
+}
+
+func randSuffix() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 func cleanup(t *testing.T, pool *pgxpool.Pool) {
@@ -303,9 +338,9 @@ func setReq(key, language, value string) openapi.SetSiteTextRequestObject {
 	return openapi.SetSiteTextRequestObject{Key: key, Body: &body}
 }
 
-func identity(ctx context.Context, caps ...string) context.Context {
+func (f *fixture) identity(ctx context.Context, caps ...string) context.Context {
 	return auth.WithIdentity(ctx, &auth.Identity{
-		UserRef:      1,
+		UserRef:      f.userRef,
 		Username:     "sitetext-fixture",
 		AuthMethod:   "session",
 		Capabilities: caps,
