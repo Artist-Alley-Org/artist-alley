@@ -44,6 +44,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 )
 
 // cacheDomainCollectionFieldValues — NOTIFY channel for
@@ -493,7 +494,10 @@ func buildCollectionValue(
 		SetBy:        openapi.CollectionFieldValueSetBy(setBy),
 		SetAt:        setAt.Time,
 		SetByUserRef: setByUserRef,
-		ValueText:    text,
+		// #816's read boundary — see buildAssetValue for the argument.
+		// A collection value has the same writers-that-are-not-handlers
+		// problem the asset side does.
+		ValueText: richtext.SanitizeValueText(fieldType, text),
 	}
 	if label != "" {
 		v.FieldLabel = &label
@@ -537,7 +541,11 @@ func buildCollectionUpsertParams(
 	}
 	switch fieldType {
 	case "text", "longtext", "rich_text":
-		p.ValueText = body.ValueText
+		// #816's write boundary, same one line the asset side runs in
+		// buildUpsertParams. Two call sites, one implementation — the
+		// two handlers cannot drift about what HTML is allowed because
+		// neither of them decides it. See internal/richtext.
+		p.ValueText = richtext.SanitizeValueText(fieldType, body.ValueText)
 	case "number", "boolean":
 		// `boolean` is 0/1 in value_num, exactly as ADR 0012 specifies
 		// and exactly what handler.go's buildUpsertParams has always
@@ -681,7 +689,10 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 	}
 	switch fieldRow.Type {
 	case "text", "longtext", "rich_text", "select", "tree":
-		params.ValueText = valueText
+		// Seeds bypass the HTTP handler, so they get the write-side
+		// sanitise explicitly (#816). The read side would cover them
+		// anyway; this keeps the stored row clean too.
+		params.ValueText = richtext.SanitizeValueText(fieldRow.Type, valueText)
 	case "number", "boolean":
 		// `boolean` moved out of the value_text group in #791 — see
 		// buildCollectionUpsertParams. A seeded collection boolean is

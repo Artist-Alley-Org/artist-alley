@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 )
 
 // Cache domain names. Stable strings used as NOTIFY targets — peer
@@ -1033,7 +1034,16 @@ func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.A
 		if in.ValueText == nil {
 			return p, fmt.Errorf("field type %q requires value_text", fieldType)
 		}
-		p.ValueText = in.ValueText
+		// The write half of #816's boundary. `rich_text` is the one
+		// value in the system a client renders as markup, so what
+		// lands in the column is already policy-clean — see
+		// internal/richtext for why it is sanitised here AND on read.
+		//
+		// It sits inside buildUpsertParams rather than at the handler
+		// because this function is not only the API write path:
+		// ApplyAssetDefaults funnels a field default through it too,
+		// so a default carrying markup is covered by the same line.
+		p.ValueText = richtext.SanitizeValueText(fieldType, in.ValueText)
 	case "number":
 		if in.ValueNum == nil {
 			return p, fmt.Errorf("field type %q requires value_num", fieldType)
@@ -1231,7 +1241,13 @@ func buildAssetValue(
 		SetByUserRef: setByUserRef,
 	}
 	if valueText != nil {
-		out.ValueText = valueText
+		// The read half of #816's boundary. A stored value is never
+		// trusted, because not every writer is a handler: the seed's
+		// SeedInsertAssetFieldValue goes at the table directly, and so
+		// will an import or a peer. Sanitising here is what lets the
+		// API promise every client that rich_text HTML on the wire is
+		// safe to render as markup. See internal/richtext.
+		out.ValueText = richtext.SanitizeValueText(fieldType, valueText)
 	}
 	if valueNum != nil {
 		v := float32(*valueNum)
