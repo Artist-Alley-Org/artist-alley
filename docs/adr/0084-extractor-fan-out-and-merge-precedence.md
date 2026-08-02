@@ -3,7 +3,7 @@ id: "0084"
 title: Every supporting extractor runs, and canonical fields are namespaced per source
 status: accepted
 date: 2026-08-02
-area: metadata
+area: architecture
 phases: []
 supersedes: []
 related:
