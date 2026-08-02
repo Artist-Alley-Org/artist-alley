@@ -40,6 +40,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The hover slideshow now fills the tile instead of floating between black bars.** In the
+  grid, a video's cover picture fills its tile — but starting the hover slideshow used to swap
+  in a letterboxed strip over a near-black backdrop, so more than half the tile went dark the
+  moment you looked closely. The slideshow now fills the tile exactly the way the cover does,
+  showing the same central region. (Investigating this also cleared the cover image itself of
+  suspicion — it was never the problem.) And for anyone who prefers reduced motion, hovering
+  now simply keeps the cover picture instead of animating (#834, #837).
+
 - **Animated GIFs now play their hover slideshow, and their thumbnail is a frame worth
   looking at.** A GIF was treated as a still picture: the system decoded the first frame,
   made a thumbnail out of it, and stopped. For a screen recording the first frame is
