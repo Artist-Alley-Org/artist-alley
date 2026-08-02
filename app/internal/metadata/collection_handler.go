@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -200,11 +201,12 @@ func (h *Handler) SetCollectionFieldValue(
 		return nil, fmt.Errorf("metadata: load previous: %w", err)
 	}
 
-	// Controlled-vocabulary gate (#824) — the SAME call the asset
-	// writer makes, on the same helper, so a collection cannot accept a
-	// slug an asset refuses. Placed after the snapshot because the
-	// lifecycle half of the rule needs the held value, which prev
-	// already is.
+	// Controlled-vocabulary gate (#824) + the accept-and-create branch
+	// an open vocabulary takes (#830) — the SAME call the asset writer
+	// makes, on the same helper, so a collection cannot accept a slug an
+	// asset refuses, or refuse one an asset creates. Placed after the
+	// snapshot because the lifecycle half of the rule needs the held
+	// value, which prev already is.
 	var held []string
 	if hadOld {
 		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
@@ -213,14 +215,21 @@ func (h *Handler) SetCollectionFieldValue(
 	if req.Body.ValueOptions != nil {
 		incomingOptions = *req.Body.ValueOptions
 	}
-	if rej := checkVocabulary(
-		fieldRow.Type, fieldRow.Options,
-		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions),
-		held,
-	); rej != nil {
+	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
+		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held)
+	if err != nil {
+		return nil, err
+	}
+	if rej != nil {
 		return openapi.SetCollectionFieldValue422JSONResponse{
 			FieldValueUnprocessableJSONResponse: rejectionBody(fieldRow.Code, rej),
 		}, nil
+	}
+	// Canonical slugs, not the text a client sent — same reason the
+	// asset path rewrites its upsert params. Here the params are built
+	// from req.Body a line below, so the normalisation lands on the body.
+	if fieldRow.Type == "multi_select" {
+		req.Body.ValueOptions = &vocab.Slugs
 	}
 
 	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(
@@ -255,6 +264,18 @@ func (h *Handler) SetCollectionFieldValue(
 	// Cache evict + broadcast. Best-effort — a NOTIFY failure logs
 	// but doesn't propagate, matching invalidateField behavior.
 	h.invalidateCollectionValues(ctx, pgCollection)
+	if len(vocab.Created) > 0 {
+		// The vocabulary grew; see the asset path for why this is after
+		// the commit and why it drops the extraction cache too.
+		h.InvalidateFieldVocabulary(ctx, pgField)
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
+				slog.String("field", fieldRow.Code),
+				slog.Int("count", len(vocab.Created)),
+				slog.String("terms", strings.Join(vocab.Created, ",")),
+			)
+		}
+	}
 
 	return openapi.SetCollectionFieldValue200JSONResponse(
 		buildCollectionValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,

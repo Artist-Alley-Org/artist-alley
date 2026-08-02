@@ -99,14 +99,16 @@ INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, read_capability, write_capability,
     display_order, display_group, status,
-    created_by_user_ref, updated_by_user_ref, subject_kind, default_value
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)
+    created_by_user_ref, updated_by_user_ref, subject_kind, default_value,
+    open_vocabulary
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16,$17)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode, default_value
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary
 `
 
 type CreateFieldDefinitionParams struct {
@@ -126,6 +128,7 @@ type CreateFieldDefinitionParams struct {
 	CreatedByUserRef *int64
 	SubjectKind      string
 	DefaultValue     []byte
+	OpenVocabulary   bool
 }
 
 func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefinitionParams) (FieldDefinition, error) {
@@ -146,6 +149,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		arg.CreatedByUserRef,
 		arg.SubjectKind,
 		arg.DefaultValue,
+		arg.OpenVocabulary,
 	)
 	var i FieldDefinition
 	err := row.Scan(
@@ -173,6 +177,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.ExtractionSource,
 		&i.ExtractionMode,
 		&i.DefaultValue,
+		&i.OpenVocabulary,
 	)
 	return i, err
 }
@@ -323,7 +328,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition WHERE code = $1
 `
 
@@ -355,6 +361,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.ExtractionSource,
 		&i.ExtractionMode,
 		&i.DefaultValue,
+		&i.OpenVocabulary,
 	)
 	return i, err
 }
@@ -365,7 +372,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition WHERE id = $1
 `
 
@@ -397,6 +405,7 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.ExtractionSource,
 		&i.ExtractionMode,
 		&i.DefaultValue,
+		&i.OpenVocabulary,
 	)
 	return i, err
 }
@@ -924,7 +933,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -989,6 +999,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.ExtractionSource,
 			&i.ExtractionMode,
 			&i.DefaultValue,
+			&i.OpenVocabulary,
 		); err != nil {
 			return nil, err
 		}
@@ -1006,7 +1017,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -1050,6 +1062,7 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.ExtractionSource,
 			&i.ExtractionMode,
 			&i.DefaultValue,
+			&i.OpenVocabulary,
 		); err != nil {
 			return nil, err
 		}
@@ -1107,6 +1120,61 @@ func (q *Queries) ListRequiredCollectionFields(ctx context.Context) ([]ListRequi
 	return items, nil
 }
 
+const lockFieldDefinitionVocabulary = `-- name: LockFieldDefinitionVocabulary :one
+SELECT options, type, open_vocabulary
+  FROM field_definition
+ WHERE id = $1
+   FOR UPDATE
+`
+
+type LockFieldDefinitionVocabularyRow struct {
+	Options        []byte
+	Type           string
+	OpenVocabulary bool
+}
+
+// Reads the live options document under a ROW LOCK, for the
+// accept-and-create path on an open vocabulary (#830).
+//
+// FOR UPDATE is the whole point. Adding a term rewrites the WHOLE
+// options document, so two concurrent writes each minting a different
+// new term would both read the pre-write document and the second
+// UPDATE would discard the first's term — the last-write-wins gap #737
+// records for the admin options editor, except here it happens on an
+// ordinary value save that no operator would think of as an edit to the
+// field. The lock serialises the read-modify-write; the loser re-reads
+// the winner's document inside its own transaction and appends to it.
+//
+// Reads the row rather than trusting the caller's copy for a second
+// reason: the field-by-id LRU can hand back an options document that is
+// one write old, and resolving against a stale document is how a term
+// gets minted twice.
+func (q *Queries) LockFieldDefinitionVocabulary(ctx context.Context, id pgtype.UUID) (LockFieldDefinitionVocabularyRow, error) {
+	row := q.db.QueryRow(ctx, lockFieldDefinitionVocabulary, id)
+	var i LockFieldDefinitionVocabularyRow
+	err := row.Scan(&i.Options, &i.Type, &i.OpenVocabulary)
+	return i, err
+}
+
+const setFieldDefinitionOptions = `-- name: SetFieldDefinitionOptions :exec
+UPDATE field_definition
+   SET options = $2, updated_at = NOW()
+ WHERE id = $1
+`
+
+type SetFieldDefinitionOptionsParams struct {
+	ID      pgtype.UUID
+	Options []byte
+}
+
+// Writes back an options document that gained terms. Deliberately
+// narrow — it touches options and nothing else — so it cannot be
+// mistaken for the admin editor's whole-definition update.
+func (q *Queries) SetFieldDefinitionOptions(ctx context.Context, arg SetFieldDefinitionOptionsParams) error {
+	_, err := q.db.Exec(ctx, setFieldDefinitionOptions, arg.ID, arg.Options)
+	return err
+}
+
 const setFieldExtractionConfig = `-- name: SetFieldExtractionConfig :one
 UPDATE field_definition
    SET extraction_source = $2,
@@ -1119,7 +1187,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode, default_value
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -1165,6 +1234,7 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.ExtractionSource,
 		&i.ExtractionMode,
 		&i.DefaultValue,
+		&i.OpenVocabulary,
 	)
 	return i, err
 }
@@ -1181,24 +1251,26 @@ UPDATE field_definition SET
     write_capability          = COALESCE($8,          write_capability),
     display_order             = COALESCE($9,             display_order),
     display_group             = COALESCE($10,             display_group),
-    status                    = COALESCE($11,                    status),
-    deprecated_replacement_id = COALESCE($12, deprecated_replacement_id),
+    open_vocabulary           = COALESCE($11,           open_vocabulary),
+    status                    = COALESCE($12,                    status),
+    deprecated_replacement_id = COALESCE($13, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $13::BOOLEAN THEN NULL
-                                     ELSE COALESCE($14, default_value) END,
+    default_value             = CASE WHEN $14::BOOLEAN THEN NULL
+                                     ELSE COALESCE($15, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $15
-WHERE id = $16
+    updated_by_user_ref       = $16
+WHERE id = $17
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode, default_value
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -1212,6 +1284,7 @@ type UpdateFieldDefinitionParams struct {
 	WriteCapability         *string
 	DisplayOrder            *int32
 	DisplayGroup            *string
+	OpenVocabulary          *bool
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1236,6 +1309,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.WriteCapability,
 		arg.DisplayOrder,
 		arg.DisplayGroup,
+		arg.OpenVocabulary,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1269,6 +1343,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.ExtractionSource,
 		&i.ExtractionMode,
 		&i.DefaultValue,
+		&i.OpenVocabulary,
 	)
 	return i, err
 }
