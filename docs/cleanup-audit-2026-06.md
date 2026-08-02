@@ -22,7 +22,7 @@
 | Naming inconsistencies | 3 | 0 | 0 | 3 |
 | **Total findings** | **26** | **0** | **17** | **9** |
 
-**Headline:** the schema is in good shape for the v1.0 baseline squash. The dominant cleanup opportunity is the **17 ResourceSpace-heritage columns on `"user"`** that have zero non-generated Go consumers — they're inherited from the RS fork base (per [ADR 0024](adr/0024-resourcespace-clean-room-fork.md)) and never re-wired into the artist-alley auth/session/profile surfaces. Dropping them in C-2 shrinks the User struct + the migrate-up cost without any behavior change.
+**Headline:** the schema is in good shape for the v1.0 baseline squash. The dominant cleanup opportunity is the **17 upstream-heritage columns on `"user"`** that have zero non-generated Go consumers — they're inherited from the upstream fork base (per [ADR 0024](adr/0024-resourcespace-clean-room-fork.md)) and never re-wired into the artist-alley auth/session/profile surfaces. Dropping them in C-2 shrinks the User struct + the migrate-up cost without any behavior change.
 
 Everything else is cosmetic. There are **no orphan tables** (all 61 are referenced), **no genuine column churn smells** (the iterative federation table additions are expected layering, not redo), and **no critical FK / data-integrity issues**. The naming inconsistencies are limited to 3 specific columns; ADR-level naming is consistent.
 
@@ -117,31 +117,31 @@ Three real findings (1 BIGINT `_id`, 1 UUID `_ref`, 1 missing `_user_` prefix). 
 
 ## Orphan columns
 
-### F-001 through F-017 — `"user"` table ResourceSpace-heritage columns
+### F-001 through F-017 — `"user"` table upstream-heritage columns
 
 **Severity:** drop-recommended (17 of 17)
-**Created in:** `00001_baseline.sql` (Phase 0 — the RS fork import per ADR 0024)
+**Created in:** `00001_baseline.sql` (Phase 0 — the upstream fork import per ADR 0024)
 **Code references:** 1 each, all pointing at `app/internal/db/migrations/00001_baseline.sql` (the originating migration). Zero non-generated Go consumers. sqlc generates a struct field for each because `SELECT *` on the user table picks them up, but no production code reads or writes any of them.
 
-| ID | Column | Type | RS purpose (now defunct) |
+| ID | Column | Type | upstream purpose (now defunct) |
 |---|---|---|---|
-| F-001 | `accepted_terms` | `integer DEFAULT 0 NOT NULL` | RS "accepted terms of service" flag; not in artist-alley signup flow |
-| F-002 | `csrf_token` | `character varying(255)` | RS per-session CSRF; artist-alley uses different CSRF handling |
-| F-003 | `current_collection` | `integer` | RS active-collection memory; artist-alley has no global "active collection" UX |
-| F-004 | `email_invalid` | `integer DEFAULT 0` | RS email-bounce flag; not wired into artist-alley email sending |
-| F-005 | `email_rate_limit_active` | `integer DEFAULT 0` | RS email rate limit; artist-alley has none |
-| F-006 | `hidden_collections` | `text` | RS per-user collection hide list; artist-alley has no equivalent |
-| F-007 | `ip_restrict` | `text` | RS per-user IP allow-list; not in artist-alley auth |
-| F-008 | `last_browser` | `text` | RS user-agent capture; not used |
-| F-009 | `last_ip` | `character varying(100)` | RS last-IP capture; not used (we use `audit_events.ip`) |
-| F-010 | `login_last_try` | `timestamp with time zone` | RS login throttle state; artist-alley uses `auth.LoginLimiter` (in-memory) |
-| F-011 | `login_tries` | `integer DEFAULT 0 NOT NULL` | Same — RS throttle, not used |
-| F-012 | `processing_messages` | `text` | RS job-progress text dump; we have `jobs` table |
-| F-013 | `profile_image` | `text` | RS profile pic URL; superseded by `user_profiles.avatar_url` |
-| F-014 | `profile_text` | `character varying(500)` | RS profile bio; superseded by `user_profiles.bio` |
-| F-015 | `search_filter_o_id` | `integer` | RS user-group "owner-only" search filter override; not used |
-| F-016 | `search_filter_override` | `text` | RS user-level search filter SQL override; not used |
-| F-017 | `unique_hash` | `character varying(50)` | RS share-token field; not used |
+| F-001 | `accepted_terms` | `integer DEFAULT 0 NOT NULL` | upstream "accepted terms of service" flag; not in artist-alley signup flow |
+| F-002 | `csrf_token` | `character varying(255)` | upstream per-session CSRF; artist-alley uses different CSRF handling |
+| F-003 | `current_collection` | `integer` | upstream active-collection memory; artist-alley has no global "active collection" UX |
+| F-004 | `email_invalid` | `integer DEFAULT 0` | upstream email-bounce flag; not wired into artist-alley email sending |
+| F-005 | `email_rate_limit_active` | `integer DEFAULT 0` | upstream email rate limit; artist-alley has none |
+| F-006 | `hidden_collections` | `text` | upstream per-user collection hide list; artist-alley has no equivalent |
+| F-007 | `ip_restrict` | `text` | upstream per-user IP allow-list; not in artist-alley auth |
+| F-008 | `last_browser` | `text` | upstream user-agent capture; not used |
+| F-009 | `last_ip` | `character varying(100)` | upstream last-IP capture; not used (we use `audit_events.ip`) |
+| F-010 | `login_last_try` | `timestamp with time zone` | upstream login throttle state; artist-alley uses `auth.LoginLimiter` (in-memory) |
+| F-011 | `login_tries` | `integer DEFAULT 0 NOT NULL` | Same — upstream throttle, not used |
+| F-012 | `processing_messages` | `text` | upstream job-progress text dump; we have `jobs` table |
+| F-013 | `profile_image` | `text` | upstream profile pic URL; superseded by `user_profiles.avatar_url` |
+| F-014 | `profile_text` | `character varying(500)` | upstream profile bio; superseded by `user_profiles.bio` |
+| F-015 | `search_filter_o_id` | `integer` | upstream user-group "owner-only" search filter override; not used |
+| F-016 | `search_filter_override` | `text` | upstream user-level search filter SQL override; not used |
+| F-017 | `unique_hash` | `character varying(50)` | upstream share-token field; not used |
 
 **Verification command (per column):**
 ```bash
@@ -149,7 +149,7 @@ grep -rln "\bcolumn_name\b" app/internal/ | grep -v 'queries.sql.go$\|models.go$
 # Should only return: app/internal/db/migrations/00001_baseline.sql
 ```
 
-**Background:** The `"user"` table was imported wholesale from ResourceSpace as part of the Phase 0 fork (per ADR 0024 §"clean-room methodology"). Artist-alley has since added 5 net-new columns (`actor_uri`, `signing_public_key_pem`, `signing_private_key_enc`, `encryption_public_key`, `encryption_private_key_enc`) to support federation; the original 17 RS columns above were not removed because no migration explicitly dropped them, and pre-MVP "we can wipe DBs freely" policy ([`feedback_pre_mvp_everything_is_volatile.md`](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/feedback_pre_mvp_everything_is_volatile.md)) meant accumulated cruft was fine until the baseline squash.
+**Background:** The `"user"` table was imported wholesale from the upstream fork base as part of the Phase 0 fork (per ADR 0024 §"clean-room methodology"). Artist-alley has since added 5 net-new columns (`actor_uri`, `signing_public_key_pem`, `signing_private_key_enc`, `encryption_public_key`, `encryption_private_key_enc`) to support federation; the original 17 upstream columns above were not removed because no migration explicitly dropped them, and pre-MVP "we can wipe DBs freely" policy ([`feedback_pre_mvp_everything_is_volatile.md`](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/feedback_pre_mvp_everything_is_volatile.md)) meant accumulated cruft was fine until the baseline squash.
 
 **Suggested C-2 action:** `ALTER TABLE "user" DROP COLUMN <each>` in the squashed baseline. Touches sqlc (User struct loses 17 fields — regen handles it) + zero handlers (because nothing reads them). Mechanical change; CI will validate cleanly.
 
@@ -495,7 +495,7 @@ All commands run from the repo root. Live-DB commands require the dev stack to b
 
 ## Conclusion + C-2 input
 
-The pre-MVP DB is **in good shape for the v1.0 baseline squash.** 26 findings total; the meaningful cleanup is the **17 RS-heritage columns on `"user"`** (F-001 through F-017) plus **2 naming renames** (F-021 + F-023). Everything else is review-recommended or defer-to-post-MVP.
+The pre-MVP DB is **in good shape for the v1.0 baseline squash.** 26 findings total; the meaningful cleanup is the **17 upstream-heritage columns on `"user"`** (F-001 through F-017) plus **2 naming renames** (F-021 + F-023). Everything else is review-recommended or defer-to-post-MVP.
 
 ### Suggested C-2 commit shape (input only — not part of this PR)
 
