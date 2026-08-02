@@ -65,14 +65,11 @@ func (h *HTTPHandler) GetSiteText(
 	if err != nil {
 		return nil, fmt.Errorf("sitetext: get: %w", err)
 	}
-	// Marshal an empty map rather than nil so the JSON is `{}`, not
-	// `null` — a client destructuring the response should not have to
-	// special-case "no overrides yet", which is every fresh install.
-	out := make(map[string]map[string]string, len(all))
-	for lang, byKey := range all {
-		out[lang] = byKey
-	}
-	return openapi.GetSiteText200JSONResponse{Overrides: out}, nil
+	// All() guarantees a non-nil map, so a fresh install marshals as
+	// `{"overrides":{}}` rather than `null` and no client has to
+	// special-case it. Encoding only reads, so handing over the cached
+	// map directly is safe — see All()'s read-only contract.
+	return openapi.GetSiteText200JSONResponse{Overrides: all}, nil
 }
 
 // ---------------------------------------------------------------------------

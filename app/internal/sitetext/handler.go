@@ -81,6 +81,11 @@ func NewHandler(pool *pgxpool.Pool, c *Cache, logger *slog.Logger) *Handler {
 // anonymously — a logged-out visitor reads the same navbar as everyone
 // else, and gating it would mean the operator's wording appeared only
 // after sign-in.
+//
+// The returned map is READ-ONLY: on a hit it IS the cached value, so
+// mutating it would corrupt what every other reader sees. It is never
+// nil — a fresh install returns an empty map, so the JSON is `{}` and
+// no client has to special-case "nothing overridden yet".
 func (h *Handler) All(ctx context.Context) (Overrides, error) {
 	if h.cache != nil {
 		if hit, ok := h.cache.Map.Get(CacheKeyAll); ok {
