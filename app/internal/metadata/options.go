@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
 // ---------------------------------------------------------------------------
@@ -181,6 +183,192 @@ func resolveOptionSlugs(raw []byte, slugs []string) map[string]ResolvedOption {
 		return nil
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// The write-path vocabulary gate (#824)
+// ---------------------------------------------------------------------------
+//
+// resolveOptionSlugs above is deliberately tolerant, because it serves
+// values that are ALREADY stored. This is its counterpart on the way
+// in, and it is deliberately strict: a slug that is not a term of the
+// field is refused rather than written.
+//
+// Before this, `PUT country {"value_text":"atlantis"}` returned 200.
+// The slug was stored, never resolved, and rendered as the raw string
+// on every read surface — indistinguishable from a good value until
+// someone looked for the term and found no such country. It was
+// unobservable while `country` and `keywords` shipped with an empty
+// vocabulary (nothing resolved, so a bogus slug looked exactly like a
+// real one); giving them real terms in #820 is what made the gap
+// visible and worth closing.
+//
+// # One rule, two callers
+//
+// [SetAssetFieldValue] and [SetCollectionFieldValue] are separate
+// handlers with separate type checks, and this is exactly the kind of
+// rule that gets copied into both and then fixed in one. So the rule
+// lives here once and both call it. The upload-defaults validator
+// calls it too — see validateDefaultSlugs, which is the same
+// membership question asked with no held value.
+//
+// # What this does NOT gate
+//
+// Every other writer of asset_field_value goes around this handler and
+// is already safe by construction:
+//
+//   - Extraction upserts directly (metaValueWriterAdapter) and resolves
+//     its own slugs first — see resolveVocabularySlug in
+//     app/internal/asset/metadata/vocabulary.go, which stores the term
+//     or stores nothing.
+//   - Upload defaults write via their own if-absent query, and the
+//     default itself was validated against the vocabulary when the
+//     field definition was saved.
+//   - The seeder writes DB-direct (app/internal/seed/runner.go),
+//     deliberately outside the API. Manifest correctness is #807's.
+
+// slugRejection is one slug a write may not store, and the reason.
+//
+// Status is the empty string when the slug is not a term of the field
+// at all, and the option's lifecycle state when the term exists but is
+// no longer offered — the two cases the API reports as
+// `unknown_option` and `option_not_offerable`.
+type slugRejection struct {
+	Slug   string
+	Status OptionStatus
+}
+
+// unknown reports whether the slug is absent from the vocabulary
+// entirely, as opposed to present but retired.
+func (r *slugRejection) unknown() bool { return r.Status == "" }
+
+func (r *slugRejection) Error() string {
+	if r.unknown() {
+		return fmt.Sprintf("%q is not one of this field's options", r.Slug)
+	}
+	return fmt.Sprintf(
+		"option %q is %s and is no longer offered for new values", r.Slug, r.Status)
+}
+
+// vocabularySlugs pulls out the slugs a value puts on a vocabulary
+// field, from the two columns that can carry them.
+//
+// The asset and collection write bodies are distinct generated types
+// with identical members, and a stored row exposes the same two — so
+// this takes the members rather than any one struct, and every caller
+// on both paths uses it for both the incoming value and the held one.
+//
+// Returns nil for every type without a vocabulary, which is what makes
+// [checkVocabulary] a no-op on `text`, `number`, dates, `boolean` and
+// `reference`.
+func vocabularySlugs(fieldType string, valueText *string, valueOptions []string) []string {
+	switch fieldType {
+	case "select", "tree":
+		// `tree` sits with `select` because its value is ONE slug in
+		// value_text, matched across the WHOLE option tree rather than
+		// at the top level: slugs are unique tree-wide, so a bare slug
+		// addresses a node at any depth (2026-07-31 amendment to ADR
+		// 0012). A branch slug is as valid as a leaf — the picker
+		// offers every term at every depth on the stated grounds that
+		// "Europe" is a legitimate answer when the operator does not
+		// know the city (selectableTreeOptions, web/src/lib/fieldOptions.ts).
+		if valueText == nil || *valueText == "" {
+			return nil
+		}
+		return []string{*valueText}
+	case "multi_select":
+		return valueOptions
+	default:
+		return nil
+	}
+}
+
+// checkVocabulary is THE membership rule for a controlled vocabulary,
+// and the only one. Returns nil when every incoming slug may be
+// stored, or the first slug that may not.
+//
+// held is what the record ALREADY stores for this field, and it is the
+// whole of the lifecycle rule:
+//
+//   - An unknown slug is refused always. There is no reading under
+//     which storing it is right.
+//   - A deprecated or archived slug is refused only when the value is
+//     CHANGING to it. Options are never hard-deleted precisely so that
+//     a record carrying a since-retired term keeps working, and a save
+//     that leaves that term where it was must not fail — otherwise
+//     deprecating a term silently freezes every record holding it.
+//     This mirrors the editing surface, which stops OFFERING a retired
+//     term but keeps showing one a record holds (selectableOptions,
+//     web/src/lib/fieldOptions.ts).
+//
+// For multi_select the grandfather test is per-element MEMBERSHIP in
+// the stored set, not equality of the sets: an operator removing three
+// keywords from a set that also contains a grandfathered one is
+// changing the value, but is not choosing the retired term, and
+// refusing that save would make a deprecated keyword impossible to
+// edit around. Set equality would do exactly that.
+//
+// Pass held=nil to ask the strict question — "may this slug be chosen
+// fresh?" — which is what a field default needs.
+//
+// A field with no readable vocabulary refuses every slug, for the same
+// reason an unknown one is refused: a field that offers no terms has
+// no term to choose. That is also what this rule already did on the
+// defaults path before it was shared, so generalising it changes no
+// behaviour there.
+func checkVocabulary(fieldType string, options []byte, incoming, held []string) *slugRejection {
+	if len(incoming) == 0 {
+		return nil
+	}
+	switch fieldType {
+	case "select", "multi_select", "tree":
+	default:
+		return nil
+	}
+
+	grandfathered := make(map[string]struct{}, len(held))
+	for _, s := range held {
+		grandfathered[s] = struct{}{}
+	}
+
+	present := resolveOptionSlugs(options, incoming)
+	for _, s := range incoming {
+		got, found := present[s]
+		if !found {
+			return &slugRejection{Slug: s}
+		}
+		if got.Status == OptionActive {
+			continue
+		}
+		if _, kept := grandfathered[s]; kept {
+			continue
+		}
+		return &slugRejection{Slug: s, Status: got.Status}
+	}
+	return nil
+}
+
+// rejectionBody renders a slugRejection as the 422 body BOTH value
+// writers return. The asset and collection handlers wrap it in their
+// own generated response type — which embeds this one shape — so the
+// two cannot report the same refusal with different words or a
+// different reason code.
+//
+// The `error` string leads with the field's code because it is the
+// only part a human reads, and "atlantis is not one of this field's
+// options" is not actionable without knowing which field said it.
+func rejectionBody(fieldCode string, rej *slugRejection) openapi.FieldValueUnprocessableJSONResponse {
+	reason := openapi.OptionNotOfferable
+	if rej.unknown() {
+		reason = openapi.UnknownOption
+	}
+	code, slug := fieldCode, rej.Slug
+	return openapi.FieldValueUnprocessableJSONResponse{
+		Error:  fmt.Sprintf("%s: %s", fieldCode, rej.Error()),
+		Reason: reason,
+		Field:  &code,
+		Option: &slug,
+	}
 }
 
 // walkOptions visits every option in the document depth-first, passing

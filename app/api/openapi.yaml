@@ -5095,6 +5095,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/FieldValueUnprocessable"
     delete:
       operationId: clearAssetFieldValue
       summary: Clear a field value
@@ -5214,20 +5216,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
-          description: |
-            Field is asset-scoped (cannot be written on a collection)
-            or value type doesn't match the field's declared type.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [error, reason]
-                properties:
-                  error: { type: string }
-                  reason:
-                    type: string
-                    enum: [field_not_for_collection, value_type_mismatch]
-                  field: { type: string, nullable: true }
+          $ref: "#/components/responses/FieldValueUnprocessable"
     delete:
       operationId: clearCollectionFieldValue
       summary: Clear a single field value on a collection
@@ -11491,6 +11480,52 @@ components:
           enum: [manual, api, import, computed]
         set_at: { type: string, format: date-time }
         set_by_user_ref: { type: integer, format: int64, nullable: true }
+    FieldValueUnprocessable:
+      type: object
+      description: |
+        Why a well-formed field-value write could not be stored.
+
+        ONE body shared by the asset and the collection writers (both
+        return it via the FieldValueUnprocessable response), so the two
+        cannot drift into describing the same refusal differently.
+        `field` is the field's code and `option` the slug that was
+        refused, so a client can point at the offending term without
+        parsing `error`.
+      required: [error, reason]
+      properties:
+        error: { type: string }
+        reason:
+          type: string
+          description: |
+            - `field_not_for_collection` — the field is asset-scoped and
+              cannot be written on a collection.
+            - `value_type_mismatch` — the value arrived in the wrong
+              value_* member for the field's declared type.
+            - `unknown_option` — `select` / `multi_select` / `tree`
+              only: the slug is not a term in the field's controlled
+              vocabulary. For `tree` the whole option tree is searched,
+              not just the top level, and a branch slug is as valid as
+              a leaf.
+            - `option_not_offerable` — the slug names a deprecated or
+              archived term that the record did not already hold.
+              Options are never hard-deleted, so a record already
+              carrying a since-retired term keeps saving; only
+              *changing* to one is refused.
+          enum:
+            - field_not_for_collection
+            - value_type_mismatch
+            - unknown_option
+            - option_not_offerable
+        field:
+          type: string
+          nullable: true
+          description: The `code` of the field that refused the value.
+        option:
+          type: string
+          nullable: true
+          description: |
+            The offending slug, for the two vocabulary reasons. Null
+            otherwise.
     CollectionFieldValueWrite:
       type: object
       description: |
@@ -16309,6 +16344,29 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    FieldValueUnprocessable:
+      description: |
+        The request is well-formed but the value cannot be stored.
+
+        ONE response shared by the asset and the collection field-value
+        writers, so the two cannot drift into describing the same
+        refusal differently. `field` is the field's code and `option`
+        the slug that was refused, so a client can point at the
+        offending term without parsing `error`.
+
+        - `field_not_for_collection` — the field is asset-scoped.
+        - `value_type_mismatch` — the value is in the wrong member for
+          the field's declared type.
+        - `unknown_option` — `select` / `multi_select` / `tree` only:
+          the slug is not in the field's controlled vocabulary.
+        - `option_not_offerable` — the slug names a deprecated or
+          archived term the record did not already hold. Terms are
+          never hard-deleted, so a value already carrying a retired
+          slug keeps saving; only *changing* to one is refused.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/FieldValueUnprocessable"
     Forbidden:
       description: Authenticated but missing required capabilities
       content:

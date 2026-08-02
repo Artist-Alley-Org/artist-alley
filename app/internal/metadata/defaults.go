@@ -279,38 +279,35 @@ func ValidateFieldDefault(fieldType string, options []byte, d FieldDefault) erro
 
 // validateDefaultSlugs enforces the vocabulary half: a default may only
 // name terms that exist and are offerable.
+//
+// The membership walk itself is checkVocabulary — the same rule the
+// asset and collection value writers apply (#824). A default asks it
+// with NO held value, which is the strict form: nothing is
+// grandfathered, so a deprecated or archived term is refused outright
+// rather than merely refused as a change. That is the right question
+// here for a reason the value path does not share — a default is not
+// one record's value, it is the value every future asset gets, so
+// there is no existing holder to protect and every reason not to
+// spread a retired term.
+//
+// Only the wording is local: this path can say what a DEFAULT may
+// name, which is more useful to an operator editing a field definition
+// than the generic value-path message.
 func validateDefaultSlugs(fieldType string, options []byte, d FieldDefault) error {
-	var slugs []string
-	switch fieldType {
-	case "select", "tree":
-		if d.ValueText != nil {
-			slugs = []string{*d.ValueText}
-		}
-	case "multi_select":
-		slugs = d.ValueOptions
-	default:
+	slugs := vocabularySlugs(fieldType, d.ValueText, d.ValueOptions)
+	rej := checkVocabulary(fieldType, options, slugs, nil)
+	if rej == nil {
 		return nil
 	}
-	if len(slugs) == 0 {
-		return nil
+	if rej.unknown() {
+		return fmt.Errorf(
+			"default_value: %q is not an option of this field — a default may only name a term the field actually offers",
+			rej.Slug)
 	}
-
-	present := resolveOptionSlugs(options, slugs)
-	for _, s := range slugs {
-		got, found := present[s]
-		if !found {
-			return fmt.Errorf(
-				"default_value: %q is not an option of this field — a default may only name a term the field actually offers",
-				s)
-		}
-		if got.Status != OptionActive {
-			return fmt.Errorf(
-				"default_value: option %q is %s and cannot be a default — "+
-					"defaulting to a retired term would quietly spread it onto every new asset",
-				s, got.Status)
-		}
-	}
-	return nil
+	return fmt.Errorf(
+		"default_value: option %q is %s and cannot be a default — "+
+			"defaulting to a retired term would quietly spread it onto every new asset",
+		rej.Slug, rej.Status)
 }
 
 // hasLiteralPayload reports whether any value_* member is populated.
