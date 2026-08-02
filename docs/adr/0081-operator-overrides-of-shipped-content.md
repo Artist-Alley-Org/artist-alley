@@ -366,3 +366,5 @@ compares the two writers' output byte for byte, which is the guard that stops a 
   anything from ever improving on it — the same inversion by a different route.
 - **§3's precedence sentence is retracted, not merely annotated.** Leaving it standing would be
   worse than the bug it described, because the next person would implement from it.
+
+**Implementation note (2026-08-02):** §1 shipped as specified in PR #857 — per-row `site_text` table keyed `(key, language)`, read-time resolution in the client language store, cache invalidated on write with cross-instance NOTIFY, unknown keys refused against a build-embedded catalogue. The #774 prerequisite was fixed beforehand. §2 (as amended) and §3 remain the open tiles.
