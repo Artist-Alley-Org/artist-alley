@@ -711,6 +711,27 @@ func (h *Handler) SetAssetFieldValue(
 		return nil, fmt.Errorf("metadata: load previous: %w", err)
 	}
 
+	// Controlled-vocabulary gate (#824). Deliberately AFTER the
+	// snapshot rather than beside buildUpsertParams: the lifecycle half
+	// of the rule needs to know what the asset already holds, and prev
+	// is that, already loaded for the history entry. No extra query.
+	//
+	// checkVocabulary is shared with SetCollectionFieldValue — see its
+	// doc for why the rule may not be written twice.
+	var held []string
+	if hadOld {
+		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
+	}
+	if rej := checkVocabulary(
+		fieldRow.Type, fieldRow.Options,
+		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions),
+		held,
+	); rej != nil {
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: rejectionBody(fieldRow.Code, rej),
+		}, nil
+	}
+
 	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
@@ -1164,16 +1185,13 @@ func resolveValueOptions(
 	valueOptions []string,
 	fieldOptions []byte,
 ) map[string]openapi.ResolvedOption {
-	var slugs []string
-	switch fieldType {
-	case "select", "tree":
-		if valueText == nil || *valueText == "" {
-			return nil
-		}
-		slugs = []string{*valueText}
-	case "multi_select":
-		slugs = valueOptions
-	default:
+	// Same extraction the WRITE gate uses (#824). Sharing it is the
+	// point: "which types carry vocabulary slugs, and in which column"
+	// is one fact, and a reader that answered it differently from the
+	// writer is how `tree` ended up written to one column and read from
+	// another (#778).
+	slugs := vocabularySlugs(fieldType, valueText, valueOptions)
+	if len(slugs) == 0 {
 		return nil
 	}
 	hits := resolveOptionSlugs(fieldOptions, slugs)
