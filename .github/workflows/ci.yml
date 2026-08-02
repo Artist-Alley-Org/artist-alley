@@ -250,6 +250,16 @@ jobs:
           docker run --rm -v "${PWD}/app":/src -w /src sqlc/sqlc:latest generate
           (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
 
+      # The embedded site-text catalogue (#794) is a generated artifact
+      # like openapi.gen.go — a copy of the frontend's en.json that the
+      # override write API validates keys against. It has to be
+      # regenerated HERE, not only in scripts/generate.sh: this job does
+      # not call that script, so without this line editing en.json would
+      # leave the server validating against a stale key set and the
+      # porcelain check below would pass on it.
+      - name: Regenerate embedded site-text catalogue
+        run: cp web/src/lib/i18n/en.json app/internal/sitetext/catalogue.json
+
       - name: Regenerate frontend TypeScript schema
         # Use npx -y to fetch openapi-typescript on demand instead
         # of running npm install — the drift check only needs the

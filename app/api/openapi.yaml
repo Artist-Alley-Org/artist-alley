@@ -8702,6 +8702,119 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /site-text:
+    get:
+      operationId: getSiteText
+      summary: Operator overrides of shipped UI strings
+      description: |
+        Every override the operator has written, as `language → i18n key
+        → replacement string` (#794, ADR 0081 §1). The frontend fetches
+        this once at boot and resolves each override over its bundled
+        catalogue at render time.
+
+        ANONYMOUS-READABLE, deliberately. This is the wording of the UI
+        itself — the navbar a logged-out visitor reads is the same
+        navbar everyone else reads, and gating it would mean the
+        operator's copy only appeared after sign-in. There is nothing
+        here a caller could not already read off the rendered page.
+
+        Every language is returned in one response rather than behind a
+        `?language=` filter: the map is small (operators override a
+        handful of strings), it is cached as a single entry, and the
+        client switches locale at runtime — a filtered read would force
+        a refetch on every locale change.
+
+        Values are PLAIN TEXT. They flow through the client's `{var}`
+        interpolation and are never rendered as HTML (ADR 0085 keeps
+        rich text the only HTML surface).
+      tags: [i18n]
+      security: []
+      responses:
+        "200":
+          description: The override map. Empty object when nothing is overridden.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteTextOverrides" }
+
+  /site-text/{key}:
+    put:
+      operationId: setSiteText
+      summary: Override one shipped string for one language
+      description: |
+        Upserts the override for `(key, language)`.
+
+        THE KEY MUST EXIST IN THE SHIPPED CATALOGUE. A key the frontend
+        never renders is refused with 422 naming the key, rather than
+        stored to no effect — ADR 0081 §1's fail-loud rule. The check is
+        enforced here, not only in the admin UI, because a caller
+        holding `system.config.write` can reach this endpoint directly.
+
+        Requires `system.config.write`: rewriting the site's wording is
+        the same kind of act as renaming the site (#718).
+      tags: [i18n]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: The dotted i18n key, e.g. `nav.collections`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SiteTextWrite" }
+      responses:
+        "200":
+          description: The stored override
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteTextEntry" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      operationId: deleteSiteText
+      summary: Revert one string to what ships
+      description: |
+        Removes the override for `(key, language)`; the shipped string
+        renders again on the next read. 404 when nothing was overridden
+        — reverting a string that was never changed is a mistake worth
+        reporting rather than a silent success.
+      tags: [i18n]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: The dotted i18n key, e.g. `nav.collections`.
+          schema: { type: string }
+        - name: language
+          in: query
+          required: true
+          description: Locale code the override was written for.
+          schema: { type: string }
+      responses:
+        "204":
+          description: Override removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /featured:
     get:
       operationId: getPublicFeaturedRail
@@ -9951,6 +10064,65 @@ components:
             outgoing links (e.g., password-reset emails). May be empty
             at install time and filled in later.
           example: https://art.example.com
+    SiteTextOverrides:
+      type: object
+      required: [overrides]
+      description: |
+        Operator overrides of shipped UI strings (#794), nested
+        language → i18n key → replacement.
+
+        Language first because that is the axis every consumer selects
+        on: a client resolves its active locale once and then does key
+        lookups inside it. A language with no overrides is simply
+        absent — there are no empty sub-objects to skip.
+      properties:
+        overrides:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: { type: string }
+          example:
+            en:
+              nav.collections: Libraries
+    SiteTextEntry:
+      type: object
+      required: [key, language, value]
+      properties:
+        key:
+          type: string
+          description: The dotted i18n key this override replaces.
+          example: nav.collections
+        language:
+          type: string
+          description: Locale code the override applies to.
+          example: en
+        value:
+          type: string
+          description: |
+            The replacement string. Plain text — it flows through the
+            client's `{var}` interpolation and is never rendered as
+            HTML.
+          example: Libraries
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    SiteTextWrite:
+      type: object
+      required: [language, value]
+      description: PUT body for /site-text/{key}. The key rides the path.
+      properties:
+        language:
+          type: string
+          minLength: 1
+          example: en
+        value:
+          type: string
+          description: |
+            Replacement string. May be empty — an operator blanking a
+            label is a legitimate edit, and is distinct from reverting
+            (DELETE), which restores the shipped text.
+          example: Libraries
     PublicModeConfig:
       type: object
       required: [enabled]
