@@ -185,3 +185,17 @@ that: pre-#835 VTTs end with a **zero-length cue** (the old writer emitted the c
 *then* broke on `start >= duration`), which addresses ffmpeg's first padding cell, so the
 parser drops any cue whose window is empty. The writer no longer emits one; the filter
 stays for the sheets that already have it.
+
+## Amendment 2026-08-02 — the scrub cycles what the VTT declares, and GIFs are first-class (#836)
+
+The hover scrub's geometry contract is now **cue-driven**: the client fetches
+`sprites.vtt` and cycles exactly the cues it declares, using their `#xywh`
+rects. The per-kind hardcoded grids (10×10 video, 6×6 turntable) are gone from
+the client; a sheet's real frame count is whatever the VTT says, which is what
+lets a short clip stop at its last real frame and an animated GIF's sheet
+(new `preview.gif` kind, #832) join the same code path with no third special
+case. The parser drops empty-window cues — pre-#836 writers emitted a trailing
+zero-length cue on short clips, and dropping it client-side is what fixed
+existing sheets without any re-render. Scrub availability is signalled
+(`scrub_available`) rather than probed, preserving the zero-console-404
+contract this ADR established.
