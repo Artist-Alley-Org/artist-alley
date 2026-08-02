@@ -872,15 +872,31 @@
                 <dd
                   class="min-w-0 break-words text-fg"
                   class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}
+                  class:aa-rich={!!val.html}
                   data-testid="post-field-{f.field_code}"
                 >
                   <!-- href is set only for a value that points at an
                        in-app route (a resolved reference). Everything
                        else renders exactly as it did before the
-                       contract changed — including rich_text, which
-                       stays escaped text until #816 designs its
-                       boundary. -->
-                  {#if val.href}
+                       contract changed. -->
+                  {#if val.html}
+                    <!-- The app's only {@html}, and the only field
+                         type that has any business being one (#816).
+                         `html` is present for rich_text alone, and the
+                         markup in it was reduced to the allowed set by
+                         the server — on write AND on read, so a value
+                         that never met a handler is covered too. See
+                         app/internal/richtext and the note on
+                         FieldDisplay.html. There is deliberately no
+                         client-side sanitiser: one policy, server-side,
+                         or two policies that disagree.
+
+                         whitespace-pre-wrap stays on (see the class
+                         above): these values are typed into a plain
+                         textarea, so most of them are prose whose line
+                         breaks are the only formatting they have. -->
+                    {@html val.html}
+                  {:else if val.href}
                     <a
                       href={val.href}
                       class="underline decoration-fg-muted/40 underline-offset-2 transition-colors hover:decoration-fg"
@@ -969,5 +985,61 @@
   }
   details.aa-collapse > summary::-webkit-details-marker {
     display: none;
+  }
+
+  /* rich_text values (#816). Tailwind's preflight zeroes the margins,
+     list markers and heading sizes these tags ship with, so markup
+     that arrived correctly would still render as one undifferentiated
+     block without this.
+
+     :global is required, not sloppiness: {@html} content is inserted
+     at runtime and never gets Svelte's scope class, so a scoped rule
+     would not match it. Every selector is nested under .aa-rich, which
+     only the one <dd> that renders markup carries, so nothing here can
+     reach the rest of the panel. */
+  .aa-rich :global(p),
+  .aa-rich :global(ul),
+  .aa-rich :global(ol),
+  .aa-rich :global(blockquote) {
+    margin: 0.5em 0;
+  }
+  .aa-rich > :global(:first-child) {
+    margin-top: 0;
+  }
+  .aa-rich > :global(:last-child) {
+    margin-bottom: 0;
+  }
+  .aa-rich :global(ul),
+  .aa-rich :global(ol) {
+    padding-left: 1.25em;
+  }
+  .aa-rich :global(ul) {
+    list-style: disc;
+  }
+  .aa-rich :global(ol) {
+    list-style: decimal;
+  }
+  .aa-rich :global(li) {
+    margin: 0.15em 0;
+  }
+  /* h3/h4 are the deepest headings the policy allows — the panel owns
+     everything above them — so they read as emphasis, not as titles
+     competing with the post's own. */
+  .aa-rich :global(h3),
+  .aa-rich :global(h4) {
+    margin: 0.75em 0 0.25em;
+    font-weight: 600;
+  }
+  .aa-rich :global(h3) {
+    font-size: 1.05em;
+  }
+  .aa-rich :global(blockquote) {
+    border-left: 2px solid var(--color-border, currentColor);
+    padding-left: 0.75em;
+    opacity: 0.85;
+  }
+  .aa-rich :global(a) {
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 </style>

@@ -26,9 +26,9 @@ import { decodeBoolean } from '$lib/fieldOptions';
  * A formatted value, ready to render.
  *
  * `text` is always present and always plain — the caller interpolates
- * it, never `{@html}`s it. `rich_text` deliberately returns its source
- * as escaped text here; rendering it as markup is #816's problem and
- * has a boundary of its own to design.
+ * it, never `{@html}`s it. Markup, for the one type that has any,
+ * arrives on its own `html` property; see the note there for why that
+ * one is safe to render (#816).
  *
  * `href` turns the entry into a link. Present only where the value
  * genuinely points at something in-app (today: a resolved `reference`).
@@ -57,6 +57,34 @@ export interface FieldDisplay {
    * divergence this module was extracted to end.
    */
   parts?: string[];
+  /**
+   * Markup, for the one field type whose value IS markup: `rich_text`.
+   *
+   * Present only for `rich_text`, and only when the value has any
+   * content. A renderer that understands it `{@html}`s it INSTEAD of
+   * `text`; every other type has no `html` and takes the interpolated
+   * branch exactly as before. Additive, same as `parts`.
+   *
+   * ## Why this is safe to `{@html}` (#816)
+   *
+   * Because the SERVER guarantees it. `rich_text` values are run
+   * through app/internal/richtext — one bluemonday policy, applied on
+   * write AND on read — so the HTML in an API response has already
+   * been reduced to `p br strong em ul ol li blockquote h3 h4` and
+   * `a[href]` on http/https/mailto with `rel="noopener noreferrer"`.
+   * The read-side hook is the load-bearing half: it covers values that
+   * never passed a handler (the seed's direct inserts, imports, a
+   * federated peer), so "it was in the database" is never a reason to
+   * trust a string.
+   *
+   * That is a deliberate architectural choice and not an oversight:
+   * there is ONE sanitiser, it is the server's, and shipping a second
+   * one here would be a second policy to disagree with the first. If
+   * the API contract ever stops guaranteeing pre-sanitised HTML, this
+   * field has to go with it — do not paper over it with a client-side
+   * scrub.
+   */
+  html?: string;
 }
 
 /** The `t()` from the lang store, as a parameter. */
@@ -145,12 +173,53 @@ export function displayTreePath(f: AssetFieldValue, slug: string, t: Translate):
   return [...opt.path.slice(0, -1), label].join(' / ');
 }
 
+/**
+ * The plain reading of a `rich_text` value — its words with its tags
+ * taken out.
+ *
+ * This is NOT a sanitiser and must never be used as one. Its output
+ * feeds `FieldDisplay.text`, which is always interpolated, so the only
+ * thing riding on it is legibility: the field count, the "is this set"
+ * test, and any caller that wants a string rather than markup. The
+ * markup itself is made safe on the server (see FieldDisplay.html).
+ *
+ * Tags collapse to a space rather than to nothing, so `<li>one</li>
+ * <li>two</li>` reads as "one two" and not "onetwo".
+ */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;|&#34;/g, '"')
+    .replace(/&apos;|&#39;/g, "'")
+    // &amp; last, so "&amp;lt;" reads as the literal "&lt;" the author
+    // wrote rather than being decoded twice into a "<".
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function formatFieldValue(f: AssetFieldValue, t: Translate): FieldDisplay {
   switch (f.type) {
     case 'text':
     case 'longtext':
-    case 'rich_text':
       return { text: (f.value_text ?? '').trim() };
+    case 'rich_text': {
+      // The only type that renders as markup. The server has already
+      // reduced it to the allowed set (app/internal/richtext) — see
+      // FieldDisplay.html for why that, and not a scrub here, is the
+      // boundary.
+      const html = (f.value_text ?? '').trim();
+      // `text` stays the plain reading of the same value: it is what
+      // the "does this field have a value" test and the field count
+      // are built on, and what a caller that only wants a string gets.
+      // A value that is nothing but stripped markup reads as empty and
+      // is correctly treated as unset.
+      const text = htmlToPlainText(html);
+      return text === '' ? { text: '' } : { text, html };
+    }
     case 'number':
       return { text: f.value_num == null ? '' : String(f.value_num) };
     case 'boolean': {

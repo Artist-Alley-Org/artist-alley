@@ -46,6 +46,30 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A rich-text field renders as formatted text.** `rich_text` is the one field type
+  whose entire purpose is formatting, and it was the one type that lost it: a value of
+  `<p>Cleared for <strong>internal</strong> use.</p>` appeared on the post metadata panel
+  as exactly those characters. Paragraphs, bold, italics, bulleted and numbered lists,
+  block quotes, sub-headings and links now render as what they are (#816). The input is
+  still the plain textarea it was — no editor toolbar in this change.
+
+  What made this worth doing carefully rather than quickly is that it is the first
+  surface in the app that renders stored markup instead of stored text, which is the
+  place cross-site scripting lives. The markup is reduced to a fixed allowed set —
+  `p br strong em ul ol li blockquote h3 h4` and links — by one policy on the server,
+  applied both when a value is saved and again when it is served. Everything outside
+  that set is removed rather than shown as escaped source. Links are limited to
+  `http`, `https` and `mailto`, so a `javascript:` link is dropped, and every surviving
+  link gets `rel="noopener noreferrer"` whether or not its author wrote one.
+
+  Sanitising on the way out as well as on the way in is the deliberate part: not every
+  writer is the API. Seeded datasets, imports, anything edited straight against the
+  database and — later — a value arriving from a federated peer all reach the same
+  column, and none of them pass the endpoint's checks. Doing it on read means a stored
+  value is never trusted, which also means existing values need no migration. Other
+  field types are untouched: `text` and `longtext` still render literally, tags and all.
+  No-spec-impact.
+
 - **A hierarchical field's nested terms are editable now.** `country` ships with 24
   nations under 5 continents, and until now the admin fields screen would show you every
   one of them and let you change none. You could see `gb / United Kingdom` sitting under

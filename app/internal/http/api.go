@@ -86,6 +86,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/requests"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 	"github.com/mscrnt/artist-alley/app/internal/scheduledactions"
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
@@ -4906,7 +4907,12 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 	switch p.Value.Kind {
 	case assetmetadata.ValueKindText:
 		s := p.Value.Text
-		upsert.ValueText = &s
+		// Extraction reads whatever an uploaded file's IPTC/XMP block
+		// says, which is attacker-controlled bytes. No shipped field
+		// wires extraction to a rich_text field today, but
+		// writableFieldTypes permits it, so the write side is closed
+		// here too rather than left to the read side alone (#816).
+		upsert.ValueText = richtext.SanitizeValueText(p.FieldType, &s)
 	case assetmetadata.ValueKindNum:
 		n := p.Value.Num
 		upsert.ValueNum = &n
