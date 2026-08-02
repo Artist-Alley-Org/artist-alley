@@ -293,12 +293,27 @@ export interface FieldValueColumns {
   value_ref?: string | null;
 }
 
+/**
+ * Where a term sits in the document, as child indices from the root.
+ *
+ * `[]` addresses the root list itself — the parent of every top-level
+ * term — and is the destination "top level" in a move. `[2, 0]` is the
+ * first child of the third top-level term.
+ *
+ * An INDEX path, not a slug path, because the editor has to address a
+ * position that does not have a slug yet (where a new sibling goes) and
+ * because reordering has to survive two terms swapping places mid-edit.
+ */
+export type OptionPath = number[];
+
 /** A vocabulary entry plus where it sits in the hierarchy. */
 export interface FlatOption extends FieldOption {
   /** 0 for a top-level term, 1 for its children, and so on. */
   depth: number;
   /** Labels from the root down to and including this term. */
   path: string[];
+  /** Child indices from the root to this term. */
+  indexPath: OptionPath;
 }
 
 /**
@@ -318,13 +333,15 @@ export function flattenOptions(
   opts: FieldOption[],
   depth = 0,
   ancestors: string[] = [],
+  at: OptionPath = [],
 ): FlatOption[] {
   const out: FlatOption[] = [];
-  for (const o of opts) {
+  for (const [i, o] of opts.entries()) {
     const path = [...ancestors, o.label];
-    out.push({ ...o, depth, path });
+    const indexPath = [...at, i];
+    out.push({ ...o, depth, path, indexPath });
     if (o.children?.length) {
-      out.push(...flattenOptions(o.children, depth + 1, path));
+      out.push(...flattenOptions(o.children, depth + 1, path, indexPath));
     }
   }
   return out;
@@ -346,4 +363,219 @@ export function selectableTreeOptions(
   return flattenOptions(all).filter(
     (o) => isSelectable(o) || (heldSet.has(o.value) && isResolvable(o)),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Path-addressed editing (#779 / #825)
+// ---------------------------------------------------------------------------
+//
+// The flat editor addressed every control by its index in the top-level
+// list, which is why a `tree` field's nested terms were displayed but
+// read-only: there was no way to say "the second child of the fifth
+// term". These functions take an OptionPath instead, so one set of
+// controls works at every depth — and a flat vocabulary is just the
+// depth-0 case, so select / multi_select goes through the same code
+// rather than a parallel one that can drift.
+//
+// Every function is pure and returns a NEW array. The editor holds the
+// document in a `$state` rune and reassigns; copying rather than
+// mutating keeps the dirty-check (a serialize + compare against a
+// snapshot) honest, and makes each operation testable without a
+// component.
+
+/** The children list at `path`; `[]` addresses the root list. */
+export function childrenAtPath(opts: FieldOption[], path: OptionPath): FieldOption[] {
+  let cur = opts;
+  for (const i of path) {
+    const next = cur[i];
+    if (!next) return [];
+    cur = next.children ?? [];
+  }
+  return cur;
+}
+
+/** The term at `path`, or undefined. `[]` addresses no term. */
+export function optionAtPath(opts: FieldOption[], path: OptionPath): FieldOption | undefined {
+  if (path.length === 0) return undefined;
+  const parent = childrenAtPath(opts, path.slice(0, -1));
+  return parent[path[path.length - 1]];
+}
+
+/**
+ * True when `path` IS `ancestor` or sits underneath it.
+ *
+ * This is the cycle guard. A nested document cannot represent a cycle,
+ * so the hazard is not an infinite loop server-side — it is the editor
+ * splicing a subtree into itself, which duplicates or orphans every
+ * term below the move. The destination list is filtered with this, so
+ * the move is not merely refused on submit: it is never offered.
+ */
+export function containsPath(ancestor: OptionPath, path: OptionPath): boolean {
+  if (ancestor.length === 0) return true;
+  if (path.length < ancestor.length) return false;
+  return ancestor.every((v, i) => path[i] === v);
+}
+
+/** Replace the term at `path` with `fn(term)`. */
+export function updateOptionAtPath(
+  opts: FieldOption[],
+  path: OptionPath,
+  fn: (o: FieldOption) => FieldOption,
+): FieldOption[] {
+  if (path.length === 0) return opts;
+  const [i, ...rest] = path;
+  const out = [...opts];
+  const cur = out[i];
+  if (!cur) return opts;
+  if (rest.length === 0) {
+    out[i] = fn(cur);
+    return out;
+  }
+  const kids = updateOptionAtPath(cur.children ?? [], rest, fn);
+  out[i] = withChildren(cur, kids);
+  return out;
+}
+
+/** Drop the term at `path`, with its whole subtree, and hand it back. */
+export function removeOptionAtPath(
+  opts: FieldOption[],
+  path: OptionPath,
+): { options: FieldOption[]; removed?: FieldOption } {
+  if (path.length === 0) return { options: opts };
+  const [i, ...rest] = path;
+  const cur = opts[i];
+  if (!cur) return { options: opts };
+  const out = [...opts];
+  if (rest.length === 0) {
+    out.splice(i, 1);
+    return { options: out, removed: cur };
+  }
+  const inner = removeOptionAtPath(cur.children ?? [], rest);
+  out[i] = withChildren(cur, inner.options);
+  return { options: out, removed: inner.removed };
+}
+
+/**
+ * Insert `node` into the children of `parentPath` at `index`
+ * (`Infinity`, or any index past the end, appends). `[]` inserts at the
+ * top level.
+ */
+export function insertOptionAtPath(
+  opts: FieldOption[],
+  parentPath: OptionPath,
+  index: number,
+  node: FieldOption,
+): FieldOption[] {
+  if (parentPath.length === 0) {
+    const out = [...opts];
+    out.splice(clampIndex(index, out.length), 0, node);
+    return out;
+  }
+  return updateOptionAtPath(opts, parentPath, (o) => {
+    const kids = [...(o.children ?? [])];
+    kids.splice(clampIndex(index, kids.length), 0, node);
+    return withChildren(o, kids);
+  });
+}
+
+/**
+ * Swap the term at `path` with the sibling `delta` places away.
+ * Out-of-range is a no-op, so the caller can wire it to a button that
+ * is merely disabled at the ends.
+ */
+export function moveOptionWithinSiblings(
+  opts: FieldOption[],
+  path: OptionPath,
+  delta: number,
+): FieldOption[] {
+  if (path.length === 0) return opts;
+  const parentPath = path.slice(0, -1);
+  const i = path[path.length - 1];
+  const j = i + delta;
+  const siblings = childrenAtPath(opts, parentPath);
+  if (j < 0 || j >= siblings.length || i < 0 || i >= siblings.length) return opts;
+  const next = [...siblings];
+  [next[i], next[j]] = [next[j], next[i]];
+  if (parentPath.length === 0) return next;
+  return updateOptionAtPath(opts, parentPath, (o) => withChildren(o, next));
+}
+
+/**
+ * Move the term at `fromPath`, subtree and all, to the end of
+ * `toParentPath`'s children (`[]` = top level).
+ *
+ * Refuses — by returning the document unchanged — a move into the
+ * node's own subtree, which is the one operation that would corrupt
+ * the document rather than merely reorder it. The UI never offers it
+ * either (see moveDestinations); this is the second lock on the same
+ * door, because the function is exported and reachable without the UI.
+ *
+ * Stored values are untouched by design: a `tree` value is one slug,
+ * unique across the whole vocabulary, so a term keeps resolving
+ * wherever it sits (ADR 0012's 2026-07-31 tree amendment).
+ */
+export function reparentOption(
+  opts: FieldOption[],
+  fromPath: OptionPath,
+  toParentPath: OptionPath,
+): FieldOption[] {
+  if (fromPath.length === 0) return opts;
+  if (containsPath(fromPath, toParentPath)) return opts;
+  const { options: without, removed } = removeOptionAtPath(opts, fromPath);
+  if (!removed) return opts;
+  return insertOptionAtPath(without, adjustAfterRemoval(toParentPath, fromPath), Infinity, removed);
+}
+
+/**
+ * The terms a node at `fromPath` may be moved under — everything
+ * except itself and its own descendants. The caller adds "top level"
+ * separately; the root is always a legal destination.
+ */
+export function moveDestinations(opts: FieldOption[], fromPath: OptionPath): FlatOption[] {
+  return flattenOptions(opts).filter((o) => !containsPath(fromPath, o.indexPath));
+}
+
+/**
+ * Every slug in the vocabulary, at any depth, trimmed.
+ *
+ * The client-side half of the tree-wide uniqueness rule
+ * NormalizeOptionsDoc enforces (app/internal/metadata/options.go). The
+ * server stays the authority — this exists so the operator finds out
+ * before the save, not after it.
+ */
+export function allOptionSlugs(opts: FieldOption[]): Set<string> {
+  return new Set(flattenOptions(opts).map((o) => o.value.trim()).filter(Boolean));
+}
+
+/** Set or clear `children`, dropping the key when the list is empty. */
+function withChildren(o: FieldOption, kids: FieldOption[]): FieldOption {
+  const out = { ...o };
+  if (kids.length) out.children = kids;
+  else delete out.children;
+  return out;
+}
+
+function clampIndex(index: number, len: number): number {
+  if (!Number.isFinite(index) || index > len) return len;
+  return index < 0 ? 0 : index;
+}
+
+/**
+ * Rewrite a path so it still addresses the same position after the term
+ * at `removed` was spliced out.
+ *
+ * Only siblings AFTER the removed term shift, and only at the removed
+ * term's own depth. Getting this wrong is how a reparent lands the node
+ * one slot off — visible only when the destination happens to sit later
+ * in the same list, which is exactly the case nobody tries by hand.
+ */
+function adjustAfterRemoval(path: OptionPath, removed: OptionPath): OptionPath {
+  const depth = removed.length - 1;
+  if (path.length <= depth) return [...path];
+  for (let k = 0; k < depth; k++) {
+    if (path[k] !== removed[k]) return [...path];
+  }
+  const out = [...path];
+  if (out[depth] > removed[depth]) out[depth] -= 1;
+  return out;
 }

@@ -46,6 +46,34 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A hierarchical field's nested terms are editable now.** `country` ships with 24
+  nations under 5 continents, and until now the admin fields screen would show you every
+  one of them and let you change none. You could see `gb / United Kingdom` sitting under
+  `europe` and there was no way to rename it, retire it, move it, or put a term next to
+  it — the controls were wired to the top of the list, so a continent was editable and a
+  country was decoration. Every control now reaches a term at any depth: rename, the
+  deprecate / archive lifecycle with its "use instead" successor, add a term under
+  another, add one beside it, and reorder within a branch (#779, #825).
+
+  Moving a term to a different branch is a **Move** button and a list of destinations,
+  not a drag — a drag between nested lists is unusable with a thumb, and this has to work
+  on a phone. The list leaves out the term you are moving and everything under it, so the
+  one move that would corrupt the vocabulary (dropping a branch inside itself) is never
+  offered rather than refused after the fact.
+
+  Nothing you have already catalogued moves with it. An asset stores the term, not its
+  position, so renaming Europe or moving the United Kingdom under a different continent
+  rewrites zero asset records and every one of them keeps resolving — the new position
+  simply shows up the next time the asset is read. New terms are typed as names, not
+  codes: type "New Zealand", see the `new-zealand` it will be stored as before you commit
+  it, and get told immediately if that term already exists somewhere else in the tree.
+  Flat option lists (`select`, `multi_select`) are unchanged.
+
+  Two saves at once are still caught the way they were: the editor sends the timestamp it
+  loaded, and a field somebody else changed in the meantime — including a field that grew
+  a term because someone typed a new keyword during an upload — comes back as a visible
+  conflict with the choice to reload theirs or overwrite with yours. No-spec-impact.
+
 - **You can now type a keyword in.** The previous entry taught the server to accept a
   keyword it had never seen; nothing in the interface could send it one. Upload's metadata
   panel drew every multi-pick field as a list of tick boxes over the terms that already
