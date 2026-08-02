@@ -23,6 +23,7 @@
     extraction_source?: string;
     extraction_mode?: string;
     options?: Record<string, unknown>;
+    open_vocabulary?: boolean;
     default_value?: FieldDefault | null;
     updated_at: string;
   }
@@ -371,6 +372,7 @@
                   initialLabel={f.label}
                   initialRequired={f.required}
                   initialOptions={f.options}
+                  initialOpenVocabulary={f.open_vocabulary === true}
                   initialUpdatedAt={f.updated_at}
                   onSaved={() => load(true)}
                 />

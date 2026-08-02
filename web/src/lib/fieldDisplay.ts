@@ -39,6 +39,24 @@ import { decodeBoolean } from '$lib/fieldOptions';
 export interface FieldDisplay {
   text: string;
   href?: string;
+  /**
+   * The value's independently-meaningful pieces, for a surface that
+   * can render them as separate things — today, a multi_select's terms
+   * as chips.
+   *
+   * `text` stays authoritative and stays the flat rendering: every
+   * caller that only wants a string keeps working unchanged, and the
+   * "does this field have a value" test is still `text !== ''`. A
+   * renderer that understands `parts` uses it INSTEAD of `text`, never
+   * as well.
+   *
+   * Deliberately optional and deliberately here rather than in a
+   * second formatter. `formatFieldValue` is the one place that knows
+   * how a stored value reads; a parallel `formatFieldValueAsChips`
+   * would be the second copy of that switch, which is exactly the
+   * divergence this module was extracted to end.
+   */
+  parts?: string[];
 }
 
 /** The `t()` from the lang store, as a parameter. */
@@ -175,8 +193,15 @@ export function formatFieldValue(f: AssetFieldValue, t: Translate): FieldDisplay
     }
     case 'select':
       return { text: f.value_text ? displaySlug(f, f.value_text, t) : '' };
-    case 'multi_select':
-      return { text: (f.value_options ?? []).map((s) => displaySlug(f, s, t)).join(', ') };
+    case 'multi_select': {
+      // The one type whose value is a SET, so it is the one type with
+      // parts. Comma-joining them read as one long sentence in which
+      // no individual term was findable, and on an open vocabulary —
+      // where the set is the point — that gets worse the more useful
+      // the field is.
+      const parts = (f.value_options ?? []).map((s) => displaySlug(f, s, t));
+      return { text: parts.join(', '), parts };
+    }
     case 'tree':
       // One slug in value_text, resolved to its full ancestor path so
       // the hierarchy is visible: "Europe / United Kingdom / London".

@@ -1596,7 +1596,9 @@
       "default_override_team": "Team",
       "default_override_add": "Add override",
       "default_override_add_help": "The override uses whatever value is selected above.",
-      "default_override_needs_value": "Pick a value above before adding an override."
+      "default_override_needs_value": "Pick a value above before adding an override.",
+      "open_vocabulary": "Let values add new terms",
+      "open_vocabulary_help": "A value naming a term this field doesn't have creates it instead of being refused. Matching is case-insensitive on the slug or the label, so “Sunset” and “sunset” stay one term."
     },
     "asset_types": {
       "title": "Asset types",
@@ -2673,6 +2675,16 @@
       "uploading": "Uploading {name}… {pct}%",
       "ready": "Cover ready: {name}",
       "error_prefix": "Failed: {error}"
+    },
+    "err_field_values": "Some field values were refused. Fix them below and submit again.",
+    "field_error": {
+      "unknown_option": "{field}: “{option}” isn't one of this field's terms.",
+      "option_not_offerable": "{field}: “{option}” has been retired and can't be chosen.",
+      "value_type_mismatch": "{field}: that value doesn't match the field's type.",
+      "field_not_for_collection": "{field}: this field can't be set here.",
+      "reported": "{field}: {detail}",
+      "generic": "{field}: couldn't be saved (HTTP {status}).",
+      "network": "{field}: couldn't be saved — the request didn't complete."
     }
   },
   "auth": {
@@ -2694,5 +2706,18 @@
     "title": "Posts featuring this asset",
     "heading": "Posts featuring this asset",
     "none": "No posts feature this asset, or none are visible to you."
+  },
+  "vocabulary": {
+    "input_aria": "Terms",
+    "placeholder": "Search or add…",
+    "no_matches": "No matching terms.",
+    "no_terms": "This field has no terms yet.",
+    "create_term": "Create “{term}”",
+    "chip_new": "new",
+    "remove_term": "Remove {label}",
+    "term_retired": "“{label}” has been retired and can't be chosen for a new value.",
+    "term_unknown": "“{term}” isn't one of this field's terms, and this field doesn't accept new ones.",
+    "term_unslugifiable": "A term needs at least one letter or number.",
+    "truncated": "Showing the first {count} — keep typing to narrow it down."
   }
 }

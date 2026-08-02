@@ -21,6 +21,7 @@
     selectableOptions,
     selectableTreeOptions,
   } from '$lib/fieldOptions';
+  import VocabularyCombobox from './VocabularyCombobox.svelte';
 
   interface FieldDef {
     id: string;
@@ -41,6 +42,9 @@
     required: boolean;
     display_group?: string;
     options?: Record<string, unknown>;
+    /** The vocabulary grows from what is written to it (#830).
+        multi_select only — the server ignores it elsewhere. */
+    open_vocabulary?: boolean;
   }
 
   interface Value {
@@ -142,14 +146,41 @@
   const INDENT = '    ';
 </script>
 
+<!-- The field's visible name. A snippet because multi_select's
+     wrapper is a <div> and every other type's is a <label> — see the
+     note at that branch — and the name reads the same in both. -->
+{#snippet fieldName()}
+  <span class="text-sm text-fg-muted">
+    {def.label}
+    {#if def.required}
+      <span class="ml-1 text-xs text-fg-muted" data-testid="required-marker">({t('collection_fields.required_marker')})</span>
+    {/if}
+  </span>
+{/snippet}
+
 <div class="space-y-1">
+  {#if def.type === 'multi_select'}
+    <!--
+      A <div>, not a <label>: the combobox renders a remove button per
+      chip and a <button> is labelable, so the implicit association
+      would bind the field's name to the first chip's remove button
+      rather than to the text box. The control names itself instead.
+    -->
+    <div class="block">
+      {@render fieldName()}
+      <VocabularyCombobox
+        options={allOptions}
+        value={optionsVal}
+        open={def.open_vocabulary === true}
+        {disabled}
+        label={def.label}
+        testid={def.code}
+        onchange={emitMultiSelect}
+      />
+    </div>
+  {:else}
   <label class="block">
-    <span class="text-sm text-fg-muted">
-      {def.label}
-      {#if def.required}
-        <span class="ml-1 text-xs text-fg-muted" data-testid="required-marker">({t('collection_fields.required_marker')})</span>
-      {/if}
-    </span>
+    {@render fieldName()}
 
     {#if def.type === 'text' || def.type === 'longtext' || def.type === 'rich_text'}
       {#if def.type === 'longtext' || def.type === 'rich_text'}
@@ -233,23 +264,6 @@
           </option>
         {/each}
       </select>
-    {:else if def.type === 'multi_select'}
-      <select
-        multiple
-        size={Math.min(selectOptions.length || 4, 6)}
-        value={optionsVal}
-        onchange={(e) => {
-          const sel = Array.from((e.currentTarget as HTMLSelectElement).selectedOptions).map((o) => o.value);
-          emitMultiSelect(sel);
-        }}
-        {disabled}
-        data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {#each selectOptions as opt (opt.value)}
-          <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
-        {/each}
-      </select>
     {:else if def.type === 'reference'}
       <input
         type="text"
@@ -262,4 +276,5 @@
       />
     {/if}
   </label>
+  {/if}
 </div>

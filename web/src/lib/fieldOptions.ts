@@ -129,10 +129,98 @@ export function selectableOptions(
   );
 }
 
+/** The term carrying `slug`, at any depth, or undefined. */
+export function findOption(all: FieldOption[], slug: string): FieldOption | undefined {
+  return flattenOptions(all).find((o) => o.value === slug);
+}
+
 /** Map a stored slug to its display label, falling back to the slug. */
 export function optionLabel(all: FieldOption[], slug: string): string {
-  const hit = flattenOptions(all).find((o) => o.value === slug);
+  const hit = findOption(all, slug);
   return hit ? hit.label : slug;
+}
+
+/**
+ * Free text → the lowercase, hyphenated form a stored option value
+ * takes.
+ *
+ * Mirrors metadata.Slugify (app/internal/metadata/open_vocabulary.go)
+ * exactly — lowercase, every run of non-alphanumerics collapsed to one
+ * hyphen, trimmed, capped at 80 — because an open-vocabulary picker
+ * PREVIEWS the slug the server is about to mint. A preview that does
+ * not match what gets stored is worse than no preview: it tells the
+ * operator a specific untruth about their own catalogue.
+ *
+ * Returns '' for input with no alphanumerics at all. That term has no
+ * addressable form and cannot be created, which is what the server
+ * says too.
+ */
+const SLUG_MAX_LEN = 80;
+export function slugify(s: string): string {
+  const out = s
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (out.length <= SLUG_MAX_LEN) return out;
+  return out.slice(0, SLUG_MAX_LEN).replace(/-+$/g, '');
+}
+
+/** What one free-text term resolves to against a field's vocabulary. */
+export interface TermResolution {
+  /** The existing term it addresses, if any. */
+  option?: FieldOption;
+  /** True when it addresses a term the field already has. */
+  matched: boolean;
+  /**
+   * The slug it would be stored as. The matched term's slug when it
+   * matched; the slugified input when it would be created; '' when the
+   * term has no addressable form at all.
+   */
+  slug: string;
+}
+
+/**
+ * Resolve one typed term the way the server's write path does, so the
+ * picker's preview equals what gets stored.
+ *
+ * Mirrors indexVocabulary + resolveOrMint
+ * (app/internal/metadata/open_vocabulary.go): match on slug OR label,
+ * case-insensitive and whitespace-trimmed, at full depth; then on the
+ * slugified form, which is how `Black & White` and `black_and_white`
+ * both address `black-and-white` without becoming new terms. Archived
+ * terms do not match by name — but their slugs are still taken, so a
+ * term slugifying onto one comes back matched-and-archived rather than
+ * as something creatable. The caller refuses it, which is the answer
+ * the server gives.
+ *
+ * First-writer-wins on a duplicate key, matching the server's `add`.
+ */
+export function resolveTerm(all: FieldOption[], term: string): TermResolution {
+  const trimmed = term.trim();
+  const flat = flattenOptions(all);
+  const matchable = new Map<string, FieldOption>();
+  const taken = new Map<string, FieldOption>();
+  for (const o of flat) {
+    const slug = o.value.trim();
+    if (!slug) continue;
+    const key = slug.toLowerCase();
+    if (!taken.has(key)) taken.set(key, { ...o, value: slug });
+    if (o.status === 'archived') continue;
+    if (!matchable.has(key)) matchable.set(key, o);
+    const label = o.label.trim().toLowerCase();
+    if (label && !matchable.has(label)) matchable.set(label, o);
+  }
+
+  const key = trimmed.toLowerCase();
+  const byName = matchable.get(key);
+  if (byName) return { option: byName, matched: true, slug: byName.value };
+
+  const minted = slugify(trimmed);
+  if (!minted) return { matched: false, slug: '' };
+  const clash = taken.get(minted);
+  if (clash) return { option: clash, matched: true, slug: clash.value };
+  return { matched: false, slug: minted };
 }
 
 /**

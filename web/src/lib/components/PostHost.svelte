@@ -888,6 +888,19 @@
                     >
                       {val.text}
                     </a>
+                  {:else if val.parts}
+                    <!-- A set renders as a set. `parts` is present for
+                         multi_select only; every other type takes the
+                         plain-text branch below and renders exactly as
+                         it did. -->
+                    <span class="flex flex-wrap gap-1">
+                      {#each val.parts as part (part)}
+                        <span
+                          class="inline-flex items-center rounded-full bg-surface-elevated px-2 py-0.5 text-[11px] text-fg"
+                          data-testid="post-field-chip"
+                        >{part}</span>
+                      {/each}
+                    </span>
                   {:else}
                     {val.text}
                   {/if}

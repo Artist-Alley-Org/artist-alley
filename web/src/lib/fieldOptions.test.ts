@@ -14,6 +14,9 @@ import {
   VALUE_COLUMN,
   encodeBoolean,
   decodeBoolean,
+  findOption,
+  slugify,
+  resolveTerm,
 } from './fieldOptions';
 
 describe('normalizeOptions', () => {
@@ -284,5 +287,140 @@ describe('boolean encoding', () => {
   it('round-trips', () => {
     expect(decodeBoolean(encodeBoolean(true))).toBe(true);
     expect(decodeBoolean(encodeBoolean(false))).toBe(false);
+  });
+});
+
+// ── Open vocabularies (#830/#846) ───────────────────────────────────
+//
+// These two functions are the browser's copy of the server's write
+// rule — Slugify and indexVocabulary/resolveOrMint in
+// app/internal/metadata/open_vocabulary.go. They exist so a picker can
+// PREVIEW what a typed term will become, and a preview that disagrees
+// with the write tells the operator a specific untruth about their own
+// catalogue. So these cases are deliberately the server's cases,
+// asserted against the answers the server gives.
+
+describe('slugify', () => {
+  it('lowercases and hyphenates runs of non-alphanumerics', () => {
+    expect(slugify('Macro Detail')).toBe('macro-detail');
+    expect(slugify('Black & White')).toBe('black-white');
+    expect(slugify('black_and_white')).toBe('black-and-white');
+    expect(slugify('  Sunset   Over  Water  ')).toBe('sunset-over-water');
+  });
+
+  it('trims leading and trailing hyphens', () => {
+    expect(slugify('!!!hello!!!')).toBe('hello');
+    expect(slugify('-a-')).toBe('a');
+  });
+
+  it('returns empty for a term with no addressable form', () => {
+    // The server treats this as a term that cannot be created, and so
+    // must the picker — otherwise it offers to create nothing.
+    expect(slugify('!!!')).toBe('');
+    expect(slugify('   ')).toBe('');
+  });
+
+  it('caps at 80 characters without leaving a trailing hyphen', () => {
+    const long = 'a'.repeat(100);
+    expect(slugify(long)).toHaveLength(80);
+    // A cut landing on a separator must not leave the hyphen behind.
+    expect(slugify('a'.repeat(79) + ' tail')).toBe('a'.repeat(79));
+  });
+});
+
+describe('resolveTerm', () => {
+  const vocab = normalizeOptions({
+    values: [
+      { value: 'landscape', label: 'Landscape' },
+      { value: 'black-and-white', label: 'Black and White' },
+      { value: 'sepia', label: 'Sepia', status: 'deprecated' },
+      { value: 'daguerreotype', label: 'Daguerreotype', status: 'archived' },
+    ],
+  });
+
+  it('matches a slug case-insensitively and whitespace-trimmed', () => {
+    // Acceptance: typing "LANDSCAPE" must offer the existing term, not
+    // a second one spelled in capitals.
+    for (const spelling of ['landscape', 'LANDSCAPE', '  Landscape  ']) {
+      const r = resolveTerm(vocab, spelling);
+      expect(r.matched, spelling).toBe(true);
+      expect(r.slug, spelling).toBe('landscape');
+    }
+  });
+
+  it('matches a label the same way', () => {
+    const r = resolveTerm(vocab, 'black and white');
+    expect(r.matched).toBe(true);
+    expect(r.slug).toBe('black-and-white');
+  });
+
+  it('matches a term that merely SLUGIFIES onto an existing one', () => {
+    // The server checks this before minting, which is what stops
+    // "black_and_white" becoming a second term meaning the same thing.
+    const r = resolveTerm(vocab, 'Black_and_White');
+    expect(r.matched).toBe(true);
+    expect(r.slug).toBe('black-and-white');
+  });
+
+  it('matches a deprecated term, and says it is deprecated', () => {
+    // Matching and OFFERING are different questions. The term
+    // resolves; whether it may be chosen is the lifecycle rule's call,
+    // and the caller needs the status to tell "that is not a term" from
+    // "that term was retired".
+    const r = resolveTerm(vocab, 'Sepia');
+    expect(r.matched).toBe(true);
+    expect(r.option?.status).toBe('deprecated');
+  });
+
+  it('does not match an archived term by name, but its slug is taken', () => {
+    // An archived term is one an operator retired hard; typing its
+    // label must not resurrect it, and minting a near-miss would leave
+    // the catalogue with two terms meaning one thing.
+    const r = resolveTerm(vocab, 'Daguerreotype');
+    expect(r.matched).toBe(true);
+    expect(r.option?.status).toBe('archived');
+  });
+
+  it('reports an unmatched term with the slug it would become', () => {
+    const r = resolveTerm(vocab, 'Macro Detail');
+    expect(r.matched).toBe(false);
+    expect(r.slug).toBe('macro-detail');
+  });
+
+  it('reports a term with no addressable form as uncreatable', () => {
+    const r = resolveTerm(vocab, '!!!');
+    expect(r.matched).toBe(false);
+    expect(r.slug).toBe('');
+  });
+
+  it('searches the whole tree, not just the top level', () => {
+    const tree = normalizeOptions({
+      values: [
+        { value: 'europe', label: 'Europe', children: [{ value: 'london', label: 'London' }] },
+      ],
+    });
+    const r = resolveTerm(tree, 'london');
+    expect(r.matched).toBe(true);
+    expect(r.slug).toBe('london');
+  });
+
+  it('resolves nothing against an empty vocabulary', () => {
+    expect(resolveTerm([], 'anything')).toEqual({ matched: false, slug: 'anything' });
+  });
+});
+
+describe('findOption', () => {
+  const vocab = normalizeOptions({
+    values: [{ value: 'europe', label: 'Europe', children: [{ value: 'london', label: 'London' }] }],
+  });
+
+  it('finds a term at any depth', () => {
+    expect(findOption(vocab, 'london')?.label).toBe('London');
+  });
+
+  it('returns undefined for a term the vocabulary does not carry', () => {
+    // Which is how a picker tells a term being CREATED from one that
+    // already exists.
+    expect(findOption(vocab, 'atlantis')).toBeUndefined();
   });
 });
