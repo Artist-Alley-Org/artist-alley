@@ -44,6 +44,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
+	"github.com/mscrnt/artist-alley/app/internal/sitetext"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -187,6 +188,7 @@ type apiServer struct {
 	requestsHTTP      *requests.HTTPHandler
 	featuredHTTP      *featured.HTTPHandler
 	featuredDomain    *featured.Handler
+	sitetextHTTP      *sitetext.HTTPHandler
 	subtitles         *subtitles.Handler
 	subtitlesHTTP     *subtitles.HTTPHandler
 	aieditHTTP        *aiedit.HTTPHandler
@@ -1258,6 +1260,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// system.admin-gated CRUD over the featured_items table.
 	s.featuredDomain = featured.NewHandler(pool, logger)
 	s.featuredHTTP = featured.NewHTTPHandler(s.featuredDomain, logger)
+
+	// Operator overrides of shipped UI strings (#794, ADR 0081 §1).
+	// The whole map lives behind ONE cache entry registered with the
+	// process registry, so a write on this instance invalidates locally
+	// and pg_notifies every peer — the boot payload updates without a
+	// restart on any of them.
+	s.sitetextHTTP = sitetext.NewHTTPHandler(
+		sitetext.NewHandler(pool, sitetext.NewCache(cacheReg, logger), logger),
+		logger,
+	)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -3020,6 +3032,18 @@ func (s *apiServer) ListAdminRequests(ctx context.Context, req openapi.ListAdmin
 }
 func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAdminRequestRequestObject) (openapi.DecideAdminRequestResponseObject, error) {
 	return s.requestsHTTP.DecideAdminRequest(ctx, req)
+}
+
+// --- operator string overrides (#794) -------------------------------------
+
+func (s *apiServer) GetSiteText(ctx context.Context, req openapi.GetSiteTextRequestObject) (openapi.GetSiteTextResponseObject, error) {
+	return s.sitetextHTTP.GetSiteText(ctx, req)
+}
+func (s *apiServer) SetSiteText(ctx context.Context, req openapi.SetSiteTextRequestObject) (openapi.SetSiteTextResponseObject, error) {
+	return s.sitetextHTTP.SetSiteText(ctx, req)
+}
+func (s *apiServer) DeleteSiteText(ctx context.Context, req openapi.DeleteSiteTextRequestObject) (openapi.DeleteSiteTextResponseObject, error) {
+	return s.sitetextHTTP.DeleteSiteText(ctx, req)
 }
 
 // --- featured content (GitHub #341) ---------------------------------------

@@ -1601,6 +1601,27 @@ COMMENT ON COLUMN public.federation_user_keys.rotated_by_user_ref IS 'user.ref o
 
 
 --
+-- Name: field_default_override; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.field_default_override (
+    field_id uuid NOT NULL,
+    team_id uuid NOT NULL,
+    default_value jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by_user_ref bigint
+);
+
+
+--
+-- Name: TABLE field_default_override; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.field_default_override IS 'Per-team override of field_definition.default_value, applied to that team''s uploads. Same document shape and same validation as the field default. Does NOT federate: a field definition travels to a peer, a team does not.';
+
+
+--
 -- Name: field_definition; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1638,24 +1659,17 @@ CREATE TABLE public.field_definition (
 
 
 --
+-- Name: COLUMN field_definition.default_value; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.default_value IS 'Declarative default applied at asset creation. Either {"kind":"literal", value_*: …} or {"kind":"context","context":…} naming a member of a closed server-resolved set. Never an expression. NULL = no default. Validated on write against the field''s type and, for vocabulary types, against the live options document — a default naming a deprecated or archived option is rejected. Federates with the field definition.';
+
+
+--
 -- Name: COLUMN field_definition.open_vocabulary; Type: COMMENT; Schema: public; Owner: -
 --
 
 COMMENT ON COLUMN public.field_definition.open_vocabulary IS 'When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).';
-
-
---
--- Name: field_default_override; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.field_default_override (
-    field_id uuid NOT NULL,
-    team_id uuid NOT NULL,
-    default_value jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_by_user_ref bigint
-);
 
 
 --
@@ -2067,6 +2081,19 @@ CREATE TABLE public.sessions (
     user_agent text,
     origin_server_id uuid,
     impersonated_by_user_ref bigint
+);
+
+
+--
+-- Name: site_text; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.site_text (
+    key text NOT NULL,
+    language text NOT NULL,
+    value text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by_user_ref bigint
 );
 
 
@@ -3106,6 +3133,14 @@ ALTER TABLE ONLY public.sessions
 
 
 --
+-- Name: site_text site_text_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.site_text
+    ADD CONSTRAINT site_text_pkey PRIMARY KEY (key, language);
+
+
+--
 -- Name: storage_objects storage_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4041,6 +4076,13 @@ CREATE INDEX federation_user_keys_retained_idx ON public.federation_user_keys US
 --
 
 CREATE INDEX federation_user_keys_rotated_by_idx ON public.federation_user_keys USING btree (rotated_by_user_ref) WHERE (rotated_by_user_ref IS NOT NULL);
+
+
+--
+-- Name: field_default_override_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_default_override_team_idx ON public.field_default_override USING btree (team_id);
 
 
 --
@@ -5443,6 +5485,22 @@ ALTER TABLE ONLY public.federation_user_keys
 
 
 --
+-- Name: field_default_override field_default_override_field_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.field_default_override
+    ADD CONSTRAINT field_default_override_field_id_fkey FOREIGN KEY (field_id) REFERENCES public.field_definition(id) ON DELETE CASCADE;
+
+
+--
+-- Name: field_default_override field_default_override_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.field_default_override
+    ADD CONSTRAINT field_default_override_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
 -- Name: field_definition field_definition_deprecated_replacement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5632,6 +5690,14 @@ ALTER TABLE ONLY public.search_visual_backfill_run
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_impersonated_by_user_ref_fkey FOREIGN KEY (impersonated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: site_text site_text_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.site_text
+    ADD CONSTRAINT site_text_updated_by_user_ref_fkey FOREIGN KEY (updated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
 
 
 --

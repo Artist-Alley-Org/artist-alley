@@ -54,6 +54,22 @@ export const testIds = {
     errorBanner:      'login-error-banner',
   },
 
+  // Admin → Content → Site text (#794) ------------------------
+  siteText: {
+    page:             'site-text-page',
+    language:         'site-text-language',
+    search:           'site-text-search',
+    changedOnly:      'site-text-changed-only',
+    list:             'site-text-list',
+    row:              'site-text-row',
+    count:            'site-text-count',
+    toast:            'site-text-toast',
+    loadMore:         'site-text-load-more',
+    inputPrefix:      'site-text-input-',   // suffix with the i18n key
+    savePrefix:       'site-text-save-',    // suffix with the i18n key
+    revertPrefix:     'site-text-revert-',  // suffix with the i18n key
+  },
+
   // Generic page surfaces ------------------------------------
   page: {
     errorBoundary:    'page-error-boundary',

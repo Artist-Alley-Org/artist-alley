@@ -609,6 +609,7 @@ type FederationUserKey struct {
 	RotatedByUserRef *int64 `json:"rotated_by_user_ref"`
 }
 
+// Per-team override of field_definition.default_value, applied to that team's uploads. Same document shape and same validation as the field default. Does NOT federate: a field definition travels to a peer, a team does not.
 type FieldDefaultOverride struct {
 	FieldID          pgtype.UUID        `json:"field_id"`
 	TeamID           pgtype.UUID        `json:"team_id"`
@@ -642,7 +643,8 @@ type FieldDefinition struct {
 	SubjectKind             string             `json:"subject_kind"`
 	ExtractionSource        string             `json:"extraction_source"`
 	ExtractionMode          string             `json:"extraction_mode"`
-	DefaultValue            []byte             `json:"default_value"`
+	// Declarative default applied at asset creation. Either {"kind":"literal", value_*: …} or {"kind":"context","context":…} naming a member of a closed server-resolved set. Never an expression. NULL = no default. Validated on write against the field's type and, for vocabulary types, against the live options document — a default naming a deprecated or archived option is rejected. Federates with the field definition.
+	DefaultValue []byte `json:"default_value"`
 	// When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).
 	OpenVocabulary bool `json:"open_vocabulary"`
 }
@@ -900,6 +902,14 @@ type Session struct {
 	UserAgent             *string            `json:"user_agent"`
 	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
 	ImpersonatedByUserRef *int64             `json:"impersonated_by_user_ref"`
+}
+
+type SiteText struct {
+	Key              string             `json:"key"`
+	Language         string             `json:"language"`
+	Value            string             `json:"value"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	UpdatedByUserRef *int64             `json:"updated_by_user_ref"`
 }
 
 type StorageObject struct {

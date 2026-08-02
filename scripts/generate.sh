@@ -7,6 +7,7 @@
 # Outputs:
 #   app/internal/<feature>/queries.sql.go, models.go, db.go  (sqlc)
 #   app/internal/openapi/openapi.gen.go                       (oapi-codegen)
+#   app/internal/sitetext/catalogue.json                      (copy of en.json)
 #
 # Both generators run in throwaway containers — no host toolchain
 # required beyond Docker.
@@ -40,6 +41,20 @@ docker run --rm \
         go install "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${OAPI_CODEGEN_VERSION}" >/dev/null 2>&1
         /go/bin/oapi-codegen -config oapi-codegen.yaml openapi.yaml
     '
+
+step "site-text catalogue: copying the shipped en.json into the Go tree"
+# The write API for operator string overrides refuses any key the
+# shipped catalogue does not contain (ADR 0081 §1: "an override that
+# names a key that does not exist must fail loudly"). The server can
+# only enforce that if it knows the key set — and the catalogue lives in
+# the frontend tree, which the Go binary does not read at runtime.
+#
+# So the catalogue is copied here and `go:embed`ed, exactly like
+# openapi.gen.go: a committed generated artifact, which is what puts it
+# under CI's drift check. Edit en.json without re-running this and the
+# check fails, rather than the server silently validating against a
+# stale key set.
+cp "${ROOT}/web/src/lib/i18n/en.json" "${ROOT}/app/internal/sitetext/catalogue.json"
 
 step "gen-panicshim: regenerating strictservershim.PanicShim from openapi.gen.go"
 "${ROOT}/scripts/gen-panicshim.sh" \
