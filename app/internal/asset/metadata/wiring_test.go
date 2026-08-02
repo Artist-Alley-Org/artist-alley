@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -512,20 +513,24 @@ func TestResolveVocabularySlug_EmptyVocabularyMatchesNothing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The guard that stops `keywords` being wired before #789
+// multi_select extraction: `keywords` finally reachable (#830)
 // ---------------------------------------------------------------------------
 
-// /admin/fields will let an operator point a multi_select field at
-// iptc_keywords. The applier has no value_options column, so the write
-// would go to value_text and the field would stay visibly empty while
-// every log line said it was set. Refuse it loudly instead.
-func TestApply_MultiSelectTargetIsRefused(t *testing.T) {
+// This used to be TestApply_MultiSelectTargetIsRefused, which asserted
+// that wiring `keywords` to iptc_keywords produced a failure row naming
+// the type — the guard standing in for a value_options column the
+// extraction path did not have. It has one now, so the refusal moved:
+// a multi_select is written, and what gets refused is an unmatched term
+// on a CLOSED vocabulary.
+func TestApply_ClosedMultiSelectRefusesUnknownTerms(t *testing.T) {
 	fid := uuid.New()
 	writer, failures := &stubWriter{}, &stubFailures{}
 	a := NewApplier(
 		stubConfig{cfg: []FieldExtractionConfig{{
 			FieldID: fid, Source: FieldIPTCKeywords,
 			Mode: ExtractionModeReplace, FieldType: "multi_select",
+			Options: []byte(`{"values":[{"value":"landscape","label":"Landscape"}]}`),
+			// OpenVocabulary deliberately false.
 		}}},
 		stubValues{}, writer, failures,
 	)
@@ -538,17 +543,133 @@ func TestApply_MultiSelectTargetIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
+	// One unmatched term fails the WHOLE set: a half-written keyword
+	// list looks complete on the asset page.
 	if len(writer.calls) != 0 {
-		t.Fatalf("a multi_select field was written as text: %q", writer.calls[0].Value.Text)
+		t.Fatalf("a closed multi_select was written with an unknown term: %+v", writer.calls[0].Value.Options)
 	}
 	if len(failures.calls) != 1 {
 		t.Fatalf("failure rows = %d, want 1", len(failures.calls))
 	}
-	if !strings.Contains(failures.calls[0].Message, "multi_select") {
-		t.Errorf("message %q does not name the offending type", failures.calls[0].Message)
+	if !strings.Contains(failures.calls[0].Message, `"nature"`) {
+		t.Errorf("message %q does not name the term that did not resolve", failures.calls[0].Message)
 	}
 	if len(summary.FieldsSet) != 0 {
 		t.Errorf("summary claims fields were set: %+v", summary.FieldsSet)
+	}
+}
+
+// The comma-joined string IPTC 2:25 arrives as becomes a set, each
+// term resolved against the vocabulary by label or slug.
+func TestApply_MultiSelectSplitsAndResolves(t *testing.T) {
+	fid := uuid.New()
+	writer := &stubWriter{}
+	a := NewApplier(
+		stubConfig{cfg: []FieldExtractionConfig{{
+			FieldID: fid, Source: FieldIPTCKeywords,
+			Mode: ExtractionModeReplace, FieldType: "multi_select",
+			Options: []byte(`{"values":[
+				{"value":"landscape","label":"Landscape"},
+				{"value":"black-and-white","label":"Black and White"}]}`),
+		}}},
+		stubValues{}, writer, &stubFailures{},
+	)
+	if _, err := a.Apply(context.Background(), AssetRef{ID: uuid.New()}, Result{
+		Format: "image/jpeg",
+		Fields: map[CanonicalField]Value{
+			// Label case and spacing both differ from the stored slug.
+			FieldIPTCKeywords: {Kind: ValueKindText, Text: "Landscape,  black and white "},
+		},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(writer.calls) != 1 {
+		t.Fatalf("writes = %d, want 1", len(writer.calls))
+	}
+	got := writer.calls[0].Value
+	if got.Kind != ValueKindTextList {
+		t.Fatalf("value kind = %v, want ValueKindTextList", got.Kind)
+	}
+	want := []string{"landscape", "black-and-white"}
+	if !slices.Equal(got.Options, want) {
+		t.Errorf("options = %v, want %v (canonical slugs, not the file's labels)", got.Options, want)
+	}
+}
+
+// An open field passes the unmatched term through AS THE FILE WROTE IT
+// so the writer can mint it with a readable label. Matched terms still
+// arrive canonicalised.
+func TestApply_OpenMultiSelectPassesUnmatchedTermsThrough(t *testing.T) {
+	fid := uuid.New()
+	writer, failures := &stubWriter{}, &stubFailures{}
+	a := NewApplier(
+		stubConfig{cfg: []FieldExtractionConfig{{
+			FieldID: fid, Source: FieldIPTCKeywords,
+			Mode: ExtractionModeReplace, FieldType: "multi_select",
+			Options:        []byte(`{"values":[{"value":"landscape","label":"Landscape"}]}`),
+			OpenVocabulary: true,
+		}}},
+		stubValues{}, writer, failures,
+	)
+	if _, err := a.Apply(context.Background(), AssetRef{ID: uuid.New()}, Result{
+		Format: "image/jpeg",
+		Fields: map[CanonicalField]Value{
+			// "Sunset" twice in two spellings is ONE term.
+			FieldIPTCKeywords: {Kind: ValueKindText, Text: "Landscape, Sunset Over Water, sunset over water"},
+		},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(failures.calls) != 0 {
+		t.Fatalf("an open vocabulary produced a failure row: %+v", failures.calls[0])
+	}
+	if len(writer.calls) != 1 {
+		t.Fatalf("writes = %d, want 1", len(writer.calls))
+	}
+	got := writer.calls[0]
+	if !got.OpenVocabulary {
+		t.Error("the open flag did not reach the writer, which is what tells it to mint")
+	}
+	want := []string{"landscape", "Sunset Over Water"}
+	if !slices.Equal(got.Value.Options, want) {
+		t.Errorf("options = %v, want %v", got.Value.Options, want)
+	}
+}
+
+// Second pass over the same file writes nothing: the set the asset
+// holds and the set the file carries are the same set, in whatever
+// order and whatever casing.
+func TestApply_MultiSelectSecondPassIsNoOp(t *testing.T) {
+	fid := uuid.New()
+	writer := &stubWriter{}
+	a := NewApplier(
+		stubConfig{cfg: []FieldExtractionConfig{{
+			FieldID: fid, Source: FieldIPTCKeywords,
+			Mode: ExtractionModeReplace, FieldType: "multi_select",
+			Options:        []byte(`{"values":[{"value":"landscape","label":"Landscape"}]}`),
+			OpenVocabulary: true,
+		}}},
+		// What a first pass left behind, in the other order.
+		stubValues{byField: map[uuid.UUID]FieldValueSnapshot{fid: {
+			ValueOptions: []string{"sunset-over-water", "landscape"},
+			SetBy:        "iptc",
+		}}},
+		writer, &stubFailures{},
+	)
+	summary, err := a.Apply(context.Background(), AssetRef{ID: uuid.New()}, Result{
+		Format: "image/jpeg",
+		Fields: map[CanonicalField]Value{
+			FieldIPTCKeywords: {Kind: ValueKindText, Text: "Landscape, Sunset Over Water"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(writer.calls) != 0 {
+		t.Fatalf("the second pass rewrote an unchanged set: %+v", writer.calls[0].Value.Options)
+	}
+	if len(summary.FieldsSkippedNoChange) != 1 {
+		t.Errorf("skipped-no-change = %v, want the one field", summary.FieldsSkippedNoChange)
 	}
 }
 
@@ -586,12 +707,15 @@ func TestShippedWiring_NamesRealCanonicalFields(t *testing.T) {
 		"copyright":    FieldXMPRights,
 		"credit":       FieldIPTCCredit,
 		"country":      FieldIPTCCountry,
+		// Wired by 00028 (#830), once the applier could write a set.
+		"keywords": FieldIPTCKeywords,
 	}
 	want := map[string]string{
 		"capture_date": "capture_datetime",
 		"copyright":    "xmp_rights",
 		"credit":       "iptc_credit",
 		"country":      "iptc_country",
+		"keywords":     "iptc_keywords",
 	}
 	for code, canonical := range shipped {
 		if string(canonical) != want[code] {

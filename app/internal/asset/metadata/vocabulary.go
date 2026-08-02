@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -145,29 +146,84 @@ func walkVocabulary(raw []json.RawMessage, want string) (string, bool) {
 	return "", false
 }
 
+// resolveTermList splits one joined multi-value string and resolves
+// each term against the field's vocabulary.
+//
+// Returns the terms in the form the writer needs — the CANONICAL SLUG
+// where a term matched, the ORIGINAL TEXT where it did not — and,
+// separately, the ones that did not match.
+//
+// Passing unmatched text through rather than dropping it is what lets
+// the writer create the term with a usable label: `sunset` is the slug
+// but "Sunset" is what the photographer wrote, and a vocabulary of
+// hyphenated lowercase slugs with no labels is a vocabulary nobody
+// wants to read. The writer re-resolves every entry under the row lock
+// anyway (a canonical slug matches itself), so nothing here has to be
+// right — only useful.
+//
+// Duplicates are collapsed on the resolved form, so "Sunset, sunset"
+// is one term.
+func resolveTermList(optionsJSON []byte, joined string) (terms, unresolved []string) {
+	seen := make(map[string]struct{})
+	for _, raw := range splitTermList(joined) {
+		entry := raw
+		if slug, ok := resolveVocabularySlug(optionsJSON, raw); ok {
+			entry = slug
+		} else {
+			unresolved = append(unresolved, raw)
+		}
+		key := slugifyTerm(entry)
+		if key == "" {
+			// No addressable form — a term of "!!!" is not a term.
+			continue
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		terms = append(terms, entry)
+	}
+	return terms, unresolved
+}
+
+// quoteTerms renders a term list for a failure message. The operator
+// reading /admin/extraction-failures needs to see WHICH terms did not
+// resolve, not merely that some did not.
+func quoteTerms(terms []string) string {
+	quoted := make([]string, 0, len(terms))
+	for _, t := range terms {
+		quoted = append(quoted, strconv.Quote(t))
+	}
+	return strings.Join(quoted, ", ")
+}
+
 // ---------------------------------------------------------------------------
 // Which field types extraction can write at all
 // ---------------------------------------------------------------------------
 
-// Field types the applier is able to write. The list is short because
-// [FieldValueSnapshot] and [WriteAssetFieldValueParams] carry
-// value_text / value_num / value_date and nothing else — there is no
-// value_options and no value_ref anywhere in the extraction path.
+// Field types the applier is able to write. Everything except
+// `reference`, whose value is another asset's UUID — a thing no file's
+// metadata can name, since the id is ours and not the file's.
 //
 // This is enforced rather than assumed because the gap is invisible
-// from the wiring surface: /admin/fields will happily accept
-// `iptc_keywords` as the extraction_source of the multi_select
-// `keywords` field, and the pipeline would then run, validate, and
-// write... a text value into a field whose reader looks at
-// value_options. The result is a field that stays empty while every
-// log line says it was set.
+// from the wiring surface: /admin/fields will happily accept a
+// canonical source on a field the applier cannot write, and the
+// pipeline would then run, validate, and write... a text value into a
+// column the field's reader never looks at. The result is a field that
+// stays empty while every log line says it was set.
 //
 // So a wired-but-unwritable field is refused loudly, at apply time,
-// with a failure row naming the type. `keywords` is exactly this case
-// and is the reason the type is checked: its IPTC mapping is real
-// (2:25 → iptc_keywords, the mapping ResourceSpace ships too) and it
-// stays unwired until #789 gives the applier a multi-value column to
-// put it in.
+// with a failure row naming the type.
+//
+// `multi_select` was on the wrong side of this line until #830.
+// `keywords` is the case that mattered — its IPTC mapping is real
+// (2:25 → iptc_keywords, the mapping ResourceSpace ships too) — and it
+// stayed unwired because [FieldValueSnapshot] and
+// [WriteAssetFieldValueParams] carried value_text / value_num /
+// value_date and there was no path from extraction to value_options at
+// all. There is now: ValueKindTextList carries the set, the applier
+// splits IPTC's comma-joined string into it, and each term resolves
+// against the field's vocabulary exactly as a select's would.
 var writableFieldTypes = map[string]bool{
 	"text":      true,
 	"longtext":  true,
@@ -176,16 +232,79 @@ var writableFieldTypes = map[string]bool{
 	"boolean":   true,
 	"date":      true,
 	"datetime":  true,
-	// select + tree hold ONE vocabulary slug in value_text, so they
-	// are writable — via resolveVocabularySlug, never verbatim.
-	"select": true,
-	"tree":   true,
+	// select + tree hold ONE vocabulary slug in value_text;
+	// multi_select holds a SET of them in value_options. All three go
+	// through resolveVocabularySlug, never verbatim.
+	"select":       true,
+	"tree":         true,
+	"multi_select": true,
 }
 
 // vocabularyFieldTypes are the writable types whose value is a
 // vocabulary slug rather than free text, and which therefore must be
 // resolved before writing.
 var vocabularyFieldTypes = map[string]bool{
-	"select": true,
-	"tree":   true,
+	"select":       true,
+	"tree":         true,
+	"multi_select": true,
+}
+
+// keywordSeparator is what a repeatable IPTC dataset arrives joined
+// on. FieldIPTCKeywords is DEFINED as 2:25's repeats joined with ", "
+// (app/internal/asset/metadata/iptc/iptc.go), which makes splitting it
+// back apart the applier's job rather than a guess — the extractor
+// chose the separator and this is the other end of that choice.
+//
+// Split on the comma alone rather than the comma-space, so a file
+// written "a,b" by some other tool splits the same way. The trim
+// afterwards absorbs the space either way.
+const keywordSeparator = ","
+
+// splitTermList turns one joined multi-value string into its terms:
+// split, trimmed, empties dropped. Order is preserved; duplicates are
+// NOT removed here (resolution collapses them, since two spellings of
+// one term resolve to one slug).
+func splitTermList(s string) []string {
+	parts := strings.Split(s, keywordSeparator)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// slugifyTerm is metadata.Slugify, duplicated for the same reason
+// SetByDefault and vocabularyEntry are: the exported original lives in
+// the API-facing metadata package, which sits ABOVE this one.
+//
+// It is used ONLY to predict what slug an unresolved term will become,
+// so the equal-value short-circuit can compare a term the vocabulary
+// does not have yet against the slug a previous pass minted for it.
+// The authoritative mint is metadata.EnsureOpenVocabularyTerms, under
+// the row lock; if the two ever disagreed the cost would be one
+// redundant write per extraction pass, not a wrong value.
+func slugifyTerm(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastHyphen := false
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastHyphen = false
+		default:
+			if !lastHyphen && b.Len() > 0 {
+				b.WriteByte('-')
+				lastHyphen = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	const slugMaxLen = 80
+	if len(out) > slugMaxLen {
+		out = strings.Trim(out[:slugMaxLen], "-")
+	}
+	return out
 }

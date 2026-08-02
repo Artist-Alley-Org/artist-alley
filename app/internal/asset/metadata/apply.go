@@ -50,8 +50,17 @@ type FieldValueSnapshot struct {
 	// extraction, which is the inverse of ADR 0081 §3, on the 13 of 15
 	// live field definitions that use skip_if_set.
 	SetBy string
-	// Multi-value / ref fields aren't covered by Phase 1.18.A-2
-	// extractors (no EXIF tags map to them); shape stays minimal.
+	// ValueOptions is the multi_select set — asset_field_value's
+	// value_options column. Added with #830, which is what gave
+	// extraction a path to that column at all; before it, the snapshot
+	// of a multi_select field read back as entirely empty and every
+	// pass looked like a first pass.
+	//
+	// Presence of a multi-value value is a NON-EMPTY ValueOptions, not
+	// a non-nil one: the row can exist with an empty array.
+	ValueOptions []string
+	// `reference` still isn't covered — no file's metadata names one of
+	// our asset ids — so value_ref stays off this shape.
 }
 
 // SetByDefault is the provenance an upload default writes. Mirrors
@@ -67,9 +76,20 @@ const SetByDefault = "default"
 // not overwrite anything else.
 func (s FieldValueSnapshot) isPlaceholder() bool { return s.SetBy == SetByDefault }
 
-// FieldValueWriter persists ONE extraction-derived value. Production
-// implementation wraps the metadata package's UpsertAssetFieldValue
-// + AppendAssetFieldValueHistory in one tx.
+// FieldValueWriter persists ONE extraction-derived value.
+//
+// The production implementation (metaValueWriterAdapter, in
+// app/internal/http) runs the upsert, the audit-history append, and —
+// on an open vocabulary — the term creation in ONE transaction. All
+// three, because they are one fact: a value arrived, here is what it
+// was, and here is the term it needed.
+//
+// The history append is new with #830. This doc claimed it before,
+// while the adapter wrote no history at all, so every value extraction
+// set had a blank audit trail — and the audit panel is the only place
+// an operator can see that `iptc` and not a person put a keyword on an
+// asset. That gap was invisible precisely because the comment said
+// otherwise.
 type FieldValueWriter interface {
 	WriteAssetFieldValue(ctx context.Context, p WriteAssetFieldValueParams) error
 }
@@ -81,6 +101,12 @@ type WriteAssetFieldValueParams struct {
 	FieldID uuid.UUID
 	Value   Value
 
+	// FieldType is field_definition.type, carried so the writer can
+	// encode the audit-history row in the same shape the API path
+	// does — that shape leads with the field's type, and the writer
+	// has no other way to know it.
+	FieldType string
+
 	// SetBy is the NAME OF THE EXTRACTOR that produced this value —
 	// "exif" / "iptc" / "xmp" / "pdf" / "raw", from
 	// [Result.FieldSources], or [SetByExtraction] when the Result
@@ -91,6 +117,16 @@ type WriteAssetFieldValueParams struct {
 	// makes it load-bearing rather than decorative: a value's
 	// provenance decides whether a later extraction may replace it.
 	SetBy string
+
+	// OpenVocabulary mirrors [FieldExtractionConfig.OpenVocabulary] and
+	// tells the writer how to read an entry in Value.Options it cannot
+	// find in the field's vocabulary: as a term to create (true), or as
+	// a slug that must already exist (false).
+	//
+	// The applier has already refused the closed-field miss by the time
+	// this is set, so in practice false means "every entry is a
+	// resolved slug, store them verbatim".
+	OpenVocabulary bool
 }
 
 // FailureWriter records one extraction_failure row for the admin
@@ -159,8 +195,8 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 		if fc.FieldType != "" && !writableFieldTypes[fc.FieldType] {
 			a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
 				fmt.Sprintf("field type %q cannot be written by extraction: "+
-					"the applier carries value_text / value_num / value_date only, "+
-					"and a %s value needs a column none of those is",
+					"a %s value names another asset by id, and an id is ours "+
+					"rather than something a file's metadata can carry",
 					fc.FieldType, fc.FieldType))
 			continue
 		}
@@ -177,6 +213,14 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 		// is written — a label we have no term for is not a value, and
 		// storing it raw would produce a row that renders plausibly
 		// and addresses nothing. See vocabulary.go.
+		//
+		// Unless the field is OPEN, in which case a term we have no
+		// match for is a term we do not have YET, and the write creates
+		// it (#830). The creation itself happens under the row lock in
+		// the writer, not here: this loop holds a snapshot of the
+		// options document taken when the config list was read, and no
+		// transaction, so it can PROPOSE a term but is in no position
+		// to mint one.
 		if vocabularyFieldTypes[fc.FieldType] {
 			if normalized.Kind != ValueKindText {
 				a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
@@ -184,15 +228,42 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 						"but the extracted value is not text", fc.FieldType))
 				continue
 			}
-			slug, ok := resolveVocabularySlug(fc.Options, normalized.Text)
-			if !ok {
-				a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
-					fmt.Sprintf("no term in this field's vocabulary matches %q "+
-						"(matching is on label or slug, case-insensitive); "+
-						"add the term or correct the file", normalized.Text))
-				continue
+			if fc.FieldType == "multi_select" {
+				terms, unresolved := resolveTermList(fc.Options, normalized.Text)
+				if len(terms) == 0 {
+					a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
+						fmt.Sprintf("%q has no terms once split on %q",
+							normalized.Text, keywordSeparator))
+					continue
+				}
+				if len(unresolved) > 0 && !fc.OpenVocabulary {
+					// One unmatched term fails the whole set rather than
+					// storing a partial one, which is what select and tree
+					// already do with their single term. A half-written
+					// keyword set is worse than none: it looks complete on
+					// the asset page, and the operator has no way to tell
+					// which terms the file carried and we dropped.
+					a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
+						fmt.Sprintf("no term in this field's vocabulary matches %s "+
+							"(matching is on label or slug, case-insensitive); "+
+							"add the terms, open the field's vocabulary, or "+
+							"correct the file", quoteTerms(unresolved)))
+					continue
+				}
+				normalized.Kind = ValueKindTextList
+				normalized.Options = terms
+				normalized.Text = ""
+			} else {
+				slug, ok := resolveVocabularySlug(fc.Options, normalized.Text)
+				if !ok {
+					a.reject(ctx, &summary, asset, result.Format, fc.Source, extracted,
+						fmt.Sprintf("no term in this field's vocabulary matches %q "+
+							"(matching is on label or slug, case-insensitive); "+
+							"add the term or correct the file", normalized.Text))
+					continue
+				}
+				normalized.Text = slug
 			}
-			normalized.Text = slug
 		}
 
 		// Read current value (for equal-value + skip_if_set checks).
@@ -244,9 +315,16 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 		// fields — which 1.18.A-2 doesn't ship).
 		if a.writer != nil {
 			if err := a.writer.WriteAssetFieldValue(ctx, WriteAssetFieldValueParams{
-				AssetID: asset.ID,
-				FieldID: fc.FieldID,
-				Value:   normalized,
+				AssetID:   asset.ID,
+				FieldID:   fc.FieldID,
+				FieldType: fc.FieldType,
+				Value:     normalized,
+				// Carried through so the writer knows whether the
+				// unmatched entries in Value.Options are terms to
+				// create or a bug. The applier already refused the
+				// closed case above; passing the flag rather than
+				// re-deriving it keeps one answer to the question.
+				OpenVocabulary: fc.OpenVocabulary,
 				// The provenance of the value being written, from the
 				// extractor that produced it (#799). This was the
 				// constant "exif" — five extractors fanning into one
@@ -270,8 +348,10 @@ func (a *DefaultApplier) Apply(ctx context.Context, asset AssetRef, result Resul
 // operator can see, at /admin/extraction-failures, both the value that
 // was in the file and why it did not become a value on the asset.
 //
-// The three callers are the validator, the unwritable-type refusal and
-// the unresolved-vocabulary-term drop. They share a shape — a field
+// The callers are the validator, the unwritable-type refusal, the
+// unresolved-vocabulary-term drop (one term for select / tree, the
+// whole set for a closed multi_select), and the multi-value string that
+// contained no terms at all. They share a shape — a field
 // the operator deliberately wired, carrying a value the file
 // deliberately supplied, that we are declining to store — and the
 // operator needs the same information about all three. error_kind is
@@ -322,6 +402,19 @@ func valuesEqual(current FieldValueSnapshot, extracted Value) bool {
 		return current.ValueNum != nil && *current.ValueNum == extracted.Num
 	case ValueKindTime:
 		return current.ValueDate != nil && current.ValueDate.Truncate(time.Second).Equal(extracted.Time.Truncate(time.Second))
+	case ValueKindTextList:
+		// SET equality, not sequence equality: value_options is a set
+		// of terms and "portrait, studio" is the same value as
+		// "studio, portrait". Comparing in order would make every
+		// backfill pass rewrite every keyword row whose file happened
+		// to list them differently.
+		//
+		// Both sides are slugified before comparing so an unresolved
+		// term compares against the slug a previous pass minted for it
+		// — see slugifyTerm. Without that, a stale extraction-config
+		// cache would make the second pass over the same file look
+		// like a change and write again.
+		return equalTermSets(current.ValueOptions, extracted.Options)
 	case ValueKindGPS:
 		// GPS stores in the field-value system as two numeric
 		// fields (lat + lon) on separate field-definitions; the
@@ -334,6 +427,37 @@ func valuesEqual(current FieldValueSnapshot, extracted Value) bool {
 	return false
 }
 
+// equalTermSets reports whether two term lists denote the same set,
+// comparing on the slug each term resolves (or would resolve) to.
+func equalTermSets(stored, incoming []string) bool {
+	if len(stored) == 0 || len(incoming) == 0 {
+		// An absent value is not equal to anything, including an empty
+		// incoming set — which the applier does not produce anyway.
+		return false
+	}
+	have := make(map[string]struct{}, len(stored))
+	for _, s := range stored {
+		if k := slugifyTerm(s); k != "" {
+			have[k] = struct{}{}
+		}
+	}
+	want := make(map[string]struct{}, len(incoming))
+	for _, s := range incoming {
+		if k := slugifyTerm(s); k != "" {
+			want[k] = struct{}{}
+		}
+	}
+	if len(have) != len(want) {
+		return false
+	}
+	for k := range want {
+		if _, ok := have[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // rawDisplayValue returns a JSON-marshallable view of the
 // extracted value for the extraction_failure.raw_value column.
 // Operators see this in the admin review queue so they can decide
@@ -342,6 +466,8 @@ func rawDisplayValue(v Value) any {
 	switch v.Kind {
 	case ValueKindText:
 		return v.Text
+	case ValueKindTextList:
+		return v.Options
 	case ValueKindNum:
 		return v.Num
 	case ValueKindTime:

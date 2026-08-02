@@ -11070,6 +11070,23 @@ components:
             the WHOLE tree, not merely within a level — the server
             rejects a duplicate at any depth — which is what lets a
             stored value be a single leaf slug rather than a path.
+        open_vocabulary:
+          type: boolean
+          description: |
+            When true, a value naming a term this field does not have
+            CREATES the term instead of being refused: the text becomes
+            the label and its slugified form becomes the stored value.
+            When false (the default) an unknown term is a 422.
+
+            Matching before creating is on slug OR label,
+            case-insensitive and whitespace-trimmed, so `Character`,
+            `character` and ` character ` all name one term rather than
+            three.
+
+            Honoured for `multi_select` only. The flag is legal on any
+            type and inert on the rest — opening `select` or `tree` is a
+            later decision, and `tree` additionally has to say WHERE in
+            the hierarchy a new term lands.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:
@@ -11189,6 +11206,13 @@ components:
           default: asset
           description: "What the field describes. Defaults to asset for backwards compatibility."
         options: { type: object, additionalProperties: true }
+        open_vocabulary:
+          type: boolean
+          default: false
+          description: |
+            Let values create terms this field does not have yet. See
+            FieldDefinition.open_vocabulary — honoured for
+            `multi_select` only, inert elsewhere.
         required: { type: boolean, default: false }
         searchable: { type: boolean, default: true }
         applies_to:
@@ -11253,6 +11277,12 @@ components:
             documents written before options had a lifecycle
             round-trip unchanged. Options are never hard-deleted —
             retire them with `deprecated` or `archived`.
+        open_vocabulary:
+          type: boolean
+          description: |
+            Let values create terms this field does not have yet. See
+            FieldDefinition.open_vocabulary — honoured for
+            `multi_select` only, inert elsewhere.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:

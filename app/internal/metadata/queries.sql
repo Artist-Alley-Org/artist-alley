@@ -19,7 +19,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -38,7 +39,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -51,7 +53,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -60,7 +63,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode, default_value
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -68,14 +72,16 @@ INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, read_capability, write_capability,
     display_order, display_group, status,
-    created_by_user_ref, updated_by_user_ref, subject_kind, default_value
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)
+    created_by_user_ref, updated_by_user_ref, subject_kind, default_value,
+    open_vocabulary
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16,$17)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode, default_value;
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -93,6 +99,7 @@ UPDATE field_definition SET
     write_capability          = COALESCE(sqlc.narg('write_capability'),          write_capability),
     display_order             = COALESCE(sqlc.narg('display_order'),             display_order),
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
+    open_vocabulary           = COALESCE(sqlc.narg('open_vocabulary'),           open_vocabulary),
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
@@ -110,7 +117,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode, default_value;
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -135,7 +143,38 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode, default_value;
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary;
+
+-- name: LockFieldDefinitionVocabulary :one
+-- Reads the live options document under a ROW LOCK, for the
+-- accept-and-create path on an open vocabulary (#830).
+--
+-- FOR UPDATE is the whole point. Adding a term rewrites the WHOLE
+-- options document, so two concurrent writes each minting a different
+-- new term would both read the pre-write document and the second
+-- UPDATE would discard the first's term — the last-write-wins gap #737
+-- records for the admin options editor, except here it happens on an
+-- ordinary value save that no operator would think of as an edit to the
+-- field. The lock serialises the read-modify-write; the loser re-reads
+-- the winner's document inside its own transaction and appends to it.
+--
+-- Reads the row rather than trusting the caller's copy for a second
+-- reason: the field-by-id LRU can hand back an options document that is
+-- one write old, and resolving against a stale document is how a term
+-- gets minted twice.
+SELECT options, type, open_vocabulary
+  FROM field_definition
+ WHERE id = $1
+   FOR UPDATE;
+
+-- name: SetFieldDefinitionOptions :exec
+-- Writes back an options document that gained terms. Deliberately
+-- narrow — it touches options and nothing else — so it cannot be
+-- mistaken for the admin editor's whole-definition update.
+UPDATE field_definition
+   SET options = $2, updated_at = NOW()
+ WHERE id = $1;
 
 -- ---------------------------------------------------------------------------
 -- asset_field_value — the actual values

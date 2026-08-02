@@ -40,6 +40,32 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Keywords can grow — by typing one, and from the files themselves.** `Keywords` shipped
+  with a fixed list of 17 terms and no way to add an 18th except the admin options editor,
+  one at a time. That is a workable rule for a field like `Country`, and the wrong one for
+  the field whose whole job is to describe what is actually in your catalogue. A field can
+  now be marked as an **open vocabulary**: a keyword it has never seen is *added* rather
+  than refused, keeping the words you typed as its display name. `Keywords` is the first
+  field set that way.
+
+  Matching happens before adding, on the term's display name as well as its stored form,
+  ignoring case and stray spaces — so `Character`, `character` and ` character ` are one
+  keyword, not three, and typing the display name of a keyword you already have picks it
+  rather than duplicating it. Every other field stays exactly as strict as it was: a term
+  a closed vocabulary does not offer is still refused. Retired terms stay retired on open
+  fields too — choosing a deprecated keyword afresh is still refused, and a keyword whose
+  name collides with an archived one is refused rather than quietly resurrected or turned
+  into a near-duplicate.
+
+  Files can now fill the field in as well. Photographs, exports and just about every
+  cataloguing tool write keywords into the picture itself (the IPTC 2:25 tag), and until
+  now nothing read them — the extraction pipeline had no way to write a multi-value field
+  at all, so `Keywords` was left deliberately unwired. It is wired now: uploading a picture
+  that carries keywords matches each one against the field, adds the ones that are new, and
+  records the change in the asset's history with `iptc` as the source, so you can see what
+  came from the file and what somebody typed. Re-running extraction over the same file
+  changes nothing (#830, #789).
+
 - **The hover slideshow now fills the tile instead of floating between black bars.** In the
   grid, a video's cover picture fills its tile — but starting the hover slideshow used to swap
   in a letterboxed strip over a near-black backdrop, so more than half the tile went dark the

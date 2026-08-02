@@ -136,6 +136,52 @@ func (h *Handler) invalidateField(ctx context.Context, id pgtype.UUID) {
 	}
 }
 
+// InvalidateFieldVocabulary drops EVERY cached copy of one field
+// definition's options document, and is what an accept-and-create write
+// must call after it commits (#830).
+//
+// Two caches hold that document and they are invalidated by different
+// mechanisms, which is exactly why this is one function rather than two
+// calls at each site:
+//
+//   - the field-by-id LRU in this package, read by SetAssetFieldValue /
+//     SetCollectionFieldValue. A stale entry here makes the NEXT value
+//     write re-resolve against a vocabulary missing the term just
+//     created — which the row lock in EnsureOpenVocabularyTerms already
+//     protects against, but only because it re-reads. Everything else
+//     reading a field definition would show the old term list.
+//
+//   - the extraction-config list on the metadata.extraction_config
+//     domain, whose FieldExtractionConfig.Options is a verbatim copy of
+//     the same document. A stale entry there makes the next extract job
+//     match an incoming keyword against a vocabulary that does not have
+//     it yet — which is survivable (the row lock re-resolves against
+//     the live document before minting anything) but wasteful, since
+//     every job would re-propose terms that already exist.
+//
+//     Today that emit reaches nobody: asset/metadata's Cache type is
+//     never constructed in the boot wire, so ListExtractionConfig reads
+//     the database on every job. The emit is here because the domain is
+//     what a wired cache WOULD listen on, and a cache added later must
+//     not have to remember that this write path exists.
+//
+// Exported because the extraction path creates terms too, from
+// app/internal/http's writer adapter, which sits above this package and
+// cannot reach the unexported invalidator. Best-effort throughout: a
+// NOTIFY failure logs and does not propagate, matching invalidateField.
+func (h *Handler) InvalidateFieldVocabulary(ctx context.Context, fieldID pgtype.UUID) {
+	h.invalidateField(ctx, fieldID)
+	if h.registry == nil {
+		return
+	}
+	if err := h.registry.Emit(ctx, "metadata.extraction_config", "all"); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn,
+			"metadata.cache.extraction_config.emit_error",
+			slog.String("err", err.Error()),
+		)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ListFields
 // ---------------------------------------------------------------------------
@@ -295,6 +341,7 @@ func (h *Handler) CreateField(
 		CreatedByUserRef: &id.UserRef,
 		SubjectKind:      string(subject),
 		DefaultValue:     defaultJSON,
+		OpenVocabulary:   boolOr(in.OpenVocabulary, false),
 	})
 	if err != nil {
 		// Most likely a duplicate code violating the UNIQUE
@@ -405,6 +452,7 @@ func (h *Handler) UpdateField(
 		DisplayOrder:            int32PtrOpt(in.DisplayOrder),
 		DisplayGroup:            in.DisplayGroup,
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
+		OpenVocabulary:          in.OpenVocabulary,
 		UpdatedByUserRef:        &id.UserRef,
 	}
 	if in.Status != nil {
@@ -711,25 +759,35 @@ func (h *Handler) SetAssetFieldValue(
 		return nil, fmt.Errorf("metadata: load previous: %w", err)
 	}
 
-	// Controlled-vocabulary gate (#824). Deliberately AFTER the
+	// Controlled-vocabulary gate (#824), plus the accept-and-create
+	// branch an open vocabulary takes (#830). Deliberately AFTER the
 	// snapshot rather than beside buildUpsertParams: the lifecycle half
 	// of the rule needs to know what the asset already holds, and prev
 	// is that, already loaded for the history entry. No extra query.
 	//
-	// checkVocabulary is shared with SetCollectionFieldValue — see its
-	// doc for why the rule may not be written twice.
+	// openOrCheckVocabulary is shared with SetCollectionFieldValue —
+	// see its doc for why the rule may not be written twice.
 	var held []string
 	if hadOld {
 		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
 	}
-	if rej := checkVocabulary(
-		fieldRow.Type, fieldRow.Options,
-		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions),
-		held,
-	); rej != nil {
+	slugs, created, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
+		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held)
+	if err != nil {
+		return nil, err
+	}
+	if rej != nil {
 		return openapi.SetAssetFieldValue422JSONResponse{
 			FieldValueUnprocessableJSONResponse: rejectionBody(fieldRow.Code, rej),
 		}, nil
+	}
+	// The row stores the CANONICAL slug, never the text a client sent.
+	// buildUpsertParams ran before the gate — it has to, the gate reads
+	// what it built — so the normalised slugs go back into it here.
+	// Skipping this is how "Sunset" ends up in value_options next to
+	// the `sunset` term it was supposed to become.
+	if fieldRow.Type == "multi_select" {
+		upsert.ValueOptions = slugs
 	}
 
 	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
@@ -756,6 +814,21 @@ func (h *Handler) SetAssetFieldValue(
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("metadata: commit: %w", err)
+	}
+
+	// The vocabulary grew, so every cached copy of it is now wrong —
+	// including the one the extraction pipeline holds. After the commit,
+	// because a cache dropped before the write lands is a cache that
+	// repopulates with the pre-write document.
+	if len(created) > 0 {
+		h.InvalidateFieldVocabulary(ctx, pgField)
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
+				slog.String("field", fieldRow.Code),
+				slog.Int("count", len(created)),
+				slog.String("terms", strings.Join(created, ",")),
+			)
+		}
 	}
 
 	// Resolve the reference target for the response body, so this
@@ -994,6 +1067,23 @@ func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.A
 	return p, nil
 }
 
+// ValueRowJSON is valueRowToJSON for callers outside this package.
+//
+// The extraction writer (app/internal/http, metaValueWriterAdapter)
+// appends its own audit rows since #830, and an audit trail whose rows
+// have two shapes depending on who wrote them is an audit trail no
+// reader can parse. So the encoder is shared rather than reimplemented.
+func ValueRowJSON(
+	text *string,
+	num *float64,
+	date pgtype.Timestamptz,
+	options []string,
+	ref pgtype.UUID,
+	fieldType string,
+) ([]byte, error) {
+	return valueRowToJSON(text, num, date, options, ref, fieldType)
+}
+
 // valueRowToJSON encodes a typed value row into a JSONB blob suitable
 // for the history table — the single shape both old and new values
 // share regardless of underlying column.
@@ -1050,6 +1140,7 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		UpdatedAt:        r.UpdatedAt.Time,
 		ExtractionSource: &r.ExtractionSource,
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
+		OpenVocabulary:   &r.OpenVocabulary,
 	}
 	if r.DeprecatedReplacementID.Valid {
 		v := openapi_types.UUID(r.DeprecatedReplacementID.Bytes)
