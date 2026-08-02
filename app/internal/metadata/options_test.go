@@ -140,6 +140,16 @@ func TestOptionsDocRejectsBadDocuments(t *testing.T) {
 			"duplicate option value",
 		},
 		{
+			// The tree editor's failure mode, not the flat one: a
+			// reparent implemented as copy-without-remove leaves the
+			// same slug at two DEPTHS, where no same-level scan sees
+			// it. Uniqueness is tree-WIDE, and this is the case that
+			// says so.
+			"duplicate slug across depths",
+			`{"values":[{"value":"a","children":[{"value":"b"}]},{"value":"b"}]}`,
+			"duplicate option value",
+		},
+		{
 			"values is not an array",
 			`{"values":{"a":1}}`,
 			"must be an array",
