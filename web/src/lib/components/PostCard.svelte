@@ -95,6 +95,9 @@
   // is a tile at the user's chosen rung.
   const coverLadderAvailable = $derived(!!coverAsset?.ladder_available);
 
+  // The hover-scrub gate (#835) — see CardThumb.scrubAvailable.
+  const coverScrubAvailable = $derived(!!coverAsset?.scrub_available);
+
   // The cover's recorded dimensions (#640) — what lets a masonry tile
   // reserve its height before the image loads. `?? null` because a post
   // whose cover member is missing has no asset at all, which is the same
@@ -232,6 +235,7 @@
     fileExtension={coverFileExtension}
     hasFileHash={coverHasFile}
     previewAvailable={coverPreviewAvailable}
+    scrubAvailable={coverScrubAvailable}
     ladderAvailable={coverLadderAvailable}
     {sizesHint}
     {hovering}

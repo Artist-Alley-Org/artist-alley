@@ -757,6 +757,7 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 			PixelHeight:      full.PixelHeight,
 			PixelWidth:       full.PixelWidth,
 			PreviewAvailable: full.PreviewAvailable,
+			ScrubAvailable:   full.ScrubAvailable,
 			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
 			Status:           openapi.AssetWithDedupStatus(full.Status),
 			Thumbhash:        full.Thumbhash,
@@ -934,20 +935,22 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		return fmt.Errorf("assets: content check: %w", err)
 	}
 	if readable && out.FileHash != nil && *out.FileHash != "" {
-		// Both flags in one round trip. ladder_available is computed
+		// All three flags in one round trip. ladder_available is computed
 		// against the CONFIGURED ladder (#591), never a hardcoded rung
 		// list — an operator who drops a rung must move this flag, not
 		// silently invalidate it.
-		var hasCol, hasLadder bool
+		var hasCol, hasLadder, hasScrub bool
 		if err := h.Pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col'),
-			        `+sysconfig.LadderSatisfiedSQL("$1", "$2"),
+			        `+sysconfig.LadderSatisfiedSQL("$1", "$2")+`,
+			        EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'sprites.vtt')`,
 			*out.FileHash, h.ladder(ctx),
-		).Scan(&hasCol, &hasLadder); err != nil {
+		).Scan(&hasCol, &hasLadder, &hasScrub); err != nil {
 			return fmt.Errorf("assets: variant check: %w", err)
 		}
 		out.PreviewAvailable = hasCol
 		out.LadderAvailable = hasLadder
+		out.ScrubAvailable = hasScrub
 	}
 	return nil
 }
@@ -1324,6 +1327,7 @@ func (h *Handler) ListAssets(
 		a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
 		a.PreviewAvailable = r.PreviewAvailable
 		a.LadderAvailable = r.LadderAvailable
+		a.ScrubAvailable = r.ScrubAvailable
 		// #640 — the tile's aspect ratio, joined by the same pass.
 		// The gated row already applied the pair-or-neither rule.
 		a.PixelWidth = r.PixelWidth

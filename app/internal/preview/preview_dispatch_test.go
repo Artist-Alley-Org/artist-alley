@@ -30,6 +30,7 @@ import (
 // TerminalError. Add an entry here when a preview handler is added.
 var accepts = map[jobs.JobType]func(string) bool{
 	jobs.TypePreviewRaster:  isRasterExt,
+	jobs.TypePreviewGif:     isGifExt,
 	jobs.TypePreviewVideo:   isVideoExt,
 	jobs.TypePreview3D:      isModelExt,
 	jobs.TypePreviewAudio:   isAudioExt,

@@ -39,6 +39,11 @@
   import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
+  import {
+    loadSpriteCues,
+    cueBackgroundStyle,
+    type SpriteCue,
+  } from '$lib/util/spriteCues';
   import CardFallback from './CardFallback.svelte';
 
   interface Props {
@@ -65,6 +70,12 @@
     /** Every CONFIGURED rung exists for this asset (#610). Licenses the
      *  responsive srcset below; false → `col` only, exactly as before. */
     ladderAvailable?: boolean;
+    /** A `sprites.vtt` hover-scrub cue file exists for this asset AND
+     *  the caller may read it (#835). This is the ONLY licence to
+     *  request the sheet — the scrub used to be gated on the file
+     *  extension, which is a guess about storage made from a filename
+     *  and 404s whenever the render has not drained yet. */
+    scrubAvailable?: boolean;
     /** Slot width for `sizes`. The caller knows the layout (tile rung,
      *  feed column, masonry column); this component only knows it is a
      *  square-ish box. Defaults to the tile ladder's default rung.
@@ -146,6 +157,7 @@
     hasFileHash = false,
     previewAvailable = false,
     ladderAvailable = false,
+    scrubAvailable = false,
     sizesHint = DEFAULT_TILE_SIZES,
     hovering = false,
     framed = true,
@@ -323,60 +335,88 @@
     return parts.length > 0 ? `${parts.join('; ')};` : undefined;
   });
 
-  // Sprite-sheet hover preview. Video covers walk the preview.video 10×10
-  // timeline sheet; 3D covers walk the preview.model 6×6 turntable sheet.
-  // Both serve from the same sprites.jpg variant.
-  const hasSpriteScrub = $derived(isVideo || is3D);
-  const spriteUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/sprites.jpg` : '');
-  const spriteCols = $derived(is3D ? 6 : 10);
-  const spriteRows = $derived(is3D ? 6 : 10);
-  const spriteCells = $derived(spriteCols * spriteRows);
-  let spriteFrame = $state(0);
-  // Run the sprite turntable only while the card is hovered. The effect
-  // owns the interval so it's torn down on unhover / unmount.
-  $effect(() => {
-    if (!hovering || !hasSpriteScrub) {
-      spriteFrame = 0;
-      return;
-    }
-    const iv = setInterval(() => {
-      spriteFrame = (spriteFrame + 1) % spriteCells;
-    }, 120);
-    return () => clearInterval(iv);
-  });
-
-  // Video scrub cells are no longer a fixed 16:9 (#761) — the sheet is
-  // now fitted to the source, so a portrait clip has portrait cells and
-  // a hardcoded `aspect-video` box would squash them exactly the way the
-  // old fixed-size sheet did. Nothing here knows the cell's pixel size —
-  // the backend has already moved it once (160 -> 240, #811) and this
-  // component did not need touching, which is the property to keep.
+  // ── Sprite-sheet hover preview (#835) ────────────────────────────
   //
-  // The ratio is MEASURED off the sheet we're already painting rather
-  // than taken from the asset's recorded pixel_width/pixel_height: the
-  // grid is square (10 cols x 10 rows), so the sheet's aspect ratio IS
-  // the cell's, and a measurement cannot drift from the image it
-  // describes. Recorded pixel dims are the coded frame size, which is
-  // wrong for a rotated phone clip — the same trap the backend avoids.
-  let spriteAspect = $state<number | null>(null);
+  // THE CUE FILE DRIVES EVERYTHING. Frame count, cell geometry, and
+  // whether there is a scrub at all now come from `sprites.vtt`, the
+  // file the renderer writes next to the sheet. See spriteCues.ts for
+  // what that fixes; the short version is that the previous code
+  // hardcoded a 10x10 (video) or 6x6 (3D) grid keyed off the file
+  // EXTENSION and cycled every cell of it, so a clip too short to fill
+  // the grid hovered through ffmpeg's black padding, and a format that
+  // was not on the list could not scrub even with a sheet in storage.
+  //
+  // The gate is `scrubAvailable`, a server flag (#835), not a fetch that
+  // might 404 and not the extension. Extension is a guess about storage
+  // made from a filename, and it is wrong in both directions: a video
+  // whose expensive render has not drained yet has a card (the cheap
+  // poster job, #818) and no sheet, and an animated GIF has had a sheet
+  // since #832 and was never on the list.
+  const spriteUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/sprites.jpg` : '');
+
+  let cues = $state<SpriteCue[]>([]);
+  let spriteFrame = $state(0);
+  // The sheet's own pixel size, measured off the bytes we are about to
+  // paint. Needed because a cue's rect is in SHEET pixels and CSS
+  // background percentages are relative to the whole image; measuring
+  // beats deriving it from the cue list, which is truncated for a short
+  // clip and so cannot report the sheet's real height.
+  let sheetSize = $state<{ w: number; h: number } | null>(null);
+
+  // Load both halves in parallel on first hover. The cue list is cached
+  // per asset for the session; the sheet is an ordinary browser image
+  // cache hit on every hover after the first.
   $effect(() => {
-    if (!hovering || !isVideo || !spriteUrl) return;
-    // Same URL the background-image request uses, so this is a cache
-    // hit rather than a second download.
+    if (!hovering || !scrubAvailable || !assetId || !spriteUrl) return;
+    let live = true;
+    void loadSpriteCues(assetId).then((c) => {
+      if (live) cues = c;
+    });
     const img = new Image();
     img.onload = () => {
-      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        spriteAspect = img.naturalWidth / img.naturalHeight;
+      if (live && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        sheetSize = { w: img.naturalWidth, h: img.naturalHeight };
       }
     };
     img.src = spriteUrl;
     return () => {
+      live = false;
       img.onload = null;
     };
   });
-  // 16:9 until the sheet reports otherwise — the common case, and the
-  // pre-#761 behaviour.
-  const spriteCellRatio = $derived(spriteAspect ?? 16 / 9);
+
+  // The scrub layer paints only once both halves have landed. Painting
+  // early would mean guessing the sheet's scale for a frame or two,
+  // which reads as a zoom jump; the sheet has to be fetched before
+  // anything is visible anyway, so there is nothing to lose by waiting
+  // for the measurement it arrives with.
+  const spriteCue = $derived(cues.length > 0 ? cues[spriteFrame % cues.length] : null);
+  const showScrub = $derived(!!hovering && !!scrubAvailable && !!spriteCue && !!sheetSize);
+  const spriteStyle = $derived(
+    spriteCue && sheetSize ? cueBackgroundStyle(spriteCue, sheetSize.w, sheetSize.h) : null,
+  );
+  // The cell's OWN aspect ratio, straight off the cue rect (#761). Not
+  // the sheet's: those agree only while the grid is square, and the cue
+  // states the cell directly, so there is nothing to infer. A landscape
+  // cell is width-bound and centred vertically; a portrait one is
+  // height-bound and pillarboxed. Recorded pixel dims are deliberately
+  // not used — they are the coded frame size, which is wrong for a
+  // rotated phone clip, the same trap the backend avoids.
+  const spriteCellRatio = $derived(spriteCue ? spriteCue.w / spriteCue.h : 16 / 9);
+
+  // Run the scrub only while the card is hovered. The effect owns the
+  // interval so it is torn down on unhover / unmount.
+  $effect(() => {
+    if (!hovering || cues.length === 0) {
+      spriteFrame = 0;
+      return;
+    }
+    const n = cues.length;
+    const iv = setInterval(() => {
+      spriteFrame = (spriteFrame + 1) % n;
+    }, 120);
+    return () => clearInterval(iv);
+  });
 </script>
 
 <!--
@@ -488,26 +528,29 @@
       onload={onLoad}
       onerror={onError}
     />
-    {#if hasSpriteScrub && hovering}
-      {#if isVideo}
-        <!-- Video scrub: the sprite cell letterboxed (or pillarboxed) in
-             the slot on a black backdrop, so it renders at its native
-             ratio whatever shape the source is (#761). A landscape cell
-             is width-bound and centred vertically — the pre-#761 layout;
-             a portrait cell is height-bound and centred horizontally. -->
-        <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/95 transition-opacity duration-150">
-          <div
-            class="bg-no-repeat {spriteCellRatio >= 1 ? 'w-full' : 'h-full'}"
-            style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
-          ></div>
-        </div>
-      {:else}
-        <!-- 3D turntable: 1:1 cells in the 1:1 slot — no letterbox. -->
+    {#if showScrub && spriteStyle}
+      <!--
+        ONE layout for every scrubbing format (#835). The cell is
+        letterboxed (or pillarboxed) in the slot on a black backdrop so it
+        renders at its native ratio whatever shape the source is (#761):
+        a landscape cell is width-bound and centred vertically — the
+        pre-#761 video layout — and a portrait cell is height-bound and
+        centred horizontally.
+
+        This used to be two branches, one per extension, because the 3D
+        turntable's 1:1 cells fill a 1:1 tile exactly and so needed no
+        box. They still do: with a square cell in a square tile the
+        backdrop is completely covered and the render is identical. What
+        the shared branch adds is the masonry case, where the tile is NOT
+        square — there the old `bg-cover` silently cropped the turntable
+        and this letterboxes it.
+      -->
+      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/95 transition-opacity duration-150">
         <div
-          class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
-          style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+          class="bg-no-repeat {spriteCellRatio >= 1 ? 'w-full' : 'h-full'}"
+          style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteStyle.size}; background-position: {spriteStyle.position};"
         ></div>
-      {/if}
+      </div>
     {/if}
     <!-- Media-type badge. Suppressed under `compact` (#652): it lives at
          `left-2 top-2`, which is exactly where the selection checkbox

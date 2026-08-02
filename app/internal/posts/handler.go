@@ -1396,6 +1396,9 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
 		       `+sysconfig.LadderSatisfiedSQL("a.file_hash", "$3")+` AS has_ladder,
+		       (a.file_hash IS NOT NULL AND EXISTS (
+		            SELECT 1 FROM storage_variants sv
+		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'sprites.vtt')) AS has_scrub,
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
 		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member,
@@ -1411,6 +1414,9 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 
 	avail := make(map[uuid.UUID]bool, len(idSet))
 	ladderOK := make(map[uuid.UUID]bool, len(idSet))
+	// The hover-scrub gate (#835), computed from the SAME readability
+	// decision as the two above for the same reason.
+	scrubOK := make(map[uuid.UUID]bool, len(idSet))
 	// Source pixel dimensions per member asset (#640). They ride this
 	// pass rather than ListPostAssets because that query's rows are
 	// CACHED per post and these have to reach a caller whose members came
@@ -1438,12 +1444,13 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			owner     *int64
 			hasCol    bool
 			hasLadder bool
+			hasScrub  bool
 			isMember  bool
 			thumb     []byte
 			pxW       *int32
 			pxH       *int32
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &isMember, &thumb, &pxW, &pxH); err != nil {
+		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &hasScrub, &isMember, &thumb, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
 		if pixeldims.Sane(pxW, pxH) {
@@ -1463,6 +1470,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		readable := visibility.ContentReadable(sens, owner, caller, caps, isMember)
 		avail[uuid.UUID(id.Bytes)] = hasCol && readable
 		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && readable
+		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && readable
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("posts: preview enrich rows: %w", err)
@@ -1477,6 +1485,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		for i := range fresh {
 			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
 			fresh[i].Asset.LadderAvailable = ladderOK[uuid.UUID(fresh[i].Asset.Id)]
+			fresh[i].Asset.ScrubAvailable = scrubOK[uuid.UUID(fresh[i].Asset.Id)]
 			fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = nil, nil
 			if wh, ok := dims[uuid.UUID(fresh[i].Asset.Id)]; ok {
 				w, h := wh[0], wh[1]

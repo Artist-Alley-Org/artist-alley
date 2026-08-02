@@ -283,25 +283,33 @@ type workDir struct {
 }
 
 func (h *VideoHandler) stage(ctx context.Context, hash string) (workDir, func(), error) {
-	base := h.TempDir
+	return stageSource(ctx, h.Storage, h.TempDir, "aa-video-*", hash, h.MaxSourceBytes)
+}
+
+// stageSource copies an asset's original bytes into a fresh temp dir so
+// ffmpeg can seek freely over a real file. Shared by every handler that
+// shells out to ffmpeg (video, video.poster, gif) — the staging dance is
+// identical and the only thing that differs is the temp-dir prefix.
+func stageSource(ctx context.Context, st *storage.Service, tempDir, pattern, hash string, maxBytes int64) (workDir, func(), error) {
+	base := tempDir
 	if base == "" {
 		base = os.TempDir()
 	}
-	dir, err := os.MkdirTemp(base, "aa-video-*")
+	dir, err := os.MkdirTemp(base, pattern)
 	if err != nil {
 		return workDir{}, nil, fmt.Errorf("stage: mkdir: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	rc, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
+	rc, info, err := st.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
 		cleanup()
 		return workDir{}, nil, fmt.Errorf("stage: download: %w", err)
 	}
 	defer rc.Close()
-	if info != nil && info.Size > h.MaxSourceBytes {
+	if info != nil && info.Size > maxBytes {
 		cleanup()
-		return workDir{}, nil, fmt.Errorf("stage: source %d bytes > cap %d", info.Size, h.MaxSourceBytes)
+		return workDir{}, nil, fmt.Errorf("stage: source %d bytes > cap %d", info.Size, maxBytes)
 	}
 
 	srcPath := filepath.Join(dir, "src.bin")
@@ -310,7 +318,7 @@ func (h *VideoHandler) stage(ctx context.Context, hash string) (workDir, func(),
 		cleanup()
 		return workDir{}, nil, fmt.Errorf("stage: create: %w", err)
 	}
-	if _, err := io.CopyN(f, rc, h.MaxSourceBytes+1); err != nil && !errors.Is(err, io.EOF) {
+	if _, err := io.CopyN(f, rc, maxBytes+1); err != nil && !errors.Is(err, io.EOF) {
 		_ = f.Close()
 		cleanup()
 		return workDir{}, nil, fmt.Errorf("stage: copy: %w", err)
@@ -324,7 +332,19 @@ func (h *VideoHandler) stage(ctx context.Context, hash string) (workDir, func(),
 // ---------------------------------------------------------------------------
 
 func (h *VideoHandler) probe(ctx context.Context, path string) (Probe, error) {
-	cmd := exec.CommandContext(ctx, h.ffprobeBin(),
+	return probeMedia(ctx, h.ffprobeBin(), path)
+}
+
+// probeMedia reads a staged file's duration, frame shape and fps.
+//
+// Not video-only despite the Probe type's name: ffprobe demuxes an
+// animated GIF as a video stream with a real duration and avg_frame_rate
+// (verified against the seed's 29.97s 260x212 capture), which is exactly
+// what the sprite cadence needs. preview.gif calls this rather than
+// carrying a second probe that would answer the same question slightly
+// differently.
+func probeMedia(ctx context.Context, ffprobeBin, path string) (Probe, error) {
+	cmd := exec.CommandContext(ctx, ffprobeBin,
 		"-v", "error",
 		"-print_format", "json",
 		"-show_streams",
@@ -445,7 +465,58 @@ type posterPick struct {
 // writePoster puts a poster frame on the backend and fans the raster
 // ladder from it. Reports whether it actually rendered one.
 func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe, force bool) (bool, error) {
-	if variantDone(ctx, h.Storage, hash, "poster", force) {
+	return writeTimelinePoster(ctx, timelinePosterInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		FFmpegBin: h.ffmpegBin(), Kind: "video",
+		AssetID: assetID, Hash: hash, Work: w, Probe: probe, Force: force,
+	})
+}
+
+// timelinePosterInput is everything writeTimelinePoster needs. Handler
+// structs differ, so the shared step takes explicit dependencies — same
+// reasoning as ladderInput in ladder.go.
+type timelinePosterInput struct {
+	Pool      *pgxpool.Pool
+	Storage   *storage.Service
+	SysConfig *sysconfig.Store
+	Logger    *slog.Logger
+
+	FFmpegBin string
+	// Kind names the pipeline for log keys and for the ladder's
+	// provenance: "video" or "gif".
+	Kind string
+
+	AssetID uuid.UUID
+	Hash    string
+	Work    workDir
+	Probe   Probe
+	Force   bool
+}
+
+// writeTimelinePoster picks a representative frame from a staged
+// timeline source, stores it as the `poster` variant, and fans the
+// raster ladder from it. Reports whether it actually rendered one.
+//
+// Shared with preview.gif (#832) rather than reimplemented there. An
+// animated GIF needs the SAME frame selection a video does, and for the
+// same reason: frame one of a screen capture is usually the empty window
+// before anything happens, which is precisely the "black card" case
+// #810's fraction-plus-luma rule exists to walk past. Decoding frame one
+// with image/gif would have been three lines and would have shipped a
+// library of blank thumbnails.
+func writeTimelinePoster(ctx context.Context, in timelinePosterInput) (bool, error) {
+	fan := func(src image.Image) error {
+		if src == nil {
+			return errors.New("poster variants: nil source image")
+		}
+		return fanToLadder(ctx, ladderInput{
+			Pool: in.Pool, Storage: in.Storage, SysConfig: in.SysConfig, Logger: in.Logger,
+			AssetID: in.AssetID, Hash: in.Hash, Src: src, Kind: in.Kind, Source: "poster",
+			Overwrite: in.Force,
+		})
+	}
+
+	if variantDone(ctx, in.Storage, in.Hash, "poster", in.Force) {
 		// The poster bytes already exist, but the raster ladder may not
 		// — an encode predating poster-derived thumbnails has one and
 		// not the other — so the ladder still has to run.
@@ -457,28 +528,28 @@ func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w wor
 		// shows would drift away from the `poster` the player shows for
 		// the same asset, from one requeue to the next, with nothing
 		// re-uploaded to explain it.
-		src, err := decodeStoredVariant(ctx, h.Storage, hash, "poster", defaultMaxVariantBytes)
+		src, err := decodeStoredVariant(ctx, in.Storage, in.Hash, "poster", defaultMaxVariantBytes)
 		if err == nil {
-			return false, h.writePosterVariants(ctx, assetID, hash, src, force)
+			return false, fan(src)
 		}
 		// Unreadable poster bytes — the backend has something under the
 		// key that will not decode. Fall through and render a new one.
-		logAttrs(h.Logger, ctx, slog.LevelWarn, "preview.video.poster_readback_failed",
-			slog.String("file_hash", hash),
+		logAttrs(in.Logger, ctx, slog.LevelWarn, "preview."+in.Kind+".poster_readback_failed",
+			slog.String("file_hash", in.Hash),
 			slog.String("err", err.Error()))
 	}
 
-	pick, err := h.selectPoster(ctx, w, probe)
+	pick, err := selectPosterFrame(ctx, in.FFmpegBin, in.Work, in.Probe)
 	if err != nil {
 		return false, err
 	}
-	logAttrs(h.Logger, ctx, slog.LevelDebug, "preview.video.poster_selected",
-		slog.String("file_hash", hash),
+	logAttrs(in.Logger, ctx, slog.LevelDebug, "preview."+in.Kind+".poster_selected",
+		slog.String("file_hash", in.Hash),
 		slog.Float64("at_s", pick.atS),
 		slog.Float64("mean_luma", pick.luma),
 		slog.Int("tries", pick.tries))
 
-	if err := h.uploadFile(ctx, hash, "poster", pick.path, "image/jpeg"); err != nil {
+	if err := putVariantFile(ctx, in.Pool, in.Storage, in.Hash, "poster", pick.path, "image/jpeg"); err != nil {
 		return false, err
 	}
 
@@ -486,7 +557,7 @@ func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w wor
 	// from the poster frame so videos render the same shape as images
 	// across every browse + post-detail surface. This is what makes a
 	// video card actually look like a card instead of a placeholder.
-	return true, h.writePosterVariants(ctx, assetID, hash, pick.img, force)
+	return true, fan(pick.img)
 }
 
 // selectPoster extracts the best poster frame it can find and returns it
@@ -510,12 +581,18 @@ func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w wor
 // candidate seen wins once the list runs out. Refusing to produce one
 // would trade a dark card for no card.
 func (h *VideoHandler) selectPoster(ctx context.Context, w workDir, probe Probe) (posterPick, error) {
+	return selectPosterFrame(ctx, h.ffmpegBin(), w, probe)
+}
+
+// selectPosterFrame is selectPoster's implementation, free of the video
+// handler so preview.gif can reuse the same selection rule (#832).
+func selectPosterFrame(ctx context.Context, ffmpegBin string, w workDir, probe Probe) (posterPick, error) {
 	offsets := posterOffsets(probe.DurationS)
 	var best posterPick
 	var lastErr error
 	for i, at := range offsets {
 		path := filepath.Join(w.dir, fmt.Sprintf("poster-%d.jpg", i))
-		if err := h.extractFrame(ctx, w.sourcePath, path, at); err != nil {
+		if err := extractPosterFrame(ctx, ffmpegBin, w.sourcePath, path, at); err != nil {
 			lastErr = err
 			continue
 		}
@@ -567,7 +644,13 @@ func posterOffsets(durationS float64) []float64 {
 // keyframe rather than decoding from zero, which is what keeps this
 // affordable on a feature-length source.
 func (h *VideoHandler) extractFrame(ctx context.Context, sourcePath, outPath string, at float64) error {
-	return runFFmpeg(exec.CommandContext(ctx, h.ffmpegBin(),
+	return extractPosterFrame(ctx, h.ffmpegBin(), sourcePath, outPath, at)
+}
+
+// extractPosterFrame is extractFrame's implementation, free of the
+// handler — see selectPosterFrame.
+func extractPosterFrame(ctx context.Context, ffmpegBin, sourcePath, outPath string, at float64) error {
+	return runFFmpeg(exec.CommandContext(ctx, ffmpegBin,
 		"-hide_banner", "-loglevel", "error", "-y",
 		"-ss", fmt.Sprintf("%.3f", at),
 		"-i", sourcePath,
@@ -880,14 +963,71 @@ func evenCell(v int) int {
 }
 
 func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string, probe Probe) error {
+	return writeSpriteSheet(ctx, h.ffmpegBin(), w, probe, func(ctx context.Context, key, path, ct string) error {
+		return h.uploadFile(ctx, hash, key, path, ct)
+	})
+}
+
+// spriteUploader puts one generated file on the backend under a variant
+// key. Every ffmpeg-driven handler already has one (they differ only in
+// which asset hash they close over), so the shared sheet writer takes it
+// rather than a handler.
+type spriteUploader func(ctx context.Context, key, path, contentType string) error
+
+// spriteCueCount is how many of the grid's cells the sheet will
+// ACTUALLY contain a frame in — and therefore how many cues the VTT is
+// allowed to declare.
+//
+// It is not always the full grid, and the difference is the whole of
+// #835. `interval` has a floor of spriteMinInterval, so a clip shorter
+// than grid×floor seconds cannot fill the grid: ffmpeg's `fps` filter
+// emits ceil(duration/interval) frames, `tile` pads the rest of the
+// sheet with black, and a consumer that assumes cols×rows frames scrubs
+// through the padding. A 5s clip fills 25 of 100 cells, so three
+// quarters of its hover preview was blank.
+//
+// ceil, not round or floor: the fps filter's output frame k lands at
+// t = k/rate, so every k with k/rate < duration produces a frame, which
+// is exactly ceil(duration/interval) frames. Where that lands on a
+// boundary (duration an exact multiple of the interval) the answer is
+// one LOW, never one high — under-declaring loses a frame nobody misses,
+// over-declaring shows a black cell, which is the bug.
+func spriteCueCount(durationS, interval float64, gridCells int) int {
+	if durationS <= 0 || interval <= 0 {
+		return 0
+	}
+	n := int(math.Ceil(durationS / interval))
+	if n > gridCells {
+		n = gridCells
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// spriteMinInterval is the closest together two scrub cells may sample.
+// Below it a sheet stops being a summary of the clip and becomes a
+// low-framerate copy of it — 100 cells five frames apart is 4 seconds of
+// a 4-second clip.
+const spriteMinInterval = 0.2
+
+// writeSpriteSheet renders the hover-scrub sheet + its WebVTT cue file
+// for any ffmpeg-readable timeline source and hands both to `upload`.
+//
+// Shared by preview.video and preview.gif (#832): an animated GIF is a
+// short silent video, and giving it a second, subtly different sprite
+// writer is how the two drift. The only thing either caller supplies is
+// a staged file, a probe, and where to put the output.
+func writeSpriteSheet(ctx context.Context, ffmpegBin string, w workDir, probe Probe, upload spriteUploader) error {
 	if probe.DurationS <= 0 {
 		return errors.New("sprites: probe duration is zero")
 	}
 	totalCells := spriteCols * spriteRows
 	// Cell interval in seconds.
 	interval := probe.DurationS / float64(totalCells)
-	if interval < 0.2 {
-		interval = 0.2
+	if interval < spriteMinInterval {
+		interval = spriteMinInterval
 	}
 	spriteOut := filepath.Join(w.dir, "sprites.jpg")
 	// `select='not(mod(n,N))'` is fragile across containers; using
@@ -900,7 +1040,7 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 	// probe.Width/Height of 1920x1080 (coded) but decodes as 1080x1920.
 	// Letting ffmpeg fit the real decoded frame gets rotated sources
 	// right; a probe-derived cell size would still squash them.
-	cmd := exec.CommandContext(ctx, h.ffmpegBin(),
+	cmd := exec.CommandContext(ctx, ffmpegBin,
 		"-hide_banner", "-loglevel", "error", "-y",
 		"-i", w.sourcePath,
 		"-vf", fmt.Sprintf(
@@ -913,7 +1053,7 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 	if err := runFFmpeg(cmd); err != nil {
 		return err
 	}
-	if err := h.uploadFile(ctx, hash, "sprites.jpg", spriteOut, "image/jpeg"); err != nil {
+	if err := upload(ctx, "sprites.jpg", spriteOut, "image/jpeg"); err != nil {
 		return err
 	}
 
@@ -926,10 +1066,22 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 	// two impossible to diverge.
 	cellW, cellH := measureSpriteCell(spriteOut, probe)
 
-	// WebVTT mapping each cell to its time range.
+	// WebVTT mapping each POPULATED cell to its time range.
+	//
+	// The count comes from spriteCueCount, not from the grid (#835). The
+	// VTT is the only thing that knows which cells the tile filter
+	// actually filled — the sheet itself is always cols×rows with black
+	// padding, and nothing downstream can tell padding from a dark frame.
+	// Declaring cues for cells that were never written is what made a
+	// short clip's hover preview three-quarters blank.
+	//
+	// The old loop ran the full grid and broke on `start >= duration`
+	// AFTER writing that cue, which both over-declared by one and left a
+	// zero-length cue at the end.
+	cues := spriteCueCount(probe.DurationS, interval, totalCells)
 	var vtt bytes.Buffer
 	vtt.WriteString("WEBVTT\n\n")
-	for i := 0; i < totalCells; i++ {
+	for i := 0; i < cues; i++ {
 		start := float64(i) * interval
 		end := float64(i+1) * interval
 		if end > probe.DurationS {
@@ -939,15 +1091,12 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 		y := (i / spriteCols) * cellH
 		fmt.Fprintf(&vtt, "%s --> %s\nsprites.jpg#xywh=%d,%d,%d,%d\n\n",
 			vttTime(start), vttTime(end), x, y, cellW, cellH)
-		if start >= probe.DurationS {
-			break
-		}
 	}
 	vttPath := filepath.Join(w.dir, "sprites.vtt")
 	if err := os.WriteFile(vttPath, vtt.Bytes(), 0o644); err != nil {
 		return err
 	}
-	return h.uploadFile(ctx, hash, "sprites.vtt", vttPath, "text/vtt")
+	return upload(ctx, "sprites.vtt", vttPath, "text/vtt")
 }
 
 // measureSpriteCell reads the generated sheet's real pixel dimensions
@@ -1001,17 +1150,25 @@ func (h *VideoHandler) ffprobeBin() string {
 }
 
 func (h *VideoHandler) uploadFile(ctx context.Context, hash, key, path, contentType string) error {
+	return putVariantFile(ctx, h.Pool, h.Storage, hash, key, path, contentType)
+}
+
+// putVariantFile streams a generated file onto the storage backend under
+// a variant key and records the row that makes it servable. The
+// handler-free form so preview.gif can hand the same closure to the
+// shared poster + sprite writers.
+func putVariantFile(ctx context.Context, pool *pgxpool.Pool, st *storage.Service, hash, key, path, contentType string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", key, err)
 	}
 	defer f.Close()
-	if _, err := h.Storage.Backend.Put(ctx, hash, key, f); err != nil {
+	if _, err := st.Backend.Put(ctx, hash, key, f); err != nil {
 		return fmt.Errorf("backend put %s: %w", key, err)
 	}
 	info, err := f.Stat()
 	if err == nil {
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
+		_ = storage.New(pool).UpsertVariant(ctx, storage.UpsertVariantParams{
 			ObjectHash:  hash,
 			VariantKey:  key,
 			SizeBytes:   info.Size(),
