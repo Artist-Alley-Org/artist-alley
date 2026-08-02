@@ -335,6 +335,46 @@
     return parts.length > 0 ? `${parts.join('; ')};` : undefined;
   });
 
+  // ── Reduced motion (#837) ────────────────────────────────────────
+  //
+  // WITH THE PREFERENCE SET, THE SCRUB NEVER MOUNTS — THE POSTER STAYS.
+  //
+  // The obvious reading of "show a single representative frame instead
+  // of cycling" is to freeze the scrub on its first cue. Measured, that
+  // is the worse of the two options and by a wide margin: cue 0 is the
+  // clip's OPENING frame, and films open on black. On the seeded Sintel
+  // 1080p the frozen first cue renders an entirely black tile, while the
+  // still underneath it is a legible snow shot.
+  //
+  // The still is already the right answer. The poster the preview
+  // pipeline picks (#818/#829) is chosen to be a representative frame —
+  // that is its whole job — so "a single representative frame" is what
+  // the card is showing before the pointer ever arrives. Suppressing the
+  // scrub leaves it there.
+  //
+  // So this is NOT a hover that does nothing. It is a hover that does
+  // not ANIMATE, over an image that was always there, and it costs a
+  // reduced-motion visitor neither the sheet download nor the cue fetch —
+  // both are gated on the same flag below.
+  //
+  // Reactive rather than a one-shot read at mount. The setting can be
+  // toggled while the page is open (OS accessibility panel, devtools
+  // emulation), and a wall of cards that keeps animating until the next
+  // reload is precisely the experience the preference exists to prevent.
+  // `matchMedia` is optional-chained for the SSR/jsdom case, where it is
+  // absent and no-motion is the right default anyway.
+  let reducedMotion = $state(false);
+  onMount(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq) return;
+    reducedMotion = mq.matches;
+    const onChange = (e: MediaQueryListEvent) => {
+      reducedMotion = e.matches;
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  });
+
   // ── Sprite-sheet hover preview (#835) ────────────────────────────
   //
   // THE CUE FILE DRIVES EVERYTHING. Frame count, cell geometry, and
@@ -367,7 +407,7 @@
   // per asset for the session; the sheet is an ordinary browser image
   // cache hit on every hover after the first.
   $effect(() => {
-    if (!hovering || !scrubAvailable || !assetId || !spriteUrl) return;
+    if (!hovering || !scrubAvailable || !assetId || !spriteUrl || reducedMotion) return;
     let live = true;
     void loadSpriteCues(assetId).then((c) => {
       if (live) cues = c;
@@ -391,7 +431,14 @@
   // anything is visible anyway, so there is nothing to lose by waiting
   // for the measurement it arrives with.
   const spriteCue = $derived(cues.length > 0 ? cues[spriteFrame % cues.length] : null);
-  const showScrub = $derived(!!hovering && !!scrubAvailable && !!spriteCue && !!sheetSize);
+  //
+  // `!reducedMotion` is the #837 gate. Belt and braces with the fetch
+  // guard above — that one stops the bytes, this one stops a layer
+  // painting from a cue list already cached from a hover taken before
+  // the preference was turned on.
+  const showScrub = $derived(
+    !!hovering && !!scrubAvailable && !!spriteCue && !!sheetSize && !reducedMotion,
+  );
   const spriteStyle = $derived(
     spriteCue && sheetSize ? cueBackgroundStyle(spriteCue, sheetSize.w, sheetSize.h) : null,
   );
@@ -407,7 +454,7 @@
   // Run the scrub only while the card is hovered. The effect owns the
   // interval so it is torn down on unhover / unmount.
   $effect(() => {
-    if (!hovering || cues.length === 0) {
+    if (!hovering || cues.length === 0 || reducedMotion) {
       spriteFrame = 0;
       return;
     }
@@ -530,24 +577,64 @@
     />
     {#if showScrub && spriteStyle}
       <!--
-        ONE layout for every scrubbing format (#835). The cell is
-        letterboxed (or pillarboxed) in the slot on a black backdrop so it
-        renders at its native ratio whatever shape the source is (#761):
-        a landscape cell is width-bound and centred vertically — the
-        pre-#761 video layout — and a portrait cell is height-bound and
-        centred horizontally.
+        THE SCRUB USES THE SAME FIT AS THE STILL IT REPLACES (#834).
+        That is the whole rule, and `fill` — the caller's "this tile is a
+        contact sheet, bleed to the edges" flag — is the one input, so
+        the two layers cannot drift apart the way they had.
 
-        This used to be two branches, one per extension, because the 3D
-        turntable's 1:1 cells fill a 1:1 tile exactly and so needed no
-        box. They still do: with a square cell in a square tile the
-        backdrop is completely covered and the render is identical. What
-        the shared branch adds is the masonry case, where the tile is NOT
-        square — there the old `bg-cover` silently cropped the turntable
-        and this letterboxes it.
+        What #834 actually was: NOT a wrongly-shaped still. Measured on
+        the browse grid, a 1920x818 video's still is the `col` rung
+        (320x320) painted `object-cover` into a 367x367 tile — an exact
+        fill, no band anywhere. The band was THIS layer. It letterboxed
+        the 2.35:1 cue cell to `w-full` inside a SQUARE tile and backed it
+        with `bg-black/95`, so hovering swapped a full-bleed frame for a
+        160px strip with 109px of opaque black above and below it — 57%
+        of the tile. The report described that black as belonging to the
+        still because hovering is how you look closely at a card.
+
+        So the two states disagreed, and the still was the one that was
+        right for grid: a contact sheet fills (#561/#588).
+
+        Fit, per mode:
+
+          fill (grid) — COVER. The cell is bound on its SHORT axis
+            against the square tile and overflows the long one, which the
+            frame's `overflow-hidden` clips. Landscape binds height,
+            portrait binds width — the mirror of the contain branch, not
+            a special case. Centred, so it crops to the same middle
+            square that `col` (itself a centred cover crop of the same
+            poster) already shows: the still and the scrub then frame the
+            IDENTICAL region and the hover no longer jumps.
+
+          everything else — CONTAIN, unchanged from #761/#835: a
+            landscape cell is width-bound, a portrait one height-bound,
+            so a rotated phone clip is never cropped. Masonry sizes its
+            tile from the same shape, so the box is usually invisible
+            there; where it does show (a rotated clip, whose coded dims
+            and display cell disagree) it now shows the MATTE the still
+            letterboxes onto rather than black, because "agree with the
+            still" applies to the backdrop too.
+
+        `shrink-0` is load-bearing on the cover branch, not tidying: the
+        cell is a FLEX ITEM that deliberately overflows its container, and
+        a flex item's default `flex-shrink: 1` licenses the engine to
+        squeeze it back to fit — which would silently restore the
+        letterbox by squashing the frame instead of boxing it. Chromium
+        happens to derive the width from the ratio and leave it alone;
+        that is not something to depend on.
       -->
-      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/95 transition-opacity duration-150">
+      <div
+        class="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden
+               transition-opacity duration-150 {fill ? '' : 'bg-thumb-matte'}"
+      >
         <div
-          class="bg-no-repeat {spriteCellRatio >= 1 ? 'w-full' : 'h-full'}"
+          class="bg-no-repeat shrink-0 {fill
+            ? spriteCellRatio >= 1
+              ? 'h-full'
+              : 'w-full'
+            : spriteCellRatio >= 1
+              ? 'w-full'
+              : 'h-full'}"
           style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteStyle.size}; background-position: {spriteStyle.position};"
         ></div>
       </div>
