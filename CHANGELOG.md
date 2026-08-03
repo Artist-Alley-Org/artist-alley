@@ -9,6 +9,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Sharing a post with someone now actually shares it.** Granting a person read on
+  one of your posts (`POST /posts/{id}/acls`) recorded the grant, listed it back, and
+  changed nothing whatsoever for the person you granted it to (#667). The post stayed
+  missing from their browse list and `GET /posts/{id}` still refused it, because no
+  read path had ever consulted the grants table — share was a button that stored a row.
+
+  A live grant now opens the post on both read paths at once: the link you send opens
+  for them, and `GET /posts` hands the post back when asked for the tier it sits in.
+  Grants are purely additive, per ADR 0010 Layer 6 — a share can only ever open a post
+  that was closed, never close one that was open, and nothing you can see today becomes
+  invisible. `expires_at` works as advertised, so a time-boxed share stops granting the
+  moment it lapses without anyone having to revoke it. Grants to a `user` principal are
+  what read paths honour; `role` and `team` principals can still be recorded but do not
+  grant yet, exactly as for collections.
+
+  Two things a share still does not do, both unchanged by this and both tracked
+  separately: it does not put the post in the recipient's default browse grid (that
+  feed shows the walled-garden `org-only` tier and only that, whatever you have been
+  granted), and it does not make the post findable by *search*, which runs a separate
+  rule (#873). No-spec-impact.
+
 - **Admin pages no longer accuse administrators of lacking permission.** Opening an
   `/admin` page directly — a bookmark, a pasted link, a reload — showed a red *"You
   don't have permission to view this page."* panel for a moment before the page
