@@ -505,7 +505,7 @@ func (h *Handler) loginViaRegistry(
 	// itself — it is the first thing a user does on a second machine.
 	// Sign-in is a client-side navigation, so this response is the only
 	// chance to deliver these before the browse page paints.
-	h.hydrateAccountPrefs(ctx, user.Ref, &current)
+	h.hydrateSessionUser(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -623,7 +623,7 @@ func (h *Handler) loginInlinePassword(
 	})
 	// Same as the password path above — a provider sign-in lands a user
 	// on a fresh device just as often, so it needs the same payload.
-	h.hydrateAccountPrefs(ctx, user.Ref, &current)
+	h.hydrateSessionUser(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -777,13 +777,90 @@ func (h *Handler) GetCurrentUser(
 		}
 	}
 
-	h.hydrateAccountPrefs(ctx, id.UserRef, &cu)
+	h.hydrateSessionUser(ctx, id.UserRef, &cu)
 
 	return openapi.GetCurrentUser200JSONResponse(cu), nil
 }
 
+// hydrateSessionUser fills every field on a CurrentUser that does not
+// come straight off the Identity: the stored preferences (language,
+// theme, default views) and the caller's resolved capability set.
+//
+// THIS is the one function every CurrentUser producer calls. It exists
+// so that "did this endpoint remember to populate X?" is a question
+// with one answer for all of X, rather than one answer per field. Both
+// halves of it were shipped incomplete exactly once — the preferences
+// in #706, the capabilities in #871 — and in both cases the endpoint
+// that forgot was the one nobody thought of as a session endpoint. A
+// new field on CurrentUser belongs behind this call, not at the call
+// sites.
+func (h *Handler) hydrateSessionUser(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	if h.Pool == nil || cu == nil {
+		return
+	}
+	h.hydrateAccountPrefs(ctx, userRef, cu)
+	h.hydrateCapabilities(ctx, userRef, cu)
+}
+
+// hydrateCapabilities fills CurrentUser.capabilities with the user's
+// resolved GLOBAL capability codes (#871).
+//
+// Why this rides the session response at all: the SPA's auth store
+// flips `ready` the moment /auth/me or /auth/login resolves, and the
+// admin shell's gate reads `ready` and the capability set in the same
+// breath. Capabilities that arrive on a second request
+// (GET /auth/me/capabilities) therefore arrive strictly after the gate
+// has already decided, and the gate's answer without them is "you
+// don't have permission" — shown to a real administrator, in red,
+// until the follow-up landed and it silently corrected itself. There
+// is no ordering fix for that on the client; the only fix is for the
+// answer to be in the response the decision is made from.
+//
+// The context short-circuit is not an optimisation detail, it is the
+// correct source: on /auth/me the resolver middleware has ALREADY
+// resolved this exact set for this exact request (and cached it), so
+// re-deriving it from the DB would be both slower and a second chance
+// to disagree with the identity the request is actually running as.
+// It is guarded on the ref matching because POST /auth/login is
+// reachable while holding somebody else's cookie — there the refs
+// differ and we fall through to the query, which is what makes the
+// response describe the account that just signed in rather than the
+// one that was already signed in.
+//
+// Scoped (per-team) capabilities are deliberately excluded. The wire
+// field is a flat list of codes with no room to say "…but only inside
+// team X", and a scoped code flattened into it would read as global —
+// i.e. the UI would offer a control that 403s. Global-only is the
+// shape GET /auth/me/capabilities already publishes.
+//
+// Best-effort, matching hydrateAccountPrefs: on error the key is
+// omitted and the client falls back to holding nothing. That is the
+// safe direction — a transient DB blip hides admin UI for a moment, it
+// does not hand anybody a capability, and every action is enforced
+// server-side regardless of what this list said.
+func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	if id := IdentityFromContext(ctx); id != nil && id.UserRef == userRef && id.Capabilities != nil {
+		caps := append([]string{}, id.Capabilities...)
+		cu.Capabilities = &caps
+		return
+	}
+	caps, err := New(h.Pool).EffectiveCapabilitiesForUser(ctx, userRef)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.caps.session_hydrate.error",
+				slog.Int64("user_ref", userRef), slog.String("err", err.Error()))
+		}
+		return
+	}
+	if caps == nil {
+		caps = []string{}
+	}
+	cu.Capabilities = &caps
+}
+
 // hydrateAccountPrefs fills the three stored-preference fields on a
-// CurrentUser: language, theme, and default views.
+// CurrentUser: language, theme, and default views. Reached through
+// [Handler.hydrateSessionUser], which is what producers call.
 //
 // EVERY endpoint that returns a CurrentUser must call this, and that
 // is the whole reason it is a method rather than four lines inlined in
@@ -816,16 +893,18 @@ func (h *Handler) GetCurrentUser(
 // back to its built-in defaults — it never fails the login or the
 // session check.
 //
-// One producer deliberately does NOT call this: setup.Handler's
-// /setup/complete, which mints the very first admin. It lives in
-// another package and would need an auth dependency plumbed in to
-// reach a row that cannot exist — the account is created inside that
-// same request. If /setup/complete ever starts writing a profile, it
-// needs this too.
+// One producer deliberately does NOT go through hydrateSessionUser:
+// setup.Handler's /setup/complete, which mints the very first admin.
+// It lives in another package and would need an auth-handler
+// dependency plumbed in to fill a response the client immediately
+// discards — the setup page calls auth.refresh() (i.e. /auth/me) the
+// line after it lands, so the session the operator actually browses on
+// is fully hydrated regardless. Note this is now a real omission
+// rather than a provable no-op: /setup/complete commits the admin's
+// role assignment before it builds the response, so the capability
+// list it leaves absent is one that exists. If anything ever starts
+// reading /setup/complete's body as a session, it needs this.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
-	if h.Pool == nil || cu == nil {
-		return
-	}
 	var lang, theme string
 	var viewsJSON []byte
 	err := h.Pool.QueryRow(ctx, `

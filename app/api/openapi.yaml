@@ -11334,6 +11334,32 @@ components:
             store can consult these synchronously in its `init()`
             rather than seeding itself from a second round-trip that
             lands after the grid has already painted.
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: |
+            The caller's resolved GLOBAL capability codes — the same set
+            GET /auth/me/capabilities reports in its `capabilities`
+            field, after role inheritance, per-user grants and revokes
+            have all been applied. Team-scoped capabilities are NOT
+            included; ask the scoped endpoints for those.
+
+            Rides the session response for the same reason `theme` and
+            `default_views` do, and for a sharper one (#871): the client
+            marks its auth store "ready" the instant this response
+            lands, and every capability-gated surface reads the store at
+            that moment. A capability set that arrives on a SECOND
+            round-trip therefore arrives after the gate has already
+            decided, which rendered a "you don't have permission" panel
+            at real admins until the follow-up landed. One response, one
+            decision, no window.
+
+            Best-effort, like the preference fields: a failed lookup
+            omits the key rather than failing the session call, and the
+            client falls back to holding nothing — the safe direction.
+            Absent and empty therefore both mean "assume no
+            capabilities".
         impersonated_by:
           type: object
           nullable: true

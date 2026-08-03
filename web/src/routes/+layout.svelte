@@ -37,15 +37,14 @@
     // pages get the right brand fonts.
     appearance.init();
     // i18n: must run AFTER auth state has hydrated so user pref wins
-    // over the cookie. +layout.ts has populated `auth.user` by now
-    // via hydrateFrom — but caps don't ride that path, so we pull
-    // them here.
+    // over the cookie. +layout.ts has populated the auth store by now
+    // via hydrateFrom, capabilities included (#871) — there is
+    // deliberately no follow-up capability fetch here. One used to
+    // live at this spot, and because it landed AFTER +layout.ts had
+    // already flipped `ready`, the /admin gate got to decide with an
+    // empty capability set and rendered "you don't have permission"
+    // at real administrators until the second response arrived.
     lang.init();
-    // Caps load unconditionally — `refreshCaps` bails early when
-    // there's no user. Without this, the admin menu stays hidden
-    // even for admins because +layout.ts's hydrateFrom doesn't
-    // populate caps (only user fields).
-    void auth.refreshCaps();
     // Drop-anywhere-to-upload — install once globally. The store
     // returns a cleanup but layouts don't unmount in normal use, so
     // we ignore it.
