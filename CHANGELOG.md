@@ -7,6 +7,8 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.8.0] — 2026-08-03 — Operator configuration: field vocabularies, tree editor, site text, and email templates
+
 ### Security
 
 - **postcss bumped past a path-traversal advisory.** The web build's copy of `postcss`
