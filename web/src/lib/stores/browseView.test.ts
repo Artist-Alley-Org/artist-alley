@@ -112,6 +112,57 @@ describe('built-in defaults are the last rung', () => {
   });
 });
 
+// Signing in is a client-side navigation: the root layout mounted on
+// /login, so the store hydrated with no session to consult. The layout
+// re-applies on session change, and this is that sequence.
+//
+// These tests would NOT have caught the bug review found. That one was
+// in the Go handler — /auth/login returns the same `CurrentUser` schema
+// as /auth/me from a different code path, and that path never joined
+// the preferences row, so the session object the layout handed this
+// store was genuinely empty. A store test supplies its own defaults
+// and therefore constructs the very input the bug destroyed. The guard
+// for it lives in app/internal/auth/account_prefs_session_test.go,
+// where the observable is the response.
+//
+// They are still worth having: they pin the store half of the
+// contract, which is that a late-arriving account is applied at all
+// rather than being ignored because hydration already happened.
+describe('an account arriving after hydration (sign-in)', () => {
+  it('applies the seed without a reload', () => {
+    rehydrate(null);
+    expect(browseView.mode).toBe('grid');
+    expect(browseView.filter).toBe('latest');
+
+    // The session lands; the layout re-applies.
+    browseView.applyAccountDefaults({
+      browse_layout: 'masonry',
+      home_tab: 'following',
+      browse_sort: 'oldest',
+    });
+
+    expect(browseView.mode).toBe('masonry');
+    expect(browseView.filter).toBe('following');
+    expect(browseView.feedDir).toBe('asc');
+  });
+
+  it('still does not write the late seed to localStorage', () => {
+    rehydrate(null);
+    browseView.applyAccountDefaults({ browse_layout: 'masonry' });
+    expect(localStorage.getItem('aa_browse_mode')).toBeNull();
+  });
+
+  it('does not overwrite a choice made before signing in', () => {
+    // Browsing as a guest on a public install, picking a layout, and
+    // then signing in must not yank the view out from under them.
+    rehydrate(null);
+    browseView.setMode('thumbnail');
+
+    browseView.applyAccountDefaults({ browse_layout: 'masonry' });
+    expect(browseView.mode).toBe('thumbnail');
+  });
+});
+
 describe('a stale local value is not a local choice', () => {
   it('clears a removed feed filter and lets the account seed instead', () => {
     // `trending` was a real stored value before #691 removed it. It

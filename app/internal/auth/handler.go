@@ -501,6 +501,11 @@ func (h *Handler) loginViaRegistry(
 		Usergroup:  user.Usergroup,
 		AuthMethod: "session",
 	})
+	// Signing in IS the moment a cross-device preference has to prove
+	// itself — it is the first thing a user does on a second machine.
+	// Sign-in is a client-side navigation, so this response is the only
+	// chance to deliver these before the browse page paints.
+	h.hydrateAccountPrefs(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -616,6 +621,9 @@ func (h *Handler) loginInlinePassword(
 		Usergroup:  user.Usergroup,
 		AuthMethod: "session",
 	})
+	// Same as the password path above — a provider sign-in lands a user
+	// on a fresh device just as often, so it needs the same payload.
+	h.hydrateAccountPrefs(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -769,16 +777,55 @@ func (h *Handler) GetCurrentUser(
 		}
 	}
 
-	// Pull language + theme + default views so the frontend can hydrate
-	// the language store, the theme and the browse store on the first
-	// paint without a separate round-trip. One small SELECT.
-	//
-	// The anchor sub-select is what makes the two LEFT JOINs safe: a
-	// user can have preferences without a profile row or the reverse
-	// (they are written by different surfaces), and joining from either
-	// table would drop the other's values whenever its own row happens
-	// to be missing. Anchoring on the ref means exactly one row comes
-	// back, with NULLs standing in for whichever side has nothing yet.
+	h.hydrateAccountPrefs(ctx, id.UserRef, &cu)
+
+	return openapi.GetCurrentUser200JSONResponse(cu), nil
+}
+
+// hydrateAccountPrefs fills the three stored-preference fields on a
+// CurrentUser: language, theme, and default views.
+//
+// EVERY endpoint that returns a CurrentUser must call this, and that
+// is the whole reason it is a method rather than four lines inlined in
+// /auth/me. `CurrentUser` is one schema used by both /auth/me and
+// /auth/login, so a login response that omits these fields is not a
+// smaller response — it is the declared schema, returned with three
+// documented fields silently empty.
+//
+// That is exactly what shipped and what #706 review caught: the browse
+// store and the theme store both read these off the session, both
+// correctly no-opped when they were absent, and the account
+// preferences therefore did not apply until the user happened to
+// trigger a full page load. `language` had the same hole and nobody
+// had noticed, because a locale that only takes effect on the second
+// page load looks like a slow render rather than a bug.
+//
+// The frontend cannot paper over this with a follow-up /auth/me: the
+// point of carrying the fields on the session response is that they
+// arrive BEFORE first paint, and a second round-trip lands after it.
+//
+// The anchor sub-select is what makes the two LEFT JOINs safe: a user
+// can have preferences without a profile row or the reverse (they are
+// written by different surfaces), and joining from either table would
+// drop the other's values whenever its own row happens to be missing.
+// Anchoring on the ref means exactly one row comes back, with NULLs
+// standing in for whichever side has nothing yet.
+//
+// Best-effort by design. These are render hints on the call that gates
+// the entire app, so a failure leaves them nil and the client falls
+// back to its built-in defaults — it never fails the login or the
+// session check.
+//
+// One producer deliberately does NOT call this: setup.Handler's
+// /setup/complete, which mints the very first admin. It lives in
+// another package and would need an auth dependency plumbed in to
+// reach a row that cannot exist — the account is created inside that
+// same request. If /setup/complete ever starts writing a profile, it
+// needs this too.
+func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	if h.Pool == nil || cu == nil {
+		return
+	}
 	var lang, theme string
 	var viewsJSON []byte
 	err := h.Pool.QueryRow(ctx, `
@@ -788,24 +835,23 @@ func (h *Handler) GetCurrentUser(
 		FROM (SELECT $1::bigint AS user_ref) k
 		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
 		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
-		id.UserRef,
+		userRef,
 	).Scan(&lang, &theme, &viewsJSON)
-	if err == nil {
-		if lang != "" {
-			l := lang
-			cu.Language = &l
-		}
-		if theme != "" {
-			t := openapi.CurrentUserTheme(theme)
-			cu.Theme = &t
-		}
-		if v, ok := decodeDefaultViews(viewsJSON); ok {
-			cu.DefaultViews = &v
-		}
+	if err != nil {
+		// pgx.ErrNoRows is fine; we leave the fields nil.
+		return
 	}
-	// pgx.ErrNoRows is fine; we leave the fields nil.
-
-	return openapi.GetCurrentUser200JSONResponse(cu), nil
+	if lang != "" {
+		l := lang
+		cu.Language = &l
+	}
+	if theme != "" {
+		t := openapi.CurrentUserTheme(theme)
+		cu.Theme = &t
+	}
+	if v, ok := decodeDefaultViews(viewsJSON); ok {
+		cu.DefaultViews = &v
+	}
 }
 
 // decodeDefaultViews parses the user_preferences.default_views blob

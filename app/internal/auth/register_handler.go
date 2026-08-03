@@ -195,15 +195,29 @@ func (h *Handler) Register(
 		if err != nil {
 			return nil, err
 		}
+		current := openapi.CurrentUser{
+			Ref:        row.Ref,
+			Username:   derefOr(row.Username, username),
+			Email:      row.Email,
+			AuthMethod: openapi.CurrentUserAuthMethod("session"),
+		}
+		// Registration issues a session and drops the user straight onto
+		// browse, so it is a sign-in path and gets the same treatment.
+		//
+		// An account created microseconds ago has nothing stored, so
+		// today this is provably a no-op — which is the point of doing
+		// it anyway. "Every CurrentUser goes through
+		// hydrateAccountPrefs" is a rule that survives someone later
+		// seeding a profile at registration (an Accept-Language default
+		// is the obvious candidate); "every CurrentUser except the ones
+		// where it cannot matter yet" is a rule that has to be
+		// re-derived, and getting that derivation wrong is what shipped
+		// the /auth/login hole in the first place.
+		h.hydrateAccountPrefs(ctx, row.Ref, &current)
 		return registerSetCookieResponse{
 			token:       token,
 			sessionDays: h.SessionDays,
-			body: openapi.CurrentUser{
-				Ref:        row.Ref,
-				Username:   derefOr(row.Username, username),
-				Email:      row.Email,
-				AuthMethod: openapi.CurrentUserAuthMethod("session"),
-			},
+			body:        current,
 		}, nil
 	}
 
