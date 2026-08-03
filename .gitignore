@@ -136,9 +136,16 @@ app/aa-abr-extract
 /model-*.png
 /epub-tool-*.png
 /test-*.png
-/admin-fields-*.png
 /firing_squad/
 kaggle.txt
 .dogfood-runs
 app/.cache/
 logos/*
+kaggle.json
+
+# Playwright writes verification screenshots to the WORKSPACE ROOT, not
+# to .playwright-mcp/ — so every UI check leaves untracked .png files
+# behind, which dirty the tree and block the reindex step of close-out.
+# Real screenshots are committed under docs/screenshots/, so ignoring
+# root-level ones only ever hides throwaway artifacts.
+/*.png
