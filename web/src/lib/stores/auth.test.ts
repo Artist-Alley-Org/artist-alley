@@ -13,6 +13,51 @@ import { auth } from './auth.svelte';
 afterEach(() => {
   // Reset shared singleton state between cases.
   auth.caps = [];
+  auth.user = null;
+});
+
+// #871 — the boot path. +layout.ts hands hydrateFrom the raw /auth/me
+// body and then immediately flips `ready`, and the /admin gate decides
+// on the very next frame. So hydrateFrom adopting the user WITHOUT the
+// capabilities is not "capabilities arrive slightly later" — it is the
+// gate answering "no permission" with the wrong inputs, in red, at a
+// real administrator.
+//
+// This asserts the two land together off ONE body, which is the only
+// shape that has no window in it. Note what it does not assert: that
+// capabilities are correct — that is the server's business and
+// app/internal/auth/session_capabilities_test.go pins it there.
+describe('hydrateFrom (boot path)', () => {
+  it('adopts capabilities from the same body as the user', () => {
+    auth.hydrateFrom({
+      ref: 1,
+      username: 'admin',
+      auth_method: 'session',
+      capabilities: ['system.admin'],
+    });
+    expect(auth.user?.username).toBe('admin');
+    expect(auth.caps).toEqual(['system.admin']);
+    expect(auth.canSeeAdmin).toBe(true);
+  });
+
+  it('falls back to holding nothing when the server omits the field', () => {
+    auth.caps = ['system.admin'];
+    auth.hydrateFrom({ ref: 2, username: 'nobody', auth_method: 'session' });
+    // Not merely "unchanged": a stale set from a previous identity
+    // would be a capability the current user does not hold.
+    expect(auth.caps).toEqual([]);
+    expect(auth.canSeeAdmin).toBe(false);
+  });
+
+  it('ignores a malformed capabilities value rather than trusting it', () => {
+    auth.hydrateFrom({
+      ref: 3,
+      username: 'weird',
+      auth_method: 'session',
+      capabilities: ['users.read', 7, null, 'system.admin'],
+    });
+    expect(auth.caps).toEqual(['users.read', 'system.admin']);
+  });
 });
 
 describe('canSeeTile', () => {
