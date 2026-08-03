@@ -11916,6 +11916,22 @@ components:
           enum: [manual, api, import, computed]
         set_at: { type: string, format: date-time }
         set_by_user_ref: { type: integer, format: int64, nullable: true }
+        resolved_options:
+          type: object
+          nullable: true
+          additionalProperties:
+            $ref: '#/components/schemas/ResolvedOption'
+          description: |
+            Display data for the vocabulary slugs this value holds,
+            keyed by slug. Present only for select / multi_select /
+            tree, and only for slugs that resolve against the field's
+            options document — a slug with no entry is absent and the
+            caller falls back to the slug itself. Mirrors
+            AssetFieldValue.resolved_options exactly (#840): collection
+            metadata resolves the same way asset metadata does, so a
+            select value renders its label and not its raw slug.
+        resolved_reference:
+          $ref: '#/components/schemas/ResolvedReference'
     FieldValueUnprocessable:
       type: object
       description: |
@@ -11947,11 +11963,20 @@ components:
               Options are never hard-deleted, so a record already
               carrying a since-retired term keeps saving; only
               *changing* to one is refused.
+            - `dangling_reference` — `reference` only: `value_ref` names
+              an asset that does not resolve (never existed, or has been
+              deleted). Refused on WRITE so a value cannot be pointed at
+              a nonexistent asset. Note the asymmetry with READ: a value
+              that resolved when written and whose target is deleted
+              *later* still reads fine, degrading to the bare id
+              (`resolved_reference` simply absent) — the write gate does
+              not retroactively invalidate it.
           enum:
             - field_not_for_collection
             - value_type_mismatch
             - unknown_option
             - option_not_offerable
+            - dangling_reference
         field:
           type: string
           nullable: true
@@ -16799,6 +16824,9 @@ components:
           archived term the record did not already hold. Terms are
           never hard-deleted, so a value already carrying a retired
           slug keeps saving; only *changing* to one is refused.
+        - `dangling_reference` — `reference` only: `value_ref` names an
+          asset that does not resolve. Refused on write; a value whose
+          target is deleted after a valid write still reads (bare id).
       content:
         application/json:
           schema:

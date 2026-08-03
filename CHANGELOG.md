@@ -373,6 +373,36 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A reference field can no longer be pointed at an asset that does not exist.** A
+  `reference` value is a bare asset id, and the write path accepted any id at all — so
+  saving one that named nothing (a typo, a since-deleted asset, an id from another
+  instance) returned success and stored a link to nowhere. The write is now refused with
+  422 `dangling_reference` unless the target resolves. This is a WRITE gate only, and
+  deliberately so: a reference that was valid when you saved it and whose target is
+  deleted *later* still reads fine, degrading to the bare id with no fuss (the behaviour
+  #839 chose) — deleting an asset does not retroactively break every record that pointed
+  at it. Both the asset and the collection write paths enforce it identically (#842).
+
+- **Collection metadata now shows labels and titles, not raw slugs and ids.** A pick-list
+  value on a collection rendered its stored slug (`in_review`) instead of its label ("In
+  Review"), and a reference value rendered a 36-character id instead of the linked
+  asset's title — while the same field on an *asset* rendered both correctly. The
+  collection read path simply never resolved them: the asset query joined the field
+  definition and the referenced asset, the collection query did not. It does now, through
+  the same query shape and the same shared formatter, so the two subject kinds render
+  identically. A reference whose target has been deleted degrades to the bare id with no
+  disclosure, exactly as on the asset side (#840).
+
+- **Field-value history rows no longer outlive the asset or field they describe.**
+  `asset_field_value_history` had no foreign keys, so a deleted asset or field left its
+  history behind as orphan rows pointing at ids that no longer existed — and those rows
+  survived `aa seed --reset` too, since a cascade cannot reach a table nothing references.
+  It now carries the same two `ON DELETE CASCADE` foreign keys its collection counterpart
+  always had, on `asset_id` and `field_id`; deleting either takes the history with it. The
+  migration deletes any pre-existing orphans before adding the constraints, and the bespoke
+  history sweep the reset used to run for this table is gone — the constraint does the job
+  now (#821). No-spec-impact.
+
 - **An upload no longer reports success when the server refused your metadata.** Per-file
   field values are written after the asset exists, and the upload modal sent those writes
   without ever looking at the answer. Every refusal — a term the field does not offer, a

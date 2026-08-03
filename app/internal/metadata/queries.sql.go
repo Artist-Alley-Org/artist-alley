@@ -278,10 +278,15 @@ func (q *Queries) GetAssetFieldValue(ctx context.Context, arg GetAssetFieldValue
 }
 
 const getCollectionFieldValue = `-- name: GetCollectionFieldValue :one
-SELECT collection_id, field_id, value_text, value_num, value_date,
-       value_options, value_ref, set_by, set_at, set_by_user_ref
-FROM collection_field_value
-WHERE collection_id = $1 AND field_id = $2
+SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
+       v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
+       f.code, f.label, f.type, f.options,
+       r.id AS ref_asset_id,
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
+FROM collection_field_value v
+JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
+WHERE v.collection_id = $1 AND v.field_id = $2
 `
 
 type GetCollectionFieldValueParams struct {
@@ -289,9 +294,31 @@ type GetCollectionFieldValueParams struct {
 	FieldID      pgtype.UUID
 }
 
-func (q *Queries) GetCollectionFieldValue(ctx context.Context, arg GetCollectionFieldValueParams) (CollectionFieldValue, error) {
+type GetCollectionFieldValueRow struct {
+	CollectionID  pgtype.UUID
+	FieldID       pgtype.UUID
+	ValueText     *string
+	ValueNum      *float64
+	ValueDate     pgtype.Timestamptz
+	ValueOptions  []string
+	ValueRef      pgtype.UUID
+	SetBy         string
+	SetAt         pgtype.Timestamptz
+	SetByUserRef  *int64
+	Code          string
+	Label         string
+	Type          string
+	Options       []byte
+	RefAssetID    pgtype.UUID
+	RefAssetTitle string
+}
+
+// Same joins as ListCollectionFieldValues, for the single-row read the
+// write path snapshots against — code/label/type/options and the
+// reference title all resolve here too (#840).
+func (q *Queries) GetCollectionFieldValue(ctx context.Context, arg GetCollectionFieldValueParams) (GetCollectionFieldValueRow, error) {
 	row := q.db.QueryRow(ctx, getCollectionFieldValue, arg.CollectionID, arg.FieldID)
-	var i CollectionFieldValue
+	var i GetCollectionFieldValueRow
 	err := row.Scan(
 		&i.CollectionID,
 		&i.FieldID,
@@ -303,6 +330,12 @@ func (q *Queries) GetCollectionFieldValue(ctx context.Context, arg GetCollection
 		&i.SetBy,
 		&i.SetAt,
 		&i.SetByUserRef,
+		&i.Code,
+		&i.Label,
+		&i.Type,
+		&i.Options,
+		&i.RefAssetID,
+		&i.RefAssetTitle,
 	)
 	return i, err
 }
@@ -797,26 +830,65 @@ func (q *Queries) ListCollectionFieldValueHistory(ctx context.Context, arg ListC
 
 const listCollectionFieldValues = `-- name: ListCollectionFieldValues :many
 
-SELECT collection_id, field_id, value_text, value_num, value_date,
-       value_options, value_ref, set_by, set_at, set_by_user_ref
-FROM collection_field_value
-WHERE collection_id = $1
+SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
+       v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
+       f.code, f.label, f.type, f.options,
+       r.id AS ref_asset_id,
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
+FROM collection_field_value v
+JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
+WHERE v.collection_id = $1
+ORDER BY f.display_group, f.display_order, f.code
 `
+
+type ListCollectionFieldValuesRow struct {
+	CollectionID  pgtype.UUID
+	FieldID       pgtype.UUID
+	ValueText     *string
+	ValueNum      *float64
+	ValueDate     pgtype.Timestamptz
+	ValueOptions  []string
+	ValueRef      pgtype.UUID
+	SetBy         string
+	SetAt         pgtype.Timestamptz
+	SetByUserRef  *int64
+	Code          string
+	Label         string
+	Type          string
+	Options       []byte
+	RefAssetID    pgtype.UUID
+	RefAssetTitle string
+}
 
 // ---------------------------------------------------------------------------
 // collection_field_value — typed-value storage for collection metadata
 // (Phase 1.9.B). Mirrors the asset_field_value pattern one-for-one;
 // the value path is identical so debuggers see one shape, not two.
 // ---------------------------------------------------------------------------
-func (q *Queries) ListCollectionFieldValues(ctx context.Context, collectionID pgtype.UUID) ([]CollectionFieldValue, error) {
+// The collection sibling of ListAssetFieldValues (#840). It carried NO
+// join at all until now, so collection metadata rendered raw slugs and
+// bare reference UUIDs where the asset path rendered labels and linked
+// titles. The two joins here close that gap and cost nothing extra:
+//   - JOIN field_definition brings code/label/type AND f.options, so the
+//     handler resolves a stored `select` slug to its label without a
+//     second query (exactly what ListAssetFieldValues does).
+//   - LEFT JOIN assets resolves a `reference` value's title (#817).
+//     `r.deleted_at IS NULL` IS the authenticated-asset visibility rule
+//     (ADR 0063/0064), the SAME predicate ListAssetFieldValues' join
+//     hard-codes — see that query and
+//     TestCollectionReferenceJoinMatchesAuthenticatedAssetPredicate. A
+//     target that does not resolve yields NULLs and the handler omits
+//     resolved_reference, degrading to the bare id (#839).
+func (q *Queries) ListCollectionFieldValues(ctx context.Context, collectionID pgtype.UUID) ([]ListCollectionFieldValuesRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionFieldValues, collectionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CollectionFieldValue
+	var items []ListCollectionFieldValuesRow
 	for rows.Next() {
-		var i CollectionFieldValue
+		var i ListCollectionFieldValuesRow
 		if err := rows.Scan(
 			&i.CollectionID,
 			&i.FieldID,
@@ -828,6 +900,12 @@ func (q *Queries) ListCollectionFieldValues(ctx context.Context, collectionID pg
 			&i.SetBy,
 			&i.SetAt,
 			&i.SetByUserRef,
+			&i.Code,
+			&i.Label,
+			&i.Type,
+			&i.Options,
+			&i.RefAssetID,
+			&i.RefAssetTitle,
 		); err != nil {
 			return nil, err
 		}

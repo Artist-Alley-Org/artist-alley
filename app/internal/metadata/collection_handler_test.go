@@ -395,3 +395,148 @@ func cleanCollectionTestRows(t *testing.T, pool *pgxpool.Pool) {
 		collectionTestPrefix+"%")
 	_, _ = pool.Exec(ctx, `DELETE FROM collections WHERE name LIKE 'mcoltest col %'`)
 }
+
+// TestCollectionField_DanglingReferenceRejected_422 is the collection
+// half of #842: a reference write on a collection is gated exactly like
+// the asset path — a UUID naming no asset is refused 422
+// dangling_reference and stores nothing, a real target writes 200.
+func TestCollectionField_DanglingReferenceRejected_422(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanCollectionTestRows(t, pool)
+	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
+
+	router, userRef := makeRouter(t, pool, true)
+	fieldID := mustCreateCollectionField(t, router, "mcoltest_ref", "Ref", "reference")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col ref")
+	target := mustInsertTitledAsset(t, pool, userRef, "Coll Ref Target", "active")
+	cleanupAssets(t, pool, target)
+
+	orphan := uuid.New().String()
+	rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID),
+		map[string]any{"value_ref": orphan})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("dangling collection reference write: status=%d want 422 body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]any
+	mustDecode(t, rr.Body.Bytes(), &body)
+	if body["reason"] != "dangling_reference" {
+		t.Errorf("reason=%v want dangling_reference", body["reason"])
+	}
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM collection_field_value WHERE collection_id = $1 AND field_id = $2`,
+		collectionID, fieldID).Scan(&count); err != nil {
+		t.Fatalf("count value rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("a rejected dangling write left %d collection value row(s); it must store nothing", count)
+	}
+
+	if ok := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID),
+		map[string]any{"value_ref": target}); ok.Code != http.StatusOK {
+		t.Fatalf("valid collection reference write: status=%d want 200 body=%s", ok.Code, ok.Body.String())
+	}
+}
+
+// TestCollectionField_ResolvesOptionsAndReference is the behavioural
+// core of #840: a collection carrying a select value and a reference
+// value renders the LABEL and the linked TITLE, not the raw slug and a
+// bare UUID — the same resolution the asset path has always done. It
+// also pins the #839 degradation: once the reference target is
+// soft-deleted, resolved_reference goes absent and the bare id remains.
+func TestCollectionField_ResolvesOptionsAndReference(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanCollectionTestRows(t, pool)
+	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
+
+	router, userRef := makeRouter(t, pool, true)
+	selectField := mustCreateField(t, router, map[string]any{
+		"code": "mcoltest_status", "label": "Status", "type": "select",
+		"subject_kind": "collection",
+		"options": map[string]any{
+			"values": []any{map[string]any{"value": "in_review", "label": "In Review"}},
+		},
+	})
+	refField := mustCreateCollectionField(t, router, "mcoltest_hero", "Hero", "reference")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col resolve")
+	target := mustInsertTitledAsset(t, pool, userRef, "Hero Asset", "active")
+	cleanupAssets(t, pool, target)
+
+	if rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, selectField),
+		map[string]any{"value_text": "in_review"}); rr.Code != http.StatusOK {
+		t.Fatalf("set select: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, refField),
+		map[string]any{"value_ref": target}); rr.Code != http.StatusOK {
+		t.Fatalf("set reference: %d %s", rr.Code, rr.Body.String())
+	}
+
+	sel := findCollectionValue(t, getCollectionFields(t, router, collectionID), selectField)
+	if sel.ResolvedOptions == nil {
+		t.Fatal("resolved_options is nil on a collection select value — #840 did not resolve it")
+	}
+	if opt, ok := (*sel.ResolvedOptions)["in_review"]; !ok || opt.Label != "In Review" {
+		t.Errorf("resolved_options[in_review] = %+v, want label \"In Review\"", opt)
+	}
+
+	ref := findCollectionValue(t, getCollectionFields(t, router, collectionID), refField)
+	if ref.ResolvedReference == nil {
+		t.Fatal("resolved_reference is nil for a live collection reference target — the #840 bug")
+	}
+	if ref.ResolvedReference.Title != "Hero Asset" {
+		t.Errorf("resolved_reference.title = %q, want \"Hero Asset\"", ref.ResolvedReference.Title)
+	}
+
+	// #839 degradation: soft-delete the target, resolved_reference goes
+	// absent, the bare id stays. No disclosure that the row was removed.
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET deleted_at = NOW() WHERE id = $1`, target); err != nil {
+		t.Fatalf("soft-delete target: %v", err)
+	}
+	after := findCollectionValue(t, getCollectionFields(t, router, collectionID), refField)
+	if after.ResolvedReference != nil {
+		t.Errorf("resolved_reference = %+v for a soft-deleted target, want absent", *after.ResolvedReference)
+	}
+	if after.ValueRef == nil || after.ValueRef.String() != target {
+		t.Errorf("value_ref = %v, want %s — the id must remain for the client to degrade to", after.ValueRef, target)
+	}
+}
+
+// getCollectionFields GETs the value list for a collection.
+func getCollectionFields(t *testing.T, router interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}, collectionID string) []openapi.CollectionFieldValue {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/collections/%s/fields", collectionID), nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET collection fields: %d %s", rr.Code, rr.Body.String())
+	}
+	var values []openapi.CollectionFieldValue
+	mustDecode(t, rr.Body.Bytes(), &values)
+	return values
+}
+
+func findCollectionValue(t *testing.T, values []openapi.CollectionFieldValue, fieldID string) openapi.CollectionFieldValue {
+	t.Helper()
+	for _, v := range values {
+		if v.FieldId.String() == fieldID {
+			return v
+		}
+	}
+	t.Fatalf("field %s not found among %d collection values", fieldID, len(values))
+	return openapi.CollectionFieldValue{}
+}

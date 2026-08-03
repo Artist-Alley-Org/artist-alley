@@ -308,16 +308,44 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 -- ---------------------------------------------------------------------------
 
 -- name: ListCollectionFieldValues :many
-SELECT collection_id, field_id, value_text, value_num, value_date,
-       value_options, value_ref, set_by, set_at, set_by_user_ref
-FROM collection_field_value
-WHERE collection_id = $1;
+-- The collection sibling of ListAssetFieldValues (#840). It carried NO
+-- join at all until now, so collection metadata rendered raw slugs and
+-- bare reference UUIDs where the asset path rendered labels and linked
+-- titles. The two joins here close that gap and cost nothing extra:
+--   - JOIN field_definition brings code/label/type AND f.options, so the
+--     handler resolves a stored `select` slug to its label without a
+--     second query (exactly what ListAssetFieldValues does).
+--   - LEFT JOIN assets resolves a `reference` value's title (#817).
+--     `r.deleted_at IS NULL` IS the authenticated-asset visibility rule
+--     (ADR 0063/0064), the SAME predicate ListAssetFieldValues' join
+--     hard-codes — see that query and
+--     TestCollectionReferenceJoinMatchesAuthenticatedAssetPredicate. A
+--     target that does not resolve yields NULLs and the handler omits
+--     resolved_reference, degrading to the bare id (#839).
+SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
+       v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
+       f.code, f.label, f.type, f.options,
+       r.id AS ref_asset_id,
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
+FROM collection_field_value v
+JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
+WHERE v.collection_id = $1
+ORDER BY f.display_group, f.display_order, f.code;
 
 -- name: GetCollectionFieldValue :one
-SELECT collection_id, field_id, value_text, value_num, value_date,
-       value_options, value_ref, set_by, set_at, set_by_user_ref
-FROM collection_field_value
-WHERE collection_id = $1 AND field_id = $2;
+-- Same joins as ListCollectionFieldValues, for the single-row read the
+-- write path snapshots against — code/label/type/options and the
+-- reference title all resolve here too (#840).
+SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
+       v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
+       f.code, f.label, f.type, f.options,
+       r.id AS ref_asset_id,
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
+FROM collection_field_value v
+JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
+WHERE v.collection_id = $1 AND v.field_id = $2;
 
 -- name: UpsertCollectionFieldValue :one
 -- Cache invalidation MUST follow at handler layer.
