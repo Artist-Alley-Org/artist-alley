@@ -14,6 +14,8 @@
 //   - Login / logout update state in place; no manual refetch needed.
 //   - 401 responses from anywhere in the app should call auth.clear()
 //     so the chrome reflects the logged-out state immediately.
+//   - Capabilities ride the session response and are adopted with the
+//     user, never fetched separately. See adopt() (#871).
 
 import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
@@ -108,6 +110,25 @@ class AuthState {
     return this.can(tile.cap ?? SYSTEM_ADMIN);
   }
 
+  /**
+   * Adopt a session payload (the `CurrentUser` schema, as returned by
+   * /auth/me, /auth/login and /auth/register) as the signed-in
+   * identity.
+   *
+   * The ONE place `user` and `caps` are assigned, and they are assigned
+   * together, from the same response, synchronously (#871). That is the
+   * whole invariant: `ready` is what the capability-gated surfaces wait
+   * on, so any path that can publish a user without their capabilities
+   * is a path that can tell an administrator they have no permission.
+   * Fetching the caps separately is exactly such a path — it is how
+   * the /admin gate came to flash a red panel at real admins — so
+   * there is no setter for one without the other.
+   */
+  private adopt(u: Record<string, unknown>): void {
+    this.user = mapUser(u);
+    this.caps = mapCaps(u);
+  }
+
   /** Re-fetch the current session from the server. */
   async refresh(): Promise<void> {
     const { data, error, response } = await api.GET('/auth/me');
@@ -115,33 +136,11 @@ class AuthState {
       this.user = null;
       this.caps = [];
     } else {
-      this.user = mapUser(data);
-      // Caps load in parallel — soft fail (empty caps = no admin
-      // UI). Anonymous callers shouldn't reach this branch.
-      void this.refreshCaps();
+      this.adopt(data);
     }
     // 401 just means anonymous — not an error condition for refresh.
     void response;
     this.ready = true;
-  }
-
-  /**
-   * Pull the caller's resolved capability set from
-   * GET /auth/me/capabilities. Called by refresh() and after login.
-   */
-  async refreshCaps(): Promise<void> {
-    if (!this.user) {
-      this.caps = [];
-      return;
-    }
-    try {
-      const { data } = await api.GET('/auth/me/capabilities');
-      if (data && Array.isArray(data.capabilities)) {
-        this.caps = data.capabilities;
-      }
-    } catch {
-      this.caps = [];
-    }
   }
 
   /**
@@ -163,9 +162,8 @@ class AuthState {
       if (code === 'invalid_2fa_code') throw new LoginNeedsTOTPError('invalid_2fa_code');
       throw new Error(code);
     }
-    this.user = mapUser(data);
+    this.adopt(data);
     this.ready = true;
-    void this.refreshCaps();
   }
 
   async logout(): Promise<void> {
@@ -186,9 +184,13 @@ class AuthState {
    * load function doesn't have to go through the api client wrapper
    * (which uses the global fetch and would trip SvelteKit's hydration
    * warning).
+   *
+   * This is the BOOT path — the one that decides what a cold navigate
+   * to /admin/* renders on its first frame — so it takes capabilities
+   * off the same body, via the same setter, as every other path.
    */
   hydrateFrom(u: Record<string, unknown>): void {
-    this.user = mapUser(u);
+    this.adopt(u);
   }
 
   /** Mark the store as initialised even when no user was loaded. */
@@ -230,6 +232,15 @@ function mapUser(u: Record<string, unknown>): AuthUser {
       ? { ref: ib.ref, username: ib.username }
       : null,
   };
+}
+
+/** Read `CurrentUser.capabilities` off a session body. Absent, null or
+ *  malformed all mean "holds nothing" — the safe fallback, and the one
+ *  the server documents for a failed capability lookup. */
+function mapCaps(u: Record<string, unknown>): string[] {
+  const c = u.capabilities;
+  if (!Array.isArray(c)) return [];
+  return c.filter((v): v is string => typeof v === 'string');
 }
 
 function extractError(err: unknown): string | undefined {

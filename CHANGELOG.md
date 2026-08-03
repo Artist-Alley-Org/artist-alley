@@ -9,6 +9,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Admin pages no longer accuse administrators of lacking permission.** Opening an
+  `/admin` page directly — a bookmark, a pasted link, a reload — showed a red *"You
+  don't have permission to view this page."* panel for a moment before the page
+  appeared (#871). Nothing was actually denied and no action ever failed; the console
+  simply asked the server *who are you* and *what may you do* as two separate
+  questions, decided what to show the instant the first answer arrived, and had to
+  correct itself when the second one landed. On a slower connection the wrong answer
+  was on screen long enough to read, and long enough to file a bug about.
+
+  Your permissions now arrive with your session, in the same response, so there is no
+  moment at which the console knows who you are but not what you may do. The dedicated
+  `GET /auth/me/capabilities` endpoint is unchanged and still published — this changes
+  when the console learns the answer, not what the API offers. Wire change:
+  `CurrentUser` (returned by `/auth/me`, `/auth/login` and `/auth/register`) gains a
+  `capabilities` array of your global capability codes. No-spec-impact.
+
 - **Your default browse view is now the view you get.** Account → Preferences has
   offered a home tab, a browse layout and a browse sort since 1.17.G. All three saved,
   survived a restart, and were read by nothing: browse hydrated purely from that
