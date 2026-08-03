@@ -52,6 +52,7 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
 
 | Version | Date | Headline |
 |---|---|---|
+| **v0.8.0** | 2026-08-03 | Operator configuration — the admin config spine (epic #519): controlled vocabularies are editable (#328), a field can be a hierarchy with a nested-term tree editor (#779, #825), keywords grow by typing and from files (open vocabulary, #830/#831), rich-text fields render as formatted text (#816), any interface wording is rewritable without forking (site text, #794, ADR 0081 §1) as are all transactional emails (#795, ADR 0081 §2), and `fields.admin` is now a grantable capability (#804); internal release numbers no longer surface in the UI (#801); re-seeding an instance serves fresh data without a restart (#845); plus SSO credential read-hardening (#718) and a long tail of field-type, preview, and seed-fidelity fixes |
 | **v0.7.0** | 2026-07-28 | Browse correctness, visibility security, and a real seed catalogue — five visibility leaks closed under one root cause (private posts readable by any signed-in user #660, ungated collections #661, anonymous `?tag=` exposing drafts #657, authenticated search 500ing #650, session IPs on the wrong capability #573; epic #665); Blender unpackaged, image 3.64GB → 1.82GB (#500, ADR 0069 amended); cards render correctly end to end (aspect ratios, append-stable masonry, blur-up for every asset type, honest `sizes`, designed no-preview tile); seed catalogue 1,007 → 1,946 assets with a 60-asset floor across 11 studios (#572, epic #562) |
 | **v0.6.0** | 2026-07-23 | Public read surface + demo hardening — public user-profile pages (#478), three.js 3D-preview migration (multi-file glTF fixed, arm64 3D previews) (#496 steps 1–2, #486), shared browse view controls (#511), CI-reliability epic (#485); fixes a federation-path query bug caught by the nightly (#538) |
 | **v0.5.2** | 2026-07-21 | `content.read.all` capability (#474) — a content-plane-only read cap so a read-only viewer (the public demo) sees `team`/`restricted` content without exposing admin surfaces; fixes the demo's blank "Preview unavailable" tiles |
@@ -634,9 +635,9 @@ map to the milestones below.
 > | Milestone | Theme |
 > |---|---|
 > | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
-> | **v0.7.0** *(current)* | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) |
-> | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine: content & metadata config (#519), bulk/reprocessing maintenance (#521, partially phase-gated), and the operator toggles over them (#709, #552). Branding (#517) shipped. |
-> | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577), workflow triggers & notification rules (#520), default-view preferences (#706) |
+> | **v0.7.0** ✅ | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) *(shipped 2026-07-28)* |
+> | **v0.8.0** ✅ | **Operator & admin configuration** — the admin config spine (epic #519): editable vocabularies, hierarchy tree editor, open-vocabulary keywords, rich text, site-text + email-template overrides, and `fields.admin` as a grantable capability *(shipped 2026-08-03)* |
+> | v0.9.0 *(current)* | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577), workflow triggers & notification rules (#520), default-view preferences (#706) |
 > | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* — now also carries the **3D animation arc** (epic #741, ADR 0078): addressable clips, extracted rig identity, and a shared animation library |
 > | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
 > | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
