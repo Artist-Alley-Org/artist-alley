@@ -637,8 +637,8 @@ map to the milestones below.
 > | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
 > | **v0.7.0** ✅ | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) *(shipped 2026-07-28)* |
 > | **v0.8.0** ✅ | **Operator & admin configuration** — the admin config spine (epic #519): editable vocabularies, hierarchy tree editor, open-vocabulary keywords, rich text, site-text + email-template overrides, and `fields.admin` as a grantable capability *(shipped 2026-08-03)* |
-> | v0.9.0 *(current)* | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577), workflow triggers & notification rules (#520), default-view preferences (#706) |
-> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* — now also carries the **3D animation arc** (epic #741, ADR 0078): addressable clips, extracted rig identity, and a shared animation library |
+> | v0.9.0 *(current)* | **User-facing surfaces** — preferences that take effect (#706, #736, #677 ✅), explicit shares that actually grant read (#667), account-tile completeness (#600), asset edit route (#549), one visual result surface (#850), social feed card (#557), teams browse + channels (#684, #577) |
+> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* — plus the **articles** arc (epic #693, ADR 0073) and **workflow triggers & notification rules** (#520), both moved out of v0.9.0 on 2026-08-03 — now also carries the **3D animation arc** (epic #741, ADR 0078): addressable clips, extracted rig identity, and a shared animation library |
 > | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
 > | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
 > | v0.13.0 | Privacy, audit, observability & reporting *(was v0.11.0)* |
