@@ -43,6 +43,14 @@ updates:
       majors:
         patterns: ["*"]
         update-types: [major]
+    ignore:
+      # Our own vendored mscrnt/* forks are pinned deliberately. mviewer
+      # is a v2-without-a-/v2-module-path fork, so Go resolves it as
+      # `v2.1.2+incompatible` and dependabot's isolated updater cannot
+      # resolve the package, failing every /app run with
+      # `dependency_file_not_resolvable` (and emailing on each failure).
+      # We never want dependabot bumping our forks anyway.
+      - dependency-name: "github.com/mscrnt/*"
 
   # SvelteKit + Tailwind + everything else under web/
   - package-ecosystem: npm
