@@ -83,14 +83,81 @@ type NotificationChannels map[string][]string
 // DefaultViews captures the per-user view selections that the
 // frontend would otherwise have to guess from cookies or first-visit
 // heuristics. Empty string = fall back to per-route default. The set
-// of valid values for each field is enforced by the frontend and
-// pinned by the openapi schema, NOT by a DB CHECK constraint — the
-// list will grow (e.g. new browse layouts in 1.18) and the DB
-// shouldn't have to migrate every time the UI ships a new option.
+// of valid values for each field is enforced HERE and pinned by the
+// openapi schema, NOT by a DB CHECK constraint — the list will grow
+// (e.g. new browse layouts in 1.18) and the DB shouldn't have to
+// migrate every time the UI ships a new option.
+//
+// Every member of every set below names a state the app can actually
+// reach. That is the whole lesson of #736: the vocabulary shipped with
+// `trending` and `for_you` on HomeTab and `popular`/`trending` on
+// BrowseSort, none of which had a query behind them, so choosing one
+// stored a durable preference for a screen that does not exist and
+// the user silently got the default. A value belongs here only once
+// something serves it.
 type DefaultViews struct {
-	HomeTab      string `json:"home_tab,omitempty"`      // "" | "following" | "latest" | "trending" | "for_you"
-	BrowseLayout string `json:"browse_layout,omitempty"` // "" | "grid" | "masonry" | "thumbnail" | "list"
-	BrowseSort   string `json:"browse_sort,omitempty"`   // "" | "newest" | "oldest" | "popular" | "trending"
+	HomeTab      string `json:"home_tab,omitempty"`      // "" | "latest" | "following"
+	BrowseLayout string `json:"browse_layout,omitempty"` // "" | "grid" | "masonry" | "thumbnail" | "list" | "feed"
+	BrowseSort   string `json:"browse_sort,omitempty"`   // "" | "newest" | "oldest"
+}
+
+// The closed value sets for the three view knobs. Each mirrors a
+// vocabulary that already exists somewhere concrete:
+//
+//	KnownHomeTabs       ← the `feed` enum on GET /posts
+//	                      (app/api/openapi.yaml, /posts:)
+//	KnownBrowseLayouts  ← ViewMode in web/src/lib/stores/browseView.svelte.ts
+//	KnownBrowseSorts    ← the two orderings the client can produce
+//
+// `feed` is in KnownBrowseLayouts and was never in the pref
+// vocabulary, which is the mirror-image defect to the phantom tabs: a
+// mode a phone lands on by default but no user could ask for.
+//
+// KnownBrowseSorts stops at two on purpose. GET /posts takes no
+// ordering parameter of any kind, so `newest` / `oldest` are the
+// client reversing what it holds; `popular` and `trending` would need
+// a ranking model chosen first, and a guessed one is worse than none.
+var (
+	KnownHomeTabs      = []string{"latest", "following"}
+	KnownBrowseLayouts = []string{"grid", "masonry", "thumbnail", "list", "feed"}
+	KnownBrowseSorts   = []string{"newest", "oldest"}
+)
+
+func inSet(v string, set []string) bool {
+	for _, s := range set {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// Sanitized drops any selection this build no longer serves, leaving
+// the field empty so the caller falls back to its built-in default.
+//
+// This is the READ-side counterpart to the write-side rejection in
+// ValidatePreferences, and it is what makes shrinking a vocabulary
+// safe. A row saved before #706/#736 may hold `trending`, `for_you`
+// or `popular`; GET /account/preferences must return something the
+// preferences page can render and the browse store can act on, and
+// "no selection" is the only honest answer for a value nothing can
+// serve. It must never be an error — a stale string in a JSONB blob
+// is not a reason to 500 a preferences read, and a user locked out of
+// the page that would let them fix the value has no way out.
+//
+// Same shape as readFilter() in browseView.svelte.ts, for the same
+// reason and against the same removed values.
+func (v DefaultViews) Sanitized() DefaultViews {
+	if !inSet(v.HomeTab, KnownHomeTabs) {
+		v.HomeTab = ""
+	}
+	if !inSet(v.BrowseLayout, KnownBrowseLayouts) {
+		v.BrowseLayout = ""
+	}
+	if !inSet(v.BrowseSort, KnownBrowseSorts) {
+		v.BrowseSort = ""
+	}
+	return v
 }
 
 // EventType enumerates the notification trigger events the UI lets
@@ -204,10 +271,26 @@ func (p *Preferences) ChannelsFor(event string) []string {
 
 // ValidatePreferences rejects values the client shouldn't be able
 // to persist: unknown event types in the channels map, unknown
-// channel names, and known events with channel lists containing the
-// same channel twice. Returns the first violation found — callers
-// surface it to the user verbatim.
+// channel names, known events with channel lists containing the same
+// channel twice, and default-view selections outside the closed sets
+// above. Returns the first violation found — callers surface it to
+// the user verbatim.
+//
+// The view knobs are validated on WRITE and sanitized on READ, not
+// one or the other. Rejecting on write is what stops a new phantom
+// value entering the store; sanitizing on read is what keeps the rows
+// already holding one readable. Only doing the first would 500 every
+// preferences GET for a user who set `trending` before #736.
 func ValidatePreferences(p Preferences) error {
+	if v := p.DefaultViews.HomeTab; v != "" && !inSet(v, KnownHomeTabs) {
+		return fmt.Errorf("unknown home_tab %q", v)
+	}
+	if v := p.DefaultViews.BrowseLayout; v != "" && !inSet(v, KnownBrowseLayouts) {
+		return fmt.Errorf("unknown browse_layout %q", v)
+	}
+	if v := p.DefaultViews.BrowseSort; v != "" && !inSet(v, KnownBrowseSorts) {
+		return fmt.Errorf("unknown browse_sort %q", v)
+	}
 	known := make(map[string]bool, len(KnownEventTypes))
 	for _, e := range KnownEventTypes {
 		known[e] = true
@@ -288,6 +371,10 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Prefe
 		if err := json.Unmarshal(viewsJSON, &p.DefaultViews); err != nil {
 			return Preferences{}, fmt.Errorf("default_views: %w", err)
 		}
+		// Every read goes through here, so this is the one place a
+		// value removed from a vocabulary can be neutralised. See
+		// DefaultViews.Sanitized.
+		p.DefaultViews = p.DefaultViews.Sanitized()
 	}
 	if len(cadenceJSON) > 0 {
 		if err := json.Unmarshal(cadenceJSON, &p.EmailCadence); err != nil {

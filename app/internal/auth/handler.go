@@ -24,6 +24,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -768,16 +769,27 @@ func (h *Handler) GetCurrentUser(
 		}
 	}
 
-	// Pull language + theme from the user's profile so the frontend
-	// can hydrate the language store + theme on the first paint
-	// without a separate round-trip. One small SELECT; the row is
-	// missing entirely for users who haven't created a profile yet,
-	// in which case both prefs default to empty (= "follow system").
+	// Pull language + theme + default views so the frontend can hydrate
+	// the language store, the theme and the browse store on the first
+	// paint without a separate round-trip. One small SELECT.
+	//
+	// The anchor sub-select is what makes the two LEFT JOINs safe: a
+	// user can have preferences without a profile row or the reverse
+	// (they are written by different surfaces), and joining from either
+	// table would drop the other's values whenever its own row happens
+	// to be missing. Anchoring on the ref means exactly one row comes
+	// back, with NULLs standing in for whichever side has nothing yet.
 	var lang, theme string
-	err := h.Pool.QueryRow(ctx,
-		`SELECT COALESCE(language, ''), COALESCE(theme, '') FROM user_profiles WHERE user_ref = $1`,
+	var viewsJSON []byte
+	err := h.Pool.QueryRow(ctx, `
+		SELECT COALESCE(p.language, ''),
+		       COALESCE(p.theme, ''),
+		       COALESCE(up.default_views, '{}'::jsonb)
+		FROM (SELECT $1::bigint AS user_ref) k
+		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
+		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
 		id.UserRef,
-	).Scan(&lang, &theme)
+	).Scan(&lang, &theme, &viewsJSON)
 	if err == nil {
 		if lang != "" {
 			l := lang
@@ -787,10 +799,54 @@ func (h *Handler) GetCurrentUser(
 			t := openapi.CurrentUserTheme(theme)
 			cu.Theme = &t
 		}
+		if v, ok := decodeDefaultViews(viewsJSON); ok {
+			cu.DefaultViews = &v
+		}
 	}
 	// pgx.ErrNoRows is fine; we leave the fields nil.
 
 	return openapi.GetCurrentUser200JSONResponse(cu), nil
+}
+
+// decodeDefaultViews parses the user_preferences.default_views blob
+// into the wire type, dropping any selection this build no longer
+// serves. Reports false when nothing survives, so /auth/me omits the
+// key entirely rather than shipping an empty object.
+//
+// It decodes straight into the GENERATED type rather than a local
+// struct, which is what keeps the vocabulary in one place: the enum
+// members and the Valid() methods below both come from
+// UserPreferencesViews in openapi.yaml, so a value removed there
+// starts being dropped here with no second list to remember to edit.
+// (The obvious alternative — importing userprefs, which owns the same
+// rule for GET /account/preferences — is an import cycle: userprefs
+// depends on this package for IdentityFromContext.)
+//
+// A malformed blob is treated as "no selections". This is a render
+// hint on the session endpoint, and failing /auth/me — the call that
+// gates the entire app — over an unreadable preferences column would
+// lock a user out of the page where they could fix it.
+func decodeDefaultViews(raw []byte) (openapi.UserPreferencesViews, bool) {
+	var v openapi.UserPreferencesViews
+	if len(raw) == 0 {
+		return v, false
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return openapi.UserPreferencesViews{}, false
+	}
+	if v.HomeTab != nil && (*v.HomeTab == "" || !v.HomeTab.Valid()) {
+		v.HomeTab = nil
+	}
+	if v.BrowseLayout != nil && (*v.BrowseLayout == "" || !v.BrowseLayout.Valid()) {
+		v.BrowseLayout = nil
+	}
+	if v.BrowseSort != nil && (*v.BrowseSort == "" || !v.BrowseSort.Valid()) {
+		v.BrowseSort = nil
+	}
+	if v.HomeTab == nil && v.BrowseLayout == nil && v.BrowseSort == nil {
+		return openapi.UserPreferencesViews{}, false
+	}
+	return v, true
 }
 
 // ---------------------------------------------------------------------------

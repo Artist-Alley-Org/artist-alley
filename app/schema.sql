@@ -2391,7 +2391,7 @@ CREATE TABLE public.user_profiles (
     language text DEFAULT ''::text NOT NULL,
     theme text DEFAULT ''::text NOT NULL,
     hide_from_anonymous boolean DEFAULT false NOT NULL,
-    CONSTRAINT user_profiles_theme_check CHECK ((theme = ANY (ARRAY[''::text, 'light'::text, 'dark'::text])))
+    CONSTRAINT user_profiles_theme_check CHECK ((theme = ANY (ARRAY[''::text, 'light'::text, 'dark'::text, 'system'::text])))
 );
 
 
