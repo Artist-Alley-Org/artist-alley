@@ -29,16 +29,9 @@
             href={item.href}
             class="rounded-lg border border-border bg-surface-elevated p-4 transition-colors hover:border-accent/50"
           >
-            <div class="flex items-start justify-between gap-2">
-              <h3 class="text-sm font-medium text-fg">
-                {t(`account.items.${item.slug}.title`)}
-              </h3>
-              {#if item.status === 'stub' && item.phase}
-                <span class="shrink-0 rounded-full bg-warning-container px-2 py-0.5 text-[10px] font-medium text-warning">
-                  {t('admin.status.phase', { phase: item.phase })}
-                </span>
-              {/if}
-            </div>
+            <h3 class="text-sm font-medium text-fg">
+              {t(`account.items.${item.slug}.title`)}
+            </h3>
             <p class="mt-1 text-xs text-fg-muted">{t(`account.items.${item.slug}.blurb`)}</p>
           </a>
         {/each}

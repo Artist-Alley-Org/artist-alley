@@ -38,6 +38,17 @@ import (
 // connection overhead of N LISTEN goroutines.
 const ChannelName = "cache_invalidate"
 
+// WildcardDomain is the reserved domain that flushes EVERY registered
+// cache on a receiving instance, not just one domain. It exists so a
+// separate process — the seeder, which owns no Registry and cannot
+// enumerate the ~50 domains a serving instance registers — can tell
+// running instances to drop all their in-memory caches at once after
+// `aa seed --reset` rewrites the database (#845). Routing is on the
+// Domain field (dispatch already switches on it); the Op field is left
+// unset. A pre-wildcard binary treats "*" as an unknown domain and
+// safely no-ops, which is acceptable pre-release.
+const WildcardDomain = "*"
+
 // Payload is the NOTIFY message format. Producers must marshal
 // this exact shape; the metadata handler does so already.
 type Payload struct {
@@ -143,11 +154,26 @@ func Register[V any](r *Registry, name string, size int) *Cache[V] {
 // the metadata handler emitting from trigger-side writes) can call
 // it directly too.
 func (r *Registry) Emit(ctx context.Context, domain, key string) error {
-	payload, err := json.Marshal(Payload{Domain: domain, Key: key, Op: "upsert"})
+	return publish(ctx, r.Pool, Payload{Domain: domain, Key: key, Op: "upsert"})
+}
+
+// EmitFlushAll publishes a wildcard cache-flush NOTIFY that purges every
+// registered cache on every receiving instance. It takes a raw pool
+// rather than a Registry so a process that owns no cache — the seeder —
+// can broadcast it after `aa seed --reset` commits (#845). Marshals the
+// same Payload shape Registry.Emit does; see WildcardDomain.
+func EmitFlushAll(ctx context.Context, pool *pgxpool.Pool) error {
+	return publish(ctx, pool, Payload{Domain: WildcardDomain})
+}
+
+// publish marshals p and fires it on the shared NOTIFY channel. Shared
+// by Emit and EmitFlushAll so the wire format has a single source.
+func publish(ctx context.Context, pool *pgxpool.Pool, p Payload) error {
+	payload, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("cache: marshal payload: %w", err)
 	}
-	if _, err := r.Pool.Exec(ctx, "SELECT pg_notify($1, $2)", ChannelName, string(payload)); err != nil {
+	if _, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", ChannelName, string(payload)); err != nil {
 		return fmt.Errorf("cache: pg_notify: %w", err)
 	}
 	return nil
@@ -239,6 +265,16 @@ func (r *Registry) listen(ctx context.Context, conn *pgx.Conn) {
 
 func (r *Registry) dispatch(p Payload) {
 	if p.Domain == "" {
+		return
+	}
+	if p.Domain == WildcardDomain {
+		// Wildcard flush (#845): purge every registered invalidator so a
+		// running instance drops all pre-reset caches without a restart.
+		r.mu.RLock()
+		for _, inv := range r.domains {
+			inv.purge()
+		}
+		r.mu.RUnlock()
 		return
 	}
 	r.mu.RLock()

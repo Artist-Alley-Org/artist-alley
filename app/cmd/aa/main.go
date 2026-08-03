@@ -20,6 +20,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/db"
 	"github.com/mscrnt/artist-alley/app/internal/debugsrv"
@@ -196,6 +197,24 @@ func runSeed(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// The reset + reseed above have committed. Tell any already-running
+	// instance to flush its in-memory caches so it stops serving
+	// pre-reset data without needing a restart (#845). This is the whole
+	// point of --reset for a live deployment: the seeder is a separate
+	// process with no cache Registry, so it broadcasts a wildcard flush
+	// over the same NOTIFY channel the caches already LISTEN on. Only on
+	// --reset — a plain re-seed layers onto existing data and does not
+	// invalidate the world. Best-effort: a failed NOTIFY must not fail an
+	// otherwise-successful seed, and a pre-wildcard binary ignores it.
+	if *reset {
+		if err := cache.EmitFlushAll(ctx, pool); err != nil {
+			logger.Warn("seed.cache_flush.failed", "err", err.Error())
+		} else {
+			logger.Info("seed.cache_flush.sent")
+		}
+	}
+
 	logger.Info("seed.complete",
 		"users", counts.Users, "teams", counts.Teams,
 		"collections", counts.Collections, "assets", counts.Assets,

@@ -6,4 +6,4 @@
   let { data } = $props();
 </script>
 
-<AccountStubPage slug={data.item.slug} phase={data.item.phase} />
+<AccountStubPage slug={data.item.slug} />
