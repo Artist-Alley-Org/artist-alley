@@ -18,7 +18,7 @@
   },
   "search": {
     "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
-    "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search.",
+    "coming_soon": "Advanced search is not yet available. For now, the navbar input runs a full-text search.",
     "facets_heading": "Facets",
     "advanced_builder": "Advanced builder",
     "save_search_button": "Save search",
@@ -553,8 +553,7 @@
     "intro": "Manage the install. Changes here affect every user on this server.",
     "status": {
       "live": "Live",
-      "stub": "Stub",
-      "phase": "Phase {phase}"
+      "stub": "Stub"
     },
     "requests": {
       "title": "Resource requests",
@@ -648,12 +647,12 @@
       "title": "Federation peers",
       "intro": "Trusted artist-alley instances this install will exchange activities with. Per ADR 0043, pairing alone shares no content.",
       "banner_no_content_yet_label": "Channel only.",
-      "banner_no_content_yet": "Adding a peer here creates a trusted communication channel. No posts, collections, assets, or other content actually flows until you (or another user with permission) explicitly shares an object with the peer — that's the next phase (1.22.C aa:Share).",
+      "banner_no_content_yet": "Adding a peer here creates a trusted communication channel. No posts, collections, assets, or other content actually flows until you (or another user with permission) explicitly shares an object with the peer — object sharing arrives in a future release.",
       "paired_peers": "Paired peers",
       "add_peer": "Add peer",
       "add_cancel": "Cancel",
       "add_submit": "Pair peer",
-      "add_help": "Manual entry — paste the peer's instance URL, display name, and PEM-encoded Ed25519 instance public key (coordinated out-of-band with the peer's operator). Automated handshake lands in 1.22.B-b.",
+      "add_help": "Manual entry — paste the peer's instance URL, display name, and PEM-encoded Ed25519 instance public key (coordinated out-of-band with the peer's operator). An automated handshake will arrive in a future release.",
       "form_instance_url": "Instance URL",
       "form_display_name": "Display name",
       "form_public_key": "Instance public key (PEM)",
@@ -671,7 +670,7 @@
       "enabled_no": "disabled",
       "never_seen": "never",
       "defederate": "Defederate",
-      "confirm_defederate": "Defederate {name}? This removes the peer + cascades to any share grants when 1.22.C ships.",
+      "confirm_defederate": "Defederate {name}? This removes the peer + cascades to any share grants once object sharing ships.",
       "cascade_title": "Defederate {name}?",
       "cascade_intro": "You're about to defederate {url}. Review the impact below before continuing.",
       "cascade_loading": "Loading cascade preview…",
@@ -692,7 +691,7 @@
       "cascade_kind_user": "user share(s)",
       "shares": {
         "title": "Federation shares",
-        "intro": "Active per-object grants. Pairing alone shares nothing; every row here is an explicit grantor decision (1.22.C aa:Share).",
+        "intro": "Active per-object grants. Pairing alone shares nothing; every row here is an explicit grantor decision.",
         "filter_heading": "Filter",
         "filter_by_peer": "By peer",
         "filter_by_grantor": "By grantor",
@@ -862,7 +861,7 @@
       "label_cc": "cc:",
       "label_signed": "signed:",
       "label_signed_yes": "yes ({key})",
-      "label_signed_no": "no (federation outbox not wired yet — Phase 1.22.D)",
+      "label_signed_no": "no (federation outbox not wired yet)",
       "label_payload": "payload:",
       "source_placeholder": "local or https://...",
       "actor_placeholder": "user ref"
@@ -1179,7 +1178,7 @@
         "tiles": {
           "peers": {
             "title": "Peers",
-            "blurb": "Paired instances + handshake state. Pairing alone shares no content (1.22.C aa:Share is the access-control layer)."
+            "blurb": "Paired instances + handshake state. Pairing alone shares no content; sharing is the access-control layer and arrives in a future release."
           },
           "directories": {
             "title": "Directories",
@@ -1187,7 +1186,7 @@
           },
           "shares": {
             "title": "Shares",
-            "blurb": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views."
+            "blurb": "Active share grants across all paired peers. Revoke from here OR from the per-peer / per-object views."
           },
           "outbox": {
             "title": "Outbox",
@@ -1199,7 +1198,7 @@
           },
           "blocklist": {
             "title": "Block list",
-            "blurb": "Peers this instance refuses to federate with. Lands with the moderation hooks in Phase 1.22.G."
+            "blurb": "Peers this instance refuses to federate with. Arrives with the moderation hooks in a future release."
           },
           "activitypub": {
             "title": "Public fediverse compatibility",
@@ -1669,7 +1668,7 @@
     },
     "asset_types": {
       "title": "Asset types",
-      "intro": "The catalogue of asset types known to this instance. Click a row to manage its per-type ACL (Phase 1.17.F-bis). Defining the full editor (rename, icon, allowed extensions) lands in a follow-up phase.",
+      "intro": "The catalogue of asset types known to this instance. Click a row to manage its per-type ACL. Defining the full editor (rename, icon, allowed extensions) will arrive in a future release.",
       "coming_soon": "Resource-type editing lands in a follow-up phase.",
       "load_error": "Failed to load asset types.",
       "empty": "No asset types — the catalogue is empty (or every type is hidden by ACLs your account can't see).",
@@ -1774,9 +1773,9 @@
         "ai": "AI provider list and default selection.",
         "log": "Audit trail of admin actions.",
         "activities": "Federation activity ledger — every Create/Update/Delete/Like/Follow/etc emitted by this instance + received from peers.",
-        "federation": "Trusted artist-alley instances this install will exchange activities with. Pairing alone shares no content (1.22.C aa:Share is the access-control layer).",
+        "federation": "Trusted artist-alley instances this install will exchange activities with. Pairing alone shares no content; sharing is the access-control layer and arrives in a future release.",
         "directories": "Subscribed federation directories — opt-in discovery surfaces listing other artist-alley instances you might want to pair with. Discovery only; pairing still goes through the handshake.",
-        "fed_shares": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views.",
+        "fed_shares": "Active share grants across all paired peers. Revoke from here OR from the per-peer / per-object views.",
         "fed_outbox": "Per-recipient federation delivery queue. Failed rows can be re-queued from the row's action; queued + sent + cancelled rows are surfaced for observability. LISTEN/NOTIFY drives sub-1s p99 latency.",
         "fed_inbox": "Inbound federation activities + their dispatch state (pending / processed / rejected / failed). Read-only — re-delivered envelopes land idempotently on the existing row via the activity_uri UNIQUE constraint."
       },
@@ -1863,7 +1862,7 @@
       },
       "ai_inference": {
         "title": "AI routing & budgets",
-        "intro": "Phase 1.14.A inference config. Per-task default provider, fallback chains walked on transient errors, privacy lock for sensitive assets, default budget caps applied to new providers. Master switch ships off — flip when at least one provider is configured.",
+        "intro": "Inference config. Per-task default provider, fallback chains walked on transient errors, privacy lock for sensitive assets, default budget caps applied to new providers. Master switch ships off — flip when at least one provider is configured.",
         "enabled_label": "AI inference enabled",
         "enabled_help": "Master switch. Off ships safe; the operator opts in once routing + budgets are configured.",
         "routing_section": "Per-task routing",
@@ -2578,10 +2577,10 @@
   "federation": {
     "banner_aria_label": "Encrypted federation status",
     "not_supported_headline": "Encrypted federation is not yet supported.",
-    "page_body": "Activities that target restricted or embargo sensitivity objects will not federate to peers until Phase 1.22.I lands encrypted delivery. The share records you grant today are persisted, so when encrypted federation ships those backlogged activities will federate automatically — but until then, expect zero outbound federation for sensitive objects.",
+    "page_body": "Activities that target restricted or embargo sensitivity objects will not federate to peers until encrypted delivery ships in a future release. The share records you grant today are persisted, so when encrypted federation ships those backlogged activities will federate automatically — but until then, expect zero outbound federation for sensitive objects.",
     "grant_headline": "This object is marked {sensitivity} — encrypted federation is not yet supported.",
-    "grant_body": "Sharing now will create the share record but no activities will federate until Phase 1.22.I ships encrypted delivery. You can:",
-    "opt_share_anyway": "Share anyway, knowing activity federation is paused for this object until 1.22.I; or",
+    "grant_body": "Sharing now will create the share record but no activities will federate until encrypted delivery ships in a future release. You can:",
+    "opt_share_anyway": "Share anyway, knowing activity federation is paused for this object until encrypted delivery ships; or",
     "opt_cancel": "Cancel and downgrade the object’s sensitivity to a non-restricted tier first."
   },
   "post_host": {
