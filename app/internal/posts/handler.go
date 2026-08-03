@@ -1008,6 +1008,15 @@ func (h *Handler) RemovePostAsset(
 // Authorization: reading the ACL list requires read access to the post
 // (canReadPost). Adding/removing requires write access (canMutatePost)
 // so a viewer can't expand their own access by editing the ACL list.
+//
+// Since #667 wired post_acls into canReadPost's rule, a GRANTEE can now
+// read this list too — someone you share a post with can see who else it
+// is shared with. That follows from "read the post ⇒ read its grants"
+// and is not a new class of disclosure (any signed-in caller could
+// already list the grants on any org-only post), but it is a real
+// behaviour change and it is deliberate rather than overlooked. If
+// grantee-visible ACL rows ever need hiding, the narrow fix is a
+// separate authorization here, not a second read rule.
 
 func (h *Handler) ListPostAcls(
 	ctx context.Context,
