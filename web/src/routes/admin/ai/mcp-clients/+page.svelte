@@ -13,6 +13,7 @@
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import PasswordInput from '$components/PasswordInput.svelte';
   import type { components } from '$api/schema';
 
   type MCPServer = components['schemas']['MCPServer'];
@@ -22,7 +23,11 @@
   let loading = $state(true);
   let loadError = $state<string | null>(null);
 
-  let form = $state<MCPServerCreate>({
+  // auth_secret_ref is optional on the wire type but this form always
+  // holds a string — it is initialised to '' and reset to '' after a
+  // successful register — so pin it, and PasswordInput can bind to it
+  // without a cast.
+  let form = $state<MCPServerCreate & { auth_secret_ref: string }>({
     name: '',
     url: '',
     transport: 'http',
@@ -243,8 +248,8 @@
         {#if form.auth_kind === 'bearer' || form.auth_kind === 'header'}
           <label class="block">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref')}</span>
-            <input type="password" bind:value={form.auth_secret_ref}
-                   class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
+            <PasswordInput bind:value={form.auth_secret_ref}
+                   inputClass="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
             <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref_hint')}</span>
           </label>
         {/if}

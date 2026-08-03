@@ -73,15 +73,6 @@ import (
 // safe; one instance per process is enough.
 var exifExtractor = exif.New()
 
-// RasterPayload is the JSON body of a preview.raster job. We carry
-// the file_hash + file_extension explicitly so an external worker
-// doesn't need to query the assets table.
-type RasterPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // RasterResult is what the handler writes back to jobs.result on
 // success. The admin UI surfaces this for diagnosis.
 type RasterResult struct {
@@ -170,7 +161,7 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 		if v.Key == storage.VariantOriginal {
 			continue
 		}
-		if h.variantExists(ctx, p.FileHash, v.Key) {
+		if variantDone(ctx, h.Storage, p.FileHash, v.Key, p.Force) {
 			result.Skipped = append(result.Skipped, v.Key)
 			continue
 		}
@@ -181,17 +172,22 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 		result.Generated = append(result.Generated, v.Key)
 	}
 
-	// Backfill thumbhash on assets that don't already have one. We
-	// already paid for the decode; computing thumbhash is sub-ms on
-	// top, so this is free for any pipeline that ran the variants.
-	// Best-effort: failure here doesn't fail the job.
+	// Stamp the source's shape — thumbhash + pixel dimensions. We
+	// already paid for the decode; both are sub-ms on top, so this is
+	// free for any pipeline that ran the variants. Best-effort:
+	// failure here doesn't fail the job.
 	//
-	// Shared with every non-raster handler since #645 — see
+	// Shared with every non-raster handler since #645/#757 — see
 	// ladder.go. This handler keeps its own variant loop (it reports
 	// generated/skipped rungs and hard-fails the job on any rung
 	// error, which the best-effort helper deliberately doesn't), but
-	// the thumbhash stamp is now one implementation for all of them.
-	setThumbhashIfMissing(ctx, h.Pool, h.Logger, "raster", p.AssetID, src)
+	// the stamps are one implementation for all eleven.
+	//
+	// `src` here is POST-EXIF-ROTATION (see above), so the recorded
+	// dimensions describe the picture the card shows rather than the
+	// byte order on disk — an orientation=6 phone photo records
+	// portrait, which is what the tile has to reserve.
+	stampSourceShape(ctx, h.Pool, h.Logger, "raster", p.AssetID, src, p.Force)
 
 	h.markReady(ctx, p.AssetID)
 	result.DurationS = time.Since(started).Seconds()
@@ -302,11 +298,6 @@ func mimeForExt(ext string) string {
 		return "image/webp"
 	}
 	return "application/octet-stream"
-}
-
-func (h *RasterHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *RasterHandler) writeVariant(ctx context.Context, hash string, src image.Image, v sysconfig.PreviewVariant) error {

@@ -12,6 +12,7 @@ supersedes: []
 related: 
   - "0017"
   - "0024"
+  - "0079"
 tags:
   - monetization
   - ai
@@ -163,6 +164,11 @@ Cross-instance ad bidding is explicitly out of scope.
 - Ad slot UI takes screen space even when the slot is consenting-
   but-empty. Mitigation: collapse the slot entirely if the provider
   signals "no ad to fill." Most providers offer this signal.
+  *Amended 2026-07-29 — this holds for the banner and sidebar slots
+  listed above, which sit in page margins. It does **not** hold for the
+  in-grid sized slots introduced by **ADR 0079**: collapsing a 2×2 cell
+  leaves a 2×2 hole in the middle of the feed. Those degrade to ordinary
+  feed content instead, so the no-fill rule is now per slot kind.*
 - Operator can paste malicious custom HTML into the Custom provider.
   Mitigation: Custom provider config is gated by an admin role +
   an explicit "I understand this loads arbitrary code on every

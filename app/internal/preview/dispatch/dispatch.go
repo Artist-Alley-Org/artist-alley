@@ -22,7 +22,10 @@
 package dispatch
 
 import (
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/archive"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
@@ -47,6 +50,18 @@ var (
 		"hdr": {}, "exr": {}, "pic": {},
 		"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
 	}
+
+	// GifExts routes to preview.gif (#832). Deliberately a SUBSET of
+	// ImageExts rather than a move out of it: a GIF is an image to every
+	// consumer that is not the preview router — `assetTypeFor` puts it in
+	// the Image category, `isImageExt` licenses the image-only editor
+	// surfaces, `needsProcessing` marks it for a derivative — and pulling
+	// it out of ImageExts to express "does not use preview.raster" would
+	// have silently reclassified every GIF in the library as type-0.
+	//
+	// Only JobTypeForExt reads this, and it reads it FIRST, so the one
+	// thing that changes is which handler the bytes land in.
+	GifExts = map[string]struct{}{"gif": {}}
 
 	// VideoExts — anything we'd want a poster frame + hover sprite for.
 	VideoExts = map[string]struct{}{
@@ -121,6 +136,10 @@ func JobTypeForExt(ext *string) jobs.JobType {
 	}
 	e := Normalize(*ext)
 	switch {
+	// GIF before ImageExts' raster fallback — it is in both sets and the
+	// first match wins (#832).
+	case Has(GifExts, e):
+		return jobs.TypePreviewGif
 	case Has(VideoExts, e):
 		return jobs.TypePreviewVideo
 	case Has(ModelExts, e):
@@ -145,6 +164,46 @@ func JobTypeForExt(ext *string) jobs.JobType {
 		return jobs.TypePreviewArchive
 	}
 	return jobs.TypePreviewRaster
+}
+
+// Step is one job an enqueue site should insert for an asset, with the
+// priority the router thinks it deserves.
+type Step struct {
+	Type     jobs.JobType
+	Priority int
+}
+
+// PlanForExt is what an enqueue site asks instead of JobTypeForExt when
+// it is about to actually insert rows: the ordered set of preview jobs
+// for ext, given the baseline priority that site uses for "a person is
+// waiting on this".
+//
+// For every format but video the plan is one step at the caller's own
+// priority, exactly as before.
+//
+// Video splits (#818). The cheap poster job takes the caller's priority
+// because it is the one that makes the card appear, and the full ladder
+// drops to PriorityBackfil because nothing on screen is waiting for it:
+// a video with a poster and a thumbhash looks finished, and the HLS
+// rungs matter at the moment someone presses play, not at the moment
+// the grid paints. Enqueued in this order so that at equal priority —
+// which is what a bulk rebuild produces, since it already runs
+// everything at PriorityBackfil — ClaimJob's `ORDER BY priority,
+// enqueued_at` still drains the posters first.
+//
+// The plan lives HERE, next to the extension sets, for the reason the
+// package exists: four sites enqueue preview work (upload, recreate,
+// `aa seed`, bulk rebuild) and a routing rule that any one of them
+// spells out for itself is a routing rule that drifts.
+func PlanForExt(ext *string, base int) []Step {
+	full := JobTypeForExt(ext)
+	if full != jobs.TypePreviewVideo {
+		return []Step{{Type: full, Priority: base}}
+	}
+	return []Step{
+		{Type: jobs.TypePreviewVideoPoster, Priority: base},
+		{Type: full, Priority: jobs.PriorityBackfil},
+	}
 }
 
 // CanPreview reports whether SOME handler will actually produce a
@@ -172,4 +231,85 @@ func CanPreview(ext *string) bool {
 		return true
 	}
 	return Has(ImageExts, Normalize(*ext))
+}
+
+// PreviewableExts returns every extension some handler can render, as
+// lowercase strings without a leading dot, sorted.
+//
+// Derived from CanPreview over the declared sets rather than a fresh
+// list, so it cannot drift from what the router will actually accept.
+// The caller is the bulk rebuild path, whose "no --ext given means all
+// of them" needs a concrete allowlist to hand to SQL.
+func PreviewableExts() []string {
+	seen := map[string]struct{}{}
+	for _, set := range []map[string]struct{}{
+		ImageExts, VideoExts, ModelExts, AudioExts, PDFExts, FontExts,
+		EbookExts, EPSExts, PSDExts, ComicExts, TextExts, ArchiveExts,
+	} {
+		for e := range set {
+			ext := e
+			if CanPreview(&ext) {
+				seen[ext] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for e := range seen {
+		out = append(out, e)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Payload is the JSON body EVERY preview.* job carries, on the wire and
+// in every handler. It lives here — next to the router that decides
+// which handler reads it — because producer and consumer used to
+// disagree in a way the compiler could not see: the three enqueue sites
+// (upload, "recreate previews", `aa seed`) each hand-rolled a
+// `map[string]string`, while the eleven handlers each declared their
+// own struct. Adding a field meant editing fourteen places and hoping.
+//
+// That is not hypothetical. `map[string]string{"force": "true"}` is a
+// JSON string, and a `Force bool` would reject it as a bad payload at
+// unmarshal time — a TerminalError for a control that is supposed to
+// FIX a preview. One shared type makes that a compile error instead.
+//
+// Handlers alias this type (`type ModelPayload = dispatch.Payload`)
+// rather than redeclaring it, so a new field is available to all of
+// them at once and the wire format has exactly one definition.
+type Payload struct {
+	AssetID       uuid.UUID `json:"asset_id"`
+	FileHash      string    `json:"file_hash"`
+	FileExtension string    `json:"file_extension"`
+
+	// Force re-renders variants that already exist instead of leaving
+	// them alone (#760).
+	//
+	// Every handler short-circuits on "the output is already in
+	// storage", which is what makes the steady-state re-queue nearly
+	// free — and what made "Recreate previews" a control that did
+	// nothing. An operator whose renderer just got fixed clicked it,
+	// got a 202 and a job that completed, and the thumbnail did not
+	// change, because the skip check never asked whether the bytes
+	// were STALE, only whether they were THERE.
+	//
+	// Force is the operator saying "the bytes are stale, ignore them".
+	// It never deletes: each rung is overwritten in place by an
+	// atomic backend Put, so a crash mid-render leaves the old
+	// preview intact rather than an asset with none.
+	//
+	// omitempty keeps the ordinary payload byte-identical to what
+	// shipped before, so nothing has to be re-enqueued to upgrade.
+	Force bool `json:"force,omitempty"`
+}
+
+// NewPayload builds the job body for one asset. Prefer it over a
+// struct literal at enqueue sites so a nil extension is normalised the
+// same way everywhere.
+func NewPayload(assetID uuid.UUID, hash string, ext *string, force bool) Payload {
+	e := ""
+	if ext != nil {
+		e = *ext
+	}
+	return Payload{AssetID: assetID, FileHash: hash, FileExtension: e, Force: force}
 }

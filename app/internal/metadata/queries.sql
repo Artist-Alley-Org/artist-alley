@@ -15,11 +15,12 @@
 -- visible by default; deprecated fields can still hold values on
 -- existing rows, so hiding them would drop live data from the editor.
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
-       display_order, display_group, source, status,
+       applies_to, read_capability, write_capability,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -34,11 +35,12 @@ ORDER BY display_group, display_order, code;
 -- Like ListFieldDefinitions but only fields whose applies_to is
 -- empty (applies to all) OR contains the given asset_type ref.
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
-       display_order, display_group, source, status,
+       applies_to, read_capability, write_capability,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -47,35 +49,39 @@ ORDER BY display_group, display_order, code;
 
 -- name: GetFieldDefinitionByID :one
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
-       display_order, display_group, source, status,
+       applies_to, read_capability, write_capability,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
-       applies_to, field_set_id, read_capability, write_capability,
-       display_order, display_group, source, status,
+       applies_to, read_capability, write_capability,
+       display_order, display_group, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind, extraction_source, extraction_mode
+       subject_kind, extraction_source, extraction_mode, default_value,
+       open_vocabulary
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
 INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
-    applies_to, field_set_id, read_capability, write_capability,
-    display_order, display_group, source, status,
-    created_by_user_ref, updated_by_user_ref, subject_kind
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17)
+    applies_to, read_capability, write_capability,
+    display_order, display_group, status,
+    created_by_user_ref, updated_by_user_ref, subject_kind, default_value,
+    open_vocabulary
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16,$17)
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
-          display_order, display_group, source, status,
+          applies_to, read_capability, write_capability,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode;
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -89,23 +95,30 @@ UPDATE field_definition SET
     required                  = COALESCE(sqlc.narg('required'),                  required),
     searchable                = COALESCE(sqlc.narg('searchable'),                searchable),
     applies_to                = COALESCE(sqlc.narg('applies_to'),                applies_to),
-    field_set_id              = COALESCE(sqlc.narg('field_set_id'),              field_set_id),
     read_capability           = COALESCE(sqlc.narg('read_capability'),           read_capability),
     write_capability          = COALESCE(sqlc.narg('write_capability'),          write_capability),
     display_order             = COALESCE(sqlc.narg('display_order'),             display_order),
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
-    source                    = COALESCE(sqlc.narg('source'),                    source),
+    open_vocabulary           = COALESCE(sqlc.narg('open_vocabulary'),           open_vocabulary),
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
+    -- default_value needs a CLEAR path, which COALESCE cannot express:
+    -- passing NULL means "leave it alone" everywhere else in this
+    -- statement, so "remove the default" would be unsayable. The
+    -- explicit boolean makes removal a deliberate act rather than an
+    -- ambiguity in the absence of a value.
+    default_value             = CASE WHEN sqlc.arg('clear_default')::BOOLEAN THEN NULL
+                                     ELSE COALESCE(sqlc.narg('default_value'), default_value) END,
     updated_at                = NOW(),
     updated_by_user_ref       = sqlc.narg('updated_by_user_ref')
 WHERE id = sqlc.arg('id')
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
-          display_order, display_group, source, status,
+          applies_to, read_capability, write_capability,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode;
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -126,11 +139,42 @@ UPDATE field_definition
        updated_by_user_ref = $4
  WHERE id = $1
 RETURNING id, code, label, description, type, options, required, searchable,
-          applies_to, field_set_id, read_capability, write_capability,
-          display_order, display_group, source, status,
+          applies_to, read_capability, write_capability,
+          display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind, extraction_source, extraction_mode;
+          subject_kind, extraction_source, extraction_mode, default_value,
+          open_vocabulary;
+
+-- name: LockFieldDefinitionVocabulary :one
+-- Reads the live options document under a ROW LOCK, for the
+-- accept-and-create path on an open vocabulary (#830).
+--
+-- FOR UPDATE is the whole point. Adding a term rewrites the WHOLE
+-- options document, so two concurrent writes each minting a different
+-- new term would both read the pre-write document and the second
+-- UPDATE would discard the first's term — the last-write-wins gap #737
+-- records for the admin options editor, except here it happens on an
+-- ordinary value save that no operator would think of as an edit to the
+-- field. The lock serialises the read-modify-write; the loser re-reads
+-- the winner's document inside its own transaction and appends to it.
+--
+-- Reads the row rather than trusting the caller's copy for a second
+-- reason: the field-by-id LRU can hand back an options document that is
+-- one write old, and resolving against a stale document is how a term
+-- gets minted twice.
+SELECT options, type, open_vocabulary
+  FROM field_definition
+ WHERE id = $1
+   FOR UPDATE;
+
+-- name: SetFieldDefinitionOptions :exec
+-- Writes back an options document that gained terms. Deliberately
+-- narrow — it touches options and nothing else — so it cannot be
+-- mistaken for the admin editor's whole-definition update.
+UPDATE field_definition
+   SET options = $2, updated_at = NOW()
+ WHERE id = $1;
 
 -- ---------------------------------------------------------------------------
 -- asset_field_value — the actual values
@@ -142,13 +186,59 @@ RETURNING id, code, label, description, type, options, required, searchable,
 -- per field type. Filtered to active fields (deprecated ones still
 -- return so the UI can show "this value was set on a deprecated
 -- field; please re-enter").
+-- f.options rides along so the handler can resolve a stored select
+-- slug to its label and lifecycle without a second query: the join to
+-- field_definition is already here for the code/label/type, so the
+-- column is free.
+--
+-- The LEFT JOIN to assets does the same job for `reference` values
+-- (#817): value_ref stores a bare UUID, so without it every reference
+-- field renders as a raw id. One join, no extra round trip, no N+1 —
+-- and because it is a LEFT join, a value that does not resolve simply
+-- yields NULLs and the handler omits resolved_reference.
+--
+-- `r.deleted_at IS NULL` IS THE VISIBILITY RULE, not an incidental
+-- tidy-up. It is exactly visibility.Predicate for (EntityAsset,
+-- authenticated) — see ADR 0063/0064: a title is row-plane metadata,
+-- and for an authenticated caller the asset row predicate is
+-- soft-delete and nothing else. The anonymous branch of that predicate
+-- (status/sensitivity/processing) is deliberately NOT reproduced here
+-- because it is unreachable: GetAssetFields 401s a nil identity, so no
+-- anonymous caller ever executes this query. reference_value_e2e_test.go
+-- asserts both halves of that claim, so if the authenticated predicate
+-- ever tightens (#210's sensitivity rule) or this endpoint is ever
+-- opened to anonymous callers, the test fails and points here.
 SELECT v.field_id, v.value_text, v.value_num, v.value_date, v.value_options, v.value_ref,
        v.set_by, v.set_at, v.set_by_user_ref,
-       f.code, f.label, f.type, f.status
+       f.code, f.label, f.type, f.status, f.options,
+       r.id AS ref_asset_id,
+       -- COALESCE rather than a bare r.title: sqlc infers a LEFT-joined
+       -- NOT NULL column as non-nullable and would scan a NULL into a
+       -- string. Presence is carried by ref_asset_id.Valid instead,
+       -- which is unambiguous — and an empty title is a real state
+       -- (assets.title DEFAULT '') that the client renders as the id.
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
 FROM asset_field_value v
 JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
 WHERE v.asset_id = $1
 ORDER BY f.display_group, f.display_order, f.code;
+
+-- name: GetReferencedAsset :one
+-- The resolve-one counterpart of ListAssetFieldValues' LEFT JOIN, for
+-- the upsert path — which returns a single AssetFieldValue and has no
+-- join to ride along on.
+--
+-- It exists so SetAssetFieldValue's 200 body carries the same
+-- resolved_reference the list path does. #775 is the precedent and the
+-- warning: buildAssetValue was created because one consumer resolved
+-- and another printed the slug, and shipping a DTO field that only one
+-- of two endpoints ever populates rebuilds that exact asymmetry.
+--
+-- Same visibility rule as the join, for the same reason (see above).
+SELECT a.id, a.title
+FROM assets a
+WHERE a.id = $1 AND a.deleted_at IS NULL;
 
 -- name: GetAssetFieldValue :one
 SELECT v.asset_id, v.field_id, v.value_text, v.value_num, v.value_date,
@@ -218,16 +308,44 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 -- ---------------------------------------------------------------------------
 
 -- name: ListCollectionFieldValues :many
-SELECT collection_id, field_id, value_text, value_num, value_date,
-       value_options, value_ref, set_by, set_at, set_by_user_ref
-FROM collection_field_value
-WHERE collection_id = $1;
+-- The collection sibling of ListAssetFieldValues (#840). It carried NO
+-- join at all until now, so collection metadata rendered raw slugs and
+-- bare reference UUIDs where the asset path rendered labels and linked
+-- titles. The two joins here close that gap and cost nothing extra:
+--   - JOIN field_definition brings code/label/type AND f.options, so the
+--     handler resolves a stored `select` slug to its label without a
+--     second query (exactly what ListAssetFieldValues does).
+--   - LEFT JOIN assets resolves a `reference` value's title (#817).
+--     `r.deleted_at IS NULL` IS the authenticated-asset visibility rule
+--     (ADR 0063/0064), the SAME predicate ListAssetFieldValues' join
+--     hard-codes — see that query and
+--     TestCollectionReferenceJoinMatchesAuthenticatedAssetPredicate. A
+--     target that does not resolve yields NULLs and the handler omits
+--     resolved_reference, degrading to the bare id (#839).
+SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
+       v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
+       f.code, f.label, f.type, f.options,
+       r.id AS ref_asset_id,
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
+FROM collection_field_value v
+JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
+WHERE v.collection_id = $1
+ORDER BY f.display_group, f.display_order, f.code;
 
 -- name: GetCollectionFieldValue :one
-SELECT collection_id, field_id, value_text, value_num, value_date,
-       value_options, value_ref, set_by, set_at, set_by_user_ref
-FROM collection_field_value
-WHERE collection_id = $1 AND field_id = $2;
+-- Same joins as ListCollectionFieldValues, for the single-row read the
+-- write path snapshots against — code/label/type/options and the
+-- reference title all resolve here too (#840).
+SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
+       v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
+       f.code, f.label, f.type, f.options,
+       r.id AS ref_asset_id,
+       COALESCE(r.title, '')::TEXT AS ref_asset_title
+FROM collection_field_value v
+JOIN field_definition f ON f.id = v.field_id
+LEFT JOIN assets r ON r.id = v.value_ref AND r.deleted_at IS NULL
+WHERE v.collection_id = $1 AND v.field_id = $2;
 
 -- name: UpsertCollectionFieldValue :one
 -- Cache invalidation MUST follow at handler layer.
@@ -292,3 +410,105 @@ WHERE subject_kind = 'collection'
   AND status = 'active'
   AND required = TRUE
 ORDER BY display_order ASC, label ASC;
+
+-- ---------------------------------------------------------------------------
+-- Upload defaults (#793) — ADR 0081 §3
+-- ---------------------------------------------------------------------------
+
+-- name: ListAssetDefaultCandidates :many
+-- Every asset field that carries a default OR has one overridden by a
+-- team the uploader belongs to, for the asset type being created.
+--
+-- The LEFT JOIN is what makes both halves of the precedence chain
+-- readable in ONE query: a field with only a field default comes back
+-- once with a NULL override, a field a team has overridden comes back
+-- with the override alongside, and a field whose ONLY default is a team
+-- override still comes back (the WHERE accepts either side). Emitting
+-- one row per matching override rather than picking a winner in SQL is
+-- deliberate — Go can then see that two of the uploader's teams both
+-- override the same field, which is the case that has no correct answer
+-- and must not be silently resolved by an ORDER BY.
+--
+-- applies_to is honoured here: a field that does not apply to this asset
+-- type has no business defaulting onto it.
+SELECT f.id, f.code, f.type, f.options, f.default_value,
+       o.team_id, o.default_value AS override_value
+FROM field_definition f
+LEFT JOIN field_default_override o
+       ON o.field_id = f.id
+      AND o.team_id = ANY(sqlc.arg('team_ids')::UUID[])
+WHERE f.subject_kind = 'asset'
+  AND f.status = 'active'
+  AND (cardinality(f.applies_to) = 0 OR sqlc.arg('rt')::BIGINT = ANY(f.applies_to))
+  AND (f.default_value IS NOT NULL OR o.default_value IS NOT NULL)
+ORDER BY f.code;
+
+-- name: ListDefaultTeamsForUser :many
+-- The uploader's DIRECT team memberships. Not the closure: an ancestor
+-- team is a permission scope, not a place someone uploads to, and
+-- expanding it would make a parent team's override apply to uploads it
+-- never sees.
+SELECT t.id, t.name
+FROM team_memberships m
+JOIN teams t ON t.id = m.team_id
+WHERE m.user_ref = $1
+  AND t.deleted_at IS NULL
+ORDER BY t.name, t.id;
+
+-- name: GetDefaultUserDisplay :one
+-- Display name for the `uploading_user` context value. fullname when
+-- the user set one, username otherwise — the same fallback every other
+-- surface shows, so a default matches what the byline says.
+SELECT COALESCE(NULLIF(fullname, ''), username, '')::TEXT AS display
+FROM "user" WHERE ref = $1;
+
+-- name: ListFieldDefaultOverrides :many
+SELECT o.field_id, o.team_id, t.slug AS team_slug, t.name AS team_name,
+       o.default_value, o.created_at, o.updated_at, o.updated_by_user_ref
+FROM field_default_override o
+JOIN teams t ON t.id = o.team_id
+WHERE o.field_id = $1 AND t.deleted_at IS NULL
+ORDER BY t.name, t.id;
+
+-- name: UpsertFieldDefaultOverride :one
+INSERT INTO field_default_override (field_id, team_id, default_value, updated_by_user_ref)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (field_id, team_id) DO UPDATE
+   SET default_value = EXCLUDED.default_value,
+       updated_at = NOW(),
+       updated_by_user_ref = EXCLUDED.updated_by_user_ref
+RETURNING field_id, team_id, default_value, created_at, updated_at, updated_by_user_ref;
+
+-- name: DeleteFieldDefaultOverride :execrows
+DELETE FROM field_default_override WHERE field_id = $1 AND team_id = $2;
+
+-- name: GetTeamForDefaultOverride :one
+SELECT id, slug, name FROM teams WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: InsertAssetFieldValueIfAbsent :execrows
+-- The defaults writer. ON CONFLICT DO NOTHING makes "a default never
+-- overwrites a value that is already set" a property of the STATEMENT
+-- rather than of the order the caller happens to do things in. The
+-- caller today runs at asset creation, where by construction there is
+-- nothing to overwrite; encoding the rule here means a future caller
+-- (a re-apply action, a backfill) cannot reintroduce the clobber by
+-- being placed differently in the sequence.
+--
+-- set_by is hard-wired to 'default' — this statement exists only for
+-- the defaults path, and a provenance the applier can recognise is the
+-- whole reason it can tell "a default is sitting here" from "a human
+-- typed this".
+INSERT INTO asset_field_value (
+    asset_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at
+) VALUES (
+    $1, $2,
+    sqlc.narg('value_text'),
+    sqlc.narg('value_num'),
+    sqlc.narg('value_date'),
+    sqlc.narg('value_options'),
+    sqlc.narg('value_ref'),
+    'default', NOW()
+)
+ON CONFLICT (asset_id, field_id) DO NOTHING;

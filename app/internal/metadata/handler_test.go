@@ -289,8 +289,16 @@ func TestAssetFieldValueLifecycle(t *testing.T) {
 	dateFieldID := mustCreateField(t, router, map[string]any{
 		"code": "mtv_due", "label": "Due", "type": "datetime",
 	})
+	// The vocabulary is not decoration. This fixture defined a
+	// multi_select with NO options and then wrote "alpha"/"beta" to it,
+	// which the write path accepted because it never checked membership
+	// (#824). It is also a state production cannot reach: a
+	// multi_select with an empty vocabulary renders as an empty picker,
+	// so no operator can put a value in it. Give the field the terms a
+	// real one would have, and the test exercises the real path.
 	multiFieldID := mustCreateField(t, router, map[string]any{
 		"code": "mtv_tags", "label": "Tags", "type": "multi_select",
+		"options": map[string]any{"values": []any{"alpha", "beta", "gamma"}},
 	})
 
 	// Insert a throwaway asset (we don't go through /assets to keep
@@ -580,6 +588,15 @@ func (s metaShim) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRequ
 }
 func (s metaShim) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	return s.h.SetFieldExtraction(ctx, req)
+}
+func (s metaShim) ListFieldDefaultOverrides(ctx context.Context, req openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
+	return s.h.ListFieldDefaultOverrides(ctx, req)
+}
+func (s metaShim) SetFieldDefaultOverride(ctx context.Context, req openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error) {
+	return s.h.SetFieldDefaultOverride(ctx, req)
+}
+func (s metaShim) DeleteFieldDefaultOverride(ctx context.Context, req openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error) {
+	return s.h.DeleteFieldDefaultOverride(ctx, req)
 }
 func (s metaShim) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.h.GetAssetFields(ctx, req)

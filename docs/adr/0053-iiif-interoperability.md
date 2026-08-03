@@ -10,6 +10,8 @@ supersedes: []
 related:
   - "0034"
   - "0043"
+  - "0074"
+  - "0083"
 tags:
   - extensibility
   - standards

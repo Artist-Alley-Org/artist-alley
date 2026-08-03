@@ -387,6 +387,14 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
 }
 
+type EmailTemplate struct {
+	TemplateName     string             `json:"template_name"`
+	Part             string             `json:"part"`
+	Body             string             `json:"body"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	UpdatedByUserRef *int64             `json:"updated_by_user_ref"`
+}
+
 type EmailVerificationToken struct {
 	ID         pgtype.UUID        `json:"id"`
 	UserRef    int64              `json:"user_ref"`
@@ -609,6 +617,16 @@ type FederationUserKey struct {
 	RotatedByUserRef *int64 `json:"rotated_by_user_ref"`
 }
 
+// Per-team override of field_definition.default_value, applied to that team's uploads. Same document shape and same validation as the field default. Does NOT federate: a field definition travels to a peer, a team does not.
+type FieldDefaultOverride struct {
+	FieldID          pgtype.UUID        `json:"field_id"`
+	TeamID           pgtype.UUID        `json:"team_id"`
+	DefaultValue     []byte             `json:"default_value"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	UpdatedByUserRef *int64             `json:"updated_by_user_ref"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`
@@ -619,12 +637,10 @@ type FieldDefinition struct {
 	Required                bool               `json:"required"`
 	Searchable              bool               `json:"searchable"`
 	AppliesTo               []int64            `json:"applies_to"`
-	FieldSetID              pgtype.UUID        `json:"field_set_id"`
 	ReadCapability          *string            `json:"read_capability"`
 	WriteCapability         *string            `json:"write_capability"`
 	DisplayOrder            int32              `json:"display_order"`
 	DisplayGroup            string             `json:"display_group"`
-	Source                  []byte             `json:"source"`
 	Status                  string             `json:"status"`
 	DeprecatedReplacementID pgtype.UUID        `json:"deprecated_replacement_id"`
 	OriginServerID          pgtype.UUID        `json:"origin_server_id"`
@@ -635,6 +651,10 @@ type FieldDefinition struct {
 	SubjectKind             string             `json:"subject_kind"`
 	ExtractionSource        string             `json:"extraction_source"`
 	ExtractionMode          string             `json:"extraction_mode"`
+	// Declarative default applied at asset creation. Either {"kind":"literal", value_*: …} or {"kind":"context","context":…} naming a member of a closed server-resolved set. Never an expression. NULL = no default. Validated on write against the field's type and, for vocabulary types, against the live options document — a default naming a deprecated or archived option is rejected. Federates with the field definition.
+	DefaultValue []byte `json:"default_value"`
+	// When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).
+	OpenVocabulary bool `json:"open_vocabulary"`
 }
 
 type GooseDbVersion struct {
@@ -892,6 +912,14 @@ type Session struct {
 	ImpersonatedByUserRef *int64             `json:"impersonated_by_user_ref"`
 }
 
+type SiteText struct {
+	Key              string             `json:"key"`
+	Language         string             `json:"language"`
+	Value            string             `json:"value"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	UpdatedByUserRef *int64             `json:"updated_by_user_ref"`
+}
+
 type StorageObject struct {
 	Hash           string             `json:"hash"`
 	SizeBytes      int64              `json:"size_bytes"`
@@ -941,6 +969,7 @@ type StorageVariant struct {
 	ContentType string             `json:"content_type"`
 	Metadata    []byte             `json:"metadata"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SystemConfig struct {

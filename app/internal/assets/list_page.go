@@ -85,6 +85,11 @@ type ListAssetsPageGatedRow struct {
 	// PreviewAvailable and derived from the SAME readability decision,
 	// so the two can never disagree for a restricted asset.
 	LadderAvailable bool
+	// ScrubAvailable: a `sprites.vtt` cue file exists AND the caller
+	// passes the content plane (#835). Same 0064 contract and the same
+	// readability decision again — this is the card's hover-scrub gate,
+	// which used to be inferred from the file extension.
+	ScrubAvailable bool
 	// PixelWidth / PixelHeight: the recorded source dimensions, joined in
 	// the same pass (#640). NOT gated on readability — they are metadata
 	// about a row the caller can already see, the same plane as
@@ -147,6 +152,7 @@ func ListAssetsPageGated(
 	// pass — no per-asset round-trips on this browse hot path (#471):
 	//   has_col_variant     — a servable `col` thumbnail exists
 	//   has_full_ladder     — every CONFIGURED rung exists (#591)
+	//   has_scrub_variant   — a `sprites.vtt` hover-scrub cue file exists (#835)
 	//   caller_is_team_member — caller belongs to a team-tier asset's team
 	// Readability is then decided in-Go per row (visibility.ContentReadable)
 	// from sensitivity + owner + that membership boolean + caps.
@@ -157,6 +163,9 @@ func ListAssetsPageGated(
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
        ` + sysconfig.LadderSatisfiedSQL("assets.file_hash", "$9") + ` AS has_full_ladder,
+       (file_hash IS NOT NULL AND EXISTS (
+            SELECT 1 FROM storage_variants sv
+             WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'sprites.vtt')) AS has_scrub_variant,
        (team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
              WHERE tm.team_id = assets.team_id AND tm.user_ref = $8::BIGINT)) AS caller_is_team_member
@@ -191,6 +200,7 @@ LIMIT $7::INTEGER`)
 			pixelHeight        *int32
 			hasColVariant      bool
 			hasFullLadder      bool
+			hasScrubVariant    bool
 			callerIsTeamMember bool
 		)
 		if err := rows.Scan(
@@ -199,7 +209,7 @@ LIMIT $7::INTEGER`)
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
 			&sensitivity, &pixelWidth, &pixelHeight,
-			&hasColVariant, &hasFullLadder, &callerIsTeamMember,
+			&hasColVariant, &hasFullLadder, &hasScrubVariant, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
@@ -208,6 +218,7 @@ LIMIT $7::INTEGER`)
 			ListAssetsPageRow: i,
 			PreviewAvailable:  hasColVariant && readable,
 			LadderAvailable:   hasFullLadder && readable,
+			ScrubAvailable:    hasScrubVariant && readable,
 		}
 		// A pair or neither — never a half-populated one the client has
 		// to re-validate before dividing.

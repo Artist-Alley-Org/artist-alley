@@ -214,6 +214,19 @@ UPDATE assets
  WHERE id = $1
    AND thumbhash IS NULL;
 
+-- name: SetAssetThumbhash :exec
+-- Overwrites unconditionally. The ONLY caller is a forced re-render
+-- (#760), where the operator has said the stored preview is wrong: the
+-- thumbhash is a 30-byte blur of those same wrong pixels, and leaving it
+-- makes a corrected card fade up from the stale image it just replaced.
+-- Every other writer must keep using SetAssetThumbhashIfMissing, whose
+-- NULL guard is what stops the worker racing CreateAsset's synchronous
+-- compute and what makes the backfill safe to re-run.
+UPDATE assets
+   SET thumbhash  = $2,
+       updated_at = NOW()
+ WHERE id = $1;
+
 -- name: SetAssetPageCount :exec
 -- Idempotent page-count stamp from the metadata pipeline (PDF today;
 -- comics + ebooks later). Always overwrites — re-extraction on the

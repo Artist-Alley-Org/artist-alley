@@ -30,6 +30,17 @@ func TestGetJobTypeConcurrency(t *testing.T) {
 		"jobs.type_concurrency.preview.raster",
 		"jobs.type_concurrency.ai.badval",
 	}
+	// Clear first, then seed. t.Cleanup does NOT run when the test
+	// process is killed (^C, a CI cancel, a timeout), so these two rows
+	// have repeatedly survived into the dev database and shown up in
+	// `system_config` as if an operator had set them — which is exactly
+	// how the preview.video cap was misread during #777. Deleting on the
+	// way IN makes the fixture self-healing rather than relying on an
+	// exit path that interruption skips.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM system_config WHERE key = ANY($1)`, extras); err != nil {
+		t.Fatalf("pre-clear extras: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO system_config (key, value, updated_at) VALUES
 			('jobs.type_concurrency.preview.raster', '0', now()),

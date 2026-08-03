@@ -14,6 +14,14 @@
   // dirty-state tracking stays in one place.
 
   import { t } from '$stores/lang.svelte';
+  import {
+    decodeBoolean,
+    encodeBoolean,
+    normalizeOptions,
+    selectableOptions,
+    selectableTreeOptions,
+  } from '$lib/fieldOptions';
+  import VocabularyCombobox from './VocabularyCombobox.svelte';
 
   interface FieldDef {
     id: string;
@@ -34,6 +42,9 @@
     required: boolean;
     display_group?: string;
     options?: Record<string, unknown>;
+    /** The vocabulary grows from what is written to it (#830).
+        multi_select only — the server ignores it elsewhere. */
+    open_vocabulary?: boolean;
   }
 
   interface Value {
@@ -81,8 +92,11 @@
     onchange({ value_num: n });
   }
   function emitBool(v: boolean) {
-    textVal = String(v);
-    onchange({ value_text: String(v) });
+    // 1/0 in value_num (ADR 0012). This emitted the string "true" /
+    // "false" into value_text until #791, which the asset write
+    // endpoint rejects outright — it has always required value_num.
+    numVal = encodeBoolean(v);
+    onchange({ value_num: numVal });
   }
   function emitDate(v: string) {
     dateVal = v;
@@ -102,23 +116,71 @@
   }
 
   // Select options come from field_definition.options.values per
-  // ADR 0012: [{value, label}]. Fall back to the value as the label
-  // if no label is set.
-  type SelectOpt = { value: string; label?: string };
-  const selectOptions: SelectOpt[] = $derived.by(() => {
-    const opts = def.options as { values?: SelectOpt[] } | undefined;
-    return opts?.values ?? [];
-  });
+  // ADR 0012. Entries are bare slug strings OR {value, label} objects
+  // — normalizeOptions handles both. This file previously assumed the
+  // object form only, which meant every seeded vocabulary (all bare
+  // strings) rendered as blank options.
+  const allOptions = $derived(normalizeOptions(def.options));
+
+  // Deprecated and archived terms are not offered for NEW values, but
+  // a value the record ALREADY holds stays in the list — dropping it
+  // would blank the field on a record nobody edited, which is exactly
+  // what ADR 0012 forbids.
+  //
+  // `tree` reads its held value from textVal, not optionsVal: a tree
+  // value is one slug in value_text, the same as `select`. This
+  // component used to group it with multi_select and emit
+  // value_options, which put a collection's tree value in a different
+  // column from an asset's and made it unreadable by the detail
+  // surface either way (#778).
+  const held = $derived(
+    def.type === 'multi_select' ? optionsVal : textVal ? [textVal] : [],
+  );
+  const selectOptions = $derived(selectableOptions(allOptions, held));
+
+  // The tree picker offers every term at every depth — a branch is a
+  // legitimate answer, not just a leaf — indented so the hierarchy is
+  // legible in a plain <select>. A dedicated tree widget is #779; this
+  // is the minimum that makes the value settable and correct.
+  const treeOptions = $derived(selectableTreeOptions(allOptions, held));
+  const INDENT = '    ';
 </script>
 
+<!-- The field's visible name. A snippet because multi_select's
+     wrapper is a <div> and every other type's is a <label> — see the
+     note at that branch — and the name reads the same in both. -->
+{#snippet fieldName()}
+  <span class="text-sm text-fg-muted">
+    {def.label}
+    {#if def.required}
+      <span class="ml-1 text-xs text-fg-muted" data-testid="required-marker">({t('collection_fields.required_marker')})</span>
+    {/if}
+  </span>
+{/snippet}
+
 <div class="space-y-1">
+  {#if def.type === 'multi_select'}
+    <!--
+      A <div>, not a <label>: the combobox renders a remove button per
+      chip and a <button> is labelable, so the implicit association
+      would bind the field's name to the first chip's remove button
+      rather than to the text box. The control names itself instead.
+    -->
+    <div class="block">
+      {@render fieldName()}
+      <VocabularyCombobox
+        options={allOptions}
+        value={optionsVal}
+        open={def.open_vocabulary === true}
+        {disabled}
+        label={def.label}
+        testid={def.code}
+        onchange={emitMultiSelect}
+      />
+    </div>
+  {:else}
   <label class="block">
-    <span class="text-sm text-fg-muted">
-      {def.label}
-      {#if def.required}
-        <span class="ml-1 text-xs text-fg-muted" data-testid="required-marker">({t('collection_fields.required_marker')})</span>
-      {/if}
-    </span>
+    {@render fieldName()}
 
     {#if def.type === 'text' || def.type === 'longtext' || def.type === 'rich_text'}
       {#if def.type === 'longtext' || def.type === 'rich_text'}
@@ -155,7 +217,7 @@
       <label class="mt-1 flex items-center gap-2 text-sm">
         <input
           type="checkbox"
-          checked={textVal === 'true'}
+          checked={decodeBoolean(numVal) === true}
           onchange={(e) => emitBool((e.currentTarget as HTMLInputElement).checked)}
           {disabled}
           data-testid="field-input-{def.code}"
@@ -182,24 +244,24 @@
       >
         <option value=""></option>
         {#each selectOptions as opt (opt.value)}
-          <option value={opt.value}>{opt.label ?? opt.value}</option>
+          <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
         {/each}
       </select>
-    {:else if def.type === 'multi_select' || def.type === 'tree'}
+    {:else if def.type === 'tree'}
       <select
-        multiple
-        size={Math.min(selectOptions.length || 4, 6)}
-        value={optionsVal}
-        onchange={(e) => {
-          const sel = Array.from((e.currentTarget as HTMLSelectElement).selectedOptions).map((o) => o.value);
-          emitMultiSelect(sel);
-        }}
+        bind:value={textVal}
+        onchange={(e) => emitSelect((e.currentTarget as HTMLSelectElement).value)}
         {disabled}
         data-testid="field-input-{def.code}"
-        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="mt-1 w-full rounded border border-border-strong bg-surface px-3 py-1.5 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {#each selectOptions as opt (opt.value)}
-          <option value={opt.value}>{opt.label ?? opt.value}</option>
+        <option value=""></option>
+        {#each treeOptions as opt (opt.value)}
+          <option value={opt.value} title={opt.path.join(' / ')}>
+            {INDENT.repeat(opt.depth)}{opt.status === 'active'
+              ? opt.label
+              : t('common.option_deprecated', { label: opt.label })}
+          </option>
         {/each}
       </select>
     {:else if def.type === 'reference'}
@@ -214,4 +276,5 @@
       />
     {/if}
   </label>
+  {/if}
 </div>

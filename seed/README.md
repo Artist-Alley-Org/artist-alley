@@ -1,5 +1,16 @@
 # seed/ — demo + dogfood + dev-reseed dataset
 
+> **Looking to populate an instance?** You do not need this file.
+> See [`SEED_INSTRUCTIONS.md`](SEED_INSTRUCTIONS.md), or grab the
+> ready-made public dataset:
+> **https://www.kaggle.com/datasets/mscrnt/dam-population-seed**
+>
+> **This document describes how the maintainer *builds* that dataset**
+> from a private source archive. Every concrete path below is one
+> maintainer's local mount — they will not exist on your machine and are
+> shown only to make the pipeline legible. Nothing here is required to
+> use the seeder.
+
 This directory holds everything needed to populate a fresh artist-alley
 instance with a representative studio-shaped dataset. Four profiles are
 emitted from one canonical source:
@@ -7,12 +18,10 @@ emitted from one canonical source:
 | Profile | Where it ships | Content |
 |---|---|---|
 | `demo.assets.json` | Phase 1.48 public demo sandboxes at `demo.artist-alley.org` | **Layer A only** — public-safe (Kenney CC0, PixelSpaces, Google Fonts, UISketch, internet-fetched CC-BY/CC0 samples) |
-| `studio-a.assets.json` | Phase 1.22.I-a dogfood (Mirror Studios side) | Layer A + B — full curated set, ~600 assets, ~330 MB |
-| `studio-b.assets.json` | Phase 1.22.I-a dogfood (Adventureworks side) | Layer A + B — full curated set, ~600 assets, ~610 MB |
-| `dev.assets.json` | Solo developer DB re-seed | Layer A + B unified — everything in one instance |
+| `studio-a.assets.json`, `studio-b.assets.json`, `dev.assets.json` | Local dogfood + dev re-seed only | Layer A + B. **Not distributed** — Layer B is third-party material the project does not redistribute, so these profiles are only usable by the maintainer, who has the source archive. |
 
-`demo` and `dev` are byte-for-byte **aliases** of `studio-a` and
-`studio-b`. They used to be written before the upgrade pass ran, so
+`demo` and `dev` are byte-for-byte **aliases** of the two dogfood
+profiles. They used to be written before the upgrade pass ran, so
 every upgrade since #604 landed on `studio-{a,b}` and missed its own
 aliases — `demo.assets.json` shipped 971 records against `studio-a`'s
 1,007, and a demo re-seed would have dropped all 36 added videos with
@@ -23,12 +32,12 @@ after the upgrade, and `test_dataset_upgrade.py` asserts the equality
 The four profiles + supporting catalogues (users, teams, collections,
 brand workspaces, field definitions, workflow states) are produced from a
 single Python script that reads the existing 12,871-row metadata.csv at
-`/mnt/d/Projects/unraid_management/artist-alley_dataset/`.
+`$DATASET_SRC/`.
 
 ## Pipeline
 
 ```
-/mnt/d/Projects/unraid_management/artist-alley_dataset/
+$DATASET_SRC/
 ├── metadata.csv         12,871 rows, 41 cols
 ├── groups.csv           8,050 logical groups (sibling linkage)
 └── <on-disk asset tree> 21 GB raw assets
@@ -43,9 +52,9 @@ seed/profiles/
 ├── dataset.brand_workspaces.json   Echo + Mirror (the 2 promoted franchises)
 ├── dataset.field_definitions.json  12 custom field definitions
 ├── dataset.workflow.json           5 states + 6 transitions
-├── studio-a.assets.json            Mirror Studios side
-├── studio-b.assets.json            Adventureworks side
-├── dev.assets.json                 Unified set
+├── studio-a.assets.json            local dogfood peer A
+├── studio-b.assets.json            local dogfood peer B
+├── dev.assets.json                 unified local set
 └── demo.assets.json                Layer A only
               │
               │  seed/scripts/fetch_gaps.py
@@ -220,7 +229,7 @@ python3 seed/scripts/resolve_media_urls.py --check seed/profiles/*.assets.json
 
 # prove the round trip against the staged copies
 python3 seed/scripts/resolve_media_urls.py --refetch /tmp/out \
-    --against /mnt/<share>/datasets/artist_alley/site_a \
+    --against $SEED_SITE \
     seed/profiles/studio-a.assets.json
 ```
 
@@ -236,63 +245,51 @@ Rebuilding the pool needs the renderer installed once (no sudo):
 cd seed/scripts && npm install sharp
 ```
 
-## Studio split
+### What is on the share but not in the catalogue (#722)
 
-Two studios with deliberately overlapping but distinct identities, so the
-federation scenarios (Like, Share, Defederate, Restricted) have something
-real to act on.
+A file on a site that no `MANIFEST.json` record names is **three
+different situations**, and answering "what is uncatalogued?" without
+separating them produces a confident wrong number every time. site_a has
+461 such files:
 
-### Studio A — "Mirror Studios"
-
-A VFX + cinematics + open-world shop. Owns the Echo + Mirror brand workspaces.
-
-| Project | Source pack(s) | Notes |
+| kind | site_a | correct response |
 |---|---|---|
-| Project Mirror | light-masks-1.0 | VFX-heavy reference |
-| Project Echo | retro-fantasy-kit + retro-textures-fantasy + rpg-audio + ui-pack-rpg-expansion + kenney_music-jingles + kenney_voiceover-pack | Fantasy RPG |
-| Project Citylight | rpg-urban-pack | Top-down urban |
-| Project Compass | minimap-pack | Open-world minimap |
-| Art Research | The-Models-Resource game rips | Cinematic reference (Mario, Sonic, MvC2) |
-| Snapdex | `/mnt/d/Projects/Snapdex/datasets/cards/` (50 cards) | Marketing reference |
-| Engine Core (subset) | development-essentials + prototype-textures + kenney-fonts + format3d + font families | Mirror-flavoured tooling |
-| Studio Library (subset) | Personal photos + Dresden Files (6 issues sampled) + reference docs | Format-coverage |
+| **companion** — reachable from a catalogued `.gltf` (`images[].uri`, `buffers[].uri`) or `.obj` (`mtllib` → `.mtl` → `map_*`) | 201 | **nothing.** `Runner.applyAssetCompanions` registers these against their parent asset at seed time. A record of its own would double-count the bytes and detach the texture from its model. |
+| **superseded** — the `old` file of a #604 HQ replacement | 260 | **delete.** The record still exists; it was repointed at a `kenney-hq` render and the original was left behind. |
+| **orphan** — neither | **0** | catalogue it, via an upgrade doc (never by editing `MANIFEST.json` — see above). |
 
-### Studio B — "Adventureworks"
+The companion walk is **two hops**. Stop at `mtllib` and every OBJ
+texture reads as an orphan, which over-counts site_a's gap by ~200 files.
+`audit_uncatalogued.py` delegates to
+`populate_archive.resolve_model_companions`, the Python twin of the Go
+`format3d.ResolveCompanions` the seed runner registers with, so the
+audit cannot drift from what the running instance believes.
 
-A character + casual + UI shop. Owns no franchise brand workspaces, but
-participates in the shared Echo brand.
+**#722 was filed as "260 assets were never catalogued".** They were: that
+set is *exactly* the `old` column of
+`kenney-hq-replacements.site_a.json` — 260 replacements, 260 stranded
+files, byte-identical sets. `apply_upgrade.apply_replacements` repoints
+the record's `file_path`; nothing deletes the file it used to point at,
+and `populate_archive.py` only removes unwanted files under `--prune`. So
+every replacement leaves one file behind that is indistinguishable from a
+never-catalogued asset unless you read that column. Cataloguing them
+would give 260 pieces of content two records each and re-introduce what
+the upgrade removed — including a 1×1 white pixel and 169 files under
+64 px.
 
-| Project | Source pack(s) | Notes |
-|---|---|---|
-| Project Heroes | blocky-characters_20 | Stylized character RPG |
-| Project Zoo | animal-pack-remastered | Kids / casual |
-| Project Adventure | ui-pack-adventure | Adventure UI |
-| Project Jumpstart | pixel-line-platformer | 2D pixel platformer |
-| Project Toybox | IconKitchen-Output + icons + PixelSpaces Free Pack + PixelSpaces Full Pack + UISketch | UI kit + branding + wireframes |
-| Hearthstone Archive | hearthstone_archive/* (100 groups) | Card-game reference |
-| MTG Archive | mtg_img_archive/* (150 cards) | Card-game reference |
-| Heroes Archive | heroes/* (30 portraits across 3 heroes) | Character reference |
-| Engine Core (subset) | (different files from Mirror's subset) | Adventureworks tooling |
-| Studio Library (subset) | (different files from Mirror's subset) | Format-coverage |
+```bash
+# classify; exit 1 only on a REAL gap
+python3 seed/scripts/audit_uncatalogued.py detect --site site_a \
+    --site-root "$DATASETS/site_a" --fail-on-orphans
 
-### Why this split
+# delete the superseded originals (reports only, until --apply)
+python3 seed/scripts/audit_uncatalogued.py prune --site site_a \
+    --site-root "$DATASETS/site_a" --apply
+```
 
-- **Both studios get format diversity.** Each has images (lots), audio
-  (Kenney packs split between them), 3D (Mirror gets game-rip references;
-  Adventureworks gets Kenney 3D), video (Studio Library is split by file
-  hash), fonts (Engine Core has the font families, split between).
-- **Both have restricted content.** Each studio's Art Research / Reference
-  material is `sensitivity_tier=restricted` (community rips, internal
-  attribution) — drives Scenarios 04 + 05 of the federation regression
-  catalogue (pre-1.22.I refusal vs post-1.22.I encrypted delivery).
-- **Engine Core overlap stress-tests CAS dedup.** Both studios have
-  "Engine Core" but with non-overlapping file subsets. The handful of
-  files that appear in both with identical content hashes exercise the
-  storage-layer dedup across federation.
-- **Brand workspace ownership is asymmetric.** Studio A owns the Echo
-  brand workspace; Studio B works on Echo via the shared workspace. This
-  is the canonical "publisher + supporting studio" relationship that
-  motivates aa:Share + aa:Approve activities in the federation protocol.
+`prune` re-derives the live `file_path` set from the manifest and refuses
+to delete anything still in it, so a reverted replacement cannot be
+turned into data loss by a stale doc.
 
 ## Brand workspace decision
 
@@ -305,7 +302,7 @@ brand_workspaces (per [ADR 0025](../docs/adr/0025-brand-workspaces.md)):
 | **Mirror** | brand_workspace | Shippable VFX-heavy game IP — same |
 | Engine | tag (`franchise:engine`) | Internal tooling — not a customer-facing brand |
 | Reference | tag (`franchise:reference`) | Third-party reference, not our brand |
-| Snapdex | tag (`franchise:snapdex`) | External IP (Pokemon TCG), not our brand |
+| Third-party franchises | tag (`franchise:<name>`) | External IP, not our brand |
 
 The promoted workspaces become demonstrable: opening the Echo workspace
 shows the brand kit, guidelines doc, and asset library. The tag-only
@@ -332,17 +329,21 @@ Ships in the Phase 1.48 demo sandboxes that anyone can spin up at
 - Khronos glTF sample models (CC-BY, internet-fetched)
 - LibriVox audiobook samples (public domain, internet-fetched)
 
-### Layer B — local-only
+### Layer B — local-only, never published
 
-Used in dogfood + dev re-seed where you control both peers. Sources:
+Some source material is **not** publicly redistributable: third-party
+game/card IP, licensed fonts, and licensed comics. Those records are
+tagged `layer = "B"` and are used only for local dogfood and dev
+re-seeding, where the operator controls both peers.
 
-- Snapdex (TCG) — Pokemon IP (Nintendo)
-- Scryfall / Wizards of the Coast — MTG IP
-- Hearthstone (Blizzard) — Blizzard IP
-- Overwatch (Blizzard) — Blizzard IP
-- The Models Resource — community game rips
-- Type foundry license — proprietary fonts
-- Dabel Brothers Publishing — Dresden Files comics
+**Layer B never ships.** It is excluded from `site_a`, from the demo, and
+from the published dataset. This file does not enumerate it — publishing
+an inventory of material we deliberately do not distribute serves nobody,
+and the tagging is what enforces the boundary, not the list.
+
+If you are assembling your own dataset, the same discipline applies:
+tag anything you cannot redistribute and keep it out of whatever you
+publish.
 
 ## Schema mapping (CSV → AA)
 
@@ -414,12 +415,9 @@ floods.
 
 ```python
 TRIMS = {
-    "Snapdex (TCG)": 50,
-    "hearthstone": 100,
-    "mtg_img_archive": 150,
-    "heroes": 30,
+    "<source-pack-name>": 50,     # per-pack row cap
     "UISketch": 200,
-    "Dresden Files Comics": 6,
+    # … see sanitize_and_assemble.py for the live values
 }
 ```
 
@@ -461,14 +459,14 @@ ASSET_TYPE_CAPS = {
 ```bash
 # Dry-run — see summary stats without writing files
 python3 seed/scripts/sanitize_and_assemble.py \
-    --source /mnt/d/Projects/unraid_management/artist-alley_dataset \
-    --out    /mnt/d/Projects/artist-alley/seed/profiles \
+    --source $DATASET_SRC \
+    --out    $REPO/seed/profiles \
     --dry-run
 
 # Actual run
 python3 seed/scripts/sanitize_and_assemble.py \
-    --source /mnt/d/Projects/unraid_management/artist-alley_dataset \
-    --out    /mnt/d/Projects/artist-alley/seed/profiles
+    --source $DATASET_SRC \
+    --out    $REPO/seed/profiles
 ```
 
 Re-running with the same inputs produces the same outputs (deterministic
@@ -488,7 +486,7 @@ python3 seed/scripts/kenney_hq.py build \
 
 # 2. copy assets + regenerate MANIFEST.json / posts.json / metadata.csv
 python3 seed/scripts/populate_archive.py \
-    --local-source    /mnt/d/Projects/unraid_management/artist-alley_dataset \
+    --local-source    $DATASET_SRC \
     --internet-source seed/internet-fetched \
     --hq-source       "$DATASETS/kenney-hq-pool" \
     --pack-source     "$DATASETS/Kenney Game Assets All-in-1 3.6.0" \

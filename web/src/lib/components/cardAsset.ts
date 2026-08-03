@@ -54,6 +54,13 @@ export interface CardAsset {
    *  safely request `col`, which is why widescreen art was being
    *  square-cropped (#502/#589). */
   ladder_available: boolean;
+  /** A `sprites.vtt` hover-scrub cue file exists for this asset AND the
+   *  caller may read it (#835). REQUIRED, like the two flags above: it
+   *  is the card's only licence to request the sprite sheet, and a
+   *  surface that hand-maps a narrower object and drops it silently
+   *  turns off the hover preview — which is exactly how #595 happened
+   *  to `file_extension`. */
+  scrub_available: boolean;
   /** Recorded source pixel dimensions, or null (#640). Masonry sizes
    *  each tile from this ratio BEFORE the image loads, so the column
    *  heights are right from first paint and the wall doesn't reflow as
@@ -75,6 +82,8 @@ export interface CardCoverAsset {
   preview_available: boolean;
   /** See CardAsset.ladder_available. */
   ladder_available: boolean;
+  /** See CardAsset.scrub_available. */
+  scrub_available: boolean;
   /** See CardAsset.pixel_width. */
   pixel_width: number | null;
   pixel_height: number | null;

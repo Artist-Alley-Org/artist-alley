@@ -25,6 +25,7 @@
 import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
 import type { components } from '$api/schema';
+import type { FieldDefault } from '$lib/fieldDefaults';
 
 type AssetCreate = components['schemas']['AssetCreate'];
 
@@ -34,6 +35,13 @@ type AssetCreate = components['schemas']['AssetCreate'];
 // after the asset is created.
 export interface PendingFieldValue {
   fieldId: string;
+  /**
+   * The field's human label, carried so a refusal can name the field
+   * the way the row does. The 422 body names it by CODE, and
+   * "mtv_keywords refused that" is not what the person typing into a
+   * box labelled "Keywords" needs to read.
+   */
+  label?: string;
   type:
     | 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
     | 'date' | 'datetime' | 'select' | 'multi_select' | 'tree' | 'reference';
@@ -85,8 +93,16 @@ export interface UploadRow {
    * after the asset is created — runRow handles the sequencing.
    */
   fieldValues: Map<string, PendingFieldValue>;
-  /** True after the per-asset field values have been written. */
+  /** True after EVERY per-asset field value has been written. */
   fieldsWritten: boolean;
+  /**
+   * Why individual field writes were refused, keyed by field id.
+   * Rendered next to the offending input and summarised on the row —
+   * #843. Before it, writeFieldValues discarded the server's answer
+   * without reading it, so a 422 from the vocabulary gate vanished
+   * while the upload reported success.
+   */
+  fieldErrors: Map<string, string>;
   /**
    * Companion files (OBJ → MTL + textures, glTF → .bin + textures,
    * etc.) the user attaches alongside a 3D model upload. Each
@@ -364,15 +380,27 @@ class UploadState {
     this.composeBusy = true;
     try {
       // Flush per-row field values BEFORE creating any posts. Each
-      // row's writes are independent — one bad field doesn't fail
-      // the rest (writeFieldValues already soft-fails individual
-      // writes), but a row with no fieldValues skips this step
-      // entirely.
+      // row's writes are independent — one bad field doesn't abort the
+      // rest — but a refusal STOPS the submit (#843).
+      //
+      // It has to. The refusals are rendered on the rows, and a
+      // successful submit resets the modal: reporting the problem and
+      // then destroying the surface reporting it is the silent failure
+      // this is fixing, one step further down. So the modal stays open
+      // with the offending fields marked, and the operator fixes the
+      // value and submits again — the writes are idempotent PUTs, so
+      // the retry re-sends the whole row and the ones that already
+      // landed simply land again.
+      let refused = false;
       for (const row of ready) {
         if (row.fieldValues.size > 0 && !row.fieldsWritten) {
-          await this.writeFieldValues(row);
-          row.fieldsWritten = true;
+          row.fieldsWritten = await this.writeFieldValues(row);
+          if (!row.fieldsWritten) refused = true;
         }
+      }
+      if (refused) {
+        this.composeError = t('upload.err_field_values');
+        return false;
       }
       if (this.compose.enabled) {
         await this.createPosts(ready);
@@ -434,6 +462,7 @@ class UploadState {
         error: null,
         fieldValues: new Map(),
         fieldsWritten: false,
+        fieldErrors: new Map(),
         companions: [],
         companionsWritten: false,
       });
@@ -509,12 +538,27 @@ class UploadState {
 
   /**
    * Apply the row's pending per-asset field values via
-   * PUT /assets/{id}/fields/{field_id}. Soft-fail on individual
-   * writes — a bad value shouldn't abort the upload.
+   * PUT /assets/{id}/fields/{field_id}. Returns true when every write
+   * landed.
+   *
+   * #843. This used to `await fetch(...)` inside a bare try/catch and
+   * never look at the result — so a 422 from the vocabulary gate (and
+   * every other refusal the endpoint can return) was discarded on the
+   * floor while the upload went on to report success. The comment
+   * excusing it promised the operator could "edit the field value from
+   * the asset detail page later", which is not true: there is no asset
+   * edit surface yet (#549), so a value dropped here was dropped for
+   * good, silently.
+   *
+   * Each write is still independent — one refused field does not stop
+   * the others being attempted, because the operator wants to see ALL
+   * of the problems, not the first one. The caller decides what a
+   * refusal means for the submit.
    */
-  private async writeFieldValues(row: UploadRow): Promise<void> {
+  private async writeFieldValues(row: UploadRow): Promise<boolean> {
     const aid = row.assetId;
-    if (!aid) return;
+    if (!aid) return false;
+    const errors = new Map<string, string>();
     for (const v of row.fieldValues.values()) {
       const body: Record<string, unknown> = { set_by: 'manual' };
       if (typeof v.valueText === 'string') body.value_text = v.valueText;
@@ -522,21 +566,29 @@ class UploadState {
       if (typeof v.valueDate === 'string') body.value_date = v.valueDate;
       if (Array.isArray(v.valueOptions)) body.value_options = v.valueOptions;
       if (typeof v.valueRef === 'string') body.value_ref = v.valueRef;
+      const named = v.label || v.fieldId;
       try {
         // Plain fetch — openapi-fetch's PUT for this endpoint hit a
         // type/runtime mismatch we couldn't track down quickly. The
         // shape is small and stable so this is fine.
-        await fetch(`/api/v1/assets/${aid}/fields/${v.fieldId}`, {
+        const res = await fetch(`/api/v1/assets/${aid}/fields/${v.fieldId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify(body),
         });
+        if (!res.ok) {
+          errors.set(v.fieldId, await describeFieldRefusal(res, named));
+        }
       } catch {
-        // Soft fail; the asset still exists, the user can edit the
-        // field value from the asset detail page later.
+        // The request never completed — offline, or the tab lost the
+        // network mid-submit. Honest and generic; we know nothing more
+        // than that it did not go.
+        errors.set(v.fieldId, t('upload.field_error.network', { field: named }));
       }
     }
+    row.fieldErrors = errors;
+    return errors.size === 0;
   }
 
   /**
@@ -700,6 +752,58 @@ function extensionOf(name: string): string | undefined {
   return name.slice(dot + 1).toLowerCase();
 }
 
+/**
+ * Turn a refused field-value write into a sentence naming the field
+ * and the reason (#843).
+ *
+ * 422 carries FieldValueUnprocessable — `{error, reason, field,
+ * option}`, the ONE body the asset and collection writers share
+ * (app/internal/metadata/options.go, rejectionBody). `reason` and
+ * `option` are what a client is meant to read; `error` is the server's
+ * English and names the field by CODE, so it is the fallback rather
+ * than the answer. All four reasons are handled: the enum has
+ * `value_type_mismatch` and `field_not_for_collection` alongside the
+ * two vocabulary ones, and an unhandled reason would render as a bare
+ * key.
+ *
+ * Anything else gets an honest generic — we know the field and the
+ * status and genuinely nothing else.
+ */
+const FIELD_REFUSAL_KEYS: Record<string, string> = {
+  unknown_option: 'upload.field_error.unknown_option',
+  option_not_offerable: 'upload.field_error.option_not_offerable',
+  value_type_mismatch: 'upload.field_error.value_type_mismatch',
+  field_not_for_collection: 'upload.field_error.field_not_for_collection',
+};
+
+interface RefusalBody {
+  error?: unknown;
+  reason?: unknown;
+  option?: unknown;
+}
+
+async function describeFieldRefusal(res: Response, field: string): Promise<string> {
+  let body: RefusalBody | null = null;
+  try {
+    body = (await res.json()) as RefusalBody;
+  } catch {
+    // Not JSON — a proxy error page, or an empty body. Falls through
+    // to the generic, which is all we can honestly say.
+    body = null;
+  }
+  if (res.status === 422 && body && typeof body.reason === 'string') {
+    const key = FIELD_REFUSAL_KEYS[body.reason];
+    if (key) {
+      const option = typeof body.option === 'string' ? body.option : '';
+      return t(key, { field, option });
+    }
+  }
+  if (body && typeof body.error === 'string' && body.error) {
+    return t('upload.field_error.reported', { field, detail: body.error });
+  }
+  return t('upload.field_error.generic', { field, status: res.status });
+}
+
 function extractError(err: unknown): string | undefined {
   if (err && typeof err === 'object' && 'error' in err) {
     const v = (err as { error: unknown }).error;
@@ -726,10 +830,32 @@ export interface FieldDef {
   label: string;
   description?: string;
   type: PendingFieldValue['type'];
-  options?: { values?: string[] };
+  // Entries under `values` are bare slugs OR option objects carrying
+  // a label and a lifecycle status — see $lib/fieldOptions, which
+  // normalises both. Typing this as `{ values?: string[] }` is what
+  // let the two option consumers drift apart.
+  options?: Record<string, unknown>;
+  /**
+   * The field's vocabulary grows from what is written to it (#830).
+   * Honoured for `multi_select` only — see FieldDefinition in
+   * openapi.yaml. Drives whether the picker offers to CREATE a term
+   * the field does not have.
+   */
+  open_vocabulary?: boolean;
   required?: boolean;
   display_order: number;
   display_group: string;
+  // The upload default the server will apply if this field is left
+  // alone (#793). Carried so the row can SAY so — a default the
+  // artist cannot see is a decision made on their behalf without
+  // telling them, which is a different thing from one they did not
+  // have to make.
+  //
+  // Deliberately not pre-filled into row.fieldValues: a value the
+  // artist did not choose must not be sent as set_by='manual', or the
+  // extraction pipeline will treat it as a decision and never improve
+  // on it.
+  default_value?: FieldDefault | null;
 }
 
 /**

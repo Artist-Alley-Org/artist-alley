@@ -44,6 +44,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -51,8 +52,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
@@ -70,6 +73,21 @@ type Options struct {
 	AdminUsername string // bootstrap admin username; owns collections
 	Logger        *slog.Logger
 
+	// Profile selects a named catalogue-shrink strategy (#768).
+	// "" = the full catalogue, which is what the demo runs. "ci" runs
+	// coverage selection: greedy set-cover over posts plus a depth
+	// floor, so every file type / relation class survives at a fraction
+	// of the scale. See coverage.go for why post-first and why it
+	// errors rather than warns on a gap.
+	Profile string
+
+	// CoverageDepth is the profile's depth floor: at least this many
+	// posts per collection and assets per extension, bounded by what
+	// the catalogue holds. It, not the cover, is what sizes the seed —
+	// minimum cover is degenerate for grid / masonry / pagination
+	// specs. 0 uses defaultCoverageDepth.
+	CoverageDepth int
+
 	// Previews enqueues a preview job per seeded asset (#355). Without
 	// it a seeded instance has originals and zero derivatives — no card
 	// thumbnails (`col`), no video hover sprites — which is what the
@@ -79,6 +97,24 @@ type Options struct {
 	// preempt interactive work; the running app's worker pool drains
 	// them. Set false for a fast metadata-only seed.
 	Previews bool
+
+	// ForcePreviews makes those jobs re-render variants that are
+	// already in storage (#760).
+	//
+	// It exists because `--reset` and the variant store diverge BY
+	// DESIGN: variants are content-addressed and describe what is on
+	// the storage volume, so a TRUNCATE of the content tables cannot
+	// and must not erase them (see seed.Reset). Re-seeding the same
+	// dataset therefore re-enqueues a preview job per asset whose
+	// output already exists — every one of which skips.
+	//
+	// That default is correct and cheap. What was wrong was that it
+	// was SILENT: `preview.3d done: 590, failed: 0` looks identical
+	// whether 590 renders happened or none did. So the seed now
+	// reports the skip count up front (see previewSkipEstimate), and
+	// this flag is how an operator says "the renderer changed, rebuild
+	// them".
+	ForcePreviews bool
 }
 
 // Counts is the verify-phase tally.
@@ -118,6 +154,10 @@ type Runner struct {
 	collections map[string]pgtype.UUID // name -> id
 	assets      map[string]pgtype.UUID // manifest id -> asset id (inserted only)
 	posts       map[string]pgtype.UUID // post id -> post id (inserted only)
+
+	// asset field values applyAssetFields threw away, per reason per
+	// code (#807). Summarised at the end of the asset phase.
+	fieldDrops *fieldDropTally
 }
 
 type fieldMeta struct {
@@ -155,15 +195,48 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		collections: map[string]pgtype.UUID{},
 		assets:      map[string]pgtype.UUID{},
 		posts:       map[string]pgtype.UUID{},
+		fieldDrops:  newFieldDropTally(),
 	}
 }
 
 // Run loads the catalogues + manifest and executes every phase in
 // order, returning the verify counts.
 func (r *Runner) Run(ctx context.Context) (Counts, error) {
+	// Validate the profile name BEFORE touching disk: a typo should say
+	// so, not fail thirty seconds later on something unrelated, and must
+	// never fall through to seeding the full catalogue.
+	switch r.opts.Profile {
+	case "", ProfileFull, ProfileCI:
+	default:
+		return Counts{}, fmt.Errorf("unknown seed profile %q (want %q or %q)",
+			r.opts.Profile, ProfileFull, ProfileCI)
+	}
+	// The two shrinks select on opposite axes and the extension limit
+	// runs second, so combining them would silently re-open the hole the
+	// profile exists to close: it would cascade-drop coverage-selected
+	// posts whose assets it cut. Refuse rather than produce a fixture
+	// whose coverage report is a lie.
+	if r.opts.Profile == ProfileCI && r.opts.LimitPerExt > 0 {
+		return Counts{}, errors.New(
+			"seed: --profile ci and --limit-per-extension are mutually exclusive; " +
+				"the profile's own depth floor is the extension control (--coverage-depth)")
+	}
 	cat, err := loadCatalogues(r.opts.CatalogueRoot, r.opts.SiteRoot)
 	if err != nil {
 		return Counts{}, err
+	}
+	if r.opts.Profile == ProfileCI {
+		depth := r.opts.CoverageDepth
+		if depth <= 0 {
+			depth = defaultCoverageDepth
+		}
+		rep, cErr := cat.applyCoverageProfile(depth, r.log)
+		if rep != nil {
+			fmt.Print(rep.Summary())
+		}
+		if cErr != nil {
+			return Counts{}, cErr
+		}
 	}
 	if r.opts.LimitPerExt > 0 {
 		cat.applyExtensionLimit(r.opts.LimitPerExt, r.log)
@@ -352,6 +425,47 @@ func (r *Runner) applyMemberships(ctx context.Context, cat *catalogues) error {
 // --- phase: fields ----------------------------------------------------
 
 func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
+	// BIND THE FIELDS THAT ALREADY EXIST FIRST (#820).
+	//
+	// applyAssetFields resolves a manifest's field code against
+	// r.fields and drops anything it cannot find as
+	// `seed.field.unknown_code`. r.fields used to be built from
+	// cat.Fields alone — the 20 studio codes in
+	// dataset.field_definitions.json — so the nine codes the
+	// MIGRATIONS ship were absent from it even though their rows were
+	// sitting in field_definition, and a manifest value for `country`
+	// or `keywords` was thrown away with a warning that read like a
+	// typo in the manifest.
+	//
+	// That was invisible until #812: `aa seed --reset` used to TRUNCATE
+	// field_definition, so on a seeded instance those rows genuinely did
+	// not exist and "unknown code" was the truth. Since #812 they
+	// survive the reset, the rows are there, and the map was simply not
+	// looking at the table.
+	//
+	// Every existing definition is bound, not just the shipped ones. A
+	// code the seed can write is "a field this install has", and there
+	// is no principled line between a row a migration inserted, a row an
+	// operator created and a row a federation peer minted — all three
+	// are fields, and a manifest naming one means the same thing. This
+	// does not weaken the unknown_code check: a code that matches no row
+	// at all is still dropped and still warned about, which is the
+	// manifest typo the warning is for.
+	//
+	// The catalogue loop below then runs over the top and REPLACES the
+	// entry for any code it also declares, so its type-mismatch
+	// detection (existing row's type wins over the JSON's) is unchanged.
+	existing, err := r.q.SeedListFields(ctx)
+	if err != nil {
+		return fmt.Errorf("list existing fields: %w", err)
+	}
+	for _, f := range existing {
+		r.fields[f.Code] = fieldMeta{id: f.ID, typ: f.Type}
+	}
+	if len(existing) > 0 {
+		r.log.Info("seed.fields.preexisting", "count", len(existing))
+	}
+
 	for _, f := range cat.Fields {
 		opts := []byte("{}")
 		if len(f.Options) > 0 {
@@ -359,8 +473,29 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			if err != nil {
 				return err
 			}
+			// Same validation + canonicalisation the admin write path
+			// runs (metadata handler, create and update). The seed is
+			// NOT trusted input just because it lives in the repo: the
+			// catalogue is hand-edited, and the invariant that matters
+			// most here — slugs unique across the whole option tree —
+			// is exactly the one a human adding a `tree` branch breaks
+			// by copy-paste. Break it and values resolve to the wrong
+			// node with no error anywhere (ADR 0012, tree amendment).
+			//
+			// Fatal, not warn-only, unlike the per-value drops below: a
+			// bad catalogue is a repo defect that every seed of every
+			// instance would inherit, not one manifest row.
+			b, err = metadata.NormalizeOptionsDoc(b)
+			if err != nil {
+				return fmt.Errorf("field %s options: %w", f.Name, err)
+			}
 			opts = b
 		}
+		// typ is the type values for this code will be WRITTEN as. It
+		// starts as the catalogue's and is replaced by the existing
+		// row's below when the insert binds to one, because the column
+		// the value lands in is chosen by the row, not by the JSON.
+		typ := f.Type
 		id, err := r.q.SeedInsertField(ctx, SeedInsertFieldParams{
 			Code:             f.Name,
 			Label:            f.Label,
@@ -370,14 +505,39 @@ func (r *Runner) applyFields(ctx context.Context, cat *catalogues) error {
 			ExtractionMode:   f.ExtractionMode,
 		})
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				id, err = r.q.SeedGetFieldByCode(ctx, f.Name)
-			}
-			if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("create field %s: %w", f.Name, err)
 			}
+			// ON CONFLICT (code) DO NOTHING returned no row: a
+			// definition with this code already exists. Since #812 that
+			// is the NORMAL case for a code the migrations ship —
+			// `aa seed --reset` no longer truncates field_definition, so
+			// pixel_width/pixel_height are always already there.
+			//
+			// Binding to the existing row is right. Trusting the
+			// CATALOGUE's type for it is not: applyAssetFields picks the
+			// value column from fieldMeta.typ, so a catalogue entry
+			// declaring `date` against a `datetime` row would have every
+			// value written into the wrong column — or silently dropped
+			// as value_rejected — while the field count still looked
+			// correct. No row count can see it, which is the same shape
+			// as the reference NULL-row bug (#809).
+			existing, getErr := r.q.SeedGetFieldByCode(ctx, f.Name)
+			if getErr != nil {
+				return fmt.Errorf("create field %s: %w", f.Name, getErr)
+			}
+			id = existing.ID
+			if existing.Type != f.Type {
+				typ = existing.Type
+				if r.fieldDrops.record(dropTypeMismatch, f.Name) {
+					r.log.Warn("seed.field.type_mismatch",
+						"code", f.Name,
+						"catalogue_type", f.Type,
+						"existing_type", existing.Type)
+				}
+			}
 		}
-		r.fields[f.Name] = fieldMeta{id: id, typ: f.Type}
+		r.fields[f.Name] = fieldMeta{id: id, typ: typ}
 	}
 	r.log.Info("seed.fields", "count", len(r.fields))
 	return nil
@@ -496,7 +656,7 @@ func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
 // --- phase: assets ----------------------------------------------------
 
 func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
-	inserted, deduped, missing, queued := 0, 0, 0, 0
+	inserted, deduped, missing, queued, willSkip := 0, 0, 0, 0, 0
 	for i, a := range cat.Assets {
 		abs := filepath.Join(r.opts.SiteRoot, a.FilePath)
 		f, err := os.Open(abs)
@@ -567,14 +727,14 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 		r.assets[a.ID] = id
 
-		// Register multi-file companions (#486). A .gltf/.obj declares its
-		// buffer/textures/.mtl as sibling files; without companion rows the
-		// render stages nothing and the interactive viewer's
-		// GLTFLoader 404s on the .bin, so the model renders blank. Do this
-		// BEFORE the preview enqueue below so the worker finds them staged.
-		// Best-effort: a companion hiccup shouldn't fail an otherwise-good
-		// seed.
-		r.applyAssetCompanions(ctx, id, a.ID, abs, a.FileExtension)
+		// Register multi-file companions (#486, #750). A .gltf/.glb/.obj
+		// declares its buffer/textures/.mtl as sibling files; without
+		// companion rows the render stages nothing and the interactive
+		// viewer's GLTFLoader 404s on the .bin/textures, so the model
+		// renders blank or untextured. Do this BEFORE the preview enqueue
+		// below so the worker finds them staged. Best-effort: a companion
+		// hiccup shouldn't fail an otherwise-good seed.
+		r.applyAssetCompanions(ctx, id, a.ID, abs)
 
 		// Dispatch the preview job (#355). Enqueued AFTER the asset row
 		// exists — the handler resolves the asset by id — and using the
@@ -586,17 +746,33 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		// seed from minting dead jobs for the odd unpreviewable file in
 		// the catalogue.
 		if r.opts.Previews && dispatch.CanPreview(&ext) {
-			if _, jErr := r.jobs.Enqueue(ctx,
-				dispatch.JobTypeForExt(&ext),
-				map[string]string{
-					"asset_id":       id.String(),
-					"file_hash":      hash,
-					"file_extension": ext,
-				},
-				jobs.EnqueueOpts{Priority: &previewPriority},
-			); jErr != nil {
-				r.log.Warn("seed.preview.enqueue_failed", "asset", a.ID, "err", jErr.Error())
-			} else {
+			// Count the ones whose card thumbnail is ALREADY on the
+			// storage volume before enqueueing. Without --force-previews
+			// their jobs will skip, and "queued 590" with no further
+			// detail is indistinguishable from 590 real renders — the
+			// ambiguity #760 was filed over.
+			if !r.opts.ForcePreviews && variantOnDisk(ctx, r.storage, hash, "col") {
+				willSkip++
+			}
+			// PlanForExt, so a seeded video gets its cheap poster job
+			// alongside the full ladder (#818). On a seed this is the
+			// difference between a browse grid that fills in as the run
+			// proceeds and one that stays blank behind 74%-of-CPU video
+			// encodes. `queued` still counts assets, not jobs.
+			payload := dispatch.NewPayload(uuid.UUID(id.Bytes), hash, &ext, r.opts.ForcePreviews)
+			enqueued := 0
+			for _, step := range dispatch.PlanForExt(&ext, previewPriority) {
+				priority := step.Priority
+				if _, jErr := r.jobs.Enqueue(ctx, step.Type, payload,
+					jobs.EnqueueOpts{Priority: &priority},
+				); jErr != nil {
+					r.log.Warn("seed.preview.enqueue_failed", "asset", a.ID,
+						"job_type", string(step.Type), "err", jErr.Error())
+					continue
+				}
+				enqueued++
+			}
+			if enqueued > 0 {
 				queued++
 			}
 		}
@@ -626,13 +802,40 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			r.log.Info("seed.assets.progress", "processed", i+1, "inserted", inserted)
 		}
 	}
+	r.logFieldDrops()
 	r.log.Info("seed.assets", "inserted", inserted,
-		"deduped", deduped, "missing", missing, "previews_queued", queued)
+		"deduped", deduped, "missing", missing,
+		"previews_queued", queued,
+		"previews_force", r.opts.ForcePreviews,
+		"previews_will_skip", willSkip)
+	// Say it in plain words too, on stdout, where whoever ran the seed
+	// is looking. A log line at INFO inside a JSON handler is not where
+	// an operator finds out that the renders they were waiting for are
+	// not going to happen.
+	if willSkip > 0 {
+		fmt.Printf(
+			"NOTE: %d of %d queued preview jobs will SKIP — those assets already have "+
+				"rendered variants on the storage volume, which --reset deliberately does "+
+				"not erase (they are content-addressed). Re-run with --force-previews to "+
+				"re-render them.\n", willSkip, queued)
+	}
 	return nil
 }
 
+// variantOnDisk reports whether a rendered variant is already on the
+// storage backend. Deliberately the same question the preview handlers
+// ask (backend Stat, not a storage_variants row) so the seed's estimate
+// and the worker's decision cannot disagree.
+func variantOnDisk(ctx context.Context, st *storage.Service, hash, key string) bool {
+	if st == nil {
+		return false
+	}
+	_, err := st.Backend.Stat(ctx, hash, key)
+	return err == nil
+}
+
 // applyAssetCompanions parses a seeded model's declared external
-// resources (glTF buffers[].uri / images[].uri; OBJ mtllib → MTL
+// resources (glTF/GLB buffers[].uri + images[].uri; OBJ mtllib → MTL
 // map_*) and registers each sibling that exists on disk as a companion
 // (#486). Mirrors what the HTTP AddAssetCompanion handler does — upload
 // bytes content-addressed, pin them, insert the asset+path→blob row —
@@ -640,17 +843,19 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 // calls, so the seed self-wires any complete multi-file model dropped
 // into its source tree.
 //
-// Every step is soft-fail: GLB/FBX and single-file models resolve to
-// no companions and return immediately; a missing or unreadable sibling
-// logs and is skipped so the asset still seeds (it just renders
-// untextured, which beats failing the whole seed).
-func (r *Runner) applyAssetCompanions(ctx context.Context, assetID pgtype.UUID, manifestID, mainPath, ext string) {
-	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
-	case "gltf", "obj":
-	default:
-		return // GLB / FBX / everything else — self-contained
-	}
-
+// Which extensions carry companions is ResolveCompanions' call alone.
+// This used to pre-filter on `case "gltf", "obj"`, which duplicated that
+// list and let it rot: GLB was excluded here as "self-contained" and
+// stayed excluded even once the resolver could read it, so 363 seeded
+// GLBs got zero companion rows and rendered untextured (#750). One
+// source of truth now — an extension with no declared references costs a
+// string switch and no file I/O.
+//
+// Every step is soft-fail: single-file models resolve to no companions
+// and return immediately; an unparseable model, or a missing or
+// unreadable sibling, logs and is skipped so the asset still seeds (it
+// just renders untextured, which beats failing the whole seed).
+func (r *Runner) applyAssetCompanions(ctx context.Context, assetID pgtype.UUID, manifestID, mainPath string) {
 	found, missing, err := format3d.ResolveCompanions(mainPath)
 	if err != nil {
 		r.log.Warn("seed.companion.resolve", "id", manifestID, "err", err.Error())
@@ -700,6 +905,190 @@ func companionExt(rel string) string {
 	return strings.TrimPrefix(filepath.Ext(rel), ".")
 }
 
+// --- dropped field values (#807) --------------------------------------
+//
+// applyAssetFields discards a value in two places, and until #807 both
+// spellings of "discard" were the same bare `continue`. A malformed
+// value and a code that was never defined produced identical output —
+// none — so the seed reported success, the field was simply absent, and
+// every downstream check that counts rows agreed with itself. That is
+// the "green suite over a state production cannot reach" class, except
+// here the seed MANUFACTURES the unreachable state.
+//
+// Both drops now warn, and they warn DIFFERENTLY, because the fixes are
+// different: an unknown code is a schema/catalogue mismatch (add the
+// definition, or fix the slug), a rejected value is a bad value (fix the
+// manifest, or widen the coercion).
+//
+// Warn-only, for now. There is in-repo precedent for strictness — the
+// `ci` coverage profile errors rather than warns on a gap (coverage.go).
+// The reason not to be strict was that both seed manifests carried six
+// codes with no definition, so every asset hit the unknown-code branch
+// by design and a hard error would have broken the seed and therefore
+// CI. #808 added those six definitions and a full site_a seed now
+// reports unknown_code=0 / value_rejected=0, so the blocker is gone:
+// promoting unknown-code to a hard error under ProfileCI is the
+// sensible follow-up, and this comment is the record that it is now
+// possible.
+//
+// Note the catalogue's OWN validity is already fatal — applyFields
+// runs metadata.NormalizeOptionsDoc and returns the error. The
+// asymmetry is deliberate: a broken catalogue is one repo defect every
+// instance inherits, a dropped value is one row of one manifest.
+const (
+	dropUnknownCode   = "unknown_code"
+	dropValueRejected = "value_rejected"
+
+	// dropTypeMismatch is counted per FIELD, not per value: it is
+	// recorded once by applyFields when a catalogue entry binds to an
+	// existing definition of a different type (#812). It rides the same
+	// tally because it belongs on the same summary line — the tally is
+	// what an operator reads to find out that the catalogue and the
+	// database disagree — and because record()'s per-code log limit is
+	// exactly the throttling this needs too.
+	//
+	// It does not itself drop anything. The seed proceeds using the
+	// EXISTING row's type, so the values land in the right column; what
+	// gets reported is that the catalogue is lying about a field, which
+	// is a repo defect to fix rather than a bad manifest row.
+	dropTypeMismatch = "type_mismatch"
+)
+
+// fieldDropLogLimit caps the per-asset detail warnings emitted for any
+// one (reason, code) pair. A single misconfigured field is ~1,900
+// identical lines against site_a, which buries every other warning the
+// run produced — and the operator learns nothing from line 900 that
+// line 1 did not already say. A handful of examples name the code, the
+// type and an offending value; the end-of-phase summary carries the
+// true totals.
+const fieldDropLogLimit = 3
+
+// fieldDropTally counts discarded field values per reason per code.
+type fieldDropTally struct {
+	byReason map[string]map[string]int // reason -> code -> dropped
+	logged   map[string]int            // reason + "|" + code -> warnings emitted
+}
+
+func newFieldDropTally() *fieldDropTally {
+	return &fieldDropTally{
+		byReason: map[string]map[string]int{},
+		logged:   map[string]int{},
+	}
+}
+
+// record counts one drop and reports whether the caller should emit a
+// detail warning for it (see fieldDropLogLimit).
+func (t *fieldDropTally) record(reason, code string) bool {
+	codes, ok := t.byReason[reason]
+	if !ok {
+		codes = map[string]int{}
+		t.byReason[reason] = codes
+	}
+	codes[code]++
+	key := reason + "|" + code
+	if t.logged[key] >= fieldDropLogLimit {
+		return false
+	}
+	t.logged[key]++
+	return true
+}
+
+func (t *fieldDropTally) total(reason string) int {
+	n := 0
+	for _, c := range t.byReason[reason] {
+		n += c
+	}
+	return n
+}
+
+// offenders renders the worst codes for a reason as "code=n, code=n",
+// heaviest first and ties broken by code so the line is reproducible.
+func (t *fieldDropTally) offenders(reason string, limit int) string {
+	codes := t.byReason[reason]
+	if len(codes) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(codes))
+	for c := range codes {
+		keys = append(keys, c)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if codes[keys[i]] != codes[keys[j]] {
+			return codes[keys[i]] > codes[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	if limit > 0 && len(keys) > limit {
+		keys = keys[:limit]
+	}
+	parts := make([]string, 0, len(keys))
+	for _, c := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", c, codes[c]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// dropValueRepr renders the offending value for a warning: enough to
+// recognise which manifest entry is wrong, bounded so a long rich_text
+// body cannot own the log line.
+func dropValueRepr(raw any) string {
+	if raw == nil {
+		return "<nil>"
+	}
+	s := fmt.Sprintf("%v", raw)
+	// Rune-bounded, not byte-bounded: a manifest value is arbitrary
+	// text, and slicing mid-rune would put a replacement character in
+	// the log where the operator is trying to read a value.
+	const max = 120
+	if utf8.RuneCountInString(s) > max {
+		return string([]rune(s)[:max]) + "…"
+	}
+	return s
+}
+
+// logFieldDrops closes the asset phase with the part an operator
+// actually reads. Always logged — zeros are the evidence the check ran
+// — with a plain-words stdout NOTE when something was actually dropped,
+// same reasoning as the preview-skip note above: a WARN inside a JSON
+// handler is not where whoever ran the seed finds out.
+func (r *Runner) logFieldDrops() {
+	unknown := r.fieldDrops.total(dropUnknownCode)
+	rejected := r.fieldDrops.total(dropValueRejected)
+	mistyped := r.fieldDrops.total(dropTypeMismatch)
+	r.log.Info("seed.field.drops",
+		"unknown_code", unknown,
+		"value_rejected", rejected,
+		"type_mismatch", mistyped,
+		"unknown_code_by_code", r.fieldDrops.offenders(dropUnknownCode, 10),
+		"value_rejected_by_code", r.fieldDrops.offenders(dropValueRejected, 10),
+		"type_mismatch_by_code", r.fieldDrops.offenders(dropTypeMismatch, 10))
+	if mistyped > 0 {
+		fmt.Printf(
+			"NOTE: %d catalogue field(s) declare a type the EXISTING definition does not "+
+				"have; the seed used the existing type. Fix the type in "+
+				"seed/profiles/dataset.field_definitions.json, or migrate the definition: %s\n",
+			mistyped, r.fieldDrops.offenders(dropTypeMismatch, 10))
+	}
+	if unknown == 0 && rejected == 0 {
+		return
+	}
+	fmt.Printf(
+		"NOTE: %d asset field values were DROPPED and are absent from the seeded "+
+			"database.\n", unknown+rejected)
+	if unknown > 0 {
+		fmt.Printf(
+			"  %d had no field definition for their code (add the definition, or fix "+
+				"the slug in the manifest): %s\n",
+			unknown, r.fieldDrops.offenders(dropUnknownCode, 10))
+	}
+	if rejected > 0 {
+		fmt.Printf(
+			"  %d carried a value the field's declared type could not accept (see the "+
+				"seed.field.value_rejected warnings for examples): %s\n",
+			rejected, r.fieldDrops.offenders(dropValueRejected, 10))
+	}
+}
+
 func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals map[string]any) error {
 	if len(vals) == 0 {
 		return nil
@@ -713,10 +1102,28 @@ func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals
 	for _, code := range codes {
 		fm, ok := r.fields[code]
 		if !ok {
+			// No definition carries this code. A schema/catalogue
+			// mismatch, NOT a bad value — the two used to share one
+			// silent `continue` and were indistinguishable (#807).
+			if r.fieldDrops.record(dropUnknownCode, code) {
+				r.log.Warn("seed.field.unknown_code",
+					"code", code,
+					"asset_id", uuidString(assetID),
+					"value", dropValueRepr(vals[code]))
+			}
 			continue
 		}
 		params, ok := fieldValueParams(fm.typ, vals[code])
 		if !ok {
+			// The code is defined; the VALUE could not be coerced into
+			// the column its declared type writes.
+			if r.fieldDrops.record(dropValueRejected, code) {
+				r.log.Warn("seed.field.value_rejected",
+					"code", code,
+					"type", fm.typ,
+					"asset_id", uuidString(assetID),
+					"value", dropValueRepr(vals[code]))
+			}
 			continue
 		}
 		params.AssetID = assetID
@@ -996,6 +1403,26 @@ func parseTime(s string) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// dateOnlyLayout is the calendar date a `date`-typed field accepts in
+// addition to RFC3339. Midnight UTC, matching what the API's own date
+// writer stores.
+const dateOnlyLayout = "2006-01-02"
+
+// parseDateValue parses a `date` field's manifest value: RFC3339 first
+// (unchanged, so every existing timestamp keeps working), then the bare
+// calendar date. Used ONLY for `date` — see fieldValueParams for why
+// `datetime` stays strict.
+func parseDateValue(s string) pgtype.Timestamptz {
+	if ts := parseTime(s); ts.Valid {
+		return ts
+	}
+	t, err := time.Parse(dateOnlyLayout, s)
 	if err != nil {
 		return pgtype.Timestamptz{}
 	}
@@ -1368,8 +1795,18 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 	}
 	switch strings.ToLower(ftype) {
 	case "text", "longtext", "rich_text", "select", "tree":
+		// A `tree` value in a dataset MANIFEST is a single option slug
+		// — the leaf node — not a "NA/US/CA" path and not an array.
+		// Slugs are unique across the whole option tree, so the leaf
+		// addresses the node on its own and the ancestor path is
+		// reassembled at read time. See the 2026-07-31 tree-storage
+		// amendment to ADR 0012.
 		s := scalarString(raw)
-		p.ValueText = &s
+		// SeedInsertAssetFieldValue goes straight at the table, so no
+		// handler gate runs on a seeded value. The read side sanitises
+		// regardless (#816), but a dataset should not be able to leave
+		// a live payload sitting in a column either.
+		p.ValueText = richtext.SanitizeValueText(strings.ToLower(ftype), &s)
 	case "number":
 		f, ok := raw.(float64)
 		if !ok {
@@ -1382,7 +1819,21 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 			n = 1
 		}
 		p.ValueNum = &n
-	case "date", "datetime":
+	case "date":
+		// A `date` field takes the obvious spelling — "2026-03-14" —
+		// as well as a full RFC3339 timestamp (#807). It used to take
+		// RFC3339 only, so the obvious spelling was DISCARDED without a
+		// word; the only reason #805's manifests avoided it is that
+		// their author read parseTime first.
+		p.ValueDate = parseDateValue(scalarString(raw))
+		if !p.ValueDate.Valid {
+			return p, false
+		}
+	case "datetime":
+		// Deliberately NOT widened to the bare date. A datetime field
+		// handed a date has lost its time of day somewhere upstream,
+		// which is worth reporting rather than papering over with
+		// midnight UTC.
 		p.ValueDate = parseTime(scalarString(raw))
 		if !p.ValueDate.Valid {
 			return p, false
@@ -1404,7 +1855,16 @@ func fieldValueParams(ftype string, raw any) (SeedInsertAssetFieldValueParams, b
 		}
 		p.ValueOptions = opts
 	case "reference":
-		p.ValueRef = parseUUID(scalarString(raw))
+		// An unparseable UUID used to fall through as ACCEPTED, which
+		// wrote a row with every value column NULL — a field that reads
+		// as "set to nothing" rather than as absent, and the one drop
+		// shape that even a row count could not catch (#807). Refuse it
+		// so the caller warns.
+		ref := parseUUID(scalarString(raw))
+		if !ref.Valid {
+			return p, false
+		}
+		p.ValueRef = ref
 	default:
 		s := scalarString(raw)
 		p.ValueText = &s

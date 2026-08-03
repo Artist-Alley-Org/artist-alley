@@ -62,8 +62,16 @@ func TestClaimScope_UnrestrictedWithCaps_ExcludesTypesAtCap(t *testing.T) {
 		t.Fatalf("both types should be eligible, got %v", got)
 	}
 
-	// Saturate ai.embed (cap 1).
-	p.confirmReservation("ai.embed")
+	// claimScope RESERVES what it returns (#777), so this poll is now
+	// holding ai.embed's only slot. Hand it back the way Run does when
+	// a claim comes up empty, or the next assertion would pass for the
+	// wrong reason — an unreleased reservation rather than the cap.
+	p.releaseReserved(got, "")
+
+	// Saturate ai.embed (cap 1) by taking its slot for real.
+	if len(p.tryReserve([]JobType{"ai.embed"})) != 1 {
+		t.Fatal("ai.embed should have been free to reserve")
+	}
 
 	got, saturated = w.claimScope()
 	if saturated {
@@ -82,7 +90,9 @@ func TestClaimScope_UnrestrictedWithCaps_ExcludesTypesAtCap(t *testing.T) {
 func TestClaimScope_TypeRestrictedAllAtCap_Saturated(t *testing.T) {
 	w, p := newScopeWorker(map[JobType]int{"ai.embed": 1}, "ai.embed")
 	w.Types = []JobType{"ai.embed"}
-	p.confirmReservation("ai.embed")
+	if len(p.tryReserve([]JobType{"ai.embed"})) != 1 {
+		t.Fatal("ai.embed should have been free to reserve")
+	}
 
 	got, saturated := w.claimScope()
 	if !saturated {

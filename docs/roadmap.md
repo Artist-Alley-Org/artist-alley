@@ -52,6 +52,8 @@ Full user-facing notes live in [`CHANGELOG.md`](../CHANGELOG.md). This table is 
 
 | Version | Date | Headline |
 |---|---|---|
+| **v0.8.0** | 2026-08-03 | Operator configuration — the admin config spine (epic #519): controlled vocabularies are editable (#328), a field can be a hierarchy with a nested-term tree editor (#779, #825), keywords grow by typing and from files (open vocabulary, #830/#831), rich-text fields render as formatted text (#816), any interface wording is rewritable without forking (site text, #794, ADR 0081 §1) as are all transactional emails (#795, ADR 0081 §2), and `fields.admin` is now a grantable capability (#804); internal release numbers no longer surface in the UI (#801); re-seeding an instance serves fresh data without a restart (#845); plus SSO credential read-hardening (#718) and a long tail of field-type, preview, and seed-fidelity fixes |
+| **v0.7.0** | 2026-07-28 | Browse correctness, visibility security, and a real seed catalogue — five visibility leaks closed under one root cause (private posts readable by any signed-in user #660, ungated collections #661, anonymous `?tag=` exposing drafts #657, authenticated search 500ing #650, session IPs on the wrong capability #573; epic #665); Blender unpackaged, image 3.64GB → 1.82GB (#500, ADR 0069 amended); cards render correctly end to end (aspect ratios, append-stable masonry, blur-up for every asset type, honest `sizes`, designed no-preview tile); seed catalogue 1,007 → 1,946 assets with a 60-asset floor across 11 studios (#572, epic #562) |
 | **v0.6.0** | 2026-07-23 | Public read surface + demo hardening — public user-profile pages (#478), three.js 3D-preview migration (multi-file glTF fixed, arm64 3D previews) (#496 steps 1–2, #486), shared browse view controls (#511), CI-reliability epic (#485); fixes a federation-path query bug caught by the nightly (#538) |
 | **v0.5.2** | 2026-07-21 | `content.read.all` capability (#474) — a content-plane-only read cap so a read-only viewer (the public demo) sees `team`/`restricted` content without exposing admin surfaces; fixes the demo's blank "Preview unavailable" tiles |
 | **v0.5.1** | 2026-07-21 | Shareable asset pages (`/assets/[id]`, fixing dead-end collection clicks) + 3D previews restored to published images (Blender was missing from the release build); also promoted the accumulated foundation work — scheduled-action engine (ADR 0020), audit retention/export (ADR 0032), and a visibility-consolidation batch |
@@ -181,7 +183,7 @@ first-ever tagged release. Seventeen sub-phases, 2026-07-07 → 2026-07-11.
 | **1.55.A** | 07-07 | Master release-readiness audit (`docs/v0_1_readiness.md`) — exit criteria, gap inventory, sequencing |
 | **1.55.B** | 07-08 | Hygiene bundle — oapi-codegen pinned, MDX hazard gate, schema-freshness boot detection, baseline verification |
 | **1.55.R** | 07-08 | v0.1.0 milestone rename pass — recalibrated "v1.0.0" language to "v0.1.0" |
-| **1.55.S** | 07-08 | ResourceSpace sanitization + physical reference-tree deletion |
+| **1.55.S** | 07-08 | Upstream sanitization + physical reference-tree deletion |
 | **1.55.T** | 07-09 | Release-candidate dry runs |
 | **1.55.T-2** | 07-09 | Docker-only distribution + all-green rc9 dry-run |
 | **1.55.U-1** | 07-08 | Schema + cache audit report (0 MUST / 23 SHOULD / 11 NICE) |
@@ -215,7 +217,7 @@ on every row, sequencing proposal (base v0.1.0 scope ~9 days;
 full menu ~17-22 days), 7-gate RS deletion readiness checklist,
 post-milestone arc pointers (split v0.1.0 vs v1.0.0). **Unblocks two follow-up arcs:**
 (a) physical deletion of the ~102 MB gitignored `/dbstruct/` +
-`/include/` + `/plugins/` + `/pages/` ResourceSpace reference tree
+`/include/` + `/plugins/` + `/pages/` upstream reference tree
 (§6 confirms every pattern is captured internally); (b) the
 AGPL + commercial relicense arc per ADR 0016 → 0017 direction,
 gated on this audit + Phase 1.24. **Recommended next sub-phase**
@@ -269,7 +271,7 @@ checklist all seven gates cleared. ADR 0002 skipped for a
 pending-review pointer (already `superseded_by: 0016` from prior
 lifecycle; redundant). Local `/dbstruct/` `/include/` `/plugins/`
 `/pages/` physically removed from disk; `.gitignore` entries
-retained as safety net. `grep -rn -iE "resourcespace|resource[-_]space"`
+retained as safety net. a case-insensitive product-name pattern sweep
 in application code + config now returns empty; deliberate
 historical mentions retained in ADR bodies + `cleanup-audit-2026-06.md`
 + this readiness doc's §6 inventory + memory files. Closes #231.
@@ -628,13 +630,15 @@ map to the milestones below.
 >
 > **What changed on 2026-07-27 and why.** v0.7.0's theme was *"operator configurability + browse polish"* — two releases in one, which is why it kept growing instead of closing. It has been split: the browse half keeps v0.7.0, and **two new milestones were inserted**, shifting everything from the old v0.8.0 upward by two. No issues were reassigned in that shift; the milestones themselves were renamed, so each carried its contents with it.
 >
+> **Scope correction 2026-07-29.** v0.8.0 had drifted into a catch-all: of its 12 open issues, eight had been filed in the preceding 48 hours and assigned to it *because it was the current milestone*, not because they matched its theme. Six moved out — #706 → v0.9.0, #212 → v0.10.0, #687 → v0.19.0 (rejoining #242, which already tracks native binaries as a v1.0 prerequisite), and #683/#714/#725 → a new release-less **seed & demo data** milestone. Seed and demo-dataset work does not gate a tag and no longer inflates release scope. v0.8.0 is now six issues with one subject.
+>
 > | Milestone | Theme |
 > |---|---|
 > | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
-> | **v0.7.0** *(current)* | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) |
-> | v0.8.0 🆕 | **Operator & admin configuration** — the admin config spine (#519/#520/#521), branding (#517), feature flags (#524) |
-> | v0.9.0 🆕 | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577) |
-> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* |
+> | **v0.7.0** ✅ | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) *(shipped 2026-07-28)* |
+> | **v0.8.0** ✅ | **Operator & admin configuration** — the admin config spine (epic #519): editable vocabularies, hierarchy tree editor, open-vocabulary keywords, rich text, site-text + email-template overrides, and `fields.admin` as a grantable capability *(shipped 2026-08-03)* |
+> | v0.9.0 *(current)* | **User-facing surfaces** — account-tile completeness (#600), social feed card (#557), asset edit route (#549), team channels (#577), workflow triggers & notification rules (#520), default-view preferences (#706) |
+> | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* — now also carries the **3D animation arc** (epic #741, ADR 0078): addressable clips, extracted rig identity, and a shared animation library |
 > | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
 > | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
 > | v0.13.0 | Privacy, audit, observability & reporting *(was v0.11.0)* |
@@ -1213,17 +1217,36 @@ whatever anchor the presenter emits to everyone in the room.
 - Blender / Houdini integrations (community-driven via the same API).
 - Webhook + presence broadcasts for studio production trackers.
 
-### 1.18.B-10 — 3D viewer (native)
-- `<model-viewer>` for glTF / GLB native — instant load, AR,
-  animations.
-- three.js loader fallbacks for OBJ (+ .mtl + texture set) and FBX.
+### 1.18.B-10 — 3D viewer (native) — SHIPPED, with corrections
+- ~~`<model-viewer>` for glTF / GLB native~~ — **not what shipped.** The
+  viewer uses the three.js loaders directly (`GLTFLoader` / `FBXLoader` /
+  `OBJLoader` + `MTLLoader`) in `ModelView.svelte`; there is no
+  `<model-viewer>` dependency. *(Corrected 2026-07-29.)*
+- three.js loaders for OBJ (+ .mtl + texture set) and FBX.
 - Marmoset Toolbag `.mview` native player (self-contained JS).
 - USDZ via Quick Look on Apple devices.
 - Camera presets, lighting picker, turntable poster generation,
   wireframe / UV inspect modes.
 
+### 1.18.B-10a — 3D animation arc (epic #741, ADR 0078) — v0.10.0
+- **Rig identity extracted at ingest** (#742) — bone-name signature, bone
+  list, per-clip name/duration/track-count. The gating item, and the only
+  one whose cost grows with the catalogue.
+- **Shared-rig clip playback** (#743) — play a clip from one asset on a
+  different, rig-compatible mesh. Small: `AnimationMixer` already binds
+  tracks to bones by name, so no transformation is involved.
+- **Cross-rig retargeting** (#744) — a **spike, not a commitment.**
+  `SkeletonUtils.retargetClip` is in no official three.js example and
+  carries standing correctness bugs. ADR 0078 keeps retargeting out of the
+  supported set, and forbids it as a silent fallback.
+- Per ADR 0076 (amended), a playing clip is **time-based media** and reuses
+  the existing transport and frame-addressing model — no second player.
+
 ### 1.18.B-11 — 3D heavy converters (worker side)
-- Blender headless → glTF for `.blend`.
+- ~~Blender headless → glTF for `.blend`~~ — **Blender was removed from the
+  image entirely** (#500/#680, image 3.64GB → 1.82GB) and is not to be
+  packaged again. Proprietary-format conversion was re-scoped to optional
+  **plugin** delivery (#499, v0.14.0) per ADR 0069. *(Corrected 2026-07-29.)*
 - FBX2glTF for cached glTF when the source format is heavy.
 - Maya `.mb` / `.ma` and 3ds Max `.max` — extract embedded preview
   where possible; full conversion gated on a licensed converter
@@ -1374,6 +1397,38 @@ Explicitly rejected from the internal reference:
 - **Strip view of a playlist** — not on the roadmap.
 - **Smart metadata field reordering on edit** — fragile UX that
   breaks operator muscle memory.
+
+### 1.18.B-20 — Frame-scoped review annotation (ADR 0076)
+
+Epic #728. The player already unifies video + audio behind one
+transport and already addresses frames (1.18.B-1). ADR 0076 records
+that and adds the part that is missing: **annotations that belong to a
+frame**, not to the asset.
+
+Verified before scoping: `frame_number` / `frameNumber` appear nowhere
+in the codebase, so a drawing made while reviewing is not attached to
+the moment it describes.
+
+- **#729** — frame-rate trustworthiness gate. An asset whose rate cannot
+  be trusted must not present a frame index; a guessed rate silently
+  misplaces every annotation stored against it.
+- **#730** — frame-scoped annotation storage + API. The only piece with
+  no existing backend. The frame rate travels with the annotation, or it
+  is unplaceable after a rate correction or a federation hop.
+- **#731** — draw on a frame. Wires the existing brush engine
+  (`BrushCanvas`, `brushes.ts`) into the player; a review-only drawing
+  implementation is explicitly rejected.
+- **#732** — annotation markers on the scrubber. What turns a review
+  recording into a review *document*. Marker cost is bounded by frame
+  count, not annotation count.
+- **#733** — adjacent-frame stroke ghosting, so an arc drawn across six
+  frames is legible. A view setting; never stored on the annotation.
+- **#734** — stacked control rows (transport / drawing / view), fit,
+  flip, grid overlay, and comparison as the same player instantiated
+  twice against one transport.
+
+Sequencing: 729 → 730 → 731 → 732 → 733, with 734 foldable in after 729.
+
 
 ## Admin settings — fleshing out every placeholder
 
@@ -1860,12 +1915,24 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
 - **Plugin ecosystem** (Phase 1.23). WASM extension model via
   Extism. In-tree Go packages until external authors arrive.
 
+- **Sized feed slots** (epic #745, **ADR 0079**) — the placement primitive
+  underneath both ads and premium placement. A slot is a *position*, a
+  *size in grid units* (2×2), and an *ordered fill chain*; ads, promoted
+  premium posts and operator curation are **consumers**, not three
+  implementations. Load-bearing rule: an unfilled slot becomes ordinary
+  feed content, never a hole — so ADR 0030's "collapse the empty slot"
+  now applies per slot kind. Sequenced #746 (uniform grid, cheap — works
+  today) → #747 (masonry rework; a tile currently *cannot* span, per the
+  #651 append-stability trade) → #748 (wire the fill sources).
+
 - **Operator-configurable ad slots** (Phase 1.38). Opt-in surface for
   operators running public-facing community instances (fan sites,
   festival hubs, art-school portfolios) to monetize hosting via ads.
   Defined zones across feed top / between-every-Nth feed item /
   sidebar top + bottom / post-modal sidebar / footer; each zone is
-  toggled and provider-bound per instance. Providers ship for Google
+  toggled and provider-bound per instance. *In-grid 2×2 slots are a
+  separate kind, added by ADR 0079 — the zones listed here are
+  page-margin banners.* Providers ship for Google
   AdSense, Meta Audience Network, Carbon Ads, EthicalAds, and a
   custom-HTML option. Default off everywhere; AAA-internal studios
   see zero ad markup. Operator allow-lists categories (block

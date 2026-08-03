@@ -33,15 +33,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
-// AudioPayload — JSON body for a preview.audio job. Matches the
-// shape every other preview.* worker uses so the dispatcher in
-// assets/handler.go just hands the same struct over.
-type AudioPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // AudioResult — what the worker writes back into jobs.result for
 // the admin queue page.
 type AudioResult struct {
@@ -284,24 +275,30 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// Cheap re-queue path: if every variant already exists, skip
 	// the (cheap) waveform render.
 	//
-	// Note this is the one preview handler whose re-queue never
-	// reaches fanToLadder, so it is also the one whose re-queue does
-	// NOT heal a missing thumbhash (#645). Healing existing assets is
-	// the thumbhash-backfill job's remit, not this short-circuit's —
-	// re-rendering a waveform on every requeue to recover a 30-byte
-	// hash would be the wrong trade.
-	if h.variantExists(jobCtx, p.FileHash, "col") &&
-		h.variantExists(jobCtx, p.FileHash, "preview") &&
-		h.variantExists(jobCtx, p.FileHash, "screen") &&
-		h.variantExists(jobCtx, p.FileHash, "hires") {
+	// This handler's re-queue never reaches fanToLadder, so nothing on
+	// this path stamps the thumbhash the ladder step would have. That
+	// used to be left to the thumbhash-backfill sweep on the correct
+	// grounds that re-rendering a waveform to recover 30 bytes is the
+	// wrong trade — and it still is. healThumbhashOnSkip does not
+	// re-render; it reads a rung already in storage, which is what the
+	// sweep does, for the one asset this job is already holding (#827).
+	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "audio",
+		})
 	} else {
 		wavePath := filepath.Join(filepath.Dir(src), "wave.png")
 		if err := h.renderWaveform(jobCtx, src, wavePath); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.waveform_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
-		} else if err := h.fanWaveformToLadder(jobCtx, p.AssetID, p.FileHash, wavePath); err != nil {
+		} else if err := h.fanWaveformToLadder(jobCtx, p.AssetID, p.FileHash, wavePath, p.Force); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.fan_failed",
 				slog.String("err", err.Error()))
 		} else {
@@ -314,7 +311,7 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// the waveform display alone is acceptable (SoundCloud-style).
 	// Skip when the variant already exists (re-queue idempotency
 	// matches the raster ladder above).
-	if meta.HasCover && !h.variantExists(jobCtx, p.FileHash, "cover") {
+	if meta.HasCover && !variantDone(jobCtx, h.Storage, p.FileHash, "cover", p.Force) {
 		if err := h.extractCover(jobCtx, src, p.FileHash); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.cover_failed",
 				slog.String("asset_id", p.AssetID.String()),
@@ -638,7 +635,7 @@ func (h *AudioHandler) extractCover(ctx context.Context, src, hash string) error
 // ladder step, which writes each configured variant (alpha preserved —
 // the waveform renders white-on-transparent) and stamps the asset's
 // thumbhash.
-func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, assetID uuid.UUID, hash, wavePath string) error {
+func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, assetID uuid.UUID, hash, wavePath string, force bool) error {
 	f, err := os.Open(wavePath)
 	if err != nil {
 		return fmt.Errorf("open wave: %w", err)
@@ -651,6 +648,7 @@ func (h *AudioHandler) fanWaveformToLadder(ctx context.Context, assetID uuid.UUI
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "audio",
+		Overwrite: force,
 	})
 }
 
@@ -667,11 +665,6 @@ func (h *AudioHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta A
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
 	})
-}
-
-func (h *AudioHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *AudioHandler) ffmpegBin() string {

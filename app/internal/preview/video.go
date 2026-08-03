@@ -12,6 +12,7 @@ import (
 	"image"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,13 +31,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
-
-// VideoPayload is the JSON body for a preview.video job.
-type VideoPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
 
 // VideoResult — what the worker writes back to jobs.result for the
 // admin queue view.
@@ -235,18 +229,23 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// when the poster itself already exists (e.g. earlier encodes
 	// pre-dating poster-derived thumbnails). The inner helpers skip
 	// what's already on the backend.
-	posterExists := h.variantExists(jobCtx, p.FileHash, "poster")
-	if err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe); err != nil {
+	//
+	// On an install running the cheap poster job (#818) this is normally
+	// the skip branch: preview.video.poster has already put the poster
+	// and the whole raster ladder in place by the time this job is
+	// claimed, and the expensive handler must not render either again.
+	rendered, err := h.writePoster(jobCtx, p.AssetID, work, p.FileHash, probe, p.Force)
+	if err != nil {
 		return nil, fmt.Errorf("preview.video: poster: %w", err)
 	}
-	if posterExists {
-		result.Skipped = append(result.Skipped, "poster")
-	} else {
+	if rendered {
 		result.Variants = append(result.Variants, "poster")
+	} else {
+		result.Skipped = append(result.Skipped, "poster")
 	}
 
 	// --- HLS ladder -------------------------------------------------------
-	if h.variantExists(jobCtx, p.FileHash, "hls/master.m3u8") {
+	if variantDone(jobCtx, h.Storage, p.FileHash, "hls/master.m3u8", p.Force) {
 		result.Skipped = append(result.Skipped, "hls")
 	} else if err := h.writeHLS(jobCtx, work, p.FileHash, probe, enc); err != nil {
 		return nil, fmt.Errorf("preview.video: hls: %w", err)
@@ -255,8 +254,13 @@ func (h *VideoHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 
 	// --- scrub sprite + VTT ----------------------------------------------
-	if h.variantExists(jobCtx, p.FileHash, "sprites.jpg") {
+	if variantDone(jobCtx, h.Storage, p.FileHash, "sprites.jpg", p.Force) {
 		result.Skipped = append(result.Skipped, "sprites")
+		// The sheet and its cue file are written together and are
+		// useless apart, so the sentinel's reconcile has to cover both
+		// (#827) — otherwise a healed install has a row for the pixels
+		// and none for the geometry that reads them.
+		variantDone(jobCtx, h.Storage, p.FileHash, "sprites.vtt", false)
 	} else if err := h.writeSprites(jobCtx, work, p.FileHash, probe); err != nil {
 		return nil, fmt.Errorf("preview.video: sprites: %w", err)
 	} else {
@@ -279,25 +283,33 @@ type workDir struct {
 }
 
 func (h *VideoHandler) stage(ctx context.Context, hash string) (workDir, func(), error) {
-	base := h.TempDir
+	return stageSource(ctx, h.Storage, h.TempDir, "aa-video-*", hash, h.MaxSourceBytes)
+}
+
+// stageSource copies an asset's original bytes into a fresh temp dir so
+// ffmpeg can seek freely over a real file. Shared by every handler that
+// shells out to ffmpeg (video, video.poster, gif) — the staging dance is
+// identical and the only thing that differs is the temp-dir prefix.
+func stageSource(ctx context.Context, st *storage.Service, tempDir, pattern, hash string, maxBytes int64) (workDir, func(), error) {
+	base := tempDir
 	if base == "" {
 		base = os.TempDir()
 	}
-	dir, err := os.MkdirTemp(base, "aa-video-*")
+	dir, err := os.MkdirTemp(base, pattern)
 	if err != nil {
 		return workDir{}, nil, fmt.Errorf("stage: mkdir: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	rc, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
+	rc, info, err := st.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
 		cleanup()
 		return workDir{}, nil, fmt.Errorf("stage: download: %w", err)
 	}
 	defer rc.Close()
-	if info != nil && info.Size > h.MaxSourceBytes {
+	if info != nil && info.Size > maxBytes {
 		cleanup()
-		return workDir{}, nil, fmt.Errorf("stage: source %d bytes > cap %d", info.Size, h.MaxSourceBytes)
+		return workDir{}, nil, fmt.Errorf("stage: source %d bytes > cap %d", info.Size, maxBytes)
 	}
 
 	srcPath := filepath.Join(dir, "src.bin")
@@ -306,7 +318,7 @@ func (h *VideoHandler) stage(ctx context.Context, hash string) (workDir, func(),
 		cleanup()
 		return workDir{}, nil, fmt.Errorf("stage: create: %w", err)
 	}
-	if _, err := io.CopyN(f, rc, h.MaxSourceBytes+1); err != nil && !errors.Is(err, io.EOF) {
+	if _, err := io.CopyN(f, rc, maxBytes+1); err != nil && !errors.Is(err, io.EOF) {
 		_ = f.Close()
 		cleanup()
 		return workDir{}, nil, fmt.Errorf("stage: copy: %w", err)
@@ -320,7 +332,19 @@ func (h *VideoHandler) stage(ctx context.Context, hash string) (workDir, func(),
 // ---------------------------------------------------------------------------
 
 func (h *VideoHandler) probe(ctx context.Context, path string) (Probe, error) {
-	cmd := exec.CommandContext(ctx, h.ffprobeBin(),
+	return probeMedia(ctx, h.ffprobeBin(), path)
+}
+
+// probeMedia reads a staged file's duration, frame shape and fps.
+//
+// Not video-only despite the Probe type's name: ffprobe demuxes an
+// animated GIF as a video stream with a real duration and avg_frame_rate
+// (verified against the seed's 29.97s 260x212 capture), which is exactly
+// what the sprite cadence needs. preview.gif calls this rather than
+// carrying a second probe that would answer the same question slightly
+// differently.
+func probeMedia(ctx context.Context, ffprobeBin, path string) (Probe, error) {
+	cmd := exec.CommandContext(ctx, ffprobeBin,
 		"-v", "error",
 		"-print_format", "json",
 		"-show_streams",
@@ -389,81 +413,327 @@ func parseRatio(s string) float64 {
 // Poster
 // ---------------------------------------------------------------------------
 
-func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe) error {
-	posterPath := filepath.Join(w.dir, "poster.jpg")
-	if h.variantExists(ctx, hash, "poster") {
-		// Re-extract from source to drive the raster ladder without
-		// re-uploading the poster bytes. Fast: one I-frame seek.
-		at := 1.0
-		if probe.DurationS > 0 && probe.DurationS < 4 {
-			at = probe.DurationS * 0.1
+// posterCandidateFractions are the points in a clip, as fractions of
+// its duration, that the poster is drawn from — in order of preference.
+//
+// A FRACTION, NOT A FIXED OFFSET (#810). The old rule was `at := 1.0`,
+// with the fraction used only as a short-clip guard, so on anything
+// longer than four seconds the poster was always the frame one second
+// in. One second into a film is the fade-in. Measured mean luma at
+// t=1.0s across the seed dataset: sintel-2010-1080p.mkv 0.0 — a
+// literally black card — tears-of-steel 15.0, big-buck-bunny 49.3,
+// xonotic 93.0, which is why gameplay capture looked fine and films did
+// not. Ten percent in is past every title card we have.
+//
+// Three of them because one is a guess. The extras are only ever
+// visited when the first lands somewhere dark; see selectPoster.
+var posterCandidateFractions = []float64{0.10, 0.25, 0.50}
+
+// posterThumbnailFrames is the window the ffmpeg `thumbnail` filter
+// scores at each candidate offset. It buffers this many frames, picks
+// the one furthest from their average histogram, and emits it — which is
+// what turns "the frame that happens to be at 10%" into "the most
+// distinctive frame near 10%", at the cost of decoding the window.
+//
+// 60 is ~2.5 seconds at 24fps: wide enough to step over a cut or a
+// dissolve, narrow enough that the decode stays well under a second for
+// 1080p. It is deliberately not the 100 the sprite sheet uses — that
+// grid samples the whole clip and can afford to; this runs in the cheap
+// poster job whose entire justification is finishing fast.
+const posterThumbnailFrames = 60
+
+// posterMinMeanLuma is the mean luminance, on 0..1, below which a
+// candidate frame is treated as "the card would look broken" and the
+// next offset is tried.
+//
+// 16/255. Above it sit every deliberately dark frame we measured
+// (tears-of-steel's t=1.0s frame is 15.0/255, i.e. just under — which is
+// the right side of the line for a frame that reads as black on a
+// browse grid). Below it is a fade, a slate, or a letterboxed gap.
+const posterMinMeanLuma = 16.0 / 255.0
+
+// posterPick is the outcome of selectPoster: the chosen frame, where it
+// came from, and how bright it turned out.
+type posterPick struct {
+	path  string
+	img   image.Image
+	atS   float64
+	luma  float64
+	tries int
+}
+
+// writePoster puts a poster frame on the backend and fans the raster
+// ladder from it. Reports whether it actually rendered one.
+func (h *VideoHandler) writePoster(ctx context.Context, assetID uuid.UUID, w workDir, hash string, probe Probe, force bool) (bool, error) {
+	return writeTimelinePoster(ctx, timelinePosterInput{
+		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+		FFmpegBin: h.ffmpegBin(), Kind: "video",
+		AssetID: assetID, Hash: hash, Work: w, Probe: probe, Force: force,
+	})
+}
+
+// timelinePosterInput is everything writeTimelinePoster needs. Handler
+// structs differ, so the shared step takes explicit dependencies — same
+// reasoning as ladderInput in ladder.go.
+type timelinePosterInput struct {
+	Pool      *pgxpool.Pool
+	Storage   *storage.Service
+	SysConfig *sysconfig.Store
+	Logger    *slog.Logger
+
+	FFmpegBin string
+	// Kind names the pipeline for log keys and for the ladder's
+	// provenance: "video" or "gif".
+	Kind string
+
+	AssetID uuid.UUID
+	Hash    string
+	Work    workDir
+	Probe   Probe
+	Force   bool
+}
+
+// writeTimelinePoster picks a representative frame from a staged
+// timeline source, stores it as the `poster` variant, and fans the
+// raster ladder from it. Reports whether it actually rendered one.
+//
+// Shared with preview.gif (#832) rather than reimplemented there. An
+// animated GIF needs the SAME frame selection a video does, and for the
+// same reason: frame one of a screen capture is usually the empty window
+// before anything happens, which is precisely the "black card" case
+// #810's fraction-plus-luma rule exists to walk past. Decoding frame one
+// with image/gif would have been three lines and would have shipped a
+// library of blank thumbnails.
+func writeTimelinePoster(ctx context.Context, in timelinePosterInput) (bool, error) {
+	fan := func(src image.Image) error {
+		if src == nil {
+			return errors.New("poster variants: nil source image")
 		}
-		cmd := exec.CommandContext(ctx, h.ffmpegBin(),
-			"-hide_banner", "-loglevel", "error", "-y",
-			"-ss", fmt.Sprintf("%.3f", at),
-			"-i", w.sourcePath,
-			"-frames:v", "1",
-			"-vf", "scale='min(4096,iw)':'-2'",
-			"-q:v", "2",
-			posterPath,
-		)
-		if err := runFFmpeg(cmd); err != nil {
-			return err
-		}
-		return h.writePosterVariants(ctx, assetID, hash, posterPath)
+		return fanToLadder(ctx, ladderInput{
+			Pool: in.Pool, Storage: in.Storage, SysConfig: in.SysConfig, Logger: in.Logger,
+			AssetID: in.AssetID, Hash: in.Hash, Src: src, Kind: in.Kind, Source: "poster",
+			Overwrite: in.Force,
+		})
 	}
 
-	at := 1.0
-	if probe.DurationS > 0 && probe.DurationS < 4 {
-		at = probe.DurationS * 0.1
+	if variantDone(ctx, in.Storage, in.Hash, "poster", in.Force) {
+		// The poster bytes already exist, but the raster ladder may not
+		// — an encode predating poster-derived thumbnails has one and
+		// not the other — so the ladder still has to run.
+		//
+		// It runs from the STORED poster, read back, rather than from a
+		// fresh extract of the source. Re-extracting was cheap and
+		// wrong: it is not guaranteed to return the same frame (with
+		// #810's selection it frequently will not), so the `col` a card
+		// shows would drift away from the `poster` the player shows for
+		// the same asset, from one requeue to the next, with nothing
+		// re-uploaded to explain it.
+		src, err := decodeStoredVariant(ctx, in.Storage, in.Hash, "poster", defaultMaxVariantBytes)
+		if err == nil {
+			return false, fan(src)
+		}
+		// Unreadable poster bytes — the backend has something under the
+		// key that will not decode. Fall through and render a new one.
+		logAttrs(in.Logger, ctx, slog.LevelWarn, "preview."+in.Kind+".poster_readback_failed",
+			slog.String("file_hash", in.Hash),
+			slog.String("err", err.Error()))
 	}
-	cmd := exec.CommandContext(ctx, h.ffmpegBin(),
-		"-hide_banner", "-loglevel", "error", "-y",
-		"-ss", fmt.Sprintf("%.3f", at),
-		"-i", w.sourcePath,
-		"-frames:v", "1",
-		// Cap at 4096 so we have headroom for `hires`; the sysconfig
-		// variant ladder downsamples from there.
-		"-vf", "scale='min(4096,iw)':'-2'",
-		"-q:v", "2",
-		posterPath,
-	)
-	if err := runFFmpeg(cmd); err != nil {
-		return err
+
+	pick, err := selectPosterFrame(ctx, in.FFmpegBin, in.Work, in.Probe)
+	if err != nil {
+		return false, err
 	}
-	if err := h.uploadFile(ctx, hash, "poster", posterPath, "image/jpeg"); err != nil {
-		return err
+	logAttrs(in.Logger, ctx, slog.LevelDebug, "preview."+in.Kind+".poster_selected",
+		slog.String("file_hash", in.Hash),
+		slog.Float64("at_s", pick.atS),
+		slog.Float64("mean_luma", pick.luma),
+		slog.Int("tries", pick.tries))
+
+	if err := putVariantFile(ctx, in.Pool, in.Storage, in.Hash, "poster", pick.path, "image/jpeg"); err != nil {
+		return false, err
 	}
 
 	// Drive the raster variant ladder (col / preview / screen / hires)
 	// from the poster frame so videos render the same shape as images
 	// across every browse + post-detail surface. This is what makes a
 	// video card actually look like a card instead of a placeholder.
-	return h.writePosterVariants(ctx, assetID, hash, posterPath)
+	return true, fan(pick.img)
 }
 
-// writePosterVariants decodes the poster JPEG and runs it through the
-// shared ladder step, which writes each rung and stamps the asset's
-// thumbhash from the poster frame. Rungs already on the backend are
-// skipped — re-runs are cheap.
+// selectPoster extracts the best poster frame it can find and returns it
+// decoded.
 //
-// A failed Put here now fails the job (it used to log + continue). The
-// job system retries up to max_attempts, and the alternative — a video
-// reporting success with no `col` — is the col-404 class the model
-// handler already fixed for itself.
-func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash, posterPath string) error {
-	f, err := os.Open(posterPath)
+// The rule is "a representative frame near a fraction of the duration,
+// and not a black one". ffmpeg's `thumbnail` filter supplies the first
+// half — it scores a window of frames and hands back the most
+// distinctive — and it is the right tool, but it is not sufficient on
+// its own: it picks the best frame in the window it is given, and a
+// window that lies entirely inside a fade-from-black contains no good
+// frame to pick. So the offsets are walked in order and the mean
+// luminance of each result decides whether to stop.
+//
+// The measurement is free of extra process spawns: the JPEG has to be
+// decoded anyway to drive the ladder, so the check reads the image that
+// was already going to be decoded.
+//
+// A clip that is dark ALL THE WAY THROUGH — night footage, a black-slug
+// intro across the first half — still gets a poster: the brightest
+// candidate seen wins once the list runs out. Refusing to produce one
+// would trade a dark card for no card.
+func (h *VideoHandler) selectPoster(ctx context.Context, w workDir, probe Probe) (posterPick, error) {
+	return selectPosterFrame(ctx, h.ffmpegBin(), w, probe)
+}
+
+// selectPosterFrame is selectPoster's implementation, free of the video
+// handler so preview.gif can reuse the same selection rule (#832).
+func selectPosterFrame(ctx context.Context, ffmpegBin string, w workDir, probe Probe) (posterPick, error) {
+	offsets := posterOffsets(probe.DurationS)
+	var best posterPick
+	var lastErr error
+	for i, at := range offsets {
+		path := filepath.Join(w.dir, fmt.Sprintf("poster-%d.jpg", i))
+		if err := extractPosterFrame(ctx, ffmpegBin, w.sourcePath, path, at); err != nil {
+			lastErr = err
+			continue
+		}
+		img, err := decodeImageFile(path)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		pick := posterPick{path: path, img: img, atS: at, luma: meanLuma(img), tries: i + 1}
+		if pick.luma > best.luma || best.img == nil {
+			best = pick
+		}
+		if pick.luma >= posterMinMeanLuma {
+			best.tries = i + 1
+			return best, nil
+		}
+	}
+	if best.img == nil {
+		if lastErr == nil {
+			lastErr = errors.New("no candidate offsets")
+		}
+		return posterPick{}, fmt.Errorf("poster: no usable frame: %w", lastErr)
+	}
+	best.tries = len(offsets)
+	return best, nil
+}
+
+// posterOffsets turns a duration into the ordered seek points to try.
+//
+// A zero or absent duration (a container ffprobe could not measure)
+// falls back to the start of the file: the thumbnail filter still scans
+// forward from there, so the result is "the most distinctive of the
+// first 60 frames" rather than "frame 0", which is the best available
+// answer when there is no duration to take a fraction of.
+func posterOffsets(durationS float64) []float64 {
+	if durationS <= 0 {
+		return []float64{0}
+	}
+	out := make([]float64, 0, len(posterCandidateFractions))
+	for _, f := range posterCandidateFractions {
+		out = append(out, durationS*f)
+	}
+	return out
+}
+
+// extractFrame writes one JPEG from the source at the given offset.
+//
+// `-ss` before `-i` is an input seek — ffmpeg jumps to the preceding
+// keyframe rather than decoding from zero, which is what keeps this
+// affordable on a feature-length source.
+func (h *VideoHandler) extractFrame(ctx context.Context, sourcePath, outPath string, at float64) error {
+	return extractPosterFrame(ctx, h.ffmpegBin(), sourcePath, outPath, at)
+}
+
+// extractPosterFrame is extractFrame's implementation, free of the
+// handler — see selectPosterFrame.
+func extractPosterFrame(ctx context.Context, ffmpegBin, sourcePath, outPath string, at float64) error {
+	return runFFmpeg(exec.CommandContext(ctx, ffmpegBin,
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-ss", fmt.Sprintf("%.3f", at),
+		"-i", sourcePath,
+		// thumbnail first, then scale: the filter's histogram scoring
+		// should see the frames as shot. Cap at 4096 so `hires` has
+		// headroom; the sysconfig variant ladder downsamples from there.
+		"-vf", fmt.Sprintf("thumbnail=%d,scale='min(4096,iw)':'-2'", posterThumbnailFrames),
+		"-frames:v", "1",
+		"-q:v", "2",
+		outPath,
+	))
+}
+
+// meanLuma is the average Rec.601 luminance of an image, on 0..1.
+//
+// Subsampled: a 4096px poster is 8M+ pixels and image.At is an interface
+// call per pixel, so a full pass would cost more than the ffmpeg run it
+// is checking. ~4096 samples on a regular grid is far more than enough
+// to tell "black card" from "picture" — the distinction this exists to
+// draw is between 0.0 and 0.2, not between 0.19 and 0.20.
+func meanLuma(img image.Image) float64 {
+	if img == nil {
+		return 0
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return 0
+	}
+	const samplesPerAxis = 64
+	stepX := max(1, w/samplesPerAxis)
+	stepY := max(1, h/samplesPerAxis)
+	var sum float64
+	var n int
+	for y := b.Min.Y; y < b.Max.Y; y += stepY {
+		for x := b.Min.X; x < b.Max.X; x += stepX {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			sum += (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(bl)) / 65535.0
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / float64(n)
+}
+
+// decodeImageFile decodes a file the handler just wrote.
+func decodeImageFile(path string) (image.Image, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("poster variants: open: %w", err)
+		return nil, err
 	}
 	defer f.Close()
-	src, _, err := image.Decode(f)
+	img, _, err := image.Decode(f)
 	if err != nil {
-		return fmt.Errorf("poster variants: decode: %w", err)
+		return nil, fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+	}
+	return img, nil
+}
+
+// writePosterVariants runs the poster frame through the shared ladder
+// step, which writes each rung and stamps the asset's thumbhash and
+// pixel dimensions from it. Rungs already on the backend are skipped —
+// and, since #827, reconciled — so re-runs are cheap.
+//
+// Takes the DECODED image, not a path: both callers already hold one
+// (the render path decoded it to measure its luminance, the skip path
+// decoded it out of storage), and decoding a 4096px JPEG twice to keep a
+// path-shaped signature is not a trade worth making.
+//
+// A failed Put here fails the job (it used to log + continue). The job
+// system retries up to max_attempts, and the alternative — a video
+// reporting success with no `col` — is the col-404 class the model
+// handler already fixed for itself.
+func (h *VideoHandler) writePosterVariants(ctx context.Context, assetID uuid.UUID, hash string, src image.Image, force bool) error {
+	if src == nil {
+		return errors.New("poster variants: nil source image")
 	}
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "video", Source: "poster",
+		Overwrite: force,
 	})
 }
 
@@ -610,31 +880,172 @@ func (h *VideoHandler) uploadHLSTree(ctx context.Context, hash, hlsDir string) e
 // ---------------------------------------------------------------------------
 
 const (
-	spriteCols   = 10
-	spriteRows   = 10
-	spriteWidth  = 160
-	spriteHeight = 90
+	spriteCols = 10
+	spriteRows = 10
+
+	// spriteCellBox bounds BOTH edges of a single scrub cell. The cell
+	// is fitted inside this square with the source's aspect ratio
+	// preserved (#761), so:
+	//
+	//   16:9  -> 240x134 or 240x136 (see below)
+	//   9:16  -> 134x240 or 136x240
+	//   1:1   -> 240x240
+	//
+	// and the whole sheet is therefore bounded at 2400x2400 whatever
+	// the source shape — an ultrawide or a 1:8 panorama cannot blow the
+	// sheet out to several thousand pixels on one axis.
+	//
+	// The 16:9 short edge is not a fixed number: it computes to 135,
+	// which is odd, and `force_divisible_by=2` resolves that per ffmpeg
+	// BUILD — 5.1 (the runtime image) rounds down to 134, 6.1 rounds up
+	// to 136, same filter, same source. Nothing downstream may assume
+	// either: the VTT measures the sheet that was written (#796) rather
+	// than recomputing it, and the frontend measures it again off the
+	// image it paints.
+	//
+	// 240, not 160 (#811): the card shows a 320px still and swaps it for
+	// this cell on hover, so a 160px cell was visibly softer than the
+	// image it replaced. Measured over a 51-sheet seed, 240 buys 1.5x
+	// linear resolution for 1.8x the sheet bytes — JPEG does not scale
+	// with pixel count, so this came in under the 2.25x the decision
+	// budgeted. Matching the still at 320 would have cost ~4x, and
+	// motion masks the remaining gap.
+	spriteCellBox = 240
+
+	// spriteFallbackW/H are the cell dimensions used only when the real
+	// sheet cannot be measured AND the probe carries no usable source
+	// dimensions. The 16:9 fit of the box — the shape the handler emitted
+	// unconditionally before #761 — DERIVED from spriteCellBox rather
+	// than written out, so raising the box cannot leave a stale cell
+	// behind here (it very nearly did in #811).
+	spriteFallbackW = spriteCellBox
+	spriteFallbackH = spriteCellBox * 9 / 16
 )
 
+// spriteCellSize fits a srcW x srcH frame inside the spriteCellBox
+// square, preserving aspect ratio.
+//
+// It mirrors what `scale=BOX:BOX:force_original_aspect_ratio=decrease:
+// force_divisible_by=2` asks ffmpeg to do, and exists as the fallback
+// for the VTT geometry when the generated sheet cannot be measured.
+// Degenerate probes (a container ffprobe reports no video stream for,
+// so Width/Height are 0) fall back to the historical 16:9 cell rather
+// than dividing by zero.
+func spriteCellSize(srcW, srcH int) (int, int) {
+	if srcW <= 0 || srcH <= 0 {
+		// evenCell here too: the derived 16:9 fit of the box is not
+		// guaranteed to be even (240 -> 135), and an odd cell edge is the
+		// one thing every other path in this file rules out.
+		return evenCell(spriteFallbackW), evenCell(spriteFallbackH)
+	}
+	cw, ch := spriteCellBox, spriteCellBox
+	if srcW >= srcH {
+		ch = int(math.Round(spriteCellBox * float64(srcH) / float64(srcW)))
+	} else {
+		cw = int(math.Round(spriteCellBox * float64(srcW) / float64(srcH)))
+	}
+	return evenCell(cw), evenCell(ch)
+}
+
+// evenCell clamps a cell edge into [2, spriteCellBox] and rounds it up
+// to an even number. Odd dimensions are rejected outright by some
+// encoders and quietly resampled by others; 2 is the floor because
+// `force_divisible_by=2` is ffmpeg's own floor for a pathological
+// aspect ratio (a 1000:1 render would otherwise compute a 0px edge).
+func evenCell(v int) int {
+	if v < 2 {
+		return 2
+	}
+	if v > spriteCellBox {
+		v = spriteCellBox
+	}
+	return v + v%2
+}
+
 func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string, probe Probe) error {
+	return writeSpriteSheet(ctx, h.ffmpegBin(), w, probe, func(ctx context.Context, key, path, ct string) error {
+		return h.uploadFile(ctx, hash, key, path, ct)
+	})
+}
+
+// spriteUploader puts one generated file on the backend under a variant
+// key. Every ffmpeg-driven handler already has one (they differ only in
+// which asset hash they close over), so the shared sheet writer takes it
+// rather than a handler.
+type spriteUploader func(ctx context.Context, key, path, contentType string) error
+
+// spriteCueCount is how many of the grid's cells the sheet will
+// ACTUALLY contain a frame in — and therefore how many cues the VTT is
+// allowed to declare.
+//
+// It is not always the full grid, and the difference is the whole of
+// #835. `interval` has a floor of spriteMinInterval, so a clip shorter
+// than grid×floor seconds cannot fill the grid: ffmpeg's `fps` filter
+// emits ceil(duration/interval) frames, `tile` pads the rest of the
+// sheet with black, and a consumer that assumes cols×rows frames scrubs
+// through the padding. A 5s clip fills 25 of 100 cells, so three
+// quarters of its hover preview was blank.
+//
+// ceil, not round or floor: the fps filter's output frame k lands at
+// t = k/rate, so every k with k/rate < duration produces a frame, which
+// is exactly ceil(duration/interval) frames. Where that lands on a
+// boundary (duration an exact multiple of the interval) the answer is
+// one LOW, never one high — under-declaring loses a frame nobody misses,
+// over-declaring shows a black cell, which is the bug.
+func spriteCueCount(durationS, interval float64, gridCells int) int {
+	if durationS <= 0 || interval <= 0 {
+		return 0
+	}
+	n := int(math.Ceil(durationS / interval))
+	if n > gridCells {
+		n = gridCells
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// spriteMinInterval is the closest together two scrub cells may sample.
+// Below it a sheet stops being a summary of the clip and becomes a
+// low-framerate copy of it — 100 cells five frames apart is 4 seconds of
+// a 4-second clip.
+const spriteMinInterval = 0.2
+
+// writeSpriteSheet renders the hover-scrub sheet + its WebVTT cue file
+// for any ffmpeg-readable timeline source and hands both to `upload`.
+//
+// Shared by preview.video and preview.gif (#832): an animated GIF is a
+// short silent video, and giving it a second, subtly different sprite
+// writer is how the two drift. The only thing either caller supplies is
+// a staged file, a probe, and where to put the output.
+func writeSpriteSheet(ctx context.Context, ffmpegBin string, w workDir, probe Probe, upload spriteUploader) error {
 	if probe.DurationS <= 0 {
 		return errors.New("sprites: probe duration is zero")
 	}
 	totalCells := spriteCols * spriteRows
 	// Cell interval in seconds.
 	interval := probe.DurationS / float64(totalCells)
-	if interval < 0.2 {
-		interval = 0.2
+	if interval < spriteMinInterval {
+		interval = spriteMinInterval
 	}
 	spriteOut := filepath.Join(w.dir, "sprites.jpg")
 	// `select='not(mod(n,N))'` is fragile across containers; using
 	// `fps=` is more deterministic.
 	fps := 1.0 / interval
-	cmd := exec.CommandContext(ctx, h.ffmpegBin(),
+	// The box + force_original_aspect_ratio=decrease form (#761) is
+	// deliberately NOT `scale=<computed w>:<computed h>` from the probe:
+	// ffmpeg applies the container's display matrix before the
+	// filtergraph, so a phone-shot portrait clip arrives here with
+	// probe.Width/Height of 1920x1080 (coded) but decodes as 1080x1920.
+	// Letting ffmpeg fit the real decoded frame gets rotated sources
+	// right; a probe-derived cell size would still squash them.
+	cmd := exec.CommandContext(ctx, ffmpegBin,
 		"-hide_banner", "-loglevel", "error", "-y",
 		"-i", w.sourcePath,
-		"-vf", fmt.Sprintf("fps=%f,scale=%d:%d,tile=%dx%d",
-			fps, spriteWidth, spriteHeight, spriteCols, spriteRows),
+		"-vf", fmt.Sprintf(
+			"fps=%f,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,tile=%dx%d",
+			fps, spriteCellBox, spriteCellBox, spriteCols, spriteRows),
 		"-frames:v", "1",
 		"-q:v", "5",
 		spriteOut,
@@ -642,32 +1053,73 @@ func (h *VideoHandler) writeSprites(ctx context.Context, w workDir, hash string,
 	if err := runFFmpeg(cmd); err != nil {
 		return err
 	}
-	if err := h.uploadFile(ctx, hash, "sprites.jpg", spriteOut, "image/jpeg"); err != nil {
+	if err := upload(ctx, "sprites.jpg", spriteOut, "image/jpeg"); err != nil {
 		return err
 	}
 
-	// WebVTT mapping each cell to its time range.
+	// The VTT's cell size is MEASURED off the sheet that was just
+	// written, never recomputed from the same inputs. A stated cell
+	// size that disagrees with the real one by even a pixel makes every
+	// hover thumbnail crop a sliding, wrong region — plausible-looking
+	// on some frames and visibly wrong on others, which is harder to
+	// spot than the squash this issue started as. Measuring makes the
+	// two impossible to diverge.
+	cellW, cellH := measureSpriteCell(spriteOut, probe)
+
+	// WebVTT mapping each POPULATED cell to its time range.
+	//
+	// The count comes from spriteCueCount, not from the grid (#835). The
+	// VTT is the only thing that knows which cells the tile filter
+	// actually filled — the sheet itself is always cols×rows with black
+	// padding, and nothing downstream can tell padding from a dark frame.
+	// Declaring cues for cells that were never written is what made a
+	// short clip's hover preview three-quarters blank.
+	//
+	// The old loop ran the full grid and broke on `start >= duration`
+	// AFTER writing that cue, which both over-declared by one and left a
+	// zero-length cue at the end.
+	cues := spriteCueCount(probe.DurationS, interval, totalCells)
 	var vtt bytes.Buffer
 	vtt.WriteString("WEBVTT\n\n")
-	for i := 0; i < totalCells; i++ {
+	for i := 0; i < cues; i++ {
 		start := float64(i) * interval
 		end := float64(i+1) * interval
 		if end > probe.DurationS {
 			end = probe.DurationS
 		}
-		x := (i % spriteCols) * spriteWidth
-		y := (i / spriteCols) * spriteHeight
+		x := (i % spriteCols) * cellW
+		y := (i / spriteCols) * cellH
 		fmt.Fprintf(&vtt, "%s --> %s\nsprites.jpg#xywh=%d,%d,%d,%d\n\n",
-			vttTime(start), vttTime(end), x, y, spriteWidth, spriteHeight)
-		if start >= probe.DurationS {
-			break
-		}
+			vttTime(start), vttTime(end), x, y, cellW, cellH)
 	}
 	vttPath := filepath.Join(w.dir, "sprites.vtt")
 	if err := os.WriteFile(vttPath, vtt.Bytes(), 0o644); err != nil {
 		return err
 	}
-	return h.uploadFile(ctx, hash, "sprites.vtt", vttPath, "text/vtt")
+	return upload(ctx, "sprites.vtt", vttPath, "text/vtt")
+}
+
+// measureSpriteCell reads the generated sheet's real pixel dimensions
+// and divides them by the grid to get the true cell size. Falls back to
+// the probe-derived fit only if the sheet cannot be decoded or does not
+// divide cleanly into the grid — in which case the sheet is already
+// suspect and the historical geometry is the least-surprising answer.
+func measureSpriteCell(path string, probe Probe) (int, int) {
+	fallbackW, fallbackH := spriteCellSize(probe.Width, probe.Height)
+	f, err := os.Open(path)
+	if err != nil {
+		return fallbackW, fallbackH
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return fallbackW, fallbackH
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 ||
+		cfg.Width%spriteCols != 0 || cfg.Height%spriteRows != 0 {
+		return fallbackW, fallbackH
+	}
+	return cfg.Width / spriteCols, cfg.Height / spriteRows
 }
 
 func vttTime(s float64) string {
@@ -697,23 +1149,26 @@ func (h *VideoHandler) ffprobeBin() string {
 	return "ffprobe"
 }
 
-func (h *VideoHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
+func (h *VideoHandler) uploadFile(ctx context.Context, hash, key, path, contentType string) error {
+	return putVariantFile(ctx, h.Pool, h.Storage, hash, key, path, contentType)
 }
 
-func (h *VideoHandler) uploadFile(ctx context.Context, hash, key, path, contentType string) error {
+// putVariantFile streams a generated file onto the storage backend under
+// a variant key and records the row that makes it servable. The
+// handler-free form so preview.gif can hand the same closure to the
+// shared poster + sprite writers.
+func putVariantFile(ctx context.Context, pool *pgxpool.Pool, st *storage.Service, hash, key, path, contentType string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", key, err)
 	}
 	defer f.Close()
-	if _, err := h.Storage.Backend.Put(ctx, hash, key, f); err != nil {
+	if _, err := st.Backend.Put(ctx, hash, key, f); err != nil {
 		return fmt.Errorf("backend put %s: %w", key, err)
 	}
 	info, err := f.Stat()
 	if err == nil {
-		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
+		_ = storage.New(pool).UpsertVariant(ctx, storage.UpsertVariantParams{
 			ObjectHash:  hash,
 			VariantKey:  key,
 			SizeBytes:   info.Size(),

@@ -173,7 +173,29 @@ ON CONFLICT (code) DO NOTHING
 RETURNING id;
 
 -- name: SeedGetFieldByCode :one
-SELECT id FROM field_definition WHERE code = $1;
+-- Recovery path for SeedInsertField's ON CONFLICT DO NOTHING. `type`
+-- is selected alongside the id because the row the catalogue binds to
+-- may be typed differently from the catalogue entry that bound to it
+-- (#812): the seed must write values against the type the COLUMN
+-- actually has, not the one the JSON claims.
+SELECT id, type FROM field_definition WHERE code = $1;
+
+-- name: SeedListFields :many
+-- Every field definition that already exists, so a manifest can write a
+-- value for one the seed CATALOGUE does not mention (#820).
+--
+-- applyFields used to build its code→id map from dataset.field_definitions.json
+-- alone, so `r.fields` held exactly the 20 studio codes. The nine codes
+-- the MIGRATIONS ship — title, description, credit, copyright,
+-- capture_date, keywords, country, pixel_width, pixel_height — were
+-- absent from that map even though the rows were sitting in the table,
+-- and every manifest value naming one was thrown away as
+-- `seed.field.unknown_code`. Before #812 that was invisible, because
+-- `aa seed --reset` TRUNCATEd the shipped rows anyway; since #812 they
+-- survive the reset and the map is simply missing them.
+--
+-- Ordered by code so the log line and any drop tally are reproducible.
+SELECT id, code, type FROM field_definition ORDER BY code;
 
 -- name: SeedInsertCollection :one
 -- Stable id from dataset.collections.json; owner is the bootstrap

@@ -174,14 +174,24 @@ func (q *Queries) SeedGetCommentParentInfo(ctx context.Context, id pgtype.UUID) 
 }
 
 const seedGetFieldByCode = `-- name: SeedGetFieldByCode :one
-SELECT id FROM field_definition WHERE code = $1
+SELECT id, type FROM field_definition WHERE code = $1
 `
 
-func (q *Queries) SeedGetFieldByCode(ctx context.Context, code string) (pgtype.UUID, error) {
+type SeedGetFieldByCodeRow struct {
+	ID   pgtype.UUID
+	Type string
+}
+
+// Recovery path for SeedInsertField's ON CONFLICT DO NOTHING. `type`
+// is selected alongside the id because the row the catalogue binds to
+// may be typed differently from the catalogue entry that bound to it
+// (#812): the seed must write values against the type the COLUMN
+// actually has, not the one the JSON claims.
+func (q *Queries) SeedGetFieldByCode(ctx context.Context, code string) (SeedGetFieldByCodeRow, error) {
 	row := q.db.QueryRow(ctx, seedGetFieldByCode, code)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+	var i SeedGetFieldByCodeRow
+	err := row.Scan(&i.ID, &i.Type)
+	return i, err
 }
 
 const seedGetTeamBySlug = `-- name: SeedGetTeamBySlug :one
@@ -876,6 +886,50 @@ func (q *Queries) SeedListAssetTypes(ctx context.Context) ([]SeedListAssetTypesR
 	for rows.Next() {
 		var i SeedListAssetTypesRow
 		if err := rows.Scan(&i.Ref, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const seedListFields = `-- name: SeedListFields :many
+SELECT id, code, type FROM field_definition ORDER BY code
+`
+
+type SeedListFieldsRow struct {
+	ID   pgtype.UUID
+	Code string
+	Type string
+}
+
+// Every field definition that already exists, so a manifest can write a
+// value for one the seed CATALOGUE does not mention (#820).
+//
+// applyFields used to build its code→id map from dataset.field_definitions.json
+// alone, so `r.fields` held exactly the 20 studio codes. The nine codes
+// the MIGRATIONS ship — title, description, credit, copyright,
+// capture_date, keywords, country, pixel_width, pixel_height — were
+// absent from that map even though the rows were sitting in the table,
+// and every manifest value naming one was thrown away as
+// `seed.field.unknown_code`. Before #812 that was invisible, because
+// `aa seed --reset` TRUNCATEd the shipped rows anyway; since #812 they
+// survive the reset and the map is simply missing them.
+//
+// Ordered by code so the log line and any drop tally are reproducible.
+func (q *Queries) SeedListFields(ctx context.Context) ([]SeedListFieldsRow, error) {
+	rows, err := q.db.Query(ctx, seedListFields)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeedListFieldsRow
+	for rows.Next() {
+		var i SeedListFieldsRow
+		if err := rows.Scan(&i.ID, &i.Code, &i.Type); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

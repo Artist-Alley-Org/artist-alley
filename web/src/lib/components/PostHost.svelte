@@ -34,6 +34,7 @@
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
   import { createWhiteboardSession } from '$lib/whiteboard/session.svelte';
   import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
+  import { formatFieldValue, type AssetFieldValue } from '$lib/fieldDisplay';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
@@ -79,20 +80,10 @@
     post_count: number;
   }
 
-  interface AssetFieldValue {
-    field_id: string;
-    field_code: string;
-    field_label?: string;
-    type: 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
-        | 'date' | 'datetime' | 'select' | 'multi_select' | 'tree' | 'reference';
-    value_text?: string | null;
-    value_num?: number | null;
-    value_date?: string | null;
-    value_options?: string[] | null;
-    value_ref?: string | null;
-    set_by: string;
-    set_at: string;
-  }
+  // AssetFieldValue + the formatter that reads it live in
+  // $lib/fieldDisplay — display logic with no component state, and
+  // (the reason it moved out) the only place a unit test can reach the
+  // timezone and reference-resolution rules. See that module.
 
   let author = $state<UserPublic | null>(null);
   let liked = $state(false);
@@ -412,36 +403,6 @@
     return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
   }
 
-  function formatFieldValue(f: AssetFieldValue): string {
-    switch (f.type) {
-      case 'text':
-      case 'longtext':
-      case 'rich_text':
-        return (f.value_text ?? '').trim();
-      case 'number':
-        return f.value_num == null ? '' : String(f.value_num);
-      case 'boolean':
-        return f.value_text === 'true' ? 'Yes' : f.value_text === 'false' ? 'No' : '';
-      case 'date':
-      case 'datetime': {
-        if (!f.value_date) return '';
-        const d = new Date(f.value_date);
-        if (isNaN(d.getTime())) return '';
-        if (f.field_code === 'pokemon_release_date') return String(d.getUTCFullYear());
-        return f.type === 'date' ? d.toLocaleDateString() : d.toLocaleString();
-      }
-      case 'select':
-        return f.value_text ?? '';
-      case 'multi_select':
-        return (f.value_options ?? []).join(', ');
-      case 'tree':
-      case 'reference':
-        return f.value_ref ?? '';
-      default:
-        return '';
-    }
-  }
-
   // Lifecycle housekeeping the shell doesn't own (the host owns body
   // scroll-lock indirectly via shell's onMount; nothing post-specific
   // to do here at the moment).
@@ -469,11 +430,15 @@
   }
 
   // ── Recreate previews ─────────────────────────────────────────────
-  // Calls POST /assets/{id}/preview — worker re-enqueues the right
-  // preview.<kind> job at PriorityHigh. The worker's idempotency-
-  // skip usually short-circuits no-ops; explicit per-worker flags
-  // (isoDone in preview.3d, etc.) decide whether new bytes get
-  // written. We just kick the job off and trust the worker.
+  // Calls POST /assets/{id}/preview — the server enqueues the right
+  // preview.<kind> job at PriorityHigh with force=true (the endpoint's
+  // default), which re-renders outputs that already exist.
+  //
+  // It did not always. Until #760 the job hit each handler's "this
+  // variant is already in storage" check, skipped everything and
+  // completed successfully, so this menu item returned 202 and changed
+  // nothing — the click was a no-op wearing a success response. Do not
+  // pass force:false here without meaning it.
   let recreating = $state<Record<string, boolean>>({});
   async function recreatePreviews(assetId: string) {
     if (recreating[assetId]) return;
@@ -883,18 +848,78 @@
                 <polyline points="9 18 15 12 9 6" />
               </svg>
               {t('post_host.metadata_heading')}
-              <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f) !== '').length})</span>
+              <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f, t).text !== '').length})</span>
             </span>
           </summary>
-          <dl class="mt-3 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
+          <!-- Two columns only where there is room for them. The
+               value column is 1fr next to a max-content label, so on
+               a phone-width sidebar it collapses to a couple of
+               characters and wraps every value one letter per line.
+               Below sm the pair stacks instead. -->
+          <dl
+            class="mt-3 grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-[max-content_1fr]"
+            data-testid="post-metadata"
+          >
             {#each currentFields as f (f.field_id)}
-              {@const val = formatFieldValue(f)}
-              {#if val}
-                <dt class="truncate text-fg-muted" title={f.field_label || f.field_code}>
+              {@const val = formatFieldValue(f, t)}
+              {#if val.text}
+                <dt
+                  class="mt-2 truncate text-fg-muted first:mt-0 sm:mt-0"
+                  title={f.field_label || f.field_code}
+                >
                   {f.field_label || f.field_code}
                 </dt>
-                <dd class="min-w-0 break-words text-fg" class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}>
-                  {val}
+                <dd
+                  class="min-w-0 break-words text-fg"
+                  class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}
+                  class:aa-rich={!!val.html}
+                  data-testid="post-field-{f.field_code}"
+                >
+                  <!-- href is set only for a value that points at an
+                       in-app route (a resolved reference). Everything
+                       else renders exactly as it did before the
+                       contract changed. -->
+                  {#if val.html}
+                    <!-- The app's only {@html}, and the only field
+                         type that has any business being one (#816).
+                         `html` is present for rich_text alone, and the
+                         markup in it was reduced to the allowed set by
+                         the server — on write AND on read, so a value
+                         that never met a handler is covered too. See
+                         app/internal/richtext and the note on
+                         FieldDisplay.html. There is deliberately no
+                         client-side sanitiser: one policy, server-side,
+                         or two policies that disagree.
+
+                         whitespace-pre-wrap stays on (see the class
+                         above): these values are typed into a plain
+                         textarea, so most of them are prose whose line
+                         breaks are the only formatting they have. -->
+                    {@html val.html}
+                  {:else if val.href}
+                    <a
+                      href={val.href}
+                      class="underline decoration-fg-muted/40 underline-offset-2 transition-colors hover:decoration-fg"
+                      data-testid="post-field-link-{f.field_code}"
+                    >
+                      {val.text}
+                    </a>
+                  {:else if val.parts}
+                    <!-- A set renders as a set. `parts` is present for
+                         multi_select only; every other type takes the
+                         plain-text branch below and renders exactly as
+                         it did. -->
+                    <span class="flex flex-wrap gap-1">
+                      {#each val.parts as part (part)}
+                        <span
+                          class="inline-flex items-center rounded-full bg-surface-elevated px-2 py-0.5 text-[11px] text-fg"
+                          data-testid="post-field-chip"
+                        >{part}</span>
+                      {/each}
+                    </span>
+                  {:else}
+                    {val.text}
+                  {/if}
                 </dd>
               {/if}
             {/each}
@@ -960,5 +985,61 @@
   }
   details.aa-collapse > summary::-webkit-details-marker {
     display: none;
+  }
+
+  /* rich_text values (#816). Tailwind's preflight zeroes the margins,
+     list markers and heading sizes these tags ship with, so markup
+     that arrived correctly would still render as one undifferentiated
+     block without this.
+
+     :global is required, not sloppiness: {@html} content is inserted
+     at runtime and never gets Svelte's scope class, so a scoped rule
+     would not match it. Every selector is nested under .aa-rich, which
+     only the one <dd> that renders markup carries, so nothing here can
+     reach the rest of the panel. */
+  .aa-rich :global(p),
+  .aa-rich :global(ul),
+  .aa-rich :global(ol),
+  .aa-rich :global(blockquote) {
+    margin: 0.5em 0;
+  }
+  .aa-rich > :global(:first-child) {
+    margin-top: 0;
+  }
+  .aa-rich > :global(:last-child) {
+    margin-bottom: 0;
+  }
+  .aa-rich :global(ul),
+  .aa-rich :global(ol) {
+    padding-left: 1.25em;
+  }
+  .aa-rich :global(ul) {
+    list-style: disc;
+  }
+  .aa-rich :global(ol) {
+    list-style: decimal;
+  }
+  .aa-rich :global(li) {
+    margin: 0.15em 0;
+  }
+  /* h3/h4 are the deepest headings the policy allows — the panel owns
+     everything above them — so they read as emphasis, not as titles
+     competing with the post's own. */
+  .aa-rich :global(h3),
+  .aa-rich :global(h4) {
+    margin: 0.75em 0 0.25em;
+    font-weight: 600;
+  }
+  .aa-rich :global(h3) {
+    font-size: 1.05em;
+  }
+  .aa-rich :global(blockquote) {
+    border-left: 2px solid var(--color-border, currentColor);
+    padding-left: 0.75em;
+    opacity: 0.85;
+  }
+  .aa-rich :global(a) {
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 </style>

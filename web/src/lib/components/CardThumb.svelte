@@ -8,9 +8,9 @@
   // forked. This is the one thumbnail treatment every asset-showing
   // surface renders — browse + profile + post-by-asset (via PostCard) and
   // the profile asset section + collections + asset detail (via
-  // AssetCard) — so the RS-style presentation lands everywhere at once.
+  // AssetCard) — so the gallery presentation lands everywhere at once.
   //
-  // RS thumbnail pattern (pages/search_views/thumbs.php): the artwork is
+  // Gallery-matte thumbnail pattern: the artwork is
   // LETTERBOXED on a neutral matte inside a framed panel — never cropped —
   // so mixed-aspect art reads like a gallery wall. The previous treatment
   // painted the thumbhash as a `bg-cover` backdrop, so a contained image
@@ -39,6 +39,11 @@
   import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
   import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
+  import {
+    loadSpriteCues,
+    cueBackgroundStyle,
+    type SpriteCue,
+  } from '$lib/util/spriteCues';
   import CardFallback from './CardFallback.svelte';
 
   interface Props {
@@ -65,6 +70,12 @@
     /** Every CONFIGURED rung exists for this asset (#610). Licenses the
      *  responsive srcset below; false → `col` only, exactly as before. */
     ladderAvailable?: boolean;
+    /** A `sprites.vtt` hover-scrub cue file exists for this asset AND
+     *  the caller may read it (#835). This is the ONLY licence to
+     *  request the sheet — the scrub used to be gated on the file
+     *  extension, which is a guess about storage made from a filename
+     *  and 404s whenever the render has not drained yet. */
+    scrubAvailable?: boolean;
     /** Slot width for `sizes`. The caller knows the layout (tile rung,
      *  feed column, masonry column); this component only knows it is a
      *  square-ish box. Defaults to the tile ladder's default rung.
@@ -146,6 +157,7 @@
     hasFileHash = false,
     previewAvailable = false,
     ladderAvailable = false,
+    scrubAvailable = false,
     sizesHint = DEFAULT_TILE_SIZES,
     hovering = false,
     framed = true,
@@ -260,16 +272,19 @@
   //   1. recorded pixel_width/pixel_height — known BEFORE any request,
   //      so the space is reserved and nothing shifts on load. This is
   //      the reason #640 waited for #618's extraction fields to exist.
+  //      Since #757 the preview pipeline records the shape of the image
+  //      the contain rungs were built from, for EVERY format it can
+  //      render — so an audio waveform (5.33:1), a video poster and a
+  //      font sheet (16:9) all land here, not just EXIF-bearing rasters.
+  //      Before that, nothing wrote these fields at all and every tile
+  //      fell to case 3.
   //   2. the loaded image's own naturalWidth/naturalHeight — exact, but
   //      only knowable after the bytes arrive, so tiles that land here
   //      DO settle into shape as they load. That is a deliberate trade
   //      against the alternative, which is being confidently square and
-  //      wrong: on this dataset only ~18% of feed covers have recorded
-  //      dimensions, and the rest are audio waveforms (~16:3), video
-  //      frames and font sheets (16:9), 3D turntables — all of which
-  //      have a genuine non-square preview that nothing has measured.
-  //      Recording the PREVIEW variant's dimensions server-side is what
-  //      would move those tiles into case 1.
+  //      wrong. What still lands here is an asset whose preview predates
+  //      #757 and has not been re-rendered since (see
+  //      `aa rebuild-previews`).
   //   3. square — no image in the tile at all (typed-doc card, icon
   //      placeholder, gated/thumbhash-only). There is no ratio to
   //      follow, and a square is what those generated tiles are drawn
@@ -320,24 +335,132 @@
     return parts.length > 0 ? `${parts.join('; ')};` : undefined;
   });
 
-  // Sprite-sheet hover preview. Video covers walk the preview.video 10×10
-  // timeline sheet; 3D covers walk the preview.model 6×6 turntable sheet.
-  // Both serve from the same sprites.jpg variant.
-  const hasSpriteScrub = $derived(isVideo || is3D);
+  // ── Reduced motion (#837) ────────────────────────────────────────
+  //
+  // WITH THE PREFERENCE SET, THE SCRUB NEVER MOUNTS — THE POSTER STAYS.
+  //
+  // The obvious reading of "show a single representative frame instead
+  // of cycling" is to freeze the scrub on its first cue. Measured, that
+  // is the worse of the two options and by a wide margin: cue 0 is the
+  // clip's OPENING frame, and films open on black. On the seeded Sintel
+  // 1080p the frozen first cue renders an entirely black tile, while the
+  // still underneath it is a legible snow shot.
+  //
+  // The still is already the right answer. The poster the preview
+  // pipeline picks (#818/#829) is chosen to be a representative frame —
+  // that is its whole job — so "a single representative frame" is what
+  // the card is showing before the pointer ever arrives. Suppressing the
+  // scrub leaves it there.
+  //
+  // So this is NOT a hover that does nothing. It is a hover that does
+  // not ANIMATE, over an image that was always there, and it costs a
+  // reduced-motion visitor neither the sheet download nor the cue fetch —
+  // both are gated on the same flag below.
+  //
+  // Reactive rather than a one-shot read at mount. The setting can be
+  // toggled while the page is open (OS accessibility panel, devtools
+  // emulation), and a wall of cards that keeps animating until the next
+  // reload is precisely the experience the preference exists to prevent.
+  // `matchMedia` is optional-chained for the SSR/jsdom case, where it is
+  // absent and no-motion is the right default anyway.
+  let reducedMotion = $state(false);
+  onMount(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq) return;
+    reducedMotion = mq.matches;
+    const onChange = (e: MediaQueryListEvent) => {
+      reducedMotion = e.matches;
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  });
+
+  // ── Sprite-sheet hover preview (#835) ────────────────────────────
+  //
+  // THE CUE FILE DRIVES EVERYTHING. Frame count, cell geometry, and
+  // whether there is a scrub at all now come from `sprites.vtt`, the
+  // file the renderer writes next to the sheet. See spriteCues.ts for
+  // what that fixes; the short version is that the previous code
+  // hardcoded a 10x10 (video) or 6x6 (3D) grid keyed off the file
+  // EXTENSION and cycled every cell of it, so a clip too short to fill
+  // the grid hovered through ffmpeg's black padding, and a format that
+  // was not on the list could not scrub even with a sheet in storage.
+  //
+  // The gate is `scrubAvailable`, a server flag (#835), not a fetch that
+  // might 404 and not the extension. Extension is a guess about storage
+  // made from a filename, and it is wrong in both directions: a video
+  // whose expensive render has not drained yet has a card (the cheap
+  // poster job, #818) and no sheet, and an animated GIF has had a sheet
+  // since #832 and was never on the list.
   const spriteUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/sprites.jpg` : '');
-  const spriteCols = $derived(is3D ? 6 : 10);
-  const spriteRows = $derived(is3D ? 6 : 10);
-  const spriteCells = $derived(spriteCols * spriteRows);
+
+  let cues = $state<SpriteCue[]>([]);
   let spriteFrame = $state(0);
-  // Run the sprite turntable only while the card is hovered. The effect
-  // owns the interval so it's torn down on unhover / unmount.
+  // The sheet's own pixel size, measured off the bytes we are about to
+  // paint. Needed because a cue's rect is in SHEET pixels and CSS
+  // background percentages are relative to the whole image; measuring
+  // beats deriving it from the cue list, which is truncated for a short
+  // clip and so cannot report the sheet's real height.
+  let sheetSize = $state<{ w: number; h: number } | null>(null);
+
+  // Load both halves in parallel on first hover. The cue list is cached
+  // per asset for the session; the sheet is an ordinary browser image
+  // cache hit on every hover after the first.
   $effect(() => {
-    if (!hovering || !hasSpriteScrub) {
+    if (!hovering || !scrubAvailable || !assetId || !spriteUrl || reducedMotion) return;
+    let live = true;
+    void loadSpriteCues(assetId).then((c) => {
+      if (live) cues = c;
+    });
+    const img = new Image();
+    img.onload = () => {
+      if (live && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        sheetSize = { w: img.naturalWidth, h: img.naturalHeight };
+      }
+    };
+    img.src = spriteUrl;
+    return () => {
+      live = false;
+      img.onload = null;
+    };
+  });
+
+  // The scrub layer paints only once both halves have landed. Painting
+  // early would mean guessing the sheet's scale for a frame or two,
+  // which reads as a zoom jump; the sheet has to be fetched before
+  // anything is visible anyway, so there is nothing to lose by waiting
+  // for the measurement it arrives with.
+  const spriteCue = $derived(cues.length > 0 ? cues[spriteFrame % cues.length] : null);
+  //
+  // `!reducedMotion` is the #837 gate. Belt and braces with the fetch
+  // guard above — that one stops the bytes, this one stops a layer
+  // painting from a cue list already cached from a hover taken before
+  // the preference was turned on.
+  const showScrub = $derived(
+    !!hovering && !!scrubAvailable && !!spriteCue && !!sheetSize && !reducedMotion,
+  );
+  const spriteStyle = $derived(
+    spriteCue && sheetSize ? cueBackgroundStyle(spriteCue, sheetSize.w, sheetSize.h) : null,
+  );
+  // The cell's OWN aspect ratio, straight off the cue rect (#761). Not
+  // the sheet's: those agree only while the grid is square, and the cue
+  // states the cell directly, so there is nothing to infer. A landscape
+  // cell is width-bound and centred vertically; a portrait one is
+  // height-bound and pillarboxed. Recorded pixel dims are deliberately
+  // not used — they are the coded frame size, which is wrong for a
+  // rotated phone clip, the same trap the backend avoids.
+  const spriteCellRatio = $derived(spriteCue ? spriteCue.w / spriteCue.h : 16 / 9);
+
+  // Run the scrub only while the card is hovered. The effect owns the
+  // interval so it is torn down on unhover / unmount.
+  $effect(() => {
+    if (!hovering || cues.length === 0 || reducedMotion) {
       spriteFrame = 0;
       return;
     }
+    const n = cues.length;
     const iv = setInterval(() => {
-      spriteFrame = (spriteFrame + 1) % spriteCells;
+      spriteFrame = (spriteFrame + 1) % n;
     }, 120);
     return () => clearInterval(iv);
   });
@@ -452,23 +575,69 @@
       onload={onLoad}
       onerror={onError}
     />
-    {#if hasSpriteScrub && hovering}
-      {#if isVideo}
-        <!-- Video scrub: 16:9 sprite cells letterboxed in the 1:1 slot on
-             a black backdrop, so the cell renders at native ratio. -->
-        <div class="pointer-events-none absolute inset-0 bg-black/95 transition-opacity duration-150">
-          <div
-            class="absolute left-0 right-0 top-1/2 aspect-video -translate-y-1/2 bg-no-repeat"
-            style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
-          ></div>
-        </div>
-      {:else}
-        <!-- 3D turntable: 1:1 cells in the 1:1 slot — no letterbox. -->
+    {#if showScrub && spriteStyle}
+      <!--
+        THE SCRUB USES THE SAME FIT AS THE STILL IT REPLACES (#834).
+        That is the whole rule, and `fill` — the caller's "this tile is a
+        contact sheet, bleed to the edges" flag — is the one input, so
+        the two layers cannot drift apart the way they had.
+
+        What #834 actually was: NOT a wrongly-shaped still. Measured on
+        the browse grid, a 1920x818 video's still is the `col` rung
+        (320x320) painted `object-cover` into a 367x367 tile — an exact
+        fill, no band anywhere. The band was THIS layer. It letterboxed
+        the 2.35:1 cue cell to `w-full` inside a SQUARE tile and backed it
+        with `bg-black/95`, so hovering swapped a full-bleed frame for a
+        160px strip with 109px of opaque black above and below it — 57%
+        of the tile. The report described that black as belonging to the
+        still because hovering is how you look closely at a card.
+
+        So the two states disagreed, and the still was the one that was
+        right for grid: a contact sheet fills (#561/#588).
+
+        Fit, per mode:
+
+          fill (grid) — COVER. The cell is bound on its SHORT axis
+            against the square tile and overflows the long one, which the
+            frame's `overflow-hidden` clips. Landscape binds height,
+            portrait binds width — the mirror of the contain branch, not
+            a special case. Centred, so it crops to the same middle
+            square that `col` (itself a centred cover crop of the same
+            poster) already shows: the still and the scrub then frame the
+            IDENTICAL region and the hover no longer jumps.
+
+          everything else — CONTAIN, unchanged from #761/#835: a
+            landscape cell is width-bound, a portrait one height-bound,
+            so a rotated phone clip is never cropped. Masonry sizes its
+            tile from the same shape, so the box is usually invisible
+            there; where it does show (a rotated clip, whose coded dims
+            and display cell disagree) it now shows the MATTE the still
+            letterboxes onto rather than black, because "agree with the
+            still" applies to the backdrop too.
+
+        `shrink-0` is load-bearing on the cover branch, not tidying: the
+        cell is a FLEX ITEM that deliberately overflows its container, and
+        a flex item's default `flex-shrink: 1` licenses the engine to
+        squeeze it back to fit — which would silently restore the
+        letterbox by squashing the frame instead of boxing it. Chromium
+        happens to derive the width from the ratio and leave it alone;
+        that is not something to depend on.
+      -->
+      <div
+        class="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden
+               transition-opacity duration-150 {fill ? '' : 'bg-thumb-matte'}"
+      >
         <div
-          class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
-          style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+          class="bg-no-repeat shrink-0 {fill
+            ? spriteCellRatio >= 1
+              ? 'h-full'
+              : 'w-full'
+            : spriteCellRatio >= 1
+              ? 'w-full'
+              : 'h-full'}"
+          style="aspect-ratio: {spriteCellRatio}; background-image: url({spriteUrl}); background-size: {spriteStyle.size}; background-position: {spriteStyle.position};"
         ></div>
-      {/if}
+      </div>
     {/if}
     <!-- Media-type badge. Suppressed under `compact` (#652): it lives at
          `left-2 top-2`, which is exactly where the selection checkbox

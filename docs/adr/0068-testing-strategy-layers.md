@@ -8,6 +8,7 @@ supersedes: []
 related:
   - "0058"
   - "0067"
+  - "0080"
 tags:
   - testing
   - quality
@@ -82,6 +83,42 @@ Both are required — the instance test documents intent, the class net prevents
 - Open bugs #471 / #476 / #470 each carry their own red-first regression test into their fix PR.
 - A green CI that skipped a layer is not "covered" — the layer's absence is a tracked gap, logged,
   never silent.
+
+## Amendment 2026-07-29 — a fixture must be able to exercise the thing it claims to cover
+
+Three bugs in one day shipped green because a test was written to agree with an
+**assumption** rather than with the format, the API, or production reality. This is
+not the same failure as a missing layer, and no layer above catches it: the test
+exists, runs, and passes.
+
+- **#750.** `TestResolveCompanions_SelfContained` wrote the eleven-byte ASCII string
+  `"glTF binary"` to `model.glb` and asserted "GLB should declare no companions." It
+  passed because there was nothing to parse. The assertion was true of the fixture and
+  false of every real GLB — 363 of 374 in the catalogue reference external textures.
+  The test did not merely miss the bug; it **certified the false assumption** and would
+  have failed anyone who fixed it.
+- **#689.** The 3D smoke test asserted the rendered poster had non-transparent pixels.
+  Untextured flat-white geometry is opaque, so an entirely untextured catalogue passed
+  twice.
+- **IIIF / EXIF dimensions** (earlier): a green suite against a state production could
+  not reach, because `assets.has_image` had no writer.
+
+**The rule:** a fixture must be capable of reaching the failure the test claims to
+guard. Before writing an assertion, ask **what would make this fail?** — and confirm
+that a real input *can* produce that outcome. Two practical forms:
+
+1. **Assert on the discriminator, not a side effect.** "Non-transparent pixels" is
+   satisfied by the bug; "the material carries a decoded texture" is not.
+2. **Build negative fixtures from the real producer.** #752's replacement tests the
+   self-contained case with bytes `WriteGLB` itself emits, so "no companions" is a fact
+   about a genuine GLB rather than about a text file with a misleading name.
+
+**Corollary for comments.** Each of these bugs also sat behind a comment asserting the
+property as settled — `worker.mjs` claimed it shared the viewer's loaders; the companion
+resolver claimed "GLB/FBX are self-contained." **A comment asserting a structural
+guarantee is worse than no comment, because it stops the next person looking.** If a
+comment states a guarantee, either a test enforces it or the comment says it is an
+assumption. ADR 0069 carries the same lesson for the renderer specifically.
 
 ## References
 

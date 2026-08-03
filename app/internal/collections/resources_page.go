@@ -60,6 +60,10 @@ type ListCollectionResourcesPageGatedRow struct {
 	// passes the content plane (#591). Same 0064 contract as
 	// PreviewAvailable, from the same readability decision.
 	LadderAvailable bool
+	// ScrubAvailable: a `sprites.vtt` hover-scrub cue file exists AND
+	// the caller passes the content plane (#835). A collection member
+	// renders through the same CardThumb as every other surface.
+	ScrubAvailable bool
 	// PixelWidth / PixelHeight: recorded source dimensions, joined in the
 	// same pass (#640). Not readability-gated — metadata about a row the
 	// caller can already see — and nil unless BOTH are present.
@@ -108,6 +112,9 @@ func ListCollectionResourcesPageGated(
             SELECT 1 FROM storage_variants sv
              WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col_variant,
        ` + sysconfig.LadderSatisfiedSQL("a.file_hash", "$6") + ` AS has_full_ladder,
+       (a.file_hash IS NOT NULL AND EXISTS (
+            SELECT 1 FROM storage_variants sv
+             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'sprites.vtt')) AS has_scrub_variant,
        (a.team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
              WHERE tm.team_id = a.team_id AND tm.user_ref = $5::BIGINT)) AS caller_is_team_member
@@ -139,6 +146,7 @@ LIMIT $4::INTEGER`
 			pixelHeight        *int32
 			hasColVariant      bool
 			hasFullLadder      bool
+			hasScrubVariant    bool
 			callerIsTeamMember bool
 		)
 		if err := rows.Scan(
@@ -148,7 +156,7 @@ LIMIT $4::INTEGER`
 			&i.FileExtension, &i.Thumbhash,
 			&i.AssetCreatedAt,
 			&sensitivity, &ownerUserRef, &pixelWidth, &pixelHeight,
-			&hasColVariant, &hasFullLadder, &callerIsTeamMember,
+			&hasColVariant, &hasFullLadder, &hasScrubVariant, &callerIsTeamMember,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
@@ -157,6 +165,7 @@ LIMIT $4::INTEGER`
 			ListCollectionResourcesPageRow: i,
 			PreviewAvailable:               hasColVariant && readable,
 			LadderAvailable:                hasFullLadder && readable,
+			ScrubAvailable:                 hasScrubVariant && readable,
 		}
 		if pixeldims.Sane(pixelWidth, pixelHeight) {
 			row.PixelWidth, row.PixelHeight = pixelWidth, pixelHeight

@@ -161,6 +161,58 @@ func TestNotifyPurgeAll(t *testing.T) {
 	}
 }
 
+// TestNotifyFlushAll verifies the wildcard flush (#845): EmitFlushAll —
+// which owns no Registry, mirroring the seeder — purges EVERY registered
+// domain on a peer instance, not just one. This is the invariant that
+// lets `aa seed --reset` clear a running instance's caches without a
+// restart.
+func TestNotifyFlushAll(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set")
+	}
+	ctx := t.Context()
+
+	poolA := openPool(t, pwd)
+	defer poolA.Close()
+	poolB := openPool(t, pwd)
+	defer poolB.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Only regB registers caches + LISTENs — it stands in for a running
+	// serving instance. poolA stands in for the seeder: it broadcasts the
+	// flush with no Registry of its own.
+	regB := cache.NewRegistry(poolB, logger)
+	c1 := cache.Register[int](regB, "test.flush.one", 16)
+	c2 := cache.Register[string](regB, "test.flush.two", 16)
+	if err := regB.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer regB.Stop()
+	time.Sleep(100 * time.Millisecond)
+
+	for i := 0; i < 3; i++ {
+		c1.Add(string(rune('a'+i)), i)
+		c2.Add(string(rune('a'+i)), "v")
+	}
+	if c1.Len() == 0 || c2.Len() == 0 {
+		t.Fatalf("precondition: caches empty before flush (%d, %d)", c1.Len(), c2.Len())
+	}
+
+	// The seeder-side broadcast: no Registry, just a pool.
+	if err := cache.EmitFlushAll(ctx, poolA); err != nil {
+		t.Fatalf("EmitFlushAll: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && (c1.Len() > 0 || c2.Len() > 0) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if c1.Len() != 0 || c2.Len() != 0 {
+		t.Errorf("wildcard flush did not purge all domains: one=%d two=%d", c1.Len(), c2.Len())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

@@ -31,9 +31,9 @@
 //     es/fr WITHOUT failing CI (es/fr are deliberately incomplete
 //     pre-#247).
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import enDict from './en.json';
@@ -42,6 +42,23 @@ import frDict from './fr.json';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../../..'); // .../web
+
+/** Nested catalogue → flat dotted-key map. Mirrors lang.svelte.ts. */
+function flatten(
+  src: Record<string, unknown>,
+  prefix = '',
+  out: Record<string, string> = {},
+): Record<string, string> {
+  for (const [k, v] of Object.entries(src)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+      flatten(v as Record<string, unknown>, key, out);
+    } else {
+      out[key] = String(v);
+    }
+  }
+  return out;
+}
 
 const TRACKED_FILES = [
   // — pre-1.55.V-2 surfaces —
@@ -54,6 +71,10 @@ const TRACKED_FILES = [
   'src/routes/admin/teams/+page.svelte',
   'src/routes/admin/teams/[id]/+page.svelte',
   'src/routes/admin/asset-types/+page.svelte',
+  // The site-text override page (#794). Tracked from the day it lands:
+  // a page whose whole subject is operator-editable wording has no
+  // business shipping hardcoded English of its own.
+  'src/routes/admin/site-text/+page.svelte',
   'src/routes/admin/asset-types/[ref]/+page.svelte',
   'src/routes/admin/system/log/+page.svelte',
   'src/routes/admin/system/license/+page.svelte',
@@ -92,6 +113,15 @@ const TRACKED_FILES = [
   'src/lib/components/upload/ThumbnailPicker.svelte',
   // — 1.55.W reverse-image dropzone —
   'src/lib/components/search/ReverseImageDropzone.svelte',
+  // — #737 field-options editor —
+  'src/lib/components/FieldEditor.svelte',
+  // — #774 surfaces whose keys were dead until the resolution guard
+  //   below caught them. Tracked so both halves stay clean. —
+  'src/routes/admin/ai/config/+page.svelte',
+  'src/routes/admin/ai/usage/+page.svelte',
+  'src/lib/components/SimilarAssetsPanel.svelte',
+  'src/lib/components/AssetTagBadge.svelte',
+  'src/lib/components/FieldValueInput.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)
@@ -222,22 +252,183 @@ describe('i18n surface coverage', () => {
   );
 });
 
-// Locale-parity — WARN-ONLY. es/fr are deliberately incomplete
-// pre-#247; this surfaces the coverage gap without blocking CI. The
-// numbers here are the baseline the #247 translation arc burns down.
-describe('i18n locale parity (warn-only)', () => {
-  function flatten(src: Record<string, unknown>, prefix = '', out: Record<string, string> = {}): Record<string, string> {
-    for (const [k, v] of Object.entries(src)) {
-      const key = prefix ? `${prefix}.${k}` : k;
-      if (v != null && typeof v === 'object' && !Array.isArray(v)) {
-        flatten(v as Record<string, unknown>, key, out);
-      } else {
-        out[key] = String(v);
-      }
+// ---------------------------------------------------------------
+// Key-resolution guard (#774).
+//
+// The surface-coverage block above asserts strings are *wrapped* in
+// t(). It never asked whether the key t() is handed actually exists.
+// That gap shipped 46 dead keys across four surfaces — /admin/ai/config
+// and /admin/ai/usage rendered `admin.ai_inference.budget_hard_label`
+// as literal text to operators, because t() falls back to returning
+// the key itself when nothing resolves.
+//
+// This block closes it: every t() key in src/ must resolve against
+// en.json. Unlike the block above it is repo-wide, not opt-in —
+// there is no judgement call in "does this key exist".
+//
+// How `t` is identified — this is the part that decides whether the
+// guard survives. A naive /t\(/ matcher hits the tail of `import(`,
+// `await(`, `format(`, and every other identifier ending in `t`; the
+// first draft of this sweep reported `hls.js` as a missing key,
+// harvested from `await import('hls.js')` in MediaView.svelte. A
+// guard that cries wolf gets deleted, and then it protects nothing.
+// So we resolve `t` to its import binding: a file is only scanned if
+// it imports `t` from $stores/lang.svelte, and only that binding's
+// name (honouring `as` aliases) is matched, with a preceding
+// non-identifier character so `import(` / `obj.t(` never qualify.
+//
+// Known, deliberate false negatives:
+//   - t(someVariable) — the key isn't a literal, so it can't be
+//     checked statically (AccountStubPage, BrowseFooter, …). Those
+//     keys come from typed tables the surface-coverage block sees.
+//   - Interpolated keys are checked structurally, not exactly: the
+//     literal segments must match at least one real en key. That
+//     catches `asset.tag_source.${s}` when the block actually lives
+//     at `admin.asset.tag_source` — which is exactly how the fourth
+//     defect in #774 was found — without needing to enumerate every
+//     runtime value.
+
+describe('i18n key resolution', () => {
+  const EN_FLAT = flatten(enDict as Record<string, unknown>);
+  const EN_KEYS = Object.keys(EN_FLAT);
+
+  const SRC_ROOT = resolve(repoRoot, 'src');
+  const SCANNED_EXT = /\.(svelte|svelte\.ts|ts)$/;
+  // Test files are excluded: they talk *about* keys (deliberately bad
+  // ones, in synthetic fixtures) rather than rendering them, and this
+  // file in particular would harvest its own controls. The store that
+  // defines t() is excluded for the same reason.
+  const SKIP = /(\.test\.ts|\.spec\.ts|lang\.svelte\.ts)$/;
+
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) walk(p, out);
+      else if (SCANNED_EXT.test(entry)) out.push(p);
     }
     return out;
   }
 
+  /**
+   * The local name `t` is bound to in this file, or null if the file
+   * doesn't import it. Handles `import { t }`, `import { lang, t }`
+   * and `import { t as translate }`.
+   */
+  function localTName(source: string): string | null {
+    const imp = source.match(/import\s*\{([^}]*)\}\s*from\s*['"]\$stores\/lang\.svelte['"]/);
+    if (!imp) return null;
+    for (const spec of imp[1].split(',')) {
+      const parts = spec.trim().split(/\s+as\s+/);
+      if (parts[0] === 't') return parts[1] ?? 't';
+    }
+    return null;
+  }
+
+  /** Literal first arguments passed to the resolved `t` binding. */
+  function extractKeys(source: string, name: string): string[] {
+    // Leading (^|[^\w$.]) is what keeps `import(`, `await(` and
+    // `obj.t(` out. Captures '…', "…" and `…` first arguments.
+    const re = new RegExp(`(?:^|[^\\w$.])${name}\\(\\s*(['"\`])((?:[^'"\`\\\\]|\\\\.)*?)\\1`, 'g');
+    return [...source.matchAll(re)].map((m) => m[2]);
+  }
+
+  /**
+   * `${…}` segments make a key a family, not a key. Match the literal
+   * parts against real keys: interpolated values never contain a dot
+   * (they're slugs / enum members), so `[^.]+` is the right wildcard.
+   */
+  function familyMatches(key: string): boolean {
+    const pattern = key
+      .split(/\$\{[^}]*\}/)
+      .map((lit) => lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[^.]+');
+    const re = new RegExp(`^${pattern}$`);
+    return EN_KEYS.some((k) => re.test(k));
+  }
+
+  const files = walk(SRC_ROOT).filter((f) => !SKIP.test(f));
+
+  it('scans a meaningful number of files (the sweep is wired up)', () => {
+    // Guards against a refactor that silently empties the walk — a
+    // zero-file sweep would report zero missing keys and look green.
+    const scanned = files.filter((f) => localTName(readFileSync(f, 'utf-8')) !== null);
+    expect(scanned.length).toBeGreaterThan(100);
+  });
+
+  it('every t() key resolves against en.json', () => {
+    const missing = new Map<string, Set<string>>();
+    for (const file of files) {
+      const source = readFileSync(file, 'utf-8');
+      const name = localTName(source);
+      if (!name) continue;
+      for (const key of extractKeys(source, name)) {
+        const ok = key.includes('${') ? familyMatches(key) : key in EN_FLAT;
+        if (ok) continue;
+        if (!missing.has(key)) missing.set(key, new Set());
+        missing.get(key)!.add(relative(repoRoot, file));
+      }
+    }
+    const report = [...missing]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, files_]) => `  ${k}  <- ${[...files_].join(', ')}`)
+      .join('\n');
+    expect(
+      [...missing.keys()],
+      `t() keys with no entry in en.json — add the key, or fix the ` +
+        `prefix if the string already lives elsewhere:\n${report}`,
+    ).toEqual([]);
+  });
+
+  // Negative control. `await import('hls.js')` is the exact string
+  // that made the first draft of this sweep report a phantom failure.
+  // If someone loosens the matcher, this fails before it reaches a
+  // reviewer.
+  it('does not harvest keys from identifiers ending in t', () => {
+    const synthetic = `
+      import { t } from '$stores/lang.svelte';
+      const mod = await import('hls.js');
+      const fmt = await someImport('not-a-key');
+      const x = obj.t('also.not.a.key');
+      const real = t('common.loading');
+    `;
+    const name = localTName(synthetic);
+    expect(name).toBe('t');
+    expect(extractKeys(synthetic, name!)).toEqual(['common.loading']);
+  });
+
+  // Positive control: the guard must actually fire on a bad key.
+  it('flags a key that is absent from en.json', () => {
+    const synthetic = `
+      import { t } from '$stores/lang.svelte';
+      const a = t('common.loading');
+      const b = t('admin.ai_inference.budget_hard_label');
+    `;
+    const keys = extractKeys(synthetic, localTName(synthetic)!);
+    expect(keys.filter((k) => !(k in EN_FLAT))).toEqual([
+      // The pre-#774 prefix. Lives at admin.system.ai_inference.*.
+      'admin.ai_inference.budget_hard_label',
+    ]);
+  });
+
+  // Interpolated keys resolve structurally, and a wrong prefix on an
+  // interpolated key is still caught.
+  it('checks interpolated keys against the key family', () => {
+    expect(familyMatches('asset.tag_source.${source}')).toBe(true);
+    expect(familyMatches('admin.asset.tag_source.${source}')).toBe(false);
+    expect(familyMatches('nope.${x}.title')).toBe(false);
+  });
+
+  // Files that never import t() are skipped entirely, so a stray
+  // `t(` in an unrelated module can't produce a phantom key.
+  it('ignores files that do not import t', () => {
+    expect(localTName(`const t = (s) => s; t('fake.key');`)).toBeNull();
+  });
+});
+
+// Locale-parity — WARN-ONLY. es/fr are deliberately incomplete
+// pre-#247; this surfaces the coverage gap without blocking CI. The
+// numbers here are the baseline the #247 translation arc burns down.
+describe('i18n locale parity (warn-only)', () => {
   const en = flatten(enDict as Record<string, unknown>);
   const enKeys = Object.keys(en);
 

@@ -50,11 +50,6 @@
               class={`flex items-center justify-between gap-2 rounded-md px-3 py-1.5 ${active ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
             >
               <span>{t(`account.items.${item.slug}.title`)}</span>
-              {#if item.status === 'stub' && item.phase}
-                <span class="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-fg-muted">
-                  {item.phase}
-                </span>
-              {/if}
             </a>
           {/each}
         </div>

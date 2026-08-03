@@ -33,6 +33,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/email"
+	"github.com/mscrnt/artist-alley/app/internal/storage"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -70,6 +71,13 @@ type Handler struct {
 	// InvalidatePublicMode no-ops, which in an uncached fixture is
 	// correct because the reader has no cache to stale out.
 	CacheReg *cache.Registry
+
+	// Storage is the byte plane for the instance logo (#517) — the one
+	// setting in this package whose value is a blob rather than a
+	// short string. nil-safe: unwired, the logo write endpoints refuse
+	// with a 400 and the read endpoint reports "no logo", so a fixture
+	// that doesn't exercise logos needs no storage backend.
+	Storage *storage.Service
 
 	// DemoMode mirrors config.Config.DemoMode (env AA_DEMO_MODE). When
 	// true it's surfaced on the public /appearance boot payload so the
@@ -216,7 +224,14 @@ func (h *Handler) UpdateSMTPConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	before, beforeErr := h.Store.GetSMTP(ctx)
+	// Load-bearing, not just audit input: apiToSMTP merges the stored
+	// password in from `before`. On a read failure, merging against a
+	// zero SMTP would blank the password on an unrelated-field save —
+	// the same class of bug as #708's font PATCH clearing the logo.
+	before, err := h.Store.GetSMTP(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get smtp for merge: %w", err)
+	}
 	smtp, err := apiToSMTP(*req.Body, before)
 	if err != nil {
 		return openapi.UpdateSMTPConfig400JSONResponse{
@@ -229,15 +244,11 @@ func (h *Handler) UpdateSMTPConfig(
 		}, nil
 	}
 	if h.Audit != nil {
-		var beforeArg any = &before
-		if beforeErr != nil {
-			beforeArg = (*SMTP)(nil)
-		}
 		actor := &id.UserRef
 		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
 			audit.EventAdminSMTPConfigUpdated,
 			nil, actor,
-			beforeArg, &smtp, nil)
+			&before, &smtp, nil)
 	}
 	return openapi.UpdateSMTPConfig200JSONResponse(smtpToAPI(smtp)), nil
 }
@@ -308,7 +319,7 @@ func (h *Handler) SendSMTPTestEmail(
 		"triggered_by":   triggeredByLabel(id),
 		"triggered_at":   time.Now().UTC().Format(time.RFC3339),
 	}
-	msg, err := email.Render(email.TemplateAdminTest, []string{to}, data)
+	msg, err := email.Render(ctx, email.TemplateAdminTest, []string{to}, data)
 	if err != nil {
 		return nil, fmt.Errorf("sysconfig: render admin_test: %w", err)
 	}
@@ -406,23 +417,28 @@ func (h *Handler) UpdateAuthConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	before, beforeErr := h.Store.GetAuth(ctx)
-	cfg := apiToAuth(*req.Body)
+	// The stored config is now load-bearing, not just audit input:
+	// apiToAuth merges each provider's on-file secrets in from it. A
+	// read failure must abort rather than write a config with every
+	// OAuth client secret, LDAP bind password and SAML private key
+	// blanked (#718). Same reasoning as UpdateAIConfig below, and the
+	// reason the previously-tolerated beforeErr is now fatal.
+	before, err := h.Store.GetAuth(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get auth for merge: %w", err)
+	}
+	cfg := apiToAuth(*req.Body, before)
 	if err := h.Store.SetAuth(ctx, cfg); err != nil {
 		return openapi.UpdateAuthConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	if h.Audit != nil {
-		var beforeArg any = &before
-		if beforeErr != nil {
-			beforeArg = (*AuthConfig)(nil)
-		}
 		actor := &id.UserRef
 		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
 			audit.EventAdminAuthConfigUpdated,
 			nil, actor,
-			beforeArg, &cfg, nil)
+			&before, &cfg, nil)
 	}
 	return openapi.UpdateAuthConfig200JSONResponse(authToAPI(cfg)), nil
 }
@@ -458,23 +474,25 @@ func (h *Handler) UpdateAIConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	before, beforeErr := h.Store.GetAI(ctx)
-	cfg := apiToAI(*req.Body)
+	// The stored config is now load-bearing, not just audit input:
+	// apiToAI merges the on-file API keys in from it. A read failure
+	// must abort rather than write a config with every key blanked.
+	before, err := h.Store.GetAI(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get ai for merge: %w", err)
+	}
+	cfg := apiToAI(*req.Body, before)
 	if err := h.Store.SetAI(ctx, cfg); err != nil {
 		return openapi.UpdateAIConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	if h.Audit != nil {
-		var beforeArg any = &before
-		if beforeErr != nil {
-			beforeArg = (*AIConfig)(nil)
-		}
 		actor := &id.UserRef
 		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
 			audit.EventAdminAIConfigUpdated,
 			nil, actor,
-			beforeArg, &cfg, nil)
+			&before, &cfg, nil)
 	}
 	return openapi.UpdateAIConfig200JSONResponse(aiToAPI(cfg)), nil
 }
@@ -561,7 +579,7 @@ func (h *Handler) GetAppearanceConfig(
 	if err != nil {
 		return nil, fmt.Errorf("sysconfig: get appearance: %w", err)
 	}
-	return openapi.GetAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
+	return openapi.GetAppearanceConfig200JSONResponse(h.appearanceAdminAPI(ctx, cfg)), nil
 }
 
 func (h *Handler) UpdateAppearanceConfig(
@@ -579,6 +597,14 @@ func (h *Handler) UpdateAppearanceConfig(
 	}
 	before, beforeErr := h.Store.GetAppearance(ctx)
 	cfg := apiToAppearance(*req.Body)
+	// Carry the logo forward. This endpoint is a whole-object replace
+	// and the logo fields are read-only on it, so without this an
+	// admin saving a font would silently reset the install's brand
+	// mark and orphan every pinned entry in the recent list.
+	if beforeErr == nil {
+		cfg.ActiveLogo = before.ActiveLogo
+		cfg.LogoHistory = before.LogoHistory
+	}
 	if err := h.Store.SetAppearance(ctx, cfg); err != nil {
 		return openapi.UpdateAppearanceConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
@@ -595,7 +621,7 @@ func (h *Handler) UpdateAppearanceConfig(
 			nil, actor,
 			beforeArg, &cfg, nil)
 	}
-	return openapi.UpdateAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
+	return openapi.UpdateAppearanceConfig200JSONResponse(h.appearanceAdminAPI(ctx, cfg)), nil
 }
 
 // GetPublicPreviewLadder reads the configured preview rungs (#591).

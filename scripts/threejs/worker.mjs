@@ -14,9 +14,16 @@
 //
 // Rendering is headless Chromium (Puppeteer) on SwiftShader software
 // WebGL — the exact stack #497 proved: no GPU required, ~20-30× faster
-// than Blender Cycles was, equal-or-better PBR fidelity. The same three.js
-// loaders the interactive viewer uses (ModelView.svelte) load the model,
-// so anything the viewer renders, this renders identically.
+// than Blender Cycles was, equal-or-better PBR fidelity.
+//
+// render.html imports the interactive viewer's OWN load path
+// (web/src/lib/3d/modelLoader.js) and its default lighting constants
+// (defaultLighting.js), served below at /shared/. Until #689 it carried
+// a second hand-written loader instead, which had no MTLLoader and no
+// material-upgrade pass — so every OBJ and every unlit glTF rendered
+// untextured here while the viewer showed them correctly. Sharing the
+// module is what makes ADR 0069's WYSIWYG claim structural rather than
+// a comment.
 //
 // Usage:
 //   node worker.mjs --input <model> --workdir <dir> --output <dir> \
@@ -24,11 +31,13 @@
 //
 // The model + its companions must both live under --workdir so the
 // loaders resolve sibling .bin/textures by relative URL (the Go handler's
-// stageCompanions writes them there). Exit 0 on success, non-zero on any
-// failure so the Go handler can fail (and retry) the preview job.
+// stageCompanions writes them there). Companions are also enumerated and
+// handed to the page, because OBJ's .mtl is not something a loader can
+// find on its own. Exit 0 on success, non-zero on any failure so the Go
+// handler can fail (and retry) the preview job.
 //
-// Formats: the dispatch in render.html's loadModel() is the source of
-// truth; threeJSExts in model.go mirrors it and smoke.mjs covers it.
+// Formats: LOADABLE_EXTS in modelLoader.js is the source of truth;
+// threeJSExts in model.go mirrors it and smoke.mjs covers it.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -39,6 +48,18 @@ import puppeteer from 'puppeteer';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const THREE_DIR = path.join(HERE, 'node_modules', 'three');
+
+// Modules shared with the web app, served to render.html at /shared/.
+// Two layouts, because this script runs from both:
+//   * the container image — the Dockerfiles copy the shared files to
+//     /app/threejs/shared/ next to this script;
+//   * a repo checkout — they live in web/src/lib/3d/, their canonical
+//     home (the web container only bind-mounts ./web, so that is the one
+//     directory both build worlds can reach).
+const SHARED_DIR = [
+  path.join(HERE, 'shared'),
+  path.join(HERE, '..', '..', 'web', 'src', 'lib', '3d'),
+].find((d) => fs.existsSync(path.join(d, 'modelLoader.js')));
 
 function parseArgs(argv) {
   const a = {};
@@ -58,9 +79,10 @@ const CONTENT_TYPES = {
   '.webp': 'image/webp', '.wasm': 'application/wasm',
 };
 
-// Serve render.html, three's module graph (/three/*), and the work dir
-// (/models/* — model + staged companions). Path-normalised so a
-// crafted URL can't escape the served roots.
+// Serve render.html, three's module graph (/three/*), the modules shared
+// with the web app (/shared/*) and the work dir (/models/* — model +
+// staged companions). Path-normalised so a crafted URL can't escape the
+// served roots.
 function startServer(workDir) {
   return new Promise((resolve) => {
     const serveFrom = (root, rel, res) => {
@@ -77,6 +99,7 @@ function startServer(workDir) {
       if (url === '/favicon.ico') { res.statusCode = 204; return res.end(); }
       if (url === '/' || url === '/render.html') return serveFrom(HERE, 'render.html', res);
       if (url.startsWith('/three/')) return serveFrom(THREE_DIR, url.slice('/three/'.length), res);
+      if (url.startsWith('/shared/')) return serveFrom(SHARED_DIR, url.slice('/shared/'.length), res);
       if (url.startsWith('/models/')) return serveFrom(workDir, url.slice('/models/'.length), res);
       res.statusCode = 404; res.end('nf');
     });
@@ -88,6 +111,37 @@ function dataUrlToBuffer(u) {
   return Buffer.from(u.slice(u.indexOf(',') + 1), 'base64');
 }
 
+// Every staged sidecar in the work dir, as the [{ path, url }] shape
+// modelLoader.js takes — relative path (POSIX, matching what the user
+// declared at upload) plus its URL under /models/. The model file itself
+// is excluded.
+//
+// Two consumers need this list, for different reasons:
+//   * OBJ's .mtl, because `mtllib` is a name OBJLoader never fetches;
+//   * companionLoadingManager, which render.html now installs (#753).
+//     "Textures resolve relatively" is true of GLTFLoader and MTLLoader
+//     and FALSE of FBXLoader, which asks for a texture's bare basename
+//     next to the model however deep the reference actually was.
+//
+// The Go handler points --output at the work dir itself, so this runs
+// before the output subdirectories are created; a stray render artefact
+// in the list would be harmless anyway, since the only thing read out of
+// it is the .mtl.
+function listCompanions(workDir, modelName) {
+  const out = [];
+  const walk = (dir, prefix) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), rel);
+      else if (rel !== modelName) {
+        out.push({ path: rel, url: `/models/${rel.split('/').map(encodeURIComponent).join('/')}` });
+      }
+    }
+  };
+  walk(workDir, '');
+  return out;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const input = args.input;
@@ -97,9 +151,13 @@ async function main() {
   const res = parseInt(args.res || '512', 10);
   const posterRes = parseInt(args['poster-res'] || '2048', 10);
   if (!input || !output) throw new Error('usage: --input <model> --output <dir> [--workdir <dir>]');
+  if (!SHARED_DIR) {
+    throw new Error('shared 3D modules (modelLoader.js) not found — expected ./shared/ or ../../web/src/lib/3d/');
+  }
 
   const ext = path.extname(input).slice(1).toLowerCase();
   const modelName = path.basename(input);
+  const companions = listCompanions(workDir, modelName);
 
   fs.mkdirSync(path.join(output, 'turntable'), { recursive: true });
   fs.mkdirSync(path.join(output, 'views'), { recursive: true });
@@ -148,7 +206,7 @@ async function main() {
     const modelUrl = `http://127.0.0.1:${port}/models/${encodeURIComponent(modelName)}`;
     const out = await page.evaluate(
       (u, e, o) => window.__renderAll(u, e, o),
-      modelUrl, ext, { frames, res, posterRes },
+      modelUrl, ext, { frames, res, posterRes, companions },
     );
 
     // Write in the layout the Go handler reads.
@@ -163,10 +221,17 @@ async function main() {
     fs.writeFileSync(path.join(output, 'views', 'bottom.png'), dataUrlToBuffer(out.bottom));
 
     // One machine-readable line on stdout for the Go handler to log.
+    // materials / textured / broken_textures make "rendered, but flat
+    // white" visible in the job log instead of only in the PNG (#689).
     process.stdout.write(JSON.stringify({
       ok: true,
       frames: out.turntable.length,
       triangles: out.meta.triangles,
+      companions: companions.length,
+      materials: out.meta.materials.length,
+      material_types: [...new Set(out.meta.materials.map((m) => m.type))],
+      textured: out.meta.texturedMaterials,
+      broken_textures: out.meta.brokenTextures,
       gl: gl.renderer,
       timings: out.timings,
     }) + '\n');

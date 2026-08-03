@@ -35,13 +35,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
-// ModelPayload — JSON body for a preview.model job.
-type ModelPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // ModelResult — what the worker writes back to jobs.result for the
 // admin queue view.
 type ModelResult struct {
@@ -210,7 +203,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 
 	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
-		h.extractMviewThumbBestEffort(jobCtx, p.AssetID, p.FileHash, work.sourcePath)
+		h.extractMviewThumbBestEffort(jobCtx, p.AssetID, p.FileHash, work.sourcePath, p.Force)
 		glbPath, err := h.convertMviewToGLB(jobCtx, work.sourcePath)
 		if err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.mview_convert_failed",
@@ -233,18 +226,29 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// variants whose presence guarantees the whole bundle landed in a
 	// previous run (raster ladder + sprite sheet + per-frame CLIP set
 	// + reference views).
-	posterDone := h.variantExists(jobCtx, p.FileHash, "col")
-	spritesDone := h.variantExists(jobCtx, p.FileHash, "sprites.jpg")
-	framesDone := h.variantExists(jobCtx, p.FileHash, "turntable/0000.png")
-	viewsDone := h.variantExists(jobCtx, p.FileHash, "views/top.png")
+	posterDone := variantDone(jobCtx, h.Storage, p.FileHash, "col", p.Force)
+	spritesDone := variantDone(jobCtx, h.Storage, p.FileHash, "sprites.jpg", p.Force)
+	framesDone := variantDone(jobCtx, h.Storage, p.FileHash, "turntable/0000.png", p.Force)
+	viewsDone := variantDone(jobCtx, h.Storage, p.FileHash, "views/top.png", p.Force)
 	// isoDone is the "the ladder was fanned from a textured render"
 	// sentinel. It predates #500 (it used to gate a Blender Cycles re-fan
 	// that fixed workbench's magenta textures); with three.js as the only
 	// renderer the poster IS that textured source, and the sentinel now
 	// only serves the re-enqueue early exit below.
-	isoDone := h.variantExists(jobCtx, p.FileHash, "iso/source.png")
+	isoDone := variantDone(jobCtx, h.Storage, p.FileHash, "iso/source.png", p.Force)
 	if posterDone && spritesDone && framesDone && viewsDone && isoDone {
 		result.Skipped = append(result.Skipped, "col", "sprites", "frames", "views", "iso")
+		// The sentinel above asks about `col` but not the other three
+		// ladder rungs, so those rows are still missing after a
+		// split-brain restore even though every rung's bytes are there.
+		reconcileLadderRows(jobCtx, h.Storage, p.FileHash)
+		// Nothing was rendered, so nothing reached the ladder step that
+		// stamps the blur-up placeholder. Read a rung back rather than
+		// spin up a three.js turntable to recover 30 bytes (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "model",
+		})
 		h.markReady(jobCtx, p.AssetID)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
@@ -295,33 +299,47 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		h.markFailed(jobCtx, p.AssetID, err.Error())
 		return nil, fmt.Errorf("preview.model: render: %w", err)
 	}
+	// --- raster ladder: fan the poster into col / preview / screen / hires
+	//
+	// `posterDone` was read BEFORE the render (the `col` sentinel), so it
+	// means "a previous run already fanned this ladder", not "we just
+	// fanned it". The poster is the preferred source — it is the hi-res
+	// textured render — and frame 0 of the turntable is the fallback if
+	// the poster is unusable.
+	//
+	// One `raster` line in the result, reported by what actually
+	// happened. It used to report BOTH: `poster` under generated and
+	// `raster` under skipped, for the single act of fanning the ladder
+	// from the poster. An operator reading `skipped: raster` on a job
+	// that had just rewritten every rung would reasonably conclude the
+	// thumbnail had not been touched — which is the same
+	// can't-tell-what-happened complaint this change exists to answer
+	// (#760).
 	posterPath := filepath.Join(renderOut, "poster.png")
-	if !posterDone {
-		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, posterPath); err != nil {
-			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
-				slog.String("err", err.Error()))
-		} else {
-			result.Variants = append(result.Variants, "poster")
-			posterDone = true
-		}
-	}
-	// The poster IS the textured ladder source; persist it under the
-	// iso sentinel so a re-enqueue can early-exit without re-rendering.
-	if !isoDone {
-		if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err == nil {
-			isoDone = true
-		}
-	}
-
-	// --- raster ladder: fan frame 0 into col / preview / screen / hires ---
 	if posterDone {
 		result.Skipped = append(result.Skipped, "raster")
 	} else {
-		firstFrame := filepath.Join(framesDir, "frame_0000.png")
-		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, firstFrame); err != nil {
-			return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
+		src := posterPath
+		if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, src, p.Force); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
+				slog.String("err", err.Error()))
+			src = filepath.Join(framesDir, "frame_0000.png")
+			if err := h.fanRasterLadder(jobCtx, p.AssetID, p.FileHash, src, p.Force); err != nil {
+				return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
+			}
 		}
 		result.Variants = append(result.Variants, "raster")
+	}
+
+	// The poster IS the textured ladder source; persist it under the
+	// iso sentinel so a re-enqueue can early-exit without re-rendering.
+	if isoDone {
+		result.Skipped = append(result.Skipped, "iso")
+	} else if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", posterPath, "image/png"); err != nil {
+		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_source_upload_failed",
+			slog.String("err", err.Error()))
+	} else {
+		result.Variants = append(result.Variants, "iso")
 	}
 
 	// --- per-frame turntable variants (CLIP training set) ----------------
@@ -331,7 +349,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// per asset which is cheap at our scale.
 	if framesDone {
 		result.Skipped = append(result.Skipped, "frames")
-	} else if err := h.writeFrameVariants(jobCtx, p.FileHash, framesDir); err != nil {
+	} else if err := h.writeFrameVariants(jobCtx, p.FileHash, framesDir, p.Force); err != nil {
 		return nil, fmt.Errorf("preview.model: frame variants: %w", err)
 	} else {
 		result.Variants = append(result.Variants, "frames")
@@ -342,7 +360,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// up' insets later. Not part of the scrub.
 	if viewsDone {
 		result.Skipped = append(result.Skipped, "views")
-	} else if err := h.writeReferenceViews(jobCtx, p.FileHash, viewsDir); err != nil {
+	} else if err := h.writeReferenceViews(jobCtx, p.FileHash, viewsDir, p.Force); err != nil {
 		return nil, fmt.Errorf("preview.model: views: %w", err)
 	} else {
 		result.Variants = append(result.Variants, "views")
@@ -361,8 +379,10 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// Blender (#500): it existed solely to repaint the magenta thumbnails
 	// Blender's workbench engine produced for textured models, and the
 	// three.js poster is already correctly textured. `iso/source.png` is
-	// still written above, as the re-enqueue sentinel.
-	result.Skipped = append(result.Skipped, "iso")
+	// still written above, as the re-enqueue sentinel — and reported
+	// there, by whether it was written. This line used to append "iso" to
+	// Skipped unconditionally, including on runs that had just uploaded
+	// it.
 
 	h.markReady(jobCtx, p.AssetID)
 	result.WorkS = time.Since(started).Seconds()
@@ -372,10 +392,10 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 // writeFrameVariants uploads each turntable frame as its own variant
 // under `turntable/NNNN.png`. Idempotent per-variant so a re-queue
 // after a partial upload only fills the gaps.
-func (h *ModelHandler) writeFrameVariants(ctx context.Context, hash, framesDir string) error {
+func (h *ModelHandler) writeFrameVariants(ctx context.Context, hash, framesDir string, force bool) error {
 	for i := 0; i < h.Frames; i++ {
 		key := fmt.Sprintf("turntable/%04d.png", i)
-		if h.variantExists(ctx, hash, key) {
+		if variantDone(ctx, h.Storage, hash, key, force) {
 			continue
 		}
 		path := filepath.Join(framesDir, fmt.Sprintf("frame_%04d.png", i))
@@ -390,10 +410,10 @@ func (h *ModelHandler) writeFrameVariants(ctx context.Context, hash, framesDir s
 // renders as `views/top.png` and `views/bottom.png`. Best-effort per
 // view — a missing file is a soft fail so a render that wrote only one
 // view doesn't tank the whole job.
-func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir string) error {
+func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir string, force bool) error {
 	for _, name := range []string{"top", "bottom"} {
 		key := "views/" + name + ".png"
-		if h.variantExists(ctx, hash, key) {
+		if variantDone(ctx, h.Storage, hash, key, force) {
 			continue
 		}
 		path := filepath.Join(viewsDir, name+".png")
@@ -415,8 +435,8 @@ func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir s
 // failures log a warning and return, never abort the job — the col
 // variant is a "nice to have here, the GLB conversion below produces
 // real renders on success".
-func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, assetID uuid.UUID, hash, mviewPath string) {
-	if h.variantExists(ctx, hash, "col") {
+func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, assetID uuid.UUID, hash, mviewPath string, force bool) {
+	if variantDone(ctx, h.Storage, hash, "col", force) {
 		return
 	}
 	f, err := os.Open(mviewPath)
@@ -432,7 +452,7 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, assetID 
 			slog.String("err", err.Error()))
 		return
 	}
-	if err := h.fanThumbBytes(ctx, assetID, hash, thumb); err != nil {
+	if err := h.fanThumbBytes(ctx, assetID, hash, thumb, force); err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_thumb_fan_failed",
 			slog.String("err", err.Error()))
 	}
@@ -512,7 +532,7 @@ func (h *ModelHandler) convertMviewToGLB(ctx context.Context, mviewPath string) 
 // fanThumbBytes decodes a JPEG and writes it through the raster
 // variant ladder. Shared by the mview path; could be repurposed by
 // any future "we already have a poster, just resize it" worker.
-func (h *ModelHandler) fanThumbBytes(ctx context.Context, assetID uuid.UUID, hash string, jpegBytes []byte) error {
+func (h *ModelHandler) fanThumbBytes(ctx context.Context, assetID uuid.UUID, hash string, jpegBytes []byte, force bool) error {
 	src, err := jpeg.Decode(bytes.NewReader(jpegBytes))
 	if err != nil {
 		return fmt.Errorf("decode thumb: %w", err)
@@ -520,6 +540,7 @@ func (h *ModelHandler) fanThumbBytes(ctx context.Context, assetID uuid.UUID, has
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "model", Source: "mview",
+		Overwrite: force,
 	})
 }
 
@@ -764,7 +785,7 @@ func (h *ModelHandler) renderThreeJS(ctx context.Context, src, workDir, outDir s
 // col/preview/screen bytes. three.js renders textured on the first
 // pass, so there is nothing to repaint and no second writer — the pair
 // collapsed back into one function with #500.
-func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, hash, framePath string) error {
+func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, hash, framePath string, force bool) error {
 	f, err := os.Open(framePath)
 	if err != nil {
 		return fmt.Errorf("open frame: %w", err)
@@ -777,6 +798,7 @@ func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, h
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "model", Source: "turntable",
+		Overwrite: force,
 	})
 }
 
@@ -787,9 +809,12 @@ func (h *ModelHandler) fanRasterLadder(ctx context.Context, assetID uuid.UUID, h
 // ---------------------------------------------------------------------------
 
 const (
-	modelSpriteCols       = 6
-	modelSpriteRows       = 6
-	modelSpriteCell       = 160 // px per cell; 36 cells × 160 = 960² sprite sheet
+	modelSpriteCols = 6
+	modelSpriteRows = 6
+	// px per cell; a 6×6 grid × 240 = 1440² sprite sheet. 240 rather than
+	// 160 (#811) so the turntable is not visibly softer than the 320px
+	// still the card swaps out when you hover it.
+	modelSpriteCell       = 240
 	modelTurntableSeconds = 4.0
 )
 
@@ -866,11 +891,6 @@ func (h *ModelHandler) writeSprites(ctx context.Context, hash, framesDir string)
 // ---------------------------------------------------------------------------
 // Shared plumbing — variantExists / mark* mirror VideoHandler.
 // ---------------------------------------------------------------------------
-
-func (h *ModelHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
-}
 
 func (h *ModelHandler) markProcessing(ctx context.Context, id uuid.UUID) {
 	if err := assets.New(h.Pool).MarkAssetProcessing(ctx, pgtype.UUID{Bytes: id, Valid: true}); err != nil {

@@ -28,6 +28,8 @@
 
 import * as THREE from 'three';
 
+import { DEFAULT_ENV_ROUGHNESS } from './defaultLighting';
+
 export type EnvPresetId = 'studio' | 'park' | 'sunset' | 'city' | 'night' | 'none';
 
 interface GradientStop { offset: number; color: string }
@@ -91,7 +93,7 @@ export async function buildEnvironment(
   }
   if (id === 'studio') {
     const { RoomEnvironment } = await import('three/examples/jsm/environments/RoomEnvironment.js');
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const env = pmrem.fromScene(new RoomEnvironment(), DEFAULT_ENV_ROUGHNESS).texture;
     // Studio's "background" is a flat tone so the IBL details
     // don't read as visual noise behind the model.
     return { env, background: new THREE.Color(0x202024) };

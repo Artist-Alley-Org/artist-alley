@@ -45,20 +45,23 @@
     controller.setRate = () => {};
   });
 
-  const labels: Record<ViewKind, { title: string; phase: string; icon: string }> = {
-    pdf: { title: 'PDF preview', phase: 'Phase 1.18.B-12', icon: 'file-text' },
-    audio: { title: 'Audio waveform', phase: 'Phase 1.18.B-12', icon: 'audio' },
-    font: { title: 'Font specimen', phase: 'Phase 1.18.E', icon: 'placeholder' },
-    sprite: { title: 'Sprite viewer', phase: '', icon: 'placeholder' },
-    '3d': { title: '3D viewer', phase: 'Phase 1.18.B-10', icon: 'cube' },
-    sequence: { title: 'Image sequence', phase: 'Phase 1.18.B-4', icon: 'film' },
-    placeholder: { title: 'Preview', phase: '', icon: 'placeholder' },
-    image: { title: 'Image', phase: '', icon: 'placeholder' },
-    video: { title: 'Video', phase: '', icon: 'placeholder' },
-    ebook: { title: 'Ebook reader', phase: '', icon: 'file-text' },
-    doc: { title: 'Document viewer', phase: '', icon: 'file-text' },
-    audiobook: { title: 'Audiobook reader', phase: '', icon: 'audio' },
-    archive: { title: 'Archive viewer', phase: '', icon: 'placeholder' },
+  // `planned` gates the "coming soon" line: true where a dedicated
+  // viewer is on the roadmap but not yet built. The specific release is a
+  // dev-side detail and is deliberately not surfaced to viewers (#801).
+  const labels: Record<ViewKind, { title: string; planned: boolean; icon: string }> = {
+    pdf: { title: 'PDF preview', planned: true, icon: 'file-text' },
+    audio: { title: 'Audio waveform', planned: true, icon: 'audio' },
+    font: { title: 'Font specimen', planned: true, icon: 'placeholder' },
+    sprite: { title: 'Sprite viewer', planned: false, icon: 'placeholder' },
+    '3d': { title: '3D viewer', planned: true, icon: 'cube' },
+    sequence: { title: 'Image sequence', planned: true, icon: 'film' },
+    placeholder: { title: 'Preview', planned: false, icon: 'placeholder' },
+    image: { title: 'Image', planned: false, icon: 'placeholder' },
+    video: { title: 'Video', planned: false, icon: 'placeholder' },
+    ebook: { title: 'Ebook reader', planned: false, icon: 'file-text' },
+    doc: { title: 'Document viewer', planned: false, icon: 'file-text' },
+    audiobook: { title: 'Audiobook reader', planned: false, icon: 'audio' },
+    archive: { title: 'Archive viewer', planned: false, icon: 'placeholder' },
   };
   const label = $derived(labels[kind]);
 </script>
@@ -94,8 +97,8 @@
   </svg>
   <div>
     <p class="text-sm font-medium text-fg">{label.title}</p>
-    {#if label.phase}
-      <p class="mt-0.5 text-xs">Dedicated viewer lands in {label.phase}.</p>
+    {#if label.planned}
+      <p class="mt-0.5 text-xs">A dedicated viewer is coming in a future release.</p>
     {/if}
     <a href={fileUrl} class="mt-3 inline-block text-xs text-accent underline" target="_blank">Download original</a>
   </div>

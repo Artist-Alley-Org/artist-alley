@@ -79,6 +79,10 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		return nil, fmt.Errorf("storage backend: %w", err)
 	}
 	storageSvc := storage.NewService(backend, pool)
+	// The worker process is where the split-brain reconcile fires
+	// (#827) and where its "healed a row nobody recorded" line is the
+	// only signal a restored-backup install ever gets.
+	storageSvc.Logger = logger
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "storage.ready",
 		slog.String("backend", backend.Name()),
 	)
@@ -212,6 +216,8 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 
 	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewVideoPosterHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewGifHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewModelHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewAudioHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewPDFHandler(pool, storageSvc, sysCfg, logger))
@@ -420,7 +426,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		impl.auth.SetRegistrationSurface(auth.RegisterSurface{
 			SendVerification: func(ctx context.Context, to, recipientName, verifyURL, expiresIn string) error {
 				site, _ := emailSite(ctx)
-				msg, err := email.Render(email.TemplateRegisterVerify, []string{to}, map[string]any{
+				msg, err := email.Render(ctx, email.TemplateRegisterVerify, []string{to}, map[string]any{
 					"site_name":      site.Name,
 					"site_url":       site.URL,
 					"recipient_name": recipientName,

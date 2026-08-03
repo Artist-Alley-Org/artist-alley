@@ -58,6 +58,35 @@
 // notifications.target_kind can be "license", which is an external
 // identifier with no local table, and deleting rows we cannot resolve
 // would be a guess.
+//
+// # field_definition: the same policy, applied to the table that named
+// it and then broke it (#812)
+//
+// field_definition was in the TRUNCATE list. It is exactly the shape
+// point 3 above warns about — a table holding BOTH rows the reset must
+// keep (the nine definitions the migrations ship: title, description,
+// credit, copyright, capture_date, keywords, country, pixel_width,
+// pixel_height) and rows it should remove (the studio fields
+// seed/profiles/dataset.field_definitions.json adds). Truncating it
+// deleted the shipped catalogue on every dev, CI and demo instance and
+// installed the seed's instead, so production ran one field catalogue
+// and every instance we tested ran a different one, neither a subset of
+// the other. That is the unreal-fixture class inverted: not a fixture
+// production cannot reach, but a production state no test ever built.
+//
+// So field_definition is SWEPT, against the same registry/derived-
+// enforcement pattern: db.ShippedFieldCodes names the shipped codes by
+// hand (classification is a judgement call — see the discussion of
+// rejected heuristics in app/internal/db/shippedfields.go) and
+// TestShippedFieldCatalogue_MatchesMigrations reads the codes a fresh
+// migration run actually produces and fails if the two disagree. A
+// future migration that ships a definition without registering it gets
+// a "classify me" CI failure instead of a row this reset silently
+// deletes.
+//
+// The registry lives in internal/db, not here, because the migrations
+// are its authority: the reset DEFERS to what the migrations ship, it
+// does not decide it.
 
 package seed
 
@@ -67,6 +96,8 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/db"
 )
 
 // polyTarget is the table + primary-key column a single kind value
@@ -391,11 +422,47 @@ func Reset(ctx context.Context, pool *pgxpool.Pool, adminUsername string) error 
 	// seeded content, so a truncate is the honest statement of intent
 	// and RESTART IDENTITY applies. The polymorphic sweep below would
 	// reach the same end state and is the backstop, not the mechanism.
+	//
+	// field_definition is NOT in the list (#812) — see the header. It
+	// is swept below instead, so the shipped catalogue survives a
+	// content reset and only the seed's studio fields go.
 	const truncate = `TRUNCATE
-	    assets, posts, comments, collections, field_definition, likes
+	    assets, posts, comments, collections, likes
 	    RESTART IDENTITY CASCADE`
 	if _, err := pool.Exec(ctx, truncate); err != nil {
 		return fmt.Errorf("truncate content: %w", err)
+	}
+	// The field-definition sweep. Everything that is not shipped is
+	// seed-added or operator-added; on a reset both are content.
+	//
+	// Deleting the DEFINITIONS cascades to asset_field_value,
+	// collection_field_value, collection_field_value_history,
+	// field_default_override AND — since #821 gave it the FKs its
+	// collection sibling always had — asset_field_value_history, all of
+	// which now carry a real ON DELETE CASCADE FK. The TRUNCATE assets
+	// above also reaches asset_field_value_history via its new asset_id
+	// FK. Both paths together leave nothing for the bespoke history
+	// sweep this file used to run here to do, so it is gone (#821): the
+	// constraint is the structural guarantee the hand-written DELETE was
+	// standing in for while it was absent.
+	//
+	// deprecated_replacement_id is the table's one self-FK and it is ON
+	// DELETE RESTRICT, so a SURVIVING definition that names a doomed one
+	// as its replacement would abort the whole reset. Clear the pointer
+	// rather than let the delete fail: the replacement it named is about
+	// to stop existing either way.
+	if _, err := pool.Exec(ctx, `
+	    UPDATE field_definition
+	       SET deprecated_replacement_id = NULL, updated_at = now()
+	     WHERE deprecated_replacement_id IN (
+	         SELECT id FROM field_definition WHERE code <> ALL($1::text[]))`,
+		db.ShippedFieldCodes()); err != nil {
+		return fmt.Errorf("clear field_definition replacements: %w", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM field_definition WHERE code <> ALL($1::text[])`,
+		db.ShippedFieldCodes()); err != nil {
+		return fmt.Errorf("sweep field_definition: %w", err)
 	}
 	// teams gets a per-row DELETE, NOT a slot in the TRUNCATE above.
 	// TRUNCATE ... CASCADE empties dependent tables WHOLESALE, and

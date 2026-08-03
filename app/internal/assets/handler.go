@@ -48,6 +48,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
@@ -455,6 +456,37 @@ func (h *Handler) CreateAsset(
 		}
 	}
 
+	// Upload defaults (#793, ADR 0081 §3). Inside the tx, so an asset
+	// is never observable without the values its field definitions say
+	// it should be born with.
+	//
+	// This is the artist-friction wedge: every default that lands here
+	// is a decision nobody had to make at upload time. The values are
+	// written with set_by='default', which is what lets the async
+	// extraction job overwrite them later without also overwriting
+	// anything a person chose.
+	//
+	// A failure is logged and swallowed rather than rolled back. A
+	// default is a convenience; refusing an upload because one field
+	// definition carries a document the resolver dislikes would trade a
+	// missing convenience for a lost file.
+	if applied, dErr := metadata.ApplyAssetDefaults(ctx, tx, metadata.ApplyDefaultsParams{
+		AssetID:   uuid.UUID(row.ID.Bytes),
+		AssetType: in.AssetType,
+		UserRef:   id.UserRef,
+		Now:       row.CreatedAt.Time,
+	}); dErr != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.defaults.error",
+			slog.String("asset_id", uuid.UUID(row.ID.Bytes).String()),
+			slog.String("err", dErr.Error()),
+		)
+	} else if len(applied) > 0 {
+		h.Logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.defaults.applied",
+			slog.String("asset_id", uuid.UUID(row.ID.Bytes).String()),
+			slog.Int("count", len(applied)),
+		)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("assets: commit: %w", err)
 	}
@@ -496,23 +528,29 @@ func (h *Handler) CreateAsset(
 		// files can demote themselves once we have size at create
 		// time (the create body doesn't carry it today).
 		priority := jobs.PriorityHigh
-		payload := map[string]string{
-			"asset_id":       newID.String(),
-			"file_hash":      *fileHashPtr,
-			"file_extension": strDefault(in.FileExtension, ""),
-		}
+		// force=false: a brand-new asset has no variants to overwrite,
+		// and the skip check is what keeps a re-upload of identical
+		// bytes (same hash, same variants) nearly free.
+		payload := dispatch.NewPayload(newID, *fileHashPtr, in.FileExtension, false)
 		// Only enqueue when something can actually render this ext.
 		// Unroutable extensions fall through to preview.raster, which
 		// terminal-rejects them — a guaranteed dead job (#366). Skip
 		// instead; the asset still uploads fine, it just has no preview.
 		if dispatch.CanPreview(in.FileExtension) {
-			if _, err := h.Jobs.Enqueue(ctx, jobTypeForExt(in.FileExtension), payload, jobs.EnqueueOpts{
-				Priority: &priority,
-			}); err != nil {
-				h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
-					slog.String("asset_id", newID.String()),
-					slog.String("err", err.Error()),
-				)
+			// PlanForExt, not jobTypeForExt: a video gets a cheap poster
+			// job at this priority plus the full ladder behind it
+			// (#818), everything else gets the single job it always got.
+			for _, step := range dispatch.PlanForExt(in.FileExtension, priority) {
+				stepPriority := step.Priority
+				if _, err := h.Jobs.Enqueue(ctx, step.Type, payload, jobs.EnqueueOpts{
+					Priority: &stepPriority,
+				}); err != nil {
+					h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
+						slog.String("asset_id", newID.String()),
+						slog.String("job_type", string(step.Type)),
+						slog.String("err", err.Error()),
+					)
+				}
 			}
 		} else {
 			h.Logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.no_preview_for_ext",
@@ -719,6 +757,7 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 			PixelHeight:      full.PixelHeight,
 			PixelWidth:       full.PixelWidth,
 			PreviewAvailable: full.PreviewAvailable,
+			ScrubAvailable:   full.ScrubAvailable,
 			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
 			Status:           openapi.AssetWithDedupStatus(full.Status),
 			Thumbhash:        full.Thumbhash,
@@ -785,17 +824,6 @@ func isPgUniqueViolation(err error) bool {
 		return pe.Code == "23505"
 	}
 	return false
-}
-
-// jobTypeForExt picks the preview-job type for a given file extension.
-// preview.raster handles still images; preview.video runs the HLS
-// pipeline; preview.3d runs the headless three.js turntable renderer. Other
-// formats (audio/svg/pdf/font) land in follow-ups.
-// jobTypeForExt delegates to the shared dispatch map (#355): the
-// upload path, `aa seed`, and the preview handlers all read one set,
-// so they can never drift apart.
-func jobTypeForExt(ext *string) jobs.JobType {
-	return dispatch.JobTypeForExt(ext)
 }
 
 // ---------------------------------------------------------------------------
@@ -907,20 +935,22 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		return fmt.Errorf("assets: content check: %w", err)
 	}
 	if readable && out.FileHash != nil && *out.FileHash != "" {
-		// Both flags in one round trip. ladder_available is computed
+		// All three flags in one round trip. ladder_available is computed
 		// against the CONFIGURED ladder (#591), never a hardcoded rung
 		// list — an operator who drops a rung must move this flag, not
 		// silently invalidate it.
-		var hasCol, hasLadder bool
+		var hasCol, hasLadder, hasScrub bool
 		if err := h.Pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'col'),
-			        `+sysconfig.LadderSatisfiedSQL("$1", "$2"),
+			        `+sysconfig.LadderSatisfiedSQL("$1", "$2")+`,
+			        EXISTS (SELECT 1 FROM storage_variants WHERE object_hash = $1 AND variant_key = 'sprites.vtt')`,
 			*out.FileHash, h.ladder(ctx),
-		).Scan(&hasCol, &hasLadder); err != nil {
+		).Scan(&hasCol, &hasLadder, &hasScrub); err != nil {
 			return fmt.Errorf("assets: variant check: %w", err)
 		}
 		out.PreviewAvailable = hasCol
 		out.LadderAvailable = hasLadder
+		out.ScrubAvailable = hasScrub
 	}
 	return nil
 }
@@ -1297,6 +1327,7 @@ func (h *Handler) ListAssets(
 		a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
 		a.PreviewAvailable = r.PreviewAvailable
 		a.LadderAvailable = r.LadderAvailable
+		a.ScrubAvailable = r.ScrubAvailable
 		// #640 — the tile's aspect ratio, joined by the same pass.
 		// The gated row already applied the pair-or-neither rule.
 		a.PixelWidth = r.PixelWidth
@@ -1441,11 +1472,21 @@ func (h *Handler) DownloadAssetVariant(
 // worker bug-fix lands and the user wants existing renders
 // regenerated against the new code.
 //
-// The worker's idempotency-skip logic (variant exists → skip)
-// usually short-circuits a no-op re-enqueue; explicit per-worker
-// flags (isoDone in preview.3d, etc.) decide whether the
-// re-render actually writes new bytes. Failure to enqueue is loud:
-// the caller gets a 500 rather than a silent no-op.
+// It enqueues with force=true unless the caller passes force=false
+// (#760). It previously did not, and the result was a control that
+// could not do the only thing it is named for: the job it queued hit
+// each handler's "this variant is already in storage" check, skipped
+// everything, and completed successfully. The operator got a 202, a
+// job id, a `done` job — and the same stale thumbnail. Three merged
+// renderer fixes (#689, #750, #753) were invisible on every existing
+// install for exactly this reason.
+//
+// force=false is still reachable and still useful: it is the cheap
+// "fill in whatever is missing" pass, e.g. after attaching a companion
+// to an asset whose ladder never rendered at all.
+//
+// Failure to enqueue is loud: the caller gets a 500 rather than a
+// silent no-op.
 func (h *Handler) RecreateAssetPreview(
 	ctx context.Context,
 	req openapi.RecreateAssetPreviewRequestObject,
@@ -1485,20 +1526,33 @@ func (h *Handler) RecreateAssetPreview(
 		}, nil
 	}
 
-	jobType := jobTypeForExt(row.FileExtension)
-	payload := map[string]string{
-		"asset_id":       req.Id.String(),
-		"file_hash":      *row.FileHash,
-		"file_extension": strDefault(row.FileExtension, ""),
+	force := true
+	if req.Params.Force != nil {
+		force = *req.Params.Force
 	}
+	payload := dispatch.NewPayload(uuid.UUID(req.Id), *row.FileHash, row.FileExtension, force)
 	priority := jobs.PriorityHigh
-	jobID, err := h.Jobs.Enqueue(ctx, jobType, payload, jobs.EnqueueOpts{Priority: &priority})
-	if err != nil {
-		return nil, fmt.Errorf("assets: enqueue preview re-render: %w", err)
+
+	// A video plans two jobs (#818): the poster refreshes in seconds so
+	// the operator sees their "recreate" land, the ladder follows. The
+	// response reports the LAST step — the full job — because that is
+	// the one whose completion means the asset is actually rebuilt, and
+	// it is what a caller polling the returned id is waiting to see.
+	steps := dispatch.PlanForExt(row.FileExtension, priority)
+	var jobID uuid.UUID
+	var jobType jobs.JobType
+	for _, step := range steps {
+		stepPriority := step.Priority
+		id, err := h.Jobs.Enqueue(ctx, step.Type, payload, jobs.EnqueueOpts{Priority: &stepPriority})
+		if err != nil {
+			return nil, fmt.Errorf("assets: enqueue preview re-render: %w", err)
+		}
+		jobID, jobType = id, step.Type
 	}
 	return openapi.RecreateAssetPreview202JSONResponse{
 		JobId:   openapi_types.UUID(jobID),
 		JobType: string(jobType),
+		Force:   force,
 	}, nil
 }
 

@@ -14,9 +14,9 @@ import (
 const KeyAuth = "auth"
 
 // SSOProviderKind enumerates the supported single-sign-on identity
-// kinds. Per-kind configuration lives in SSOProvider.Config as a free
-// JSON blob — concrete shapes are validated by the integration code
-// that actually performs the login, not here. We're a settings store.
+// kinds. Per-kind configuration lives in SSOProvider.Config, a typed
+// struct — see SSOProviderConfig for why it is not a free JSON blob
+// any more.
 type SSOProviderKind string
 
 const (
@@ -51,13 +51,64 @@ type SSOProvider struct {
 	Enabled     bool            `json:"enabled"`
 	DisplayName string          `json:"display_name"`
 
-	// Per-kind opaque config. For LDAP: server URL, base DN, bind
-	// creds, search filter. For SAML: IdP metadata URL, SP entity ID,
-	// cert. For OAuth providers (Google/GitHub/X): client_id,
-	// client_secret, redirect_uri, scopes. We don't strongly type
-	// these here — the integration code in Phase 1.18 owns the
-	// schemas and validates at use time.
-	Config map[string]any `json:"config,omitempty"`
+	// Per-kind config. Which subset applies is decided by Kind.
+	Config SSOProviderConfig `json:"config"`
+}
+
+// SSOProviderConfig is the typed per-kind provider configuration.
+//
+// This used to be a `map[string]any` and that was the bug (#718): the
+// read path copied it into the response verbatim, so every stored LDAP
+// bind password, OAuth client secret and SAML SP private key went to
+// anyone holding `system.config.read` — a strictly weaker capability
+// than the `system.auth.write` needed to set one.
+//
+// Naming every field is what makes the fix possible rather than a
+// guess. The three secrets below are write-only: authToAPI zeroes them
+// and reports a `*_set` boolean instead, and apiToAuth merges the
+// stored value back in when the caller omits it. A free-form remainder
+// would defeat that by construction — the server cannot know which
+// unknown key holds a credential — which is why there isn't one. That
+// is also why denylisting known secret names was rejected: it fails
+// open on the next field somebody adds.
+//
+// Nothing reads these at login time yet; SSO enforcement is a later
+// phase. Names follow the upstream protocol vocabulary (RFC 6749,
+// RFC 4511, SAML 2.0) so the integration inherits them.
+type SSOProviderConfig struct {
+	// --- OAuth 2.0 / OIDC: Kind google | github | x ---
+
+	// ClientID is public by definition — it travels in the
+	// authorization URL — so it is returned on read.
+	ClientID string `json:"client_id,omitempty"`
+	// ClientSecret is SECRET. Never returned; see the type doc.
+	ClientSecret string   `json:"client_secret,omitempty"`
+	RedirectURI  string   `json:"redirect_uri,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+
+	// --- LDAP: Kind ldap ---
+
+	ServerURL string `json:"server_url,omitempty"`
+	StartTLS  bool   `json:"start_tls,omitempty"`
+	BaseDN    string `json:"base_dn,omitempty"`
+	// BindDN is an identifier, not a credential — returned on read.
+	BindDN string `json:"bind_dn,omitempty"`
+	// BindPassword is SECRET. Never returned; see the type doc.
+	BindPassword     string `json:"bind_password,omitempty"`
+	UserSearchFilter string `json:"user_search_filter,omitempty"`
+
+	// --- SAML 2.0: Kind saml ---
+
+	IDPMetadataURL string `json:"idp_metadata_url,omitempty"`
+	IDPEntityID    string `json:"idp_entity_id,omitempty"`
+	// IDPCertificate is public material — the IdP publishes it in its
+	// own metadata — so it is returned on read. The SP's private key
+	// below is not.
+	IDPCertificate string `json:"idp_certificate,omitempty"`
+	SPEntityID     string `json:"sp_entity_id,omitempty"`
+	SPACSURL       string `json:"sp_acs_url,omitempty"`
+	// SPPrivateKey is SECRET. Never returned; see the type doc.
+	SPPrivateKey string `json:"sp_private_key,omitempty"`
 }
 
 // PasswordPolicy is the local-account complexity policy. Applies only
@@ -81,12 +132,12 @@ type AuthConfig struct {
 	// limitation; addressable with a per-field audit:"include"
 	// opt-in tag in a follow-up if the false positive matters.
 	PasswordPolicy PasswordPolicy `json:"password_policy"`
-	// SSOProviders carries per-provider Config map[string]any
-	// values that may include OAuth client_secret / LDAP bind
-	// creds. Stripped from the changeset for the same reason as
-	// AIConfig.Providers — the diff helper isn't slice-element-
-	// aware. Operators see "auth config updated"; provider list
-	// edits are visible via the API.
+	// SSOProviders carries per-provider SSOProviderConfig values
+	// that may include an OAuth client_secret, an LDAP bind
+	// password or a SAML SP private key. Stripped from the
+	// changeset for the same reason as AIConfig.Providers — the
+	// diff helper isn't slice-element-aware. Operators see "auth
+	// config updated"; provider list edits are visible via the API.
 	SSOProviders []SSOProvider `json:"sso_providers" audit:"-"`
 	// SelfRegistration controls whether anonymous callers can
 	// create their own accounts via /auth/register. Phase 1.19.C.

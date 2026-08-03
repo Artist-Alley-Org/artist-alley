@@ -56,6 +56,19 @@ type Result struct {
 	// each Value before the applier writes it.
 	Fields map[CanonicalField]Value
 
+	// FieldSources records WHICH extractor produced each entry in
+	// Fields, keyed identically — the [Extractor.Name] of whichever
+	// implementation emitted it ("exif" / "iptc" / "xmp" / "pdf" /
+	// "raw"). It is what asset_field_value.set_by is written from.
+	//
+	// A single extractor's own Result leaves this nil; [MergeResults]
+	// fills it as it folds each extractor's Result into the combined
+	// one, which is the only place that knows which extractor a Value
+	// came from. The applier falls back to [SetByExtraction] for any
+	// key absent here, so a hand-built Result in a test still writes
+	// a truthful — if unspecific — provenance rather than a wrong one.
+	FieldSources map[CanonicalField]string
+
 	// ICCProfile is the source's colour profile bytes if present.
 	// Variant pipeline writes these byte-for-byte into every
 	// derived variant so print colour stays accurate.
@@ -171,6 +184,13 @@ type Value struct {
 	Num  float64
 	Time time.Time
 	GPS  GPSCoord // when Kind == ValueKindGPS
+
+	// Options is the SET a multi-value field stores, when
+	// Kind == ValueKindTextList. Entries are vocabulary terms: a
+	// canonical slug where the applier resolved one, and the file's
+	// original text where it did not and the field is open enough to
+	// create it. See the multi_select branch in Apply.
+	Options []string
 }
 
 // ValueKind tags the union shape of [Value].
@@ -181,6 +201,12 @@ const (
 	ValueKindNum
 	ValueKindTime
 	ValueKindGPS
+	// ValueKindTextList is a SET of vocabulary terms bound for
+	// asset_field_value.value_options (#830). No extractor produces one
+	// directly — IPTC 2:25 arrives as a single comma-joined string, per
+	// FieldIPTCKeywords — so the applier is what turns text into a list
+	// once it knows the target field is multi_select.
+	ValueKindTextList
 )
 
 // GPSCoord is a normalised lat/lon pair in decimal degrees.
@@ -214,6 +240,36 @@ type FieldExtractionConfig struct {
 	// Default (when row exists with empty mode) is "skip_if_set"
 	// — the conservative choice that never clobbers operator work.
 	Mode ExtractionMode
+
+	// FieldType is field_definition.type. The applier needs it for
+	// two things the extraction path cannot do without it: refusing a
+	// field whose value does not fit the columns extraction can write
+	// (reference), and recognising the three types whose value is a
+	// vocabulary slug rather than the extracted text (select, tree,
+	// multi_select). Empty means "unknown" and is treated as
+	// writable free text, which is what every pre-existing caller
+	// that does not set it expects.
+	FieldType string
+
+	// Options is field_definition.options verbatim. Carries the
+	// controlled vocabulary for select / tree / multi_select fields,
+	// against which an extracted LABEL is resolved to the SLUG that
+	// actually gets stored. Nil for every other type.
+	Options []byte
+
+	// OpenVocabulary is field_definition.open_vocabulary. It decides
+	// what happens to an extracted term the vocabulary does not have:
+	// on a closed field the value is dropped with a failure row, on an
+	// open one the term is created (#830).
+	//
+	// It is here rather than inferred because the applier cannot ask
+	// the database — it holds a config list and a Result and nothing
+	// else — and without it the pipeline would have to pick one
+	// behaviour for every field. Picking "create" would let a
+	// misspelled country into the vocabulary of a field an operator
+	// curated; picking "drop" would leave `keywords` as unusable as it
+	// was before, which is the whole reason this shipped.
+	OpenVocabulary bool
 }
 
 // ExtractionMode is the enum stored in

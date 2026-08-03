@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 )
 
 // Cache domain names. Stable strings used as NOTIFY targets — peer
@@ -131,6 +132,52 @@ func (h *Handler) invalidateField(ctx context.Context, id pgtype.UUID) {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "metadata.cache.invalidate.error",
 			slog.String("domain", cacheDomainFieldByID),
 			slog.String("key", uuidString(id)),
+			slog.String("err", err.Error()),
+		)
+	}
+}
+
+// InvalidateFieldVocabulary drops EVERY cached copy of one field
+// definition's options document, and is what an accept-and-create write
+// must call after it commits (#830).
+//
+// Two caches hold that document and they are invalidated by different
+// mechanisms, which is exactly why this is one function rather than two
+// calls at each site:
+//
+//   - the field-by-id LRU in this package, read by SetAssetFieldValue /
+//     SetCollectionFieldValue. A stale entry here makes the NEXT value
+//     write re-resolve against a vocabulary missing the term just
+//     created — which the row lock in EnsureOpenVocabularyTerms already
+//     protects against, but only because it re-reads. Everything else
+//     reading a field definition would show the old term list.
+//
+//   - the extraction-config list on the metadata.extraction_config
+//     domain, whose FieldExtractionConfig.Options is a verbatim copy of
+//     the same document. A stale entry there makes the next extract job
+//     match an incoming keyword against a vocabulary that does not have
+//     it yet — which is survivable (the row lock re-resolves against
+//     the live document before minting anything) but wasteful, since
+//     every job would re-propose terms that already exist.
+//
+//     Today that emit reaches nobody: asset/metadata's Cache type is
+//     never constructed in the boot wire, so ListExtractionConfig reads
+//     the database on every job. The emit is here because the domain is
+//     what a wired cache WOULD listen on, and a cache added later must
+//     not have to remember that this write path exists.
+//
+// Exported because the extraction path creates terms too, from
+// app/internal/http's writer adapter, which sits above this package and
+// cannot reach the unexported invalidator. Best-effort throughout: a
+// NOTIFY failure logs and does not propagate, matching invalidateField.
+func (h *Handler) InvalidateFieldVocabulary(ctx context.Context, fieldID pgtype.UUID) {
+	h.invalidateField(ctx, fieldID)
+	if h.registry == nil {
+		return
+	}
+	if err := h.registry.Emit(ctx, "metadata.extraction_config", "all"); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn,
+			"metadata.cache.extraction_config.emit_error",
 			slog.String("err", err.Error()),
 		)
 	}
@@ -234,11 +281,14 @@ func (h *Handler) CreateField(
 	if err != nil {
 		return nil, err
 	}
-	srcJSON, err := encodeJSONOptional(in.Source)
+	// Validate the controlled vocabulary at the door so a bad
+	// replaced_by or an unknown status can never reach storage.
+	optsJSON, err = NormalizeOptionsDoc(optsJSON)
 	if err != nil {
-		return nil, err
+		return openapi.CreateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
 	}
-
 	// subject_kind discriminator (Phase 1.9.B). Defaults to asset for
 	// callers that don't supply one — preserves the pre-1.9.B
 	// "everything is an asset field" semantics.
@@ -253,6 +303,27 @@ func (h *Handler) CreateField(
 		subject = parsed
 	}
 
+	// The default is validated against the options document the SAME
+	// request is storing, not against whatever the row held a moment
+	// ago — otherwise a field created with its vocabulary and its
+	// default in one call could only ever be rejected.
+	var defaultJSON []byte
+	if in.DefaultValue != nil {
+		if subject != SubjectAsset {
+			return openapi.CreateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "upload defaults apply to asset fields only; this field describes a collection",
+				},
+			}, nil
+		}
+		defaultJSON, err = encodeFieldDefault(string(in.Type), optsJSON, in.DefaultValue)
+		if err != nil {
+			return openapi.CreateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+	}
+
 	q := New(h.Pool)
 	row, err := q.CreateFieldDefinition(ctx, CreateFieldDefinitionParams{
 		Code:             code,
@@ -263,15 +334,15 @@ func (h *Handler) CreateField(
 		Required:         boolOr(in.Required, false),
 		Searchable:       boolOr(in.Searchable, true),
 		AppliesTo:        int64SliceOr(in.AppliesTo, []int64{}),
-		FieldSetID:       uuidFromOpenAPIPtr(in.FieldSetId),
 		ReadCapability:   in.ReadCapability,
 		WriteCapability:  in.WriteCapability,
 		DisplayOrder:     int32Or(in.DisplayOrder, 100),
 		DisplayGroup:     strOr(in.DisplayGroup, "general"),
-		Source:           srcJSON,
 		Status:           "active",
 		CreatedByUserRef: &id.UserRef,
 		SubjectKind:      string(subject),
+		DefaultValue:     defaultJSON,
+		OpenVocabulary:   boolOr(in.OpenVocabulary, false),
 	})
 	if err != nil {
 		// Most likely a duplicate code violating the UNIQUE
@@ -338,19 +409,51 @@ func (h *Handler) UpdateField(
 	}
 
 	in := req.Body
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+
+	// Load the current row straight from the DB — NOT the by-id cache.
+	// A cached updated_at could be stale, which would turn the
+	// concurrency guard below into theatre.
+	cur, err := q.GetFieldDefinitionByID(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateField404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("metadata: update load: %w", err)
+	}
+
+	// Optimistic-concurrency check (ADR 0012 amendment). Editing one
+	// option rewrites the whole options document, so an unguarded
+	// write silently discards a concurrent editor's curation. Truncate
+	// both sides to µs — Postgres stores at µs, Go marshals at ns.
+	// Caller opts in by sending the field; absent = last-write-wins.
+	if in.IfUnchangedSince != nil && cur.UpdatedAt.Valid {
+		stored := cur.UpdatedAt.Time.Truncate(time.Microsecond)
+		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
+		if !stored.Equal(sent) {
+			return openapi.UpdateField409JSONResponse{
+				Error:     "field was edited by someone else after your last load; reload and try again",
+				UpdatedAt: cur.UpdatedAt.Time,
+			}, nil
+		}
+	}
+
 	params := UpdateFieldDefinitionParams{
-		ID:                      pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		ID:                      pgID,
 		Label:                   in.Label,
 		Description:             in.Description,
 		Required:                in.Required,
 		Searchable:              in.Searchable,
 		AppliesTo:               appliesToOrNil(in.AppliesTo),
-		FieldSetID:              uuidFromOpenAPIPtr(in.FieldSetId),
 		ReadCapability:          in.ReadCapability,
 		WriteCapability:         in.WriteCapability,
 		DisplayOrder:            int32PtrOpt(in.DisplayOrder),
 		DisplayGroup:            in.DisplayGroup,
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
+		OpenVocabulary:          in.OpenVocabulary,
 		UpdatedByUserRef:        &id.UserRef,
 	}
 	if in.Status != nil {
@@ -362,17 +465,50 @@ func (h *Handler) UpdateField(
 		if err != nil {
 			return nil, err
 		}
+		b, err = NormalizeOptionsDoc(b)
+		if err != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
 		params.Options = b
 	}
-	if in.Source != nil {
-		b, err := json.Marshal(*in.Source)
-		if err != nil {
-			return nil, err
+	// A default is validated against the options document this request
+	// LANDS ON, not the one already stored: an operator retiring a term
+	// and moving the default off it in one PATCH must succeed, and one
+	// retiring the term the default still names must fail. Reading
+	// params.Options first (falling back to the stored document when the
+	// request does not touch options) is what makes both true.
+	if in.ClearDefault != nil && *in.ClearDefault {
+		if in.DefaultValue != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "send either default_value or clear_default, not both",
+				},
+			}, nil
 		}
-		params.Source = b
+		params.ClearDefault = true
+	} else if in.DefaultValue != nil {
+		if cur.SubjectKind != string(SubjectAsset) {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "upload defaults apply to asset fields only; this field describes a collection",
+				},
+			}, nil
+		}
+		opts := cur.Options
+		if params.Options != nil {
+			opts = params.Options
+		}
+		b, err := encodeFieldDefault(cur.Type, opts, in.DefaultValue)
+		if err != nil {
+			return openapi.UpdateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		params.DefaultValue = b
 	}
 
-	q := New(h.Pool)
 	row, err := q.UpdateFieldDefinition(ctx, params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -624,6 +760,68 @@ func (h *Handler) SetAssetFieldValue(
 		return nil, fmt.Errorf("metadata: load previous: %w", err)
 	}
 
+	// Controlled-vocabulary gate (#824), plus the accept-and-create
+	// branch an open vocabulary takes (#830). Deliberately AFTER the
+	// snapshot rather than beside buildUpsertParams: the lifecycle half
+	// of the rule needs to know what the asset already holds, and prev
+	// is that, already loaded for the history entry. No extra query.
+	//
+	// openOrCheckVocabulary is shared with SetCollectionFieldValue —
+	// see its doc for why the rule may not be written twice.
+	var held []string
+	if hadOld {
+		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
+	}
+	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
+		vocabularySlugs(fieldRow.Type, upsert.ValueText, upsert.ValueOptions), held)
+	if err != nil {
+		return nil, err
+	}
+	if rej != nil {
+		return openapi.SetAssetFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: rejectionBody(fieldRow.Code, rej),
+		}, nil
+	}
+	// The row stores the CANONICAL slug, never the text a client sent.
+	// buildUpsertParams ran before the gate — it has to, the gate reads
+	// what it built — so the normalised slugs go back into it here.
+	// Skipping this is how "Sunset" ends up in value_options next to
+	// the `sunset` term it was supposed to become.
+	if fieldRow.Type == "multi_select" {
+		upsert.ValueOptions = vocab.Slugs
+	}
+
+	// Reference-existence gate (#842). A `reference` value is a bare
+	// asset UUID, and until now buildUpsertParams accepted any UUID —
+	// so a PUT could point a value at an asset that never existed and
+	// get a 200. Verify the target resolves BEFORE the upsert, on the
+	// tx handle so the check and the write see one snapshot; a miss is
+	// 422 dangling_reference.
+	//
+	// THE #839 INTERLOCK: this is a WRITE gate and nothing else. The
+	// read path (GetReferencedAsset at the response-build below, and
+	// ListAssetFieldValues' LEFT JOIN) deliberately TOLERATES a target
+	// that has since been deleted, degrading to the bare id with no
+	// disclosure. A value that was valid when written must keep reading
+	// fine after its target is deleted — so the gate lives here, on the
+	// way in, and never on the way out. Same GetReferencedAsset query
+	// both sides, so "resolvable" means one thing.
+	if fieldRow.Type == "reference" && upsert.ValueRef.Valid {
+		if _, refErr := qTx.GetReferencedAsset(ctx, upsert.ValueRef); refErr != nil {
+			if errors.Is(refErr, pgx.ErrNoRows) {
+				field := fieldRow.Code
+				return openapi.SetAssetFieldValue422JSONResponse{
+					FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+						Error:  fmt.Sprintf("%s: referenced asset %s does not exist", fieldRow.Code, uuid.UUID(upsert.ValueRef.Bytes)),
+						Reason: openapi.DanglingReference,
+						Field:  &field,
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("metadata: verify reference target: %w", refErr)
+		}
+	}
+
 	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
@@ -650,10 +848,44 @@ func (h *Handler) SetAssetFieldValue(
 		return nil, fmt.Errorf("metadata: commit: %w", err)
 	}
 
+	// The vocabulary grew, so every cached copy of it is now wrong —
+	// including the one the extraction pipeline holds. After the commit,
+	// because a cache dropped before the write lands is a cache that
+	// repopulates with the pre-write document.
+	if len(vocab.Created) > 0 {
+		h.InvalidateFieldVocabulary(ctx, pgField)
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
+				slog.String("field", fieldRow.Code),
+				slog.Int("count", len(vocab.Created)),
+				slog.String("terms", strings.Join(vocab.Created, ",")),
+			)
+		}
+	}
+
+	// Resolve the reference target for the response body, so this
+	// endpoint's AssetFieldValue matches the list path's (see
+	// buildAssetValue). One extra read, only for a reference field
+	// that actually points somewhere, after the write has committed —
+	// a failure here degrades to the bare id rather than failing a
+	// write that already succeeded.
+	var ref resolvedRef
+	if fieldRow.Type == "reference" && row.ValueRef.Valid {
+		if target, refErr := New(h.Pool).GetReferencedAsset(ctx, row.ValueRef); refErr == nil {
+			ref = resolvedRef{ID: target.ID, Title: target.Title}
+		} else if !errors.Is(refErr, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("metadata: resolve reference: %w", refErr)
+		}
+	}
+
 	return openapi.SetAssetFieldValue200JSONResponse(
 		buildAssetValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
 			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
-			row.SetBy, row.SetAt, row.SetByUserRef),
+			// vocab.Options, not fieldRow.Options: on a write that
+			// created a term, the row the handler loaded predates it,
+			// and the response would resolve every term except the new
+			// one. See vocabularyWrite.Options.
+			row.SetBy, row.SetAt, row.SetByUserRef, vocab.Options, ref),
 	), nil
 }
 
@@ -771,6 +1003,9 @@ var _ interface {
 	SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error)
 	ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error)
 	GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error)
+	ListFieldDefaultOverrides(context.Context, openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error)
+	SetFieldDefaultOverride(context.Context, openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error)
+	DeleteFieldDefaultOverride(context.Context, openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error)
 } = (*Handler)(nil)
 
 // uuidString returns the canonical text form of a pgtype.UUID. Used
@@ -816,10 +1051,30 @@ func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.A
 
 	switch fieldType {
 	case "text", "longtext", "rich_text", "select", "tree":
+		// `tree` is here for the same reason `select` is: its value is
+		// ONE vocabulary slug. It is NOT the "NA/US/CA" path string ADR
+		// 0012 originally described — storing a path would denormalise
+		// every ancestor's slug into the value and make renaming or
+		// re-parenting an ancestor a rewrite of every descendant's
+		// stored value, which is the cascade the slug indirection
+		// exists to avoid. Slugs are unique across a field's entire
+		// option tree (NormalizeOptionsDoc → collectSlugs enforces it
+		// at full depth), so the leaf slug alone addresses the node and
+		// the path is derived at read time. See the 2026-07-31
+		// tree-storage amendment to ADR 0012.
 		if in.ValueText == nil {
 			return p, fmt.Errorf("field type %q requires value_text", fieldType)
 		}
-		p.ValueText = in.ValueText
+		// The write half of #816's boundary. `rich_text` is the one
+		// value in the system a client renders as markup, so what
+		// lands in the column is already policy-clean — see
+		// internal/richtext for why it is sanitised here AND on read.
+		//
+		// It sits inside buildUpsertParams rather than at the handler
+		// because this function is not only the API write path:
+		// ApplyAssetDefaults funnels a field default through it too,
+		// so a default carrying markup is covered by the same line.
+		p.ValueText = richtext.SanitizeValueText(fieldType, in.ValueText)
 	case "number":
 		if in.ValueNum == nil {
 			return p, fmt.Errorf("field type %q requires value_num", fieldType)
@@ -855,6 +1110,23 @@ func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.A
 		return p, fmt.Errorf("unknown field type %q", fieldType)
 	}
 	return p, nil
+}
+
+// ValueRowJSON is valueRowToJSON for callers outside this package.
+//
+// The extraction writer (app/internal/http, metaValueWriterAdapter)
+// appends its own audit rows since #830, and an audit trail whose rows
+// have two shapes depending on who wrote them is an audit trail no
+// reader can parse. So the encoder is shared rather than reimplemented.
+func ValueRowJSON(
+	text *string,
+	num *float64,
+	date pgtype.Timestamptz,
+	options []string,
+	ref pgtype.UUID,
+	fieldType string,
+) ([]byte, error) {
+	return valueRowToJSON(text, num, date, options, ref, fieldType)
 }
 
 // valueRowToJSON encodes a typed value row into a JSONB blob suitable
@@ -913,10 +1185,7 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		UpdatedAt:        r.UpdatedAt.Time,
 		ExtractionSource: &r.ExtractionSource,
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
-	}
-	if r.FieldSetID.Valid {
-		v := openapi_types.UUID(r.FieldSetID.Bytes)
-		def.FieldSetId = &v
+		OpenVocabulary:   &r.OpenVocabulary,
 	}
 	if r.DeprecatedReplacementID.Valid {
 		v := openapi_types.UUID(r.DeprecatedReplacementID.Bytes)
@@ -928,11 +1197,8 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 			def.Options = &m
 		}
 	}
-	if len(r.Source) > 0 && string(r.Source) != "null" {
-		var m map[string]any
-		if err := json.Unmarshal(r.Source, &m); err == nil {
-			def.Source = &m
-		}
+	if d := apiFieldDefault(r.DefaultValue); d != nil {
+		def.DefaultValue = d
 	}
 	return def
 }
@@ -944,14 +1210,44 @@ func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
 	return buildAssetValue(
 		r.FieldID, r.Code, r.Label, r.Type,
 		r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
-		r.SetBy, r.SetAt, r.SetByUserRef,
+		r.SetBy, r.SetAt, r.SetByUserRef, r.Options,
+		resolvedRef{ID: r.RefAssetID, Title: r.RefAssetTitle},
 	)
+}
+
+// resolvedRef is the target of a `reference` value, as the query
+// layer hands it over: the LEFT JOIN in ListAssetFieldValues, or the
+// GetReferencedAsset lookup on the upsert path.
+//
+// An invalid ID means "did not resolve" and is the ONLY presence
+// signal — Title cannot serve as one, because an asset with no title
+// is a perfectly ordinary row (assets.title defaults to empty). Not
+// resolving covers a soft-deleted target and a dangling ref alike;
+// both degrade the same way, to the bare value_ref the client already
+// holds.
+type resolvedRef struct {
+	ID    pgtype.UUID
+	Title string
 }
 
 // buildAssetValue is the single helper for assembling an
 // openapi.AssetFieldValue from sqlc-side columns. Used by both the
 // list path (joined rows) and the upsert path (where we have the
 // field metadata loaded separately).
+//
+// fieldOptions is the raw field_definition.options document. Both
+// callers already hold it — the list path joins field_definition
+// anyway, the upsert path loads the definition to validate against —
+// so resolving here costs no extra query and means no consumer can
+// forget to do it. That a consumer DID forget is why this exists
+// (#775): the picker resolved, the detail surface printed the slug.
+//
+// ref is the same idea one type further on (#817): a `reference`
+// value stores a bare UUID, and every read surface that printed it
+// raw was printing an id at a human. Both callers supply it — the
+// list path off its LEFT JOIN, the upsert path off GetReferencedAsset
+// — so, as with fieldOptions, the two endpoints cannot disagree about
+// what a reference value looks like on the wire.
 func buildAssetValue(
 	fieldID pgtype.UUID,
 	code, label, fieldType string,
@@ -963,6 +1259,8 @@ func buildAssetValue(
 	setBy string,
 	setAt pgtype.Timestamptz,
 	setByUserRef *int64,
+	fieldOptions []byte,
+	ref resolvedRef,
 ) openapi.AssetFieldValue {
 	out := openapi.AssetFieldValue{
 		FieldId:      openapi_types.UUID(fieldID.Bytes),
@@ -974,7 +1272,13 @@ func buildAssetValue(
 		SetByUserRef: setByUserRef,
 	}
 	if valueText != nil {
-		out.ValueText = valueText
+		// The read half of #816's boundary. A stored value is never
+		// trusted, because not every writer is a handler: the seed's
+		// SeedInsertAssetFieldValue goes at the table directly, and so
+		// will an import or a peer. Sanitising here is what lets the
+		// API promise every client that rich_text HTML on the wire is
+		// safe to render as markup. See internal/richtext.
+		out.ValueText = richtext.SanitizeValueText(fieldType, valueText)
 	}
 	if valueNum != nil {
 		v := float32(*valueNum)
@@ -991,6 +1295,65 @@ func buildAssetValue(
 	if valueRef.Valid {
 		ref := openapi_types.UUID(valueRef.Bytes)
 		out.ValueRef = &ref
+	}
+	if resolved := resolveValueOptions(fieldType, valueText, valueOptions, fieldOptions); len(resolved) > 0 {
+		out.ResolvedOptions = &resolved
+	}
+	// Gate on fieldType as well as ref.ID so a stray value_ref left on
+	// a non-reference field cannot start emitting a resolved target —
+	// the same narrowness resolveValueOptions applies to its own types.
+	if fieldType == "reference" && ref.ID.Valid {
+		out.ResolvedReference = &openapi.ResolvedReference{
+			Id:    openapi_types.UUID(ref.ID.Bytes),
+			Title: ref.Title,
+		}
+	}
+	return out
+}
+
+// resolveValueOptions turns the slugs a select / multi_select / tree
+// value holds into the display map the API ships. Other field types
+// hold no vocabulary slug and get nothing.
+//
+// `tree` resolves exactly like `select` — one slug out of value_text —
+// because a tree value IS a single vocabulary term; the only thing
+// that distinguishes it is that its term sits somewhere in a nested
+// options document rather than at the top level. That difference is
+// entirely resolveOptionSlugs' problem, and it shows up here only as
+// the ancestor Path this function forwards.
+func resolveValueOptions(
+	fieldType string,
+	valueText *string,
+	valueOptions []string,
+	fieldOptions []byte,
+) map[string]openapi.ResolvedOption {
+	// Same extraction the WRITE gate uses (#824). Sharing it is the
+	// point: "which types carry vocabulary slugs, and in which column"
+	// is one fact, and a reader that answered it differently from the
+	// writer is how `tree` ended up written to one column and read from
+	// another (#778).
+	slugs := vocabularySlugs(fieldType, valueText, valueOptions)
+	if len(slugs) == 0 {
+		return nil
+	}
+	hits := resolveOptionSlugs(fieldOptions, slugs)
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make(map[string]openapi.ResolvedOption, len(hits))
+	for slug, o := range hits {
+		r := openapi.ResolvedOption{
+			Label:  o.Label,
+			Status: openapi.ResolvedOptionStatus(o.Status),
+		}
+		// A single-element path says nothing the label does not, so
+		// it is omitted — which keeps every flat vocabulary's response
+		// byte-identical to what it was before tree fields resolved.
+		if len(o.Path) > 1 {
+			p := o.Path
+			r.Path = &p
+		}
+		out[slug] = r
 	}
 	return out
 }
@@ -1026,13 +1389,6 @@ func historyRowToAPI(r AssetFieldValueHistory) openapi.FieldValueHistoryEntry {
 func encodeJSON(m *map[string]any, fallback string) ([]byte, error) {
 	if m == nil || len(*m) == 0 {
 		return []byte(fallback), nil
-	}
-	return json.Marshal(*m)
-}
-
-func encodeJSONOptional(m *map[string]any) ([]byte, error) {
-	if m == nil || len(*m) == 0 {
-		return nil, nil
 	}
 	return json.Marshal(*m)
 }

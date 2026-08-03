@@ -338,7 +338,8 @@ def load_pool_manifest(path: Path) -> list[dict]:
     return doc["entries"] if isinstance(doc, dict) else doc
 
 
-def build(pack_root: Path, out_dir: Path, manifest: Path, dry_run: bool) -> int:
+def build(pack_root: Path, out_dir: Path, manifest: Path, dry_run: bool,
+          rerender: list[str] | None = None) -> int:
     """Rebuild the pool EXACTLY as described by the committed manifest.
 
     Selection is data, not a re-derived heuristic, and that is the whole
@@ -388,18 +389,37 @@ def build(pack_root: Path, out_dir: Path, manifest: Path, dry_run: bool) -> int:
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    jobs, copied = [], 0
+    # A build normally skips anything already on disk, which is what makes
+    # it cheap to re-run. The cost is that a RASTERISER fix can never reach
+    # a pool that already exists — #672's and #685's fixes both had to be
+    # applied by hand because of it. `--rerender` re-renders the named
+    # entries (output name, or a substring of the source path) whether or
+    # not the PNG is there, so a repair is a command rather than a
+    # procedure someone has to remember.
+    def wanted(e: dict) -> bool:
+        if not rerender:
+            return False
+        return any(pat == e["name"] or pat in e["source"] for pat in rerender)
+
+    jobs, copied, forced = [], 0, 0
     for e in entries:
         src, dst = pack_root / e["source"], out_dir / e["name"]
         if e["kind"] == "vector":
-            if not dst.exists():
+            if wanted(e):
+                forced += 1
+            if not dst.exists() or wanted(e):
                 jobs.append({"src": str(src), "dst": str(dst),
                              "px": e.get("render_px") or DEFAULT_RENDER_PX})
         else:
             if not dst.exists() or dst.stat().st_size != src.stat().st_size:
                 shutil.copyfile(src, dst)
             copied += 1
-    print(f"copied {copied:,} bitmaps; rendering {len(jobs):,} vectors…",
+    if rerender and not forced:
+        raise SystemExit(
+            f"FATAL: --rerender {rerender} matched no manifest entry. A repair "
+            "that silently repairs nothing is how a known-bad file ships twice.")
+    print(f"copied {copied:,} bitmaps; rendering {len(jobs):,} vectors"
+          + (f" ({forced:,} forced by --rerender)" if forced else "") + "…",
           file=sys.stderr)
     rasterize(jobs, Path(__file__).with_name("rasterize_svg.mjs"))
     return verify_pool(out_dir, expected_names={e["name"] for e in entries})
@@ -545,6 +565,11 @@ def main() -> int:
     b.add_argument("--manifest", type=Path, default=default_manifest,
                    help="pool manifest (default: seed/upgrades/kenney-hq-pool.json)")
     b.add_argument("--dry-run", action="store_true")
+    b.add_argument("--rerender", action="append", metavar="NAME_OR_SOURCE_SUBSTRING",
+                   help="re-render these entries even though the PNG exists "
+                        "(repeatable). Matches an output name exactly, or any "
+                        "source path containing the string. Use after a "
+                        "rasterize_svg.mjs fix — a plain build would skip them.")
 
     s = sub.add_parser("select", help="propose a weighted selection (prints a manifest)")
     s.add_argument("--pack", required=True, type=Path)
@@ -565,7 +590,8 @@ def main() -> int:
               file=sys.stderr)
         return 2
     if args.cmd == "build":
-        return build(args.pack, args.out, args.manifest, args.dry_run)
+        return build(args.pack, args.out, args.manifest, args.dry_run,
+                     args.rerender)
     if args.cmd == "select":
         return cmd_select(args.pack, args.limit, args.out)
     return cmd_verify(args.pack, args.pool)

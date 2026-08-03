@@ -58,13 +58,6 @@ import (
 // Worker is pure-Go (no shell-out). Stays simple, fast, and runs in
 // the same container without extra apt packages.
 
-// EPUBPayload — JSON body for a preview.ebook job.
-type EPUBPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // EPUBMetadata: Dublin Core fields lifted out of the OPF. All
 // optional — different publishers populate different subsets, and
 // hand-rolled ebooks often only set title + creator.
@@ -160,12 +153,17 @@ func (h *EPUBHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMess
 	result.Metadata = meta
 
 	if len(coverBytes) > 0 {
-		if h.variantExists(jobCtx, p.FileHash, "col") &&
-			h.variantExists(jobCtx, p.FileHash, "preview") &&
-			h.variantExists(jobCtx, p.FileHash, "screen") &&
-			h.variantExists(jobCtx, p.FileHash, "hires") {
+		if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 			result.Skipped = append(result.Skipped, "raster")
-		} else if err := h.fanCoverToLadder(jobCtx, p.AssetID, p.FileHash, coverBytes); err != nil {
+			// The rungs were already there, so nothing was rendered and
+			// nothing reached the ladder step that normally stamps the
+			// blur-up placeholder. Read one back instead of re-rendering
+			// (#827).
+			healThumbhashOnSkip(jobCtx, ladderInput{
+				Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+				AssetID: p.AssetID, Hash: p.FileHash, Kind: "ebook",
+			})
+		} else if err := h.fanCoverToLadder(jobCtx, p.AssetID, p.FileHash, coverBytes, p.Force); err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.ebook.fan_failed",
 				slog.String("asset_id", p.AssetID.String()),
 				slog.String("err", err.Error()))
@@ -479,7 +477,7 @@ func (h *EPUBHandler) stage(ctx context.Context, hash string) (string, func(), e
 	return src, cleanup, nil
 }
 
-func (h *EPUBHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, hash string, coverBytes []byte) error {
+func (h *EPUBHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, hash string, coverBytes []byte, force bool) error {
 	src, _, err := image.Decode(bytes.NewReader(coverBytes))
 	if err != nil {
 		return fmt.Errorf("decode cover: %w", err)
@@ -487,6 +485,7 @@ func (h *EPUBHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, h
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "ebook",
+		Overwrite: force,
 	})
 }
 
@@ -499,11 +498,6 @@ func (h *EPUBHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta EP
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
 	})
-}
-
-func (h *EPUBHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *EPUBHandler) markProcessing(ctx context.Context, id uuid.UUID) {

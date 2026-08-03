@@ -123,6 +123,37 @@
   /** Measured height of the chrome layer (banners + header). Drives
    *  <main>'s padding-top — see the markup for why it's measured. */
   let chromeH = $state(0);
+
+  // Publish the chrome layer's BOTTOM EDGE as --aa-chrome-bottom on the
+  // root so overlays that want to sit under the chrome (the asset
+  // viewer's windowed mode) can position against it in CSS.
+  //
+  // This lives here, not in the overlay, because this is the only place
+  // that knows what the layer contains. The viewer used to measure
+  // `document.querySelector('header')` itself and take its HEIGHT — a
+  // number that is only the chrome's bottom edge when the header is the
+  // *first* thing in the layer. Add a bar above it (the demo banner, the
+  // impersonation banner) and the viewer's top chrome slid up behind the
+  // navbar by exactly the bar's height (#688). Deriving it from the same
+  // measured box <main> already pads by means the next bar added up
+  // there is free — nothing to keep in sync, no second constant.
+  //
+  // Three inputs, and each is load-bearing:
+  //   - chromeH      — the measured layer height (bind:clientHeight
+  //                    below), so banners appearing/disappearing and the
+  //                    header reflowing between one and two rows all
+  //                    move the edge.
+  //   - chromeHidden — the layer auto-hides via translateY(-100%), which
+  //                    moves its bottom edge to 0 WITHOUT changing its
+  //                    height. Nothing re-measures on a transform, so
+  //                    this term is what makes the hide reactive
+  //                    (#628/#629).
+  //   - showChrome   — login/setup render no chrome at all; there is
+  //                    nothing to sit below.
+  $effect(() => {
+    const bottom = showChrome && !chromeHidden ? chromeH : 0;
+    document.documentElement.style.setProperty('--aa-chrome-bottom', `${bottom}px`);
+  });
 </script>
 
 <!-- `h-dvh`, not `h-screen`. Tailwind's h-screen is 100vh, which on

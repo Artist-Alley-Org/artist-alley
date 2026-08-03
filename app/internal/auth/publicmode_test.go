@@ -48,6 +48,7 @@ func TestIsPublicSurface(t *testing.T) {
 		{"/api/v1/setup/status", false, "first boot"},
 		{"/api/v1/setup/complete", false, "first boot"},
 		{"/api/v1/appearance", false, "public boot payload; the login page needs it"},
+		{"/api/v1/appearance/logo", false, "instance logo is chrome on the login page, like /appearance"},
 		{"/api/v1/build-info", false, "version banner"},
 		{"/api/v1/unsubscribe", false, "token-authed; gating 401s every link already mailed"},
 		{"/api/v1/openapi.json", false, "API reference, no data"},
@@ -84,6 +85,12 @@ var notGovernedAnonymousOps = map[string]string{
 	"POST /setup/complete": "first boot — this is what creates the admin",
 	"GET /build-info":      "version banner; no data",
 	"GET /appearance":      "public boot payload — the login page cannot render without it",
+	"GET /appearance/logo": "instance logo — chrome on the login page, same reason as /appearance. " +
+		"Discloses nothing: uploading an instance logo IS publishing it.",
+	"GET /site-text": "operator overrides of shipped UI strings (#794) — the login page is MADE of " +
+		"these strings, so a private install has to serve them for the same reason it serves " +
+		"/appearance. Discloses nothing an anonymous caller cannot read off the rendered page: " +
+		"the payload is wording, not data, and it is identical for every visitor.",
 }
 
 // TestPublicSurfaceCoversAnonymousOperations is the build-time

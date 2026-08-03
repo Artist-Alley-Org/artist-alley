@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 )
 
 type catUser struct {
@@ -56,10 +58,22 @@ type catCollection struct {
 }
 
 type catField struct {
-	Name    string   `json:"name"` // federation-stable code
-	Label   string   `json:"label"`
-	Type    string   `json:"type"`
-	Options []string `json:"options"`
+	Name  string `json:"name"` // federation-stable code
+	Label string `json:"label"`
+	Type  string `json:"type"`
+	// Options is the field's controlled vocabulary, in exactly the
+	// model the API accepts (metadata.FieldOption): either a bare slug
+	// string or the full object, and nested via children.
+	//
+	// It used to be []string, which is the entry shape all fourteen
+	// pre-existing definitions use and which round-trips unchanged
+	// through FieldOption's Unmarshal/Marshal pair. But bare strings
+	// cannot express hierarchy, so a `tree` definition was not
+	// WRITABLE from this catalogue at all — which is why no seeded
+	// instance had ever had one, and why the three-way disagreement
+	// about where a tree value is stored (#778) survived undetected:
+	// the fixture that would have caught it could not be built.
+	Options []metadata.FieldOption `json:"options"`
 	// Extraction wiring (#618). extraction_source must be one of the
 	// extractor's CanonicalField names or the definition routes nothing:
 	// the mapping query filters WHERE extraction_source != '', so an
@@ -73,12 +87,16 @@ type catField struct {
 
 // manifestAsset is the subset of a MANIFEST.json entry the seeder uses.
 type manifestAsset struct {
-	ID               string          `json:"id"`
-	AssetType        string          `json:"asset_type"`
-	Title            string          `json:"title"`
-	Description      string          `json:"description"`
-	FilePath         string          `json:"file_path"`
-	FileExtension    string          `json:"file_extension"`
+	ID            string `json:"id"`
+	AssetType     string `json:"asset_type"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	FilePath      string `json:"file_path"`
+	FileExtension string `json:"file_extension"`
+	// FileSizeBytes is advisory only — the seeder writes the size it
+	// measures off disk, not this. Coverage selection reads it to
+	// prefer cheap assets over expensive ones (#768).
+	FileSizeBytes    int64           `json:"file_size_bytes"`
 	SensitivityTier  string          `json:"sensitivity_tier"`
 	ArchiveState     string          `json:"archive_state"`
 	OwnerUsername    string          `json:"owner_username"`
@@ -107,6 +125,15 @@ type manifestPost struct {
 	Tags           []string `json:"tags"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
+
+	// Coverage-selection inputs (#768). The seeder itself does not write
+	// these — applyPosts hardcodes visibility 'org-only' and state
+	// 'published' for every post — but the catalogue carries them, and
+	// the CI coverage profile selects on them so a future seeder that
+	// DOES honour them still lands a varied fixture.
+	PostKind        string `json:"post_kind"`
+	SensitivityTier string `json:"sensitivity_tier"`
+	IsMixedType     bool   `json:"is_mixed_type"`
 }
 
 type catalogues struct {
@@ -116,10 +143,15 @@ type catalogues struct {
 	Fields      []catField
 	Assets      []manifestAsset
 	Posts       []manifestPost
+
+	// SiteRoot is kept so coverage selection can reach the bytes:
+	// whether a model declares external companions is a property of the
+	// FILE, not of the manifest row (#750), so it has to be read.
+	SiteRoot string
 }
 
 func loadCatalogues(catalogueRoot, siteRoot string) (*catalogues, error) {
-	c := &catalogues{}
+	c := &catalogues{SiteRoot: siteRoot}
 	if err := loadJSON(filepath.Join(catalogueRoot, "dataset.users.json"), &c.Users); err != nil {
 		return nil, err
 	}

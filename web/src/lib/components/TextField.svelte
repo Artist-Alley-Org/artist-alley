@@ -11,6 +11,13 @@
   // divider role and measures 1.28:1 / 1.38:1; it is correct on a card
   // edge or a table rule and wrong here. Any new control follows this,
   // and app.css states the split.
+  //
+  // type="password" delegates the control to PasswordInput, which
+  // adds the reveal toggle (#692). The input styling is passed down
+  // rather than duplicated, so the revealed and plain variants are
+  // the same box.
+
+  import PasswordInput from './PasswordInput.svelte';
 
   interface Props {
     label: string;
@@ -57,6 +64,14 @@
   const fieldId = $derived(id ?? `tf-${name ?? Math.random().toString(36).slice(2, 9)}`);
   const helperId = $derived(`${fieldId}-help`);
   const hasError = $derived(error !== null && error !== undefined && error !== '');
+  const describedBy = $derived(helper || hasError ? helperId : undefined);
+  const inputClass = $derived(
+    `block w-full rounded-md border bg-surface-elevated px-3 py-2 text-sm text-fg
+     placeholder:text-fg-muted/60
+     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface focus-visible:ring-ring
+     disabled:opacity-50 disabled:cursor-not-allowed
+     ${hasError ? 'border-danger' : 'border-border-strong'}`,
+  );
 </script>
 
 <div class="space-y-1.5">
@@ -64,28 +79,43 @@
     {label}
     {#if required}<span class="text-accent" aria-hidden="true">*</span>{/if}
   </label>
-  <!-- svelte-ignore a11y_autofocus -->
-  <input
-    id={fieldId}
-    {type}
-    {name}
-    {placeholder}
-    {autocomplete}
-    {required}
-    {disabled}
-    {minlength}
-    {maxlength}
-    {autofocus}
-    data-testid={testId}
-    aria-invalid={hasError}
-    aria-describedby={helper || hasError ? helperId : undefined}
-    bind:value
-    class="block w-full rounded-md border bg-surface-elevated px-3 py-2 text-sm text-fg
-           placeholder:text-fg-muted/60
-           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface focus-visible:ring-ring
-           disabled:opacity-50 disabled:cursor-not-allowed
-           {hasError ? 'border-danger' : 'border-border-strong'}"
-  />
+  {#if type === 'password'}
+    <PasswordInput
+      id={fieldId}
+      {name}
+      {placeholder}
+      {autocomplete}
+      {required}
+      {disabled}
+      {minlength}
+      {maxlength}
+      {autofocus}
+      {testId}
+      {inputClass}
+      ariaInvalid={hasError}
+      ariaDescribedby={describedBy}
+      bind:value
+    />
+  {:else}
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      id={fieldId}
+      {type}
+      {name}
+      {placeholder}
+      {autocomplete}
+      {required}
+      {disabled}
+      {minlength}
+      {maxlength}
+      {autofocus}
+      data-testid={testId}
+      aria-invalid={hasError}
+      aria-describedby={describedBy}
+      bind:value
+      class={inputClass}
+    />
+  {/if}
   {#if hasError}
     <p id={helperId} class="text-xs text-danger" role="alert">{error}</p>
   {:else if helper}

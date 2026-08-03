@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
+	_ "image/jpeg" // DecodeConfig for the fixture-shape assertion
 	"os"
 	"path/filepath"
 	"testing"
@@ -133,13 +135,6 @@ func TestExtractor_FullExif_PopulatesEveryField(t *testing.T) {
 	if res.Orientation != 1 {
 		t.Errorf("Orientation = %d, want 1", res.Orientation)
 	}
-	// Dimensions sniffed via image.DecodeConfig
-	if got, ok := res.Fields[metadata.FieldPixelWidth]; !ok || got.Num != 64 {
-		t.Errorf("PixelWidth = %v, want 64", got)
-	}
-	if got, ok := res.Fields[metadata.FieldPixelHeight]; !ok || got.Num != 64 {
-		t.Errorf("PixelHeight = %v, want 64", got)
-	}
 	// TODO: FNumber / ISO / FocalLength / LensModel live in the
 	// EXIF sub-IFD which Pillow's getexif() doesn't write by
 	// default. Production code path handles them (see extractTag
@@ -157,6 +152,7 @@ func TestExtractor_OrientationFixtures(t *testing.T) {
 		{"orientation_1.jpg", 1},
 		{"orientation_6.jpg", 6},
 		{"orientation_8.jpg", 8},
+		{"orientation_6_landscape.jpg", 6},
 	} {
 		t.Run(c.file, func(t *testing.T) {
 			res, err := extract(t, c.file)
@@ -167,6 +163,97 @@ func TestExtractor_OrientationFixtures(t *testing.T) {
 				t.Errorf("Orientation = %d, want %d", res.Orientation, c.want)
 			}
 		})
+	}
+}
+
+// TestFixture_orientation_6_landscape_IsActuallyRotated is a test ABOUT
+// A FIXTURE, and it earns its place.
+//
+// The three orientation_N.jpg fixtures are 64x64. A square image
+// rotated a quarter turn has the same width as one that was never
+// rotated, so every assertion they can carry is satisfied by a pipeline
+// that rotates, one that doesn't, and one that rotates twice. That is
+// the shape of #778 and #791 — a fixture nothing exercised, rotting in
+// three directions while its suite stayed green — and it is why the
+// pre-rotation pixel_width write (#765) survived in the tree.
+//
+// So before anything asserts an OUTCOME against this fixture, this
+// asserts the fixture itself has the property under test: stored grid
+// landscape, tag says quarter-turn, displayed shape therefore portrait.
+// If a future regeneration flattens it back to a square, this fails
+// here — loudly, at the source — rather than silently disarming the
+// tests downstream in preview/ that depend on it.
+func TestFixture_orientation_6_landscape_IsActuallyRotated(t *testing.T) {
+	raw := loadFixture(t, "orientation_6_landscape.jpg")
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("decode fixture config: %v", err)
+	}
+	if cfg.Width <= cfg.Height {
+		t.Fatalf("fixture stored grid is %dx%d — it must be LANDSCAPE for the "+
+			"rotation to be observable; a square proves nothing (#765)", cfg.Width, cfg.Height)
+	}
+	if cfg.Width != 96 || cfg.Height != 48 {
+		t.Errorf("fixture stored grid is %dx%d, want 96x48 — the downstream "+
+			"assertions name that pair", cfg.Width, cfg.Height)
+	}
+
+	res, err := exif.New().Extract(context.Background(), bytes.NewReader(raw), "image/jpeg")
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if res.Orientation != 6 {
+		t.Fatalf("fixture Orientation tag = %d, want 6 — without the tag the "+
+			"pipeline has nothing to rotate by and every downstream assertion "+
+			"passes for the wrong reason (#765)", res.Orientation)
+	}
+}
+
+// TestExtractor_NeverEmitsPixelDimensions is the #765 regression guard.
+//
+// pixel_width / pixel_height are owned by the preview pipeline
+// (asset/pixeldims, set_by='computed'), which measures the ladder
+// SOURCE — the image AFTER orientation is applied, and for a font, a
+// waveform or a turntable the only image there is. This extractor
+// reports the stored grid, which is a different quantity wearing the
+// same name (ADR 0071 §6).
+//
+// Asserted across the WHOLE corpus, not one file: the write that was
+// removed was unconditional, so a single-fixture assertion would go
+// green against a re-introduction guarded by any condition at all.
+func TestExtractor_NeverEmitsPixelDimensions(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "testdata"))
+	if err != nil {
+		t.Fatalf("read fixture dir: %v", err)
+	}
+	var checked int
+	for _, ent := range entries {
+		if ent.IsDir() || filepath.Ext(ent.Name()) != ".jpg" {
+			continue
+		}
+		checked++
+		t.Run(ent.Name(), func(t *testing.T) {
+			res, err := extract(t, ent.Name())
+			if err != nil && !errors.Is(err, metadata.ErrNoMetadata) &&
+				!errors.Is(err, metadata.ErrMalformedFile) {
+				t.Fatalf("extract: %v", err)
+			}
+			for _, f := range []metadata.CanonicalField{
+				metadata.FieldPixelWidth, metadata.FieldPixelHeight,
+			} {
+				if got, ok := res.Fields[f]; ok {
+					t.Errorf("extractor emitted %s = %v — the applier writes it with "+
+						"set_by='exif' and extraction_mode='replace', so on the upload "+
+						"path (preview enqueued first, extract second) it OVERWRITES the "+
+						"computed pair and a portrait phone photo tiles as landscape (#765)",
+						f, got.Num)
+				}
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no .jpg fixtures found — this test asserted nothing")
 	}
 }
 
@@ -219,6 +306,15 @@ func TestExtractor_MalformedTruncated_ReturnsErrMalformedFile_NoPanic(t *testing
 	// must surface ErrMalformedFile cleanly. Either outcome is
 	// acceptable; what's NOT acceptable is the test process
 	// crashing.
+	//
+	// ErrNoMetadata joined the acceptable set in #765. This fixture is
+	// the first half of a JPEG that never carried EXIF, so "valid
+	// enough container, nothing extractable" is the honest verdict.
+	// It used to come back nil only because the dimension sniff read
+	// the still-intact SOF header and put two fields in the Result —
+	// the extractor reported "I found metadata" about a file it had
+	// found no metadata in. Removing that write made the outcome match
+	// the file.
 	_, err := extract(t, "malformed_truncated.jpg")
 	if err == nil {
 		// Some truncations are still partially decodable —
@@ -226,8 +322,10 @@ func TestExtractor_MalformedTruncated_ReturnsErrMalformedFile_NoPanic(t *testing
 		t.Log("truncated file produced no error — unexpected but not failing")
 		return
 	}
-	if !errors.Is(err, metadata.ErrMalformedFile) && !errors.Is(err, metadata.ErrLibraryPanic) {
-		t.Errorf("got %v, want ErrMalformedFile or ErrLibraryPanic", err)
+	if !errors.Is(err, metadata.ErrMalformedFile) &&
+		!errors.Is(err, metadata.ErrLibraryPanic) &&
+		!errors.Is(err, metadata.ErrNoMetadata) {
+		t.Errorf("got %v, want ErrMalformedFile, ErrLibraryPanic or ErrNoMetadata", err)
 	}
 }
 

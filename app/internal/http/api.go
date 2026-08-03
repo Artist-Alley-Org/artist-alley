@@ -44,6 +44,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
+	"github.com/mscrnt/artist-alley/app/internal/sitetext"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -69,6 +70,7 @@ import (
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
 	rawpkg "github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
 	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
+	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
@@ -86,6 +88,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/requests"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 	"github.com/mscrnt/artist-alley/app/internal/scheduledactions"
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
@@ -128,74 +131,76 @@ type apiServer struct {
 	// GetBuildInfo for the admin About page (#406).
 	version string
 
-	auth              *auth.Handler
-	resourceType      *assettype.Handler
-	storage           *storage.Handler
-	assets            *assets.Handler
-	metadata          *metadata.Handler
-	collections       *collections.Handler
-	posts             *posts.Handler
-	teams             *teams.Handler
-	users             *users.Handler
-	social            *social.Handler
-	setup             *setup.Handler
-	workflow          *workflow.Handler
-	sysconfigH        *sysconfig.Handler
-	i18n              *i18n.Handler
-	jobs              *jobs.HTTPHandler
-	brushpacks        *brushpacks.Handler
-	audit             *audit.HTTPHandler
-	scheduledActions  *scheduledactions.HTTPHandler
-	licensing         *licensing.Handler
-	userprefs         *userprefs.Handler
-	aiAdmin           *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
-	aiBridge          ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
-	aiRouter          *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
-	mcpRegistry       *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
-	mcpDispatch       *mcpdispatch.Dispatcher
-	mcpHealth         *mcpdispatch.HealthChecker
-	mcpProviders      *mcpProviderTable
-	mcpAdmin          *mcpadmin.Handler
-	notifications     *notifications.Handler
-	messages          *messages.Handler
-	activities        *activities.Writer
-	activitiesAdmin   *activities.AdminHandler
-	peers             *peer.Registry
-	peersAdmin        *peer.AdminHandler
-	peersHandshake    *peer.AdminHandshakeHandler
-	peersPublic       *peer.PublicHandler
-	fedIdentity       *identity.Manager
-	fedEngine         *peer.Engine
-	directories       *directory.Registry
-	directoriesAdmin  *directory.AdminHandler
-	directoryPoller   *directory.Poller
-	p2pRegistry       *p2p.Registry
-	p2pAdmin          *p2p.AdminHandler
-	sharesRegistry    *shares.Registry
-	sharesAdmin       *shares.AdminHandler
-	sharesSweeper     *shares.Sweeper
-	inboxHandler      *inbox.Handler
-	inboxDispatcher   *inbox.Dispatcher
-	outboxDispatcher  *outbox.Dispatcher
-	outboxDelivery    *outbox.Worker
-	outboxAdmin       *outbox.AdminHandler
-	userKeysSweeper   *userkeys.Sweeper
-	userKeysAdmin     *userkeys.AdminHandler
-	capabilitySweeper *auth.CapabilitySweeper
-	requests          *requests.Handler
-	requestsHTTP      *requests.HTTPHandler
-	featuredHTTP      *featured.HTTPHandler
-	featuredDomain    *featured.Handler
-	subtitles         *subtitles.Handler
-	subtitlesHTTP     *subtitles.HTTPHandler
-	aieditHTTP        *aiedit.HTTPHandler
-	metaCounter       *assetmetadata.Counter
-	metaAdmin         *assetmetadata.AdminHandler
-	jobsSvc           *jobs.Service
-	jobsAdmin         *jobs.AdminHandler
-	storageAdmin      *storage.AdminHandler
-	sysCfg            *sysconfig.Store
-	seedAdmin         *seed.AdminHandler
+	auth               *auth.Handler
+	resourceType       *assettype.Handler
+	storage            *storage.Handler
+	assets             *assets.Handler
+	metadata           *metadata.Handler
+	collections        *collections.Handler
+	posts              *posts.Handler
+	teams              *teams.Handler
+	users              *users.Handler
+	social             *social.Handler
+	setup              *setup.Handler
+	workflow           *workflow.Handler
+	sysconfigH         *sysconfig.Handler
+	i18n               *i18n.Handler
+	jobs               *jobs.HTTPHandler
+	brushpacks         *brushpacks.Handler
+	audit              *audit.HTTPHandler
+	scheduledActions   *scheduledactions.HTTPHandler
+	licensing          *licensing.Handler
+	userprefs          *userprefs.Handler
+	aiAdmin            *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
+	aiBridge           ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter           *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
+	mcpRegistry        *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
+	mcpDispatch        *mcpdispatch.Dispatcher
+	mcpHealth          *mcpdispatch.HealthChecker
+	mcpProviders       *mcpProviderTable
+	mcpAdmin           *mcpadmin.Handler
+	notifications      *notifications.Handler
+	messages           *messages.Handler
+	activities         *activities.Writer
+	activitiesAdmin    *activities.AdminHandler
+	peers              *peer.Registry
+	peersAdmin         *peer.AdminHandler
+	peersHandshake     *peer.AdminHandshakeHandler
+	peersPublic        *peer.PublicHandler
+	fedIdentity        *identity.Manager
+	fedEngine          *peer.Engine
+	directories        *directory.Registry
+	directoriesAdmin   *directory.AdminHandler
+	directoryPoller    *directory.Poller
+	p2pRegistry        *p2p.Registry
+	p2pAdmin           *p2p.AdminHandler
+	sharesRegistry     *shares.Registry
+	sharesAdmin        *shares.AdminHandler
+	sharesSweeper      *shares.Sweeper
+	inboxHandler       *inbox.Handler
+	inboxDispatcher    *inbox.Dispatcher
+	outboxDispatcher   *outbox.Dispatcher
+	outboxDelivery     *outbox.Worker
+	outboxAdmin        *outbox.AdminHandler
+	userKeysSweeper    *userkeys.Sweeper
+	userKeysAdmin      *userkeys.AdminHandler
+	capabilitySweeper  *auth.CapabilitySweeper
+	requests           *requests.Handler
+	requestsHTTP       *requests.HTTPHandler
+	featuredHTTP       *featured.HTTPHandler
+	featuredDomain     *featured.Handler
+	sitetextHTTP       *sitetext.HTTPHandler
+	emailTemplatesHTTP *email.HTTPHandler
+	subtitles          *subtitles.Handler
+	subtitlesHTTP      *subtitles.HTTPHandler
+	aieditHTTP         *aiedit.HTTPHandler
+	metaCounter        *assetmetadata.Counter
+	metaAdmin          *assetmetadata.AdminHandler
+	jobsSvc            *jobs.Service
+	jobsAdmin          *jobs.AdminHandler
+	storageAdmin       *storage.AdminHandler
+	sysCfg             *sysconfig.Store
+	seedAdmin          *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
 	// minimal server without the search subsystem).
@@ -293,7 +298,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		social:           social.NewHandler(pool, logger, cacheReg),
 		setup:            setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:         workflow.NewHandler(pool, logger, cacheReg),
-		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode),
+		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode, storageSvc),
 		i18n:             i18n.NewHandler(logger),
 		jobs:             jobs.NewHTTPHandler(jobSvc, logger),
 		jobsSvc:          jobSvc,
@@ -785,7 +790,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		metaLookup := metaAssetAdapter{pool: pool}
 		metaCfg := metaConfigAdapter{pool: pool}
 		metaValues := metaValueReaderAdapter{pool: pool}
-		metaWriter := metaValueWriterAdapter{pool: pool}
+		metaWriter := metaValueWriterAdapter{pool: pool, meta: s.metadata, logger: logger}
 		metaFailures := metaFailureAdapter{pool: pool}
 		metaApplier := assetmetadata.NewApplier(metaCfg, metaValues, metaWriter, metaFailures)
 		// Phase 1.18.A-2 follow-up B (commit 2) — extraction
@@ -1257,6 +1262,26 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// system.admin-gated CRUD over the featured_items table.
 	s.featuredDomain = featured.NewHandler(pool, logger)
 	s.featuredHTTP = featured.NewHTTPHandler(s.featuredDomain, logger)
+
+	// Operator overrides of shipped UI strings (#794, ADR 0081 §1).
+	// The whole map lives behind ONE cache entry registered with the
+	// process registry, so a write on this instance invalidates locally
+	// and pg_notifies every peer — the boot payload updates without a
+	// restart on any of them.
+	s.sitetextHTTP = sitetext.NewHTTPHandler(
+		sitetext.NewHandler(pool, sitetext.NewCache(cacheReg, logger), logger),
+		logger,
+	)
+
+	// Operator-authored email templates (#795, ADR 0081 §2). One store
+	// is both the render-time override source (installed process-wide so
+	// email.Render resolves against it) AND the admin HTTP surface — a
+	// single cache registration, so a save invalidates the same entry
+	// the next send reads. Installing here rather than in server.go keeps
+	// the cache registered exactly once.
+	emailTemplateStore := email.NewTemplateStore(pool, email.NewCache(cacheReg, logger), logger)
+	email.UseTemplateStore(emailTemplateStore)
+	s.emailTemplatesHTTP = email.NewHTTPHandler(emailTemplateStore, logger)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -2060,9 +2085,13 @@ func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *ca
 // sysconfigHandlerWithAudit mirrors usersHandlerWithAudit — wires
 // the audit recorder so Phase 1.17.D's RecordChange call sites in
 // the Update* config handlers have somewhere to emit to.
-func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, cacheReg *cache.Registry, demoMode bool) *sysconfig.Handler {
+func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, cacheReg *cache.Registry, demoMode bool, storageSvc *storage.Service) *sysconfig.Handler {
 	h := sysconfig.NewHTTPHandler(pool, store, logger)
 	h.SetAuditRecorder(auditRec)
+	// #517 — the instance logo is the one setting whose value is a
+	// blob, so this handler needs the byte plane as well as the
+	// config store.
+	h.SetStorage(storageSvc)
 	// #445 — the public-mode write invalidates the auth middleware's
 	// cached read of the flag. Without this the toggle appears inert
 	// until the cache entry ages out.
@@ -2744,6 +2773,15 @@ func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRe
 func (s *apiServer) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
 	return s.metadata.SetFieldExtraction(ctx, req)
 }
+func (s *apiServer) ListFieldDefaultOverrides(ctx context.Context, req openapi.ListFieldDefaultOverridesRequestObject) (openapi.ListFieldDefaultOverridesResponseObject, error) {
+	return s.metadata.ListFieldDefaultOverrides(ctx, req)
+}
+func (s *apiServer) SetFieldDefaultOverride(ctx context.Context, req openapi.SetFieldDefaultOverrideRequestObject) (openapi.SetFieldDefaultOverrideResponseObject, error) {
+	return s.metadata.SetFieldDefaultOverride(ctx, req)
+}
+func (s *apiServer) DeleteFieldDefaultOverride(ctx context.Context, req openapi.DeleteFieldDefaultOverrideRequestObject) (openapi.DeleteFieldDefaultOverrideResponseObject, error) {
+	return s.metadata.DeleteFieldDefaultOverride(ctx, req)
+}
 func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.metadata.GetAssetFields(ctx, req)
 }
@@ -3008,6 +3046,30 @@ func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAd
 	return s.requestsHTTP.DecideAdminRequest(ctx, req)
 }
 
+// --- operator string overrides (#794) -------------------------------------
+
+func (s *apiServer) GetSiteText(ctx context.Context, req openapi.GetSiteTextRequestObject) (openapi.GetSiteTextResponseObject, error) {
+	return s.sitetextHTTP.GetSiteText(ctx, req)
+}
+func (s *apiServer) SetSiteText(ctx context.Context, req openapi.SetSiteTextRequestObject) (openapi.SetSiteTextResponseObject, error) {
+	return s.sitetextHTTP.SetSiteText(ctx, req)
+}
+func (s *apiServer) DeleteSiteText(ctx context.Context, req openapi.DeleteSiteTextRequestObject) (openapi.DeleteSiteTextResponseObject, error) {
+	return s.sitetextHTTP.DeleteSiteText(ctx, req)
+}
+
+// --- operator-authored email templates (#795) -----------------------------
+
+func (s *apiServer) GetEmailTemplates(ctx context.Context, req openapi.GetEmailTemplatesRequestObject) (openapi.GetEmailTemplatesResponseObject, error) {
+	return s.emailTemplatesHTTP.GetEmailTemplates(ctx, req)
+}
+func (s *apiServer) SetEmailTemplate(ctx context.Context, req openapi.SetEmailTemplateRequestObject) (openapi.SetEmailTemplateResponseObject, error) {
+	return s.emailTemplatesHTTP.SetEmailTemplate(ctx, req)
+}
+func (s *apiServer) DeleteEmailTemplate(ctx context.Context, req openapi.DeleteEmailTemplateRequestObject) (openapi.DeleteEmailTemplateResponseObject, error) {
+	return s.emailTemplatesHTTP.DeleteEmailTemplate(ctx, req)
+}
+
 // --- featured content (GitHub #341) ---------------------------------------
 
 func (s *apiServer) GetPublicFeaturedRail(ctx context.Context, req openapi.GetPublicFeaturedRailRequestObject) (openapi.GetPublicFeaturedRailResponseObject, error) {
@@ -3119,6 +3181,18 @@ func (s *apiServer) GetAppearanceConfig(ctx context.Context, req openapi.GetAppe
 }
 func (s *apiServer) UpdateAppearanceConfig(ctx context.Context, req openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
 	return s.sysconfigH.UpdateAppearanceConfig(ctx, req)
+}
+func (s *apiServer) UploadInstanceLogo(ctx context.Context, req openapi.UploadInstanceLogoRequestObject) (openapi.UploadInstanceLogoResponseObject, error) {
+	return s.sysconfigH.UploadInstanceLogo(ctx, req)
+}
+func (s *apiServer) SelectInstanceLogo(ctx context.Context, req openapi.SelectInstanceLogoRequestObject) (openapi.SelectInstanceLogoResponseObject, error) {
+	return s.sysconfigH.SelectInstanceLogo(ctx, req)
+}
+func (s *apiServer) DeleteInstanceLogo(ctx context.Context, req openapi.DeleteInstanceLogoRequestObject) (openapi.DeleteInstanceLogoResponseObject, error) {
+	return s.sysconfigH.DeleteInstanceLogo(ctx, req)
+}
+func (s *apiServer) GetPublicInstanceLogo(ctx context.Context, req openapi.GetPublicInstanceLogoRequestObject) (openapi.GetPublicInstanceLogoResponseObject, error) {
+	return s.sysconfigH.GetPublicInstanceLogo(ctx, req)
 }
 func (s *apiServer) GetPublicPreviewLadder(ctx context.Context, req openapi.GetPublicPreviewLadderRequestObject) (openapi.GetPublicPreviewLadderResponseObject, error) {
 	return s.sysconfigH.GetPublicPreviewLadder(ctx, req)
@@ -4750,8 +4824,17 @@ type metaConfigAdapter struct {
 }
 
 func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmetadata.FieldExtractionConfig, error) {
+	// type + options ride along because the applier's write is
+	// type-dependent: a select / tree / multi_select target stores a
+	// vocabulary SLUG resolved out of options, not the label the file
+	// carried, and a reference target is refused outright.
+	//
+	// open_vocabulary decides what happens to a term the vocabulary
+	// does not have — dropped with a failure row on a closed field,
+	// created on an open one (#830). Without it here the applier cannot
+	// tell the two apart.
 	rows, err := a.pool.Query(ctx, `
-		SELECT id, extraction_source, extraction_mode
+		SELECT id, extraction_source, extraction_mode, type, options, open_vocabulary
 		  FROM field_definition
 		 WHERE extraction_source != ''
 	`)
@@ -4762,17 +4845,23 @@ func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmet
 	out := []assetmetadata.FieldExtractionConfig{}
 	for rows.Next() {
 		var (
-			id     pgtype.UUID
-			source string
-			mode   string
+			id        pgtype.UUID
+			source    string
+			mode      string
+			fieldType string
+			options   []byte
+			open      bool
 		)
-		if err := rows.Scan(&id, &source, &mode); err != nil {
+		if err := rows.Scan(&id, &source, &mode, &fieldType, &options, &open); err != nil {
 			return nil, err
 		}
 		out = append(out, assetmetadata.FieldExtractionConfig{
-			FieldID: uuid.UUID(id.Bytes),
-			Source:  assetmetadata.CanonicalField(source),
-			Mode:    assetmetadata.ExtractionMode(mode),
+			FieldID:        uuid.UUID(id.Bytes),
+			Source:         assetmetadata.CanonicalField(source),
+			Mode:           assetmetadata.ExtractionMode(mode),
+			FieldType:      fieldType,
+			Options:        options,
+			OpenVocabulary: open,
 		})
 	}
 	return out, rows.Err()
@@ -4787,12 +4876,23 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 		valText *string
 		valNum  *float64
 		valDate pgtype.Timestamptz
+		valOpts []string
+		setBy   string
 	)
+	// set_by rides along because the applier's skip_if_set rule is a
+	// provenance check, not a presence check (#793). Selecting the
+	// three value columns and not this one is what made a default
+	// indistinguishable from a human's edit.
+	//
+	// value_options joins them with #830. Without it a multi_select
+	// row read back empty, so skip_if_set never fired and the
+	// equal-value short-circuit never hit — every extraction pass over
+	// the same file would have rewritten the same keywords.
 	err := a.pool.QueryRow(ctx, `
-		SELECT value_text, value_num, value_date
+		SELECT value_text, value_num, value_date, value_options, set_by
 		  FROM asset_field_value
 		 WHERE asset_id = $1 AND field_id = $2
-	`, assetID, fieldID).Scan(&valText, &valNum, &valDate)
+	`, assetID, fieldID).Scan(&valText, &valNum, &valDate, &valOpts, &setBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return assetmetadata.FieldValueSnapshot{}, false, nil
@@ -4800,8 +4900,10 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 		return assetmetadata.FieldValueSnapshot{}, false, err
 	}
 	out := assetmetadata.FieldValueSnapshot{
-		ValueText: valText,
-		ValueNum:  valNum,
+		ValueText:    valText,
+		ValueNum:     valNum,
+		ValueOptions: valOpts,
+		SetBy:        setBy,
 	}
 	if valDate.Valid {
 		t := valDate.Time
@@ -4812,39 +4914,132 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 
 type metaValueWriterAdapter struct {
 	pool *pgxpool.Pool
+	// meta is held only for cache invalidation: a write that CREATES a
+	// vocabulary term has changed a field definition, and every cached
+	// copy of that definition — including the extraction-config list
+	// this very pipeline reads — is now one write old.
+	meta   *metadata.Handler
+	logger *slog.Logger
 }
 
+// WriteAssetFieldValue persists one extraction-derived value.
+//
+// Bypasses the metadata.Handler HTTP shape (which checks identity
+// caps) and goes at the sqlc queries directly — extraction is
+// system-owned, there is no caller identity to check against. It does
+// NOT bypass the transaction the API path uses, and since #830 it runs
+// the same three statements in it:
+//
+//	term creation (open vocabularies only) → upsert → history append
+//
+// One transaction because they are one fact. Two would let an asset
+// end up holding a slug for a term that no longer exists, or an audit
+// row describing a write that rolled back.
 func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p assetmetadata.WriteAssetFieldValueParams) error {
-	// Direct UPSERT — bypass the metadata.Handler HTTP shape
-	// (which checks identity caps). Extraction is system-owned;
-	// there's no caller identity to check against.
-	var (
-		valText *string
-		valNum  *float64
-		valDate pgtype.Timestamptz
-	)
+	pgAsset := pgtype.UUID{Bytes: p.AssetID, Valid: true}
+	pgField := pgtype.UUID{Bytes: p.FieldID, Valid: true}
+
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("metadata extraction: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := metadata.New(tx)
+
+	upsert := metadata.UpsertAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+		SetBy:   p.SetBy,
+	}
+	var created []string
 	switch p.Value.Kind {
 	case assetmetadata.ValueKindText:
 		s := p.Value.Text
-		valText = &s
+		// Extraction reads whatever an uploaded file's IPTC/XMP block
+		// says, which is attacker-controlled bytes. No shipped field
+		// wires extraction to a rich_text field today, but
+		// writableFieldTypes permits it, so the write side is closed
+		// here too rather than left to the read side alone (#816).
+		upsert.ValueText = richtext.SanitizeValueText(p.FieldType, &s)
 	case assetmetadata.ValueKindNum:
 		n := p.Value.Num
-		valNum = &n
+		upsert.ValueNum = &n
 	case assetmetadata.ValueKindTime:
-		valDate = pgtype.Timestamptz{Time: p.Value.Time, Valid: true}
+		upsert.ValueDate = pgtype.Timestamptz{Time: p.Value.Time, Valid: true}
+	case assetmetadata.ValueKindTextList:
+		upsert.ValueOptions = p.Value.Options
+		if p.OpenVocabulary {
+			// Entries the applier could not resolve are still the
+			// file's own words. This turns them into terms — under a
+			// row lock, against the LIVE options document, so two
+			// concurrent extract jobs adding different keywords to the
+			// same field both keep theirs.
+			res, ensureErr := metadata.EnsureOpenVocabularyTerms(ctx, q, pgField, p.Value.Options)
+			if ensureErr != nil {
+				return fmt.Errorf("metadata extraction: vocabulary: %w", ensureErr)
+			}
+			upsert.ValueOptions = res.Slugs
+			created = res.Created
+		}
 	}
-	_, err := a.pool.Exec(ctx, `
-		INSERT INTO asset_field_value
-		    (asset_id, field_id, value_text, value_num, value_date, set_by, set_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT (asset_id, field_id) DO UPDATE SET
-		    value_text = EXCLUDED.value_text,
-		    value_num  = EXCLUDED.value_num,
-		    value_date = EXCLUDED.value_date,
-		    set_by     = EXCLUDED.set_by,
-		    set_at     = NOW()
-	`, p.AssetID, p.FieldID, valText, valNum, valDate, p.SetBy)
-	return err
+
+	// The previous value, for the audit row's old_value. Read inside
+	// the tx and before the upsert, which is the only order in which
+	// it is the value being replaced.
+	var oldJSON []byte
+	prev, err := q.GetAssetFieldValue(ctx, metadata.GetAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+	})
+	switch {
+	case err == nil:
+		oldJSON, _ = metadata.ValueRowJSON(prev.ValueText, prev.ValueNum, prev.ValueDate,
+			prev.ValueOptions, prev.ValueRef, p.FieldType)
+	case errors.Is(err, pgx.ErrNoRows):
+		// First value on this field. old_value stays NULL.
+	default:
+		return fmt.Errorf("metadata extraction: load previous: %w", err)
+	}
+
+	row, err := q.UpsertAssetFieldValue(ctx, upsert)
+	if err != nil {
+		return fmt.Errorf("metadata extraction: upsert: %w", err)
+	}
+
+	// The audit history. It is the ONLY surface on which an operator
+	// can see that `iptc` and not a person put a value on an asset, so
+	// an extraction that writes silently is an extraction nobody can
+	// review. changed_by_user_ref stays NULL: no human did this.
+	newJSON, _ := metadata.ValueRowJSON(row.ValueText, row.ValueNum, row.ValueDate,
+		row.ValueOptions, row.ValueRef, p.FieldType)
+	if err := q.AppendAssetFieldValueHistory(ctx, metadata.AppendAssetFieldValueHistoryParams{
+		AssetID:  pgAsset,
+		FieldID:  pgField,
+		OldValue: oldJSON,
+		NewValue: newJSON,
+		SetBy:    p.SetBy,
+	}); err != nil {
+		return fmt.Errorf("metadata extraction: append history: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("metadata extraction: commit: %w", err)
+	}
+
+	if len(created) > 0 && a.meta != nil {
+		// After the commit — a cache dropped before the write lands
+		// repopulates with the pre-write document.
+		a.meta.InvalidateFieldVocabulary(ctx, pgField)
+		if a.logger != nil {
+			a.logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
+				slog.String("source", "extraction"),
+				slog.String("field_id", uuid.UUID(pgField.Bytes).String()),
+				slog.Int("count", len(created)),
+				slog.String("terms", strings.Join(created, ",")),
+			)
+		}
+	}
+	return nil
 }
 
 // metaExtractEnqueuer adapts jobs.Service into the

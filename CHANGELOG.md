@@ -7,6 +7,803 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.8.0] — 2026-08-03 — Operator configuration: field vocabularies, tree editor, site text, and email templates
+
+### Security
+
+- **postcss bumped past a path-traversal advisory.** The web build's copy of `postcss`
+  was 8.5.17, which auto-loads source maps in a way that can be pointed at files outside
+  the project. Build-time only — nothing shipped to a browser was affected, and an
+  instance running artist-alley was never exposed — but it is a dependency of the tool
+  that produces what does ship. Now 8.5.25 (#848). No-spec-impact.
+
+- **SSO provider credentials are no longer readable.** `GET /admin/system/auth`
+  returned each provider's whole configuration blob verbatim — which is where the
+  OAuth client secret, the LDAP bind password and the SAML service-provider private
+  key live. Setting one of those needs `system.auth.write`; reading the endpoint only
+  needs `system.config.read`, so the narrower write capability was protecting nothing.
+  The three secrets are now write-only: the response carries `client_secret_set`,
+  `bind_password_set` and `sp_private_key_set` booleans and never the values, to any
+  capability, `system.admin` included. Everything that is not a credential still comes
+  back in full — including the OAuth client ID, the LDAP bind DN and the IdP
+  certificate, which look like secrets and are not (#718).
+
+  The blob was free-form, and that is the part that got fixed rather than patched.
+  Denylisting the field names we know today fails open on the first one somebody adds,
+  so `config` is now a closed, typed, per-kind schema — OAuth, LDAP and SAML fields
+  named after their own protocol vocabulary, with no free-form remainder in which a
+  credential could hide. The AI provider record's `config` had the identical shape and
+  is closed the same way; #711 had made its `api_key` write-only but left the map
+  beside it returned in full.
+
+  Two knock-on changes come with it. Saving the auth settings now merges each
+  provider's stored secrets in from the database when the request omits them (or sends
+  them empty), because the admin page can no longer echo back what it never received —
+  without the merge, the first display-name edit would have wiped every stored
+  credential. And a failure to read the current settings during that save now aborts
+  the write instead of being tolerated, since it is the merge input rather than only an
+  audit record. The auth page grew the per-provider fields it never had; a configured
+  secret shows as "configured" and stays untouched unless you type a new one.
+  No-spec-impact.
+
+### Added
+
+- **Metadata field administration is now a grantable capability.** The field-management
+  surface (Admin → Content → Fields) has always accepted either `fields.admin` or
+  `system.admin`, but `fields.admin` was never a real row in the capabilities table, so
+  the grant tables' foreign key rejected any attempt to hand it out — in practice field
+  admin was superuser-only, with no way to delegate it. `fields.admin` now exists and is
+  granted to the built-in Admin role, so an operator can give a non-superuser role the
+  ability to create, edit, and delete field definitions without also handing over the
+  whole install (#804). No-spec-impact.
+
+- **The emails this instance sends can now be rewritten without forking.** Every
+  transactional email — the verify-your-address message, the "send a test email"
+  check, the saved-search and activity digests, the catch-all notification — rendered
+  from a template compiled into the binary, so an operator who wanted to change a
+  subject line or reword a body had no way to. Admin → Content → **Email templates**
+  now lists each email with what it ships as, an editor for the subject, the plain-text
+  body and the HTML body, the exact set of fields that email makes available, a live
+  preview rendered against sample values in a sandboxed frame, and Revert. Your version
+  replaces the shipped one on the next send — on this instance and on a second instance
+  sharing the database, no restart (#795, ADR 0081 §2).
+
+  A template may only reference the fields listed for its email — a small, typed
+  view-model of strings, numbers and the odd list of rows, assembled per event. That
+  list is the safety boundary: a template that names a field the email does not carry is
+  refused **when you save it**, with the field named, rather than quietly rendering to
+  nothing when the mail goes out. And if an override ever does fail at send time, the
+  shipped template renders in its place so the mail still goes. This closes the
+  operator-overrides epic (#519); locale-specific templates (#289) and email branding
+  remain future work.
+
+- **Any wording the interface ships with can now be changed without forking.** Every
+  visible string came from a catalogue compiled into the build, so an operator who
+  wanted "Collections" to read "Libraries" — or who simply wanted to fix confusing
+  wording — had to fork the project and rebuild it. Admin → Content → **Site text**
+  lists all ~2,150 strings beside what they ship as, with search, a "changed only"
+  filter, and a Revert on anything you have touched. Changes take effect on the next
+  page load, including for signed-out visitors, and including on a second instance
+  sharing the database — no restart anywhere (#794, ADR 0081 §1).
+
+  An override is stored per string *and per language*, so changing an English label
+  cannot silently un-translate a Spanish one. An English change does still back a
+  locale that has no translation for that string, because that locale was already
+  rendering the English text. Overrides are plain text — they are never rendered as
+  HTML, which stays exclusive to rich-text fields (ADR 0085).
+
+  A change naming a string that does not exist is **refused, not quietly stored**: the
+  save fails and names the key it could not find. That is the one behaviour this
+  feature could not ship without — an override that appears to save and then does
+  nothing is worse than no override at all, and is exactly the failure #774 fixed for
+  the strings themselves. The server enforces it against a copy of the shipped
+  catalogue embedded in the binary, so it holds for anything calling the API directly,
+  not just the admin page. Per-group wording and federation of any of this are
+  deliberately out (ADR 0081 §1): site text is how *this* install speaks.
+  No-spec-impact.
+
+- **A rich-text field renders as formatted text.** `rich_text` is the one field type
+  whose entire purpose is formatting, and it was the one type that lost it: a value of
+  `<p>Cleared for <strong>internal</strong> use.</p>` appeared on the post metadata panel
+  as exactly those characters. Paragraphs, bold, italics, bulleted and numbered lists,
+  block quotes, sub-headings and links now render as what they are (#816). The input is
+  still the plain textarea it was — no editor toolbar in this change.
+
+  What made this worth doing carefully rather than quickly is that it is the first
+  surface in the app that renders stored markup instead of stored text, which is the
+  place cross-site scripting lives. The markup is reduced to a fixed allowed set —
+  `p br strong em ul ol li blockquote h3 h4` and links — by one policy on the server,
+  applied both when a value is saved and again when it is served. Everything outside
+  that set is removed rather than shown as escaped source. Links are limited to
+  `http`, `https` and `mailto`, so a `javascript:` link is dropped, and every surviving
+  link gets `rel="noopener noreferrer"` whether or not its author wrote one.
+
+  Sanitising on the way out as well as on the way in is the deliberate part: not every
+  writer is the API. Seeded datasets, imports, anything edited straight against the
+  database and — later — a value arriving from a federated peer all reach the same
+  column, and none of them pass the endpoint's checks. Doing it on read means a stored
+  value is never trusted, which also means existing values need no migration. Other
+  field types are untouched: `text` and `longtext` still render literally, tags and all.
+  No-spec-impact.
+
+- **A hierarchical field's nested terms are editable now.** `country` ships with 24
+  nations under 5 continents, and until now the admin fields screen would show you every
+  one of them and let you change none. You could see `gb / United Kingdom` sitting under
+  `europe` and there was no way to rename it, retire it, move it, or put a term next to
+  it — the controls were wired to the top of the list, so a continent was editable and a
+  country was decoration. Every control now reaches a term at any depth: rename, the
+  deprecate / archive lifecycle with its "use instead" successor, add a term under
+  another, add one beside it, and reorder within a branch (#779, #825).
+
+  Moving a term to a different branch is a **Move** button and a list of destinations,
+  not a drag — a drag between nested lists is unusable with a thumb, and this has to work
+  on a phone. The list leaves out the term you are moving and everything under it, so the
+  one move that would corrupt the vocabulary (dropping a branch inside itself) is never
+  offered rather than refused after the fact.
+
+  Nothing you have already catalogued moves with it. An asset stores the term, not its
+  position, so renaming Europe or moving the United Kingdom under a different continent
+  rewrites zero asset records and every one of them keeps resolving — the new position
+  simply shows up the next time the asset is read. New terms are typed as names, not
+  codes: type "New Zealand", see the `new-zealand` it will be stored as before you commit
+  it, and get told immediately if that term already exists somewhere else in the tree.
+  Flat option lists (`select`, `multi_select`) are unchanged.
+
+  Two saves at once are still caught the way they were: the editor sends the timestamp it
+  loaded, and a field somebody else changed in the meantime — including a field that grew
+  a term because someone typed a new keyword during an upload — comes back as a visible
+  conflict with the choice to reload theirs or overwrite with yours. No-spec-impact.
+
+- **You can now type a keyword in.** The previous entry taught the server to accept a
+  keyword it had never seen; nothing in the interface could send it one. Upload's metadata
+  panel drew every multi-pick field as a list of tick boxes over the terms that already
+  existed, and a collection's fields used a plain multi-select list — both of which can
+  only ever re-send a term the field already had. So the one field designed to grow could
+  only be grown from the admin screen, one term at a time, which is the workflow that made
+  the feature necessary in the first place.
+
+  Both places now use a search box with chips. Type, and it narrows the terms on offer as
+  you go, matching on the display name or the stored form and ignoring case and stray
+  spaces — the same rule the server applies when it saves, so what the box offers is what
+  actually gets stored. Typing `LANDSCAPE` where `landscape` exists offers you the keyword
+  you already have. On an open field, a term that genuinely matches nothing gets an
+  explicit **Create "…"** row showing the stored form it will take. Nothing is ever created
+  because you pressed Enter near it — a vocabulary that grows by accident is how a
+  catalogue ends up with *sunset*, *Sunset* and *sunsets* meaning one thing. Closed fields
+  never offer to create anything, and say plainly when a term is retired rather than
+  showing an empty list. The box is keyboard-driven (arrows, Enter, Escape, Backspace to
+  drop the last chip) and sized for a thumb.
+
+  A field is marked as an open vocabulary from **Fields & metadata → edit**, where
+  multi-pick fields grew a *Let values add new terms* toggle. It appears on multi-pick
+  fields only, because that is the only type the server honours it on.
+
+  On a post, multi-pick values now read as separate chips instead of one comma-joined
+  line — a set displayed as a sentence is a set in which no individual term is findable
+  (#831).
+
+- **Keywords can grow — by typing one, and from the files themselves.** `Keywords` shipped
+  with a fixed list of 17 terms and no way to add an 18th except the admin options editor,
+  one at a time. That is a workable rule for a field like `Country`, and the wrong one for
+  the field whose whole job is to describe what is actually in your catalogue. A field can
+  now be marked as an **open vocabulary**: a keyword it has never seen is *added* rather
+  than refused, keeping the words you typed as its display name. `Keywords` is the first
+  field set that way.
+
+  Matching happens before adding, on the term's display name as well as its stored form,
+  ignoring case and stray spaces — so `Character`, `character` and ` character ` are one
+  keyword, not three, and typing the display name of a keyword you already have picks it
+  rather than duplicating it. Every other field stays exactly as strict as it was: a term
+  a closed vocabulary does not offer is still refused. Retired terms stay retired on open
+  fields too — choosing a deprecated keyword afresh is still refused, and a keyword whose
+  name collides with an archived one is refused rather than quietly resurrected or turned
+  into a near-duplicate.
+
+  Files can now fill the field in as well. Photographs, exports and just about every
+  cataloguing tool write keywords into the picture itself (the IPTC 2:25 tag), and until
+  now nothing read them — the extraction pipeline had no way to write a multi-value field
+  at all, so `Keywords` was left deliberately unwired. It is wired now: uploading a picture
+  that carries keywords matches each one against the field, adds the ones that are new, and
+  records the change in the asset's history with `iptc` as the source, so you can see what
+  came from the file and what somebody typed. Re-running extraction over the same file
+  changes nothing (#830, #789).
+
+- **The hover slideshow now fills the tile instead of floating between black bars.** In the
+  grid, a video's cover picture fills its tile — but starting the hover slideshow used to swap
+  in a letterboxed strip over a near-black backdrop, so more than half the tile went dark the
+  moment you looked closely. The slideshow now fills the tile exactly the way the cover does,
+  showing the same central region. (Investigating this also cleared the cover image itself of
+  suspicion — it was never the problem.) And for anyone who prefers reduced motion, hovering
+  now simply keeps the cover picture instead of animating (#834, #837).
+
+- **Animated GIFs now play their hover slideshow, and their thumbnail is a frame worth
+  looking at.** A GIF was treated as a still picture: the system decoded the first frame,
+  made a thumbnail out of it, and stopped. For a screen recording the first frame is
+  usually the empty window before anything happens, so a library of animated GIFs showed a
+  library of blank rectangles — and hovering one did nothing, because the little slideshow
+  of frames that videos and 3D models get was never generated. Animated GIFs now get both:
+  a thumbnail chosen the same careful way a video's is (a representative frame from a
+  tenth of the way in, skipped forward if that one is nearly black) and the full hover
+  slideshow. Still GIFs are unaffected and cost nothing extra — the system checks whether
+  the file actually moves before doing any of the expensive work (#832).
+
+- **Hover slideshows are twice as sharp.** Hovering a video or 3D model plays a little
+  slideshow of frames; those frames were generated at half the resolution of the still
+  image they replace, so the moment you hovered, the picture went soft. The frames are
+  now half again larger, which removes most of the visible blur, while the number of
+  frames — the smoothness — is unchanged. The extra storage this costs came in under
+  what was budgeted when the trade was approved (#811).
+
+- **A freshly uploaded video shows its picture in seconds, not after the whole transcode.**
+  Making a video ready to stream is the most expensive work in the system, and until now a
+  video card showed nothing at all — not even the blurred placeholder — until every bit of
+  that work finished. Grabbing one good frame takes under two seconds, so that now happens
+  first, on its own fast track, and the heavy streaming work follows behind at a lower
+  priority. Uploading a batch of videos shows pictures appearing within moments while the
+  transcodes queue up (#818).
+
+  **Film covers stop being black frames.** The cover image used to be whatever was exactly
+  one second into the video — for anything that opens with a fade from black, that is a black
+  frame, and several films' cards were literally solid black. The cover is now chosen by
+  scanning for a representative frame and checking it is actually bright enough to see,
+  looking deeper into the video if the opening is dark (#810).
+
+  **Restoring a database backup no longer blanks every card.** Databases and stored files are
+  backed up on different schedules, and restoring an older database left the system holding
+  thousands of finished renders it had no record of — so it announced no previews, showed
+  placeholders everywhere, and every background job reported success. It now notices renders
+  it already has and records them, repairing itself on the next pass instead of staying
+  broken silently (#827).
+
+- **The information written inside a photo now actually gets read — all of it, not just the
+  first kind found.** A photo usually carries several layers of embedded information: what the
+  camera recorded (exposure, capture time), what an editor or newsroom added (credit, country),
+  and what the rights holder attached (a copyright statement). The system only ever read the
+  first layer it recognised, which in practice meant the camera's — the other two were parsed
+  by code that no upload could ever reach. Now every layer is read, and each is kept separate
+  and labelled with where it came from (#800).
+
+  Four of the built-in fields fill themselves in from those layers on upload: capture date,
+  credit, copyright, and country. Two rules keep this trustworthy. **A value a person chose is
+  never overwritten** — automatic extraction only fills fields that are empty. And **a country
+  name found inside a photo is stored as its standard two-letter code** by matching it against
+  the field's vocabulary; a name that matches nothing is reported as unresolved rather than
+  guessed at or stored raw (#799, #813).
+
+  Under the hood, a leftover column that once described this wiring but was never read is gone,
+  so there is now exactly one place that says where a field's automatic values come from (#813).
+
+- **The built-in Country and Keywords fields now come with a starting vocabulary.** Both
+  shipped with an empty list of choices, which for a pick-list is the same as not working:
+  Country was a hierarchy with nothing in it, and Keywords had nothing to pick. Country now
+  offers a two-level starting set — continent, then country — and Keywords a short list of
+  general-purpose terms. Both are explicitly starting points for an operator to extend or
+  prune, not an authority (#820).
+
+  Country entries are stored under their standard two-letter ISO country codes rather than
+  invented names, so a value recorded on one site means the same thing on any other site it
+  travels to.
+
+  Along the way, two related gaps were fixed: loading sample content could not attach values
+  to any of the built-in fields (only to the fields the sample library itself defines), and
+  the field admin could not display a hierarchical field's choices at all — it showed "a tree
+  field has no option list" even when one existed. Editing nested entries is still to come
+  (#825), and the system does not yet reject a value that isn't in a field's vocabulary
+  (#824).
+
+- **A field can now be a hierarchy, and the sample library exercises every kind of field
+  there is.** Fields come in eleven kinds — plain text, long text, formatted text, numbers,
+  yes/no, dates, timestamps, pick-one and pick-many lists, a hierarchical category, and a
+  pointer to another asset. Six of those had never carried a value in any sample library, and
+  the hierarchical kind could not even be *described* in one: the file that defines the sample
+  fields could only express a flat list of choices, so a category with sub-categories was
+  unwritable. That is fixed, and the sample library now defines and fills all eleven (#808).
+
+  The sample media was regenerated to match: every video trimmed to two minutes, keeping its
+  format and audio and subtitle tracks intact, and a deliberately rotated photograph added so
+  that orientation handling is exercised by something real rather than by a square test image
+  no camera would produce (#805).
+
+  **This immediately paid for itself.** Filling in kinds of field that had never held data
+  exposed four faults that no test could have found, because the situations they occur in did
+  not exist: a malformed pointer was being stored as an empty value rather than rejected;
+  formatted text is displayed as raw markup; a date is shown a day early for anyone west of
+  UTC; and a pointer shows an internal identifier instead of the thing it points at. The first
+  is fixed, and the other three are now tracked.
+
+- **Fields can fill themselves in.** A field can carry a default that is applied when an
+  asset is uploaded, and a team can override that default for its own uploads — so a studio's
+  work lands tagged as that studio's without anyone typing it. A default is either a fixed value
+  or one of a short list the server works out for itself, like whoever is uploading or today's
+  date. There is no scripting: a default is a value, not a formula (#793).
+
+  It never overwrites anything. A value you typed stays, and so does one read out of the file
+  itself — a default only fills a blank. A field offering a retired option cannot be given that
+  option as its default.
+
+- **Profiling can be turned on when something needs investigating.** Set `AA_PPROF_ADDR` and
+  the server exposes Go's standard profiling endpoints on that address — off by default, on its
+  own listener, published by no deployment file, and it warns loudly if pointed anywhere other
+  than loopback. Profile data can contain anything the process is holding, so it is deliberately
+  not something that is simply on (#781).
+
+- **Controlled vocabularies are editable.** The options behind a `select` or
+  `multi_select` field could only be set when the field was created — after that they were
+  frozen, and `/admin/fields` had no edit surface at all. There is one now: add a term,
+  relabel one, reorder them.
+
+  **Terms are retired, not deleted.** Deleting an option that assets already reference would
+  orphan those values, and the orphan shows up as a blank on an asset nobody touched — so the
+  editor does not offer deletion. Instead an option can be marked *deprecated*, which stops it
+  being offered for new values while everything already carrying it keeps resolving and
+  displaying normally, and it can name a successor that the editor then suggests in its place.
+  *Archived* is the harder retire, for terms that were mistakes rather than terms that were
+  superseded (#737).
+
+  Saving is now conflict-checked. Changing one term rewrites the whole vocabulary, so two
+  admins editing different terms used to silently overwrite each other — the loser never found
+  out. The save now carries the version it was based on and is rejected if the field moved
+  underneath it, offering to reload or to overwrite deliberately. Fields whose options nobody
+  has edited are left byte-for-byte as they were.
+
+- **Operators can set their own instance logo.** The mark in the navbar and on the
+  sign-in page is no longer fixed to the icon that ships. Upload a PNG, JPEG, GIF or
+  WebP under `Admin → Themes & branding` and it applies everywhere immediately; the
+  shipped default returns the moment you clear it, and is always one click away
+  (#517).
+
+  The last five logos are kept so a previous mark can be picked back up without
+  re-uploading it — including when the original file is long gone, which is the case
+  the list exists for. Re-selecting one moves it to the front rather than adding a
+  duplicate, and a sixth upload drops the oldest. Every listed logo is retained in
+  storage for exactly as long as it is listed, so an entry the picker offers is an
+  entry that actually still works. If a logo's image data does go missing anyway —
+  a database restored against a fresh bucket, say — the picker says so in words and
+  refuses to apply it, rather than showing a broken thumbnail or swapping your
+  working logo for one.
+
+  Uploads are treated as hostile input, because a logo is an operator-supplied file
+  rendered on every page: the file must decode as a real raster image, its type is
+  taken from decoding it rather than from anything the browser claimed, and it is
+  capped at 2 MB and 1024px per edge. **SVG is not accepted** — it is an executable
+  document format, and accepting one safely needs a sanitiser that is its own piece
+  of work rather than a detail of this change. Rasterize vector art before uploading
+  it. No-spec-impact.
+
+### Changed
+
+- **Internal release numbers no longer show up in the interface.** "Coming soon" spots
+  across the admin console and the account area — the disabled tiles for features not yet
+  built, several federation notices, the asset-type and AI intros, the placeholder shown
+  in the asset viewer for file types without a dedicated viewer, and the pending
+  whiteboard tools — used to carry the internal roadmap identifier for when the feature
+  was scheduled (for example "Phase 1.22.C", "1.18.B-12", "C-1.14b"). Those meant nothing
+  to an operator or a user and are gone; a not-yet-built area now simply reads as coming
+  in a future release. The internal codenames also disappear from the federation copy
+  (an "aa:Share" grant is now just a "share" grant). Dev-facing source comments are
+  unchanged (#801). No-spec-impact.
+
+- **The browse feed's "Team" and "Trending" buttons are gone; the filter is now
+  Latest / Following.** Both removed buttons were decoration: neither value was ever
+  in the server's `feed` enum, so clicking them sent a query param the API ignored and
+  handed back the plain latest feed — the same posts, under a label that promised
+  something else. Nothing is lost because nothing was there. Neither returns by
+  re-adding a button: `trending` needs a ranking model (recency against engagement,
+  and how fast it decays) decided first, and `team` returns with the teams browse
+  surface (#684), where the team-scoped query gets designed once. A browser that
+  remembers "Team" or "Trending" from before opens on Latest (#691).
+
+### Fixed
+
+- **Re-seeding an instance no longer leaves it serving stale data until a restart.**
+  `aa seed --reset` wipes and rebuilds the content in the database, but a running app
+  keeps its in-memory caches — so after a reset it went on answering from the pre-reset
+  copy (old titles, deleted assets, missing new ones) until the process was restarted.
+  The seeder is a separate process and cannot reach into the app's caches directly, so on
+  `--reset` it now broadcasts a single flush over the same Postgres notification channel
+  the caches already listen on, and every running instance drops all of its caches at
+  once. The reseeded data shows up immediately, no restart or redeploy required. This is
+  what lets the public demo reset cleanly (#845). No-spec-impact.
+
+- **A reference field can no longer be pointed at an asset that does not exist.** A
+  `reference` value is a bare asset id, and the write path accepted any id at all — so
+  saving one that named nothing (a typo, a since-deleted asset, an id from another
+  instance) returned success and stored a link to nowhere. The write is now refused with
+  422 `dangling_reference` unless the target resolves. This is a WRITE gate only, and
+  deliberately so: a reference that was valid when you saved it and whose target is
+  deleted *later* still reads fine, degrading to the bare id with no fuss (the behaviour
+  #839 chose) — deleting an asset does not retroactively break every record that pointed
+  at it. Both the asset and the collection write paths enforce it identically (#842).
+
+- **Collection metadata now shows labels and titles, not raw slugs and ids.** A pick-list
+  value on a collection rendered its stored slug (`in_review`) instead of its label ("In
+  Review"), and a reference value rendered a 36-character id instead of the linked
+  asset's title — while the same field on an *asset* rendered both correctly. The
+  collection read path simply never resolved them: the asset query joined the field
+  definition and the referenced asset, the collection query did not. It does now, through
+  the same query shape and the same shared formatter, so the two subject kinds render
+  identically. A reference whose target has been deleted degrades to the bare id with no
+  disclosure, exactly as on the asset side (#840).
+
+- **Field-value history rows no longer outlive the asset or field they describe.**
+  `asset_field_value_history` had no foreign keys, so a deleted asset or field left its
+  history behind as orphan rows pointing at ids that no longer existed — and those rows
+  survived `aa seed --reset` too, since a cascade cannot reach a table nothing references.
+  It now carries the same two `ON DELETE CASCADE` foreign keys its collection counterpart
+  always had, on `asset_id` and `field_id`; deleting either takes the history with it. The
+  migration deletes any pre-existing orphans before adding the constraints, and the bespoke
+  history sweep the reset used to run for this table is gone — the constraint does the job
+  now (#821). No-spec-impact.
+
+- **An upload no longer reports success when the server refused your metadata.** Per-file
+  field values are written after the asset exists, and the upload modal sent those writes
+  without ever looking at the answer. Every refusal — a term the field does not offer, a
+  value in the wrong shape, a server error — was discarded, and the upload went on to
+  report success while the value silently went nowhere. The comment excusing it said you
+  could set the value from the asset page later; there is no asset edit page yet, so what
+  was actually being dropped was dropped for good.
+
+  Refusals are now read and shown on the file's row, one line per field, naming the field
+  and saying what was wrong with it — and submitting stops so you can see them, rather
+  than clearing the screen that was reporting the problem. Fix the value and submit again.
+  Every field is still attempted, so one bad value shows you the rest of the problems
+  instead of hiding them behind the first (#843).
+
+- **A value that isn't one of a field's choices is now rejected instead of silently stored.**
+  Writing to a pick-list, multi-pick, or hierarchical field with a term that isn't in the
+  field's vocabulary used to succeed — the bogus value was stored, never resolved to a label,
+  and displayed as a raw code forever. It now gets a clear rejection naming the field and the
+  offending term. Retired terms follow the same rule the editor already uses: they can't be
+  newly chosen, but a record that already holds one keeps it, and editing *other* parts of
+  that record isn't blocked by it (#824).
+
+- **Dates stop being a day early, and "derived from" names the actual asset.** A field that
+  holds a calendar date (like a licence expiry) was being converted into the viewer's timezone,
+  so anyone west of UTC saw the previous day. Calendar dates now display exactly as recorded,
+  in the unambiguous `2026-10-22` form; fields that hold a real moment in time (like an ingest
+  timestamp) still show in local time. And a field that points at another asset now shows that
+  asset's title as a clickable link instead of an internal identifier — pointing at something
+  that was later deleted degrades gracefully rather than breaking the panel (#815, #817).
+
+- **Hovering a short clip no longer scrolls through blank frames.** The hover slideshow
+  always stepped through a hundred frames, however many the clip actually had. A five-second
+  video only has about twenty-five, so three quarters of the hover was empty black — and
+  the shorter the clip, the more of it was nothing. The card now plays exactly the frames
+  that exist. Nothing needs regenerating: the information was already stored alongside every
+  slideshow, the card simply was not reading it (#835).
+
+  Two related things fall out of the same change. The slideshow is no longer switched on by
+  file extension — the card now asks the server whether this particular asset has one — so a
+  video whose full processing has not finished yet stops requesting frames that are not there
+  (previously a silent failed request), and any format that grows a slideshow later works
+  with no further change. Animated GIFs are the first beneficiary (see #832 above).
+
+- **A new installation starts with a small set of ready-made fields, and re-loading the
+  sample library no longer deletes them.** Every installation has always been created with
+  a handful of standard fields — title, description, credit, copyright, capture date,
+  keywords, country, and the two that record an image's pixel dimensions. But loading the
+  sample library wiped them and put its own fields in their place, so the arrangement an
+  operator actually starts from was the one nobody ever ran. Loading sample content now
+  adds to that set instead of replacing it (#812).
+
+  **Six fields that were never meant to ship have been removed.** They came in with the
+  original database snapshot — leftovers from testing, carrying a user reference no
+  installation has — and appeared to every operator as *Text Field*, *Score*, *Due*,
+  *Tags*, and two called *Fed Guard*. They are gone, along with any values recorded against
+  them.
+
+  A companion note for anyone tracking the details: the history of past edits to a field's
+  value was never being cleared when its asset or field was removed, so it accumulated
+  indefinitely. That is now cleaned up as well.
+
+- **A seed run now says when it throws a field value away.** Loading a catalogue could
+  discard a value in two different situations — the file named a field that does not
+  exist, or it carried something that field's type cannot hold — and both were silent.
+  The run reported success, the field was simply missing afterwards, and any check that
+  counted rows agreed that everything was fine. A seeded instance could therefore be
+  quietly missing data that nobody had any way to notice.
+
+  Both cases now report themselves, and they report themselves *differently*, because
+  the two need different fixes: one is a mismatch between the catalogue and the
+  definitions, the other is a bad value. A run ends with a plain-language note saying
+  how many values were dropped and which fields they belonged to. A single misconfigured
+  field no longer floods the log either — a few examples are shown, while the count
+  stays exact (#807).
+
+  A date field also accepts an ordinary calendar date now, such as `2026-03-14`.
+  Previously it required a full timestamp and would discard anything else — without
+  saying so, which is precisely the trap above.
+
+  While fixing this, one worse case turned up: a reference field given a malformed
+  identifier was not being discarded at all. It was accepted, and stored a value that
+  was empty in every respect — a field that reads as "deliberately set to nothing"
+  rather than as absent, and the one shape a row count cannot detect. It is now refused
+  like any other bad value.
+
+- **A portrait phone photo would have tiled as a landscape one.** Two different parts of
+  the system were writing the tile shape a browse page reserves for an image, and they
+  disagreed for exactly one kind of file: a photo taken in portrait, which cameras store
+  landscape with a tag telling the viewer to turn it. The preview pipeline recorded the
+  shape you actually see; the metadata reader recorded the shape on disk, and it wrote
+  last, so the wrong one won. Only the preview pipeline records it now (#765).
+
+  Nothing in the catalogue was visibly wrong yet — the six affected rows were test
+  images — so this is a trap removed before the first real phone photo hit it rather
+  than a repair. The shape is now measured in one place, from the same image the
+  thumbnails are built from, which is also the only place that can answer the question
+  for the half of the catalogue with no source pixels at all: a 3D model, a font, an
+  audio file and a document each produce exactly one picture on the way through, and its
+  shape is what a tile reserves. No-spec-impact.
+
+- **Portrait video previews were squashed into landscape.** The strip of thumbnails you
+  scrub through was built at a fixed widescreen shape whatever the video actually was, so
+  anything shot on a phone came out stretched. Thumbnails now keep the source's proportions —
+  including the case that matters most in practice, a clip whose file says it is landscape and
+  which plays portrait because of how the camera recorded it (#761).
+
+  The same squash was happening on the browse grid, where hovering a video card scrubs through
+  the same strip.
+
+  **And in the viewer, the hover preview was not appearing at all** — it was being clipped to
+  the height of the scrub bar itself, twelve pixels, ever since the scrubber gained zoom. It is
+  a separate fix, and it is why the problem looked like it only affected the grid.
+
+  Existing videos keep their old thumbnails until their previews are rebuilt.
+
+- **Yes/no fields never worked either, and one of them failed louder than blank.** A field can
+  be declared as a yes/no checkbox, and the parts of the system that write one disagreed about
+  how. Setting one on an asset stored a number, while the panel that displays it looked for the
+  words "true" and "false" — so it showed nothing. Setting one on a collection stored the words,
+  in a different place from where an asset's went. And ticking the box in the upload window sent
+  the words to a destination that only ever accepted the number, so that write was **rejected
+  outright** rather than merely rendering blank — the one part of this that would have shown a
+  user an error rather than an empty row.
+
+  Ten places, and the two that were right were the ones nobody looked at. It survived for the
+  same reason the hierarchy bug below did: no yes/no field has ever existed on a real instance,
+  so the whole path had never once been run. A number, 1 or 0, everywhere now — which is what
+  the design document said before any of the disagreeing code was written. Nothing to migrate:
+  there was no stored value anywhere, in either form (#791).
+
+  "Not set" and "no" stay different: an unset field shows nothing, a field set to no shows "No".
+
+  The test that guards this used to check only *where* a value is stored. Two writers can agree
+  on that and still disagree about what they put there, which is exactly what happened, so it
+  now drives the writers with the same input and compares what each one actually produces. The
+  list of tolerated exceptions is gone rather than emptied — an exception list is somewhere to
+  put the next one.
+
+  With this, all eleven field types agree across every writer and every screen, and the two that
+  had never been exercised end-to-end now have a test that creates one, sets it, and reads it
+  back out of the database.
+
+- **Hierarchical fields never worked, and nothing had noticed.** A field can be declared as
+  a hierarchy — country / region / city — and every part of the system disagreed about where
+  such a value was stored. An asset put it in one place, a collection in another, and the panel
+  that displays it read a third, so the value came back blank whichever way it had been entered.
+  Two more places could not resolve a nested term at all, having only ever looked at the top
+  level of the list.
+
+  It survived because no hierarchy has ever held a value — a fresh install ships one, wired to
+  read the country out of a photo's embedded metadata, and it had simply never fired. Settled
+  now: a value is the single term it points at, and the path above it is worked out on the way
+  out. Renaming a term, or moving one to a different parent, leaves every asset untouched (#778).
+
+  There is a test that fails if any of the eight places disagrees again.
+
+- **Five screens showed internal key names instead of English.** The AI configuration and
+  AI usage pages under Admin displayed text like `admin.ai_inference.budget_hard_label` where
+  their labels and help text should have been; the similar-assets panel, the collection field
+  editor and the tag-source tooltips in the viewer had the same problem. The wording had been
+  written all along — the screens were simply asking for it under the wrong name. Forty-six
+  strings, now resolving (#774).
+
+  Spanish and French translations moved with them, so nothing regressed to English.
+
+  The reason this survived: the test meant to catch it only checked that text was *marked for
+  translation*, never that the translation existed — so a screen asking for a name nothing
+  answered to passed cleanly. It now checks that every requested name resolves, which is what
+  turned up two of the five screens nobody had reported.
+
+- **The server could be killed by its own memory limit while building previews.** Go decides
+  when to collect garbage from how much memory is already in use, and it has no idea a container
+  limit exists — so on a machine with plenty of RAM it would let the heap grow past the
+  container's ceiling and be killed for it. Generating previews for large images is where that
+  bit: resizing one holds a scratch buffer proportional to the image's dimensions, and several
+  run at once. Symptom was the whole instance going unresponsive for a minute or two mid-render,
+  health checks included, then recovering.
+
+  The runtime is now told the container's own limit at startup, read from the container rather
+  than written down somewhere that could drift out of step with it. Requests that previously took
+  nearly five seconds during a heavy render now take a seventh of a second (#781).
+
+  The default deployment also gains a memory limit, which it never had — only the CI
+  configuration capped anything. That meant the failure was reproducible in CI and invisible to
+  operators. Override with `AA_APP_MEM_LIMIT` if your host warrants something other than the 4 GB
+  default.
+
+- **Per-job-type concurrency limits were not actually limiting anything.** An operator can
+  cap how many jobs of a given kind run at once — transcription at one, video and 3D previews
+  at two — precisely because those are the jobs heavy enough to hurt a machine when several run
+  together. The check and the counter were separated: a worker asked "is there room?", and the
+  answer was only recorded once the job had been claimed. Every worker that asked during that
+  window got the same stale answer and the same yes, so the real ceiling was however many
+  workers happened to be polling — not the configured number. Observed in the wild: five
+  concurrent 3D renders against a limit of two. The reservation is now taken at the moment the
+  check passes, so a limit of two means two (#777).
+
+  The old comment described this as a window that "can let one extra job through." A test that
+  releases sixteen workers into it against a limit of two saw **all sixteen** admitted.
+
+- **Vocabulary values showed their internal slug instead of their label.** A term is
+  stored by slug so that renaming it is free and rewrites nothing on any asset — but only the
+  editing screens ever turned that slug back into the label, because they happen to load the
+  field definition to build their dropdown. Everywhere else, including the post and asset
+  detail panels most people actually read, the raw slug came through. Labels now resolve on
+  the server, so every surface gets them and none has to know a controlled vocabulary is
+  involved. A term with no label of its own still shows its slug, unchanged (#775).
+
+  This also completes the deprecation marking added above: a retired term now reads as
+  deprecated on the detail panel, not only inside the picker.
+
+- **Long metadata values were unreadable on a phone.** The detail panel's two-column
+  layout gave the value column roughly two characters at 390px, so `N/A` broke across lines.
+  It stacks below the small breakpoint now (#775).
+
+- **Every dropdown in the collection field editor was empty.** The vocabularies were
+  stored correctly and the editor could not read them: it expected each option to be an object
+  and they are stored as plain strings, so it rendered one blank row per term. The upload
+  form, which read the same data the other way, worked — which is why this survived. Both
+  now accept either form (#737).
+
+- **The admin tables were unusable on a phone.** At 390px the fields table was wider than
+  the screen with nothing to scroll it, so the overflow was not merely off-screen — it was
+  unreachable. The Save button sat at a negative x-coordinate with the document reporting no
+  horizontal overflow at all. The tables scroll now (#737).
+
+- **Masonry browse laid every tile out as a square.** The layout is supposed to respect each
+  asset's real proportions, and it could not: nothing in the system had ever recorded a
+  source's pixel dimensions. The `pixel_width` / `pixel_height` field definitions existed and
+  every value was null across the whole catalogue, so the estimator fell through to 1:1 for
+  every tile and masonry rendered as a plain grid. The preview pipeline now records the source
+  dimensions as it decodes — it is the only producer that runs for *every* asset type, so this
+  also covers the tiles EXIF could never describe: audio waveforms, video posters, SVG and 3D
+  turntables, which are precisely the ones that looked worst squared off (#757).
+
+  The same missing data was breaking IIIF for the entire catalogue. `info.json` is built from
+  the asset's dimensions, and a 0×0 asset is rejected as unsupported — so every IIIF request
+  had been 404-ing. It serves now. The UI test covering that endpoint had been asserting a
+  JSON content type and passing *because* of the 404, which is a test defending the bug rather
+  than the behaviour; it now asserts the IIIF media type.
+
+- **nginx kept routing to a dead container address after any recreate.** Hostnames inside an
+  `upstream` block are resolved once, when the config loads, and a `resolver` directive does
+  not change that — the `resolve` parameter that would is NGINX Plus only. So when the app
+  container came back with a different IP, nginx went on proxying to the old one. On the
+  two-instance dev stack this surfaced as the worst possible symptom: traffic for one site
+  silently served from the other, which reads as data corruption rather than a routing fault.
+  The `upstream` block is gone; `proxy_pass` now goes through a variable, which defers
+  resolution to request time (#756).
+
+  Removing the block also removes connection reuse to the app — `keepalive` cannot be
+  configured without it. That cost is recorded in the config beside the change rather than
+  left to be rediscovered.
+
+- **3D thumbnails rendered untextured while the viewer showed the materials.** ADR 0069
+  chose headless three.js precisely so the browse-grid thumbnail and the interactive
+  viewer would match, and both files said they shared code. They did not: the headless
+  page reimplemented the viewer's loader, and the copy had no `MTLLoader` and no
+  material-upgrade pass. So every OBJ rendered as untextured white (its `.mtl` was
+  never fetched — OBJ references materials by name and the loader does not follow it),
+  and every `KHR_materials_unlit` glTF rendered as a flat, unshaded silhouette, because
+  the `MeshBasicMaterial` that extension produces ignores the entire lighting rig. The
+  thumbnail also captured its frames before the textures had finished decoding, which
+  would have kept OBJ untextured even once the `.mtl` loaded.
+  The load path — loader choice, `.mtl` resolution, material normalisation — is now one
+  module both surfaces import, so the drift cannot recur, and the release-image smoke
+  test asserts materials came out normalised and the textured fixtures came out
+  textured. Previously it only asserted the poster had non-transparent pixels, which is
+  why an untextured catalogue shipped green twice: flat white geometry passes that
+  check. Existing thumbnails are regenerated by re-running the preview job for an asset
+  (#689). No-spec-impact.
+
+  Correction: re-running the preview job did NOT regenerate anything until #760 landed,
+  so this fix — and the two companion fixes below it — were invisible on every existing
+  install. See "Recreating a preview now actually re-renders it".
+
+- **Recreating a preview now actually re-renders it.** "Recreate previews" enqueued a
+  job, returned a job id, and changed nothing. Every preview worker skips outputs that
+  are already in storage — which is what makes an ordinary re-queue nearly free — and
+  nothing could tell them not to. So the job ran, skipped everything, and completed
+  successfully, and the thumbnail stayed exactly as it was. Three shipped renderer
+  fixes (#689, #750, #753) therefore reached no existing asset: the only way to see
+  them was to upload the file again under a different hash. The endpoint now forces a
+  re-render by default, and `POST /assets/{id}/preview?force=false` selects the old
+  gap-filling behaviour deliberately (#760).
+
+  Nothing is deleted first. Each output is overwritten in place by an atomic write, so
+  an interrupted rebuild leaves the previous — stale, but present — preview serving
+  rather than an asset with no thumbnail at all.
+
+  `aa rebuild-previews --ext glb,fbx,obj` re-renders a whole set, because the situation
+  that produces this is "a renderer changed and every asset it ever touched is stale",
+  which is not a click-once-per-asset problem. It reports how many of the assets it
+  swept already had renders, i.e. how many of those jobs are replacing bytes rather
+  than filling a hole. `scripts/preview-backfill.sql`, which could only enqueue
+  raster jobs and whose own comment noted that a second run did nothing, is gone.
+
+  Two smaller honesty fixes came with it. `storage_variants` gained `updated_at`: the
+  table previously recorded only when a variant was FIRST written, so a successful
+  re-render was invisible in the database and "have these bytes changed?" had no
+  answer. And a completed job now logs what it wrote and what it skipped — `590 jobs,
+  0 failures` used to look identical whether 590 renders happened or none did.
+  No-spec-impact.
+
+- **`aa seed` says when the previews it queues will do nothing.** `--reset` truncates
+  the content tables but deliberately leaves the content-addressed variant store alone
+  (the blobs are on the volume; a database truncate does not erase them, and pretending
+  otherwise produced assets with no thumbnails at all). Re-seeding the same dataset
+  therefore enqueues a preview job per asset whose output already exists, and every one
+  of them skips. That was correct and silent — the seed reported "previews queued: 590"
+  either way. It now reports how many of those will skip and points at
+  `--force-previews`, which re-renders them (#760). No-spec-impact.
+
+- **363 of 374 3D models were missing their textures, because "a GLB embeds everything"
+  was written down as a fact and is not one.** A `.glb` is a binary wrapper around
+  ordinary glTF JSON, so it can point at `Textures/foo.png` on disk exactly as a `.gltf`
+  does — and almost all of ours do. Four separate places asserted the opposite: the Go
+  companion resolver, the seeder that called it, and two dataset scripts, in one of which
+  the claim had grown into a justification for how the library was assembled. Because the
+  copier shared the belief, the texture folders were never even placed in the dataset, so
+  fixing only the code would have found nothing and looked correct. The resolver now reads
+  a GLB's JSON and asks, instead of assuming; the duplicated extension list in the seeder
+  is gone, so there is one answer to "does this format have companions" rather than two
+  that could drift apart. The test that should have caught this was checking an
+  eleven-byte text file named `model.glb` — it passed because there was nothing to parse,
+  and it kept the assumption alive; those same bytes are now a case that must fail.
+  Existing thumbnails still need the preview job re-run to pick the textures up (#750).
+  No-spec-impact.
+
+- **The same was true of FBX: 105 of 109 named a texture and none of them found it.** FBX
+  keeps its texture filenames inside binary node records, which nothing had ever read, so
+  the comment saying FBX "embeds its resources" went unchallenged for the same reason the
+  GLB one did. There is now a reader for it, and a matching one in the dataset copier so
+  the texture folders actually get staged. Two subtler problems came out with it. Companion
+  paths were being stored with the backslashes FBX writes, because the code normalised them
+  with a call that does nothing on Linux — so `Textures\barrel.png` was one filename rather
+  than a folder and a file, and nothing could match it. And the thumbnail renderer asks for
+  textures by bare filename regardless of the folder they live in, so correcting the stored
+  path was necessary but not sufficient; the renderer now resolves them explicitly. Proven
+  by running the release-image smoke test with and without that step. As with the GLB fix,
+  **existing thumbnails do not change until previews are re-rendered** — they are still the
+  output of the renderer that shipped before July, which is tracked separately (#753).
+  No-spec-impact.
+
+- **Six seed images were showing a fraction of their own artwork.** The Kenney pack's
+  Flash-exported sprite sheets carry a stale artboard — `viewBox="0 0 550 400"` on a
+  drawing that actually spans 2248x1120 units — and the rasteriser honoured it, so the
+  Platformer Pack Remastered background sheet shipped holding **8.8%** of its picture
+  and the Physics Assets material sheets held 19.7%. They did not read as broken;
+  they read as a legitimately cropped sheet, which is why two prior sweeps went past
+  them. Every source that declares a canvas is now measured against what it actually
+  draws, and reframed to its real extent when the two disagree. Sources whose canvas
+  is correct — 800 of the pool's 806 — render byte-for-byte as before. `aa`'s pool
+  builder grew `--rerender` so a rasteriser fix can reach a pool that already exists,
+  instead of being skipped as "already on disk" (#685). No-spec-impact.
+
+- **`detect_cropped_renders.mjs` is retired, not retuned.** It flagged 41% of a
+  known-good pool, which trains everyone to ignore it — and that is how the above
+  survived. Swept against ground truth over 9,504 combinations of its thresholds,
+  alpha cutoff, agreeing-edge count and minimum pixel floor, **none** found all six
+  genuinely lossy files and the best precision reached anywhere was 0.043. The signal
+  is not there to be tuned: edge coverage measures a drawing's silhouette where it
+  meets the frame, and that silhouette is identical whether the frame was right or
+  cut. `seed/scripts/probe_render_loss.mjs` is the crop gate now — it compares the
+  render against the source, covers all 1,031 pool sources rather than the 806 it used
+  to, and no longer counts its own measurement boundary as lost artwork (#685).
+
+## [v0.7.0] — 2026-07-28 — Browse correctness, visibility security, and a real seed catalogue
+
 ### Security
 
 Four separate leaks, all found in one week and all the same underlying mistake: a
@@ -14,6 +811,9 @@ read path that wrote out the "who may see this" rule itself instead of asking th
 one component that owns it. Each copy was correct when written, then the shared rule
 moved and the copy didn't. None was caught by a test. They are grouped here because
 the pattern matters more than any one of them (#665).
+
+The last entry below is a different thing — a permission that was too broad rather
+than a rule that drifted — but it is the same data class, so it belongs here.
 
 - **Anyone signed in could read anyone else's private posts.** Adding
   `?visibility=private` to the post list returned other people's private posts —

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,7 +19,7 @@ import (
 // interface so Worker can be tested without a real Pool.
 type typeCapGate interface {
 	tryReserve(types []JobType) []JobType
-	confirmReservation(t JobType)
+	releaseReserved(reserved []JobType, keep JobType) bool
 	release(t JobType)
 	// hasCaps reports whether any per-type cap is configured, so an
 	// unrestricted worker knows whether it must consult the gate at all.
@@ -88,8 +89,10 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 
 		// Per-type concurrency cap: figure out which types we may
-		// claim this poll, honouring the gate. If everything is
-		// saturated, back off without hitting the DB.
+		// claim this poll, honouring the gate. claimScope has already
+		// RESERVED a slot on each capped type it returns, so every exit
+		// path below has to hand those back — see releaseReserved.
+		// If everything is saturated, back off without hitting the DB.
 		claimTypes, saturated := w.claimScope()
 		if saturated {
 			select {
@@ -107,6 +110,9 @@ func (w *Worker) Run(ctx context.Context) {
 		cancel()
 
 		if err != nil {
+			if w.Gate != nil {
+				w.Gate.releaseReserved(claimTypes, "")
+			}
 			w.Logger.LogAttrs(ctx, slog.LevelWarn, "jobs.worker.claim_error",
 				slog.String("worker_id", w.ID),
 				slog.String("err", err.Error()),
@@ -120,6 +126,9 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 		if job == nil {
 			// Queue empty for our scope. Back off.
+			if w.Gate != nil {
+				w.Gate.releaseReserved(claimTypes, "")
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -128,14 +137,15 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
-		// Confirm the per-type reservation now that we actually
-		// hold a job; release on return so the next iteration sees
-		// up-to-date counts.
+		// Hand back every reservation except the one for the type we
+		// actually claimed; that one stays held until the job is done,
+		// which is what bounds concurrent execution for the type.
+		held := false
 		if w.Gate != nil {
-			w.Gate.confirmReservation(job.Type)
+			held = w.Gate.releaseReserved(claimTypes, job.Type)
 		}
 		w.runOne(ctx, job)
-		if w.Gate != nil {
+		if held {
 			w.Gate.release(job.Type)
 		}
 	}
@@ -277,6 +287,7 @@ func (w *Worker) report(ctx context.Context, job *Claim, result json.RawMessage,
 		}
 		return
 	}
+	w.logOutputs(ctx, job, result)
 	if err := w.Service.Complete(ctx, job.ID, w.ID, result); err != nil && !errors.Is(err, ErrLeaseLost) {
 		w.Logger.LogAttrs(ctx, slog.LevelError, "jobs.worker.report_complete_error",
 			slog.String("err", err.Error()),
@@ -284,21 +295,74 @@ func (w *Worker) report(ctx context.Context, job *Claim, result json.RawMessage,
 	}
 }
 
+// outputSummary is the part of a handler's result JSON the worker can
+// read without knowing which handler produced it. Every preview handler
+// reports what it wrote (`generated` or `variants`) and what it left
+// alone (`skipped`); handlers that report neither decode to zero fields
+// and are not logged.
+type outputSummary struct {
+	Generated []string `json:"generated"`
+	Variants  []string `json:"variants"`
+	Skipped   []string `json:"skipped"`
+}
+
+// logOutputs states what a completed job actually produced (#760).
+//
+// A successful job used to log NOTHING, which is how "590 preview jobs,
+// all done, zero failures" came to be indistinguishable from 590 jobs
+// that skipped every output and wrote nothing at all. The handlers
+// already recorded the difference in their result JSON — it was just
+// stored in a column nobody reads and never said out loud.
+//
+// One place rather than eleven: the fields are a convention every
+// preview handler already follows, and per-handler logging is the same
+// duplication that let the skip logic drift in the first place.
+func (w *Worker) logOutputs(ctx context.Context, job *Claim, result json.RawMessage) {
+	if w.Logger == nil || len(result) == 0 {
+		return
+	}
+	var s outputSummary
+	if err := json.Unmarshal(result, &s); err != nil {
+		return
+	}
+	wrote := len(s.Generated) + len(s.Variants)
+	if wrote == 0 && len(s.Skipped) == 0 {
+		return
+	}
+	w.Logger.LogAttrs(ctx, slog.LevelInfo, "jobs.worker.outputs",
+		slog.String("job_id", job.ID.String()),
+		slog.String("job_type", string(job.Type)),
+		slog.Int("wrote", wrote),
+		slog.Int("skipped", len(s.Skipped)),
+		// The keys, not just the count: "skipped 5" does not tell an
+		// operator whether the card thumbnail was one of them.
+		slog.String("skipped_keys", strings.Join(s.Skipped, ",")),
+	)
+}
+
 // Pool spawns N workers sharing the same scope. Returns a cancel
 // function that stops all of them on shutdown.
 //
 // TypeConcurrency caps the maximum number of jobs running
 // concurrently per type. Configured via system_config keys
-// `jobs.type_concurrency.<type>` (seeded for ai.tag / ai.caption /
-// ai.embed / ai.transcribe in migration 00009). Zero = no cap.
-// Workers consult Pool.tryReserve before claiming a job of a
-// given type; the reservation is released when runOne returns.
+// `jobs.type_concurrency.<type>` (seeded for ai.* in the baseline and
+// for preview.3d / preview.video in migration 00004). Zero = no cap.
 //
-// The check-reserve-claim sequence is not strictly atomic across
-// workers — a tiny race window between tryReserve and the DB claim
-// can let one extra job through for the type. That's acceptable
-// because per-type caps are an SLA hint to spread GPU/cost
-// pressure, not a hard isolation boundary.
+// The reservation is TAKEN in Pool.tryReserve, under the same lock
+// that checks the cap, and released when runOne returns. That
+// atomicity is the whole point of the gate (#777).
+//
+// It used to work the other way round: tryReserve only READ the
+// counter and the increment happened in a separate confirmReservation
+// call after the DB claim returned. Every worker that polled inside
+// that window read the same stale count and passed the same gate, so
+// the effective ceiling was the worker-pool size, not the cap. The
+// old comment here called that "a tiny race window ... one extra job"
+// — it was not bounded at one. CI run 30595183336 attempt 1 caught
+// five workers (w0–w4) running preview.3d simultaneously against a
+// cap of 2; all five renders then died at the same instant and the
+// app stopped answering /api/v1/appearance for two minutes, which is
+// the flake #777 was filed for.
 type Pool struct {
 	Service *Service
 	Logger  *slog.Logger
@@ -316,15 +380,37 @@ type Pool struct {
 	typeRunning   map[JobType]int
 }
 
-// tryReserve atomically checks the per-type cap for the supplied
-// types and returns the subset that still has capacity. Caller
-// (Worker.Run) feeds the result into Service.ClaimNext so the
-// claim query only considers eligible types.
+// capFor returns the effective cap for a type and whether one applies.
+// A missing entry, a zero, or a negative all mean "uncapped" — the
+// operator-facing convention, and the reason a
+// `jobs.type_concurrency.<type> = 0` row is a no-op rather than a
+// freeze. Every increment and decrement below agrees on this one
+// predicate so a counter can never be taken without being returned.
+func (p *Pool) capFor(t JobType) (int, bool) {
+	c, ok := p.TypeConcurrency[t]
+	if !ok || c <= 0 {
+		return 0, false
+	}
+	return c, true
+}
+
+// tryReserve checks the per-type cap for the supplied types and TAKES
+// a reservation on each capped type that still has room, returning the
+// types the caller may claim. Caller (Worker.Run) feeds the result into
+// Service.ClaimNext so the claim query only considers eligible types.
+//
+// The counter is incremented here, under the same lock as the check,
+// so two workers racing on the last slot cannot both pass. Uncapped
+// types are returned without a reservation — there is nothing to count.
+//
+// Every returned slice MUST be handed to releaseReserved once the claim
+// resolves, naming the type actually claimed (or "" if none was), or
+// the reservations leak and the type wedges at its cap forever.
 //
 // Returns ALL the input types if no per-type caps are configured
 // (the common case for non-AI workers).
 func (p *Pool) tryReserve(types []JobType) []JobType {
-	if p.TypeConcurrency == nil || len(p.TypeConcurrency) == 0 {
+	if len(p.TypeConcurrency) == 0 {
 		return types
 	}
 	p.typeRunningMu.Lock()
@@ -334,46 +420,66 @@ func (p *Pool) tryReserve(types []JobType) []JobType {
 	}
 	out := make([]JobType, 0, len(types))
 	for _, t := range types {
-		cap, capped := p.TypeConcurrency[t]
-		if !capped || cap <= 0 {
+		cap, capped := p.capFor(t)
+		if !capped {
 			out = append(out, t)
 			continue
 		}
 		if p.typeRunning[t] < cap {
+			p.typeRunning[t]++ // reservation taken, not just observed
 			out = append(out, t)
 		}
 	}
 	return out
 }
 
-// hasCaps reports whether any per-type concurrency cap is configured.
-func (p *Pool) hasCaps() bool { return len(p.TypeConcurrency) > 0 }
-
-// confirmReservation increments the running counter for the
-// claimed job's type. Called AFTER a successful claim — the
-// counter reflects actually-running jobs.
-func (p *Pool) confirmReservation(t JobType) {
-	if p.TypeConcurrency == nil {
-		return
-	}
-	if _, capped := p.TypeConcurrency[t]; !capped {
-		return
+// releaseReserved returns the reservations tryReserve took, keeping
+// exactly one for `keep` — the type the worker actually claimed and is
+// about to run. Pass an empty `keep` when the claim failed or the queue
+// was empty, which returns all of them.
+//
+// Reports whether a reservation for `keep` was actually held. The
+// caller must only call release() when this is true: an uncapped type
+// never took a counter, and decrementing one it never incremented would
+// hand a live slot away to a third worker.
+//
+// A worker reserves every eligible type on each poll because it cannot
+// know which type the claim query will hand back. Holding those for the
+// few milliseconds a claim takes makes other workers see the type as
+// full, which is the conservative direction: it can briefly under-use a
+// slot, never over-use one.
+func (p *Pool) releaseReserved(reserved []JobType, keep JobType) bool {
+	if len(reserved) == 0 || len(p.TypeConcurrency) == 0 {
+		return false
 	}
 	p.typeRunningMu.Lock()
 	defer p.typeRunningMu.Unlock()
 	if p.typeRunning == nil {
-		p.typeRunning = map[JobType]int{}
+		return false
 	}
-	p.typeRunning[t]++
+	kept := false
+	for _, t := range reserved {
+		if _, capped := p.capFor(t); !capped {
+			continue
+		}
+		if !kept && t == keep {
+			kept = true // this one stays held for the duration of the run
+			continue
+		}
+		if p.typeRunning[t] > 0 {
+			p.typeRunning[t]--
+		}
+	}
+	return kept
 }
 
+// hasCaps reports whether any per-type concurrency cap is configured.
+func (p *Pool) hasCaps() bool { return len(p.TypeConcurrency) > 0 }
+
 // release decrements the running counter when a job finishes (or
-// fails). Always paired with a prior confirmReservation.
+// fails). Pairs with the single reservation releaseReserved kept.
 func (p *Pool) release(t JobType) {
-	if p.TypeConcurrency == nil {
-		return
-	}
-	if _, capped := p.TypeConcurrency[t]; !capped {
+	if _, capped := p.capFor(t); !capped {
 		return
 	}
 	p.typeRunningMu.Lock()

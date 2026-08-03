@@ -71,6 +71,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import urllib.request
@@ -208,20 +209,285 @@ def _clean_companion_uri(uri: str) -> str | None:
     uri = unquote(uri).replace("\\", "/")
     if uri.startswith("/"):
         return None
+    # Windows drive-absolute (`C:\Users\...\tex.png`, which FBX FileName
+    # properties routinely carry) names a file on the exporter's machine,
+    # not a sibling of the model — and after the separator swap above it
+    # would otherwise pass as an ordinary relative path (#753).
+    if len(uri) >= 2 and uri[1] == ":" and uri[0].isascii() and uri[0].isalpha():
+        return None
     cleaned = os.path.normpath(uri).replace("\\", "/")
     if cleaned in (".", "..") or cleaned.startswith("../"):
         return None
     return cleaned
 
 
+def _glb_json_chunk(model_path: Path) -> dict | None:
+    """Return the glTF JSON document inside a GLB container, or None if
+    the file isn't a readable GLB (#750).
+
+    GLB layout (glTF 2.0 §4.4, little-endian): a 12-byte header — magic
+    'glTF', version, total length — then length-prefixed chunks, the
+    first of which the spec requires to be the JSON chunk. Only that
+    chunk is read; the BIN chunk after it is the bulk of the file. Python
+    twin of format3d.ReadGLBJSONChunk."""
+    try:
+        with model_path.open("rb") as f:
+            head = f.read(12)
+            if len(head) < 12:
+                return None
+            magic, _version, _total = struct.unpack("<III", head)
+            if magic != 0x46546C67:  # 'glTF'
+                return None
+            chunk = f.read(8)
+            if len(chunk) < 8:
+                return None
+            clen, ctype = struct.unpack("<II", chunk)
+            if ctype != 0x4E4F534A:  # 'JSON'
+                return None
+            if clen > 64 * 1024 * 1024:
+                return None
+            raw = f.read(clen)
+            if len(raw) < clen:
+                return None
+        doc = json.loads(raw.decode("utf-8"))
+    except (OSError, struct.error, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+# ---------------------------------------------------------------- FBX (#753)
+#
+# Python twin of app/internal/preview/format3d/fbx.go. An FBX is a tree of
+# node records; the media a model uses is named in Video / Texture nodes'
+# RelativeFilename + FileName string properties, unless the Video carries
+# the bytes inline in a Content property. Both container encodings appear
+# in the wild and both are read here — binary record offsets are uint32
+# below version 7500 and uint64 from 7500 on, and the catalogue has both.
+#
+# Not a filename regex, for the reason the Go side isn't: a regex cannot
+# tell a texture reference from the Creator string or a bone named
+# "hand.L.png".
+
+_FBX_MAGIC = b"Kaydara FBX Binary  \x00"
+_FBX_HEADER_LEN = 27
+_FBX_WIDE_VERSION = 7500
+_FBX_MAX_DEPTH = 32
+_FBX_ARRAY_ELEM = {b"f": 4, b"d": 8, b"l": 8, b"i": 4, b"b": 1}
+_FBX_SCALAR = {b"C": 1, b"Y": 2, b"I": 4, b"F": 4, b"D": 8, b"L": 8}
+
+
+class _FbxError(Exception):
+    """The container could not be read. Distinct from 'declares nothing'."""
+
+
+class _FbxMedia:
+    __slots__ = ("rel", "abs", "embedded")
+
+    def __init__(self) -> None:
+        self.rel = ""
+        self.abs = ""
+        self.embedded = False
+
+
+def _fbx_read_prop(buf: memoryview, off: int, want_value: bool):
+    """Read one property record. Returns (offset_after, code, str_value,
+    payload_len)."""
+    code = bytes(buf[off:off + 1])
+    off += 1
+    if code in _FBX_SCALAR:
+        return off + _FBX_SCALAR[code], code, "", 0
+    if code in _FBX_ARRAY_ELEM:
+        alen, enc, clen = struct.unpack_from("<III", buf, off)
+        off += 12
+        return off + (clen if enc else alen * _FBX_ARRAY_ELEM[code]), code, "", 0
+    if code in (b"S", b"R"):
+        (n,) = struct.unpack_from("<I", buf, off)
+        off += 4
+        value = ""
+        if code == b"S" and want_value and n <= 64 * 1024:
+            value = bytes(buf[off:off + n]).decode("latin-1")
+        return off + n, code, value, n
+    raise _FbxError(f"unknown property type {code!r} at {off - 1}")
+
+
+def _fbx_walk(buf: memoryview, off: int, end: int, wide: bool, depth: int,
+              cur: "_FbxMedia | None", acc: list) -> int:
+    if depth > _FBX_MAX_DEPTH:
+        raise _FbxError("record nesting too deep")
+    num_fmt = "<QQQ" if wide else "<III"
+    hdr = 25 if wide else 13
+    while off + hdr <= end:
+        if off + hdr > len(buf):
+            raise _FbxError("truncated record header")
+        end_off, num_props, prop_len = struct.unpack_from(num_fmt, buf, off)
+        name_len = buf[off + hdr - 1]
+        p = off + hdr
+        if end_off == 0 and num_props == 0 and prop_len == 0 and name_len == 0:
+            return off + hdr
+        if end_off <= off or end_off > end or end_off > len(buf):
+            raise _FbxError(f"record end offset {end_off} out of range at {off}")
+        name = bytes(buf[p:p + name_len]).decode("latin-1").lower()
+        p += name_len
+
+        props_end = p + prop_len
+        if props_end > end_off:
+            raise _FbxError(f"property list of {name!r} overruns its record")
+        if cur is not None and num_props > 0 and name in (
+                "relativefilename", "filename", "content"):
+            _, code, value, length = _fbx_read_prop(buf, p, name != "content")
+            if name == "relativefilename" and code == b"S":
+                cur.rel = value
+            elif name == "filename" and code == b"S":
+                cur.abs = value
+            elif name == "content" and length > 0:
+                cur.embedded = True
+        p = props_end
+
+        child = cur
+        if name in ("video", "texture"):
+            child = _FbxMedia()
+            acc.append(child)
+        if p < end_off:
+            _fbx_walk(buf, p, end_off, wide, depth + 1, child, acc)
+        off = end_off
+    return off
+
+
+def _fbx_parse_binary(blob: bytes) -> list:
+    (version,) = struct.unpack_from("<I", blob, 23)
+    acc: list = []
+    _fbx_walk(memoryview(blob), _FBX_HEADER_LEN, len(blob),
+              version >= _FBX_WIDE_VERSION, 0, None, acc)
+    return acc
+
+
+def _fbx_parse_ascii(text: str) -> list:
+    """Brace-depth walk of the text encoding. `FileName` means something
+    only inside a Video or Texture block, so the stack matters."""
+    stack: list = []          # [(name, media|None)]
+    acc: list = []
+    saw_marker = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(";"):
+            continue
+        if not saw_marker and ("FBXHeaderExtension" in line or "FBXVersion" in line):
+            saw_marker = True
+        while line.startswith("}"):
+            if stack:
+                stack.pop()
+            line = line[1:].strip()
+        if not line:
+            continue
+
+        key = ""
+        colon = line.find(":")
+        if colon > 0:
+            k = line[:colon].strip()
+            if not any(c in k for c in '"{}'):
+                key = k.lower()
+
+        if line.endswith("{"):
+            media = None
+            if key in ("video", "texture"):
+                media = _FbxMedia()
+                acc.append(media)
+            if len(stack) >= _FBX_MAX_DEPTH:
+                raise _FbxError("ascii nesting too deep")
+            stack.append((key, media))
+            continue
+
+        if key and stack and stack[-1][1] is not None:
+            cur = stack[-1][1]
+            first, last = line.find('"'), line.rfind('"')
+            value = line[first + 1:last] if 0 <= first < last else ""
+            if key == "relativefilename":
+                cur.rel = value
+            elif key == "filename":
+                cur.abs = value
+            elif key == "content":
+                rest = line[colon + 1:].strip().strip(", \t")
+                if rest and rest != '""':
+                    cur.embedded = True
+
+        while line.endswith("}"):
+            if stack:
+                stack.pop()
+            line = line[:-1].strip()
+
+    if not saw_marker:
+        raise _FbxError("not an fbx (no binary magic, no FBXHeaderExtension)")
+    return acc
+
+
+def _fbx_companions(model_path: Path) -> list[str]:
+    """Relative paths an FBX declares, cleaned and de-duplicated. Raises
+    _FbxError when the container cannot be read — which is NOT the same
+    answer as 'declares nothing'."""
+    try:
+        blob = model_path.read_bytes()
+    except OSError as e:
+        raise _FbxError(str(e)) from e
+    try:
+        if blob.startswith(_FBX_MAGIC):
+            media = _fbx_parse_binary(blob)
+        else:
+            media = _fbx_parse_ascii(blob.decode("latin-1"))
+    except (struct.error, IndexError, UnicodeDecodeError) as e:
+        raise _FbxError(str(e)) from e
+
+    # A Video that embeds its bytes and the Texture applying it name the
+    # same file; only the Video carries the Content, so the embedded names
+    # are excluded everywhere.
+    embedded = set()
+    for m in media:
+        if m.embedded:
+            for raw in (m.rel, m.abs):
+                if raw:
+                    embedded.add(raw.replace("\\", "/").rsplit("/", 1)[-1].lower())
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in media:
+        if m.embedded:
+            continue
+        # Relative first, absolute only as a fallback — what three.js's
+        # FBXLoader does (`RelativeFilename || Filename`).
+        rel = _clean_companion_uri(m.rel) or _clean_companion_uri(m.abs)
+        if not rel:
+            continue
+        if rel.rsplit("/", 1)[-1].lower() in embedded or rel in seen:
+            continue
+        seen.add(rel)
+        out.append(rel)
+    return out
+
+
 def resolve_model_companions(model_path: Path) -> list[str]:
     """Return the on-disk sibling files a multi-file model declares,
-    relative to the model's directory (#486). glTF → buffers[].uri +
-    images[].uri; OBJ → mtllib .mtl files and, recursively, the textures
-    each .mtl references. GLB/FBX are self-contained → []. Only siblings
-    that exist next to the model are returned. This is the Python twin of
+    relative to the model's directory (#486). glTF and GLB → buffers[].uri
+    + images[].uri; OBJ → mtllib .mtl files and, recursively, the textures
+    each .mtl references. Only siblings that exist next to the model are
+    returned. This is the Python twin of
     app/internal/preview/format3d.ResolveCompanions so the seed pipeline
-    stages exactly what the Go runner will register + the loaders resolve."""
+    stages exactly what the Go runner will register + the loaders resolve.
+
+    GLB is NOT self-contained by default (#750). It wraps the same glTF
+    JSON document in a binary container, so its buffer/image URIs can name
+    external files exactly as a .gltf's can. Treating it as embedded here
+    is what left 363 of the catalogue's 374 GLBs staged WITHOUT the
+    textures they name — Kenney ships one Textures/ dir per format
+    directory, and this function returning [] meant the GLB dirs' copies
+    were never copied, so the models rendered grey.
+
+    FBX was the same bug one format over (#753) and is now read the same
+    way: a Video node either embeds its image in a Content property or
+    names it in RelativeFilename / FileName. 127 of the catalogue's 131
+    name a file and 126 resolve to a sibling path (the odd one out names
+    only an authoring-machine `C:\\...` path); none embed. This function
+    returning [] is why 0 of those 246 references had their file staged.
+    Reading them stages all 246, verified against both shares.
+    """
     ext = model_path.suffix.lower().lstrip(".")
     base = model_path.parent
     declared: list[str] = []
@@ -232,15 +498,33 @@ def resolve_model_companions(model_path: Path) -> list[str]:
             seen.add(rel)
             declared.append(rel)
 
+    def add_gltf_doc(doc: dict) -> None:
+        for b in doc.get("buffers", []) or []:
+            add(_clean_companion_uri(b.get("uri", "")))
+        for im in doc.get("images", []) or []:
+            add(_clean_companion_uri(im.get("uri", "")))
+
     if ext == "gltf":
         try:
             doc = json.loads(model_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return []
-        for b in doc.get("buffers", []):
-            add(_clean_companion_uri(b.get("uri", "")))
-        for im in doc.get("images", []):
-            add(_clean_companion_uri(im.get("uri", "")))
+        add_gltf_doc(doc)
+    elif ext == "glb":
+        doc = _glb_json_chunk(model_path)
+        if doc is None:
+            return []
+        add_gltf_doc(doc)
+    elif ext == "fbx":
+        try:
+            for rel in _fbx_companions(model_path):
+                add(rel)
+        except _FbxError as e:
+            # Soft-fail, matching the Go runner: an unreadable container
+            # stages nothing and says so, rather than passing silently as
+            # a model with no references.
+            print(f"  ! unreadable fbx {model_path.name}: {e}", file=sys.stderr)
+            return []
     elif ext == "obj":
         try:
             text = model_path.read_text(encoding="utf-8", errors="replace")
@@ -585,8 +869,13 @@ def main() -> int:
         # a .bin and 69 textures that were never staged, and why it was
         # the only 3D asset in the instance stuck at `failed`. The model
         # matching by size proves nothing about the 70 files beside it.
-        if args.dry_run and already:
-            continue
+        # NOTE: this used to `continue` here when `args.dry_run and
+        # already`, which made --dry-run blind to exactly the case #750 and
+        # #753 are about: every model in a populated site is `already`, so
+        # a dry run reported "companions: 0" whether the resolver had
+        # learned a new format or not, and the only way to see what a fix
+        # would stage was to mutate the share. A dry run has to report the
+        # work the real run would do.
 
         # Multi-file models (#486): copy the .gltf/.obj siblings the model
         # declares (buffer, textures, .mtl) next to the destination so the

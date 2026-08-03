@@ -204,3 +204,24 @@ jobs:
             echo ""
             echo "See the [Release notes](https://github.com/${REPO}/releases/tag/${TAG})."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Announce on Discord
+        if: success()
+        env:
+          TAG: ${{ needs.release-notes.outputs.tag }}
+          REPO: ${{ github.repository }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_RELEASES }}
+        # Best-effort: a missing webhook or a Discord outage must never
+        # fail a release that has already published images.
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "DISCORD_WEBHOOK_RELEASES not set; skipping"; exit 0; }
+          payload=$(jq -n --arg tag "$TAG" --arg repo "$REPO" '{
+            embeds: [{
+              title: ("Artist Alley " + $tag + " released"),
+              url: ("https://github.com/" + $repo + "/releases/tag/" + $tag),
+              description: ("Multi-arch images (amd64/arm64) are on GHCR and Docker Hub, signed via cosign.\n`docker pull ghcr.io/artist-alley-org/artist-alley:" + $tag + "`"),
+              color: 15102720
+            }]
+          }')
+          curl -sf -H "Content-Type: application/json" -d "$payload" "$WEBHOOK" \
+            || echo "::warning::Discord release announce failed"

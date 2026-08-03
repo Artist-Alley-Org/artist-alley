@@ -7,7 +7,8 @@
   // Tile statuses:
   //   live   — clickable, full color
   //   stub   — clickable, "Stub" badge
-  //   future — non-clickable, "Phase X" badge, muted
+  //   future — non-clickable, muted (the dimmed styling alone conveys
+  //            "not built yet"; no release identifier is shown, #801)
 
   import type { AdminSection } from '$lib/admin/sections';
   import { t } from '$stores/lang.svelte';
@@ -51,12 +52,7 @@
         class="cursor-not-allowed rounded-lg border border-dashed border-border bg-surface-elevated/50 p-4 opacity-70"
         aria-disabled="true"
       >
-        <div class="flex items-start justify-between gap-2">
-          <h3 class="text-sm font-medium text-fg-muted">{t(titleK)}</h3>
-          <span class="shrink-0 rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-fg-muted">
-            {t('admin.status.phase', { phase: tile.phase ?? '?' })}
-          </span>
-        </div>
+        <h3 class="text-sm font-medium text-fg-muted">{t(titleK)}</h3>
         <p class="mt-1 text-xs text-fg-muted">{t(blurbK)}</p>
       </div>
     {:else}

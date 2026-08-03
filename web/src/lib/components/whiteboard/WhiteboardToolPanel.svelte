@@ -251,12 +251,13 @@
   // Image / Selection placeholder buttons — disabled until C-1.14 /
   // C-1.15 wire the actual mutators. They appear in their sections
   // so the user sees what's coming.
-  interface PlaceholderEntry { id: string; label: string; icon: string; phase: string; }
-  // Image-section placeholders still pending — skew + remove-bg.
+  interface PlaceholderEntry { id: string; label: string; icon: string; note: string; }
+  // Image-section placeholders still pending — skew + remove-bg. The
+  // internal release/target is not surfaced to users (#801).
   // Resize gets its own inline dialog (not a placeholder).
   const IMAGE_PLACEHOLDERS: PlaceholderEntry[] = [
-    { id: 'skew',      label: 'Skew',              phase: 'C-1.14b', icon: 'M3 20l4-16h14L17 20z' },
-    { id: 'remove-bg', label: 'Remove background', phase: 'C-1.14b (needs ML)', icon: 'M4 4h16v16H4z M2 2l20 20' },
+    { id: 'skew',      label: 'Skew',              note: 'a future release', icon: 'M3 20l4-16h14L17 20z' },
+    { id: 'remove-bg', label: 'Remove background', note: 'a future release', icon: 'M4 4h16v16H4z M2 2l20 20' },
   ];
   // All previous placeholders here either shipped (rect-select /
   // select-all / invert) or were retired (transparent selection
@@ -743,8 +744,8 @@
         type="button"
         disabled
         class="inline-flex aspect-square items-center justify-center rounded text-fg-muted/40 opacity-60"
-        title={`${p.label} — coming in ${p.phase}`}
-        aria-label={`${p.label} (coming in ${p.phase})`}
+        title={`${p.label} — coming in ${p.note}`}
+        aria-label={`${p.label} (coming in ${p.note})`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d={p.icon} />

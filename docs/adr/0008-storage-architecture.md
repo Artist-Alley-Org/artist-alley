@@ -10,6 +10,7 @@ phases:
 supersedes: []
 related: 
   - "0007"
+  - "0075"
 tags:
   - infrastructure
   - ai
@@ -193,6 +194,19 @@ have been generated. The user-facing `resource` row is yet another
 layer above — it owns the title, tags, permissions, comments. One
 resource maps to one or more pins.
 
+**Amended 2026-07-30 (#760):** `storage_variants` carries `updated_at`
+alongside `created_at` (migration 00019). The sketch above has only
+`created_at`, and the upsert that runs on every render never touched it
+after the first write — so the table recorded when a derived form first
+appeared and could not say whether it had since been re-derived. That is
+the wrong shape for a row whose whole subject is mutable: the same
+amendment that #620 forced on the caching bullet applies here. A variant
+under a stable object hash is *expected* to be rewritten when the
+renderer improves, and a table that cannot witness the rewrite makes
+"did the rebuild work?" unanswerable — which is exactly how a preview
+control that quietly did nothing survived three releases. `created_at`
+keeps its original meaning; `updated_at` moves on every write.
+
 ### Lifecycle / dedup semantics
 
 Bytes are **reference-counted, not user-owned**. Walking through:
@@ -342,3 +356,21 @@ follow-up commits without blocking the frontend.
    (HLS bitrates the install no longer serves). Tracking
    `last_accessed_at` on variants is the data needed; deferred until
    we have real usage patterns.
+
+## Amendment 2026-08-02 — the registry row is healed, not trusted (#829)
+
+The variant registry (`storage_variants`) and the backend bytes can diverge: restoring a
+DB backup while the storage volume is intact leaves **bytes without rows**. The preview
+skip check is deliberately backend-first (`Backend.Stat` — bytes are what a request
+serves), but until PR #829 the skip path never wrote the row it had just proven
+unnecessary to re-render, while `preview_available` reads the **row** (ADR 0071). Result,
+reproduced live: every job green, every card permanently blurred (785 derived rows for
+1,947 assets).
+
+**The contract now:** a skip **reconciles** — the row is upserted from the `Stat`
+(content type healed by key extension where one exists, sniffed for ladder rungs, since
+the FS backend cannot store one), and the asset thumbhash is backfilled from a stored
+rung when NULL. Backend-first stays the source of truth for *existence*; the DB is a
+*record* of it, and the record self-heals on the next render pass. Note the 3D handler's
+sentinel needed its own reconcile — a handler whose done-check asks about fewer rungs
+than the frontend requests heals fewer rows than the frontend needs.

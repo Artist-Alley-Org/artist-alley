@@ -1,0 +1,570 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
+// Tests for the two silent drops in applyAssetFields (#807).
+//
+// The seeder used to throw a field value away in two places with one
+// bare `continue` each: no definition for the code, and a value the
+// declared type could not coerce. Both produced no output at all, so a
+// malformed value and a value that was never in the manifest were
+// indistinguishable — the seed reported success and the field was
+// simply absent. The defect this guards is therefore NOT "a value was
+// dropped"; dropping is legitimate. It is "a value was dropped and
+// nothing said so".
+//
+// So every assertion below is about the WARNING, not about the drop:
+// a rejected value that logs nothing is the regression. The one
+// exception is the bare-date case, which asserts the stored value_date
+// in the database — asserting the absence of a warning would pass just
+// as happily if the value had been dropped for some other reason.
+
+package seed
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"log/slog"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/logging"
+)
+
+// captureLogger returns a logger writing JSON records into buf, so a
+// test can assert on the message AND the attributes an operator would
+// actually grep for.
+func captureLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+type logRecord struct {
+	Msg   string `json:"msg"`
+	Code  string `json:"code"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// recordsWithMsg pulls every JSON log line carrying the given msg.
+func recordsWithMsg(t *testing.T, buf *bytes.Buffer, msg string) []logRecord {
+	t.Helper()
+	var out []logRecord
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec logRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not JSON (%v): %s", err, line)
+		}
+		if rec.Msg == msg {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// badValues: one value per declared field type that the type genuinely
+// cannot accept. All eleven types fieldValueParams knows are covered —
+// several of them can only be rejected by a JSON null, which is exactly
+// what a manifest carrying `"version": null` produces.
+func badValues() []struct {
+	fieldType string
+	raw       any
+	why       string
+} {
+	return []struct {
+		fieldType string
+		raw       any
+		why       string
+	}{
+		// The five string-backed types coerce anything non-nil, so a
+		// JSON null is the only value they can refuse.
+		{"text", nil, "JSON null"},
+		{"longtext", nil, "JSON null"},
+		{"rich_text", nil, "JSON null"},
+		{"select", nil, "JSON null"},
+		{"tree", nil, "JSON null"},
+		// A quoted number is the classic manifest slip.
+		{"number", "42", "a number as a JSON string"},
+		{"boolean", nil, "JSON null"},
+		// Neither a non-date string nor a US-style date parses.
+		{"date", "not-a-date", "unparseable date"},
+		{"date", "03/14/2026", "US-style date"},
+		// datetime stays strict: a bare calendar date is a defect.
+		{"datetime", "2026-03-14", "a bare date on a datetime field"},
+		{"multi_select", []any{}, "an empty array"},
+		{"multi_select", []any{nil, nil}, "an array of nulls"},
+		{"reference", "not-a-uuid", "an unparseable UUID"},
+		// An unknown type name falls through to the text branch, which
+		// still refuses null — so even a typo'd type reports its drop.
+		{"nosuchtype", nil, "JSON null on an unknown type"},
+	}
+}
+
+// TestFieldValueParams_RejectsBadValues pins the coercion half: every
+// value below must be REFUSED, so applyAssetFields reaches its warn.
+func TestFieldValueParams_RejectsBadValues(t *testing.T) {
+	for _, c := range badValues() {
+		t.Run(c.fieldType+"/"+c.why, func(t *testing.T) {
+			if _, ok := fieldValueParams(c.fieldType, c.raw); ok {
+				t.Fatalf("fieldValueParams(%q, %#v) ACCEPTED %s — "+
+					"applyAssetFields would insert it instead of warning", c.fieldType, c.raw, c.why)
+			}
+		})
+	}
+}
+
+// TestApplyAssetFields_WarnsOnRejectedValue is the regression this
+// issue exists to prevent: one warning per dropped value, naming the
+// code, the declared type and the offending value.
+func TestApplyAssetFields_WarnsOnRejectedValue(t *testing.T) {
+	for _, c := range badValues() {
+		t.Run(c.fieldType+"/"+c.why, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := NewRunner(nil, nil, Options{Logger: captureLogger(&buf)})
+			// A definition EXISTS for the code — so a drop here can
+			// only be the value, never the catalogue.
+			code := "fld_" + c.fieldType
+			r.fields[code] = fieldMeta{id: pgtype.UUID{Bytes: uuid.New(), Valid: true}, typ: c.fieldType}
+
+			// nil pool: reaching the insert would panic, which is
+			// itself the assertion that the value was refused.
+			if err := r.applyAssetFields(context.Background(),
+				pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				map[string]any{code: c.raw}); err != nil {
+				t.Fatalf("applyAssetFields: %v", err)
+			}
+
+			recs := recordsWithMsg(t, &buf, "seed.field.value_rejected")
+			if len(recs) != 1 {
+				t.Fatalf("dropping %s on a %q field logged %d seed.field.value_rejected "+
+					"records, want exactly 1. A drop nobody hears is the defect (#807). Log:\n%s",
+					c.why, c.fieldType, len(recs), buf.String())
+			}
+			if recs[0].Code != code {
+				t.Errorf("warning names code %q, want %q", recs[0].Code, code)
+			}
+			if recs[0].Type != c.fieldType {
+				t.Errorf("warning names type %q, want %q", recs[0].Type, c.fieldType)
+			}
+			if recs[0].Value == "" {
+				t.Errorf("warning carried no value attribute — the operator cannot tell " +
+					"which manifest entry is wrong")
+			}
+			// A rejected value must NOT be reported as an unknown code:
+			// the two failures have different fixes.
+			if got := recordsWithMsg(t, &buf, "seed.field.unknown_code"); len(got) != 0 {
+				t.Errorf("a bad VALUE was reported as an unknown CODE (%d records) — "+
+					"the two drops must stay distinguishable", len(got))
+			}
+			if n := r.fieldDrops.total(dropValueRejected); n != 1 {
+				t.Errorf("tally counted %d value_rejected drops, want 1", n)
+			}
+		})
+	}
+}
+
+// TestApplyAssetFields_WarnsOnUnknownCode covers the other half — the
+// branch every asset in both current manifests hits, six times over,
+// until #808 lands the missing definitions.
+func TestApplyAssetFields_WarnsOnUnknownCode(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRunner(nil, nil, Options{Logger: captureLogger(&buf)})
+	assetID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
+	if err := r.applyAssetFields(context.Background(), assetID, map[string]any{
+		"capture_date": "2026-03-14",
+	}); err != nil {
+		t.Fatalf("applyAssetFields: %v", err)
+	}
+
+	recs := recordsWithMsg(t, &buf, "seed.field.unknown_code")
+	if len(recs) != 1 {
+		t.Fatalf("an undefined code logged %d seed.field.unknown_code records, want 1. Log:\n%s",
+			len(recs), buf.String())
+	}
+	if recs[0].Code != "capture_date" {
+		t.Errorf("warning names code %q, want capture_date", recs[0].Code)
+	}
+	if got := recordsWithMsg(t, &buf, "seed.field.value_rejected"); len(got) != 0 {
+		t.Errorf("an unknown CODE was reported as a bad VALUE (%d records)", len(got))
+	}
+	if n := r.fieldDrops.total(dropUnknownCode); n != 1 {
+		t.Errorf("tally counted %d unknown_code drops, want 1", n)
+	}
+}
+
+// TestApplyAssetFields_UnknownCodeIsNotFatal is the constraint that
+// keeps CI alive until #808: both manifests carry six codes with no
+// definition, so warn-only is load-bearing, not a nicety.
+func TestApplyAssetFields_UnknownCodeIsNotFatal(t *testing.T) {
+	r := NewRunner(nil, nil, Options{Logger: logging.Setup("error", "text")})
+	vals := map[string]any{}
+	for _, c := range []string{
+		"production_notes", "usage_rights", "capture_date",
+		"ingested_at", "production_area", "derived_from",
+	} {
+		vals[c] = "whatever"
+	}
+	if err := r.applyAssetFields(context.Background(),
+		pgtype.UUID{Bytes: uuid.New(), Valid: true}, vals); err != nil {
+		t.Fatalf("six undefined codes returned an error (%v) — that breaks the seed, "+
+			"and therefore CI, against today's dataset. Warn only (#807).", err)
+	}
+	if n := r.fieldDrops.total(dropUnknownCode); n != 6 {
+		t.Errorf("tally counted %d unknown_code drops, want 6", n)
+	}
+}
+
+// TestFieldDropTally_SuppressesRepeatsAndSummarises: a misconfigured
+// field is ~1,900 identical lines against site_a, which buries every
+// other warning the run produced. Detail warnings are capped; the
+// summary carries the true totals, and it is the part an operator reads.
+func TestFieldDropTally_SuppressesRepeatsAndSummarises(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRunner(nil, nil, Options{Logger: captureLogger(&buf)})
+	assetID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	for i := 0; i < 50; i++ {
+		if err := r.applyAssetFields(context.Background(), assetID, map[string]any{
+			"production_area": "audio-sfx",
+			"capture_date":    "2026-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatalf("applyAssetFields: %v", err)
+		}
+	}
+
+	recs := recordsWithMsg(t, &buf, "seed.field.unknown_code")
+	if want := 2 * fieldDropLogLimit; len(recs) != want {
+		t.Errorf("emitted %d detail warnings for 100 drops across 2 codes, want %d "+
+			"(fieldDropLogLimit=%d per code)", len(recs), want, fieldDropLogLimit)
+	}
+	if n := r.fieldDrops.total(dropUnknownCode); n != 100 {
+		t.Fatalf("tally counted %d drops, want 100 — suppression must not lose the count", n)
+	}
+	if got := r.fieldDrops.offenders(dropUnknownCode, 10); got != "capture_date=50, production_area=50" {
+		t.Errorf("offenders() = %q, want %q", got, "capture_date=50, production_area=50")
+	}
+
+	buf.Reset()
+	r.logFieldDrops()
+	sum := recordsWithMsg(t, &buf, "seed.field.drops")
+	if len(sum) != 1 {
+		t.Fatalf("logFieldDrops emitted %d summary records, want 1. Log:\n%s", len(sum), buf.String())
+	}
+	if !strings.Contains(buf.String(), `"unknown_code":100`) {
+		t.Errorf("summary does not report the 100 drops: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "production_area=50") {
+		t.Errorf("summary does not name the offending codes: %s", buf.String())
+	}
+}
+
+// TestFieldDropTally_SummaryAlwaysLogged: zeros are the evidence the
+// check ran at all.
+func TestFieldDropTally_SummaryAlwaysLogged(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRunner(nil, nil, Options{Logger: captureLogger(&buf)})
+	r.logFieldDrops()
+	if len(recordsWithMsg(t, &buf, "seed.field.drops")) != 1 {
+		t.Fatalf("a clean run logged no summary. Log:\n%s", buf.String())
+	}
+}
+
+// ---------------------------------------------------------------------
+// Round-trip: a bare date must reach the DATABASE
+// ---------------------------------------------------------------------
+
+// TestApplyAssetFields_BareDateRoundTrips drives the real insert and
+// reads value_date back out. Asserting "no warning fired" would pass
+// just as happily if the value had been dropped for some other reason,
+// which is the whole failure mode #807 is about — so this asserts the
+// stored value.
+//
+// Skips (does not fail) when AA_DB_PASSWORD is unset, matching the
+// other seed integration tests.
+func TestApplyAssetFields_BareDateRoundTrips(t *testing.T) {
+	pool := openCompanionTestPool(t)
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	r := NewRunner(pool, nil, Options{Logger: captureLogger(&buf)})
+	assetID := newCompanionTestAsset(t, pool)
+
+	cases := []struct {
+		name, ftype, raw, want string
+	}{
+		{"date_bare", "date", "2026-03-14", "2026-03-14T00:00:00Z"},
+		{"date_rfc3339", "date", "2026-03-14T09:30:00Z", "2026-03-14T09:30:00Z"},
+		{"datetime_rfc3339", "datetime", "2026-03-14T09:30:00Z", "2026-03-14T09:30:00Z"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			code := "aa807_" + c.name
+			fieldID := newDropTestField(t, pool, code, c.ftype)
+			r.fields[code] = fieldMeta{id: fieldID, typ: c.ftype}
+
+			if err := r.applyAssetFields(ctx, assetID, map[string]any{code: c.raw}); err != nil {
+				t.Fatalf("applyAssetFields: %v", err)
+			}
+
+			var got time.Time
+			err := pool.QueryRow(ctx,
+				`SELECT value_date FROM asset_field_value WHERE asset_id = $1 AND field_id = $2`,
+				assetID, fieldID).Scan(&got)
+			if err != nil {
+				t.Fatalf("no asset_field_value row for %s=%q — the value was DROPPED (%v). Log:\n%s",
+					c.ftype, c.raw, err, buf.String())
+			}
+			if s := got.UTC().Format(time.RFC3339); s != c.want {
+				t.Errorf("%s field seeded with %q stored %s, want %s", c.ftype, c.raw, s, c.want)
+			}
+		})
+	}
+}
+
+// newDropTestField inserts a throwaway field definition and cleans up
+// its rows (the dev DB is shared).
+func newDropTestField(t *testing.T, pool *pgxpool.Pool, code, ftype string) pgtype.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var id pgtype.UUID
+	err := pool.QueryRow(ctx,
+		`INSERT INTO field_definition (code, label, type) VALUES ($1, $2, $3)
+		 ON CONFLICT (code) DO UPDATE SET type = EXCLUDED.type RETURNING id`,
+		code, code, ftype).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert field_definition %s: %v", code, err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM asset_field_value_history WHERE field_id = $1`, id)
+		_, _ = pool.Exec(c, `DELETE FROM asset_field_value WHERE field_id = $1`, id)
+		_, _ = pool.Exec(c, `DELETE FROM field_definition WHERE id = $1`, id)
+	})
+	return id
+}
+
+// ---------------------------------------------------------------------
+// Binding to an EXISTING definition (#812)
+// ---------------------------------------------------------------------
+
+// Since the reset stopped truncating field_definition, a catalogue
+// entry whose code matches a shipped definition binds to that row
+// instead of creating one — SeedInsertField is ON CONFLICT (code) DO
+// NOTHING and applyFields recovers via SeedGetFieldByCode. The type
+// then has to come from the ROW, because the row is what decides which
+// value_* column applyAssetFields writes.
+//
+// Registering the CATALOGUE's type instead is invisible to every count:
+// the field exists, the seed reports the right number of definitions,
+// and each value is either written into the wrong column or discarded
+// as value_rejected. So this asserts the bound type and the warning,
+// not a row count.
+func TestApplyFields_BindsToExistingRowsType(t *testing.T) {
+	pool := openCompanionTestPool(t)
+	ctx := context.Background()
+
+	code := "aa812_bind_" + strconv.FormatInt(time.Now().UnixNano()%1e9, 36)
+	// The definition that already exists — stand-in for a shipped one.
+	newDropTestField(t, pool, code, "datetime")
+
+	var buf bytes.Buffer
+	r := NewRunner(pool, nil, Options{Logger: captureLogger(&buf)})
+
+	// The catalogue disagrees: `date` where the row says `datetime`.
+	cat := &catalogues{Fields: []catField{{Name: code, Label: "Bound", Type: "date"}}}
+	if err := r.applyFields(ctx, cat); err != nil {
+		t.Fatalf("applyFields: %v", err)
+	}
+
+	fm, ok := r.fields[code]
+	if !ok {
+		t.Fatalf("applyFields did not register %q at all", code)
+	}
+	if fm.typ != "datetime" {
+		t.Errorf("applyFields registered %q as %q; it bound to a `datetime` row, so every "+
+			"value would be coerced against the wrong type", code, fm.typ)
+	}
+
+	recs := recordsWithMsg(t, &buf, "seed.field.type_mismatch")
+	if len(recs) != 1 {
+		t.Errorf("a catalogue/row type disagreement logged %d warnings, want 1. Log:\n%s",
+			len(recs), buf.String())
+	}
+	if n := r.fieldDrops.total(dropTypeMismatch); n != 1 {
+		t.Errorf("tally counted %d type mismatches, want 1", n)
+	}
+
+	// A matching type must NOT warn — otherwise every shipped code the
+	// catalogue also declares (pixel_width, pixel_height) would cry wolf
+	// on every seed.
+	var buf2 bytes.Buffer
+	r2 := NewRunner(pool, nil, Options{Logger: captureLogger(&buf2)})
+	same := &catalogues{Fields: []catField{{Name: code, Label: "Bound", Type: "datetime"}}}
+	if err := r2.applyFields(ctx, same); err != nil {
+		t.Fatalf("applyFields (matching type): %v", err)
+	}
+	if n := r2.fieldDrops.total(dropTypeMismatch); n != 0 {
+		t.Errorf("a catalogue entry that AGREES with the existing row reported %d "+
+			"mismatches. Log:\n%s", n, buf2.String())
+	}
+}
+
+// The seed catalogue and the shipped catalogue overlap on
+// pixel_width / pixel_height, and #812 makes that overlap load-bearing:
+// the shipped rows now survive `--reset`, so those two entries bind
+// rather than insert. A type change on either side would be a silent
+// mis-write, so pin the agreement in the one place both are visible.
+func TestFieldCatalogue_AgreesWithShippedTypes(t *testing.T) {
+	shipped := map[string]string{
+		"pixel_width":  "number",
+		"pixel_height": "number",
+	}
+	for _, f := range loadFieldCatalogue(t) {
+		want, ok := shipped[f.Name]
+		if !ok {
+			continue
+		}
+		if f.Type != want {
+			t.Errorf("catalogue types %q as %q, but the migrations ship it as %q. The "+
+				"catalogue entry binds to the shipped row, so the seed would write every "+
+				"value against the wrong type (#812).", f.Name, f.Type, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------
+// Binding a definition the CATALOGUE does not mention (#820)
+// ---------------------------------------------------------------------
+
+// applyFields built r.fields from dataset.field_definitions.json alone,
+// so the map held exactly the catalogue's codes. The nine codes the
+// MIGRATIONS ship were absent from it even though the rows were sitting
+// in field_definition, and applyAssetFields threw every manifest value
+// naming one away as `seed.field.unknown_code` — a warning that reads
+// like a typo in the manifest and was in fact a hole in the map.
+//
+// Invisible until #812: `aa seed --reset` used to TRUNCATE
+// field_definition, so on a seeded instance the rows genuinely were
+// gone and "unknown code" was the truth. Since #812 they survive, and
+// #820's whole point — seeding values for credit / copyright /
+// capture_date / keywords / country — cannot land without this.
+func TestApplyFields_BindsDefinitionsTheCatalogueDoesNotDeclare(t *testing.T) {
+	pool := openCompanionTestPool(t)
+	ctx := context.Background()
+
+	suffix := strconv.FormatInt(time.Now().UnixNano()%1e9, 36)
+	// Stand-in for a shipped definition: exists in the table, absent
+	// from the catalogue.
+	unlisted := "aa820_unlisted_" + suffix
+	newDropTestField(t, pool, unlisted, "text")
+	// And one the catalogue DOES declare, so the two paths are exercised
+	// against the same runner.
+	listed := "aa820_listed_" + suffix
+
+	var buf bytes.Buffer
+	r := NewRunner(pool, nil, Options{Logger: captureLogger(&buf)})
+	cat := &catalogues{Fields: []catField{{Name: listed, Label: "Listed", Type: "text"}}}
+	if err := r.applyFields(ctx, cat); err != nil {
+		t.Fatalf("applyFields: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM field_definition WHERE code = $1`, listed)
+	})
+
+	fm, ok := r.fields[unlisted]
+	if !ok {
+		t.Fatalf("applyFields did not bind %q — it exists in field_definition but the "+
+			"catalogue does not declare it, so every manifest value for it would be "+
+			"dropped as seed.field.unknown_code (#820)", unlisted)
+	}
+	if fm.typ != "text" {
+		t.Errorf("bound %q as %q, want the ROW's type `text`", unlisted, fm.typ)
+	}
+	if _, ok := r.fields[listed]; !ok {
+		t.Errorf("preloading the existing definitions lost the catalogue's own %q", listed)
+	}
+
+	// A code that matches NO row is still unknown. Preloading must not
+	// turn the manifest-typo warning into a no-op. No asset row needed:
+	// the drop happens before any insert.
+	assetID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	if err := r.applyAssetFields(ctx, assetID, map[string]any{
+		"aa820_definitely_not_a_field_" + suffix: "x",
+	}); err != nil {
+		t.Fatalf("applyAssetFields: %v", err)
+	}
+	if n := r.fieldDrops.total(dropUnknownCode); n != 1 {
+		t.Errorf("a code matching no row at all recorded %d unknown_code drops, want 1. "+
+			"Binding every existing definition must not weaken the typo check. Log:\n%s",
+			n, buf.String())
+	}
+}
+
+// The two COMPUTED fields must have no seeded values (#820, corrected).
+//
+// pixel_width / pixel_height are written by the preview pipeline
+// (pixeldims.Record, preview/ladder.go) and by nothing else. #765
+// deliberately UNWIRED them from extraction so the pipeline is their
+// single writer; #820's first measurement read them as "0 values" only
+// because that run had previews disabled. A manifest entry or
+// catalogue default for either would put a second writer back and
+// re-open the exact defect #765 closed — and it would be invisible,
+// because both writers produce a plausible number.
+//
+// Asserted over the in-repo catalogue and manifests, which is where a
+// second writer would be introduced. The NAS MANIFESTs no test can
+// reach carry the same risk; this is the half that is checkable.
+func TestSeedNeverWritesComputedPixelDimensions(t *testing.T) {
+	computed := map[string]bool{"pixel_width": true, "pixel_height": true}
+
+	for _, f := range loadFieldCatalogue(t) {
+		if !computed[f.Name] {
+			continue
+		}
+		// The catalogue entry itself is fine and load-bearing (#812
+		// pins the type agreement). What must not exist is a VALUE.
+		if len(f.Options) > 0 {
+			t.Errorf("catalogue gives computed field %q a vocabulary; it is a number "+
+				"written by the preview pipeline", f.Name)
+		}
+	}
+
+	for _, path := range []string{
+		"../../../seed/profiles/studio-a.assets.json",
+		"../../../seed/profiles/studio-b.assets.json",
+		"../../../seed/profiles/demo.assets.json",
+		"../../../seed/profiles/dev.assets.json",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var assets []struct {
+			ID          string         `json:"id"`
+			FieldValues map[string]any `json:"field_values"`
+		}
+		if err := json.Unmarshal(b, &assets); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, a := range assets {
+			for code := range a.FieldValues {
+				if computed[code] {
+					t.Errorf("%s: asset %s carries a seeded %q. That field is written by "+
+						"the preview pipeline and by nothing else (#765) — a seeded value "+
+						"makes the seed a second writer, and neither value is wrong-looking "+
+						"enough to notice.", path, a.ID, code)
+				}
+			}
+		}
+	}
+}

@@ -54,12 +54,6 @@ import (
 // .cbt (tar) variants exist in the wild but are vanishingly rare;
 // queued here when we add them.
 
-type ComicPayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 // ComicMetadata: just the page count + cover filename. Comic Book
 // archives sometimes ship a ComicInfo.xml sidecar (created by
 // ComicRack and friends) with rich metadata (title, series, issue,
@@ -150,12 +144,17 @@ func (h *ComicHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		return json.Marshal(result)
 	}
 
-	if h.variantExists(jobCtx, p.FileHash, "col") &&
-		h.variantExists(jobCtx, p.FileHash, "preview") &&
-		h.variantExists(jobCtx, p.FileHash, "screen") &&
-		h.variantExists(jobCtx, p.FileHash, "hires") {
+	if ladderDone(jobCtx, h.Storage, p.FileHash, p.Force) {
 		result.Skipped = append(result.Skipped, "raster")
-	} else if err := h.fanCoverToLadder(jobCtx, p.AssetID, p.FileHash, coverBytes); err != nil {
+		// The rungs were already there, so nothing was rendered and
+		// nothing reached the ladder step that normally stamps the
+		// blur-up placeholder. Read one back instead of re-rendering
+		// (#827).
+		healThumbhashOnSkip(jobCtx, ladderInput{
+			Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
+			AssetID: p.AssetID, Hash: p.FileHash, Kind: "comic",
+		})
+	} else if err := h.fanCoverToLadder(jobCtx, p.AssetID, p.FileHash, coverBytes, p.Force); err != nil {
 		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.comic.fan_failed",
 			slog.String("err", err.Error()))
 	} else {
@@ -393,7 +392,7 @@ func (h *ComicHandler) stage(ctx context.Context, hash, ext string) (string, fun
 	return src, cleanup, nil
 }
 
-func (h *ComicHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, hash string, coverBytes []byte) error {
+func (h *ComicHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, hash string, coverBytes []byte, force bool) error {
 	src, _, err := image.Decode(bytes.NewReader(coverBytes))
 	if err != nil {
 		return fmt.Errorf("decode cover: %w", err)
@@ -401,6 +400,7 @@ func (h *ComicHandler) fanCoverToLadder(ctx context.Context, assetID uuid.UUID, 
 	return fanToLadder(ctx, ladderInput{
 		Pool: h.Pool, Storage: h.Storage, SysConfig: h.SysConfig, Logger: h.Logger,
 		AssetID: assetID, Hash: hash, Src: src, Kind: "comic",
+		Overwrite: force,
 	})
 }
 
@@ -413,11 +413,6 @@ func (h *ComicHandler) persistMetadata(ctx context.Context, id uuid.UUID, meta C
 		ID:       pgtype.UUID{Bytes: id, Valid: true},
 		Metadata: payload,
 	})
-}
-
-func (h *ComicHandler) variantExists(ctx context.Context, hash, key string) bool {
-	_, err := h.Storage.Backend.Stat(ctx, hash, key)
-	return err == nil
 }
 
 func (h *ComicHandler) unarBin() string {

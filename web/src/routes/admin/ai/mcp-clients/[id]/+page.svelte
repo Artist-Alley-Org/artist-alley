@@ -14,6 +14,7 @@
   import { page } from '$app/stores';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import PasswordInput from '$components/PasswordInput.svelte';
   import type { components } from '$api/schema';
 
   type MCPServer = components['schemas']['MCPServer'];
@@ -31,6 +32,14 @@
   // Editor mirrors the loaded row so the user can mutate without
   // touching server until save.
   let edit = $state<MCPServerUpdate>({});
+
+  // auth_secret_ref lives outside `edit` because it is WRITE-ONLY
+  // (#711): the API never sends it back, so there is nothing to
+  // mirror. It starts empty on every load, and an empty value on save
+  // means "keep the stored secret" — omitted from the PATCH body
+  // entirely rather than sent as '', which would read as "clear it".
+  // `server.auth_secret_set` reports whether one is on file.
+  let authSecret = $state('');
   let saving = $state(false);
   let saved = $state(false);
   let saveError = $state<string | null>(null);
@@ -68,7 +77,6 @@
         url: found.url,
         transport: found.transport,
         auth_kind: found.auth_kind,
-        auth_secret_ref: found.auth_secret_ref ?? '',
         auth_header_name: found.auth_header_name ?? '',
         privacy_class: found.privacy_class,
         enabled: found.enabled,
@@ -76,6 +84,7 @@
         rate_limit_per_minute: found.rate_limit_per_minute,
         health_check_interval_s: found.health_check_interval_s,
       };
+      authSecret = '';
 
       const { data: g, error: gErr } = await api.GET('/admin/ai/mcp-clients/{id}/tools', {
         params: { path: { id } },
@@ -99,9 +108,14 @@
     saved = false;
     saveError = null;
     try {
+      // Omit rather than send '' — see the note on `authSecret`.
+      const body: MCPServerUpdate = {
+        ...edit,
+        ...(authSecret ? { auth_secret_ref: authSecret } : {}),
+      };
       const { error } = await api.PATCH('/admin/ai/mcp-clients/{id}', {
         params: { path: { id } },
-        body: edit,
+        body,
       });
       if (error) {
         saveError = (error as { error?: string }).error ?? t('admin.system.mcp_clients.save_failed');
@@ -253,8 +267,21 @@
         {#if edit.auth_kind === 'bearer' || edit.auth_kind === 'header'}
           <label class="block">
             <span class="block text-xs text-fg-muted">{t('admin.system.mcp_clients.field_auth_secret_ref')}</span>
-            <input type="password" bind:value={edit.auth_secret_ref}
-                   class="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none" />
+            <!--
+              The reveal toggle #692 withheld is now here: #711 made
+              the read path write-only, so this EDIT form no longer
+              pre-fills from the API and the box can only hold what
+              this admin just typed. Same argument that made it safe
+              on the register form and on SMTP.
+            -->
+            <PasswordInput
+              bind:value={authSecret}
+              placeholder={server.auth_secret_set ? t('admin.system.mcp_clients.auth_secret_on_file') : t('admin.system.mcp_clients.auth_secret_unset')}
+              autocomplete="new-password"
+              testId="mcp-auth-secret"
+              inputClass="mt-1 w-full rounded border border-border-strong bg-surface px-2 py-1 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+            />
+            <span class="mt-0.5 block text-[11px] text-fg-muted">{t('admin.system.mcp_clients.auth_secret_help')}</span>
           </label>
         {/if}
         {#if edit.auth_kind === 'header'}

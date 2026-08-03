@@ -387,6 +387,14 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID
 }
 
+type EmailTemplate struct {
+	TemplateName     string
+	Part             string
+	Body             string
+	UpdatedAt        pgtype.Timestamptz
+	UpdatedByUserRef *int64
+}
+
 type EmailVerificationToken struct {
 	ID         pgtype.UUID
 	UserRef    int64
@@ -609,6 +617,16 @@ type FederationUserKey struct {
 	RotatedByUserRef *int64
 }
 
+// Per-team override of field_definition.default_value, applied to that team's uploads. Same document shape and same validation as the field default. Does NOT federate: a field definition travels to a peer, a team does not.
+type FieldDefaultOverride struct {
+	FieldID          pgtype.UUID
+	TeamID           pgtype.UUID
+	DefaultValue     []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	UpdatedByUserRef *int64
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string
@@ -619,12 +637,10 @@ type FieldDefinition struct {
 	Required                bool
 	Searchable              bool
 	AppliesTo               []int64
-	FieldSetID              pgtype.UUID
 	ReadCapability          *string
 	WriteCapability         *string
 	DisplayOrder            int32
 	DisplayGroup            string
-	Source                  []byte
 	Status                  string
 	DeprecatedReplacementID pgtype.UUID
 	OriginServerID          pgtype.UUID
@@ -635,6 +651,10 @@ type FieldDefinition struct {
 	SubjectKind             string
 	ExtractionSource        string
 	ExtractionMode          string
+	// Declarative default applied at asset creation. Either {"kind":"literal", value_*: …} or {"kind":"context","context":…} naming a member of a closed server-resolved set. Never an expression. NULL = no default. Validated on write against the field's type and, for vocabulary types, against the live options document — a default naming a deprecated or archived option is rejected. Federates with the field definition.
+	DefaultValue []byte
+	// When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).
+	OpenVocabulary bool
 }
 
 type GooseDbVersion struct {
@@ -892,6 +912,14 @@ type Session struct {
 	ImpersonatedByUserRef *int64
 }
 
+type SiteText struct {
+	Key              string
+	Language         string
+	Value            string
+	UpdatedAt        pgtype.Timestamptz
+	UpdatedByUserRef *int64
+}
+
 type StorageObject struct {
 	Hash           string
 	SizeBytes      int64
@@ -941,6 +969,7 @@ type StorageVariant struct {
 	ContentType string
 	Metadata    []byte
 	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type SystemConfig struct {

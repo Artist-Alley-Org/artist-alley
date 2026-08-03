@@ -4,6 +4,8 @@
 package format3d
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -133,16 +135,227 @@ func TestResolveCompanions_OBJChainsToTextures(t *testing.T) {
 	}
 }
 
-func TestResolveCompanions_SelfContained(t *testing.T) {
+// TestResolveCompanions_GLBExternalURIs is the direction the old
+// `GLB is self-contained` assumption denied existed (#750): a GLB whose
+// images[] name sibling files, exactly as the seed catalogue's 363
+// Kenney GLBs do.
+func TestResolveCompanions_GLBExternalURIs(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "model.glb"), "glTF binary")
-	found, missing, err := ResolveCompanions(filepath.Join(dir, "model.glb"))
+	doc := `{
+		"asset":{"version":"2.0"},
+		"buffers":[{"byteLength":4}],
+		"images":[
+			{"uri":"Textures/planks.png"},
+			{"uri":"Textures/cobblestone.png"},
+			{"uri":"Textures/absent.png"}
+		]
+	}`
+	writeGLB(t, filepath.Join(dir, "structure-wall.glb"), doc, []byte("bin\x00"))
+	if err := os.MkdirAll(filepath.Join(dir, "Textures"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "Textures", "planks.png"), "png")
+	writeFile(t, filepath.Join(dir, "Textures", "cobblestone.png"), "png")
+	// Textures/absent.png intentionally not written.
+
+	found, missing, err := ResolveCompanions(filepath.Join(dir, "structure-wall.glb"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"Textures/planks.png", "Textures/cobblestone.png"}
+	if !reflect.DeepEqual(found, want) {
+		t.Fatalf("found = %v, want %v", found, want)
+	}
+	if !reflect.DeepEqual(missing, []string{"Textures/absent.png"}) {
+		t.Fatalf("missing = %v", missing)
+	}
+}
+
+// TestResolveCompanions_GLBEmbedded is the other direction, and the
+// reason the fix is a parse rather than a new blanket rule: a GLB that
+// really does carry everything — GLB-chunk buffer, data: URI image —
+// must still resolve to nothing.
+func TestResolveCompanions_GLBEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	doc := `{
+		"asset":{"version":"2.0"},
+		"buffers":[{"byteLength":4}],
+		"images":[{"uri":"data:image/png;base64,iVBORw0KGgo="},{"bufferView":0}]
+	}`
+	writeGLB(t, filepath.Join(dir, "embedded.glb"), doc, []byte("bin\x00"))
+	// A sibling that exists but is NOT declared must not be picked up.
+	writeFile(t, filepath.Join(dir, "stray.png"), "png")
+
+	found, missing, err := ResolveCompanions(filepath.Join(dir, "embedded.glb"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if found != nil || missing != nil {
-		t.Fatalf("GLB should declare no companions: found=%v missing=%v", found, missing)
+		t.Fatalf("embedded GLB should declare no companions: found=%v missing=%v", found, missing)
 	}
+}
+
+// TestResolveCompanions_GLBFromWriteGLB runs the check against bytes this
+// package itself produced. WriteGLB embeds everything, so the honest
+// answer is no companions — proven on a real container rather than a
+// hand-built one.
+func TestResolveCompanions_GLBFromWriteGLB(t *testing.T) {
+	dir := t.TempDir()
+	blob, err := WriteGLBBytes(fixtureCube())
+	if err != nil {
+		t.Fatalf("WriteGLBBytes: %v", err)
+	}
+	path := filepath.Join(dir, "cube.glb")
+	if err := os.WriteFile(path, blob, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	found, missing, err := ResolveCompanions(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found != nil || missing != nil {
+		t.Fatalf("WriteGLB output should be self-contained: found=%v missing=%v", found, missing)
+	}
+}
+
+// A file that isn't a GLB but claims the extension resolves to no
+// companions and reports why. The seed/ingest caller logs that and keeps
+// going — the soft-fail contract — rather than failing the run.
+func TestResolveCompanions_GLBMalformed(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"bad-magic.glb": "not a glb at all, just text",
+		// Right magic, truncated before the chunk header — the shape the
+		// old test fixture accidentally had.
+		"truncated.glb": "glTF binary",
+	} {
+		writeFile(t, filepath.Join(dir, name), content)
+		found, missing, err := ResolveCompanions(filepath.Join(dir, name))
+		if err == nil {
+			t.Fatalf("%s: expected an error", name)
+		}
+		if found != nil || missing != nil {
+			t.Fatalf("%s: found=%v missing=%v, want none", name, found, missing)
+		}
+	}
+}
+
+// Extensions with no reference reader resolve to nil. This pins current
+// behaviour; it is NOT a claim that these formats embed everything. DAE
+// in particular declares its images in <library_images> and is not read
+// yet — see the resolver's header comment. FBX used to be in this list
+// and is now parsed (#753, fbx_test.go).
+func TestResolveCompanions_NoReaderForFormat(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"model.stl", "model.ply", "model.dae", "notes.txt"} {
+		writeFile(t, filepath.Join(dir, name), "whatever")
+		found, missing, err := ResolveCompanions(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if found != nil || missing != nil {
+			t.Fatalf("%s: found=%v missing=%v, want none", name, found, missing)
+		}
+	}
+}
+
+func TestReadGLBJSONChunk(t *testing.T) {
+	doc := `{"asset":{"version":"2.0"},"images":[{"uri":"a.png"}]}`
+	var buf bytes.Buffer
+	appendGLB(t, &buf, doc, []byte("binchunk"))
+
+	got, err := ReadGLBJSONChunk(&buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != doc {
+		t.Fatalf("got %q, want %q", got, doc)
+	}
+
+	// The BIN chunk must be left unread: the reader stops after JSON.
+	if buf.Len() == 0 {
+		t.Fatal("BIN chunk was consumed; the reader should stop after the JSON chunk")
+	}
+}
+
+func TestReadGLBJSONChunk_Rejects(t *testing.T) {
+	cases := map[string][]byte{
+		"empty":      {},
+		"short":      []byte("glTF"),
+		"bad magic":  bytes.Repeat([]byte{0x01}, 32),
+		"no json":    glbWithChunkType(t, 0x004E4942), // BIN first
+		"short json": append(glbHeaderBytes(t, 20, 999), 'x'),
+	}
+	for name, blob := range cases {
+		if _, err := ReadGLBJSONChunk(bytes.NewReader(blob)); err == nil {
+			t.Fatalf("%s: expected an error", name)
+		}
+	}
+}
+
+// writeGLB assembles a spec-shaped GLB — 12-byte header, JSON chunk,
+// BIN chunk — around `doc` and writes it to path. Padding is the
+// spec's: spaces after JSON, zeros after BIN.
+func writeGLB(t *testing.T, path, doc string, bin []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	appendGLB(t, &buf, doc, bin)
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func appendGLB(t *testing.T, w *bytes.Buffer, doc string, bin []byte) {
+	t.Helper()
+	jsonPad := make([]byte, (4-len(doc)%4)%4)
+	for i := range jsonPad {
+		jsonPad[i] = ' '
+	}
+	binPad := make([]byte, (4-len(bin)%4)%4)
+	jsonLen := len(doc) + len(jsonPad)
+	binLen := len(bin) + len(binPad)
+	total := 12 + 8 + jsonLen + 8 + binLen
+
+	put32 := func(v uint32) {
+		var b [4]byte
+		binary.LittleEndian.PutUint32(b[:], v)
+		w.Write(b[:])
+	}
+	put32(0x46546C67) // 'glTF'
+	put32(2)
+	put32(uint32(total))
+	put32(uint32(jsonLen))
+	put32(0x4E4F534A) // 'JSON'
+	w.WriteString(doc)
+	w.Write(jsonPad)
+	put32(uint32(binLen))
+	put32(0x004E4942) // 'BIN\0'
+	w.Write(bin)
+	w.Write(binPad)
+}
+
+// glbHeaderBytes builds just the 12-byte header plus a chunk header
+// claiming `chunkLen` bytes of JSON, so callers can truncate after it.
+func glbHeaderBytes(t *testing.T, total, chunkLen uint32) []byte {
+	t.Helper()
+	b := make([]byte, 0, 20)
+	for _, v := range []uint32{0x46546C67, 2, total, chunkLen, 0x4E4F534A} {
+		var x [4]byte
+		binary.LittleEndian.PutUint32(x[:], v)
+		b = append(b, x[:]...)
+	}
+	return b
+}
+
+func glbWithChunkType(t *testing.T, chunkType uint32) []byte {
+	t.Helper()
+	b := make([]byte, 0, 24)
+	for _, v := range []uint32{0x46546C67, 2, 24, 4, chunkType} {
+		var x [4]byte
+		binary.LittleEndian.PutUint32(x[:], v)
+		b = append(b, x[:]...)
+	}
+	return append(b, 0, 0, 0, 0)
 }
 
 func writeFile(t *testing.T, path, content string) {

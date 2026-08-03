@@ -39,12 +39,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
-type ArchivePayload struct {
-	AssetID       uuid.UUID `json:"asset_id"`
-	FileHash      string    `json:"file_hash"`
-	FileExtension string    `json:"file_extension"`
-}
-
 type ArchiveResult struct {
 	Variants []string          `json:"variants,omitempty"`
 	Skipped  []string          `json:"skipped,omitempty"`

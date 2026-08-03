@@ -17,14 +17,31 @@ package format3d
 // / seed path can register them automatically instead of relying on the
 // uploader to attach each one by hand.
 //
-// GLB and (typically) FBX embed their resources, so they declare no
-// companions and are handled as self-contained.
+// A .glb is NOT automatically self-contained (#750). It is a binary
+// container wrapping the same glTF JSON document, so its buffers[].uri /
+// images[].uri can name external files exactly as a .gltf's can — an
+// exporter chooses whether to embed. Only parsing tells you which: 363
+// of the 374 GLBs in the seed catalogue reference external textures.
+// So GLB is parsed, and "self-contained" is a result, not an assumption.
+//
+// FBX was the same shape of question and is now answered the same way
+// (#753, see fbx.go): a Video node either embeds its bytes in a Content
+// property or names a file in RelativeFilename / FileName. 127 of the
+// seed catalogue's 131 FBX name a file, 126 name one that could be a
+// sibling, and 0 embed. Reading it needs a node walk over both container
+// encodings, so it lives in its own file.
+//
+// Nothing here assumes a format is self-contained. STL, PLY and DAE
+// return nil because no reader exists for their references yet, which is
+// a gap in this file and not a property of those formats — DAE in
+// particular declares images in <library_images>.
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -76,6 +93,20 @@ func ParseGLTFCompanions(gltfJSON []byte) ([]string, error) {
 		add(im.URI)
 	}
 	return out, nil
+}
+
+// ParseGLBCompanions extracts the external resource paths a GLB (binary
+// glTF) declares. A GLB wraps a glTF JSON document in a chunked binary
+// container, so this pulls the JSON chunk out and hands it to
+// ParseGLTFCompanions — same document, same rules. A GLB whose buffers
+// and images are all embedded yields none, which is the answer for 11 of
+// the 374 GLBs in the seed catalogue and an assumption for none of them.
+func ParseGLBCompanions(r io.Reader) ([]string, error) {
+	gltfJSON, err := ReadGLBJSONChunk(r)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGLTFCompanions(gltfJSON)
 }
 
 // ParseOBJMaterialLibs returns the .mtl filenames an OBJ references via
@@ -133,9 +164,12 @@ func ParseMTLTextures(mtl []byte) []string {
 
 // ResolveCompanions walks the on-disk companions of a model file and
 // returns their paths RELATIVE to the model's directory (forward-slash),
-// deterministically ordered. glTF resolves its buffer + image URIs; OBJ
-// resolves mtllib .mtl files and, recursively, the textures each .mtl
-// declares. GLB/FBX (and anything else) are self-contained → nil.
+// deterministically ordered. glTF and GLB resolve their buffer + image
+// URIs (a GLB may reference external URIs — parse to find out, #750);
+// FBX resolves its Video/Texture filenames unless the media is embedded
+// (#753); OBJ resolves mtllib .mtl files and, recursively, the textures
+// each .mtl declares. Every other extension returns nil because nothing
+// here can read its references yet.
 //
 // `found` lists companions that exist on disk; `missing` lists declared
 // references whose file is absent (so the caller can log the gap without
@@ -156,6 +190,37 @@ func ResolveCompanions(mainPath string) (found []string, missing []string, err e
 		}
 		declared, err = ParseGLTFCompanions(raw)
 		if err != nil {
+			return nil, nil, err
+		}
+	case "glb":
+		// Streamed, not ReadFile: only the leading header + JSON chunk is
+		// needed, and the BIN chunk after it is the bulk of the file.
+		f, oErr := os.Open(mainPath)
+		if oErr != nil {
+			return nil, nil, fmt.Errorf("open glb: %w", oErr)
+		}
+		declared, err = ParseGLBCompanions(f)
+		f.Close()
+		if err != nil {
+			// A malformed container resolves to no companions rather than
+			// killing the caller's run; the error carries why, and the
+			// seed/ingest caller logs it per the soft-fail contract.
+			return nil, nil, err
+		}
+	case "fbx":
+		// Streamed for the same reason GLB is: the references sit in small
+		// Video/Texture records and the geometry that dwarfs them is
+		// skipped, not buffered.
+		f, oErr := os.Open(mainPath)
+		if oErr != nil {
+			return nil, nil, fmt.Errorf("open fbx: %w", oErr)
+		}
+		declared, err = ParseFBXCompanions(f)
+		f.Close()
+		if err != nil {
+			// Soft-fail contract, as for glb: an unreadable container
+			// resolves to no companions and the error says why, rather than
+			// silently claiming the model has none.
 			return nil, nil, err
 		}
 	case "obj":
@@ -190,7 +255,9 @@ func ResolveCompanions(mainPath string) (found []string, missing []string, err e
 			}
 		}
 	default:
-		return nil, nil, nil // GLB / FBX / etc. — self-contained
+		// No reader for this format's references (STL, PLY, DAE, ...).
+		// Not the same claim as "it has none" — see the file header.
+		return nil, nil, nil
 	}
 
 	for _, rel := range declared {
@@ -223,8 +290,52 @@ func cleanCompanionURI(uri string) (string, bool) {
 	if dec, derr := url.PathUnescape(uri); derr == nil {
 		uri = dec
 	}
-	uri = filepath.ToSlash(uri)
-	if strings.HasPrefix(uri, "/") || strings.HasPrefix(uri, "\\") {
+	// Backslash → slash, explicitly (#753). This used to be
+	// filepath.ToSlash, which is a NO-OP on Linux: it swaps
+	// os.PathSeparator for '/', and on Linux the separator already IS
+	// '/'. So `Textures\barrel.png` — what every FBX and many
+	// Windows-authored MTLs write — would survive as ONE path segment
+	// containing a backslash, and both consumers of the stored path split
+	// on '/' only:
+	//
+	//   * preview.stageCompanions joins the stored path onto the render
+	//     workdir, producing a file literally NAMED "Textures\barrel.png"
+	//     in the workdir root rather than a Textures/ directory;
+	//   * companionLoadingManager compares the request against the stored
+	//     path, and its basename of `textures\barrel.png` is the whole
+	//     string, so it can never equal the `barrel.png` a loader asks
+	//     for.
+	//
+	// Note which side the backslash is on. #753 predicted the loader would
+	// REQUEST a backslash URL; measured, it does not — three.js's
+	// FBXLoader does `images[id].split('\\').pop()` and asks for the bare
+	// basename. The break is on the stored-companion side, which is why
+	// the fix belongs here.
+	//
+	// Fixing it HERE rather than at the two consumption points is a
+	// deliberate choice, and it is safe because it changes nothing that
+	// already works: this function is shared with glTF/GLB/OBJ, and
+	// measured over the whole seed catalogue not one .mtl, .gltf or GLB
+	// JSON chunk writes a backslash in a URI (0 of 14,596 references
+	// across 11,078 files), nor does any asset_companions row carry one.
+	// So there is no stored data to migrate — only FBX changes behaviour.
+	// It is still the right place for the other formats: a
+	// Windows-authored MTL may legitimately write
+	// `map_Kd Textures\foo.png`, and one canonical stored form beats two
+	// consumers each remembering to normalise.
+	//
+	// The stored companion path is POSIX-relative regardless of what wrote
+	// the model.
+	uri = strings.ReplaceAll(uri, `\`, "/")
+	if strings.HasPrefix(uri, "/") {
+		return "", false
+	}
+	// A Windows drive-absolute path names a file on the exporter's
+	// machine, not a sibling of the model. Four of the catalogue's FBX
+	// carry one in FileName (`C:\Users\...\tex.png`), and after the
+	// conversion above it would otherwise pass as an ordinary relative
+	// path.
+	if len(uri) >= 2 && uri[1] == ':' && isASCIILetter(uri[0]) {
 		return "", false
 	}
 	cleaned := path.Clean(uri)
@@ -233,6 +344,10 @@ func cleanCompanionURI(uri string) (string, bool) {
 		return "", false
 	}
 	return cleaned, true
+}
+
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // scanDirectiveArgs collects every whitespace-delimited argument of the

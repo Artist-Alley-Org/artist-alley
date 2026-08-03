@@ -134,7 +134,7 @@ func (h *NotificationJobHandler) Handle(ctx context.Context, job *jobs.Claim) (j
 		data[k] = v
 	}
 
-	msg, err := Render(templateForVerb(p.Verb), []string{recipient.Email}, data)
+	msg, err := Render(ctx, templateForVerb(p.Verb), []string{recipient.Email}, data)
 	if err != nil {
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("notification.email: render: %w", err)}
 	}

@@ -11,6 +11,7 @@
   import { api } from '$api/client';
   import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
+  import PasswordInput from '$components/PasswordInput.svelte';
 
   let current = $state('');
   let next = $state('');
@@ -66,34 +67,31 @@
 <form onsubmit={submit} class="max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
   <label class="block text-sm">
     <span class="mb-1 block text-fg-muted">{t('account.password.current_label')}</span>
-    <input
-      type="password"
+    <PasswordInput
       autocomplete="current-password"
       bind:value={current}
       required
-      class="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+      inputClass="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 
   <label class="block text-sm">
     <span class="mb-1 block text-fg-muted">{t('account.password.new_label')}</span>
-    <input
-      type="password"
+    <PasswordInput
       autocomplete="new-password"
       bind:value={next}
       required
-      class="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+      inputClass="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 
   <label class="block text-sm">
     <span class="mb-1 block text-fg-muted">{t('account.password.confirm_label')}</span>
-    <input
-      type="password"
+    <PasswordInput
       autocomplete="new-password"
       bind:value={confirm}
       required
-      class="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+      inputClass="w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
     />
   </label>
 

@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,6 +44,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/richtext"
 )
 
 // cacheDomainCollectionFieldValues — NOTIFY channel for
@@ -147,9 +149,11 @@ func (h *Handler) SetCollectionFieldValue(
 	if fieldRow.SubjectKind != string(SubjectCollection) {
 		field := fieldRow.Code
 		return openapi.SetCollectionFieldValue422JSONResponse{
-			Error:  fmt.Sprintf("field %q is not a collection field", fieldRow.Code),
-			Reason: openapi.FieldNotForCollection,
-			Field:  &field,
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  fmt.Sprintf("field %q is not a collection field", fieldRow.Code),
+				Reason: openapi.FieldNotForCollection,
+				Field:  &field,
+			},
 		}, nil
 	}
 
@@ -166,9 +170,11 @@ func (h *Handler) SetCollectionFieldValue(
 	if vErr := validateCollectionValueType(fieldRow.Type, req.Body); vErr != nil {
 		field := fieldRow.Code
 		return openapi.SetCollectionFieldValue422JSONResponse{
-			Error:  vErr.Error(),
-			Reason: openapi.ValueTypeMismatch,
-			Field:  &field,
+			FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+				Error:  vErr.Error(),
+				Reason: openapi.ValueTypeMismatch,
+				Field:  &field,
+			},
 		}, nil
 	}
 
@@ -194,6 +200,65 @@ func (h *Handler) SetCollectionFieldValue(
 	hadOld := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("metadata: load previous: %w", err)
+	}
+
+	// Controlled-vocabulary gate (#824) + the accept-and-create branch
+	// an open vocabulary takes (#830) — the SAME call the asset writer
+	// makes, on the same helper, so a collection cannot accept a slug an
+	// asset refuses, or refuse one an asset creates. Placed after the
+	// snapshot because the lifecycle half of the rule needs the held
+	// value, which prev already is.
+	var held []string
+	if hadOld {
+		held = vocabularySlugs(fieldRow.Type, prev.ValueText, prev.ValueOptions)
+	}
+	var incomingOptions []string
+	if req.Body.ValueOptions != nil {
+		incomingOptions = *req.Body.ValueOptions
+	}
+	vocab, rej, err := openOrCheckVocabulary(ctx, qTx, fieldRow,
+		vocabularySlugs(fieldRow.Type, req.Body.ValueText, incomingOptions), held)
+	if err != nil {
+		return nil, err
+	}
+	if rej != nil {
+		return openapi.SetCollectionFieldValue422JSONResponse{
+			FieldValueUnprocessableJSONResponse: rejectionBody(fieldRow.Code, rej),
+		}, nil
+	}
+	// Canonical slugs, not the text a client sent — same reason the
+	// asset path rewrites its upsert params. Here the params are built
+	// from req.Body a line below, so the normalisation lands on the body.
+	if fieldRow.Type == "multi_select" {
+		req.Body.ValueOptions = &vocab.Slugs
+	}
+
+	// Reference-existence gate (#842) — the collection sibling of the
+	// asset path's gate, on the same GetReferencedAsset query so a
+	// collection cannot store a dangling ref an asset would refuse. A
+	// WRITE gate only: the read path tolerates a since-deleted target
+	// and degrades to the bare id (the #839 interlock). See
+	// SetAssetFieldValue for the full argument. The resolved target is
+	// reused for the 200 body's resolved_reference (#840), so the write
+	// response carries the same shape the list path does.
+	var ref resolvedRef
+	if fieldRow.Type == "reference" && req.Body.ValueRef != nil {
+		refUUID := pgtype.UUID{Bytes: uuid.UUID(*req.Body.ValueRef), Valid: true}
+		target, refErr := qTx.GetReferencedAsset(ctx, refUUID)
+		if refErr != nil {
+			if errors.Is(refErr, pgx.ErrNoRows) {
+				field := fieldRow.Code
+				return openapi.SetCollectionFieldValue422JSONResponse{
+					FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+						Error:  fmt.Sprintf("%s: referenced asset %s does not exist", fieldRow.Code, uuid.UUID(*req.Body.ValueRef)),
+						Reason: openapi.DanglingReference,
+						Field:  &field,
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("metadata: verify reference target: %w", refErr)
+		}
+		ref = resolvedRef{ID: target.ID, Title: target.Title}
 	}
 
 	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(
@@ -228,11 +293,28 @@ func (h *Handler) SetCollectionFieldValue(
 	// Cache evict + broadcast. Best-effort — a NOTIFY failure logs
 	// but doesn't propagate, matching invalidateField behavior.
 	h.invalidateCollectionValues(ctx, pgCollection)
+	if len(vocab.Created) > 0 {
+		// The vocabulary grew; see the asset path for why this is after
+		// the commit and why it drops the extraction cache too.
+		h.InvalidateFieldVocabulary(ctx, pgField)
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelInfo, "metadata.vocabulary.terms_created",
+				slog.String("field", fieldRow.Code),
+				slog.Int("count", len(vocab.Created)),
+				slog.String("terms", strings.Join(vocab.Created, ",")),
+			)
+		}
+	}
 
 	return openapi.SetCollectionFieldValue200JSONResponse(
 		buildCollectionValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
 			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
-			row.SetBy, row.SetAt, row.SetByUserRef),
+			row.SetBy, row.SetAt, row.SetByUserRef,
+			// vocab.Options, not fieldRow.Options: on an open-vocabulary
+			// write that just minted a term, the loaded field row predates
+			// it and the response would resolve every term but the new one.
+			// Same reason the asset path passes vocab.Options here.
+			vocab.Options, ref),
 	), nil
 }
 
@@ -383,19 +465,19 @@ func (h *Handler) getCollectionValues(ctx context.Context, collectionID pgtype.U
 		return nil, err
 	}
 
-	// Join with field_definition to surface code/label/type per row.
+	// code/label/type/options and the reference title now ride on the
+	// row itself (#840 joins), so no per-row getFieldByIDCached and no
+	// N+1 — the query resolves everything buildCollectionValue needs.
+	// A value whose field definition was deleted is dropped by the
+	// INNER JOIN to field_definition, which is the join's equivalent of
+	// the "definition gone" skip this loop used to do by hand.
 	values := make([]openapi.CollectionFieldValue, 0, len(rows))
 	for _, r := range rows {
-		fieldRow, fErr := h.getFieldByIDCached(ctx, r.FieldID)
-		if fErr != nil {
-			// Definition gone (CASCADE delete in flight, race?).
-			// Skip silently; cache repopulates on next request.
-			continue
-		}
 		values = append(values, buildCollectionValue(
-			r.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
+			r.FieldID, r.Code, r.Label, r.Type,
 			r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
 			r.SetBy, r.SetAt, r.SetByUserRef,
+			r.Options, resolvedRef{ID: r.RefAssetID, Title: r.RefAssetTitle},
 		))
 	}
 
@@ -432,11 +514,21 @@ func (h *Handler) InvalidateCollectionValues(ctx context.Context, collectionID u
 // buildCollectionValue projects the typed-value row to the API shape.
 // Pulled out for re-use by both the read path (list) and the write
 // path (the upsert returns the new value).
+//
+// fieldOptions and ref are the #840 additions: the collection side now
+// resolves select/tree slugs and reference targets exactly the way
+// buildAssetValue does, so collection metadata renders labels and
+// linked titles instead of raw slugs and bare UUIDs. Both callers
+// already hold both — the list path off its joins, the write path off
+// the loaded field def and the reference gate — so, as on the asset
+// side, the resolution costs no extra query and no consumer can forget
+// it. See buildAssetValue for the full argument (#775/#817).
 func buildCollectionValue(
 	fieldID pgtype.UUID, code, label, fieldType string,
 	text *string, num *float64, date pgtype.Timestamptz,
 	options []string, refUUID pgtype.UUID,
 	setBy string, setAt pgtype.Timestamptz, setByUserRef *int64,
+	fieldOptions []byte, ref resolvedRef,
 ) openapi.CollectionFieldValue {
 	v := openapi.CollectionFieldValue{
 		FieldId:      openapi_types.UUID(fieldID.Bytes),
@@ -445,7 +537,10 @@ func buildCollectionValue(
 		SetBy:        openapi.CollectionFieldValueSetBy(setBy),
 		SetAt:        setAt.Time,
 		SetByUserRef: setByUserRef,
-		ValueText:    text,
+		// #816's read boundary — see buildAssetValue for the argument.
+		// A collection value has the same writers-that-are-not-handlers
+		// problem the asset side does.
+		ValueText: richtext.SanitizeValueText(fieldType, text),
 	}
 	if label != "" {
 		v.FieldLabel = &label
@@ -468,6 +563,23 @@ func buildCollectionValue(
 		u := openapi_types.UUID(refUUID.Bytes)
 		v.ValueRef = &u
 	}
+	// The same resolution the asset path does (#840), through the same
+	// shared helper, so the two subject kinds cannot render a value
+	// differently.
+	if resolved := resolveValueOptions(fieldType, text, options, fieldOptions); len(resolved) > 0 {
+		v.ResolvedOptions = &resolved
+	}
+	// Gate on fieldType as well as ref.ID — same narrowness as
+	// buildAssetValue — so a stray value_ref on a non-reference field
+	// cannot start emitting a resolved target. A target that did not
+	// resolve (soft-deleted, or a since-deleted dangling ref) leaves
+	// this absent and the client falls back to the bare id (#839).
+	if fieldType == "reference" && ref.ID.Valid {
+		v.ResolvedReference = &openapi.ResolvedReference{
+			Id:    openapi_types.UUID(ref.ID.Bytes),
+			Title: ref.Title,
+		}
+	}
 	return v
 }
 
@@ -489,28 +601,36 @@ func buildCollectionUpsertParams(
 	}
 	switch fieldType {
 	case "text", "longtext", "rich_text":
-		p.ValueText = body.ValueText
-	case "number":
+		// #816's write boundary, same one line the asset side runs in
+		// buildUpsertParams. Two call sites, one implementation — the
+		// two handlers cannot drift about what HTML is allowed because
+		// neither of them decides it. See internal/richtext.
+		p.ValueText = richtext.SanitizeValueText(fieldType, body.ValueText)
+	case "number", "boolean":
+		// `boolean` is 0/1 in value_num, exactly as ADR 0012 specifies
+		// and exactly what handler.go's buildUpsertParams has always
+		// written on the asset side. This path wrote the strings
+		// "true"/"false" into value_text until #791, so a boolean set
+		// on a collection landed in a different column from the same
+		// field's value on an asset. The 0/1-only range is enforced by
+		// validateCollectionValueType before this runs.
 		if body.ValueNum != nil {
 			n := float64(*body.ValueNum)
 			p.ValueNum = &n
-		}
-	case "boolean":
-		// Booleans store in value_text as the literal "true"/"false"
-		// — same encoding the asset path uses (see handler.go
-		// buildUpsertParams). Keeps the storage row count stable
-		// regardless of whether the operator picks a bool or text
-		// field for a yes/no question.
-		if body.ValueText != nil {
-			p.ValueText = body.ValueText
 		}
 	case "date", "datetime":
 		if body.ValueDate != nil {
 			p.ValueDate = pgtype.Timestamptz{Time: *body.ValueDate, Valid: true}
 		}
-	case "select":
+	case "select", "tree":
+		// `tree` stores ONE vocabulary slug in value_text, exactly like
+		// `select` — see the 2026-07-31 tree-storage amendment to ADR
+		// 0012. It used to sit with multi_select and write
+		// value_options, which put a collection's tree value in a
+		// different column from an asset's. Nothing caught it because
+		// no tree field has ever carried a value.
 		p.ValueText = body.ValueText
-	case "multi_select", "tree":
+	case "multi_select":
 		if body.ValueOptions != nil {
 			p.ValueOptions = *body.ValueOptions
 		}
@@ -527,7 +647,7 @@ func buildCollectionUpsertParams(
 // side's value validation.
 func validateCollectionValueType(fieldType string, body *openapi.CollectionFieldValueWrite) error {
 	switch fieldType {
-	case "text", "longtext", "rich_text", "select":
+	case "text", "longtext", "rich_text", "select", "tree":
 		if body.ValueText == nil {
 			return fmt.Errorf("value_text required for field type %q", fieldType)
 		}
@@ -536,14 +656,21 @@ func validateCollectionValueType(fieldType string, body *openapi.CollectionField
 			return fmt.Errorf("value_num required for field type %q", fieldType)
 		}
 	case "boolean":
-		if body.ValueText == nil {
-			return fmt.Errorf("value_text (\"true\"/\"false\") required for field type %q", fieldType)
+		// Same contract as the asset side's buildUpsertParams: 0/1 in
+		// value_num, and nothing else. The range check lives here
+		// because buildCollectionUpsertParams cannot fail — the
+		// collection write path validates first and then marshals.
+		if body.ValueNum == nil {
+			return fmt.Errorf("value_num (0 or 1) required for field type %q", fieldType)
+		}
+		if v := float64(*body.ValueNum); v != 0 && v != 1 {
+			return fmt.Errorf("boolean field accepts 0 or 1 only")
 		}
 	case "date", "datetime":
 		if body.ValueDate == nil {
 			return fmt.Errorf("value_date required for field type %q", fieldType)
 		}
-	case "multi_select", "tree":
+	case "multi_select":
 		if body.ValueOptions == nil {
 			return fmt.Errorf("value_options required for field type %q", fieldType)
 		}
@@ -621,15 +748,21 @@ func (h *Handler) SeedCollectionFieldValueInTx(
 		SetByUserRef: &callerRef,
 	}
 	switch fieldRow.Type {
-	case "text", "longtext", "rich_text", "select", "boolean":
-		params.ValueText = valueText
-	case "number":
+	case "text", "longtext", "rich_text", "select", "tree":
+		// Seeds bypass the HTTP handler, so they get the write-side
+		// sanitise explicitly (#816). The read side would cover them
+		// anyway; this keeps the stored row clean too.
+		params.ValueText = richtext.SanitizeValueText(fieldRow.Type, valueText)
+	case "number", "boolean":
+		// `boolean` moved out of the value_text group in #791 — see
+		// buildCollectionUpsertParams. A seeded collection boolean is
+		// 0/1 in value_num like every other writer's.
 		params.ValueNum = valueNum
 	case "date", "datetime":
 		if valueDate != nil {
 			params.ValueDate = pgtype.Timestamptz{Time: *valueDate, Valid: true}
 		}
-	case "multi_select", "tree":
+	case "multi_select":
 		params.ValueOptions = valueOptions
 	case "reference":
 		if valueRef != nil {

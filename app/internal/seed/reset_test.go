@@ -31,11 +31,14 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/db"
 )
 
 // Local copies of the two helpers admin_test.go defines — that file is
@@ -447,4 +450,136 @@ func TestReset_LeavesNoPolymorphicOrphans(t *testing.T) {
 		_, _ = pool.Exec(ctxT, `DELETE FROM scheduled_actions WHERE id = $1`, keeperID)
 		_, _ = pool.Exec(ctxT, `DELETE FROM "user" WHERE username = $1`, f.adminUsername)
 	})
+}
+
+// TestReset_SweepsFieldDefinitionButKeepsShipped is the behavioural
+// half of #812. The reset must leave a field_definition table holding
+// exactly the shipped catalogue: the studio fields a seed added are
+// content and go, the definitions the migrations ship are the product
+// and stay.
+//
+// Both directions are asserted, because each has its own failure. If
+// the sweep becomes a no-op, a `--reset` between two datasets leaves
+// the previous dataset's studio fields behind and the metadata panel
+// grows a field per reset. If it goes back to being a TRUNCATE, the
+// instance loses the catalogue every operator has — which is the bug
+// this test exists to keep fixed, and which no row count caught for
+// the life of the project.
+func TestReset_SweepsFieldDefinitionButKeepsShipped(t *testing.T) {
+	pool := openResetPool(t)
+	ctx := t.Context()
+
+	admin := "reset-fieldadmin-" + resetSuffix()
+	var adminRef int64
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO "user" (username, fullname, approved) VALUES ($1, 'Field Admin', 1) RETURNING ref`,
+		admin).Scan(&adminRef); err != nil {
+		t.Fatalf("admin: %v", err)
+	}
+	t.Cleanup(func() {
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(c, `DELETE FROM "user" WHERE username = $1`, admin)
+	})
+
+	// The shipped catalogue must be there to begin with, or the
+	// "survives" assertion below would pass vacuously.
+	shipped := db.ShippedFieldCodes()
+	var present int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM field_definition WHERE code = ANY($1::text[])`,
+		shipped).Scan(&present); err != nil {
+		t.Fatalf("count shipped: %v", err)
+	}
+	if present != len(shipped) {
+		t.Fatalf("precondition failed: %d of %d shipped field definitions are in the "+
+			"database. Something already deleted them.", present, len(shipped))
+	}
+
+	// A seed-added studio field, with a value and a history row hanging
+	// off it. Both asset_field_value and (since #821) its history table
+	// carry an ON DELETE CASCADE FK on field_id, and the history table
+	// also has one on asset_id — so deleting the field, or truncating
+	// the asset, takes the history row with it. This used to require the
+	// bespoke sweep in Reset; the constraint now does the job.
+	code := "reset_studio_field_" + resetSuffix()
+	var fieldID, assetID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO field_definition (code, label, type, subject_kind)
+		 VALUES ($1, 'Reset studio field', 'text', 'asset') RETURNING id`, code).Scan(&fieldID); err != nil {
+		t.Fatalf("plant field: %v", err)
+	}
+	var assetTypeRef int64
+	if err := pool.QueryRow(ctx, `SELECT ref FROM asset_types ORDER BY ref LIMIT 1`).Scan(&assetTypeRef); err != nil {
+		t.Fatalf("asset type: %v", err)
+	}
+	assetID = uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO assets (id, owner_user_ref, title, asset_type) VALUES ($1, $2, 'Field asset', $3)`,
+		assetID, adminRef, assetTypeRef); err != nil {
+		t.Fatalf("asset: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO asset_field_value (asset_id, field_id, value_text) VALUES ($1, $2, 'v')`,
+		assetID, fieldID); err != nil {
+		t.Fatalf("asset_field_value: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO asset_field_value_history (asset_id, field_id, new_value) VALUES ($1, $2, '"v"'::jsonb)`,
+		assetID, fieldID); err != nil {
+		t.Fatalf("asset_field_value_history: %v", err)
+	}
+	// A history row against a SHIPPED field on the same doomed asset:
+	// the asset goes, so this must go too, and it proves the sweep does
+	// not stop at the field_id predicate.
+	var shippedFieldID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM field_definition WHERE code = $1`, shipped[0]).Scan(&shippedFieldID); err != nil {
+		t.Fatalf("shipped field id: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO asset_field_value_history (asset_id, field_id, new_value) VALUES ($1, $2, '"s"'::jsonb)`,
+		assetID, shippedFieldID); err != nil {
+		t.Fatalf("shipped history row: %v", err)
+	}
+
+	if err := Reset(ctx, pool, admin); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	var codes []string
+	rows, err := pool.Query(ctx, `SELECT code FROM field_definition ORDER BY code`)
+	if err != nil {
+		t.Fatalf("read field_definition: %v", err)
+	}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		codes = append(codes, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if diff := strings.Join(codes, ","); diff != strings.Join(shipped, ",") {
+		t.Errorf("field_definition after Reset is [%s], want exactly the shipped catalogue "+
+			"[%s]. Extra codes mean the sweep is a no-op and studio fields accumulate on "+
+			"every reset; missing ones mean the shipped catalogue was truncated again (#812).",
+			diff, strings.Join(shipped, ","))
+	}
+
+	var history int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM asset_field_value_history WHERE asset_id = $1`, assetID).Scan(&history); err != nil {
+		t.Fatalf("history probe: %v", err)
+	}
+	if history != 0 {
+		t.Errorf("asset_field_value_history kept %d row(s) for a truncated asset. Since #821 "+
+			"the table has ON DELETE CASCADE FKs on both asset_id and field_id, so TRUNCATE "+
+			"assets ... CASCADE and the field_definition sweep should both reach it — a "+
+			"survivor means a constraint is missing.", history)
+	}
 }

@@ -27,6 +27,13 @@
 #      within the runner's budget (~24 GiB across 3 → ~8 GiB each).
 #      mem_limit is the non-swarm compose knob for that.
 #
+#      Since #781 the BASE stack carries its own app ceiling
+#      (AA_APP_MEM_LIMIT, default 4g) and the Go runtime derives
+#      GOMEMLIMIT from it, so the app is bounded everywhere rather
+#      than only here. The per-service caps below remain because CI's
+#      constraint is different in kind: it is sharing one runner
+#      between concurrent stacks, not protecting a single app.
+#
 # The app build also picks up GOFLAGS / GOMAXPROCS (passed as build
 # args from the job env) so the in-image `go build` caps its own
 # parallelism; unset locally → Go uses all cores as before.
@@ -43,7 +50,7 @@ services:
     # app over the compose network by DNS anyway — so drop it. A no-op
     # for the dev/backend app (which has no host port).
     ports: !reset []
-    mem_limit: 4g
+    mem_limit: ${AA_APP_MEM_LIMIT:-6g}
 
   postgres:
     ports: !reset []
@@ -72,4 +79,4 @@ services:
     mem_limit: 256m
 
   app-b:
-    mem_limit: 4g
+    mem_limit: ${AA_APP_MEM_LIMIT:-6g}

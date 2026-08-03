@@ -16,10 +16,40 @@
   // exists. Closed by default to keep the row compact; expanding
   // lazy-loads the field defs for the asset_type.
 
-  import type { UploadRow, PendingFieldValue } from '$stores/upload.svelte';
+  // FieldDef comes from the store rather than being re-declared here.
+  // It was declared in both places, so #793's `default_value` landed
+  // on one copy and the row kept type-checking against the other.
+  import type { UploadRow, PendingFieldValue, FieldDef } from '$stores/upload.svelte';
   import { upload, fieldsForAssetType } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
   import { is3DExt } from '../viewers/controller';
+  import {
+    decodeBoolean,
+    encodeBoolean,
+    normalizeOptions,
+    optionLabel,
+    selectableOptions,
+  } from '$lib/fieldOptions';
+  import { describeDefault, CONTEXT_KEYS } from '$lib/fieldDefaults';
+  import VocabularyCombobox from '$components/VocabularyCombobox.svelte';
+
+  // What the server will put on this field if the artist leaves it
+  // alone. Shown, never pre-filled: pre-filling would send the value
+  // back as set_by='manual', which tells the extraction pipeline a
+  // person chose it and stops anything from ever improving on it.
+  // Every default shown here is a decision this row did not have to
+  // make — which is the entire point of the feature.
+  function defaultHint(f: FieldDef): string {
+    if (!f.default_value) return '';
+    const vocab = normalizeOptions(f.options);
+    return describeDefault(
+      f.default_value,
+      f.type,
+      (slug) => optionLabel(vocab, slug),
+      (c) => t(CONTEXT_KEYS[c]),
+      (on) => t(on ? 'common.yes' : 'common.no'),
+    );
+  }
 
   // True when the row's file is a 3D model — drives the companion
   // disclosure visibility. Audio / image / etc. don't need a
@@ -63,18 +93,6 @@
   let metaLoading = $state(false);
   let metaError = $state<string | null>(null);
 
-  interface FieldDef {
-    id: string;
-    code: string;
-    label: string;
-    description?: string;
-    type: PendingFieldValue['type'];
-    options?: { values?: string[] };
-    required?: boolean;
-    display_order: number;
-    display_group: string;
-  }
-
   async function toggleMeta() {
     metaOpen = !metaOpen;
     if (metaOpen && metaFields === null) {
@@ -108,8 +126,13 @@
 
   function getPending(f: FieldDef): PendingFieldValue {
     const existing = row.fieldValues.get(f.id);
-    if (existing) return existing;
-    const created: PendingFieldValue = { fieldId: f.id, type: f.type };
+    // The label rides along so a refusal can name the field the way
+    // this row does — the 422 body names it by code (#843).
+    if (existing) {
+      if (!existing.label) existing.label = f.label;
+      return existing;
+    }
+    const created: PendingFieldValue = { fieldId: f.id, type: f.type, label: f.label };
     row.fieldValues.set(f.id, created);
     return created;
   }
@@ -132,11 +155,27 @@
     } else {
       row.fieldValues.set(f.id, next);
     }
+    // Editing a field the server refused clears its complaint — the
+    // message described the value that WAS sent, and keeping it next
+    // to a value the operator has since changed is a lie about the
+    // current state.
+    if (row.fieldErrors.has(f.id)) {
+      row.fieldErrors.delete(f.id);
+      row.fieldErrors = new Map(row.fieldErrors);
+    }
+    row.fieldsWritten = false;
     // Trigger reactivity.
     row.fieldValues = new Map(row.fieldValues);
   }
 
   const fieldCount = $derived(row.fieldValues.size);
+
+  // Refusals from the last submit (#843). Surfaced on the row itself,
+  // not only inside the metadata disclosure — the disclosure is
+  // collapsed by default, and a message nobody can see is the silent
+  // failure this exists to end. Opening it is what shows WHICH input
+  // is at fault; the row says that something is.
+  const fieldErrorList = $derived([...row.fieldErrors.values()]);
 
   const pct = $derived(Math.round(row.progress * 100));
 
@@ -189,6 +228,24 @@
     return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 </script>
+
+<!--
+  The field's visible name plus its upload-default hint. A snippet
+  because multi_select's wrapper is a <div> and every other type's is a
+  <label> (see the note at the branch), and the name reads the same in
+  both.
+-->
+{#snippet fieldName(f: FieldDef, pending: PendingFieldValue | undefined, hint: string)}
+  <span class="block text-xs text-fg-muted">
+    {f.label}
+    {#if hint && !pending}
+      <span
+        class="ml-1 rounded bg-surface-elevated px-1 py-0.5 text-[10px] text-fg-muted"
+        data-testid="upload-field-default-{f.code}"
+      >{t('upload.file_row.field_default_hint', { value: hint })}</span>
+    {/if}
+  </span>
+{/snippet}
 
 <div class="flex gap-3 rounded-lg border border-border bg-surface-elevated p-3">
   <!-- Thumb: the file as an inline blob URL. For non-image files
@@ -266,6 +323,22 @@
       {/if}
     </div>
 
+    <!-- Field-value refusals from the last submit (#843). The upload
+         itself succeeded — these are values the server would not
+         store, named one per line so the operator knows which input to
+         fix rather than being told "something went wrong". -->
+    {#if fieldErrorList.length > 0}
+      <ul
+        role="alert"
+        class="space-y-0.5 rounded border border-danger/40 bg-danger-container px-2 py-1.5 text-xs text-danger"
+        data-testid="upload-field-errors"
+      >
+        {#each fieldErrorList as msg (msg)}
+          <li>{msg}</li>
+        {/each}
+      </ul>
+    {/if}
+
     <!-- Tags (chip input). Collapsible feel via small footprint;
          per-asset tags are optional. -->
     <div class="flex flex-wrap items-center gap-1.5">
@@ -321,8 +394,37 @@
                 <legend class="text-[10px] uppercase tracking-wider text-fg-muted">{g.group}</legend>
                 {#each g.fields as f (f.id)}
                   {@const pending = row.fieldValues.get(f.id)}
+                  {@const hint = defaultHint(f)}
+                  {@const fieldError = row.fieldErrors.get(f.id)}
+                  {#if f.type === 'multi_select'}
+                    <!--
+                      A <div>, not a <label>, and deliberately so. The
+                      combobox renders a remove button per chip, and a
+                      <button> is a labelable element — so wrapping it
+                      in the <label> every other input uses would
+                      associate the field's name with the first chip's
+                      remove button instead of with the text box. The
+                      control carries its own accessible name via the
+                      `label` prop.
+                    -->
+                    <div class="block">
+                      {@render fieldName(f, pending, hint)}
+                      <VocabularyCombobox
+                        options={normalizeOptions(f.options)}
+                        value={pending?.valueOptions ?? []}
+                        open={f.open_vocabulary === true}
+                        label={f.label}
+                        testid={f.code}
+                        onchange={(next) =>
+                          commitField(f, { valueOptions: next.length === 0 ? null : next })}
+                      />
+                      {#if fieldError}
+                        <p class="mt-0.5 text-[11px] text-danger" data-testid="upload-field-error-{f.code}">{fieldError}</p>
+                      {/if}
+                    </div>
+                  {:else}
                   <label class="block">
-                    <span class="block text-xs text-fg-muted">{f.label}</span>
+                    {@render fieldName(f, pending, hint)}
                     {#if f.type === 'text' || f.type === 'rich_text'}
                       <input
                         type="text"
@@ -348,14 +450,24 @@
                         class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       />
                     {:else if f.type === 'boolean'}
+                      <!--
+                        1/0 in valueNum (ADR 0012). This checkbox wrote
+                        the strings "true"/"false" into valueText until
+                        #791, which the upload store posts as
+                        value_text — and the asset write endpoint has
+                        always required value_num for a boolean, so
+                        every attempt to set one during upload was
+                        rejected outright rather than merely rendering
+                        blank.
+                      -->
                       <label class="mt-0.5 inline-flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
-                          checked={pending?.valueText === 'true'}
-                          onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLInputElement).checked ? 'true' : 'false' })}
+                          checked={decodeBoolean(pending?.valueNum) === true}
+                          onchange={(e) => commitField(f, { valueNum: encodeBoolean((e.currentTarget as HTMLInputElement).checked) })}
                           class="h-4 w-4 accent-accent"
                         />
-                        <span class="text-fg-muted">{pending?.valueText === 'true' ? t('common.yes') : t('common.no')}</span>
+                        <span class="text-fg-muted">{decodeBoolean(pending?.valueNum) === true ? t('common.yes') : t('common.no')}</span>
                       </label>
                     {:else if f.type === 'date'}
                       <input
@@ -384,39 +496,20 @@
                         class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
                       >
                         <option value="">—</option>
-                        {#each (f.options?.values ?? []) as opt (opt)}
-                          <option value={opt}>{opt}</option>
+                        {#each selectableOptions(normalizeOptions(f.options), pending?.valueText ? [pending.valueText] : []) as opt (opt.value)}
+                          <option value={opt.value}>{opt.status === 'active' ? opt.label : t('common.option_deprecated', { label: opt.label })}</option>
                         {/each}
                       </select>
-                    {:else if f.type === 'multi_select'}
-                      <!-- Render as a checkbox list — simple, no chip
-                           UI dependency. For long option lists we'd
-                           swap to a search-box later. -->
-                      <div class="mt-0.5 flex flex-wrap gap-2 rounded border border-border bg-surface-elevated px-2 py-1.5">
-                        {#each (f.options?.values ?? []) as opt (opt)}
-                          {@const checked = (pending?.valueOptions ?? []).includes(opt)}
-                          <label class="inline-flex items-center gap-1 text-xs">
-                            <input
-                              type="checkbox"
-                              {checked}
-                              onchange={(e) => {
-                                const on = (e.currentTarget as HTMLInputElement).checked;
-                                const cur = new Set(pending?.valueOptions ?? []);
-                                if (on) cur.add(opt); else cur.delete(opt);
-                                commitField(f, { valueOptions: cur.size === 0 ? null : Array.from(cur) });
-                              }}
-                              class="h-3 w-3 accent-accent"
-                            />
-                            {opt}
-                          </label>
-                        {/each}
-                      </div>
                     {:else}
                       <p class="mt-0.5 rounded bg-surface-elevated px-2 py-1 text-xs text-fg-muted">
                         {t('upload.file_row.field_type_not_editable', { type: f.type })}
                       </p>
                     {/if}
+                    {#if fieldError}
+                      <span class="mt-0.5 block text-[11px] text-danger" data-testid="upload-field-error-{f.code}">{fieldError}</span>
+                    {/if}
                   </label>
+                  {/if}
                 {/each}
               </fieldset>
             {/each}

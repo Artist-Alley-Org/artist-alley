@@ -50,16 +50,16 @@
       "create_submit": "Créer",
       "create_error": "Échec de la création du champ.",
       "code_placeholder": "code_snake_case"
-    },
-    "collection_fields": {
-      "section_title": "Champs personnalisés",
-      "no_fields": "Aucun champ de collection défini. Les administrateurs peuvent les ajouter dans Champs et métadonnées.",
-      "save": "Enregistrer les champs",
-      "saved": "Champs personnalisés enregistrés.",
-      "save_error": "Échec de l'enregistrement d'un ou plusieurs champs.",
-      "locked_hint": "Vous n'avez pas la permission de modifier ce champ.",
-      "required_marker": "obligatoire"
     }
+  },
+  "collection_fields": {
+    "section_title": "Champs personnalisés",
+    "no_fields": "Aucun champ de collection défini. Les administrateurs peuvent les ajouter dans Champs et métadonnées.",
+    "save": "Enregistrer les champs",
+    "saved": "Champs personnalisés enregistrés.",
+    "save_error": "Échec de l'enregistrement d'un ou plusieurs champs.",
+    "locked_hint": "Vous n'avez pas la permission de modifier ce champ.",
+    "required_marker": "obligatoire"
   },
   "login": {
     "demo_hint": "Ceci est une démo publique. Connectez-vous avec demo / demo pour explorer.",
@@ -70,6 +70,10 @@
   },
   "common": {
     "save": "Enregistrer",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "show_password": "Afficher le mot de passe",
+    "hide_password": "Masquer le mot de passe",
+    "password_shown": "Mot de passe affiché",
+    "password_hidden": "Mot de passe masqué"
   }
 }

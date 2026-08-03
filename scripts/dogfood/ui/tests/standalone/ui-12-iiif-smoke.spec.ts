@@ -43,6 +43,49 @@ async function firstCollectionID(baseURL: string, cookies: string): Promise<stri
   }
 }
 
+// An asset info.json can actually be built for, plus the dimensions the
+// browse payload reports for it — so the test can assert the two
+// surfaces AGREE rather than merely that neither is empty.
+//
+// The predicate is exactly the handler's own two preconditions for a
+// 200 (iiif/http.go serveInfo), so a selected asset cannot 404 for an
+// unrelated reason:
+//
+//   - `preview_available` — a servable `col` exists. `col` is a
+//     configured variant with MaxDim > 0, so this implies
+//     servableVariant(), which asks for ANY configured rung, not all.
+//     (`ladder_available` would also do, but it demands the COMPLETE
+//     ladder and would skip assets info.json serves perfectly well.)
+//   - a positive pixel_width/pixel_height pair — BuildInfo returns
+//     ErrUnsupportedAsset on a non-positive dimension, and PoolLookup
+//     COALESCEs an absent value to 0.
+//
+// `scanned` is returned so the caller can tell "this install has no
+// assets" (skip, fresh clone) from "this install has assets and not one
+// of them is IIIF-servable" (fail — that is #757 itself).
+type ServableAsset = { id: string; width: number; height: number };
+
+async function firstIIIFServableAsset(
+  baseURL: string,
+  cookies: string,
+): Promise<{ asset: ServableAsset | null; scanned: number }> {
+  const api = await request.newContext({ baseURL, extraHTTPHeaders: { cookie: cookies } });
+  try {
+    const r = await api.get('/api/v1/assets?limit=50');
+    if (!r.ok()) return { asset: null, scanned: 0 };
+    const items: any[] = (await r.json())?.items ?? [];
+    const hit = items.find(
+      (a) => a?.preview_available === true && a?.pixel_width > 0 && a?.pixel_height > 0,
+    );
+    return {
+      asset: hit ? { id: hit.id, width: hit.pixel_width, height: hit.pixel_height } : null,
+      scanned: items.length,
+    };
+  } finally {
+    await api.dispose();
+  }
+}
+
 test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
   test('collection manifest is valid IIIF 3.0 JSON', async ({ page, context, baseURL }) => {
     await loginAsAdminViaUI(page);
@@ -202,13 +245,101 @@ test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
     // text/html; if the Go handler answered, content-type is JSON —
     // whether the body is a valid info doc (200) or "asset not
     // IIIF-compatible" (404) is a separate concern.
+    //
+    // THE ASSERTION HAS TO ADMIT BOTH JSON MEDIA TYPES, and the
+    // original `toContain('application/json')` did not (#757). The
+    // success path sets `application/ld+json; profile="…"` per Image
+    // API 3.0 §5.1, and `application/json` is NOT a substring of
+    // `application/ld+json` — the `ld+` sits in the middle. Only the
+    // error path, writeJSONError's flat `application/json`, could ever
+    // satisfy it. So a test whose stated intent was "200 or 404, I
+    // don't mind which" in fact passed ONLY while info.json was
+    // broken, and it went green for every asset in the catalogue
+    // because PoolLookup COALESCEd the never-written pixel dimensions
+    // to 0 and BuildInfo rejected them. It failed the moment #757 gave
+    // the fields a writer, which is the correct behaviour arriving.
+    //
+    // Matching a prefix regex rather than adding a second substring
+    // check keeps the failure legible AND keeps the real subject —
+    // "did this fall through to the SPA?" — in one expression.
     const r = await page.request.get(`/iiif/3/${aid}/info.json`);
     const ct = r.headers()['content-type'] ?? '';
-    expect(ct, `external info.json didn't reach the IIIF handler; got content-type "${ct}" (status ${r.status()})`).toContain('application/json');
+    expect(
+      ct,
+      `external info.json didn't reach the IIIF handler; got content-type "${ct}" (status ${r.status()}). ` +
+        `text/html means the /iiif/3 alias fell through to the SPA — check the nginx rewrite.`,
+    ).toMatch(/^application\/(ld\+)?json\b/);
     // CORS is set by the IIIF handler on every response (success or
     // error) — this is what OpenSeadragon needs from a cross-origin
     // embed. Verified even when the specific asset returns 404.
     expect(r.headers()['access-control-allow-origin']).toBe('*');
+  });
+
+  // #757 — info.json serves the asset's REAL dimensions.
+  //
+  // The test above deliberately tolerates a 404, because it is about
+  // routing. That tolerance is what let the whole Image API ship
+  // non-functional: every asset was 0x0 to IIIF, every info.json 404ed
+  // with "asset has no recorded pixel dimensions; run the EXIF
+  // extractor", and no test asked for a 200. The error body was naming
+  // its own cause the entire time.
+  //
+  // So this test does ask, and it asks for the property that would have
+  // caught it: the dimensions in info.json must be positive AND must
+  // equal what the browse payload reports, because "both surfaces read
+  // the same recorded pair" is the actual invariant. Asserting merely
+  // non-zero would pass on any constant (ADR 0068 — the same rule that
+  // made #757's own unit test assert varied ratios rather than
+  // non-null fields).
+  test('info.json serves real pixel dimensions, not 0x0 (#757)', async ({ page, context, baseURL }) => {
+    await loginAsAdminViaUI(page);
+    const cookies = (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+    const { asset, scanned } = await firstIIIFServableAsset(baseURL!, cookies);
+
+    // No assets at all is a fresh clone — skip, same convention as the
+    // rest of this file. Assets that exist but are none of them
+    // IIIF-servable is NOT a skip: that is the #757 state exactly, and
+    // skipping into green is how it survived three releases.
+    test.skip(scanned === 0, 'no assets in dev DB — upload one first');
+    expect(
+      asset,
+      `scanned ${scanned} asset(s) and none is IIIF-servable — every one is either missing a ` +
+        `rendered preview or has no recorded pixel_width/pixel_height. The latter is #757: ` +
+        `the preview pipeline records the ladder source's shape, so run \`aa rebuild-previews\`.`,
+    ).not.toBeNull();
+
+    const r = await page.request.get(`/iiif/3/${asset!.id}/info.json`);
+    expect(
+      r.status(),
+      `info.json for a previewable asset with recorded dimensions must be 200; ` +
+        `a 404 here means BuildInfo rejected the pair (#757).`,
+    ).toBe(200);
+
+    // Image API 3.0 §5.1 requires application/ld+json with the profile
+    // parameter. This is the exact header the routing test above could
+    // not accept.
+    expect(r.headers()['content-type']).toMatch(/^application\/ld\+json/);
+    expect(r.headers()['access-control-allow-origin']).toBe('*');
+
+    const info = await r.json();
+    expect(info['@context']).toBe('http://iiif.io/api/image/3/context.json');
+    expect(info.type).toBe('ImageService3');
+    expect(info.profile).toBe('level0');
+
+    // The payload the bug destroyed.
+    expect(info.width, 'info.json width is 0 — the recorded pair never reached IIIF (#757)')
+      .toBeGreaterThan(0);
+    expect(info.height).toBeGreaterThan(0);
+    expect(
+      { width: info.width, height: info.height },
+      'info.json and the browse payload disagree about the asset\'s size; both read the ' +
+        'same pixel_width/pixel_height field values, so they cannot legitimately differ',
+    ).toEqual({ width: asset!.width, height: asset!.height });
+
+    // Level 0 advertises the sizes it can actually serve; an empty list
+    // means BuildInfo produced a document no viewer can tile from.
+    expect(Array.isArray(info.sizes)).toBe(true);
+    expect(info.sizes.length).toBeGreaterThan(0);
   });
 
   test('Image API 2.0 URL redirects with external /iiif/3/ Location', async ({ page, context, baseURL }) => {

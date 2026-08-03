@@ -83,7 +83,6 @@ Writes:
 | Namespace | Size | TTL | Notes |
 |---|---|---|---|
 | `field_definition` (by id, by code) | 5000 | none | invalidate on field upsert |
-| `field_set` | 100 | none | invalidate on field_set upsert |
 | `asset_type` | 100 | none | invalidate on asset_type change |
 | `role` (by id, by name) | 500 | none | invalidate on role / role_capabilities change |
 | `user_capabilities` (by user_ref) | 10000 | 5 min | TTL because grants/revokes happen ad-hoc |
@@ -135,8 +134,8 @@ constructed at boot, owned by the package that reads from them.
 
 ### Generation-counter pattern for set-wide invalidation
 
-Some operations invalidate a whole namespace (e.g., "field
-definitions were bulk-imported via field_set"). Per-key invalidation
+Some operations invalidate a whole namespace (e.g., a bulk field
+definition change, or a taxonomy re-parent). Per-key invalidation
 is wrong here — we'd need to enumerate every cached entry. The
 pattern:
 

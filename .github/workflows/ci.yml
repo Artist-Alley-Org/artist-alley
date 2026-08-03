@@ -204,9 +204,10 @@ jobs:
       - name: 3D renderer present in both Dockerfiles
         run: |
           for f in Dockerfile infra/docker/app/Dockerfile; do
-            for needle in "chromium" "threejs-deps" "worker.mjs" "PUPPETEER_EXECUTABLE_PATH"; do
+            for needle in "chromium" "threejs-deps" "worker.mjs" "PUPPETEER_EXECUTABLE_PATH" \
+                          "modelLoader.js" "defaultLighting.js"; do
               if ! grep -q "$needle" "$f"; then
-                echo "::error::$f does not mention '$needle' — the three.js preview renderer is incomplete in this image. Both runtime stages must carry it (cf. #470)."
+                echo "::error::$f does not mention '$needle' — the three.js preview renderer is incomplete in this image. Both runtime stages must carry it (cf. #470). modelLoader.js / defaultLighting.js are the viewer modules render.html imports; without them the renderer 404s its own load path (#689)."
                 exit 1
               fi
             done
@@ -248,6 +249,16 @@ jobs:
         run: |
           docker run --rm -v "${PWD}/app":/src -w /src sqlc/sqlc:latest generate
           (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
+
+      # The embedded site-text catalogue (#794) is a generated artifact
+      # like openapi.gen.go — a copy of the frontend's en.json that the
+      # override write API validates keys against. It has to be
+      # regenerated HERE, not only in scripts/generate.sh: this job does
+      # not call that script, so without this line editing en.json would
+      # leave the server validating against a stale key set and the
+      # porcelain check below would pass on it.
+      - name: Regenerate embedded site-text catalogue
+        run: cp web/src/lib/i18n/en.json app/internal/sitetext/catalogue.json
 
       - name: Regenerate frontend TypeScript schema
         # Use npx -y to fetch openapi-typescript on demand instead
@@ -508,15 +519,19 @@ jobs:
       # infra/docker/app/Dockerfile — every 3D preview failed in prod while
       # local compose worked. Removing Blender did not remove that failure
       # mode, it only changed which pieces can go missing: Chromium's
-      # dlopen deps, the node_modules copy, the importmap paths, a loader
-      # that moved in three's addons. Every one of those fails at RENDER
-      # time, so a green `docker build` proves none of them.
+      # dlopen deps, the node_modules copy, the importmap paths, the
+      # /shared/ web modules render.html imports, a loader that moved in
+      # three's addons. Every one of those fails at RENDER time, so a
+      # green `docker build` proves none of them.
       #
       # scripts/threejs/smoke.mjs therefore drives the real chain — node →
-      # puppeteer → Chromium/SwiftShader → render.html → three.js loader →
-      # PNG frames on disk — once per format in threeJSExts, and asserts
+      # puppeteer → Chromium/SwiftShader → render.html → modelLoader.js →
+      # PNG frames on disk — once per format in threeJSExts. It asserts
       # the poster has non-transparent pixels (an empty render is what a
-      # broken loader or a dead GL context actually looks like on disk).
+      # broken loader or a dead GL context looks like on disk) AND, since
+      # #689, that materials were normalised and the textured fixtures came
+      # out textured — flat white geometry passes an alpha check happily,
+      # which is how a whole untextured catalogue shipped green.
       # Fixtures are synthesised at runtime, so there is still no committed
       # binary fixture and no dependency on the gitignored seed corpus.
       #

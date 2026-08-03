@@ -69,16 +69,16 @@
       "create_submit": "Crear",
       "create_error": "No se pudo crear el campo.",
       "code_placeholder": "codigo_snake_case"
-    },
-    "collection_fields": {
-      "section_title": "Campos personalizados",
-      "no_fields": "No hay campos de colección definidos. Los administradores pueden añadirlos en Campos y metadatos.",
-      "save": "Guardar campos",
-      "saved": "Campos personalizados guardados.",
-      "save_error": "No se pudieron guardar uno o más campos.",
-      "locked_hint": "No tienes permiso para editar este campo.",
-      "required_marker": "obligatorio"
     }
+  },
+  "collection_fields": {
+    "section_title": "Campos personalizados",
+    "no_fields": "No hay campos de colección definidos. Los administradores pueden añadirlos en Campos y metadatos.",
+    "save": "Guardar campos",
+    "saved": "Campos personalizados guardados.",
+    "save_error": "No se pudieron guardar uno o más campos.",
+    "locked_hint": "No tienes permiso para editar este campo.",
+    "required_marker": "obligatorio"
   },
   "login": {
     "demo_hint": "Esta es una demo pública. Inicia sesión con demo / demo para explorar.",
@@ -89,6 +89,10 @@
   },
   "common": {
     "save": "Guardar",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "show_password": "Mostrar contraseña",
+    "hide_password": "Ocultar contraseña",
+    "password_shown": "Contraseña visible",
+    "password_hidden": "Contraseña oculta"
   }
 }

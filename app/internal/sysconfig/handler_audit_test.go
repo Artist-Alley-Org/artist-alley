@@ -154,26 +154,12 @@ func TestUpdateAIConfig_StripsProvidersWithAPIKeys(t *testing.T) {
 		}
 		callAsAdmin(t, ctx, pool, func(ctx context.Context) {
 			// openapi.AIConfig.Providers is an inline anonymous
-			// struct; build a body via reflection-free literal.
+			// struct; addAIProvider builds an element without
+			// re-spelling it (see ai_secret_writeonly_test.go).
 			body := openapi.AIConfig{
 				DefaultProviderId: strPtr("new-id"),
 			}
-			body.Providers = append(body.Providers, struct {
-				ApiKey      *string                       `json:"api_key,omitempty"`
-				BaseUrl     *string                       `json:"base_url,omitempty"`
-				Config      *map[string]interface{}       `json:"config,omitempty"`
-				DisplayName string                        `json:"display_name"`
-				Enabled     bool                          `json:"enabled"`
-				Id          *string                       `json:"id,omitempty"`
-				Kind        openapi.AIConfigProvidersKind `json:"kind"`
-				Model       *string                       `json:"model,omitempty"`
-			}{
-				Id:          strPtr("new-id"),
-				Kind:        openapi.AIConfigProvidersKind("openai"),
-				Enabled:     true,
-				DisplayName: "p2",
-				ApiKey:      strPtr("sk-ALSO-LEAKY"),
-			})
+			addAIProvider(&body, "new-id", "openai", "p2", strPtr("sk-ALSO-LEAKY"))
 			if _, err := h.UpdateAIConfig(ctx, openapi.UpdateAIConfigRequestObject{Body: &body}); err != nil {
 				t.Fatalf("UpdateAIConfig: %v", err)
 			}
