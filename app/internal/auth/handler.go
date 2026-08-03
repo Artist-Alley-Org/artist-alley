@@ -24,6 +24,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -500,6 +501,11 @@ func (h *Handler) loginViaRegistry(
 		Usergroup:  user.Usergroup,
 		AuthMethod: "session",
 	})
+	// Signing in IS the moment a cross-device preference has to prove
+	// itself — it is the first thing a user does on a second machine.
+	// Sign-in is a client-side navigation, so this response is the only
+	// chance to deliver these before the browse page paints.
+	h.hydrateAccountPrefs(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -615,6 +621,9 @@ func (h *Handler) loginInlinePassword(
 		Usergroup:  user.Usergroup,
 		AuthMethod: "session",
 	})
+	// Same as the password path above — a provider sign-in lands a user
+	// on a fresh device just as often, so it needs the same payload.
+	h.hydrateAccountPrefs(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -768,29 +777,122 @@ func (h *Handler) GetCurrentUser(
 		}
 	}
 
-	// Pull language + theme from the user's profile so the frontend
-	// can hydrate the language store + theme on the first paint
-	// without a separate round-trip. One small SELECT; the row is
-	// missing entirely for users who haven't created a profile yet,
-	// in which case both prefs default to empty (= "follow system").
-	var lang, theme string
-	err := h.Pool.QueryRow(ctx,
-		`SELECT COALESCE(language, ''), COALESCE(theme, '') FROM user_profiles WHERE user_ref = $1`,
-		id.UserRef,
-	).Scan(&lang, &theme)
-	if err == nil {
-		if lang != "" {
-			l := lang
-			cu.Language = &l
-		}
-		if theme != "" {
-			t := openapi.CurrentUserTheme(theme)
-			cu.Theme = &t
-		}
-	}
-	// pgx.ErrNoRows is fine; we leave the fields nil.
+	h.hydrateAccountPrefs(ctx, id.UserRef, &cu)
 
 	return openapi.GetCurrentUser200JSONResponse(cu), nil
+}
+
+// hydrateAccountPrefs fills the three stored-preference fields on a
+// CurrentUser: language, theme, and default views.
+//
+// EVERY endpoint that returns a CurrentUser must call this, and that
+// is the whole reason it is a method rather than four lines inlined in
+// /auth/me. `CurrentUser` is one schema used by both /auth/me and
+// /auth/login, so a login response that omits these fields is not a
+// smaller response — it is the declared schema, returned with three
+// documented fields silently empty.
+//
+// That is exactly what shipped and what #706 review caught: the browse
+// store and the theme store both read these off the session, both
+// correctly no-opped when they were absent, and the account
+// preferences therefore did not apply until the user happened to
+// trigger a full page load. `language` had the same hole and nobody
+// had noticed, because a locale that only takes effect on the second
+// page load looks like a slow render rather than a bug.
+//
+// The frontend cannot paper over this with a follow-up /auth/me: the
+// point of carrying the fields on the session response is that they
+// arrive BEFORE first paint, and a second round-trip lands after it.
+//
+// The anchor sub-select is what makes the two LEFT JOINs safe: a user
+// can have preferences without a profile row or the reverse (they are
+// written by different surfaces), and joining from either table would
+// drop the other's values whenever its own row happens to be missing.
+// Anchoring on the ref means exactly one row comes back, with NULLs
+// standing in for whichever side has nothing yet.
+//
+// Best-effort by design. These are render hints on the call that gates
+// the entire app, so a failure leaves them nil and the client falls
+// back to its built-in defaults — it never fails the login or the
+// session check.
+//
+// One producer deliberately does NOT call this: setup.Handler's
+// /setup/complete, which mints the very first admin. It lives in
+// another package and would need an auth dependency plumbed in to
+// reach a row that cannot exist — the account is created inside that
+// same request. If /setup/complete ever starts writing a profile, it
+// needs this too.
+func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	if h.Pool == nil || cu == nil {
+		return
+	}
+	var lang, theme string
+	var viewsJSON []byte
+	err := h.Pool.QueryRow(ctx, `
+		SELECT COALESCE(p.language, ''),
+		       COALESCE(p.theme, ''),
+		       COALESCE(up.default_views, '{}'::jsonb)
+		FROM (SELECT $1::bigint AS user_ref) k
+		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
+		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
+		userRef,
+	).Scan(&lang, &theme, &viewsJSON)
+	if err != nil {
+		// pgx.ErrNoRows is fine; we leave the fields nil.
+		return
+	}
+	if lang != "" {
+		l := lang
+		cu.Language = &l
+	}
+	if theme != "" {
+		t := openapi.CurrentUserTheme(theme)
+		cu.Theme = &t
+	}
+	if v, ok := decodeDefaultViews(viewsJSON); ok {
+		cu.DefaultViews = &v
+	}
+}
+
+// decodeDefaultViews parses the user_preferences.default_views blob
+// into the wire type, dropping any selection this build no longer
+// serves. Reports false when nothing survives, so /auth/me omits the
+// key entirely rather than shipping an empty object.
+//
+// It decodes straight into the GENERATED type rather than a local
+// struct, which is what keeps the vocabulary in one place: the enum
+// members and the Valid() methods below both come from
+// UserPreferencesViews in openapi.yaml, so a value removed there
+// starts being dropped here with no second list to remember to edit.
+// (The obvious alternative — importing userprefs, which owns the same
+// rule for GET /account/preferences — is an import cycle: userprefs
+// depends on this package for IdentityFromContext.)
+//
+// A malformed blob is treated as "no selections". This is a render
+// hint on the session endpoint, and failing /auth/me — the call that
+// gates the entire app — over an unreadable preferences column would
+// lock a user out of the page where they could fix it.
+func decodeDefaultViews(raw []byte) (openapi.UserPreferencesViews, bool) {
+	var v openapi.UserPreferencesViews
+	if len(raw) == 0 {
+		return v, false
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return openapi.UserPreferencesViews{}, false
+	}
+	if v.HomeTab != nil && (*v.HomeTab == "" || !v.HomeTab.Valid()) {
+		v.HomeTab = nil
+	}
+	if v.BrowseLayout != nil && (*v.BrowseLayout == "" || !v.BrowseLayout.Valid()) {
+		v.BrowseLayout = nil
+	}
+	if v.BrowseSort != nil && (*v.BrowseSort == "" || !v.BrowseSort.Valid()) {
+		v.BrowseSort = nil
+	}
+	if v.HomeTab == nil && v.BrowseLayout == nil && v.BrowseSort == nil {
+		return openapi.UserPreferencesViews{}, false
+	}
+	return v, true
 }
 
 // ---------------------------------------------------------------------------

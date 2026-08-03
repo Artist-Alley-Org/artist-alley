@@ -6,16 +6,21 @@
   import { theme } from '$stores/theme.svelte';
   import { lang, t } from '$stores/lang.svelte';
   import { api } from '$api/client';
+  import type { components } from '$api/schema';
 
   // Local types mirror the openapi UserPreferencesResponse shape.
   // We don't pull from schema.d.ts directly because the openapi-fetch
   // client returns loosely-typed Records on the maps, and the UI is
   // easier to write against narrow shapes.
-  interface ViewSelections {
-    home_tab?: string;
-    browse_layout?: string;
-    browse_sort?: string;
-  }
+  //
+  // The view selections are the exception: they ARE pulled from the
+  // schema, because they are now closed enums and a hand-written
+  // `string` here would let a value the server rejects typecheck all
+  // the way to the PATCH (which is how `trending` survived so long —
+  // #736). Widening them means widening openapi.yaml first.
+  type ViewSelections = NonNullable<
+    components['schemas']['UserPreferencesRequest']['default_views']
+  >;
   interface PrefsResponse {
     notification_channels: Record<string, string[]>;
     email_cadence?: Record<string, string>;
@@ -29,13 +34,32 @@
   // drops the email channel; the other four are real cadence values.
   const CADENCE_OPTIONS = ['off', 'immediate', 'hourly', 'daily', 'weekly'] as const;
 
-  // The select-options for the three view knobs. The valid value sets
-  // are pinned here client-side; the server also accepts arbitrary
-  // strings (it doesn't enforce the enum) so adding a new layout in
-  // a later phase is a one-line change here without a migration.
-  const HOME_TAB_OPTIONS = ['', 'latest', 'following', 'trending', 'for_you'];
-  const BROWSE_LAYOUT_OPTIONS = ['', 'grid', 'masonry', 'thumbnail', 'list'];
-  const BROWSE_SORT_OPTIONS = ['', 'newest', 'oldest', 'popular', 'trending'];
+  // The select-options for the three view knobs. These mirror the
+  // enums on UserPreferencesViews in openapi.yaml, which the server
+  // now enforces on write and sanitizes on read (userprefs/prefs.go) —
+  // so this list is no longer the only thing standing between a typo
+  // and a persisted value.
+  //
+  // Every option here is a state the app can reach. Four were removed
+  // because they were not: `trending` + `for_you` on the home tab
+  // (#736) named feed segments that `GET /posts` has never accepted,
+  // and `popular` + `trending` on the sort (#706) named orderings that
+  // no endpoint can produce. Picking one saved a durable preference,
+  // showed a confirmation, and changed nothing. `feed` was added for
+  // the opposite reason: it is a real layout — the one phones land on
+  // — that no user could ask for.
+  //
+  // Adding an option means first shipping the thing it names.
+  //
+  // Typed from the schema rather than left as `string[]` so a member
+  // that openapi.yaml does not declare fails the build here instead of
+  // rendering an option nobody can honour.
+  const HOME_TAB_OPTIONS: NonNullable<ViewSelections['home_tab']>[] =
+    ['', 'latest', 'following'];
+  const BROWSE_LAYOUT_OPTIONS: NonNullable<ViewSelections['browse_layout']>[] =
+    ['', 'grid', 'masonry', 'thumbnail', 'list', 'feed'];
+  const BROWSE_SORT_OPTIONS: NonNullable<ViewSelections['browse_sort']>[] =
+    ['', 'newest', 'oldest'];
 
   let saved = $state(false);
   let savingPrefs = $state(false);

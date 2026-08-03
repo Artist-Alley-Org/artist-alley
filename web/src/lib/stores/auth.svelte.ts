@@ -19,6 +19,17 @@ import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
 import { ADMIN_TILE_CAPS } from '$lib/admin/sections';
 
+/** The account's default-view selections, as `/auth/me` reports them
+ *  (`CurrentUser.default_views`). Snake_case because it is the wire
+ *  shape, unwrapped; the store that consumes it is
+ *  browseView.svelte.ts. Absent keys mean "no account preference",
+ *  which is a different thing from a stored empty string. */
+export interface AccountViewDefaults {
+  home_tab?: string | null;
+  browse_layout?: string | null;
+  browse_sort?: string | null;
+}
+
 export interface AuthUser {
   ref: number;
   username: string;
@@ -28,7 +39,14 @@ export interface AuthUser {
   authMethod?: string;
   /** User's persisted UI prefs (joined into the response by the API). */
   language?: string | null;
-  theme?: 'light' | 'dark' | '' | null;
+  /** `''` = the account has no stored preference (each device falls
+   *  back to the app default); `'system'` = follow the OS, everywhere.
+   *  The two are not the same value — see #677 / migration 00033. */
+  theme?: 'light' | 'dark' | 'system' | '' | null;
+  /** Account-level browse defaults, joined from user_preferences.
+   *  A SEED for devices with no local choice, never an override of one
+   *  — the precedence rule lives in browseView.init() (#706). */
+  defaultViews?: AccountViewDefaults | null;
   /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
@@ -206,7 +224,8 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     usergroup: (u.usergroup ?? null) as number | null,
     authMethod: u.auth_method as string | undefined,
     language: (u.language ?? null) as string | null,
-    theme: (u.theme ?? null) as 'light' | 'dark' | '' | null,
+    theme: (u.theme ?? null) as 'light' | 'dark' | 'system' | '' | null,
+    defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

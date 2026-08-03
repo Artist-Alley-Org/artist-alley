@@ -35,6 +35,7 @@
 // mapping produced at those widths — without either being written down.
 
 import { browser } from '$app/environment';
+import { auth, type AccountViewDefaults } from '$stores/auth.svelte';
 
 export type ViewMode = 'grid' | 'masonry' | 'thumbnail' | 'list' | 'feed';
 export type SortDir = 'asc' | 'desc';
@@ -268,17 +269,21 @@ function writeColumns(ids: string[]): void {
   try { localStorage.setItem(STORAGE_COLS, JSON.stringify(ids)); } catch { /* */ }
 }
 
-function readSort(): { col: string; dir: SortDir } {
-  if (!browser) return { col: 'posted_at', dir: 'desc' };
+/** The stored list-view sort, or null when this device has never set
+ *  one. Null is the load-bearing part: it is what `init()` reads as
+ *  "no local choice here", which is the only condition under which the
+ *  account preference gets to seed the value (#706). */
+function readSort(): { col: string; dir: SortDir } | null {
+  if (!browser) return null;
   try {
     const raw = localStorage.getItem(STORAGE_SORT);
-    if (!raw) return { col: 'posted_at', dir: 'desc' };
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (typeof parsed?.col === 'string' && (parsed?.dir === 'asc' || parsed?.dir === 'desc')) {
       return { col: parsed.col, dir: parsed.dir };
     }
   } catch { /* */ }
-  return { col: 'posted_at', dir: 'desc' };
+  return null;
 }
 function writeSort(s: { col: string; dir: SortDir }): void {
   if (!browser) return;
@@ -286,36 +291,88 @@ function writeSort(s: { col: string; dir: SortDir }): void {
 }
 
 const VALID_FILTERS: ReadonlyArray<FeedFilter> = ['latest', 'following'];
-/** Read the persisted segment, dropping anything this build no longer
- *  serves.
+/** The persisted segment, or null when this device has no valid local
+ *  choice — either because it never made one or because the one it
+ *  made no longer exists.
  *
  *  The allow-list is what makes shrinking `FeedFilter` safe: a browser
  *  still holding `team` or `trending` from before #691 fails the
- *  `includes` and lands on `latest`, so no removed value can reach the
- *  segmented control (which would render no active segment) or the
- *  fetch params. The stale key is also REWRITTEN, not just ignored —
- *  otherwise it sits in localStorage forever, silently reactivating if
- *  that string ever becomes valid again for a different reason. */
-function readFilter(): FeedFilter {
-  if (!browser) return 'latest';
+ *  `includes`, so no removed value can reach the segmented control
+ *  (which would render no active segment) or the fetch params. The
+ *  stale key is also CLEARED, not just ignored — otherwise it sits in
+ *  localStorage forever, silently reactivating if that string ever
+ *  becomes valid again for a different reason.
+ *
+ *  Clearing rather than rewriting to 'latest' is the #706 amendment.
+ *  Both get the dead string out, but a rewrite leaves behind a key
+ *  that looks like a deliberate local choice, which would then outrank
+ *  the account's `home_tab` forever on that device. A value the build
+ *  cannot serve is not a choice; it is the absence of one. */
+function readFilter(): FeedFilter | null {
+  if (!browser) return null;
   const v = localStorage.getItem(STORAGE_FILTER);
   if ((VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '')) return v as FeedFilter;
-  if (v !== null) writeFilter('latest');
-  return 'latest';
+  if (v !== null) {
+    try { localStorage.removeItem(STORAGE_FILTER); } catch { /* */ }
+  }
+  return null;
 }
 function writeFilter(v: FeedFilter): void {
   if (!browser) return;
   try { localStorage.setItem(STORAGE_FILTER, v); } catch { /* */ }
 }
 
-function readFeedDir(): SortDir {
-  if (!browser) return 'desc';
+/** The persisted feed direction, or null when unset — same null-means-
+ *  no-local-choice contract as readMode / readFilter / readSort. */
+function readFeedDir(): SortDir | null {
+  if (!browser) return null;
   const v = localStorage.getItem(STORAGE_FEED_DIR);
-  return v === 'asc' || v === 'desc' ? v : 'desc';
+  return v === 'asc' || v === 'desc' ? v : null;
 }
 function writeFeedDir(v: SortDir): void {
   if (!browser) return;
   try { localStorage.setItem(STORAGE_FEED_DIR, v); } catch { /* */ }
+}
+
+// ── Account defaults (#706) ─────────────────────────────────────────
+//
+// The three knobs on /account/preferences → the store fields they
+// seed. `GET /auth/me` carries them (see CurrentUser.default_views in
+// openapi.yaml), and the root layout's load awaits that call before
+// any page renders, so they are already in hand when a page's onMount
+// calls init() — no second round-trip, no re-seed after paint.
+
+function accountMode(v: AccountViewDefaults | null | undefined): ViewMode | null {
+  const raw = v?.browse_layout ?? '';
+  return (VALID_MODES as ReadonlyArray<string>).includes(raw) ? (raw as ViewMode) : null;
+}
+
+function accountFilter(v: AccountViewDefaults | null | undefined): FeedFilter | null {
+  const raw = v?.home_tab ?? '';
+  return (VALID_FILTERS as ReadonlyArray<string>).includes(raw) ? (raw as FeedFilter) : null;
+}
+
+/** `browse_sort` is a direction, not a column.
+ *
+ *  There is no column to choose: `GET /posts` takes no ordering
+ *  parameter at all, so the feed is always `posted_at DESC, id DESC`
+ *  and every ordering the client can offer is a reversal of that one
+ *  sequence. `newest` is therefore the server order and `oldest` is
+ *  the same rows read backwards — which is exactly what the existing
+ *  newest/oldest control in ViewControls already does. The preference
+ *  seeds that control; it does not add a capability behind it.
+ *
+ *  This is also why the vocabulary stops at two. `popular` and
+ *  `trending` were offered here before #706 and could not be honoured
+ *  by anything, because ranking is a server capability nobody has
+ *  built — see the FeedFilter comment above for the same story one
+ *  field over. */
+function accountDir(v: AccountViewDefaults | null | undefined): SortDir | null {
+  switch (v?.browse_sort ?? '') {
+    case 'newest': return 'desc';
+    case 'oldest': return 'asc';
+    default:       return null;
+  }
 }
 
 class BrowseViewState {
@@ -434,7 +491,32 @@ class BrowseViewState {
     return !SINGLE_COLUMN_MODES.includes(this.mode) && this.tileIdx < TILE_MAX_IDX;
   }
 
-  /** Hydrate from localStorage. Called once from +page.svelte.
+  /** Hydrate from localStorage, then from the account, then from the
+   *  built-ins. Called once from +page.svelte.
+   *
+   *  # Precedence: explicit local choice > account preference > default
+   *
+   *  Every line below reads the same way — `local ?? account ?? built-in`
+   *  — and the order is the whole design of #706, not an implementation
+   *  detail. The account preference is a SEED for a device that has not
+   *  been set up by hand; it is not an override. Pick masonry on this
+   *  laptop and that survives a reload even though the account default
+   *  says grid, because the laptop now has an opinion and the account
+   *  only ever spoke for laptops that didn't.
+   *
+   *  Which is why the seed is deliberately NOT written to localStorage.
+   *  Persisting it would turn "the account says grid" into "this device
+   *  chose grid", and the device would then ignore the account forever
+   *  — including the next time the user changes it. Re-seeding on every
+   *  hydration costs nothing and keeps the two levels distinguishable.
+   *  The reverse direction is equally deliberate: `setMode` and friends
+   *  write to localStorage only, so changing the view while browsing
+   *  never rewrites the account preference. That is a separate, explicit
+   *  act on /account/preferences.
+   *
+   *  `defaults` is optional so the four call sites don't each have to
+   *  reach for the auth store; it falls back to what `/auth/me` already
+   *  put there. Tests pass it explicitly.
    *
    *  The default mode is resolved HERE, once, and only when nothing is
    *  stored — never in a $derived or an $effect keyed on a media query.
@@ -446,17 +528,43 @@ class BrowseViewState {
    *  question "is this a touch device that wants a one-handed feed?" is
    *  about input modality, not how many pixels are available. A
    *  touchscreen laptop at 1920px is coarse; a 390px browser window on
-   *  a desktop is not. */
-  init(): void {
+   *  a desktop is not. An account that names a layout outranks that
+   *  guess: the heuristic exists to stand in for an answer nobody gave. */
+  init(defaults?: AccountViewDefaults | null): void {
     if (this.hydrated) return;
-    const stored = readMode();
-    this.mode = stored ?? this.defaultModeForDevice();
     this.tileIdx = readTileIdx();
     this.listColumns = readColumns();
-    this.sort = readSort();
-    this.filter = readFilter();
-    this.feedDir = readFeedDir();
+    this.applyAccountDefaults(defaults);
     this.hydrated = true;
+  }
+
+  /** Resolve the four seedable fields as `local ?? account ?? built-in`.
+   *
+   *  Split out of init() because it has to run a second time in one
+   *  case init() cannot reach: a guest browsing a public install signs
+   *  in, and the store hydrated before there was an account to consult.
+   *  The root layout re-runs this whenever the session identity
+   *  changes.
+   *
+   *  Safe to call repeatedly by construction — it only ever reads
+   *  localStorage, never writes it, so a field this device has an
+   *  opinion about resolves to that same opinion every time. */
+  applyAccountDefaults(defaults?: AccountViewDefaults | null): void {
+    const acct = defaults !== undefined
+      ? defaults
+      : (auth.user?.defaultViews ?? null);
+
+    this.mode = readMode() ?? accountMode(acct) ?? this.defaultModeForDevice();
+    this.filter = readFilter() ?? accountFilter(acct) ?? 'latest';
+
+    // One account value, two store fields, because the app has two
+    // places the same intent shows up: `feedDir` reverses the card
+    // feeds, `sort` drives the list-view table header. Seeding only one
+    // would make "oldest first" true in grid and false in list on the
+    // same device.
+    const dir = accountDir(acct);
+    this.feedDir = readFeedDir() ?? dir ?? 'desc';
+    this.sort = readSort() ?? { col: 'posted_at', dir: dir ?? 'desc' };
   }
 
   private defaultModeForDevice(): ViewMode {

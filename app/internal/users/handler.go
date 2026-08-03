@@ -521,14 +521,19 @@ func (h *Handler) UpdateUserProfile(
 	if req.Body.Language != nil {
 		language = *req.Body.Language
 	}
+	// `system` is a real stored value, not a synonym for '' (#677).
+	// '' means the account has no preference and each device falls back
+	// to the app default; 'system' means every device follows its own
+	// OS. Collapsing them would make an explicit "follow my OS" unable
+	// to reach a second device — see migration 00033.
 	theme := existing.Theme
 	if req.Body.Theme != nil {
 		switch string(*req.Body.Theme) {
-		case "", "light", "dark":
+		case "", "light", "dark", "system":
 			theme = string(*req.Body.Theme)
 		default:
 			return openapi.UpdateUserProfile400JSONResponse{
-				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "theme must be '', 'light', or 'dark'"},
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "theme must be '', 'light', 'dark', or 'system'"},
 			}, nil
 		}
 	}
