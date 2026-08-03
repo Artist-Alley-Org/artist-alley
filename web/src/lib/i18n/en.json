@@ -645,7 +645,7 @@
     },
     "federation": {
       "title": "Federation peers",
-      "intro": "Trusted artist-alley instances this install will exchange activities with. Per ADR 0043, pairing alone shares no content.",
+      "intro": "Trusted artist-alley instances this install will exchange activities with. Pairing alone shares no content until you explicitly share something.",
       "banner_no_content_yet_label": "Channel only.",
       "banner_no_content_yet": "Adding a peer here creates a trusted communication channel. No posts, collections, assets, or other content actually flows until you (or another user with permission) explicitly shares an object with the peer — object sharing arrives in a future release.",
       "paired_peers": "Paired peers",
@@ -838,7 +838,7 @@
     },
     "activities": {
       "title": "Activities ledger",
-      "intro": "Every federated social action emitted by this instance and received from peers (per ADR 0044). Source of truth for the federation outbox.",
+      "intro": "Every federated social action emitted by this instance and received from peers. Source of truth for the federation outbox.",
       "filter_any": "(any)",
       "filter_type": "Type",
       "filter_kind": "Object kind",
@@ -1270,7 +1270,7 @@
           },
           "activities": {
             "title": "Activity ledger",
-            "blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received (per ADR 0044)."
+            "blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received."
           },
           "themes": {
             "title": "Themes & branding",

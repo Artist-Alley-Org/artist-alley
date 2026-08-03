@@ -7,7 +7,7 @@
 
 A self-hosted **art review and archival tool for game studios**. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
-> **Status:** pre-1.0, active development. Releases are tagged and shipping (latest **v0.4.0**); the feature set is still landing. Not production-ready.
+> **Status:** pre-1.0, active development. Releases are tagged and shipping (latest **v0.8.0**); the feature set is still landing. Not production-ready.
 
 ---
 
@@ -42,7 +42,7 @@ one surface.
 |---|---|
 | ![Sprite sheet with per-frame slicing](docs/screenshots/sprite-viewer.png) | ![Automatic sprite detection finding 45 sprites](docs/screenshots/sprite-detect.png) |
 
-![Browse feed (dark)](docs/screenshots/browse-dark.png)
+![Browse feed — masonry (dark)](docs/screenshots/browse-dark.png)
 
 <details>
 <summary>More surfaces</summary>
@@ -136,18 +136,18 @@ artist-alley/
 
 ## Roadmap
 
-The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`docs/roadmap.md`](docs/roadmap.md). Every open issue is milestoned — see [**Milestones**](https://github.com/Artist-Alley-Org/artist-alley/milestones) for the release train.
+The full roadmap lives at [artist-alley.org/docs/roadmap](https://artist-alley.org/docs/roadmap/) and in [`docs/roadmap.md`](docs/roadmap.md). Every open issue is milestoned — see [**Milestones**](https://github.com/Artist-Alley-Org/artist-alley/milestones) for the release train.
 
-- **Shipped (v0.1.0 – v0.4.0):** single-binary deploy, Postgres + pluggable storage, identity/auth with a full admin surface, upload pipeline, posts + collections, the universal asset viewer (image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets), federation over [ArchivePub](docs/protocol/archivepub.md), media derivatives, responsive UI, and the operator surfaces — jobs admin, storage admin, and storage integrity sweeps.
-- **In flight (v0.5.0 — public mode):** anonymous browsing. Content visibility now has a single enforcement point ([ADR 0063](docs/adr/0063-content-visibility-predicate.md)), asset sensitivity gates bytes rather than rows ([ADR 0064](docs/adr/0064-sensitivity-gates-content-not-rows.md)), and public browsing is an operator setting that is **off by default**. Remaining: the public featured rail and audit-log PII gating.
-- **Next (v0.6.0 – v0.10.0):** reports and moderation, the audit log, observability, runtime licensing, privacy and consent, share links, bulk operations, the capability add-on layer, external imports, the review-tool arc, commerce, and the plugin ecosystem — sequenced so no milestone depends on a later one.
+- **Shipped (v0.1.0 – v0.8.0):** single-binary deploy, Postgres + pluggable storage, identity/auth with a full admin surface, upload pipeline, posts + collections, the universal asset viewer (image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets), federation over [ArchivePub](docs/protocol/archivepub.md), media derivatives, responsive UI, the operator surfaces (jobs admin, storage admin, storage integrity sweeps), and a public read surface — anonymous browsing behind an operator toggle that is off by default (single visibility enforcement point [ADR 0063](docs/adr/0063-content-visibility-predicate.md), sensitivity gates bytes not rows [ADR 0064](docs/adr/0064-sensitivity-gates-content-not-rows.md)). **v0.8.0** added the **operator & metadata configuration admin**: per-field vocabularies that grow from use (open-vocabulary keywords), a hierarchical tree-field editor, operator string overrides (site text), operator-authored email templates over a restricted context, rich-text field rendering, and collection metadata resolution.
+- **In flight (v0.9.0 — user-facing surfaces):** account-tile completeness, the social feed card, the asset edit route, team channels, workflow triggers & notification rules, and default-view preferences.
+- **Next (v0.10.0 – v0.20.0):** the review & collaboration arc (a synchronised review player) plus the 3D animation arc (addressable clips, rig identity, a shared animation library), then community & moderation, sharing / bulk-ops, privacy / audit / observability, platform & extensibility (plugins / add-ons / MCP / imports), monetization & premium DCC, the RS migration tool, physical archive mode, distribution & packaging, and federation phase 2 — sequenced so no milestone depends on a later one.
 - **v1.0.0:** feature-complete. Everything currently on the roadmap and in the issue tracker targets GA; new work defaults there unless explicitly labelled `post-v1.0.0`.
 
 ---
 
 ## Contributing
 
-Early days — please open an [issue](https://github.com/Artist-Alley-Org/artist-alley/issues) or [Discussion](https://github.com/Artist-Alley-Org/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer docs](https://artist-alley.org/developers/) — particularly [coding standards](https://artist-alley.org/developers/coding-standards/) and [security](https://artist-alley.org/developers/security/) — before opening a PR.
+Early days — please open an [issue](https://github.com/Artist-Alley-Org/artist-alley/issues) or [Discussion](https://github.com/Artist-Alley-Org/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer docs](https://artist-alley.org/docs/developers/) — particularly [coding standards](https://artist-alley.org/docs/developers/coding-standards/) and [security](https://artist-alley.org/docs/developers/security/) — before opening a PR.
 
 Architectural changes need an ADR per the convention in [ADR 0035](docs/adr/0035-adr-conventions/). Reverse-engineering or interoperability work needs to follow the clean-room methodology in [ADR 0040](docs/adr/0040-clean-room-reverse-engineering-methodology/).
 
