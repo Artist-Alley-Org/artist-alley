@@ -387,6 +387,14 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID
 }
 
+type EmailTemplate struct {
+	TemplateName     string
+	Part             string
+	Body             string
+	UpdatedAt        pgtype.Timestamptz
+	UpdatedByUserRef *int64
+}
+
 type EmailVerificationToken struct {
 	ID         pgtype.UUID
 	UserRef    int64

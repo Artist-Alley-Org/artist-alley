@@ -1090,6 +1090,21 @@ func (*PanicShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObj
 	panic("PanicShim: DeleteComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetEmailTemplates panics by default; test shims override.
+func (*PanicShim) GetEmailTemplates(context.Context, openapi.GetEmailTemplatesRequestObject) (openapi.GetEmailTemplatesResponseObject, error) {
+	panic("PanicShim: GetEmailTemplates called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DeleteEmailTemplate panics by default; test shims override.
+func (*PanicShim) DeleteEmailTemplate(context.Context, openapi.DeleteEmailTemplateRequestObject) (openapi.DeleteEmailTemplateResponseObject, error) {
+	panic("PanicShim: DeleteEmailTemplate called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetEmailTemplate panics by default; test shims override.
+func (*PanicShim) SetEmailTemplate(context.Context, openapi.SetEmailTemplateRequestObject) (openapi.SetEmailTemplateResponseObject, error) {
+	panic("PanicShim: SetEmailTemplate called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetPublicFeaturedRail panics by default; test shims override.
 func (*PanicShim) GetPublicFeaturedRail(context.Context, openapi.GetPublicFeaturedRailRequestObject) (openapi.GetPublicFeaturedRailResponseObject, error) {
 	panic("PanicShim: GetPublicFeaturedRail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

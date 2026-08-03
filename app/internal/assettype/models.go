@@ -387,6 +387,14 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
 }
 
+type EmailTemplate struct {
+	TemplateName     string             `json:"template_name"`
+	Part             string             `json:"part"`
+	Body             string             `json:"body"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	UpdatedByUserRef *int64             `json:"updated_by_user_ref"`
+}
+
 type EmailVerificationToken struct {
 	ID         pgtype.UUID        `json:"id"`
 	UserRef    int64              `json:"user_ref"`
