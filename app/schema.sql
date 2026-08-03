@@ -1185,6 +1185,19 @@ CREATE TABLE public.direct_messages (
 
 
 --
+-- Name: email_template; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.email_template (
+    template_name text NOT NULL,
+    part text NOT NULL,
+    body text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by_user_ref bigint
+);
+
+
+--
 -- Name: email_verification_token; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3130,6 +3143,14 @@ ALTER TABLE ONLY public.sessions
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: email_template email_template_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_template
+    ADD CONSTRAINT email_template_pkey PRIMARY KEY (template_name, part);
 
 
 --
@@ -5690,6 +5711,14 @@ ALTER TABLE ONLY public.search_visual_backfill_run
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_impersonated_by_user_ref_fkey FOREIGN KEY (impersonated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: email_template email_template_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_template
+    ADD CONSTRAINT email_template_updated_by_user_ref_fkey FOREIGN KEY (updated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
 
 
 --

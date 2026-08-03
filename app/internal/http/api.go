@@ -70,6 +70,7 @@ import (
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
 	rawpkg "github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
 	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
+	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
@@ -130,75 +131,76 @@ type apiServer struct {
 	// GetBuildInfo for the admin About page (#406).
 	version string
 
-	auth              *auth.Handler
-	resourceType      *assettype.Handler
-	storage           *storage.Handler
-	assets            *assets.Handler
-	metadata          *metadata.Handler
-	collections       *collections.Handler
-	posts             *posts.Handler
-	teams             *teams.Handler
-	users             *users.Handler
-	social            *social.Handler
-	setup             *setup.Handler
-	workflow          *workflow.Handler
-	sysconfigH        *sysconfig.Handler
-	i18n              *i18n.Handler
-	jobs              *jobs.HTTPHandler
-	brushpacks        *brushpacks.Handler
-	audit             *audit.HTTPHandler
-	scheduledActions  *scheduledactions.HTTPHandler
-	licensing         *licensing.Handler
-	userprefs         *userprefs.Handler
-	aiAdmin           *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
-	aiBridge          ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
-	aiRouter          *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
-	mcpRegistry       *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
-	mcpDispatch       *mcpdispatch.Dispatcher
-	mcpHealth         *mcpdispatch.HealthChecker
-	mcpProviders      *mcpProviderTable
-	mcpAdmin          *mcpadmin.Handler
-	notifications     *notifications.Handler
-	messages          *messages.Handler
-	activities        *activities.Writer
-	activitiesAdmin   *activities.AdminHandler
-	peers             *peer.Registry
-	peersAdmin        *peer.AdminHandler
-	peersHandshake    *peer.AdminHandshakeHandler
-	peersPublic       *peer.PublicHandler
-	fedIdentity       *identity.Manager
-	fedEngine         *peer.Engine
-	directories       *directory.Registry
-	directoriesAdmin  *directory.AdminHandler
-	directoryPoller   *directory.Poller
-	p2pRegistry       *p2p.Registry
-	p2pAdmin          *p2p.AdminHandler
-	sharesRegistry    *shares.Registry
-	sharesAdmin       *shares.AdminHandler
-	sharesSweeper     *shares.Sweeper
-	inboxHandler      *inbox.Handler
-	inboxDispatcher   *inbox.Dispatcher
-	outboxDispatcher  *outbox.Dispatcher
-	outboxDelivery    *outbox.Worker
-	outboxAdmin       *outbox.AdminHandler
-	userKeysSweeper   *userkeys.Sweeper
-	userKeysAdmin     *userkeys.AdminHandler
-	capabilitySweeper *auth.CapabilitySweeper
-	requests          *requests.Handler
-	requestsHTTP      *requests.HTTPHandler
-	featuredHTTP      *featured.HTTPHandler
-	featuredDomain    *featured.Handler
-	sitetextHTTP      *sitetext.HTTPHandler
-	subtitles         *subtitles.Handler
-	subtitlesHTTP     *subtitles.HTTPHandler
-	aieditHTTP        *aiedit.HTTPHandler
-	metaCounter       *assetmetadata.Counter
-	metaAdmin         *assetmetadata.AdminHandler
-	jobsSvc           *jobs.Service
-	jobsAdmin         *jobs.AdminHandler
-	storageAdmin      *storage.AdminHandler
-	sysCfg            *sysconfig.Store
-	seedAdmin         *seed.AdminHandler
+	auth               *auth.Handler
+	resourceType       *assettype.Handler
+	storage            *storage.Handler
+	assets             *assets.Handler
+	metadata           *metadata.Handler
+	collections        *collections.Handler
+	posts              *posts.Handler
+	teams              *teams.Handler
+	users              *users.Handler
+	social             *social.Handler
+	setup              *setup.Handler
+	workflow           *workflow.Handler
+	sysconfigH         *sysconfig.Handler
+	i18n               *i18n.Handler
+	jobs               *jobs.HTTPHandler
+	brushpacks         *brushpacks.Handler
+	audit              *audit.HTTPHandler
+	scheduledActions   *scheduledactions.HTTPHandler
+	licensing          *licensing.Handler
+	userprefs          *userprefs.Handler
+	aiAdmin            *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
+	aiBridge           ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter           *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
+	mcpRegistry        *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
+	mcpDispatch        *mcpdispatch.Dispatcher
+	mcpHealth          *mcpdispatch.HealthChecker
+	mcpProviders       *mcpProviderTable
+	mcpAdmin           *mcpadmin.Handler
+	notifications      *notifications.Handler
+	messages           *messages.Handler
+	activities         *activities.Writer
+	activitiesAdmin    *activities.AdminHandler
+	peers              *peer.Registry
+	peersAdmin         *peer.AdminHandler
+	peersHandshake     *peer.AdminHandshakeHandler
+	peersPublic        *peer.PublicHandler
+	fedIdentity        *identity.Manager
+	fedEngine          *peer.Engine
+	directories        *directory.Registry
+	directoriesAdmin   *directory.AdminHandler
+	directoryPoller    *directory.Poller
+	p2pRegistry        *p2p.Registry
+	p2pAdmin           *p2p.AdminHandler
+	sharesRegistry     *shares.Registry
+	sharesAdmin        *shares.AdminHandler
+	sharesSweeper      *shares.Sweeper
+	inboxHandler       *inbox.Handler
+	inboxDispatcher    *inbox.Dispatcher
+	outboxDispatcher   *outbox.Dispatcher
+	outboxDelivery     *outbox.Worker
+	outboxAdmin        *outbox.AdminHandler
+	userKeysSweeper    *userkeys.Sweeper
+	userKeysAdmin      *userkeys.AdminHandler
+	capabilitySweeper  *auth.CapabilitySweeper
+	requests           *requests.Handler
+	requestsHTTP       *requests.HTTPHandler
+	featuredHTTP       *featured.HTTPHandler
+	featuredDomain     *featured.Handler
+	sitetextHTTP       *sitetext.HTTPHandler
+	emailTemplatesHTTP *email.HTTPHandler
+	subtitles          *subtitles.Handler
+	subtitlesHTTP      *subtitles.HTTPHandler
+	aieditHTTP         *aiedit.HTTPHandler
+	metaCounter        *assetmetadata.Counter
+	metaAdmin          *assetmetadata.AdminHandler
+	jobsSvc            *jobs.Service
+	jobsAdmin          *jobs.AdminHandler
+	storageAdmin       *storage.AdminHandler
+	sysCfg             *sysconfig.Store
+	seedAdmin          *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
 	// minimal server without the search subsystem).
@@ -1270,6 +1272,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		sitetext.NewHandler(pool, sitetext.NewCache(cacheReg, logger), logger),
 		logger,
 	)
+
+	// Operator-authored email templates (#795, ADR 0081 §2). One store
+	// is both the render-time override source (installed process-wide so
+	// email.Render resolves against it) AND the admin HTTP surface — a
+	// single cache registration, so a save invalidates the same entry
+	// the next send reads. Installing here rather than in server.go keeps
+	// the cache registered exactly once.
+	emailTemplateStore := email.NewTemplateStore(pool, email.NewCache(cacheReg, logger), logger)
+	email.UseTemplateStore(emailTemplateStore)
+	s.emailTemplatesHTTP = email.NewHTTPHandler(emailTemplateStore, logger)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -3044,6 +3056,18 @@ func (s *apiServer) SetSiteText(ctx context.Context, req openapi.SetSiteTextRequ
 }
 func (s *apiServer) DeleteSiteText(ctx context.Context, req openapi.DeleteSiteTextRequestObject) (openapi.DeleteSiteTextResponseObject, error) {
 	return s.sitetextHTTP.DeleteSiteText(ctx, req)
+}
+
+// --- operator-authored email templates (#795) -----------------------------
+
+func (s *apiServer) GetEmailTemplates(ctx context.Context, req openapi.GetEmailTemplatesRequestObject) (openapi.GetEmailTemplatesResponseObject, error) {
+	return s.emailTemplatesHTTP.GetEmailTemplates(ctx, req)
+}
+func (s *apiServer) SetEmailTemplate(ctx context.Context, req openapi.SetEmailTemplateRequestObject) (openapi.SetEmailTemplateResponseObject, error) {
+	return s.emailTemplatesHTTP.SetEmailTemplate(ctx, req)
+}
+func (s *apiServer) DeleteEmailTemplate(ctx context.Context, req openapi.DeleteEmailTemplateRequestObject) (openapi.DeleteEmailTemplateResponseObject, error) {
+	return s.emailTemplatesHTTP.DeleteEmailTemplate(ctx, req)
 }
 
 // --- featured content (GitHub #341) ---------------------------------------

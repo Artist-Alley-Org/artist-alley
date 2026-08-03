@@ -46,6 +46,26 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The emails this instance sends can now be rewritten without forking.** Every
+  transactional email — the verify-your-address message, the "send a test email"
+  check, the saved-search and activity digests, the catch-all notification — rendered
+  from a template compiled into the binary, so an operator who wanted to change a
+  subject line or reword a body had no way to. Admin → Content → **Email templates**
+  now lists each email with what it ships as, an editor for the subject, the plain-text
+  body and the HTML body, the exact set of fields that email makes available, a live
+  preview rendered against sample values in a sandboxed frame, and Revert. Your version
+  replaces the shipped one on the next send — on this instance and on a second instance
+  sharing the database, no restart (#795, ADR 0081 §2).
+
+  A template may only reference the fields listed for its email — a small, typed
+  view-model of strings, numbers and the odd list of rows, assembled per event. That
+  list is the safety boundary: a template that names a field the email does not carry is
+  refused **when you save it**, with the field named, rather than quietly rendering to
+  nothing when the mail goes out. And if an override ever does fail at send time, the
+  shipped template renders in its place so the mail still goes. This closes the
+  operator-overrides epic (#519); locale-specific templates (#289) and email branding
+  remain future work.
+
 - **Any wording the interface ships with can now be changed without forking.** Every
   visible string came from a catalogue compiled into the build, so an operator who
   wanted "Collections" to read "Libraries" — or who simply wanted to fix confusing

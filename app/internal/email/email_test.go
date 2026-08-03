@@ -91,7 +91,7 @@ func TestCapture_RejectsBadInput(t *testing.T) {
 }
 
 func TestRender_AdminTestTemplate(t *testing.T) {
-	msg, err := email.Render(email.TemplateAdminTest, []string{"ops@example.com"}, map[string]any{
+	msg, err := email.Render(context.Background(), email.TemplateAdminTest, []string{"ops@example.com"}, map[string]any{
 		"site_name":      "Studio Alpha",
 		"site_url":       "https://art.example.com",
 		"recipient_name": "Pat",
@@ -116,7 +116,7 @@ func TestRender_AdminTestTemplate(t *testing.T) {
 }
 
 func TestRender_UnknownTemplate(t *testing.T) {
-	_, err := email.Render("does_not_exist", []string{"a@b.c"}, nil)
+	_, err := email.Render(context.Background(), "does_not_exist", []string{"a@b.c"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "unknown template") {
 		t.Errorf("expected unknown-template error, got %v", err)
 	}

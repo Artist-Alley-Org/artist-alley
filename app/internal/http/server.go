@@ -426,7 +426,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		impl.auth.SetRegistrationSurface(auth.RegisterSurface{
 			SendVerification: func(ctx context.Context, to, recipientName, verifyURL, expiresIn string) error {
 				site, _ := emailSite(ctx)
-				msg, err := email.Render(email.TemplateRegisterVerify, []string{to}, map[string]any{
+				msg, err := email.Render(ctx, email.TemplateRegisterVerify, []string{to}, map[string]any{
 					"site_name":      site.Name,
 					"site_url":       site.URL,
 					"recipient_name": recipientName,
