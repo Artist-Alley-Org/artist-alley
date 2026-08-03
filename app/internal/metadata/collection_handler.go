@@ -233,6 +233,34 @@ func (h *Handler) SetCollectionFieldValue(
 		req.Body.ValueOptions = &vocab.Slugs
 	}
 
+	// Reference-existence gate (#842) — the collection sibling of the
+	// asset path's gate, on the same GetReferencedAsset query so a
+	// collection cannot store a dangling ref an asset would refuse. A
+	// WRITE gate only: the read path tolerates a since-deleted target
+	// and degrades to the bare id (the #839 interlock). See
+	// SetAssetFieldValue for the full argument. The resolved target is
+	// reused for the 200 body's resolved_reference (#840), so the write
+	// response carries the same shape the list path does.
+	var ref resolvedRef
+	if fieldRow.Type == "reference" && req.Body.ValueRef != nil {
+		refUUID := pgtype.UUID{Bytes: uuid.UUID(*req.Body.ValueRef), Valid: true}
+		target, refErr := qTx.GetReferencedAsset(ctx, refUUID)
+		if refErr != nil {
+			if errors.Is(refErr, pgx.ErrNoRows) {
+				field := fieldRow.Code
+				return openapi.SetCollectionFieldValue422JSONResponse{
+					FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+						Error:  fmt.Sprintf("%s: referenced asset %s does not exist", fieldRow.Code, uuid.UUID(*req.Body.ValueRef)),
+						Reason: openapi.DanglingReference,
+						Field:  &field,
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("metadata: verify reference target: %w", refErr)
+		}
+		ref = resolvedRef{ID: target.ID, Title: target.Title}
+	}
+
 	row, err := qTx.UpsertCollectionFieldValue(ctx, buildCollectionUpsertParams(
 		pgCollection, pgField, fieldRow.Type, req.Body, setBy, &id.UserRef,
 	))
@@ -281,7 +309,12 @@ func (h *Handler) SetCollectionFieldValue(
 	return openapi.SetCollectionFieldValue200JSONResponse(
 		buildCollectionValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
 			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
-			row.SetBy, row.SetAt, row.SetByUserRef),
+			row.SetBy, row.SetAt, row.SetByUserRef,
+			// vocab.Options, not fieldRow.Options: on an open-vocabulary
+			// write that just minted a term, the loaded field row predates
+			// it and the response would resolve every term but the new one.
+			// Same reason the asset path passes vocab.Options here.
+			vocab.Options, ref),
 	), nil
 }
 
@@ -432,19 +465,19 @@ func (h *Handler) getCollectionValues(ctx context.Context, collectionID pgtype.U
 		return nil, err
 	}
 
-	// Join with field_definition to surface code/label/type per row.
+	// code/label/type/options and the reference title now ride on the
+	// row itself (#840 joins), so no per-row getFieldByIDCached and no
+	// N+1 — the query resolves everything buildCollectionValue needs.
+	// A value whose field definition was deleted is dropped by the
+	// INNER JOIN to field_definition, which is the join's equivalent of
+	// the "definition gone" skip this loop used to do by hand.
 	values := make([]openapi.CollectionFieldValue, 0, len(rows))
 	for _, r := range rows {
-		fieldRow, fErr := h.getFieldByIDCached(ctx, r.FieldID)
-		if fErr != nil {
-			// Definition gone (CASCADE delete in flight, race?).
-			// Skip silently; cache repopulates on next request.
-			continue
-		}
 		values = append(values, buildCollectionValue(
-			r.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
+			r.FieldID, r.Code, r.Label, r.Type,
 			r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
 			r.SetBy, r.SetAt, r.SetByUserRef,
+			r.Options, resolvedRef{ID: r.RefAssetID, Title: r.RefAssetTitle},
 		))
 	}
 
@@ -481,11 +514,21 @@ func (h *Handler) InvalidateCollectionValues(ctx context.Context, collectionID u
 // buildCollectionValue projects the typed-value row to the API shape.
 // Pulled out for re-use by both the read path (list) and the write
 // path (the upsert returns the new value).
+//
+// fieldOptions and ref are the #840 additions: the collection side now
+// resolves select/tree slugs and reference targets exactly the way
+// buildAssetValue does, so collection metadata renders labels and
+// linked titles instead of raw slugs and bare UUIDs. Both callers
+// already hold both — the list path off its joins, the write path off
+// the loaded field def and the reference gate — so, as on the asset
+// side, the resolution costs no extra query and no consumer can forget
+// it. See buildAssetValue for the full argument (#775/#817).
 func buildCollectionValue(
 	fieldID pgtype.UUID, code, label, fieldType string,
 	text *string, num *float64, date pgtype.Timestamptz,
 	options []string, refUUID pgtype.UUID,
 	setBy string, setAt pgtype.Timestamptz, setByUserRef *int64,
+	fieldOptions []byte, ref resolvedRef,
 ) openapi.CollectionFieldValue {
 	v := openapi.CollectionFieldValue{
 		FieldId:      openapi_types.UUID(fieldID.Bytes),
@@ -519,6 +562,23 @@ func buildCollectionValue(
 	if refUUID.Valid {
 		u := openapi_types.UUID(refUUID.Bytes)
 		v.ValueRef = &u
+	}
+	// The same resolution the asset path does (#840), through the same
+	// shared helper, so the two subject kinds cannot render a value
+	// differently.
+	if resolved := resolveValueOptions(fieldType, text, options, fieldOptions); len(resolved) > 0 {
+		v.ResolvedOptions = &resolved
+	}
+	// Gate on fieldType as well as ref.ID — same narrowness as
+	// buildAssetValue — so a stray value_ref on a non-reference field
+	// cannot start emitting a resolved target. A target that did not
+	// resolve (soft-deleted, or a since-deleted dangling ref) leaves
+	// this absent and the client falls back to the bare id (#839).
+	if fieldType == "reference" && ref.ID.Valid {
+		v.ResolvedReference = &openapi.ResolvedReference{
+			Id:    openapi_types.UUID(ref.ID.Bytes),
+			Title: ref.Title,
+		}
 	}
 	return v
 }
