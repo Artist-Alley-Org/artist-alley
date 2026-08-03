@@ -205,6 +205,65 @@ func TestReferenceValueDegradesForDanglingRef(t *testing.T) {
 	}
 }
 
+// TestReferenceWriteRejectsDanglingRef is the WRITE half of the #842
+// interlock, and the pair to TestReferenceValueDegradesForDanglingRef
+// above (the READ half). Together they pin the rule the two issues
+// share: a dangling reference is refused on the way IN (422), but a
+// value that was valid when written and whose target vanished later is
+// tolerated on the way OUT (bare id, #839). If a future change ever
+// makes the write path tolerant or the read path strict, exactly one of
+// this pair fails and names which direction moved.
+func TestReferenceWriteRejectsDanglingRef(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestFields(t, pool)
+	t.Cleanup(func() { cleanTestFields(t, pool) })
+
+	router, userRef := makeRouter(t, pool /*admin=*/, true)
+	fieldID := mustCreateField(t, router, map[string]any{
+		"code": "metadata_test_reject_dangling", "label": "Ref", "type": "reference",
+	})
+	subject := mustInsertAsset(t, pool, userRef)
+	target := mustInsertTitledAsset(t, pool, userRef, "Real Target", "active")
+	cleanupAssets(t, pool, subject, target)
+
+	// A well-formed UUID naming no asset — refused on write. Before #842
+	// this returned 200 and stored the dangling id.
+	orphan := uuid.New().String()
+	rr := putJSON(t, router, fmt.Sprintf("/assets/%s/fields/%s", subject, fieldID),
+		map[string]any{"value_ref": orphan})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("dangling reference write: status=%d want 422 body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]any
+	mustDecode(t, rr.Body.Bytes(), &body)
+	if body["reason"] != "dangling_reference" {
+		t.Errorf("reason=%v want dangling_reference", body["reason"])
+	}
+
+	// Nothing was stored — the write was refused, not silently accepted.
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM asset_field_value WHERE asset_id = $1 AND field_id = $2`,
+		subject, fieldID).Scan(&count); err != nil {
+		t.Fatalf("count value rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("a rejected dangling write left %d value row(s); it must store nothing", count)
+	}
+
+	// A reference to a REAL asset still writes and resolves.
+	if ok := putJSON(t, router, fmt.Sprintf("/assets/%s/fields/%s", subject, fieldID),
+		map[string]any{"value_ref": target}); ok.Code != http.StatusOK {
+		t.Fatalf("valid reference write: status=%d want 200 body=%s", ok.Code, ok.Body.String())
+	}
+}
+
 // TestReferenceResolutionLeavesResolvedOptionsAlone is the
 // same-seam regression guard. #817 changed buildAssetValue, which is
 // also where #775/#776's resolved_options is populated; asserting the
@@ -377,6 +436,37 @@ func TestReferenceJoinMatchesAuthenticatedAssetPredicate(t *testing.T) {
 			"ListAssetFieldValues' LEFT JOIN hard-codes `r.deleted_at IS NULL` as this "+
 			"rule. The predicate has changed, so that join now under-enforces: update "+
 			"queries.sql (and GetReferencedAsset) to match, then update this test.", frag, want)
+	}
+	if len(args) != 0 {
+		t.Errorf("authenticated asset predicate binds %d args; the join condition binds none, "+
+			"so it can no longer be expressed as static SQL", len(args))
+	}
+}
+
+// TestCollectionReferenceJoinMatchesAuthenticatedAssetPredicate is the
+// collection sibling of the pin above (#840). ListCollectionFieldValues
+// and GetCollectionFieldValue LEFT JOIN assets on the same
+// `r.deleted_at IS NULL` the asset queries use, because a reference
+// target's visibility does not change with the subject that points at
+// it — an asset the caller may not see is no more visible because a
+// collection references it. This pins that the collection join enforces
+// the SAME authenticated-asset predicate, so if a future sensitivity
+// rule (#210) tightens it, the failure lands here by name too and not
+// only on the asset path.
+func TestCollectionReferenceJoinMatchesAuthenticatedAssetPredicate(t *testing.T) {
+	p, err := visibility.Filter(context.Background(), visibility.EntityAsset,
+		visibility.NewCaller(ptrInt64(420001)))
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	frag, args := p.ToSQL("r", 0)
+
+	const want = " AND (r.deleted_at IS NULL)"
+	if frag != want {
+		t.Errorf("authenticated asset predicate = %q, want %q.\n"+
+			"ListCollectionFieldValues / GetCollectionFieldValue LEFT JOIN assets hard-code "+
+			"`r.deleted_at IS NULL` as this rule. The predicate has changed, so those joins "+
+			"now under-enforce: update queries.sql to match, then update this test.", frag, want)
 	}
 	if len(args) != 0 {
 		t.Errorf("authenticated asset predicate binds %d args; the join condition binds none, "+

@@ -497,9 +497,11 @@ func TestReset_SweepsFieldDefinitionButKeepsShipped(t *testing.T) {
 	}
 
 	// A seed-added studio field, with a value and a history row hanging
-	// off it. asset_field_value has an ON DELETE CASCADE FK;
-	// asset_field_value_history has no constraint at all, so only the
-	// explicit sweep can reach it.
+	// off it. Both asset_field_value and (since #821) its history table
+	// carry an ON DELETE CASCADE FK on field_id, and the history table
+	// also has one on asset_id — so deleting the field, or truncating
+	// the asset, takes the history row with it. This used to require the
+	// bespoke sweep in Reset; the constraint now does the job.
 	code := "reset_studio_field_" + resetSuffix()
 	var fieldID, assetID uuid.UUID
 	if err := pool.QueryRow(ctx,
@@ -575,8 +577,9 @@ func TestReset_SweepsFieldDefinitionButKeepsShipped(t *testing.T) {
 		t.Fatalf("history probe: %v", err)
 	}
 	if history != 0 {
-		t.Errorf("asset_field_value_history kept %d row(s) for a truncated asset. The table "+
-			"has no foreign key on either asset_id or field_id, so nothing but the explicit "+
-			"sweep in Reset can reach it.", history)
+		t.Errorf("asset_field_value_history kept %d row(s) for a truncated asset. Since #821 "+
+			"the table has ON DELETE CASCADE FKs on both asset_id and field_id, so TRUNCATE "+
+			"assets ... CASCADE and the field_definition sweep should both reach it — a "+
+			"survivor means a constraint is missing.", history)
 	}
 }

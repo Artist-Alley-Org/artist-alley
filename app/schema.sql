@@ -5186,6 +5186,22 @@ ALTER TABLE ONLY public.asset_field_value
 
 
 --
+-- Name: asset_field_value_history asset_field_value_history_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_field_value_history
+    ADD CONSTRAINT asset_field_value_history_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: asset_field_value_history asset_field_value_history_field_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_field_value_history
+    ADD CONSTRAINT asset_field_value_history_field_id_fkey FOREIGN KEY (field_id) REFERENCES public.field_definition(id) ON DELETE CASCADE;
+
+
+--
 -- Name: asset_subtitle_tracks asset_subtitle_tracks_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 

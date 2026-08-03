@@ -436,21 +436,16 @@ func Reset(ctx context.Context, pool *pgxpool.Pool, adminUsername string) error 
 	// seed-added or operator-added; on a reset both are content.
 	//
 	// Deleting the DEFINITIONS cascades to asset_field_value,
-	// collection_field_value, collection_field_value_history and
-	// field_default_override, all of which carry a real FK. It does NOT
-	// reach asset_field_value_history, which names asset_id and field_id
-	// as bare uuid columns with no constraint at all — the same "CASCADE
-	// cannot reach me" class as user_follows, and swept for the same
-	// reason a few lines down. Order matters: the history rows are
-	// removed FIRST, while the definitions they name still exist, so the
-	// predicate is a plain join rather than a guess.
-	if _, err := pool.Exec(ctx, `
-	    DELETE FROM asset_field_value_history h
-	     WHERE NOT EXISTS (SELECT 1 FROM assets a WHERE a.id = h.asset_id)
-	        OR h.field_id IN (SELECT id FROM field_definition WHERE code <> ALL($1::text[]))`,
-		db.ShippedFieldCodes()); err != nil {
-		return fmt.Errorf("sweep asset_field_value_history: %w", err)
-	}
+	// collection_field_value, collection_field_value_history,
+	// field_default_override AND — since #821 gave it the FKs its
+	// collection sibling always had — asset_field_value_history, all of
+	// which now carry a real ON DELETE CASCADE FK. The TRUNCATE assets
+	// above also reaches asset_field_value_history via its new asset_id
+	// FK. Both paths together leave nothing for the bespoke history
+	// sweep this file used to run here to do, so it is gone (#821): the
+	// constraint is the structural guarantee the hand-written DELETE was
+	// standing in for while it was absent.
+	//
 	// deprecated_replacement_id is the table's one self-FK and it is ON
 	// DELETE RESTRICT, so a SURVIVING definition that names a doomed one
 	// as its replacement would abort the whole reset. Clear the pointer

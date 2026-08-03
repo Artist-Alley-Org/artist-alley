@@ -791,6 +791,37 @@ func (h *Handler) SetAssetFieldValue(
 		upsert.ValueOptions = vocab.Slugs
 	}
 
+	// Reference-existence gate (#842). A `reference` value is a bare
+	// asset UUID, and until now buildUpsertParams accepted any UUID —
+	// so a PUT could point a value at an asset that never existed and
+	// get a 200. Verify the target resolves BEFORE the upsert, on the
+	// tx handle so the check and the write see one snapshot; a miss is
+	// 422 dangling_reference.
+	//
+	// THE #839 INTERLOCK: this is a WRITE gate and nothing else. The
+	// read path (GetReferencedAsset at the response-build below, and
+	// ListAssetFieldValues' LEFT JOIN) deliberately TOLERATES a target
+	// that has since been deleted, degrading to the bare id with no
+	// disclosure. A value that was valid when written must keep reading
+	// fine after its target is deleted — so the gate lives here, on the
+	// way in, and never on the way out. Same GetReferencedAsset query
+	// both sides, so "resolvable" means one thing.
+	if fieldRow.Type == "reference" && upsert.ValueRef.Valid {
+		if _, refErr := qTx.GetReferencedAsset(ctx, upsert.ValueRef); refErr != nil {
+			if errors.Is(refErr, pgx.ErrNoRows) {
+				field := fieldRow.Code
+				return openapi.SetAssetFieldValue422JSONResponse{
+					FieldValueUnprocessableJSONResponse: openapi.FieldValueUnprocessableJSONResponse{
+						Error:  fmt.Sprintf("%s: referenced asset %s does not exist", fieldRow.Code, uuid.UUID(upsert.ValueRef.Bytes)),
+						Reason: openapi.DanglingReference,
+						Field:  &field,
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("metadata: verify reference target: %w", refErr)
+		}
+	}
+
 	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: upsert: %w", err)
