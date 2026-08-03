@@ -105,14 +105,47 @@ func readRuleFor(id *auth.Identity) readRule {
 //     more (that fallback existed for test fixtures and was a
 //     leak waiting for a boot-order slip).
 //   - private       — the author, plus posts.admin / system.admin.
-//   - explicit-share — the author only.
+//   - explicit-share — the author, plus anyone holding a live post_acls
+//     grant (below).
 //
-// explicit-share deliberately does NOT consult post_acls yet. The
-// single-item gate has never consulted it either, so admitting grantees
-// here would make the list path *wider* than GetPost — the exact defect
-// this change exists to remove. Wiring post_acls into the rule (and
-// therefore into both paths at once) is a separate, deliberate change;
-// see ADR 0010 L6 and the ACL handlers below GetPostsByAsset.
+// On top of the tiers sits ONE more disjunct: an unexpired `post_acls`
+// row naming the caller (#667). ADR 0010 L6 is explicit that "ACLs grant
+// *additional* access beyond those defaults. They never restrict below
+// them", so it is OR'd in at the top level rather than folded into a
+// tier: a grant opens a post the caller could not otherwise read, and
+// removing it can never close one they could. That is why the disjunct
+// is not conditioned on `visibility = 'explicit-share'` — a share on a
+// `private` post grants too, and nothing a caller sees today stops being
+// visible because this branch was added.
+//
+// Wiring it here rather than in either caller is the whole point: the
+// fragment feeds the list paths AND postReadable, so the list can never
+// become wider than GET /posts/{id} the way it did in #660. That
+// agreement is what the earlier deferral in this comment was protecting,
+// and it is now structural.
+//
+// principal_type is 'user' ONLY. 'role' and 'team' are in the schema and
+// in ADR 0010, but resolving them needs the caller's role set and the
+// team closure threaded into this fragment (Layer 5), and neither is
+// implemented for collection_acls either — see
+// visibility/predicate.go's EntityCollection branch, which carries the
+// identical user-only disjunct. Keeping the two ACL surfaces the same
+// shape is deliberate.
+//
+// `permission` is not filtered on, for the same reason collections do
+// not: the column's CHECK admits only read/write/admin, and all three
+// imply read. Filtering to permission='read' would make a 'write' grant
+// silently grant nothing, which is the failure this issue is about.
+//
+// Expiry is evaluated in SQL (`IS NULL OR > NOW()`), not in Go: the row
+// is matched or not matched by the same query that decides visibility,
+// so there is no window where a list built from one clock disagrees with
+// a gate built from another.
+//
+// principal_id is TEXT while user refs are BIGINT, so the bound bigint
+// is cast at the comparison (`$n::TEXT`) rather than formatted in Go.
+// The cast direction matters: a mismatch here matches nothing and looks
+// exactly like "no grant exists".
 //
 // Soft-delete is NOT part of this fragment. It is an orthogonal axis
 // owned by each caller: the list path has an admin-only include_deleted
@@ -142,7 +175,13 @@ func (r readRule) sql(alias string, argOffset int) (fragment string, args []any)
 			" OR (%[1]svisibility = 'followers' AND EXISTS ("+
 			"SELECT 1 FROM user_follows f"+
 			" WHERE f.follower_user_ref = $%[2]d"+
-			" AND f.followee_user_ref = %[1]sauthor_user_ref)))",
+			" AND f.followee_user_ref = %[1]sauthor_user_ref))"+
+			" OR EXISTS ("+
+			"SELECT 1 FROM post_acls acl"+
+			" WHERE acl.post_id = %[1]sid"+
+			" AND acl.principal_type = 'user'"+
+			" AND acl.principal_id = $%[2]d::TEXT"+
+			" AND (acl.expires_at IS NULL OR acl.expires_at > NOW())))",
 		a, idx, privateOK,
 	)
 	return frag, []any{r.userRef}
