@@ -19,7 +19,6 @@ export interface AccountItem {
   slug: string;       // last segment under /account/
   group: string;      // matches an AccountGroup.id
   status: TileStatus;
-  phase?: string;     // for status='future' or 'stub' with a target phase
   href: string;       // resolved route (most are /account/{slug})
 }
 
@@ -40,33 +39,33 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   // Identity
   { slug: 'profile',     group: 'identity', status: 'live', href: '/account/profile' },
   { slug: 'preferences', group: 'identity', status: 'live', href: '/account/preferences' },
-  { slug: 'ai',          group: 'identity', status: 'stub', phase: '1.14', href: '/account/preferences/ai' },
-  { slug: 'password',    group: 'identity', status: 'live', phase: '1.17', href: '/account/password' },
-  { slug: 'twofa',       group: 'identity', status: 'live', phase: '1.19', href: '/account/security/2fa' },
-  { slug: 'sessions',    group: 'identity', status: 'live', phase: '1.17', href: '/account/sessions' },
-  { slug: 'blocked',     group: 'identity', status: 'live', phase: '1.17', href: '/account/blocked' },
-  { slug: 'connected',   group: 'identity', status: 'stub', phase: '1.18', href: '/account/connected' },
+  { slug: 'ai',          group: 'identity', status: 'stub', href: '/account/preferences/ai' },
+  { slug: 'password',    group: 'identity', status: 'live', href: '/account/password' },
+  { slug: 'twofa',       group: 'identity', status: 'live', href: '/account/security/2fa' },
+  { slug: 'sessions',    group: 'identity', status: 'live', href: '/account/sessions' },
+  { slug: 'blocked',     group: 'identity', status: 'live', href: '/account/blocked' },
+  { slug: 'connected',   group: 'identity', status: 'stub', href: '/account/connected' },
 
   // Communication
-  { slug: 'messages',      group: 'communication', status: 'stub', phase: '1.21', href: '/account/messages' },
-  { slug: 'notifications', group: 'communication', status: 'live', phase: '1.17', href: '/account/notifications' },
-  { slug: 'subscriptions', group: 'communication', status: 'stub', phase: '1.13', href: '/account/subscriptions' },
+  { slug: 'messages',      group: 'communication', status: 'stub', href: '/account/messages' },
+  { slug: 'notifications', group: 'communication', status: 'live', href: '/account/notifications' },
+  { slug: 'subscriptions', group: 'communication', status: 'stub', href: '/account/subscriptions' },
 
   // Workspace
   { slug: 'tokens',        group: 'workspace', status: 'live', href: '/account/tokens' },
-  { slug: 'saved-searches', group: 'workspace', status: 'stub', phase: '1.12', href: '/account/saved-searches' },
-  { slug: 'bookmarks',     group: 'workspace', status: 'stub', phase: '1.21', href: '/account/bookmarks' },
-  { slug: 'drafts',        group: 'workspace', status: 'stub', phase: '1.20', href: '/account/drafts' },
-  { slug: 'trash',         group: 'workspace', status: 'stub', phase: '1.19', href: '/account/trash' },
+  { slug: 'saved-searches', group: 'workspace', status: 'stub', href: '/account/saved-searches' },
+  { slug: 'bookmarks',     group: 'workspace', status: 'stub', href: '/account/bookmarks' },
+  { slug: 'drafts',        group: 'workspace', status: 'stub', href: '/account/drafts' },
+  { slug: 'trash',         group: 'workspace', status: 'stub', href: '/account/trash' },
 
   // Activity & insights
-  { slug: 'activity',  group: 'activity', status: 'stub', phase: '1.20', href: '/account/activity' },
-  { slug: 'stats',     group: 'activity', status: 'stub', phase: '1.20', href: '/account/stats' },
-  { slug: 'following', group: 'activity', status: 'stub', phase: '1.13', href: '/account/following' },
+  { slug: 'activity',  group: 'activity', status: 'stub', href: '/account/activity' },
+  { slug: 'stats',     group: 'activity', status: 'stub', href: '/account/stats' },
+  { slug: 'following', group: 'activity', status: 'stub', href: '/account/following' },
 
   // Help
-  { slug: 'help',      group: 'help', status: 'stub', phase: '1.16', href: '/account/help' },
-  { slug: 'shortcuts', group: 'help', status: 'stub', phase: '1.16', href: '/account/shortcuts' },
+  { slug: 'help',      group: 'help', status: 'stub', href: '/account/help' },
+  { slug: 'shortcuts', group: 'help', status: 'stub', href: '/account/shortcuts' },
 ];
 
 export function itemBySlug(slug: string): AccountItem | undefined {

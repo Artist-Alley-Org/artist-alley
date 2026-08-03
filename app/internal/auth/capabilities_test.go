@@ -107,6 +107,56 @@ func TestEffectiveCapabilities_GrantsAndRevokes(t *testing.T) {
 	})
 }
 
+// TestFieldsAdminCapability_GrantableAndReachable covers #804: before
+// migration 00032 there was no `fields.admin` row in `capabilities`, so
+// the role_capabilities / user_capability_grants FKs rejected any attempt
+// to grant it and the metadata handler's Can("fields.admin") branch was
+// permanently dead — field admin was system.admin-only. This confirms
+// the row now exists, the built-in Admin role holds it, and a NARROWER,
+// non-superuser role granted fields.admin resolves it via the effective-
+// capability chain (the grant insert itself is the FK proof).
+func TestFieldsAdminCapability_GrantableAndReachable(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		// 1. The capability row exists (migration 00032 applied).
+		var n int
+		if err := fx.pool.QueryRow(ctx,
+			`SELECT count(*) FROM capabilities WHERE code='fields.admin'`).Scan(&n); err != nil {
+			t.Fatalf("count fields.admin cap: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("capabilities.fields.admin rows=%d want 1", n)
+		}
+
+		// 2. The built-in Admin role carries it.
+		if err := fx.pool.QueryRow(ctx,
+			`SELECT count(*) FROM role_capabilities rc JOIN roles r ON r.id=rc.role_id
+			 WHERE r.name='Admin' AND rc.capability_code='fields.admin'`).Scan(&n); err != nil {
+			t.Fatalf("count Admin fields.admin grant: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("Admin role fields.admin grants=%d want 1", n)
+		}
+
+		// 3. A narrower role granted fields.admin (NOT system.admin)
+		//    resolves the cap. seedRole inserts the role_capabilities row,
+		//    which the FK would have rejected before this migration.
+		q := New(fx.pool)
+		roleID := seedRole(t, ctx, fx.pool, "test_FieldEditor", nil, "fields.admin")
+		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
+			UserRef: fx.userRef,
+			RoleID:  pgtype.UUID{Bytes: roleID, Valid: true},
+		}); err != nil {
+			t.Fatalf("SetUserGlobalRole: %v", err)
+		}
+		caps, err := q.EffectiveCapabilitiesForUser(ctx, fx.userRef)
+		if err != nil {
+			t.Fatalf("EffectiveCapabilitiesForUser: %v", err)
+		}
+		assertHasAll(t, caps, "fields.admin")
+		assertHasNone(t, caps, "system.admin")
+	})
+}
+
 // TestHandlers_CapabilityEnforcement verifies that 401 is returned
 // when anonymous and 403 when authenticated without the required
 // capability. Then assigns the seeded Admin role and confirms 200.

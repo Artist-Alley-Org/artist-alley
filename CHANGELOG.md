@@ -46,6 +46,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Metadata field administration is now a grantable capability.** The field-management
+  surface (Admin → Content → Fields) has always accepted either `fields.admin` or
+  `system.admin`, but `fields.admin` was never a real row in the capabilities table, so
+  the grant tables' foreign key rejected any attempt to hand it out — in practice field
+  admin was superuser-only, with no way to delegate it. `fields.admin` now exists and is
+  granted to the built-in Admin role, so an operator can give a non-superuser role the
+  ability to create, edit, and delete field definitions without also handing over the
+  whole install (#804). No-spec-impact.
+
 - **The emails this instance sends can now be rewritten without forking.** Every
   transactional email — the verify-your-address message, the "send a test email"
   check, the saved-search and activity digests, the catch-all notification — rendered
@@ -361,6 +370,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Changed
 
+- **Internal release numbers no longer show up in the interface.** "Coming soon" spots
+  across the admin console and the account area — the disabled tiles for features not yet
+  built, several federation notices, the asset-type and AI intros, the placeholder shown
+  in the asset viewer for file types without a dedicated viewer, and the pending
+  whiteboard tools — used to carry the internal roadmap identifier for when the feature
+  was scheduled (for example "Phase 1.22.C", "1.18.B-12", "C-1.14b"). Those meant nothing
+  to an operator or a user and are gone; a not-yet-built area now simply reads as coming
+  in a future release. The internal codenames also disappear from the federation copy
+  (an "aa:Share" grant is now just a "share" grant). Dev-facing source comments are
+  unchanged (#801). No-spec-impact.
+
 - **The browse feed's "Team" and "Trending" buttons are gone; the filter is now
   Latest / Following.** Both removed buttons were decoration: neither value was ever
   in the server's `feed` enum, so clicking them sent a query param the API ignored and
@@ -372,6 +392,16 @@ where applicable, otherwise note "no-spec-impact."
   remembers "Team" or "Trending" from before opens on Latest (#691).
 
 ### Fixed
+
+- **Re-seeding an instance no longer leaves it serving stale data until a restart.**
+  `aa seed --reset` wipes and rebuilds the content in the database, but a running app
+  keeps its in-memory caches — so after a reset it went on answering from the pre-reset
+  copy (old titles, deleted assets, missing new ones) until the process was restarted.
+  The seeder is a separate process and cannot reach into the app's caches directly, so on
+  `--reset` it now broadcasts a single flush over the same Postgres notification channel
+  the caches already listen on, and every running instance drops all of its caches at
+  once. The reseeded data shows up immediately, no restart or redeploy required. This is
+  what lets the public demo reset cleanly (#845). No-spec-impact.
 
 - **A reference field can no longer be pointed at an asset that does not exist.** A
   `reference` value is a bare asset id, and the write path accepted any id at all — so

@@ -42,17 +42,24 @@ test.describe('UI-02 federation tile grid', () => {
   }
 
   // The two surfaces that legitimately aren't shipped yet — they
-  // should render as DISABLED tiles, not enabled links.
-  const futureTiles = [
-    { name: 'Block list',                       phase: '1.22.G' },
-    { name: 'Public fediverse compatibility',    phase: '1.22.K' },
-  ];
+  // should render as DISABLED tiles, not enabled links. #801 removed
+  // the internal "Phase X" pill they used to carry: the dimmed,
+  // aria-disabled styling alone conveys "not built yet", and no internal
+  // release identifier is shown to operators.
+  const futureTiles = ['Block list', 'Public fediverse compatibility'];
 
-  for (const tile of futureTiles) {
-    test(`${tile.name} tile is disabled with phase pill`, async ({ page }) => {
-      const card = page.locator('[aria-disabled="true"]').filter({ hasText: tile.name });
+  // Internal roadmap identifiers that must never render (e.g. "Phase
+  // 1.22.G", "1.22.K"). Kept in step with phase-badge-801.spec.ts.
+  const INTERNAL_ID = /\b(?:phase\s+)?\d+\.\d+(?:\.[A-Za-z0-9-]+)?\b/i;
+
+  for (const name of futureTiles) {
+    test(`${name} tile is disabled with no phase pill`, async ({ page }) => {
+      const card = page.locator('[aria-disabled="true"]').filter({ hasText: name });
       await expect(card).toBeVisible();
-      await expect(card).toContainText(`Phase ${tile.phase}`);
+      // Still a disabled tile, never an enabled link.
+      await expect(card.getByRole('link')).toHaveCount(0);
+      // ...and it carries no internal release identifier.
+      expect(await card.innerText()).not.toMatch(INTERNAL_ID);
     });
   }
 });

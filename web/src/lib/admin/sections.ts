@@ -11,11 +11,12 @@
 // Each tile is one of:
 //   status: 'live'   → fully implemented; href is set
 //   status: 'stub'   → route exists, shows a placeholder
-//   status: 'future' → not built yet; href omitted, phase badge shown
+//   status: 'future' → not built yet; href omitted, shown dimmed
 //
 // When a future tile graduates to live, flip status + add href. The
-// roadmap memo (memory: project_admin_roadmap) records which phase
-// each future tile is scheduled into.
+// roadmap memo (memory: project_admin_roadmap) records which release
+// each future tile is scheduled into — that scheduling is a dev-side
+// concern and is deliberately NOT surfaced to operators (#801).
 
 export type TileStatus = 'live' | 'stub' | 'future';
 
@@ -23,7 +24,6 @@ export interface AdminTile {
   key: string;        // unique within section, used for i18n lookup
   href?: string;      // omit for future tiles
   status: TileStatus;
-  phase?: string;     // e.g. "1.17" — only meaningful for status='future'
   // Capability the tile's backend GET/list handler enforces (#385),
   // derived from the handler source, not memory. Present on live tiles
   // that a read cap can open; ABSENT means the page requires
@@ -74,13 +74,13 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'asset_types', status: 'live',   href: '/admin/asset-types' },
       { key: 'fields',         status: 'live',   href: '/admin/fields' },
       { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures', cap: 'system.metadata_extraction.read' },
-      { key: 'field_options',  status: 'future', phase: '1.17' },
+      { key: 'field_options',  status: 'future' },
       // `field_sets` removed 2026-07-31 (#738). The tile promised
       // "bundle related fields for reuse across types", which
       // `display_group` + `applies_to` already do; the underlying
       // field_definition.field_set_id column is dropped by migration
       // 00022 and ADR 0012 is amended with the reasoning.
-      { key: 'taxonomy',       status: 'future', phase: '1.18' },
+      { key: 'taxonomy',       status: 'future' },
       // Gated on the WRITE cap, not a read cap (#794). The GET is
       // anonymous — the strings are the UI itself — so the page never
       // 403s on load; what it 403s on is every action. A tile that
@@ -92,20 +92,20 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // tile and the shipped bodies, and the write cap gates every edit.
       { key: 'email_templates', status: 'live', href: '/admin/email-templates', cap: 'system.config.read' },
       { key: 'featured',       status: 'live',   href: '/admin/content/featured', cap: 'featured.read' },
-      { key: 'defaults',       status: 'future', phase: '1.18' },
+      { key: 'defaults',       status: 'future' },
     ],
   },
   {
     slug: 'storage',
     iconKey: 'storage',
     tiles: [
-      { key: 'backends',    status: 'future', phase: '1.19' },
+      { key: 'backends',    status: 'future' },
       { key: 'usage',       status: 'live',   href: '/admin/storage/usage',    cap: 'system.storage.read' },
       { key: 'variants',    status: 'live',   href: '/admin/storage/variants', cap: 'system.storage.read' },
       { key: 'orphans',     status: 'live',   href: '/admin/storage/orphans',   cap: 'system.storage.read' },
-      { key: 'duplicates',  status: 'future', phase: '1.15' },
+      { key: 'duplicates',  status: 'future' },
       { key: 'checksums',   status: 'live',   href: '/admin/storage/checksums', cap: 'system.storage.read' },
-      { key: 'reimport',    status: 'future', phase: '1.15' },
+      { key: 'reimport',    status: 'future' },
       { key: 'trash',       status: 'live',   href: '/admin/storage/trash' },
     ],
   },
@@ -119,19 +119,19 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'failed',       status: 'live',   href: '/admin/jobs/failed',    cap: 'system.jobs.read' },
       { key: 'schedules',    status: 'live',   href: '/admin/jobs/schedules', cap: 'system.jobs.read' },
       { key: 'live',         status: 'live',   href: '/admin/jobs/live',    cap: 'system.jobs.read' },
-      { key: 'render_farm',  status: 'future', phase: '1.16' },
+      { key: 'render_farm',  status: 'future' },
     ],
   },
   {
     slug: 'search',
     iconKey: 'search',
     tiles: [
-      { key: 'index',        status: 'future', phase: '1.12' },
+      { key: 'index',        status: 'future' },
       { key: 'reindex',      status: 'live',   href: '/admin/search/reindex' },
       { key: 'analytics',    status: 'live',   href: '/admin/search/dashboard' },
-      { key: 'synonyms',     status: 'future', phase: '1.12' },
+      { key: 'synonyms',     status: 'future' },
       { key: 'saved',        status: 'live',   href: '/admin/saved-searches' },
-      { key: 'smart',        status: 'future', phase: '1.11' },
+      { key: 'smart',        status: 'future' },
     ],
   },
   {
@@ -140,28 +140,28 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     tiles: [
       { key: 'workflow',          status: 'live',   href: '/admin/workflow' },
       { key: 'audit',             status: 'live',   href: '/admin/audit', cap: 'system.audit.read' },
-      { key: 'triggers',          status: 'future', phase: '1.18' },
-      { key: 'webhooks',          status: 'future', phase: '1.18' },
-      { key: 'notifications',     status: 'future', phase: '1.18' },
-      { key: 'scheduled_exports', status: 'future', phase: '1.19' },
+      { key: 'triggers',          status: 'future' },
+      { key: 'webhooks',          status: 'future' },
+      { key: 'notifications',     status: 'future' },
+      { key: 'scheduled_exports', status: 'future' },
     ],
   },
   {
     slug: 'moderation',
     iconKey: 'moderation',
     tiles: [
-      { key: 'reports',         status: 'future', phase: '1.21' },
-      { key: 'queue',           status: 'future', phase: '1.21' },
-      { key: 'comments',        status: 'future', phase: '1.21' },
-      { key: 'banned',          status: 'future', phase: '1.21' },
-      { key: 'flagging_rules',  status: 'future', phase: '1.21' },
+      { key: 'reports',         status: 'future' },
+      { key: 'queue',           status: 'future' },
+      { key: 'comments',        status: 'future' },
+      { key: 'banned',          status: 'future' },
+      { key: 'flagging_rules',  status: 'future' },
       // Anonymous/public browsing shipped in v0.5.0 as the `public_mode`
       // operator toggle, which lives on the site-settings page. The tile
       // is a front door to that existing switch (no dedicated page of its
       // own), so it points there and carries the same read cap the site
       // page enforces.
       { key: 'anonymous',       status: 'live',   href: '/admin/system/site', cap: 'system.config.read' },
-      { key: 'rate_limits',     status: 'future', phase: '1.21' },
+      { key: 'rate_limits',     status: 'future' },
     ],
   },
   {
@@ -173,8 +173,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'shares',        status: 'live',   href: '/admin/federation/shares', cap: 'federation.read' },
       { key: 'outbox',        status: 'live',   href: '/admin/federation/outbox', cap: 'federation.read' },
       { key: 'inbox',         status: 'live',   href: '/admin/federation/inbox', cap: 'federation.read' },
-      { key: 'blocklist',     status: 'future', phase: '1.22.G' },
-      { key: 'activitypub',   status: 'future', phase: '1.22.K' },
+      { key: 'blocklist',     status: 'future' },
+      { key: 'activitypub',   status: 'future' },
     ],
   },
   {
@@ -182,11 +182,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'integrations',
     tiles: [
       { key: 'api_explorer', status: 'live',   href: '/admin/integrations/api' },
-      { key: 'api_tokens',   status: 'future', phase: '1.18' },
-      { key: 'oauth_apps',   status: 'future', phase: '1.18' },
-      { key: 'webhooks',     status: 'future', phase: '1.18' },
-      { key: 'plugins',      status: 'future', phase: '1.23' },
-      { key: 'outbound',     status: 'future', phase: '1.18' },
+      { key: 'api_tokens',   status: 'future' },
+      { key: 'oauth_apps',   status: 'future' },
+      { key: 'webhooks',     status: 'future' },
+      { key: 'plugins',      status: 'future' },
+      { key: 'outbound',     status: 'future' },
     ],
   },
   {
@@ -214,25 +214,25 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // section landing pages would each show partial overlapping
       // sets).
       { key: 'themes',       status: 'live',   href: '/admin/system/themes', cap: 'system.config.read' },
-      { key: 'maintenance',  status: 'future', phase: '1.19' },
-      { key: 'feature_flags', status: 'future', phase: '1.20' },
-      { key: 'backup',       status: 'future', phase: '1.19' },
-      { key: 'dbtools',      status: 'future', phase: '1.19' },
-      { key: 'performance',  status: 'future', phase: '1.20' },
-      { key: 'health',       status: 'future', phase: '1.16' },
+      { key: 'maintenance',  status: 'future' },
+      { key: 'feature_flags', status: 'future' },
+      { key: 'backup',       status: 'future' },
+      { key: 'dbtools',      status: 'future' },
+      { key: 'performance',  status: 'future' },
+      { key: 'health',       status: 'future' },
     ],
   },
   {
     slug: 'reports',
     iconKey: 'reports',
     tiles: [
-      { key: 'asset_usage',    status: 'future', phase: '1.20' },
-      { key: 'user_activity',  status: 'future', phase: '1.20' },
-      { key: 'storage_trends', status: 'future', phase: '1.20' },
-      { key: 'job_perf',       status: 'future', phase: '1.20' },
-      { key: 'dashboards',     status: 'future', phase: '1.20' },
-      { key: 'scheduled',      status: 'future', phase: '1.20' },
-      { key: 'export',         status: 'future', phase: '1.20' },
+      { key: 'asset_usage',    status: 'future' },
+      { key: 'user_activity',  status: 'future' },
+      { key: 'storage_trends', status: 'future' },
+      { key: 'job_perf',       status: 'future' },
+      { key: 'dashboards',     status: 'future' },
+      { key: 'scheduled',      status: 'future' },
+      { key: 'export',         status: 'future' },
     ],
   },
   {
@@ -245,13 +245,13 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // sweeps at /admin/storage/checksums + /admin/storage/orphans
       // (v0.4.0, #421). Removed here so there's one canonical home per
       // operation rather than a live page plus a dead "future" tile.
-      { key: 'regen_previews',  status: 'future', phase: '1.15' },
-      { key: 're_exif',         status: 'future', phase: '1.15' },
-      { key: 'find_missing',    status: 'future', phase: '1.19' },
-      { key: 'dummy_data',      status: 'future', phase: '1.16' },
-      { key: 'bulk_import',     status: 'future', phase: '1.15' },
-      { key: 'bulk_export',     status: 'future', phase: '1.19' },
-      { key: 'migrate',         status: 'future', phase: '1.19' },
+      { key: 'regen_previews',  status: 'future' },
+      { key: 're_exif',         status: 'future' },
+      { key: 'find_missing',    status: 'future' },
+      { key: 'dummy_data',      status: 'future' },
+      { key: 'bulk_import',     status: 'future' },
+      { key: 'bulk_export',     status: 'future' },
+      { key: 'migrate',         status: 'future' },
     ],
   },
   {
