@@ -192,7 +192,7 @@ func (c *Coordinator) sendUserDigest(ctx context.Context, group []notifications.
 		"unsubscribe_url": unsubURL,
 	}
 
-	msg, err := email.Render(email.TemplateNotificationDigest, []string{emailAddr}, data)
+	msg, err := email.Render(ctx, email.TemplateNotificationDigest, []string{emailAddr}, data)
 	if err != nil {
 		return fmt.Errorf("digest: render: %w", err)
 	}

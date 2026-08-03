@@ -319,7 +319,7 @@ func (h *Handler) SendSMTPTestEmail(
 		"triggered_by":   triggeredByLabel(id),
 		"triggered_at":   time.Now().UTC().Format(time.RFC3339),
 	}
-	msg, err := email.Render(email.TemplateAdminTest, []string{to}, data)
+	msg, err := email.Render(ctx, email.TemplateAdminTest, []string{to}, data)
 	if err != nil {
 		return nil, fmt.Errorf("sysconfig: render admin_test: %w", err)
 	}

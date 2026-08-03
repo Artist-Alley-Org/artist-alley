@@ -8815,6 +8815,120 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /email-templates:
+    get:
+      operationId: getEmailTemplates
+      summary: Operator-authored email templates
+      description: |
+        Every email the instance can send, each with its shipped body,
+        any operator override, and the finite set of fields available to
+        a template for that event (#795, ADR 0081 §2 as amended).
+
+        Requires `system.config.read`. Unlike site text this is NOT
+        anonymous: the shipped mail bodies are an operator concern, not
+        UI wording a logged-out visitor already sees.
+      tags: [i18n]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The template catalogue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmailTemplateCatalogue" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /email-templates/{template}/{part}:
+    put:
+      operationId: setEmailTemplate
+      summary: Override one face of one email template
+      description: |
+        Upserts the override for `(template, part)`. `part` is one of
+        subject, text, or html.
+
+        THE BODY MUST PARSE AND MUST REFERENCE ONLY THE EVENT'S
+        DOCUMENTED FIELDS. It is executed against a sample context with
+        `missingkey=error` at save time, so a reference to a field
+        outside the view-model is refused with 422 naming the field
+        rather than rendering to nothing at send time — ADR 0081 §2's
+        fail-loud rule. The check is enforced here, not only in the admin
+        UI, because a caller holding `system.config.write` can reach this
+        endpoint directly.
+
+        Requires `system.config.write`.
+      tags: [i18n]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: template
+          in: path
+          required: true
+          description: The template name, e.g. admin_test.
+          schema: { type: string }
+        - name: part
+          in: path
+          required: true
+          description: subject, text, or html.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailTemplateWrite" }
+      responses:
+        "200":
+          description: The stored override.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmailTemplateOverride" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      operationId: deleteEmailTemplate
+      summary: Revert one face of one email template to what ships
+      description: |
+        Removes the override for `(template, part)`; the shipped body
+        renders again on the next send. 404 when nothing was overridden.
+
+        Requires `system.config.write`.
+      tags: [i18n]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: template
+          in: path
+          required: true
+          schema: { type: string }
+        - name: part
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Override removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /featured:
     get:
       operationId: getPublicFeaturedRail
@@ -10123,6 +10237,126 @@ components:
             label is a legitimate edit, and is distinct from reverting
             (DELETE), which restores the shipped text.
           example: Libraries
+    EmailTemplateCatalogue:
+      type: object
+      required: [templates]
+      description: |
+        Every email an instance can send, each with its shipped text,
+        any operator override, and the finite set of fields available to
+        a template for that event (#795, ADR 0081 §2). The editor needs
+        all three: the shipped body to show alongside, the override to
+        edit, and the field list so an operator does not have to guess
+        what is in scope.
+      properties:
+        templates:
+          type: array
+          items: { $ref: "#/components/schemas/EmailTemplateEvent" }
+    EmailTemplateEvent:
+      type: object
+      required: [name, description, parts, fields]
+      properties:
+        name:
+          type: string
+          description: The stable template name, e.g. admin_test.
+          example: admin_test
+        description:
+          type: string
+          description: Plain-word summary of when this mail is sent.
+        parts:
+          type: array
+          description: The faces of this template — subject, text, and (when it has one) html.
+          items: { $ref: "#/components/schemas/EmailTemplatePart" }
+        fields: { $ref: "#/components/schemas/EmailTemplateFields" }
+    EmailTemplatePart:
+      type: object
+      required: [part, shipped, overridden]
+      properties:
+        part:
+          type: string
+          description: subject, text, or html.
+        shipped:
+          type: string
+          description: The body this face ships with, from the embedded binary.
+        overridden:
+          type: boolean
+          description: True when an operator override replaces the shipped body.
+        body:
+          type: string
+          description: The operator override, present only when overridden.
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    EmailTemplateFields:
+      type: object
+      required: [scalars, collections]
+      description: |
+        The documented view-model for one event — the ONLY fields a
+        template may reference. This set is the security boundary: a
+        template naming anything outside it is refused at save.
+      properties:
+        scalars:
+          type: array
+          items: { $ref: "#/components/schemas/EmailTemplateField" }
+        collections:
+          type: array
+          description: |
+            Repeated groups an operator loops over with
+            {{range .name}}…{{end}}; each row exposes its own fields.
+          items: { $ref: "#/components/schemas/EmailTemplateCollection" }
+    EmailTemplateField:
+      type: object
+      required: [name, kind, description]
+      properties:
+        name:
+          type: string
+          example: site_name
+        kind:
+          type: string
+          description: string or number.
+        description:
+          type: string
+    EmailTemplateCollection:
+      type: object
+      required: [name, description, fields]
+      properties:
+        name:
+          type: string
+          example: hits
+        description:
+          type: string
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/EmailTemplateField" }
+    EmailTemplateWrite:
+      type: object
+      required: [body]
+      description: PUT body for /email-templates/{template}/{part}. The template + part ride the path.
+      properties:
+        body:
+          type: string
+          minLength: 1
+          description: |
+            The replacement template body, in Go text/template syntax
+            (html/template for the html part). It must reference only the
+            event's documented fields — a reference to anything else is
+            refused with 422 naming the field.
+    EmailTemplateOverride:
+      type: object
+      required: [template, part, body]
+      properties:
+        template:
+          type: string
+          example: admin_test
+        part:
+          type: string
+          description: subject, text, or html.
+        body:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     PublicModeConfig:
       type: object
       required: [enabled]

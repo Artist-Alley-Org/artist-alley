@@ -87,7 +87,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // opens to a list of buttons the caller cannot press is worse
       // than a tile they do not see.
       { key: 'site_text',      status: 'live',   href: '/admin/site-text', cap: 'system.config.write' },
-      { key: 'email_templates', status: 'future', phase: '1.18' },
+      // Gated on the WRITE cap, not a read cap (#795). The catalogue
+      // GET needs system.config.read; a config-read holder sees the
+      // tile and the shipped bodies, and the write cap gates every edit.
+      { key: 'email_templates', status: 'live', href: '/admin/email-templates', cap: 'system.config.read' },
       { key: 'featured',       status: 'live',   href: '/admin/content/featured', cap: 'featured.read' },
       { key: 'defaults',       status: 'future', phase: '1.18' },
     ],
