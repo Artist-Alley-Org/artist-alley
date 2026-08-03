@@ -298,17 +298,24 @@ jobs:
       # "all outstanding jobs" would never reach zero and would burn the
       # full cap on every single run.
       #
-      # BOUNDED, and it does not fail the job. A stuck worker must not
-      # silently eat the budget this whole change exists to protect, and
-      # it must not turn an unrelated hang into a red PR either — so on
-      # expiry we log loudly and let the suite run and speak for itself.
+      # BOUNDED, and on expiry it FAILS the step (#777). Letting the
+      # suite run against a still-draining queue was the whole flake:
+      # the video renders that make up the tail saturate the worker
+      # pool enough that the app can't answer setup's 5s health probe,
+      # so the suite dies at `app not ready after 30000ms` — a
+      # load-dependent coin flip indistinguishable from a real hang.
+      # Failing loudly with the outstanding count + slowest job turns
+      # that into a legible, deterministic signal. The cap is set well
+      # above a normal drain (a clean run finishes far inside it, with
+      # ~8 min of the 20-min job budget still unused), so the failure
+      # only ever fires on genuine trouble, never a healthy tail.
       #
       # Placed AFTER the Playwright install on purpose: that step takes
       # ~15s and the workers are draining throughout it, so the wait
       # only ever pays for the tail the install did not already cover.
       - name: Wait for the preview render queue to drain
         env:
-          DRAIN_TIMEOUT_SECONDS: "240"
+          DRAIN_TIMEOUT_SECONDS: "480"
         run: |
           q() {
             docker compose exec -T postgres psql -U artist_alley \
@@ -331,10 +338,14 @@ jobs:
               break
             fi
             if [ "${elapsed}" -ge "${DRAIN_TIMEOUT_SECONDS}" ]; then
-              echo "::warning::preview queue still has ${left} job(s) after ${elapsed}s" \
-                   "(cap ${DRAIN_TIMEOUT_SECONDS}s) — running the suite anyway."
+              slowest=$(q "SELECT type || ' ' ||
+                                  round(extract(epoch from (now() - started_at))::numeric, 1) || 's'
+                             FROM jobs WHERE ${pending} AND started_at IS NOT NULL
+                             ORDER BY (now() - started_at) DESC LIMIT 1;")
+              echo "::error::preview queue did not drain: ${left} job(s) outstanding" \
+                   "after ${elapsed}s (cap ${DRAIN_TIMEOUT_SECONDS}s; slowest: ${slowest:-none})"
               q "$breakdown"
-              break
+              exit 1
             fi
             sleep 5
           done
