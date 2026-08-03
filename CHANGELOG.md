@@ -7,6 +7,52 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Fixed
+
+- **Your default browse view is now the view you get.** Account → Preferences has
+  offered a home tab, a browse layout and a browse sort since 1.17.G. All three saved,
+  survived a restart, and were read by nothing: browse hydrated purely from that
+  browser's `localStorage`, so the setting changed what the preferences page said and
+  nothing else (#706).
+
+  They now seed the browse view — and only seed it. The rule is *explicit local choice
+  beats the account preference beats the built-in default*: a device that has never had
+  its view changed by hand opens in your account's layout, tab and order, while a device
+  where you picked masonry stays on masonry through reloads even if the account says
+  grid. Changing the view while browsing is still a local act and never rewrites the
+  account setting; that stays a deliberate visit to the preferences page. Signing in
+  applies the settings immediately, without a reload. `feed` — the single-column layout
+  phones already default to — is selectable as an account default for the first time.
+  No-spec-impact.
+
+- **Preferences no longer offer views the server cannot produce.** The home-tab picker
+  listed **Trending** and **For you**; the sort picker listed **Popular** and
+  **Trending**. None of the four existed anywhere behind the API — `GET /posts` accepts
+  only `latest` and `following` and takes no ranking parameter at all — so choosing one
+  saved a durable preference, flashed "saved", and left you on the plain latest feed
+  under a label that promised otherwise (#736). All four are gone; the remaining options
+  are exactly what the app can serve. Ranking is a feature that needs a model, not a
+  label, and a guessed one is worse than none.
+
+  An account that already stored one of the removed values is not an error. The stored
+  string now reads back as "use default", on both the preferences page and the browse
+  view, and saving anything clears it for good.
+
+- **Your theme follows your account, not just your browser.** The light / dark / system
+  choice was written to a cookie and read back from it, so it stopped at whichever
+  browser made it — signing in somewhere new put you back on the default, and the
+  per-user `theme` the API had been returning all along was read by nothing (#677). The
+  choice is now saved to your account and adopted by any device that has not been set
+  by hand, with the same precedence as the browse settings: a browser where you have
+  explicitly picked a theme keeps it.
+
+  The cookie remains what actually paints the page, so there is no flash of the wrong
+  theme: when a new device adopts your account's theme it writes the cookie too, and
+  every load after the first resolves before the first paint. "System" is now stored as
+  its own value rather than as the absence of one, so an explicit *follow my OS* travels
+  between devices instead of being mistaken for never having chosen (migration `00033`).
+  No-spec-impact.
+
 ## [v0.8.0] — 2026-08-03 — Operator configuration: field vocabularies, tree editor, site text, and email templates
 
 ### Security

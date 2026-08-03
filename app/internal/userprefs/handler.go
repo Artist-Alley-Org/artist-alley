@@ -238,15 +238,15 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 	}
 	views := openapi.UserPreferencesViews{}
 	if p.DefaultViews.HomeTab != "" {
-		v := p.DefaultViews.HomeTab
+		v := openapi.UserPreferencesViewsHomeTab(p.DefaultViews.HomeTab)
 		views.HomeTab = &v
 	}
 	if p.DefaultViews.BrowseLayout != "" {
-		v := p.DefaultViews.BrowseLayout
+		v := openapi.UserPreferencesViewsBrowseLayout(p.DefaultViews.BrowseLayout)
 		views.BrowseLayout = &v
 	}
 	if p.DefaultViews.BrowseSort != "" {
-		v := p.DefaultViews.BrowseSort
+		v := openapi.UserPreferencesViewsBrowseSort(p.DefaultViews.BrowseSort)
 		views.BrowseSort = &v
 	}
 	// Channels come back as a map keyed by event type. We always
@@ -284,13 +284,13 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 	views := DefaultViews{}
 	if body.DefaultViews != nil {
 		if body.DefaultViews.HomeTab != nil {
-			views.HomeTab = *body.DefaultViews.HomeTab
+			views.HomeTab = string(*body.DefaultViews.HomeTab)
 		}
 		if body.DefaultViews.BrowseLayout != nil {
-			views.BrowseLayout = *body.DefaultViews.BrowseLayout
+			views.BrowseLayout = string(*body.DefaultViews.BrowseLayout)
 		}
 		if body.DefaultViews.BrowseSort != nil {
-			views.BrowseSort = *body.DefaultViews.BrowseSort
+			views.BrowseSort = string(*body.DefaultViews.BrowseSort)
 		}
 	}
 	cadence := EmailCadences{}

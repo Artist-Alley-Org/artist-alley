@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import { theme } from '$stores/theme.svelte';
   import { auth } from '$stores/auth.svelte';
+  import { browseView } from '$stores/browseView.svelte';
   import { site } from '$stores/site.svelte';
   import BrandMark from '$components/BrandMark.svelte';
   import { lang, t } from '$stores/lang.svelte';
@@ -49,6 +50,26 @@
     // returns a cleanup but layouts don't unmount in normal use, so
     // we ignore it.
     upload.installGlobalDragListeners();
+  });
+
+  // Re-apply the account's appearance + browse preferences when the
+  // session identity changes (#677, #706).
+  //
+  // onMount above is not enough on its own. This layout mounts once and
+  // never unmounts, so a visitor who lands on /login — or browses a
+  // public install as a guest — has already run `theme.init()` and
+  // possibly `browseView.init()` with no account to consult. Signing in
+  // is a client-side navigation, so without this the preferences they
+  // set on another device do not appear until a full reload.
+  //
+  // Keyed on `ref` rather than the preference values themselves: this
+  // fires when WHO is signed in changes, not when what they prefer
+  // does. Both callees are no-ops for any setting this device has made
+  // locally, so re-running them can never overwrite a choice made here.
+  $effect(() => {
+    void auth.user?.ref;
+    theme.syncFromAccount();
+    browseView.applyAccountDefaults();
   });
 
   // Pages that show the global nav chrome. Login/setup keep the bare

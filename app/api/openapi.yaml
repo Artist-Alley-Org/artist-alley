@@ -11312,10 +11312,28 @@ components:
             without a separate round-trip.
         theme:
           type: string
-          enum: ['', 'light', 'dark']
+          enum: ['', 'light', 'dark', 'system']
           description: |
-            User's theme pref. Empty string = follow system. Same
-            "join on /auth/me" rationale as `language`.
+            User's theme pref. `system` follows the OS; empty string
+            means the account has NO stored preference and the device
+            falls back to the app default (dark, #590). The two are
+            deliberately distinct — collapsing them made an explicit
+            "follow my OS" indistinguishable from "never chose", so it
+            could not travel to a second device (#677). Same "join on
+            /auth/me" rationale as `language`.
+        default_views:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesViews"
+          description: |
+            The account's default-view selections, joined from
+            user_preferences at /auth/me time (#706).
+
+            Same rationale as `language` and `theme`, and the same
+            timing guarantee, which is the point: the root layout's
+            load awaits /auth/me before any page renders, so the browse
+            store can consult these synchronously in its `init()`
+            rather than seeding itself from a second round-trip that
+            lands after the grid has already painted.
         impersonated_by:
           type: object
           nullable: true
@@ -13414,29 +13432,48 @@ components:
     UserPreferencesViews:
       type: object
       description: |
-        Default-view selections. Unset fields fall back
-        to per-route defaults at render time. Adding a new view knob
-        is a string-additive change; the valid value sets grow as new
-        layouts ship in later phases.
+        Default-view selections — the SEED for a device that has no
+        local choice of its own, never an override of one. The browse
+        store reads these once at hydration and only for the keys
+        `localStorage` does not already hold, so picking masonry on
+        one laptop survives a reload even when the account default
+        says grid.
+
+        Every value set below is a closed enum, and each member is a
+        state the app can actually reach: `home_tab` mirrors the `feed`
+        enum on `GET /posts`, `browse_layout` mirrors the browse
+        store's `ViewMode`, and `browse_sort` carries only the two
+        orderings the client can produce. Widening one of these means
+        first building the thing it names (#736) — a value here that
+        nothing can serve is a promise the UI breaks silently.
       properties:
         home_tab:
           type: string
           description: |
-            Which tab the home page lands on. Valid values today:
-            `following`, `latest`, `trending`, `for_you`. Empty/unset
-            falls back to `latest`.
+            Which feed segment browse lands on. Empty/unset falls back
+            to `latest`. `trending` and `for_you` were removed in
+            #736: neither existed in the `feed` enum, so choosing one
+            put the plain latest feed under a label promising
+            otherwise. They come back when a ranking model does.
+          enum: ["", latest, following]
         browse_layout:
           type: string
           description: |
-            Default browse-feed layout. Valid values today: `grid`,
-            `masonry`, `thumbnail`, `list`. Empty/unset falls back to
-            the route's default.
+            Default browse-feed layout. Empty/unset falls back to the
+            per-device default (`feed` on a coarse pointer, `grid`
+            otherwise). `feed` is selectable here as of #706 — it was
+            already a mode a phone could land on but not one a user
+            could ask for.
+          enum: ["", grid, masonry, thumbnail, list, feed]
         browse_sort:
           type: string
           description: |
-            Default browse-feed sort. Valid values today: `newest`,
-            `oldest`, `popular`, `trending`. Empty/unset falls back
-            to the route's default.
+            Default browse ordering: `newest` (posted_at descending,
+            the built-in) or `oldest`. Empty/unset falls back to
+            `newest`. `popular` and `trending` were removed in #706 —
+            `GET /posts` has no ranking parameter and no ranking
+            model, so both were labels over the default order.
+          enum: ["", newest, oldest]
 
     UserPreferencesRequest:
       type: object
@@ -14337,11 +14374,11 @@ components:
             switcher in the user menu.
         theme:
           type: string
-          enum: ['', 'light', 'dark']
+          enum: ['', 'light', 'dark', 'system']
           description: |
-            UI theme preference. Empty string = follow system / OS.
-            Persisted alongside the profile so it follows the user
-            across browsers.
+            UI theme preference. `system` follows the OS; empty string
+            = no stored preference. Persisted alongside the profile so
+            it follows the user across browsers (#677).
         member_since: { type: string, format: date-time }
         post_count:
           type: integer
@@ -14396,9 +14433,12 @@ components:
             the picker to a known list.
         theme:
           type: string
-          enum: ['', 'light', 'dark']
+          enum: ['', 'light', 'dark', 'system']
           description: |
-            Empty string resets the pref to "follow system".
+            `system` follows the OS. Empty string CLEARS the account's
+            preference, which is not the same thing — a cleared account
+            leaves each device on the app default, an account set to
+            `system` makes every device follow its own OS.
         hide_from_anonymous:
           type: boolean
           description: |
