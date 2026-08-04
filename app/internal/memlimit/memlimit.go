@@ -24,8 +24,9 @@
 //
 // # Why derive it instead of baking it in
 //
-// The ceiling lives in compose and differs per environment (4g under the
-// CI resource override, unset in the base/production stack). A static
+// The ceiling lives in compose and differs per environment (8g on the
+// base stack, 10g under the CI resource override, whatever an operator
+// sets via AA_APP_MEM_LIMIT in production). A static
 // ENV GOMEMLIMIT in the Dockerfile would be correct for exactly one
 // environment and silently wrong in every other, with no signal that the
 // two had drifted apart. Reading the cgroup means the runtime's ceiling
@@ -54,11 +55,23 @@ const (
 	v1Path = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 
 	// DefaultRatio leaves headroom between the Go heap ceiling and the
-	// cgroup ceiling for everything GOMEMLIMIT does NOT cover: thread
-	// stacks, the binary's own text/data, and any memory the runtime
-	// has not yet returned to the OS. 90% matches the de-facto default
-	// used by the ecosystem (automemlimit).
-	DefaultRatio = 0.9
+	// cgroup ceiling for everything GOMEMLIMIT does NOT cover.
+	//
+	// 80%, not the ecosystem's usual 90% (automemlimit), because this
+	// process is not a pure Go process. Preview rendering shells out to
+	// ffmpeg, ghostscript, pdftoppm, unar, ImageMagick and a
+	// node+headless-chromium three.js worker; every one of those runs in
+	// the app container's OWN cgroup, so their resident memory is
+	// charged against the same ceiling while being invisible to
+	// GOMEMLIMIT. A CI-profile render storm measured 1.0 GB of non-Go
+	// anonymous RSS at peak (#887) — more than the 10% a 6g ceiling
+	// would have reserved. 20% is sized from that measurement.
+	//
+	// This is a REserve, not a throttle: at the measured peak the Go
+	// runtime sat at 76% of its derived limit, so the ratio has never
+	// been what bounds the heap. Shrink it further only against a new
+	// measurement of non-Go RSS, never on taste.
+	DefaultRatio = 0.8
 
 	// unlimitedThreshold — cgroup v1 spells "no limit" as a sentinel
 	// near PAGE_COUNTER_MAX rather than a word, and the exact value

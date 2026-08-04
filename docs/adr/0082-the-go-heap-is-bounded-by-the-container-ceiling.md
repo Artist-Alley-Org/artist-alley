@@ -129,3 +129,67 @@ than CPU count). It is not required to stop the kill and is not attempted here.
 pprof itself is opt-in on a **separate listener** (`AA_PPROF_ADDR`, off by
 default, never mounted on the application router) because a heap profile carries
 live object contents — tokens, file bytes, DB rows. See `app/internal/debugsrv`.
+
+## Amendment 2026-08-04 — the ceiling was too low, and the reserve was sized for a pure-Go process (#887)
+
+The mechanism above works exactly as designed and is not changed. What changed
+is both numbers it is parameterised by.
+
+**The symptom.** Eleven `CONSTRAINT_MEMCG` OOM kills in ~16 hours on the CI/demo
+host, every one `task=aa`, `anon-rss` 5.05–5.69 GB against the CI override's
+`mem_limit: 6g`. Roughly one kill every 90 minutes, each surfacing downstream as
+an unrelated-looking flake — connection errors, half-written data, timeouts.
+
+**The measurement.** A local replay of the CI-profile seed (147 assets) plus its
+preview render storm, sampling the cgroup and `runtime.MemStats` together every
+three seconds. At the peak sample:
+
+| | bytes | |
+|---|---|---|
+| cgroup `anon` | 5.39 GB | the number the kernel kills on |
+| `memory.current` | 5.56 GB | against a 6.44 GB ceiling |
+| Go footprint (`Sys − HeapReleased`) | 4.38 GB | what `GOMEMLIMIT` bounds |
+| `HeapAlloc` / `HeapInuse` | 3.31 GB | **live**, not garbage |
+| non-Go anonymous RSS | 1.00 GB | the balance |
+| derived `GOMEMLIMIT` | 5.80 GB | the runtime sat at **76 %** of it |
+
+**What that rules out.** The tempting story — that the heap dutifully respects
+its ceiling while off-heap allocation pushes RSS past the container limit — is
+not what happens. Off-heap is real but is a fifth of the peak, and the Go
+runtime never approached its own limit, so GC pacing was never the binding
+constraint. Lowering the ratio alone would not have prevented a single one of
+these kills: 3.31 GB of the peak is *live* heap held by concurrently running
+render jobs, and no amount of collection shrinks a live set. It would only have
+spent GC CPU during the exact window where the render queue is already the
+bottleneck.
+
+**Where the non-Go gigabyte comes from.** This process is not a pure Go process.
+Preview rendering shells out to `ffmpeg`, `ffprobe`, `ghostscript`, `pdftoppm`,
+`unar`, ImageMagick `convert`, and a `node` + headless-chromium three.js worker.
+Every one of those runs inside the app container's own cgroup, so its resident
+memory is charged against the same ceiling while being completely invisible to
+`GOMEMLIMIT`. The ecosystem's 90 % default assumes a reserve covering thread
+stacks and unreturned pages — tens of megabytes. Ours has to cover a gigabyte of
+child processes, and 10 % of a 6g ceiling (600 MB) never did.
+
+**Decision.**
+
+- `AA_APP_MEM_LIMIT` default `4g` → **`8g`** on the base stack, `6g` → **`10g`**
+  under the CI resource override. The measured peak does not fit a 4g ceiling at
+  all, so every preview-rendering instance on the default was living on the
+  kernel's mercy. `mem_limit` is a ceiling and not a reservation, so unused
+  headroom costs nothing.
+- `DefaultRatio` `0.9` → **`0.8`**, sized from the 1.0 GB of measured non-Go RSS
+  rather than from the ecosystem default. Shrink it further only against a new
+  measurement.
+- `AA_GOMEMLIMIT_RATIO` is now **forwarded into the container** by
+  `docker-compose.yml`. It was documented as tunable but never appeared in the
+  app service's `environment:` block, so setting it had no effect on any
+  containerised deploy — the Go process simply never saw it.
+
+**What is not decided here.** The 3.31 GB live heap is the real ceiling-setter
+and nothing above reduces it. Bounding per-render scratch, or pacing preview
+workers against a memory budget rather than CPU count — the improvement the
+original Consequences section already deferred — remains open, now with a
+measurement attached to it. Memory instrumentation to catch the next drift is
+#888.
