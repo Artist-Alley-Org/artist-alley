@@ -6385,6 +6385,14 @@ paths:
         Idempotent on `(collection_id, asset_id)`. Re-adding an
         existing membership updates `sort_order`, `pinned`, and
         `expires_at` but keeps `added_at` fixed.
+
+        You may only collect what you can actually see. The asset must
+        be readable by the caller on both planes — it must exist and
+        not be soft-deleted, AND the caller must be entitled to its
+        content under the sensitivity tier (ADR 0064). An asset the
+        caller cannot read is reported exactly as one that does not
+        exist: `404` with `asset not found`, so this endpoint cannot
+        be used to probe whether a UUID exists.
       tags: [collections]
       security:
         - cookieAuth: []
