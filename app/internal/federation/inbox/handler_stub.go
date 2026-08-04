@@ -56,12 +56,12 @@ func BuildRegistry(d *Dispatcher, logger *slog.Logger) map[federation.ActivityTy
 
 		// Stubs — wire-layer landing only; per-domain
 		// follow-up phases land the real handlers.
-		federation.ActivityFollow:               stubHandler(federation.ActivityFollow, logger),
-		federation.ActivityAccept:               stubHandler(federation.ActivityAccept, logger),
-		federation.ActivityReject:               stubHandler(federation.ActivityReject, logger),
-		federation.ActivityUndo:                 stubHandler(federation.ActivityUndo, logger),
-		federation.ActivityAnnounce:             stubHandler(federation.ActivityAnnounce, logger),
-		federation.ActivityBlock:                stubHandler(federation.ActivityBlock, logger),
+		federation.ActivityFollow:   stubHandler(federation.ActivityFollow, logger),
+		federation.ActivityAccept:   stubHandler(federation.ActivityAccept, logger),
+		federation.ActivityReject:   stubHandler(federation.ActivityReject, logger),
+		federation.ActivityUndo:     stubHandler(federation.ActivityUndo, logger),
+		federation.ActivityAnnounce: stubHandler(federation.ActivityAnnounce, logger),
+		federation.ActivityBlock:    stubHandler(federation.ActivityBlock, logger),
 		// #882 — when ActivityAdd stops being a stub and actually
 		// pins an object into a local collection, it MUST apply the
 		// same asset gate the HTTP path applies
