@@ -40,9 +40,47 @@
 // Collection IDs (via collection_resources JOIN, single SQL
 // query) + try the cached share-sets for each.
 //
+// # The transitive grant is bounded by what the grantor owned (#893)
+//
+// A container share confers scope on a member ONLY if the share's
+// grantor could have shared that member directly — they own it,
+// or they hold system.admin, which is the same pair of conditions
+// AdminHandler.GrantFederationShare enforces on the grant path.
+// Both questions route through one owner map; see owner.go.
+//
+// Without that bound the JOIN carried no constraint on who owns
+// the member: the grant check protected the CONTAINER and nothing
+// re-checked the CONTENTS. "Share the container" therefore meant
+// "grant a federated peer scope over any object that happens to be
+// in it" — and a peer, unlike a local reader, keeps its own copy of
+// that decision.
+//
+// The reachability precondition already exists, contrary to the
+// issue's framing: collections.AddCollectionResource authorises
+// against the COLLECTION (canMutateCollection) and never against
+// the asset, so any collection owner can already put an asset they
+// do not own into a collection they do. What #882 adds is the
+// affordance, not the possibility.
+//
+// # Caching, and what is deliberately NOT cached
+//
+// The per-object LRU below holds active share ROWS keyed
+// "{kind}:{uuid}". The #893 constraint is evaluated AFTER that
+// read, against member ownership loaded fresh per call, so the
+// key still identifies exactly one value and needs no new
+// invalidation trigger. Folding the member-ownership answer into
+// the snapshot would break that: the same collection's cached
+// entry would have to mean different things for different
+// members, and a membership change (which touches no share row,
+// so fires no invalidation) would leave a peer holding a stale
+// grant. The extra per-call lookup is the price of that
+// coherence, and it is paid only on the container-fallback path,
+// which already costs a query.
+//
 // Workspaces deferred — the table doesn't exist yet; when it
 // lands the lookup gets a third fallback step in this same
-// function without changing the public surface.
+// function without changing the public surface. It will need the
+// same member-ownership bound.
 
 package shares
 
@@ -99,6 +137,15 @@ const (
 	// is not 'connected' (e.g. pending_inbound, pending_outbound).
 	// Inbox only accepts from fully-paired peers.
 	RejectReasonPeerNotConnected RejectReason = "peer_not_connected"
+
+	// RejectReasonGrantorNotOwner — a container share covering
+	// this object exists and matches the peer/user/scope, but its
+	// grantor neither owns the object nor holds system.admin, so
+	// the share confers nothing on it (#893). The most diagnostic
+	// reason in the taxonomy: it says "the grant you are relying
+	// on was never the grantor's to make", which is what an
+	// operator needs to see rather than a bare no_share_row.
+	RejectReasonGrantorNotOwner RejectReason = "grantor_not_owner"
 )
 
 // AccessDecision is the typed result of CanPeerAccess.
@@ -214,7 +261,8 @@ func (r *Registry) matchSharesForObject(
 
 // matchContainingCollectionShares is the container fallback for
 // asset lookups. Resolves the asset's collection memberships +
-// checks each.
+// checks each — but only counts a container share whose grantor
+// could have shared this asset directly (#893).
 func (r *Registry) matchContainingCollectionShares(
 	ctx context.Context,
 	assetID uuid.UUID,
@@ -227,21 +275,62 @@ func (r *Registry) matchContainingCollectionShares(
 	if len(containerIDs) == 0 {
 		return nil, RejectReasonNoShareRow, nil
 	}
+
+	// Who owns the member? One lookup for the whole call, read
+	// fresh (never cached — see the caching note in this file's
+	// header). No resolvable owner is a denial, not an error:
+	// nothing can be transitively re-shared on behalf of an owner
+	// we cannot name.
+	memberOwnerRef, ownerKnown, err := ObjectOwnerRef(ctx, r.Pool, federation.ShareObjectKindAsset, assetID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !ownerKnown {
+		return nil, RejectReasonGrantorNotOwner, nil
+	}
+	adminSeen := make(map[int64]bool, 1)
+
 	// Best reason across all containers — if ANY container grants
 	// access, return the matching share. If none do, return the
 	// most-specific failure reason we saw.
 	bestReason := RejectReasonNoShareRow
 	for _, cid := range containerIDs {
-		share, reason, err := r.matchSharesForObject(ctx, federation.ShareObjectKindCollection, uuid.UUID(cid.Bytes), req)
+		candidates, err := r.activeSharesByObject(ctx, federation.ShareObjectKindCollection, uuid.UUID(cid.Bytes))
+		if err != nil {
+			return nil, "", err
+		}
+		if len(candidates) == 0 {
+			bestReason = bumpReason(bestReason, RejectReasonNoShareRow)
+			continue
+		}
+		// Filter BEFORE pickBestMatch, not after: picking first
+		// would let one unauthorised grantor's higher-ranked share
+		// mask a lower-ranked share the owner themselves granted
+		// on the same collection.
+		kept := candidates[:0]
+		for i := range candidates {
+			authorized, err := r.grantorAuthority(ctx, candidates[i].GrantorUserRef, memberOwnerRef, adminSeen)
+			if err != nil {
+				return nil, "", err
+			}
+			if authorized {
+				kept = append(kept, candidates[i])
+			}
+		}
+		if len(kept) == 0 {
+			// Shares exist on this container; none of them was the
+			// grantor's to extend over this member.
+			bestReason = bumpReason(bestReason, RejectReasonGrantorNotOwner)
+			continue
+		}
+		share, reason, err := pickBestMatch(kept, req)
 		if err != nil {
 			return nil, "", err
 		}
 		if share != nil {
 			return share, "", nil
 		}
-		if reasonSpecificity(reason) > reasonSpecificity(bestReason) {
-			bestReason = reason
-		}
+		bestReason = bumpReason(bestReason, reason)
 	}
 	return nil, bestReason, nil
 }
@@ -328,6 +417,11 @@ func rankMatch(s *Share) int {
 // container-fallback path.
 func reasonSpecificity(r RejectReason) int {
 	switch r {
+	case RejectReasonGrantorNotOwner:
+		// Top of the ladder: a matching share was found and
+		// deliberately not honoured. Nothing else in the taxonomy
+		// tells the operator that.
+		return 5
 	case RejectReasonInsufficientScope:
 		return 4
 	case RejectReasonWrongUser:
@@ -457,9 +551,20 @@ func ActivityRequiredScope(t federation.ActivityType) (federation.ShareScope, bo
 		// relevant.
 		return federation.ShareScopeView, false
 	case federation.ActivityAdd, federation.ActivityRemove:
-		// Collection membership changes — emitted by the
-		// collection owner; share gate against the target
-		// collection at the grantor's scope.
+		// Collection membership changes — gated against the TARGET
+		// COLLECTION at remix scope.
+		//
+		// #893 note: the original rationale was "emitted by the
+		// collection owner", and that is all this still checks —
+		// an inbound Add carrying a FOREIGN object is authorised
+		// by the collection's remix share and by nothing about the
+		// object. The local equivalent has the same shape
+		// (collections.AddCollectionResource authorises against
+		// the collection, never the asset), so this is not a
+		// federation-only gap and closing it belongs with #882
+		// rather than here. The READ side is covered: a member the
+		// grantor doesn't own confers no scope no matter how it
+		// got into the collection.
 		return federation.ShareScopeRemix, true
 	case federation.ActivityAAShare, federation.ActivityAAUnshare, federation.ActivityAARevokeShare:
 		// Share-flow activities are gated differently (the share

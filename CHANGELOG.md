@@ -7,6 +7,42 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Security
+
+- **Sharing a collection with another instance now shares only the members you own.**
+  A federated share on a collection granted the peer scope over **every** asset in it,
+  and the only ownership check in the system sat on the container: you may share a
+  collection because you own the collection. Nothing then re-checked the contents. The
+  membership lookup that walks collection → asset carried no constraint on who owns the
+  member at all (#893).
+
+  Put someone else's asset in your own collection — which the API already allows, since
+  adding to a collection is authorised against the collection and never against the
+  asset — share the collection with a peer, and the peer was granted scope over an asset
+  that was never yours to share. This matters more than the equivalent mistake against a
+  local reader: a peer is a **separate instance**, which takes its own copy of that
+  decision and can act on it afterwards — there is no single place to take it back.
+
+  A container share now confers scope on a member only if the share's grantor could have
+  shared that member **directly** — they own it, or they hold `system.admin`. That is the
+  same pair of conditions the grant endpoint already enforces, and it is now asked from
+  one place rather than two, so the two answers cannot drift. An asset with no local
+  owner — a federated mirror, a system import — is nobody's to re-share and is refused.
+
+  **Sharing a collection of your own work is unchanged**, which is the half worth
+  stating: the fix is per member, not per collection, so a shared collection still
+  carries every member its grantor owns, and an admin's share still reaches everything.
+  A refusal on this ground carries its own reason — `grantor_not_owner` rather than the
+  misleading "no share row" — so an operator reading a rejection can tell "the grant was
+  never the grantor's to make" from "there is no grant".
+
+  Nothing was exposed in a shipped release: the decision function this fixes has no
+  caller yet — the inbox dispatcher does not consult it, so no inbound activity has ever
+  been admitted or refused by it. The guard lands **before** that wiring and before the
+  change that lets a collection hold someone else's work (#882), so the window in which
+  the hole would have been reachable never opens. No-spec-impact — no wire format
+  changes, and no existing share row is revoked or altered.
+
 ### Added
 
 - **Four more tiles on your account page now lead somewhere.** The grid at

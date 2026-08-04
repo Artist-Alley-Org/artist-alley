@@ -1096,7 +1096,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		s.sharesRegistry,
 		s.activities,
 		auditRec,
-		ownerResolverFor(pool),
+		// The owner map lives in the shares package (#893) so the
+		// grant path here and the transitive gate path answer "who
+		// owns this object" from one place; see shares/owner.go.
+		shares.NewObjectOwnerResolver(pool),
 		peerLookupFor(s.peers),
 		sysconfigBaseURLFn(sysCfg),
 		usernameResolverFor(s.users),
@@ -1526,40 +1529,6 @@ func (a socialUserExistsAdapter) UserExists(ctx context.Context, ref int64) (boo
 }
 
 // --- 1.22.C-c federation_shares adapters ---------------------------------
-
-// ownerResolverFor returns the shares.ObjectOwnerResolver closure
-// boot wires into the shares admin handler. Checks the per-
-// domain owner columns: posts.author_user_ref,
-// collections.owner_user_ref, assets.owner_user_ref. Unknown
-// kinds default to "no" — system.admin still wins at the caller
-// because the resolver short-circuits before this is called.
-func ownerResolverFor(pool *pgxpool.Pool) shares.ObjectOwnerResolver {
-	return func(ctx context.Context, kind federation.ShareObjectKind, objectID uuid.UUID, caller *auth.Identity) (bool, error) {
-		var column, table string
-		switch kind {
-		case federation.ShareObjectKindPost:
-			table, column = "posts", "author_user_ref"
-		case federation.ShareObjectKindCollection:
-			table, column = "collections", "owner_user_ref"
-		case federation.ShareObjectKindAsset:
-			table, column = "assets", "owner_user_ref"
-		default:
-			// workspace + brand_kit tables don't exist yet;
-			// user-kind shares are server-internal (Accept(Follow)
-			// path). Reject ownership claims for these.
-			return false, nil
-		}
-		var ownerRef int64
-		err := pool.QueryRow(ctx,
-			"SELECT "+column+" FROM "+table+" WHERE id = $1",
-			objectID,
-		).Scan(&ownerRef)
-		if err != nil {
-			return false, nil // unknown object → reject (caller maps to 404)
-		}
-		return ownerRef == caller.UserRef, nil
-	}
-}
 
 // peerLookupFor wraps peer.Registry.ByID with the projection
 // shapes shares needs: id, instance_url, enabled flag, and
