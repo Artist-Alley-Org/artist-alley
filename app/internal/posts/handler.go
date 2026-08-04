@@ -1566,7 +1566,7 @@ func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
 // then decides readability in-Go via visibility.ContentReadable.
 //
 // It is ALSO the #883 redaction point: a member the caller fails
-// visibility.MemberReadable on is rewritten in place as a placeholder —
+// visibility.FieldsReadable on is rewritten in place as a placeholder —
 // asset_id + sort_order + restricted + the owner's display name, and no
 // `asset` object at all. Same pass, same batched query, because it is the
 // same per-caller readability decision; splitting them would be two
@@ -1614,7 +1614,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		ladder = h.previewLadder(ctx)
 	}
 
-	// a.status + a.processing_status feed visibility.MemberReadable's
+	// a.status + a.processing_status feed visibility.FieldsReadable's
 	// row-plane conjuncts, and the owner display name is the ONE
 	// asset-derived value a #883 placeholder carries. Both ride this
 	// query rather than a second round-trip — the LEFT JOINs mirror
@@ -1711,7 +1711,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		// asset — a true ladder flag on gated bytes is a 403 the client
 		// walks straight into, and a false redaction flag on a gated row
 		// is the leak this issue closes.
-		ok := visibility.MemberReadable(visibility.MemberRow{
+		ok := visibility.FieldsReadable(visibility.FieldsRow{
 			Sensitivity:      sens,
 			Status:           status,
 			ProcessingStatus: procState,
@@ -1757,9 +1757,10 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			// cross-caller cache; mutating through it would write this
 			// caller's flags into every subsequent caller's response.
 			a := *m.Asset
-			a.PreviewAvailable = avail[id]
-			a.LadderAvailable = ladderOK[id]
-			a.ScrubAvailable = scrubOK[id]
+			prev, lad, scr := avail[id], ladderOK[id], scrubOK[id]
+			a.PreviewAvailable = &prev
+			a.LadderAvailable = &lad
+			a.ScrubAvailable = &scr
 			a.PixelWidth, a.PixelHeight = nil, nil
 			if wh, ok := dims[id]; ok {
 				w, h := wh[0], wh[1]
@@ -1782,19 +1783,24 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	return nil
 }
 
+// ptrPM returns a pointer to a copy of v. openapi.Asset's fields became
+// pointers when #899 shrank the schema's `required` list so a withheld
+// payload could omit them.
+func ptrPM[T any](v T) *T { return &v }
+
 func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 	a := openapi.Asset{
 		Id:            openapi_types.UUID(m.AssetID.Bytes),
-		Title:         m.Title,
+		Title:         &m.Title,
 		Description:   &m.Description,
-		AssetType:     m.AssetType,
-		Status:        openapi.AssetStatus(m.Status),
+		AssetType:     &m.AssetType,
+		Status:        ptrPM(openapi.AssetStatus(m.Status)),
 		FileHash:      m.FileHash,
 		FileExtension: m.FileExtension,
 		FileSizeBytes: m.FileSizeBytes,
-		Tags:          []string{},
-		CreatedAt:     m.AssetCreatedAt.Time,
-		UpdatedAt:     m.AssetUpdatedAt.Time,
+		Tags:          &[]string{},
+		CreatedAt:     &m.AssetCreatedAt.Time,
+		UpdatedAt:     &m.AssetUpdatedAt.Time,
 	}
 	if m.OwnerUserRef != nil {
 		a.OwnerUserRef = m.OwnerUserRef

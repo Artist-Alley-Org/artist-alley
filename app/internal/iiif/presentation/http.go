@@ -135,7 +135,7 @@ func callerFrom(r *http.Request) visibility.Caller {
 }
 
 // capsFrom is callerFrom's capability half, for the #883 member gate.
-// Nil for anonymous — it holds no capabilities, which MemberReadable
+// Nil for anonymous — it holds no capabilities, which FieldsReadable
 // handles. Mirrors iiif.contentCaller / assets.contentCaller.
 func capsFrom(r *http.Request) visibility.CapabilityChecker {
 	if id := auth.IdentityFromContext(r.Context()); id != nil {

@@ -49,13 +49,17 @@
     {/if}
   </dl>
 
-  <div class="flex gap-2">
-    <a
-      href={`/api/v1/assets/${ctx.asset.id}/file`}
-      download
-      class="rounded border border-border bg-surface-elevated px-2 py-1 text-fg hover:border-accent"
-    >Download original</a>
-  </div>
+  <!-- #899 — withheld assets get no download affordance; the bytes
+       404 for this caller. -->
+  {#if !ctx.asset.restricted}
+    <div class="flex gap-2">
+      <a
+        href={`/api/v1/assets/${ctx.asset.id}/file`}
+        download
+        class="rounded border border-border bg-surface-elevated px-2 py-1 text-fg hover:border-accent"
+      >Download original</a>
+    </div>
+  {/if}
 
   {#if showZoomPresets && shellState}
     <section class="rounded-md border border-border bg-surface-elevated">

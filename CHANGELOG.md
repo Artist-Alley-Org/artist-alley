@@ -9,6 +9,51 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **An asset you cannot open no longer hands you its metadata.** A `restricted` asset
+  owned by someone else refused you its **bytes** — `/file`, `/download` and every
+  `/variants/*` returned 404, correctly, and always had. It then described itself in full
+  through every surface that lists it. `GET /assets/{id}` returned **200** carrying the
+  title, the description, the complete SHA-256, the exact byte size, the original
+  filename and the whole free-form `metadata` blob. Browse returned the same. Search
+  returned the title and description; the autocomplete would **complete that title from a
+  prefix**, letter by letter; and the sensitivity facet counted the asset as
+  `restricted 1`. The card on screen said "restricted" the whole time — the API behind it
+  did not (#899).
+
+  The hash was the sharpest of these. It is a content identifier, so it confirms whether
+  a file you already hold is the same one, and it would have survived any later
+  tightening of the other fields.
+
+  An asset you may not open now returns a **placeholder** carrying exactly three things:
+  its id, a `restricted` marker, and **the owner's display name**. Nothing else — not the
+  title, not the file type, not the dimensions, not the thumbnail blur. Fields are
+  **absent** rather than blanked, so you cannot tell "withheld" from "genuinely empty" and
+  infer from the difference. The same shape now comes back from the single asset, the
+  browse list, a search hit, the similar-assets panel and a post or collection member —
+  one rule, `visibility.FieldsReadable`, in one place, rather than a version of it per
+  surface. Autocomplete is the one exception, and it drops the row instead: a completion
+  *is* the title, so there is nothing to withhold.
+
+  **The row is still there**, which is the half worth stating. Sensitivity gates content,
+  not rows (ADR 0064), so a restricted asset stays in your feed and in your search
+  results as a placeholder with its owner's name on it. That is deliberate: you are meant
+  to be able to tell there is something there you cannot see, or "request access" has
+  nothing to point at.
+
+  **Nothing changes for people who can already open the asset.** Its owner sees their own
+  work in full at every tier, including drafts; so do administrators and the read-all
+  content role the public demo runs on. The facet counts moved with the same rule — they
+  now count what *you* can open, so you still see `restricted 3` for your own work and no
+  longer see a count of other people's.
+
+  The viewer also stops offering a **Download original** button for an asset whose bytes
+  it knows it cannot fetch. The download always 404'd; now it is not drawn.
+
+  No-spec-impact for federation — asset metadata was never sent to peers. **Wire-format
+  change:** the `Asset` schema's `required` list shrank to `id` and `restricted`, because
+  a contract that demands `title` and `file_hash` cannot express a payload that withholds
+  them. Every field a readable asset carried, it still carries.
+
 - **You can only put something in a collection if you can actually see it.** Adding an
   asset to a collection was authorised against the **collection** — "is this your
   collection" — and never looked at the asset at all. Anyone who could create a

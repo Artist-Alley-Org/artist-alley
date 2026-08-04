@@ -181,7 +181,7 @@ func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef,
 		cm.Metadata = entity.Metadata
 	}
 
-	// Drop every member the caller fails visibility.MemberReadable on
+	// Drop every member the caller fails visibility.FieldsReadable on
 	// (#883). The flag is set by LoadCollectionMembers, so this manifest
 	// and the JSON post/collection APIs answer "may this caller see this
 	// member" from one function; the anonymous-only sensitivity check
@@ -198,7 +198,7 @@ func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef,
 	// the placeholder buys nothing here and costs interop. The visible
 	// placeholder lives on the surfaces a human reads.
 	//
-	// Fail-closed: MemberReadable's zero value is false, so a member ref
+	// Fail-closed: the MemberReadable flag's zero value is false, so a member ref
 	// that reached this builder without passing through
 	// LoadCollectionMembers is dropped rather than published.
 	items := make([]CollectionMember, 0, len(members))

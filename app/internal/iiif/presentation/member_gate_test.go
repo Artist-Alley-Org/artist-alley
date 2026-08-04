@@ -11,7 +11,7 @@
 // so a signed-in caller received the TITLE of every restricted member as
 // its `label`, in a collection they had nothing to do with.
 //
-// The gate is now visibility.MemberReadable for every caller, decided in
+// The gate is now visibility.FieldsReadable for every caller, decided in
 // the loader and carried on EntityRef.MemberReadable — the same function
 // the post and collection JSON APIs use, so the three surfaces cannot
 // drift on what "may not see" means.
@@ -96,16 +96,16 @@ func TestIIIFCollectionMembers_MemberReadableMatchesTheJSONAPI(t *testing.T) {
 	}
 
 	for _, m := range members {
-		var row visibility.MemberRow
+		var row visibility.FieldsRow
 		if err := pool.QueryRow(context.Background(), `
 			SELECT a.sensitivity, a.status, a.processing_status, a.owner_user_ref, FALSE
 			  FROM assets a WHERE a.id = $1`, m.ID,
 		).Scan(&row.Sensitivity, &row.Status, &row.ProcessingStatus, &row.OwnerUserRef, &row.IsTeamMember); err != nil {
 			t.Fatalf("read row %v: %v", m.ID, err)
 		}
-		want := visibility.MemberReadable(row, caller, nil)
+		want := visibility.FieldsReadable(row, caller, nil)
 		if m.MemberReadable != want {
-			t.Errorf("member %v (%q): loader says MemberReadable=%v, visibility.MemberReadable says %v",
+			t.Errorf("member %v (%q): loader says MemberReadable=%v, visibility.FieldsReadable says %v",
 				m.ID, m.Title, m.MemberReadable, want)
 		}
 	}

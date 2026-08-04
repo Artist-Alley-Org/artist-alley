@@ -12298,7 +12298,7 @@ components:
 
         RESTRICTED MEMBERS (#883) — identical contract to PostMember, see
         there for the reasoning. When the caller fails
-        `visibility.MemberReadable` this row degrades to a placeholder:
+        `visibility.FieldsReadable` this row degrades to a placeholder:
         `restricted` is true and EVERY joined-in `assets` column below
         (title, asset_type, status, file_hash, file_extension, thumbhash,
         pixel_width, pixel_height, asset_created_at, and the three
@@ -12433,19 +12433,75 @@ components:
           nullable: true
     Asset:
       type: object
-      # file_hash / file_extension / thumbhash are REQUIRED-but-nullable
-      # on purpose (#595). They are the three fields CardThumb needs to
-      # decide what a tile IS — has bytes, what media type, what blur-up
-      # — so every asset-shaped payload must carry them even when null.
-      # As OPTIONAL fields they generated `field?: T` in the frontend
-      # types, which let a surface hand-map a narrower object and drop
-      # them with no type error; that is exactly how the collection page
-      # silently lost its video/3D badges and sprite-scrub previews.
-      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
-                 file_hash, file_extension, thumbhash, ladder_available,
-                 scrub_available, pixel_width, pixel_height]
+      description: |
+        WITHHELD ASSETS (#899). An asset you cannot OPEN must not hand
+        you its metadata. When the caller fails
+        `visibility.FieldsReadable` — the conjunction of the row plane
+        and the ADR 0064 content plane — this object degrades to a
+        placeholder: `restricted` flips to true and the ONLY other keys
+        present are `id` and `owner_display_name`.
+
+        The placeholder is deliberately PRESENT rather than 404. ADR 0064
+        holds that sensitivity gates content, not rows, so the row stays
+        visible; a reader is meant to be able to tell that something is
+        there they cannot see, because that is what makes "request
+        access" (#881) mean anything.
+
+        ALLOW-LIST, not deny-list. The permitted key set on a withheld
+        asset is exactly `id`, `restricted`, `owner_display_name` — an
+        identifier the caller already holds, a marker, and the one
+        asset-derived value the owner permitted ("the placeholder should
+        never leak info. Not even title. Only the owner's name.").
+        Everything else is ABSENT, not blanked, so a client cannot tell
+        "withheld" from "genuinely empty" and infer from the difference.
+        A field added to this schema later is therefore withheld by
+        construction rather than by remembering to add it to a list of
+        known-sensitive names.
+
+        That key set is the SAME one `PostMember`'s placeholder carries,
+        and deliberately so: the field set on this surface must never be
+        wider than the field set for the same asset reached through a
+        container, or membership becomes the narrower path and the three
+        surfaces drift apart again.
+
+        WHY `required` IS SHORT. It used to name sixteen fields, on the
+        #595 reasoning that `field?: T` in the frontend types let a
+        surface hand-map a narrower object and silently drop the three
+        CardThumb needs. That reasoning still holds for a readable
+        asset — and it is exactly why absence has to be expressible for
+        an unreadable one. A contract that DEMANDS `title` and
+        `file_hash` cannot express a payload that withholds them. So
+        `required` is now the two keys every asset payload carries at
+        every tier, and the client branches on `restricted` (which is
+        required, and therefore always present to branch on) before
+        reading anything else.
+      required: [id, restricted]
       properties:
         id: { type: string, format: uuid }
+        restricted:
+          type: boolean
+          description: |
+            True when the caller may not see this asset's columns. Every
+            other key except `id` and `owner_display_name` is then
+            absent, and the client renders a placeholder tile.
+
+            REQUIRED, so it is always present to branch on: an optional
+            marker would read as `undefined` on a withheld payload from
+            an older server and fall through to "not restricted", which
+            is the wrong default for a security marker.
+        owner_display_name:
+          type: string
+          description: |
+            Set only when `restricted` is true: the display name of the
+            asset's owner, so the placeholder can say whose work it is
+            and #881 can address the request. Absent — not empty — when
+            the owner has no resolvable name or the asset is unowned, so
+            a client cannot tell "withheld" from "genuinely empty".
+
+            Not carried on a readable asset, which has `owner_user_ref`
+            and can resolve the profile itself. `owner_user_ref` is NOT
+            carried on a withheld one: the placeholder's allow-list is
+            the owner's NAME, and a ref is a second way to ask.
         title: { type: string }
         description: { type: string }
         asset_type: { type: integer, format: int64 }
@@ -13141,7 +13197,7 @@ components:
         that the *reader* is not entitled to — their own restricted
         work, or (once #882 lands) someone else's. Membership must never
         WIDEN an item, so when the reader fails
-        `visibility.MemberReadable` this object degrades to a
+        `visibility.FieldsReadable` this object degrades to a
         placeholder: `restricted` flips to true, `asset` is ABSENT, and
         the only thing carried across from the asset row is
         `owner_display_name`.

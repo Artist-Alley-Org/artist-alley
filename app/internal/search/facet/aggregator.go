@@ -86,6 +86,12 @@ type Request struct {
 	// helper the Engine uses).
 	Caller visibility.Caller
 
+	// Caps is the caller's content-plane capabilities (#899).
+	// Consulted by the asset aggregators, which count only rows the
+	// caller could actually open — see
+	// buildAssetVisibilityAppendedSQL for why. Zero value = none.
+	Caps visibility.ContentCaps
+
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
 	Timeout time.Duration

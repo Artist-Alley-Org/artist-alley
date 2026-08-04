@@ -3,7 +3,7 @@
 
 // #883 — the membership-never-widens contract.
 //
-// A CONTRACT test on visibility.MemberReadable, deliberately not a
+// A CONTRACT test on visibility.FieldsReadable, deliberately not a
 // per-endpoint one, for the same reason predicate_matrix_test.go is a
 // contract test on ToSQL: three surfaces (post members, collection
 // contents, IIIF collection manifests) route their answer through this
@@ -11,13 +11,13 @@
 //
 // It states the requirement, not the implementation. Every case is
 // derived from the two planes an asset already lives under, computed
-// INDEPENDENTLY of MemberReadable:
+// INDEPENDENTLY of FieldsReadable:
 //
 //	rowVisible   — the REAL EntityAsset predicate, executed as SQL
 //	               against the seeded row (not re-derived in Go)
 //	contentOK    — ContentReadable, the ADR 0064 tier rule
 //
-// and then asserts MemberReadable == rowVisible AND contentOK. Written
+// and then asserts FieldsReadable == rowVisible AND contentOK. Written
 // that way, the test fails if either conjunct is dropped, and it fails
 // for a reason that names which guarantee was lost. A per-case expected
 // boolean typed out by hand would only re-encode whatever the code did
@@ -26,7 +26,7 @@
 // SOFT-DELETE is the one conjunct held out, and the predicate has an
 // option that says exactly that: rowVisible is taken with
 // IncludeSoftDeleted(), which drops the `deleted_at IS NULL` clause and
-// NOTHING else. MemberReadable deliberately does not decide soft-delete
+// NOTHING else. FieldsReadable deliberately does not decide soft-delete
 // — a deleted member is not a placeholder, it is gone, and the container
 // queries drop it in SQL. That division of labour is asserted where it
 // lives, in the collection and post contents tests, not re-implemented
@@ -125,12 +125,12 @@ func seedMemberMatrix(t *testing.T, pool *pgxpool.Pool) []uuid.UUID {
 }
 
 // mmRow reads back the row exactly as a container query would project
-// it, plus the caller's team membership — so the MemberRow handed to the
+// it, plus the caller's team membership — so the FieldsRow handed to the
 // function under test is built from the DATABASE, not from the fixture
 // literal that wrote it.
-func mmRow(t *testing.T, pool *pgxpool.Pool, id uuid.UUID, caller Caller) MemberRow {
+func mmRow(t *testing.T, pool *pgxpool.Pool, id uuid.UUID, caller Caller) FieldsRow {
 	t.Helper()
-	var row MemberRow
+	var row FieldsRow
 	err := pool.QueryRow(context.Background(), `
 		SELECT a.sensitivity, a.status, a.processing_status, a.owner_user_ref,
 		       (a.team_id IS NOT NULL AND EXISTS (
@@ -175,7 +175,7 @@ func TestMemberMatrix_NeverWiderThanTheItemAlone(t *testing.T) {
 		standalone := visibleIDsOpts(t, pool, EntityAsset, c.caller, "assets", ids, IncludeSoftDeleted())
 		for i, s := range mmSeeds {
 			row := mmRow(t, pool, ids[i], c.caller)
-			member := MemberReadable(row, c.caller, nil)
+			member := FieldsReadable(row, c.caller, nil)
 			if member && !standalone[ids[i]] {
 				t.Errorf("%s / %s: readable AS A MEMBER but NOT standalone — "+
 					"membership widened this item, which is exactly what #883 forbids",
@@ -188,7 +188,7 @@ func TestMemberMatrix_NeverWiderThanTheItemAlone(t *testing.T) {
 // TestMemberMatrix_IsRowPlaneAndContentPlane pins the rule to its two
 // components rather than to a hand-typed truth table.
 //
-// Dropping either conjunct from MemberReadable turns this red, and the
+// Dropping either conjunct from FieldsReadable turns this red, and the
 // message says which: remove the ContentReadable call and every
 // restricted/embargo case fails for an authenticated stranger (whose row
 // predicate is soft-delete only); remove the anonymous status /
@@ -215,9 +215,9 @@ func TestMemberMatrix_IsRowPlaneAndContentPlane(t *testing.T) {
 			rowOK := standalone[ids[i]]
 			contentOK := ContentReadable(row.Sensitivity, row.OwnerUserRef, c.caller, nil, row.IsTeamMember)
 			want := rowOK && contentOK
-			got := MemberReadable(row, c.caller, nil)
+			got := FieldsReadable(row, c.caller, nil)
 			if got != want {
-				t.Errorf("%s / %s: MemberReadable=%v, want %v (row plane=%v, content plane=%v)",
+				t.Errorf("%s / %s: FieldsReadable=%v, want %v (row plane=%v, content plane=%v)",
 					c.name, s.name, got, want, rowOK, contentOK)
 			}
 		}
@@ -226,7 +226,7 @@ func TestMemberMatrix_IsRowPlaneAndContentPlane(t *testing.T) {
 
 // TestMemberMatrix_ContainerVisibilityIsIrrelevant is the third axis the
 // brief names, and it is stated as an INDEPENDENCE rather than a table:
-// MemberReadable takes no container argument at all, so a member's
+// FieldsReadable takes no container argument at all, so a member's
 // readability cannot vary with the post or collection it sits in, and
 // owning the CONTAINER confers nothing over its members.
 //
@@ -320,8 +320,8 @@ func TestMemberMatrix_ContainerVisibilityIsIrrelevant(t *testing.T) {
 					"without deciding what it means", c.name, s.name)
 			}
 			row := mmRow(t, pool, ids[i], c.caller)
-			if got := MemberReadable(row, c.caller, nil); got != want {
-				t.Errorf("%s / %s: MemberReadable=%v, want %v", c.name, s.name, got, want)
+			if got := FieldsReadable(row, c.caller, nil); got != want {
+				t.Errorf("%s / %s: FieldsReadable=%v, want %v", c.name, s.name, got, want)
 			}
 		}
 	}
@@ -342,32 +342,32 @@ func TestMemberMatrix_CapabilityShortCircuits(t *testing.T) {
 				continue
 			}
 			row := mmRow(t, pool, ids[i], stranger)
-			if !MemberReadable(row, stranger, caps) {
+			if !FieldsReadable(row, stranger, caps) {
 				t.Errorf("%s holder was refused member %q", cap, s.name)
 			}
 		}
 	}
 }
 
-// TestMemberReadable_FailsClosed covers the query-free guards, which
+// TestFieldsReadable_FailsClosed covers the query-free guards, which
 // need no fixture: an unrecognised tier, a NULL owner, and the anonymous
 // sentinel colliding with owner ref 0.
-func TestMemberReadable_FailsClosed(t *testing.T) {
+func TestFieldsReadable_FailsClosed(t *testing.T) {
 	anon := anonCaller()
 	zeroOwner := int64(0)
 
-	if MemberReadable(MemberRow{
+	if FieldsReadable(FieldsRow{
 		Sensitivity: "some-new-tier-2027", Status: "active", ProcessingStatus: "ready",
 	}, anon, nil) {
 		t.Error("an unrecognised sensitivity tier must DENY, never inherit public")
 	}
-	if MemberReadable(MemberRow{
+	if FieldsReadable(FieldsRow{
 		Sensitivity: "restricted", Status: "active", ProcessingStatus: "ready",
 		OwnerUserRef: &zeroOwner,
 	}, anon, nil) {
 		t.Error("an asset owned by ref 0 matched the anonymous sentinel as its owner")
 	}
-	if MemberReadable(MemberRow{
+	if FieldsReadable(FieldsRow{
 		Sensitivity: "restricted", Status: "active", ProcessingStatus: "ready",
 		OwnerUserRef: nil,
 	}, userCaller(mmOther), nil) {
@@ -375,7 +375,7 @@ func TestMemberReadable_FailsClosed(t *testing.T) {
 	}
 	// And the positive control, so the three above are not passing
 	// because the function returns false unconditionally.
-	if !MemberReadable(MemberRow{
+	if !FieldsReadable(FieldsRow{
 		Sensitivity: "public", Status: "active", ProcessingStatus: "ready",
 	}, anon, nil) {
 		t.Fatal("a public/active/ready member must be readable by anyone — the guards above are vacuous")

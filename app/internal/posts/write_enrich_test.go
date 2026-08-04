@@ -176,8 +176,8 @@ func weFields(t *testing.T, p *openapi.Post, assetID uuid.UUID) weEnriched {
 				"to be able to read it, so the enrich comparison is meaningless", assetID)
 		}
 		return weEnriched{
-			PreviewAvailable: m.Asset.PreviewAvailable,
-			LadderAvailable:  m.Asset.LadderAvailable,
+			PreviewAvailable: vOf(m.Asset.PreviewAvailable),
+			LadderAvailable:  vOf(m.Asset.LadderAvailable),
 			PixelWidth:       m.Asset.PixelWidth,
 			PixelHeight:      m.Asset.PixelHeight,
 			Thumbhash:        m.Asset.Thumbhash,

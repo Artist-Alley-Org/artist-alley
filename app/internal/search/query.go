@@ -268,7 +268,7 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 	// Enrich vector-only hits with their asset row projection so
 	// the response body carries titles + timestamps.
 	if len(newRows) > 0 {
-		if err := e.enrichAssetHits(ctx, newRows); err != nil {
+		if err := e.enrichAssetHits(ctx, q, newRows); err != nil {
 			return err
 		}
 		*hits = append(*hits, newRows...)
@@ -306,7 +306,7 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 // asset hits that arrived via the vector path (no BM25 row scan).
 // One IN-clause query keeps the round-trip bounded regardless of
 // how many vector-only hits arrived.
-func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
+func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error {
 	if len(hits) == 0 {
 		return nil
 	}
@@ -314,13 +314,22 @@ func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
 	for _, h := range hits {
 		ids = append(ids, h.ID)
 	}
+	// The readability columns ride along in the same pass (#899). This
+	// query has no visibility predicate of its own — it trusts
+	// vector.Query to have pre-filtered the ids — so before #899 there
+	// was NOTHING here between the assets table and the caller's JSON.
+	// That was sound only as long as no future caller handed it
+	// unfiltered ids; the per-row decision below no longer depends on
+	// that promise.
+	caller, caps := callerOf(q)
 	rows, err := e.Pool.Query(ctx, `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
-		       thumbhash, created_at, updated_at
+		       thumbhash, created_at, updated_at,
+		       `+visibility.FieldsColumnsSQL("assets", "$2")+`
 		  FROM assets
 		 WHERE id = ANY($1::UUID[])
 		   AND deleted_at IS NULL
-	`, ids)
+	`, ids, callerRefOf(q))
 	if err != nil {
 		return err
 	}
@@ -328,17 +337,28 @@ func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
 	byID := make(map[[16]byte]Hit, len(hits))
 	for rows.Next() {
 		var (
-			id      uuid.UUID
-			title   string
-			descr   string
-			owner   *int64
-			origin  *uuid.UUID
-			thumb   []byte
-			created time.Time
-			updated time.Time
+			id        uuid.UUID
+			title     string
+			descr     string
+			owner     *int64
+			origin    *uuid.UUID
+			thumb     []byte
+			created   time.Time
+			updated   time.Time
+			fr        visibility.FieldsRow
+			ownerName string
 		)
-		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated); err != nil {
+		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated,
+			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
+			&fr.IsTeamMember, &ownerName); err != nil {
 			return err
+		}
+		if !visibility.FieldsReadable(fr, caller, caps) {
+			// The projection carries nothing but the marker and the
+			// owner's name — note the thumbhash in particular is a
+			// blurred picture of the content, not a neutral hint.
+			byID[id] = Hit{Restricted: true, OwnerDisplayName: ownerName}
+			continue
 		}
 		extra, _ := json.Marshal(map[string]any{"thumbhash_b64": encodeB64(thumb)})
 		byID[id] = Hit{
@@ -355,15 +375,24 @@ func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
 		return err
 	}
 	for i, h := range hits {
-		if enriched, ok := byID[h.ID]; ok {
-			hits[i].Title = enriched.Title
-			hits[i].Summary = enriched.Summary
-			hits[i].OwnerUserRef = enriched.OwnerUserRef
-			hits[i].OriginServerID = enriched.OriginServerID
-			hits[i].CreatedAt = enriched.CreatedAt
-			hits[i].UpdatedAt = enriched.UpdatedAt
-			hits[i].ExtraJSON = enriched.ExtraJSON
+		enriched, ok := byID[h.ID]
+		if !ok {
+			continue
 		}
+		if enriched.Restricted {
+			// Replace the WHOLE hit rather than copying the readable
+			// fields across — the scores are carried over explicitly by
+			// withheldHit and nothing else is.
+			hits[i] = withheldHit(hits[i], enriched.OwnerDisplayName)
+			continue
+		}
+		hits[i].Title = enriched.Title
+		hits[i].Summary = enriched.Summary
+		hits[i].OwnerUserRef = enriched.OwnerUserRef
+		hits[i].OriginServerID = enriched.OriginServerID
+		hits[i].CreatedAt = enriched.CreatedAt
+		hits[i].UpdatedAt = enriched.UpdatedAt
+		hits[i].ExtraJSON = enriched.ExtraJSON
 	}
 	return nil
 }
@@ -428,16 +457,19 @@ var ErrEmptyQuery = errors.New("search: query text is required")
 // The base search_text @@ predicate stays inline; the visibility
 // AND clause is appended by the shared helper.
 func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityAsset, visibility.NewCaller(q.CallerUserRef))
+	caller, caps := callerOf(q)
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, 0, err
 	}
-	visFrag, visArgs := pred.ToSQL("", 2) // $1=query, next placeholder = $3
+	// $1=query, $2=limit, $3=caller ref, predicate args start at $4.
+	visFrag, visArgs := pred.ToSQL("", 3)
 
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
-		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
+		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score,
+		       ` + visibility.FieldsColumnsSQL("assets", "$3") + `
 		  FROM assets
 		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
 		 ORDER BY score DESC, id DESC
@@ -446,13 +478,31 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM assets
-			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 WHERE search_text @@ plainto_tsquery('english', $1)
+			   -- $3 is the caller ref, read only by the hits query's
+			   -- readability columns. It is REFERENCED here (as a
+			   -- tautology) rather than dropped, because pgx rejects a
+			   -- statement bound with more args than it names and the
+			   -- alternative — renumbering the shared predicate fragment
+			   -- per statement — is exactly the off-by-one ADR 0063's
+			   -- placeholder discipline exists to avoid.
+			   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + `
 			 LIMIT $2
 		) x
 	`
-	// Compose args: $1=query text, $2=limit, then visibility args.
-	hitsArgs := append([]any{q.Text, limit}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	// Compose args: $1=query text, $2=limit, $3=caller ref, then
+	// visibility args. The COUNT does not read $3 but still binds it, so
+	// the shared predicate fragment's placeholder indexes line up in
+	// both statements (ADR 0063 placeholder discipline).
+	//
+	// total_count deliberately counts rows the caller cannot open. ADR
+	// 0064 keeps those rows in the result set as placeholders, so a
+	// total that excluded them would disagree with the array beside it
+	// and would make the count itself a readability oracle — "the total
+	// dropped by one, so that row is restricted". Existence is already
+	// disclosed by decision 1; the count discloses nothing further.
+	hitsArgs := append([]any{q.Text, limit, callerRefOf(q)}, visArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q)}, visArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -461,18 +511,32 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	hits := make([]Hit, 0, limit)
 	for rows.Next() {
 		var (
-			id      uuid.UUID
-			title   string
-			descr   string
-			owner   *int64
-			origin  *uuid.UUID
-			thumb   []byte
-			created time.Time
-			updated time.Time
-			score   float64
+			id        uuid.UUID
+			title     string
+			descr     string
+			owner     *int64
+			origin    *uuid.UUID
+			thumb     []byte
+			created   time.Time
+			updated   time.Time
+			score     float64
+			fr        visibility.FieldsRow
+			ownerName string
 		)
-		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated, &score); err != nil {
+		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated, &score,
+			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
+			&fr.IsTeamMember, &ownerName); err != nil {
 			return nil, 0, err
+		}
+		// #899 — the row STAYS (ADR 0064 gates content, not rows), but
+		// an asset the caller cannot open hands over none of its
+		// columns. The predicate above decided whether the row is
+		// listed; this decides what the listing says.
+		if !visibility.FieldsReadable(fr, caller, caps) {
+			hits = append(hits, withheldHit(Hit{
+				Type: HitTypeAsset, ID: id, RawScore: score,
+			}, ownerName))
+			continue
 		}
 		extra, _ := json.Marshal(map[string]any{
 			"thumbhash_b64": encodeB64(thumb),

@@ -29,6 +29,10 @@ export interface AssetForPlaylist {
   asset_type?: number | null;
   metadata?: Record<string, unknown> | null;
   preview_available?: boolean;
+  /** #899 — set when the caller may not see this asset's columns.
+   *  Every field above is then absent from the payload. */
+  restricted?: boolean;
+  owner_display_name?: string | null;
 }
 
 function toItem(a: AssetForPlaylist): PlaylistItem {
@@ -40,8 +44,19 @@ function toItem(a: AssetForPlaylist): PlaylistItem {
     asset_type: a.asset_type ?? null,
     metadata: a.metadata ?? null,
     preview_available: a.preview_available ?? false,
+    restricted: !!a.restricted,
+    owner_display_name: a.owner_display_name ?? null,
   };
-  return { id: a.id, asset };
+  // #899 — the standalone route reaches the SAME restricted plate the
+  // post route has shown since #883. Threading these two through here is
+  // what stops /assets/{id} being the surface where a withheld asset
+  // renders as a broken viewer instead of a placeholder.
+  return {
+    id: a.id,
+    asset,
+    restricted: !!a.restricted,
+    ownerDisplayName: a.owner_display_name ?? null,
+  };
 }
 
 /** Reactive single-asset playlist source. Same factory-over-a-$state
