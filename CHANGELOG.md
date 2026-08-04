@@ -72,6 +72,38 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The app container's memory ceiling was too low, and it was killing itself.** On
+  our own CI host the app process was OOM-killed by the kernel roughly once every 90
+  minutes — eleven times in sixteen hours — always against the container's *own*
+  ceiling, never because the machine was short of memory (that host had 40 GiB free
+  throughout). A process that dies mid-render leaves connection errors, half-written
+  data and timeouts behind it, so this was showing up as a scatter of unrelated-looking
+  failures rather than as one problem.
+
+  **The ceiling changed, so operators who did not set it get a new default:**
+  `AA_APP_MEM_LIMIT` is now **8g**, up from 4g. Measuring a ~150-asset preview render
+  storm put the peak at **5.4 GB** — which the old 4 GB default cannot hold at all, so
+  any instance that renders previews was relying on the kernel's mercy. `mem_limit` is
+  a ceiling and not a reservation, so a machine that never reaches it gives up nothing.
+  If you pinned `AA_APP_MEM_LIMIT` yourself, your value still wins, and 4g is now known
+  to be too small for preview work.
+
+  **`AA_GOMEMLIMIT_RATIO` has been 0.9 and is now 0.8** — the share of that ceiling
+  handed to the Go runtime. The reserve is not spare change: preview rendering shells
+  out to ffmpeg, ghostscript, ImageMagick and a headless-browser 3D renderer, all of
+  which live inside the same container and were measured holding a full **1.0 GB** at
+  peak, none of it visible to the Go runtime's own accounting. 10 % of the ceiling
+  never covered that.
+
+  **And `AA_GOMEMLIMIT_RATIO` now actually does something in Docker.** It was
+  documented as a knob but was never passed into the app container, so setting it had
+  no effect on any containerised deployment — the process never saw the variable. It is
+  forwarded now (#887).
+
+  The peak itself is untouched by any of this: 3.3 GB of it is live, in-flight render
+  buffers that no garbage collector can shrink. Bounding *that* is a separate piece of
+  work. No-spec-impact.
+
 - **Two account tiles were filed as unbuilt long after their pages shipped.** *Saved
   searches* and *Messages* were still marked "not built yet" in the account menu's
   registry even though both pages had been working for releases. **Nothing on screen

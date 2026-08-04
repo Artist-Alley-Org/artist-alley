@@ -337,10 +337,14 @@ jobs:
       # calls bare `docker compose`) both inherit this. It drops host
       # ports and caps per-service memory.
       COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
-      # Cap Go build + test parallelism so three stacks at once stay
-      # within ~30 cores / ~24 GiB on the shared runner. Flows into the
-      # app image build (via the override's build args) and into
-      # test.sh's golang containers (forwarded with -e).
+      # Cap Go build + test parallelism so three stacks at once leave
+      # CPU for everything else the shared runner hosts. The runner has
+      # 125 GiB of RAM (~40 GiB free with its other workloads up), so
+      # this is about cores, not memory — an earlier revision of this
+      # comment claimed a "~24 GiB" budget, which was wrong by 5x and
+      # was reasoned from during #886 (#887). Flows into the app image
+      # build (via the override's build args) and into test.sh's golang
+      # containers (forwarded with -e).
       GOFLAGS: -p=10
       GOMAXPROCS: 10
 

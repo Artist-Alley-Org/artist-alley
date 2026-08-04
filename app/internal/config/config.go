@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mscrnt/artist-alley/app/internal/memlimit"
 )
 
 // Config holds every knob the app reads. Add a field here when you need a
@@ -58,7 +60,8 @@ type Config struct {
 	// 0 disables the derivation and leaves the runtime default in
 	// place — the switch used to profile the unbounded behaviour
 	// deliberately. An explicit GOMEMLIMIT in the environment always
-	// wins over the derived value. See internal/memlimit.
+	// wins over the derived value. See internal/memlimit for why the
+	// default reserve is 20 % rather than the ecosystem's 10 %.
 	GoMemLimitRatio float64
 
 	// Auth — must match the PHP side exactly during the transition
@@ -157,7 +160,7 @@ func Load() (Config, error) {
 		LogLevel:          envStr("AA_LOG_LEVEL", "info"),
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
 		PprofAddr:         envStr("AA_PPROF_ADDR", ""),
-		GoMemLimitRatio:   envFloat("AA_GOMEMLIMIT_RATIO", 0.9),
+		GoMemLimitRatio:   envFloat("AA_GOMEMLIMIT_RATIO", memlimit.DefaultRatio),
 		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
 
 		BootstrapAdminPath:    envStr("AA_BOOTSTRAP_ADMIN_PATH", "/var/lib/artist-alley"),

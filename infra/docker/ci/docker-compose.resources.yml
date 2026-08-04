@@ -23,12 +23,22 @@
 #      survives); the `!reset []` tag (Compose spec, v2.24+) is what
 #      actually empties an inherited sequence.
 #
-#   2. Per-service memory ceilings. Three stacks at once must stay
-#      within the runner's budget (~24 GiB across 3 → ~8 GiB each).
-#      mem_limit is the non-swarm compose knob for that.
+#   2. Per-service memory ceilings. mem_limit is the non-swarm compose
+#      knob for that.
+#
+#      The runner host has 125 GiB of RAM, ~40 GiB of it free with
+#      everything else it hosts running (measured 2026-08-04). Three
+#      concurrent stacks at the caps below come to ~40 GiB, so these
+#      numbers are NOT rationing a scarce host — they are a blast
+#      radius, so one runaway stack degrades itself and not the box.
+#      An earlier revision of this comment claimed a "~24 GiB across
+#      3 → ~8 GiB each" budget. That figure was wrong by 5x and was
+#      reasoned from during the #886 investigation, which is exactly
+#      how a wrong number in a comment costs more than no number
+#      (#887).
 #
 #      Since #781 the BASE stack carries its own app ceiling
-#      (AA_APP_MEM_LIMIT, default 4g) and the Go runtime derives
+#      (AA_APP_MEM_LIMIT, default 8g) and the Go runtime derives
 #      GOMEMLIMIT from it, so the app is bounded everywhere rather
 #      than only here. The per-service caps below remain because CI's
 #      constraint is different in kind: it is sharing one runner
@@ -50,7 +60,21 @@ services:
     # app over the compose network by DNS anyway — so drop it. A no-op
     # for the dev/backend app (which has no host port).
     ports: !reset []
-    mem_limit: ${AA_APP_MEM_LIMIT:-6g}
+    # 10g, raised from 6g (#887). The app OOM-killed itself against this
+    # cgroup ~11 times in 16 hours, every kill CONSTRAINT_MEMCG with
+    # anon-rss 5.05-5.69 GB — i.e. the container's own ceiling, on a
+    # host with 40 GiB free. A local replay of the CI-profile seed +
+    # render storm peaked at 5.39 GB anon / 5.56 GB memory.current
+    # against this 6g cap, with LESS contention than CI carries (one
+    # stack, no Playwright). The peak is genuine working set, not a
+    # pacing failure: 3.31 GB of it was live Go heap, and the Go runtime
+    # sat at 76 % of its own GOMEMLIMIT the whole time. So the cap, not
+    # the ratio, was the binding constraint — see the PR for #887.
+    #
+    # 10g is ~1.9x the measured peak; three concurrent stacks at this
+    # cap still fit the ~40 GiB free, and mem_limit is a ceiling rather
+    # than a reservation so the unused headroom costs nothing.
+    mem_limit: ${AA_APP_MEM_LIMIT:-10g}
 
   postgres:
     ports: !reset []
@@ -79,4 +103,5 @@ services:
     mem_limit: 256m
 
   app-b:
-    mem_limit: ${AA_APP_MEM_LIMIT:-6g}
+    # Same ceiling as `app` — identical binary, identical render storm.
+    mem_limit: ${AA_APP_MEM_LIMIT:-10g}
