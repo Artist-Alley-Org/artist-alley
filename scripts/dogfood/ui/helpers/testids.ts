@@ -70,6 +70,22 @@ export const testIds = {
     revertPrefix:     'site-text-revert-',  // suffix with the i18n key
   },
 
+  // Account → tiles that stopped being placeholders (#600) -----
+  account: {
+    // The overview grid. Scope tile locators to it — the /account
+    // sidebar renders the same hrefs, so an unscoped
+    // a[href="/account/x"] is a strict-mode violation.
+    tiles:              'account-tiles',
+    followingTabPrefix: 'following-tab-',  // suffix: following | followers
+    followingTable:     'following-table',
+    followingEmpty:     'following-empty',
+    requestsList:       'requests-list',
+    requestsEmpty:      'requests-empty',
+    helpLinks:          'help-links',
+    shortcutsGroups:    'shortcuts-groups',
+    shortcutGroupPrefix: 'shortcut-group-', // suffix with the group id
+  },
+
   // Generic page surfaces ------------------------------------
   page: {
     errorBoundary:    'page-error-boundary',

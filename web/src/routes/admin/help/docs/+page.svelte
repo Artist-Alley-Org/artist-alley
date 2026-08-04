@@ -10,8 +10,7 @@
 
   import { t } from '$stores/lang.svelte';
   import { site } from '$stores/site.svelte';
-
-  const DOCS_URL = 'https://artist-alley.org';
+  import { DOCS_URL } from '$lib/help/links';
 
   // In-app destinations worth surfacing from the docs landing.
   const links: { labelKey: string; href: string; external?: boolean }[] = [

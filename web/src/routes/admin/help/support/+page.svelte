@@ -8,9 +8,7 @@
 
   import { t } from '$stores/lang.svelte';
   import { site } from '$stores/site.svelte';
-
-  const ISSUES_URL = 'https://github.com/mscrnt/artist-alley/issues';
-  const DOCS_URL = 'https://artist-alley.org';
+  import { DOCS_URL, ISSUES_URL } from '$lib/help/links';
 
   const links: { labelKey: string; descKey: string; href: string }[] = [
     { labelKey: 'admin.help.support.link_docs', descKey: 'admin.help.support.desc_docs', href: DOCS_URL },

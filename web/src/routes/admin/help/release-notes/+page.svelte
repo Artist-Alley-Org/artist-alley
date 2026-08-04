@@ -11,11 +11,10 @@
 
   import { t } from '$stores/lang.svelte';
   import { site } from '$stores/site.svelte';
+  import { CHANGELOG_URL, RELEASES_URL } from '$lib/help/links';
 
   // Keep in sync with /admin/about until a build-info endpoint lands.
   const VERSION = '0.1.0-dev';
-  const RELEASES_URL = 'https://github.com/mscrnt/artist-alley/releases';
-  const CHANGELOG_URL = 'https://github.com/mscrnt/artist-alley/blob/main/CHANGELOG.md';
 </script>
 
 <svelte:head><title>{t('admin.help.release_notes.title')} — {site.name}</title></svelte:head>

@@ -65,4 +65,52 @@ test.describe('UI-09 account pages', () => {
     await page.goto('/account/blocked');
     await expect(page.locator('main')).toBeVisible();
   });
+
+  // #600 — three tiles that used to land on the "coming in a later
+  // phase" placeholder, plus one page that shipped with no nav entry.
+  // Asserting on a real control each, not just `main` visible, so a
+  // regression to the placeholder fails instead of passing.
+
+  test('following page renders both tabs', async ({ page }) => {
+    await page.goto('/account/following');
+    await expect(page.getByTestId('following-tab-following')).toBeVisible();
+    await expect(page.getByTestId('following-tab-followers')).toBeVisible();
+    // Either a populated table or the empty state — never the stub.
+    await expect(
+      page.getByTestId('following-table').or(page.getByTestId('following-empty')),
+    ).toBeVisible();
+  });
+
+  test('access requests page renders (had no nav entry before #600)', async ({ page }) => {
+    await page.goto('/account/requests');
+    await expect(
+      page.getByTestId('requests-list').or(page.getByTestId('requests-empty')),
+    ).toBeVisible();
+  });
+
+  test('help page lists reachable destinations', async ({ page }) => {
+    await page.goto('/account/help');
+    const links = page.getByTestId('help-links');
+    await expect(links).toBeVisible();
+    // Scoped to the list: the account sidebar renders the same href.
+    await expect(links.locator('a[href="/account/shortcuts"]')).toBeVisible();
+  });
+
+  test('shortcuts page renders the cheatsheet groups', async ({ page }) => {
+    await page.goto('/account/shortcuts');
+    await expect(page.getByTestId('shortcuts-groups')).toBeVisible();
+    await expect(page.getByTestId('shortcut-group-whiteboard_tools')).toBeVisible();
+  });
+
+  test('the account grid links the access-requests page', async ({ page }) => {
+    await page.goto('/account');
+    // Scoped to the grid — the sidebar carries the same href, and the
+    // tile grid is the surface #600 was about.
+    const tile = page.getByTestId('account-tiles').locator('a[href="/account/requests"]');
+    await expect(tile).toBeVisible();
+    await tile.click();
+    await expect(page).toHaveURL(/\/account\/requests$/);
+    // The stub placeholder would render this instead.
+    await expect(page.locator('main')).not.toContainText(/coming/i);
+  });
 });
