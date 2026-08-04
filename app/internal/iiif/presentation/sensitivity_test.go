@@ -120,7 +120,7 @@ func TestAssetManifest_Authenticated_SeesRestricted(t *testing.T) {
 
 // memberRefFor builds a member EntityRef the way LoadCollectionMembers
 // does — including the MemberReadable flag, decided by
-// visibility.MemberReadable rather than restated here (#883). The
+// visibility.FieldsReadable rather than restated here (#883). The
 // builder consults ONLY that flag now, so a hand-built ref that skips it
 // is dropped; that fail-closed default is deliberate and this helper is
 // what keeps the unit tests honest about it.
@@ -130,7 +130,7 @@ func memberRefFor(s Sensitivity, caller visibility.Caller) EntityRef {
 	// a leak assertion cannot tell a legitimately-published public label
 	// from a withheld restricted one when they are identical.
 	r.Title = "title-of-" + string(s)
-	r.MemberReadable = visibility.MemberReadable(visibility.MemberRow{
+	r.MemberReadable = visibility.FieldsReadable(visibility.FieldsRow{
 		Sensitivity:      string(s),
 		Status:           "active",
 		ProcessingStatus: "ready",

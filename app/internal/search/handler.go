@@ -173,7 +173,44 @@ var ErrBadTypes = errors.New("search: unknown type in filter")
 // MarshalHitJSON produces the JSON encoding for one Hit as the
 // public API surfaces it. Hides RawScore + ExtraJSON internals
 // while carrying enough for the frontend cards.
+//
+// WITHHELD HITS (#899). When h.Restricted the map is built from
+// scratch as a COMPLETE LITERAL rather than by deleting keys from the
+// full one — same discipline as assets.withheldAsset and
+// posts' PostMember placeholder, and for the same reason: a key added
+// to the full projection later is absent by construction rather than by
+// remembering to delete it. Do not refactor these two branches into one
+// map with conditional deletes; that is a deny-list.
+//
+// The permitted key set on a withheld hit is `type`, `id`,
+// `restricted`, `owner_display_name` and the three SCORES.
+//
+// The scores stay because they are properties of the QUERY, not of the
+// item: they carry the ordering the client has to render, and the
+// ordering is observable anyway from the position in the array. What
+// they do leak is that this row matched the query text at all — a real
+// residual oracle, inherent to ADR 0064 keeping restricted rows in the
+// result set, and recorded as such in visibility.FieldsReadable's doc.
+// `created_at` / `updated_at` do NOT stay: those are facts about the
+// item, and the post-member placeholder does not carry them.
 func MarshalHitJSON(h Hit) json.RawMessage {
+	if h.Restricted {
+		out := map[string]any{
+			"type":         h.Type,
+			"id":           h.ID.String(),
+			"restricted":   true,
+			"score":        h.NormalisedScore,
+			"vector_score": h.VectorScore,
+			"hybrid_score": h.HybridScore,
+		}
+		// Absent, not empty — a client that could tell "withheld" from
+		// "genuinely nameless" could infer from the difference.
+		if h.OwnerDisplayName != "" {
+			out["owner_display_name"] = h.OwnerDisplayName
+		}
+		b, _ := json.Marshal(out)
+		return b
+	}
 	extras := json.RawMessage("{}")
 	if len(h.ExtraJSON) > 0 {
 		extras = h.ExtraJSON
@@ -189,6 +226,11 @@ func MarshalHitJSON(h Hit) json.RawMessage {
 		"created_at":   h.CreatedAt,
 		"updated_at":   h.UpdatedAt,
 		"extra":        extras,
+		// `restricted` is present and false on a readable hit for the
+		// same reason the schema makes it required on Asset: a marker a
+		// client has to test for presence before trusting is a marker
+		// that defaults to "not restricted" when it goes missing.
+		"restricted": false,
 	}
 	if h.OwnerUserRef != nil {
 		out["owner_user_ref"] = *h.OwnerUserRef

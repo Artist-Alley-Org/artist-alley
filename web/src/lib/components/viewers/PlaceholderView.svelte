@@ -100,6 +100,10 @@
     {#if label.planned}
       <p class="mt-0.5 text-xs">A dedicated viewer is coming in a future release.</p>
     {/if}
-    <a href={fileUrl} class="mt-3 inline-block text-xs text-accent underline" target="_blank">Download original</a>
+    <!-- #899 — an asset whose columns were withheld has no readable
+         bytes either; offering the link invites a 404. -->
+    {#if !asset.restricted}
+      <a href={fileUrl} class="mt-3 inline-block text-xs text-accent underline" target="_blank">Download original</a>
+    {/if}
   </div>
 </div>

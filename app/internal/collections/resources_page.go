@@ -37,7 +37,7 @@ import (
 // to attach to.
 //
 // Nothing is given up by dropping the splice, because
-// visibility.MemberReadable is the CONJUNCTION of that predicate's asset
+// visibility.FieldsReadable is the CONJUNCTION of that predicate's asset
 // branch and the content plane — strictly tighter than the fragment it
 // replaces (see its doc). The one conjunct it deliberately does not
 // carry is soft-delete, which is back INLINE below: a deleted member is
@@ -75,7 +75,7 @@ type ListCollectionResourcesPageGatedRow struct {
 	PixelWidth  *int32
 	PixelHeight *int32
 	// Restricted is true when the caller fails
-	// visibility.MemberReadable for this member (#883). The handler
+	// visibility.FieldsReadable for this member (#883). The handler
 	// serialises such a row as a placeholder: no asset column at all,
 	// only the collection_resources columns plus OwnerDisplayName.
 	Restricted bool
@@ -107,7 +107,7 @@ func ListCollectionResourcesPageGated(
 
 	// Derived columns join preview_available's inputs in the same pass —
 	// no per-asset round-trips (#471). Readability is decided in-Go per
-	// row (visibility.MemberReadable) from a.sensitivity + a.status +
+	// row (visibility.FieldsReadable) from a.sensitivity + a.status +
 	// a.processing_status + a.owner + membership + caps.
 	//
 	// The owner's display name is resolved in this pass too, from the
@@ -180,7 +180,7 @@ LIMIT $4::INTEGER`
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
-		readable := visibility.MemberReadable(visibility.MemberRow{
+		readable := visibility.FieldsReadable(visibility.FieldsRow{
 			Sensitivity:      sensitivity,
 			Status:           i.Status,
 			ProcessingStatus: processingStatus,

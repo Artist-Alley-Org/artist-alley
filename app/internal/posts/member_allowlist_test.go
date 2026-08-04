@@ -163,7 +163,7 @@ func TestPostMember_RestrictedIsAllowListed(t *testing.T) {
 		}
 		if other.Asset == nil {
 			t.Errorf("%s: a public member lost its asset payload", c.name)
-		} else if other.Asset.Title == "" {
+		} else if other.Asset.Title == nil || *other.Asset.Title == "" {
 			t.Errorf("%s: a public member shipped an empty title — the redaction is too wide", c.name)
 		}
 	}
@@ -191,10 +191,10 @@ func TestPostMember_OwnerSeesEverything(t *testing.T) {
 	if m.Restricted {
 		t.Fatal("the OWNER was shown a placeholder for their own restricted asset")
 	}
-	if m.Asset == nil || m.Asset.Title == "" {
+	if m.Asset == nil || vOf(m.Asset.Title) == "" {
 		t.Fatal("the owner lost the asset payload for their own restricted member")
 	}
-	if !m.Asset.PreviewAvailable {
+	if !vOf(m.Asset.PreviewAvailable) {
 		t.Error("the owner's restricted member reported preview_available=false")
 	}
 }
@@ -292,4 +292,15 @@ func TestPostMember_AnonymousDraftMember(t *testing.T) {
 		t.Error("an anonymous caller saw a DRAFT member of a public post in full — " +
 			"the row plane is not being applied to members")
 	}
+}
+
+// vOf dereferences an optional openapi field, returning the zero value
+// for nil. openapi.Asset's fields became pointers in #899 so a withheld
+// payload can omit them; these assertions only care about the value.
+func vOf[T any](p *T) T {
+	var z T
+	if p == nil {
+		return z
+	}
+	return *p
 }

@@ -758,8 +758,8 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 			PixelWidth:       full.PixelWidth,
 			PreviewAvailable: full.PreviewAvailable,
 			ScrubAvailable:   full.ScrubAvailable,
-			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
-			Status:           openapi.AssetWithDedupStatus(full.Status),
+			ProcessingStatus: ptr(openapi.AssetWithDedupProcessingStatus(strDefault((*string)(full.ProcessingStatus), ""))),
+			Status:           ptr(openapi.AssetWithDedupStatus(strDefault((*string)(full.Status), ""))),
 			Thumbhash:        full.Thumbhash,
 			Title:            full.Title,
 			UpdatedAt:        full.UpdatedAt,
@@ -776,10 +776,10 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 	out := openapi.Asset{
 		Id:               openapi_types.UUID(uuid.UUID(r.ID.Bytes)),
-		Title:            r.Title,
-		AssetType:        r.AssetType,
-		Status:           openapi.AssetStatus(r.Status),
-		ProcessingStatus: openapi.AssetProcessingStatus(r.ProcessingStatus),
+		Title:            &r.Title,
+		AssetType:        &r.AssetType,
+		Status:           ptr(openapi.AssetStatus(r.Status)),
+		ProcessingStatus: ptr(openapi.AssetProcessingStatus(r.ProcessingStatus)),
 		FileHash:         r.FileHash,
 		FileExtension:    r.FileExtension,
 		FileSizeBytes:    r.FileSizeBytes,
@@ -790,10 +790,10 @@ func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 		out.Description = &s
 	}
 	if r.CreatedAt.Valid {
-		out.CreatedAt = r.CreatedAt.Time
+		out.CreatedAt = &r.CreatedAt.Time
 	}
 	if r.UpdatedAt.Valid {
-		out.UpdatedAt = r.UpdatedAt.Time
+		out.UpdatedAt = &r.UpdatedAt.Time
 	}
 	if len(r.Metadata) > 0 {
 		var m map[string]any
@@ -889,7 +889,7 @@ func (h *Handler) GetAsset(
 // enrichAssetDerived fills the four fields a single-asset projection
 // cannot carry off its own row — preview_available (#471),
 // ladder_available (#610) and the recorded pixel dimensions (#640) —
-// for the request's caller.
+// for the request's caller, AND applies the #899 field withholding.
 //
 // ONE place, because the class of bug this closes is a response shape
 // that disagrees with itself depending on which verb produced it (#655).
@@ -899,11 +899,44 @@ func (h *Handler) GetAsset(
 // openapi.Asset calls this; adding a fifth derived field means editing
 // this function, not auditing every caller.
 //
+// #899: that "any handler emitting an openapi.Asset calls this"
+// property is why the withholding lives here too — but it is NOT the
+// whole hook, and assuming it was would have left the leak open. The
+// BROWSE LIST does not come through here: it computes its flags in SQL
+// in one pass (list_page.go) and never calls this function, so it
+// applies the same rule at its own site, from its own copy of the same
+// decision.
+//
+// The withholding and the three availability flags are derived from ONE
+// readability decision, for the same reason the post preview enrich
+// does it that way — deriving them separately would let them disagree
+// on a restricted asset.
+//
 // Reads `out.Id` and `out.FileHash`, so the caller must have populated
 // the row first. No-op on the zero-value id.
 func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) error {
 	assetID := uuid.UUID(out.Id)
 	if assetID == uuid.Nil {
+		return nil
+	}
+	// The readability inputs + the owner's display name, in one round
+	// trip. This REPLACED a CanReadContent call that loaded three of the
+	// same columns: FieldsReadable is the conjunction of the row and
+	// content planes rather than the content plane alone, and it is the
+	// same function the container surfaces and the browse list use, so
+	// the four cannot drift (#899).
+	detCaller, detCaps := contentCaller(ctx)
+	fieldsRow, ownerName, err := visibility.LoadFieldsRow(ctx, h.Pool, detCaller, assetID)
+	if err != nil {
+		return fmt.Errorf("assets: readability inputs: %w", err)
+	}
+	readable := visibility.FieldsReadable(fieldsRow, detCaller, detCaps)
+	if !readable {
+		// Replace the WHOLE value, not selected fields — see
+		// withheldAsset's doc for why this is a literal and not a
+		// blanking pass. Nothing below this line runs, so no derived
+		// field can reintroduce a column after the withholding.
+		*out = withheldAsset(out.Id, ownerName)
 		return nil
 	}
 	// Source pixel dimensions (#640). The detail response carries them
@@ -913,9 +946,9 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 	// not a hot loop, and this is the same trade the tag-details query
 	// above already makes.
 	//
-	// NOT gated on the content plane: these are metadata about a row the
-	// caller has already been handed, like file_size_bytes. Nothing about
-	// a width confirms readable bytes.
+	// Reached only when `readable` — a source resolution is a fact about
+	// a file, and #899 retired the earlier reasoning that dimensions ride
+	// the same plane as the row rather than the same plane as the bytes.
 	var detW, detH *int32
 	if err := h.Pool.QueryRow(ctx,
 		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+` FROM assets WHERE assets.id = $1::uuid`,
@@ -927,14 +960,8 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		out.PixelWidth, out.PixelHeight = detW, detH
 	}
 	// preview_available (#471): a servable `col` exists AND the caller
-	// passes the content plane. Detail is not a hot loop, so an EXISTS +
-	// CanReadContent here is fine (the list path joins both in one pass).
-	detCaller, detCaps := contentCaller(ctx)
-	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, assetID)
-	if err != nil {
-		return fmt.Errorf("assets: content check: %w", err)
-	}
-	if readable && out.FileHash != nil && *out.FileHash != "" {
+	// passes the content plane — the same `readable` decided above.
+	if out.FileHash != nil && *out.FileHash != "" {
 		// All three flags in one round trip. ladder_available is computed
 		// against the CONFIGURED ladder (#591), never a hardcoded rung
 		// list — an operator who drops a rung must move this flag, not
@@ -948,9 +975,9 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		).Scan(&hasCol, &hasLadder, &hasScrub); err != nil {
 			return fmt.Errorf("assets: variant check: %w", err)
 		}
-		out.PreviewAvailable = hasCol
-		out.LadderAvailable = hasLadder
-		out.ScrubAvailable = hasScrub
+		out.PreviewAvailable = &hasCol
+		out.LadderAvailable = &hasLadder
+		out.ScrubAvailable = &hasScrub
 	}
 	return nil
 }
@@ -1320,14 +1347,31 @@ func (h *Handler) ListAssets(
 		if i >= int(limit) {
 			break
 		}
+		// #899 — an asset whose columns this caller may not receive never
+		// gets built into a full record at all. The tag fetch is skipped
+		// with it: tags are asset columns, and a withheld row must not
+		// spend a query gathering fields it will not emit.
+		//
+		// The decision was already made, once, by
+		// visibility.FieldsReadable inside ListAssetsPageGated — the SAME
+		// function GetAsset and the container surfaces use. This site
+		// consumes it rather than re-deciding, because a second decision
+		// is a second thing to keep in sync.
+		if !r.Readable {
+			assetsList = append(assetsList,
+				withheldAsset(openapi_types.UUID(r.ID.Bytes), r.OwnerDisplayName))
+			lastCreatedAt = r.CreatedAt.Time
+			lastID = uuid.UUID(r.ID.Bytes)
+			continue
+		}
 		tags, err := q.ListAssetTags(ctx, r.ID)
 		if err != nil {
 			return nil, fmt.Errorf("assets: list tags: %w", err)
 		}
 		a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
-		a.PreviewAvailable = r.PreviewAvailable
-		a.LadderAvailable = r.LadderAvailable
-		a.ScrubAvailable = r.ScrubAvailable
+		a.PreviewAvailable = &r.PreviewAvailable
+		a.LadderAvailable = &r.LadderAvailable
+		a.ScrubAvailable = &r.ScrubAvailable
 		// #640 — the tile's aspect ratio, joined by the same pass.
 		// The gated row already applied the pair-or-neither rule.
 		a.PixelWidth = r.PixelWidth
@@ -1657,6 +1701,12 @@ func dedupeTags(in []string) []string {
 	return out
 }
 
+// ptr returns a pointer to a copy of v. openapi.Asset's fields became
+// pointers when #899 shrank the schema's `required` list to the two
+// keys a withheld payload carries, so absence is expressible; this is
+// the noise that buys it.
+func ptr[T any](v T) *T { return &v }
+
 // strDefault returns *p or the default if p is nil.
 func strDefault(p *string, def string) string {
 	if p == nil {
@@ -1707,13 +1757,13 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTagsDetailedRow) openapi.Asset {
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
-		Title:            row.Title,
-		AssetType:        row.AssetType,
-		Status:           openapi.AssetStatus(row.Status),
-		ProcessingStatus: openapi.AssetProcessingStatus(row.ProcessingStatus),
-		CreatedAt:        row.CreatedAt.Time,
-		UpdatedAt:        row.UpdatedAt.Time,
-		Tags:             tags,
+		Title:            &row.Title,
+		AssetType:        &row.AssetType,
+		Status:           ptr(openapi.AssetStatus(row.Status)),
+		ProcessingStatus: ptr(openapi.AssetProcessingStatus(row.ProcessingStatus)),
+		CreatedAt:        &row.CreatedAt.Time,
+		UpdatedAt:        &row.UpdatedAt.Time,
+		Tags:             &tags,
 	}
 	if len(details) > 0 {
 		td := make([]openapi.AssetTagDetail, 0, len(details))
@@ -1764,7 +1814,7 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		}
 	}
 	if a.Tags == nil {
-		a.Tags = []string{}
+		a.Tags = &[]string{}
 	}
 	return a
 }

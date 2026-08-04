@@ -154,7 +154,7 @@ func memberFlag(t *testing.T, p *openapi.Post, assetID uuid.UUID) bool {
 		if m.Restricted || m.Asset == nil {
 			return false
 		}
-		return m.Asset.PreviewAvailable
+		return vOf(m.Asset.PreviewAvailable)
 	}
 	t.Fatalf("asset %v not a member of the post", assetID)
 	return false

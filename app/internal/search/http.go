@@ -82,6 +82,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		query.CallerUserRef = &ref
+		// #899 — the capabilities used to stop here. Only the ref was
+		// copied across, so the engine had no way to tell a
+		// content.read.all holder from a stranger and the sensitivity
+		// rule could not be expressed at all (search/doc.go called it
+		// "deliberately deferred").
+		query.Caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
 	}
 
 	// Phase 1.16.B-3 — if the caller supplied a `dsl=` param

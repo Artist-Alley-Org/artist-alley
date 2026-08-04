@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // HitType identifies which entity a search hit represents.
@@ -64,6 +66,19 @@ type Query struct {
 	// as a component of the cache key so User A's cache never
 	// serves User B.
 	CallerUserRef *int64
+
+	// Caps is the caller's content-plane capabilities, resolved at
+	// the HTTP edge (#899). Before this the handler read
+	// id.UserRef and dropped id.Capabilities on the floor, so the
+	// engine could not tell a demo-viewer holding
+	// `content.read.all` from a stranger — which is why the
+	// sensitivity rule could not be applied here at all.
+	//
+	// A resolved struct rather than a visibility.CapabilityChecker
+	// closure because this value has to reach the CACHE KEY, and a
+	// closure has no stable encoding. Zero value = no
+	// capabilities, which is the correct default for anonymous.
+	Caps visibility.ContentCaps
 
 	// Advanced is a placeholder for the B-2 advanced DSL
 	// (field:value, phrases, AND/OR/NOT). Nil in B-1; the engine
@@ -152,7 +167,37 @@ type Hit struct {
 	// OwnerUserRef is the row's owner (for permission checks in
 	// downstream consumers). Nil when the entity has no owner
 	// concept (currently none — populated on all three).
+	//
+	// #899 note: "for permission checks in downstream consumers"
+	// described an intention, not a caller — nothing consumed it,
+	// and the permission check it was there for never got written,
+	// which is how the asset title and description below shipped
+	// ungated for three releases. The check now happens HERE, at
+	// projection time, where the sensitivity columns are in scope;
+	// this field is a display value and not a hook. It is NOT
+	// carried on a withheld hit — see Restricted.
 	OwnerUserRef *int64
+
+	// Restricted is true when the caller fails
+	// visibility.FieldsReadable for this hit's asset (#899): they
+	// may see that the row exists but not its columns. Title,
+	// Summary, ExtraJSON (which carries the thumbhash — a blurred
+	// picture of the content), OwnerUserRef and the timestamps are
+	// then all ABSENT from the wire, and OwnerDisplayName is the
+	// only asset-derived value that survives.
+	//
+	// Decided in the projection, never in MarshalHitJSON: the
+	// marshaller has no caller in scope, and a security decision
+	// that cannot see its subject is a security decision waiting
+	// to be wrong.
+	Restricted bool
+
+	// OwnerDisplayName is the asset owner's display name, carried
+	// ONLY on a restricted hit so the placeholder card can say
+	// whose work it is and #881 can address the request. Empty
+	// when unresolvable, and then omitted from the wire rather
+	// than sent empty.
+	OwnerDisplayName string
 
 	// OriginServerID is set for federated rows so the frontend
 	// can badge them.

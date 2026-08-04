@@ -41,8 +41,15 @@
 //     sensitivity='public' + processing_status='ready'. (The earlier
 //     "no visibility gate" note was wrong on both the anonymous and
 //     authenticated halves — #210.)
-//   - assets, authenticated: not-deleted only; the sensitivity rule
-//     for signed-in callers is deliberately deferred (#288, ADR 0064).
+//   - assets, authenticated: not-deleted only. The sensitivity rule is
+//     no longer deferred here (#899) — it just does not act on the ROW.
+//     ADR 0064 keeps a restricted asset in the result set, so the
+//     predicate still returns it; what changed is that the PROJECTION
+//     now runs visibility.FieldsReadable per row and a hit the caller
+//     cannot open carries no title, no summary and no thumbhash. Same
+//     rule on /search/suggest (which drops the row outright — a
+//     completion is the title) and on the asset facets (which count
+//     only rows the caller could open).
 //   - collections: public OR owner OR a live ACL grant.
 //   - posts: public OR authored by caller.
 //
