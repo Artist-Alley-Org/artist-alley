@@ -204,16 +204,16 @@ func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID, caller visibi
 // (#429/#438 precedent).
 //
 // #883 — each row also carries MemberReadable, decided by the SAME
-// visibility.MemberReadable the post and collection APIs use, so the
+// visibility.FieldsReadable the post and collection APIs use, so the
 // three surfaces cannot drift on what "the caller may not see this
 // member" means. The predicate splice STAYS here (unlike the JSON API's
 // contents query, which dropped it so it could emit placeholders):
-// MemberReadable is strictly tighter than the fragment, so keeping both
+// visibility.FieldsReadable is strictly tighter than the fragment, so keeping both
 // changes no answer, and the fragment is what makes the anonymous
 // row-plane conjuncts a SQL filter rather than a Go one on this path.
 //
 // caps may be nil (anonymous, or a caller with no capability checker) —
-// MemberReadable handles that.
+// visibility.FieldsReadable handles that.
 func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, caller visibility.Caller, caps visibility.CapabilityChecker, limit int) ([]EntityRef, error) {
 	if limit <= 0 {
 		limit = 200
@@ -268,7 +268,7 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		if ext != nil {
 			ref.FileExtension = *ext
 		}
-		ref.MemberReadable = visibility.MemberReadable(visibility.MemberRow{
+		ref.MemberReadable = visibility.FieldsReadable(visibility.FieldsRow{
 			Sensitivity:      sens,
 			Status:           status,
 			ProcessingStatus: procState,

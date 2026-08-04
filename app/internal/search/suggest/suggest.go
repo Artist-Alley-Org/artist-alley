@@ -58,8 +58,13 @@ type Suggestion struct {
 
 // Request drives one Suggest call.
 type Request struct {
-	Prefix    string
-	Caller    visibility.Caller
+	Prefix string
+	Caller visibility.Caller
+	// Caps is the caller's content-plane capabilities (#899). A
+	// completion is an asset TITLE, so this surface answers the
+	// same question the asset payload does and needs the same
+	// short-circuits. Zero value = none, correct for anonymous.
+	Caps      visibility.ContentCaps
 	Threshold float64
 	Limit     int
 }
@@ -125,7 +130,7 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	}
 	all = append(all, postTitles...)
 
-	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller)
+	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps)
 	if err != nil {
 		return Response{}, err
 	}
@@ -207,12 +212,28 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 	return s.scanSuggestionsWith(ctx, KindPostTitle, sql, queryArgs)
 }
 
-func (s *Service) assetTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller) ([]Suggestion, error) {
+// assetTitles completes on asset titles.
+//
+// #899 — a completion IS the title, so there is no placeholder shape
+// available here: an unreadable asset must not contribute a row at all,
+// and this is the one asset surface where dropping rather than
+// withholding is the correct answer. The content plane is therefore a
+// SQL conjunct rather than a per-row Go decision, because a suggestion
+// has no id to hang a marker on.
+//
+// This surface was the sharpest of the #899 leaks in practice: it takes
+// a PREFIX, so it let any signed-in caller reconstruct a restricted
+// asset's title letter by letter, without ever touching /assets/{id}.
+func (s *Service) assetTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.ContentCaps) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, err
 	}
 	frag, args := pred.ToSQL("", 2)
+	// Caller ref inlined as a literal, same reasoning as the facet
+	// aggregators: it is an int64 this package produced, never
+	// caller-supplied text.
+	frag += visibility.ContentReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caps)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM assets

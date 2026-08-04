@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
@@ -123,7 +124,11 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 	for _, n := range neighbours {
 		ids = append(ids, pgtype.UUID{Bytes: n.AssetID, Valid: true})
 	}
-	assets, err := h.fetchAssetsByIDs(ctx, caller, ids)
+	// #899 — capabilities, not just the caller: content.read.all must
+	// still yield a rendered neighbourhood rather than a wall of
+	// placeholders.
+	_, neighbourCaps := contentCaller(ctx)
+	assets, err := h.fetchAssetsByIDs(ctx, caller, neighbourCaps, ids)
 	if err != nil {
 		return nil, fmt.Errorf("ListSimilarAssets: fetch assets: %w", err)
 	}
@@ -191,7 +196,12 @@ func (h *Handler) defaultEmbeddingModel(ctx context.Context) (string, error) {
 // predicate asserts soft-delete itself and a second expression of one
 // rule on one path is the defect ADR 0063 exists to prevent (#429,
 // #438 set the precedent).
-func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller, ids []pgtype.UUID) ([]openapi.Asset, error) {
+// #899 — a neighbour the caller cannot open is withheld, not dropped,
+// for the same reason as everywhere else: ADR 0064 keeps the row
+// visible. So this path applies BOTH planes — the predicate decides
+// which neighbours are listed, FieldsReadable decides what each listing
+// says.
+func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller, caps visibility.CapabilityChecker, ids []pgtype.UUID) ([]openapi.Asset, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -199,19 +209,21 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 	if err != nil {
 		return nil, err
 	}
-	// One bound placeholder so far ($1 = the id array); the fragment
-	// owns everything above it and its args append LAST.
-	frag, predArgs := pred.ToSQL("", 1)
+	// Two bound placeholders so far ($1 = the id array, $2 = the caller
+	// ref the readability fragment binds); the predicate fragment owns
+	// everything above them and its args append LAST.
+	frag, predArgs := pred.ToSQL("", 2)
 	// Build a $1, $2, ... placeholder list. pgx5 supports ANY($1::uuid[])
 	// when passing the slice directly; that's the cleanest path.
 	rows, err := h.Pool.Query(ctx, `
 		SELECT id, title, description, asset_type, owner_user_ref, status,
 		       file_hash, file_extension, file_size_bytes, metadata,
 		       origin_server_id, state_id, processing_status, thumbhash,
-		       created_at, updated_at
+		       created_at, updated_at,
+		       `+visibility.FieldsColumnsSQL("assets", "$2")+`
 		FROM assets
 		WHERE id = ANY($1)`+frag,
-		append([]any{ids}, predArgs...)...)
+		append([]any{ids, caller.UserRef}, predArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -220,13 +232,21 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 	var out []openapi.Asset
 	for rows.Next() {
 		var r GetAssetRow
+		var fr visibility.FieldsRow
+		var ownerName string
 		if err := rows.Scan(
 			&r.ID, &r.Title, &r.Description, &r.AssetType, &r.OwnerUserRef, &r.Status,
 			&r.FileHash, &r.FileExtension, &r.FileSizeBytes, &r.Metadata,
 			&r.OriginServerID, &r.StateID, &r.ProcessingStatus, &r.Thumbhash,
 			&r.CreatedAt, &r.UpdatedAt,
+			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
+			&fr.IsTeamMember, &ownerName,
 		); err != nil {
 			return nil, err
+		}
+		if !visibility.FieldsReadable(fr, caller, caps) {
+			out = append(out, withheldAsset(openapi_types.UUID(r.ID.Bytes), ownerName))
+			continue
 		}
 		// Tags fetched per-asset would be N+1; for the similar panel,
 		// the consumer surfaces a compact card without the tag chips,

@@ -98,6 +98,14 @@ func NewCache(reg *appcache.Registry, maxEntries int, ttl time.Duration, logger 
 // keyForQuery returns the LRU key for a Query. Includes caller
 // user_ref so User A's cached result never serves to User B —
 // the visibility floor at the cache layer.
+//
+// #899 — it also includes the caller's CONTENT CAPABILITIES, because
+// the cached QueryResult is now the post-withholding one. User ref
+// alone was sufficient while every caller with the same ref got the
+// same bytes; it stopped being sufficient the moment two requests from
+// the same ref could differ. The direction that matters is REVOKE: a
+// caller who loses `content.read.all` would otherwise keep being served
+// the cached UNREDACTED titles and thumbhashes for the rest of the TTL.
 func keyForQuery(q Query) string {
 	var callerID int64
 	if q.CallerUserRef != nil {
@@ -118,6 +126,8 @@ func keyForQuery(q Query) string {
 	sb.WriteString(strings.Join(types, ","))
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatInt(callerID, 10))
+	sb.WriteByte('|')
+	sb.WriteString(q.Caps.CacheKey())
 	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')

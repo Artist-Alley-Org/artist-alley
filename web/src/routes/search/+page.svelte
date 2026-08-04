@@ -16,17 +16,27 @@
   import ThumbButtons from '$components/search/ThumbButtons.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
 
+  // #899 — a hit for an asset the caller cannot OPEN carries no
+  // columns. Everything except `type`, `id`, `restricted` and the
+  // scores is therefore OPTIONAL on the wire, and this type says so:
+  // declaring `title: string` here would let the template read a field
+  // the server deliberately did not send and render `undefined`.
   type Hit = {
     type: 'asset' | 'collection' | 'post';
     id: string;
-    title: string;
-    summary: string;
+    /** True when the caller may not see this asset's columns. */
+    restricted?: boolean;
+    /** Set only when `restricted` — the one asset-derived value the
+     *  placeholder carries, so it can say whose work it is. */
+    owner_display_name?: string;
+    title?: string;
+    summary?: string;
     score: number;
-    created_at: string;
-    updated_at: string;
+    created_at?: string;
+    updated_at?: string;
     owner_user_ref?: number;
     origin_server_id?: string;
-    extra: Record<string, unknown>;
+    extra?: Record<string, unknown>;
   };
 
   type SearchResponse = {
@@ -410,12 +420,28 @@
               {/if}
               <span class="ml-auto text-xs text-fg-muted">score {h.score.toFixed(3)}</span>
             </div>
-            <h2 class="text-base font-semibold text-fg">{h.title || t('common.untitled')}</h2>
-            {#if h.summary}
-              <p class="mt-1 text-sm text-fg-muted">{h.summary}</p>
+            {#if h.restricted}
+              <!-- The #899 placeholder. It says two things and no more:
+                   that something is here, and whose it is — which is what
+                   makes "request access" (#881) meaningful. There is no
+                   title to fall back to; the server sent none. -->
+              <h2 class="text-base font-semibold text-fg-muted italic">{t('card.restricted.label')}</h2>
+              <p class="mt-1 text-sm text-fg-muted">
+                {h.owner_display_name
+                  ? t('card.restricted.owner', { owner: h.owner_display_name })
+                  : t('card.restricted.owner_unknown')}
+              </p>
+            {:else}
+              <h2 class="text-base font-semibold text-fg">{h.title || t('common.untitled')}</h2>
+              {#if h.summary}
+                <p class="mt-1 text-sm text-fg-muted">{h.summary}</p>
+              {/if}
             {/if}
           </a>
-          {#if h.type === 'asset'}
+          {#if h.type === 'asset' && !h.restricted}
+            <!-- The relevance-feedback buttons address an asset the
+                 caller can open. Offering them on a placeholder invites
+                 a request that 404s. -->
             <div class="mt-2 flex justify-end">
               <ThumbButtons dsl={q} hitAssetId={h.id} hitPosition={i + 1} />
             </div>

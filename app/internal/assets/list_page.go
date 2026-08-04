@@ -91,13 +91,26 @@ type ListAssetsPageGatedRow struct {
 	// which used to be inferred from the file extension.
 	ScrubAvailable bool
 	// PixelWidth / PixelHeight: the recorded source dimensions, joined in
-	// the same pass (#640). NOT gated on readability — they are metadata
+	// the same pass (#640). Gated on Readable like every other column —
+	// they used to be exempt on the reasoning that they are metadata
 	// about a row the caller can already see, the same plane as
-	// file_size_bytes, and the client needs them to reserve the tile's
-	// height before any bytes are requested. Nil when the install has
-	// never measured this asset; see the pixeldims package.
+	// file_size_bytes. #899 retired that reasoning for the whole row:
+	// file_size_bytes was a leak too, and a source resolution is a fact
+	// about a file you cannot open. Nil when the install has never
+	// measured this asset; see the pixeldims package.
 	PixelWidth  *int32
 	PixelHeight *int32
+
+	// Readable is visibility.FieldsReadable for this row and this
+	// caller (#899) — the ONE decision the three availability flags and
+	// the placeholder are all derived from, so they can never disagree
+	// on a restricted asset. False means the handler must replace every
+	// asset column with the placeholder.
+	Readable bool
+	// OwnerDisplayName is the asset owner's display name (or username),
+	// empty when unresolvable. The only asset-derived value the
+	// placeholder is permitted to carry.
+	OwnerDisplayName string
 }
 
 // ListAssetsPageGated runs the browse query for one caller. `caps` is
@@ -148,16 +161,20 @@ func ListAssetsPageGated(
 	// there is deliberately no inline soft-delete clause here, so the
 	// rule has exactly one expression on this path.
 	var b strings.Builder
-	// Two derived columns join preview_available's inputs in the SAME
-	// pass — no per-asset round-trips on this browse hot path (#471):
+	// Derived columns join the readability inputs and preview_available's
+	// inputs in the SAME pass — no per-asset round-trips on this browse
+	// hot path (#471):
+	//   visibility.FieldsColumnsSQL — sensitivity, status,
+	//       processing_status, owner_user_ref, is_team_member and the
+	//       owner's display name, as ONE fragment so this query cannot
+	//       select four of the five and silently decide the fifth (#899)
 	//   has_col_variant     — a servable `col` thumbnail exists
 	//   has_full_ladder     — every CONFIGURED rung exists (#591)
 	//   has_scrub_variant   — a `sprites.vtt` hover-scrub cue file exists (#835)
-	//   caller_is_team_member — caller belongs to a team-tier asset's team
-	// Readability is then decided in-Go per row (visibility.ContentReadable)
-	// from sensitivity + owner + that membership boolean + caps.
+	// Readability is then decided in-Go per row
+	// (visibility.FieldsReadable) from those columns + caps.
 	b.WriteString(`SELECT ` + listAssetsPageColumns + `,
-       sensitivity,
+       ` + visibility.FieldsColumnsSQL("assets", "$8") + `,
        ` + pixeldims.SelectColumnsSQL("assets.id") + `,
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
@@ -165,10 +182,7 @@ func ListAssetsPageGated(
        ` + sysconfig.LadderSatisfiedSQL("assets.file_hash", "$9") + ` AS has_full_ladder,
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
-             WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'sprites.vtt')) AS has_scrub_variant,
-       (team_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM team_memberships tm
-             WHERE tm.team_id = assets.team_id AND tm.user_ref = $8::BIGINT)) AS caller_is_team_member
+             WHERE sv.object_hash = assets.file_hash AND sv.variant_key = 'sprites.vtt')) AS has_scrub_variant
 FROM assets
 WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
@@ -195,30 +209,43 @@ LIMIT $7::INTEGER`)
 	for rows.Next() {
 		var i ListAssetsPageRow
 		var (
-			sensitivity        string
-			pixelWidth         *int32
-			pixelHeight        *int32
-			hasColVariant      bool
-			hasFullLadder      bool
-			hasScrubVariant    bool
-			callerIsTeamMember bool
+			fr              visibility.FieldsRow
+			ownerName       string
+			pixelWidth      *int32
+			pixelHeight     *int32
+			hasColVariant   bool
+			hasFullLadder   bool
+			hasScrubVariant bool
 		)
 		if err := rows.Scan(
 			&i.ID, &i.Title, &i.Description, &i.AssetType, &i.OwnerUserRef, &i.Status,
 			&i.FileHash, &i.FileExtension, &i.FileSizeBytes, &i.Metadata,
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
-			&sensitivity, &pixelWidth, &pixelHeight,
-			&hasColVariant, &hasFullLadder, &hasScrubVariant, &callerIsTeamMember,
+			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
+			&fr.IsTeamMember, &ownerName,
+			&pixelWidth, &pixelHeight,
+			&hasColVariant, &hasFullLadder, &hasScrubVariant,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
-		readable := visibility.ContentReadable(sensitivity, i.OwnerUserRef, caller, caps, callerIsTeamMember)
+		// ONE readability decision feeds the three availability flags AND
+		// the #899 field withholding, for the same reason the post
+		// preview enrich does it that way: a true ladder flag on gated
+		// bytes is a 403 the client walks straight into, and a false
+		// withholding decision on a gated row is the leak #899 closes.
+		//
+		// FieldsReadable, not ContentReadable: this is the metadata
+		// plane, and the two differ on a caller who passes the tier but
+		// not the row's workflow state.
+		readable := visibility.FieldsReadable(fr, caller, caps)
 		row := ListAssetsPageGatedRow{
 			ListAssetsPageRow: i,
 			PreviewAvailable:  hasColVariant && readable,
 			LadderAvailable:   hasFullLadder && readable,
 			ScrubAvailable:    hasScrubVariant && readable,
+			Readable:          readable,
+			OwnerDisplayName:  ownerName,
 		}
 		// A pair or neither — never a half-populated one the client has
 		// to re-validate before dividing.

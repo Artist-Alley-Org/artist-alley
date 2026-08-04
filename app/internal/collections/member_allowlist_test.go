@@ -8,7 +8,7 @@
 //
 // The collection path also carries the two assertions the post path
 // cannot make: that a soft-deleted member is absent ENTIRELY (the one
-// conjunct visibility.MemberReadable deliberately leaves to SQL), and
+// conjunct visibility.FieldsReadable deliberately leaves to SQL), and
 // that owner_display_name is actually populated when the owner has a
 // resolvable name — the post fixture has no `user` row, so it only ever
 // exercises the absent case.
@@ -307,12 +307,12 @@ func TestCollectionMember_OwnerSeesEverything(t *testing.T) {
 }
 
 // TestCollectionMember_SoftDeletedIsAbsentNotPlaceholdered pins the one
-// conjunct visibility.MemberReadable deliberately does NOT decide.
+// conjunct visibility.FieldsReadable deliberately does NOT decide.
 //
 // A restriction and a deletion are different facts and must not look the
 // same: a deleted asset is gone, and announcing "something was here" for
 // it would both be untrue and leak that a row once existed. The SQL owns
-// this, which is why MemberReadable has no Deleted field — see its doc.
+// this, which is why FieldsReadable has no Deleted field — see its doc.
 func TestCollectionMember_SoftDeletedIsAbsentNotPlaceholdered(t *testing.T) {
 	pool := maPool(t)
 	maSeedOwner(t, pool)

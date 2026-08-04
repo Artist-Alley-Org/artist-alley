@@ -62,15 +62,18 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var callerRef *int64
+	var caps visibility.ContentCaps
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		callerRef = &ref
+		caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
 	}
 
 	req := facet.Request{
 		QueryText: q,
 		Facets:    types,
 		Caller:    visibility.NewCaller(callerRef),
+		Caps:      caps,
 	}
 	resp := h.Dispatcher.Run(r.Context(), req)
 	writeJSON(w, http.StatusOK, resp)

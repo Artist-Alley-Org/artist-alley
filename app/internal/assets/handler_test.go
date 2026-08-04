@@ -119,13 +119,13 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	}
 	var created openapi.Asset
 	mustDecode(t, createRR.Body.Bytes(), &created)
-	if created.Title != "Test Asset" {
-		t.Errorf("title=%q want Test Asset", created.Title)
+	if vOf(created.Title) != "Test Asset" {
+		t.Errorf("title=%q want Test Asset", vOf(created.Title))
 	}
 	if created.FileHash == nil || *created.FileHash != hashHex {
 		t.Errorf("file_hash not propagated: %+v", created.FileHash)
 	}
-	if len(created.Tags) != 2 {
+	if len(vOf(created.Tags)) != 2 {
 		t.Errorf("tags=%v want 2 entries", created.Tags)
 	}
 	assetID := created.Id.String()
@@ -160,10 +160,10 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	}
 	var patched openapi.Asset
 	mustDecode(t, patchRR.Body.Bytes(), &patched)
-	if patched.Title != "Updated Title" {
-		t.Errorf("title not updated: %q", patched.Title)
+	if vOf(patched.Title) != "Updated Title" {
+		t.Errorf("title not updated: %q", vOf(patched.Title))
 	}
-	if len(patched.Tags) != 2 || patched.Tags[0] == "smoke" {
+	if len(vOf(patched.Tags)) != 2 || vOf(patched.Tags)[0] == "smoke" {
 		t.Errorf("tags not replaced: %v", patched.Tags)
 	}
 
@@ -178,7 +178,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	router.ServeHTTP(getRR2, httptest.NewRequest(http.MethodGet, "/assets/"+assetID, nil))
 	var afterAdd openapi.Asset
 	mustDecode(t, getRR2.Body.Bytes(), &afterAdd)
-	if len(afterAdd.Tags) != 3 {
+	if len(vOf(afterAdd.Tags)) != 3 {
 		t.Errorf("after add tags=%v want 3", afterAdd.Tags)
 	}
 
@@ -313,8 +313,8 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 	if a.FileHash != nil {
 		t.Errorf("file_hash should be nil: %v", a.FileHash)
 	}
-	if a.Status != "draft" {
-		t.Errorf("status=%q want draft", a.Status)
+	if vOf(a.Status) != "draft" {
+		t.Errorf("status=%q want draft", vOf(a.Status))
 	}
 
 	// file download -> 404 since no hash

@@ -241,7 +241,7 @@ func TestListAssetsByTag_AnonymousSubsetOfUnfiltered(t *testing.T) {
 	// The subset property itself.
 	for id, a := range tagged {
 		if _, ok := unfiltered[id]; !ok {
-			t.Errorf("anonymous ?tag= returned asset %v (%q) that the unfiltered browse withholds", id, a.Title)
+			t.Errorf("anonymous ?tag= returned asset %v (%q) that the unfiltered browse withholds", id, vOf(a.Title))
 		}
 	}
 
@@ -252,18 +252,18 @@ func TestListAssetsByTag_AnonymousSubsetOfUnfiltered(t *testing.T) {
 		}
 		if a, ok := tagged[ids[s.label]]; ok {
 			t.Errorf("anonymous ?tag= leaked %q asset %v (status=%s processing=%s title=%q)",
-				s.label, a.Id, a.Status, a.ProcessingStatus, a.Title)
+				s.label, a.Id, vOf(a.Status), vOf(a.ProcessingStatus), vOf(a.Title))
 		}
 	}
 
 	// Belt and braces on the two dimensions the API surfaces directly,
 	// in case the fixture ever grows a row the table above forgets.
 	for id, a := range tagged {
-		if string(a.Status) != "active" {
-			t.Errorf("anonymous ?tag= returned non-active asset %v status=%s", id, a.Status)
+		if string(vOf(a.Status)) != "active" {
+			t.Errorf("anonymous ?tag= returned non-active asset %v status=%s", id, vOf(a.Status))
 		}
-		if string(a.ProcessingStatus) != "ready" {
-			t.Errorf("anonymous ?tag= returned not-ready asset %v processing_status=%s", id, a.ProcessingStatus)
+		if string(vOf(a.ProcessingStatus)) != "ready" {
+			t.Errorf("anonymous ?tag= returned not-ready asset %v processing_status=%s", id, vOf(a.ProcessingStatus))
 		}
 	}
 
@@ -298,13 +298,13 @@ func TestListAssetsByTag_FlagEquivalence(t *testing.T) {
 				if !ok {
 					continue // legitimately filtered out by the tag
 				}
-				if got.PreviewAvailable != want.PreviewAvailable {
+				if vOf(got.PreviewAvailable) != vOf(want.PreviewAvailable) {
 					t.Errorf("asset %v (%q): preview_available=%v with ?tag=, %v without",
-						id, want.Title, got.PreviewAvailable, want.PreviewAvailable)
+						id, vOf(want.Title), vOf(got.PreviewAvailable), vOf(want.PreviewAvailable))
 				}
-				if got.LadderAvailable != want.LadderAvailable {
+				if vOf(got.LadderAvailable) != vOf(want.LadderAvailable) {
 					t.Errorf("asset %v (%q): ladder_available=%v with ?tag=, %v without",
-						id, want.Title, got.LadderAvailable, want.LadderAvailable)
+						id, vOf(want.Title), vOf(got.LadderAvailable), vOf(want.LadderAvailable))
 				}
 			}
 
@@ -312,10 +312,10 @@ func TestListAssetsByTag_FlagEquivalence(t *testing.T) {
 			// "identical" is just false==false and the flags could still
 			// be unwired.
 			withCol := tagged[ids["public-with-col"]]
-			if !withCol.PreviewAvailable {
+			if !vOf(withCol.PreviewAvailable) {
 				t.Error("preview_available is false for the seeded col-variant asset under ?tag= — the flag is not being computed")
 			}
-			if !withCol.LadderAvailable {
+			if !vOf(withCol.LadderAvailable) {
 				t.Error("ladder_available is false for the seeded col-variant asset under ?tag= — the ladder is not reaching this path")
 			}
 		})
@@ -391,4 +391,15 @@ func TestListAssetsByTag_AuthenticatedNotNarrower(t *testing.T) {
 			t.Errorf("asset %v is visible anonymously but NOT to a signed-in caller — access inverted", id)
 		}
 	}
+}
+
+// vOf dereferences an optional openapi field, returning the zero value
+// for nil. openapi.Asset's fields became pointers in #899 so a withheld
+// payload can omit them; these assertions only care about the value.
+func vOf[T any](p *T) T {
+	var z T
+	if p == nil {
+		return z
+	}
+	return *p
 }

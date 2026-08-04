@@ -106,8 +106,8 @@ func TestForwardCompat_NewPeerDecodesOldAsset(t *testing.T) {
 	if asset.SubtitleTracks != nil && len(*asset.SubtitleTracks) > 0 {
 		t.Errorf("subtitle_tracks should default to nil/empty on pre-subs wire, got %d entries", len(*asset.SubtitleTracks))
 	}
-	if asset.Title != "A Pre-Subs Video" {
-		t.Errorf("known fields didn't round-trip: title=%q", asset.Title)
+	if asset.Title == nil || *asset.Title != "A Pre-Subs Video" {
+		t.Errorf("known fields didn't round-trip: title=%v", asset.Title)
 	}
 }
 

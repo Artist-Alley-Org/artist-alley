@@ -12,15 +12,46 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
-// buildAssetVisibilityAppendedSQL prepends visibility.Filter to the
-// asset population predicate. Returns the WHERE-fragment suffix +
-// bound args so each aggregator composes cleanly.
-func buildAssetVisibilityAppendedSQL(ctx context.Context, caller visibility.Caller, offset int) (string, []any, error) {
+// buildAssetVisibilityAppendedSQL composes the two planes an asset
+// aggregate must respect and returns the WHERE-fragment suffix + bound
+// args so each aggregator adds them cleanly.
+//
+// THE SENSITIVITY DECISION (#899). Facet counts now include only rows
+// the caller could actually OPEN, not every row they can see exists.
+// That is a deliberate narrowing, and it is deliberately narrower than
+// `total_count` on /search beside it, so it is worth stating why.
+//
+// The judgement is different for the SENSITIVITY facet than for the
+// others, and it is the sensitivity facet that forced the change. ADR
+// 0064 keeps a restricted row LISTED, so its existence is already
+// disclosed and a count that includes it arguably discloses nothing
+// new. But a facet does not report existence — it reports a PROPERTY,
+// as a filterable dimension. `sensitivity: restricted 1` states this
+// item's tier; `extension: ogg 1` states its file type; `asset_type:
+// Audio 1` states its kind. Every one of those is a field #899
+// withholds from the payload of that same asset, handed back as an
+// aggregate. With a narrow enough query the aggregate is the item.
+//
+// So all four asset aggregators take the content plane, not just
+// sensitivity: fixing one and leaving `extension` to answer the same
+// question is a distinction an attacker will not respect. `tag` is
+// unaffected — it aggregates through POSTS, under the post predicate.
+//
+// The counts are what the caller can open, and so are strictly less
+// than or equal to the result total. An owner still sees `restricted N`
+// for their own work, which is the case that made "just drop the
+// sensitivity facet" wrong.
+func buildAssetVisibilityAppendedSQL(ctx context.Context, caller visibility.Caller, caps visibility.ContentCaps, offset int) (string, []any, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return "", nil, err
 	}
 	frag, args := pred.ToSQL("a", offset)
+	// The content plane binds no new placeholder: the caller ref is
+	// inlined as a literal because it is an int64 this package produced,
+	// never caller-supplied text, and threading another placeholder
+	// through four aggregators' arg lists is where an off-by-one lives.
+	frag += visibility.ContentReadableSQL("a", strconv.FormatInt(caller.UserRef, 10), caps)
 	return frag, args, nil
 }
 
@@ -32,7 +63,7 @@ type assetTypeAgg struct{}
 func (assetTypeAgg) Type() FacetType { return FacetAssetType }
 
 func (assetTypeAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([]Bucket, error) {
-	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, 1)
+	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +101,7 @@ type sensitivityAgg struct{}
 func (sensitivityAgg) Type() FacetType { return FacetSensitivity }
 
 func (sensitivityAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([]Bucket, error) {
-	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, 1)
+	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +136,7 @@ type ownerAgg struct{}
 func (ownerAgg) Type() FacetType { return FacetOwner }
 
 func (ownerAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([]Bucket, error) {
-	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, 1)
+	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +175,7 @@ type extensionAgg struct{}
 func (extensionAgg) Type() FacetType { return FacetExtension }
 
 func (extensionAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([]Bucket, error) {
-	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, 1)
+	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, 1)
 	if err != nil {
 		return nil, err
 	}

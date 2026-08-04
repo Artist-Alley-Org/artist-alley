@@ -197,14 +197,19 @@
     {#snippet trigger({ open })}
       <span class={triggerClass(open)}>{t('viewer_menu.file')}</span>
     {/snippet}
-    <button
-      type="button"
-      role="menuitem"
-      onclick={downloadOriginal}
-      class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
-    >
-      {t('viewer_menu.download_original')}
-    </button>
+    <!-- #899 — not offered for an asset the caller cannot open. The
+         bytes 404 for them (ADR 0064 gates the binary plane and always
+         did), so this menu item was an invitation to a dead end. -->
+    {#if !asset.restricted}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={downloadOriginal}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.download_original')}
+      </button>
+    {/if}
     {#if onDownloadVariant}
       <button
         type="button"

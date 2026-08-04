@@ -1022,10 +1022,10 @@ var errAssetMissing = errors.New("collections: asset row absent")
 //
 // # The rule
 //
-// The conjunction visibility.MemberReadable already documents
+// The conjunction visibility.FieldsReadable already documents
 // (visibility/member.go, "the CONJUNCTION of the two planes"): a caller
 // may collect an asset iff they could have reached that ROW standalone
-// AND could have reached its BYTES. MemberReadable itself is not
+// AND could have reached its BYTES. FieldsReadable itself is not
 // callable here — it takes an already-fetched MemberRow supplied by the
 // container queries — so this composes the same two planes from their
 // existing entry points rather than writing a third expression of the
@@ -1049,7 +1049,7 @@ var errAssetMissing = errors.New("collections: asset row absent")
 // catalogue; a caller who is allowed to view every asset is by this
 // endpoint's own rule — "you may collect what you can see" — allowed to
 // collect them. Narrowing it here would put the add path out of step
-// with MemberReadable, which would then render the very members this
+// with FieldsReadable, which would then render the very members this
 // refused to create.
 //
 // # Fails closed
