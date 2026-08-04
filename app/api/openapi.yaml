@@ -12287,11 +12287,34 @@ components:
         One asset's membership in a collection, joined with the
         asset's identifying columns so the UI can render without a
         follow-up fetch.
+
+        RESTRICTED MEMBERS (#883) — identical contract to PostMember, see
+        there for the reasoning. When the caller fails
+        `visibility.MemberReadable` this row degrades to a placeholder:
+        `restricted` is true and EVERY joined-in `assets` column below
+        (title, asset_type, status, file_hash, file_extension, thumbhash,
+        pixel_width, pixel_height, asset_created_at, and the three
+        availability flags) is ABSENT — not empty-string, not zero, not
+        null — so a client cannot distinguish "withheld" from "genuinely
+        empty" and infer from the difference.
+
+        That is why those fields moved out of `required`. The permitted
+        key set on a restricted row is exactly the `collection_resources`
+        row's own columns — collection_id, asset_id, sort_order, pinned,
+        expires_at, added_at — plus `restricted` and
+        `owner_display_name`. No column of `assets` crosses the boundary,
+        so a column added to that table later is withheld by
+        construction.
+
+        On a NON-restricted row every one of those fields is still sent,
+        unchanged and unconditionally; #595's argument for keeping the
+        card-critical ones non-optional (a surface that hand-maps a
+        narrower object silently loses video badges and sprite-scrub)
+        still holds, and the allow-list test in
+        `collections/member_allowlist_test.go` is what now pins it,
+        because `required` no longer can.
       required:
-        [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status, preview_available, ladder_available,
-         scrub_available,
-         file_hash, file_extension, thumbhash, pixel_width, pixel_height]
+        [collection_id, asset_id, sort_order, pinned, added_at, restricted]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -12302,6 +12325,17 @@ components:
           format: date-time
           nullable: true
         added_at: { type: string, format: date-time }
+        restricted:
+          type: boolean
+          description: |
+            True when the caller may not see this member. Every
+            asset-derived field is then absent and the client renders a
+            placeholder tile (#883).
+        owner_display_name:
+          type: string
+          description: |
+            Set only when `restricted` is true: the display name of the
+            asset's owner. Absent — not empty — when unresolvable.
         title: { type: string }
         asset_type: { type: integer, format: int64 }
         status: { type: string, enum: [draft, active, archived] }
@@ -13094,11 +13128,51 @@ components:
       description: |
         An asset attached to a post, with its sort_order in the
         carousel and the asset payload joined-in to avoid an N+1.
-      required: [asset_id, sort_order, asset]
+
+        RESTRICTED MEMBERS (#883). A post's author can attach an asset
+        that the *reader* is not entitled to — their own restricted
+        work, or (once #882 lands) someone else's. Membership must never
+        WIDEN an item, so when the reader fails
+        `visibility.MemberReadable` this object degrades to a
+        placeholder: `restricted` flips to true, `asset` is ABSENT, and
+        the only thing carried across from the asset row is
+        `owner_display_name`.
+
+        The placeholder is deliberately PRESENT rather than dropped from
+        the array. A reader is meant to be able to tell that something is
+        there they cannot see — that is what makes "request access"
+        (#881) meaningful, and silently omitting the member would hide
+        the restriction instead of stating it.
+
+        ALLOW-LIST, not deny-list. The permitted key set on a restricted
+        member is exactly `asset_id`, `sort_order`, `restricted`,
+        `owner_display_name` — the `post_assets` row's own columns plus a
+        marker plus the one asset-derived value the owner permitted. NO
+        column of `assets` crosses this boundary. A field added to
+        `Asset` later is therefore withheld by construction rather than
+        by remembering to add it to a list of known-sensitive names.
+      required: [asset_id, sort_order, restricted]
       properties:
         asset_id: { type: string, format: uuid }
         sort_order: { type: integer }
-        asset: { $ref: "#/components/schemas/Asset" }
+        restricted:
+          type: boolean
+          description: |
+            True when the caller may not see this member. `asset` is then
+            absent and the client renders a placeholder tile.
+        owner_display_name:
+          type: string
+          description: |
+            Set only when `restricted` is true: the display name of the
+            asset's owner, so the placeholder can say whose work it is
+            and #881 can address the request. Absent — not empty — when
+            the owner has no resolvable name or the asset is unowned, so
+            a client cannot tell "withheld" from "genuinely empty".
+        asset:
+          allOf: [{ $ref: "#/components/schemas/Asset" }]
+          description: |
+            ABSENT when `restricted` is true. Present, and complete, in
+            every other case.
     PostCreate:
       type: object
       required: [members]

@@ -888,16 +888,7 @@ func (h *Handler) ListCollectionResources(
 		if i >= int(limit) {
 			break
 		}
-		item := resourceRowToAPI(r.ListCollectionResourcesPageRow)
-		item.PreviewAvailable = r.PreviewAvailable
-		item.LadderAvailable = r.LadderAvailable
-		item.ScrubAvailable = r.ScrubAvailable
-		// #640 — the member tile's aspect ratio. Same pair-or-neither
-		// contract as everywhere else; the gated row already dropped a
-		// half-populated pair.
-		item.PixelWidth = r.PixelWidth
-		item.PixelHeight = r.PixelHeight
-		items = append(items, item)
+		items = append(items, resourceRowToAPI(r))
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
 	}
@@ -1309,23 +1300,73 @@ func rowToAPI(r Collection) openapi.Collection {
 	return c
 }
 
-func resourceRowToAPI(r ListCollectionResourcesPageRow) openapi.CollectionResource {
+// resourceRowToAPI serialises ONE membership row.
+//
+// The two branches are the #883 allow-list. The placeholder branch is
+// written as a complete literal rather than as "build the full row, then
+// clear the sensitive fields": a field added to CollectionResource later
+// is absent from a literal by construction, whereas a clear-list has to
+// be remembered. That is the deny-list failure mode this issue exists to
+// avoid, and it is why the shared assignments below are duplicated
+// instead of hoisted.
+func resourceRowToAPI(r ListCollectionResourcesPageGatedRow) openapi.CollectionResource {
+	if r.Restricted {
+		out := openapi.CollectionResource{
+			// collection_resources columns only — nothing from `assets`.
+			CollectionId: openapi_types.UUID(r.CollectionID.Bytes),
+			AssetId:      openapi_types.UUID(r.AssetID.Bytes),
+			SortOrder:    int(r.SortOrder),
+			Pinned:       r.Pinned,
+			AddedAt:      r.AddedAt.Time,
+			Restricted:   true,
+		}
+		if r.ExpiresAt.Valid {
+			t := r.ExpiresAt.Time
+			out.ExpiresAt = &t
+		}
+		// Absent, not "", when the owner has no resolvable name — a
+		// client must not be able to read anything off the difference
+		// between "withheld" and "empty".
+		if r.OwnerDisplayName != "" {
+			v := r.OwnerDisplayName
+			out.OwnerDisplayName = &v
+		}
+		return out
+	}
+
+	title := r.Title
+	assetType := r.AssetType
+	status := openapi.CollectionResourceStatus(r.Status)
+	preview, ladder, scrub := r.PreviewAvailable, r.LadderAvailable, r.ScrubAvailable
 	out := openapi.CollectionResource{
 		CollectionId: openapi_types.UUID(r.CollectionID.Bytes),
 		AssetId:      openapi_types.UUID(r.AssetID.Bytes),
 		SortOrder:    int(r.SortOrder),
 		Pinned:       r.Pinned,
 		AddedAt:      r.AddedAt.Time,
-		Title:        r.Title,
-		AssetType:    r.AssetType,
-		Status:       openapi.CollectionResourceStatus(r.Status),
+		Restricted:   false,
+		Title:        &title,
+		AssetType:    &assetType,
+		Status:       &status,
 		FileHash:     r.FileHash,
 		// #595 — the media-type + blur-up fields. A member tile renders
 		// through the same CardThumb as a browse tile, and CardThumb
 		// reads the media type off the extension alone (video / 3D badge
 		// + sprite-scrub hover preview). Without these the tile is an
 		// untyped still. Encoded exactly as assets.assetRowToAPI does.
-		FileExtension: r.FileExtension,
+		// They are `omitempty` pointers now only because the placeholder
+		// branch above needs them absent; on THIS branch every one is
+		// still populated unconditionally, and member_allowlist_test.go
+		// pins that.
+		FileExtension:    r.FileExtension,
+		PreviewAvailable: &preview,
+		LadderAvailable:  &ladder,
+		ScrubAvailable:   &scrub,
+		// #640 — the member tile's aspect ratio. Same pair-or-neither
+		// contract as everywhere else; the gated row already dropped a
+		// half-populated pair.
+		PixelWidth:  r.PixelWidth,
+		PixelHeight: r.PixelHeight,
 	}
 	if len(r.Thumbhash) > 0 {
 		v := base64.StdEncoding.EncodeToString(r.Thumbhash)

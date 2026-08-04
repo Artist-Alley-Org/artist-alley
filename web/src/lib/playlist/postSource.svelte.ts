@@ -36,7 +36,12 @@ export interface PostForPlaylist {
   members: Array<{
     asset_id: string;
     sort_order: number;
-    asset: {
+    /** #883 — true when the viewer may not see this member. `asset` is
+     *  then ABSENT (hence optional below) and `owner_display_name` is the
+     *  only asset-derived value present. */
+    restricted?: boolean;
+    owner_display_name?: string;
+    asset?: {
       id: string;
       title?: string;
       file_hash?: string | null;
@@ -126,9 +131,17 @@ export function createPostPlaylistSource(postId: string) {
       aux.post = post;
       state.id = post.id;
       state.title = post.title || t('common.untitled');
+      // #883 — a member the viewer may not see arrives WITHOUT its
+      // `asset` object. The `?? ''` / `?? null` defaults below already
+      // survive that, but silently: the item would render as an ordinary
+      // untitled asset with no preview, indistinguishable from one whose
+      // derivatives simply have not finished. The flag is what makes the
+      // shell state the restriction instead of guessing.
       state.items = (post.members ?? []).map(
         (m): PlaylistItem => ({
           id: m.asset_id,
+          restricted: !!m.restricted,
+          ownerDisplayName: m.owner_display_name ?? null,
           asset: {
             id: m.asset_id,
             title: m.asset?.title ?? '',

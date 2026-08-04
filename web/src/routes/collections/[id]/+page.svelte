@@ -49,19 +49,26 @@
     deleted_reason?: string | null;
   }
 
+  // #883 — every asset-derived field is OPTIONAL because a member the
+  // viewer may not see arrives as a placeholder that omits all of them.
+  // `restricted` is the flag that says which shape this row is; reading
+  // any field below without checking it first is the bug this issue
+  // closes.
   interface MemberRow {
     asset_id: string;
-    title: string;
-    asset_type: number;
-    file_hash: string | null;
+    restricted?: boolean;
+    owner_display_name?: string | null;
+    title?: string;
+    asset_type?: number;
+    file_hash?: string | null;
     // Media type + blur-up (#595). A member tile renders through the
     // same CardThumb as a browse tile, which reads the media TYPE off
     // the extension alone — that is what puts the video / 3D badge on
     // the tile and what makes the hover sprite-scrub preview play.
     // These were missing from both this row type and the API response,
     // so every video and 3D member rendered as an untyped still.
-    file_extension: string | null;
-    thumbhash: string | null;
+    file_extension?: string | null;
+    thumbhash?: string | null;
     sort_order: number;
     added_at: string;
     asset_created_at?: string | null;
@@ -129,24 +136,52 @@
   // nothing. With the annotation, forgetting a presentation field is a
   // type error here rather than a missing badge in the browser.
   const memberItems = $derived<CardAsset[]>(
-    sortedMembers.map((m) => ({
-      id: m.asset_id,
-      title: m.title,
-      file_hash: m.file_hash,
-      file_extension: m.file_extension,
-      thumbhash: m.thumbhash,
-      asset_type: m.asset_type,
-      created_at: m.asset_created_at ?? m.added_at,
-      preview_available: !!m.preview_available,
-      ladder_available: !!m.ladder_available,
-      scrub_available: !!m.scrub_available,
-      // #640 — the masonry tile's aspect ratio. The annotation above is
-      // what forced this line to be written; without it the member tiles
-      // would silently have gone back to being squares in masonry while
-      // every other surface followed its art.
-      pixel_width: m.pixel_width ?? null,
-      pixel_height: m.pixel_height ?? null,
-    })),
+    sortedMembers.map((m) =>
+      // #883 — a member the viewer may not see arrives as a placeholder:
+      // `restricted: true`, the owner's display name, and NOT ONE of the
+      // asset fields below. The zeros and empty strings here are the
+      // card contract's required shape being satisfied with values the
+      // restricted plate never reads; they are not data, and mapping the
+      // absent API fields through `?? ''` on the normal branch instead
+      // would have quietly turned a withheld title into a blank one.
+      m.restricted
+        ? {
+            id: m.asset_id,
+            title: '',
+            file_hash: null,
+            file_extension: null,
+            thumbhash: null,
+            asset_type: 0,
+            created_at: m.added_at,
+            preview_available: false,
+            ladder_available: false,
+            scrub_available: false,
+            pixel_width: null,
+            pixel_height: null,
+            restricted: true,
+            owner_display_name: m.owner_display_name ?? null,
+          }
+        : {
+            id: m.asset_id,
+            title: m.title ?? '',
+            file_hash: m.file_hash ?? null,
+            file_extension: m.file_extension ?? null,
+            thumbhash: m.thumbhash ?? null,
+            asset_type: m.asset_type ?? 0,
+            created_at: m.asset_created_at ?? m.added_at,
+            preview_available: !!m.preview_available,
+            ladder_available: !!m.ladder_available,
+            scrub_available: !!m.scrub_available,
+            // #640 — the masonry tile's aspect ratio. The annotation
+            // above is what forced this line to be written; without it
+            // the member tiles would silently have gone back to being
+            // squares in masonry while every other surface followed its
+            // art.
+            pixel_width: m.pixel_width ?? null,
+            pixel_height: m.pixel_height ?? null,
+            restricted: false,
+          },
+    ),
   );
 
   onMount(() => {

@@ -69,6 +69,20 @@ export interface CardAsset {
    *  card falls back to measuring the image on load. */
   pixel_width: number | null;
   pixel_height: number | null;
+  /** The viewer may not see this item, and the server sent a placeholder
+   *  rather than the row (#883). OPTIONAL, unlike everything above,
+   *  because it is a property of MEMBERSHIP: only a container surface (a
+   *  collection's contents, a post's members) can produce one. Browse and
+   *  the profile grids list assets in their own right and never set it.
+   *
+   *  When true, none of the fields above carry real values — the API
+   *  omitted them — and CardThumb short-circuits to the restricted plate
+   *  before reading any of them. */
+  restricted?: boolean;
+  /** The asset owner's display name: the ONE asset-derived value a
+   *  restricted placeholder is allowed to carry. Null/absent when the
+   *  server could not resolve one. */
+  owner_display_name?: string | null;
 }
 
 /** The asset payload joined into a post member — the same presentation

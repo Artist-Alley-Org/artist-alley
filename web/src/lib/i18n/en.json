@@ -214,6 +214,12 @@
         "archive": "Archive",
         "placeholder": "File"
       }
+    },
+    "restricted": {
+      "label": "Restricted",
+      "owner": "by {owner}",
+      "owner_unknown": "Owner not shown",
+      "sr": "This item is restricted. You do not have access to it."
     }
   },
   "selection": {
