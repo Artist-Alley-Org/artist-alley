@@ -52,6 +52,7 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   { slug: 'subscriptions', group: 'communication', status: 'stub', href: '/account/subscriptions' },
 
   // Workspace
+  { slug: 'shared',        group: 'workspace', status: 'live', href: '/account/shared' },
   { slug: 'tokens',        group: 'workspace', status: 'live', href: '/account/tokens' },
   { slug: 'saved-searches', group: 'workspace', status: 'stub', href: '/account/saved-searches' },
   { slug: 'bookmarks',     group: 'workspace', status: 'stub', href: '/account/bookmarks' },

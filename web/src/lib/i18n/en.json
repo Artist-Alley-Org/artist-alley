@@ -374,6 +374,10 @@
         "title": "Subscriptions",
         "blurb": "Tags, users, and collections you follow."
       },
+      "shared": {
+        "title": "Shared with me",
+        "blurb": "Posts other people have given you access to."
+      },
       "tokens": {
         "title": "API tokens",
         "blurb": "Personal access tokens for scripts and integrations."
@@ -440,6 +444,13 @@
       "col_since": "Blocked since",
       "col_actions": "Actions"
     },
+    "shared": {
+      "title": "Shared with me",
+      "intro": "Posts other people have given you access to. They stay here for as long as the access lasts — revoke it or let it expire, and the post drops off this page. Shared posts don't appear in Browse; you get a notification when someone shares one.",
+      "empty": "Nobody has shared a post with you yet.",
+      "empty_hint": "When someone gives you access to one of their posts, it shows up here and you'll get a notification.",
+      "load_more": "Load more"
+    },
     "preferences": {
       "title": "Preferences",
       "intro": "These follow you across browsers when you sign in.",
@@ -467,6 +478,7 @@
       "notif_event_post_from_followed_user": "New post from someone you follow",
       "notif_event_direct_message_received": "Direct message received",
       "notif_event_broadcast_received": "Broadcast / announcement",
+      "notif_event_post_shared_with_me": "A post was shared with you",
       "notif_event_resource_request_received_to_approve": "Asset access request awaiting your approval",
       "notif_event_resource_request_approved": "Your asset access request was approved",
       "notif_event_resource_request_denied": "Your asset access request was denied",
@@ -2201,6 +2213,7 @@
     "verb_post_from_followed_user": "New post from someone you follow",
     "verb_direct_message_received": "New direct message",
     "verb_broadcast_received": "Announcement",
+    "verb_post_shared_with_me": "A post was shared with you",
     "verb_resource_request_received_to_approve": "Asset access request awaiting your approval",
     "verb_resource_request_approved": "Your asset access request was approved",
     "verb_resource_request_denied": "Your asset access request was denied",

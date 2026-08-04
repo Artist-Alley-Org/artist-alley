@@ -124,28 +124,13 @@ func readRuleFor(id *auth.Identity) readRule {
 // agreement is what the earlier deferral in this comment was protecting,
 // and it is now structural.
 //
-// principal_type is 'user' ONLY. 'role' and 'team' are in the schema and
-// in ADR 0010, but resolving them needs the caller's role set and the
-// team closure threaded into this fragment (Layer 5), and neither is
-// implemented for collection_acls either — see
-// visibility/predicate.go's EntityCollection branch, which carries the
-// identical user-only disjunct. Keeping the two ACL surfaces the same
-// shape is deliberate.
-//
-// `permission` is not filtered on, for the same reason collections do
-// not: the column's CHECK admits only read/write/admin, and all three
-// imply read. Filtering to permission='read' would make a 'write' grant
-// silently grant nothing, which is the failure this issue is about.
-//
-// Expiry is evaluated in SQL (`IS NULL OR > NOW()`), not in Go: the row
-// is matched or not matched by the same query that decides visibility,
-// so there is no window where a list built from one clock disagrees with
-// a gate built from another.
-//
-// principal_id is TEXT while user refs are BIGINT, so the bound bigint
-// is cast at the comparison (`$n::TEXT`) rather than formatted in Go.
-// The cast direction matters: a mismatch here matches nothing and looks
-// exactly like "no grant exists".
+// The grant disjunct itself is liveGrantSQL below — principal_type,
+// expiry, the TEXT cast and the deliberate absence of a `permission`
+// filter are all documented there, because the "Shared with me" surface
+// (#875) uses the SAME fragment standalone and neither copy may drift.
+// role/team principals stay unimplemented on both post_acls and
+// collection_acls; see visibility/predicate.go's EntityCollection
+// branch, which carries the identical user-only disjunct.
 //
 // Soft-delete is NOT part of this fragment. It is an orthogonal axis
 // owned by each caller: the list path has an admin-only include_deleted
@@ -176,15 +161,54 @@ func (r readRule) sql(alias string, argOffset int) (fragment string, args []any)
 			"SELECT 1 FROM user_follows f"+
 			" WHERE f.follower_user_ref = $%[2]d"+
 			" AND f.followee_user_ref = %[1]sauthor_user_ref))"+
-			" OR EXISTS ("+
+			" OR %[4]s)",
+		a, idx, privateOK, liveGrantSQL(a, idx),
+	)
+	return frag, []any{r.userRef}
+}
+
+// liveGrantSQL renders "an unexpired post_acls row names this user" as
+// a bare EXISTS, against `qualifier` (an already-dotted table alias, or
+// empty) and the placeholder holding the caller's user ref.
+//
+// It is factored out for ONE reason: two callers need the identical
+// predicate and this file's whole point is that there is one expression
+// of it (#660, #665). The read rule ORs it in as the ACL disjunct;
+// ListSharedWithMeGated uses it standalone as "the posts shared with
+// me". Restating the same four conditions in the second query is how
+// the two drift — the "Shared with me" page listing a post the read
+// rule refuses, or (worse) still listing an expired grant because only
+// one of the two copies got the expiry clause.
+//
+// So expiry lives here, not at either call site: `expires_at IS NULL OR
+// > NOW()`, evaluated by Postgres in the same statement that decides
+// visibility. Same for `principal_type = 'user'` — role and team are
+// Layer 5, unimplemented on both ACL surfaces.
+//
+// The cast is `$n::BIGINT::TEXT`, in that order, and the BIGINT half is
+// load-bearing rather than decorative. principal_id is TEXT and a user
+// ref is a bigint, so the bound value has to be cast at the comparison;
+// but Postgres infers a parameter's type from its context, and a bare
+// `$n::TEXT` tells it the parameter IS text — at which point pgx is
+// asked to encode an int64 as text and fails with "cannot find encode
+// plan". The read rule never hit that because the same placeholder is
+// also compared against author_user_ref, which pins it to bigint; the
+// standalone caller has no such conjunct. Naming the input type here
+// makes the fragment mean the same thing wherever it is spliced, which
+// is the entire point of it being a fragment.
+//
+// `permission` is deliberately unfiltered — the column's CHECK admits
+// read/write/admin and all three imply read.
+func liveGrantSQL(qualifier string, argIdx int) string {
+	return fmt.Sprintf(
+		"EXISTS ("+
 			"SELECT 1 FROM post_acls acl"+
 			" WHERE acl.post_id = %[1]sid"+
 			" AND acl.principal_type = 'user'"+
-			" AND acl.principal_id = $%[2]d::TEXT"+
-			" AND (acl.expires_at IS NULL OR acl.expires_at > NOW())))",
-		a, idx, privateOK,
+			" AND acl.principal_id = $%[2]d::BIGINT::TEXT"+
+			" AND (acl.expires_at IS NULL OR acl.expires_at > NOW()))",
+		qualifier, argIdx,
 	)
-	return frag, []any{r.userRef}
 }
 
 // postReadable reports whether the caller may read one post, by id. It

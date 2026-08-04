@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,6 +137,25 @@ type Handler struct {
 	// unwired (tests) means no mention notifications, and the post
 	// still saves normally.
 	mentions *mention.Service
+
+	// notifier fires the "someone shared a post with you" notification
+	// from AddPostAcl (#875). Same local-interface shape social and
+	// messages use, and at boot it is the SAME socialNotifyAdapter over
+	// the one notifications.Writer, so shares inherit the block and
+	// channel-preference gating every other verb goes through.
+	//
+	// nil-safe: unwired (tests that don't care) means the grant lands
+	// silently, which is precisely the pre-#875 behaviour rather than a
+	// panic.
+	notifier notifier
+}
+
+// notifier is the notifications.Writer slice this package needs.
+// Declared locally so posts doesn't import notifications for the writer
+// itself (it already imports the package for the verb + payload-key
+// constants, which are just strings).
+type notifier interface {
+	Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error
 }
 
 // The social-graph seam this package used to carry (followChecker /
@@ -164,6 +184,10 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 // SetMentions installs the @-mention notification service (Phase
 // 1.55.X). Post-construction setter, same shape as the others.
 func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
+
+// SetNotifier installs the cross-package notifications writer (#875).
+// Post-construction setter, same shape as social.Handler's.
+func (h *Handler) SetNotifier(n notifier) { h.notifier = n }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}
@@ -865,6 +889,107 @@ func (h *Handler) ListPosts(
 	return openapi.ListPosts200JSONResponse(resp), nil
 }
 
+// ---------------------------------------------------------------------------
+// ListPostsSharedWithMe — the "Shared with me" surface (#875)
+// ---------------------------------------------------------------------------
+//
+// Where shares accumulate. A grant used to be findable only if the
+// sharer also sent a link out of band: the notification did not exist,
+// and ListPosts above pins visibility to `org-only` when the caller
+// sends no `?visibility=`, which no frontend surface does — so a shared
+// post never entered the recipient's grid.
+//
+// The fix is NOT to widen that default. A share is low-volume and
+// high-salience: burying it in the busiest grid in the app is the wrong
+// place for it, and putting an EXISTS over post_acls into the feed would
+// change the shape (and the cache key) of the hottest query in the app
+// for content better served by being announced. Every prior-art surface
+// worth copying does the same two things instead — tell the recipient,
+// and give shares somewhere of their own to land. This is the second.
+//
+// Everything after the query is the feed's own tail: fetchFullPost per
+// row through the shared post cache, then enrichPreview for the
+// per-caller preview flags. Deliberately identical, so a post looks the
+// same here as it does anywhere else it is listed.
+func (h *Handler) ListPostsSharedWithMe(
+	ctx context.Context,
+	req openapi.ListPostsSharedWithMeRequestObject,
+) (openapi.ListPostsSharedWithMeResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListPostsSharedWithMe401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+
+	limit := int32(50)
+	if req.Params.Limit != nil {
+		l := *req.Params.Limit
+		if l < 1 {
+			l = 1
+		}
+		if l > maxListLimit {
+			l = maxListLimit
+		}
+		limit = int32(l)
+	}
+
+	var cursorTs pgtype.Timestamptz
+	var cursorID pgtype.UUID
+	if req.Params.Cursor != nil && *req.Params.Cursor != "" {
+		ts, id, err := decodeCursor(*req.Params.Cursor)
+		if err != nil {
+			return openapi.ListPostsSharedWithMe500JSONResponse{
+				InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: "invalid cursor"},
+			}, nil
+		}
+		cursorTs = pgtype.Timestamptz{Time: ts, Valid: true}
+		cursorID = pgtype.UUID{Bytes: id, Valid: true}
+	}
+
+	rows, err := h.ListSharedWithMeGated(ctx, caller.UserRef, cursorTs, cursorID, limit+1)
+	if err != nil {
+		return nil, fmt.Errorf("posts: shared with me: %w", err)
+	}
+
+	items := make([]openapi.Post, 0, limit)
+	var lastPostedAt time.Time
+	var lastID uuid.UUID
+	for i, r := range rows {
+		if i >= int(limit) {
+			break
+		}
+		full, err := h.fetchFullPost(ctx, r.ID)
+		if err != nil {
+			// The query already filters deleted_at IS NULL, so a miss
+			// here means the post was deleted between the two reads.
+			// Drop it rather than 500 — this surface has no trash view.
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return nil, err
+		}
+		items = append(items, *full)
+		lastPostedAt = r.PostedAt.Time
+		lastID = uuid.UUID(r.ID.Bytes)
+	}
+
+	ptrs := make([]*openapi.Post, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+
+	resp := openapi.PostList{Items: items}
+	if len(rows) > int(limit) {
+		next := encodeCursor(lastPostedAt, lastID)
+		resp.NextCursor = &next
+	}
+	return openapi.ListPostsSharedWithMe200JSONResponse(resp), nil
+}
+
 // GetPostsByAsset returns the visibility-filtered posts whose members
 // include the given asset (#478 slice-2, ADR 0070). An asset is a
 // many-to-many member of ≥0 posts, so this is a slice of the same feed
@@ -1005,18 +1130,33 @@ func (h *Handler) RemovePostAsset(
 // ACLs — additive grants on top of role/team/visibility (ADR 0010 L6)
 // ---------------------------------------------------------------------------
 //
-// Authorization: reading the ACL list requires read access to the post
-// (canReadPost). Adding/removing requires write access (canMutatePost)
-// so a viewer can't expand their own access by editing the ACL list.
+// Authorization: adding, removing AND listing all require write access
+// to the post (canMutatePost) — author, posts.admin or system.admin.
+// Add/remove has always been gated that way so a viewer can't expand
+// their own access by editing the ACL list; listing joined it in #876.
 //
-// Since #667 wired post_acls into canReadPost's rule, a GRANTEE can now
-// read this list too — someone you share a post with can see who else it
-// is shared with. That follows from "read the post ⇒ read its grants"
-// and is not a new class of disclosure (any signed-in caller could
-// already list the grants on any org-only post), but it is a real
-// behaviour change and it is deliberate rather than overlooked. If
-// grantee-visible ACL rows ever need hiding, the narrow fix is a
-// separate authorization here, not a second read rule.
+// #667 wired post_acls into the read rule, which incidentally handed the
+// grant list to every GRANTEE: share a post with someone and they could
+// enumerate everyone else it was shared with, who granted it and when
+// each grant expires. That followed from gating on "can read the post",
+// and the note left here at the time named the fix — "a separate
+// authorization here, not a second read rule" — which is what this is.
+//
+// The gate is a DIFFERENT rule from the read rule, not a restatement of
+// it, and the difference is the point: it drops the grant disjunct (a
+// grantee may use the share without seeing the guest list) and drops the
+// org-only tier too (being signed in is not a management relationship
+// with somebody else's post). collections.ListCollectionAcls has always
+// drawn exactly this line, for exactly this reason — "who may read the
+// grant list is a management question, not the row-visibility question".
+//
+// Note what did NOT change: the read rule. A grantee still reads the
+// post, still finds it at GET /posts/{id}, still sees it on their
+// "Shared with me" surface. Only the guest list closed.
+//
+// The 404-before-403 order is kept: a caller who cannot mutate a post
+// that does not exist gets "not found", same as every other post route,
+// so this endpoint stays no more enumerable than GetPost.
 
 func (h *Handler) ListPostAcls(
 	ctx context.Context,
@@ -1029,7 +1169,7 @@ func (h *Handler) ListPostAcls(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	full, err := h.fetchFullPost(ctx, pgID)
+	cur, err := New(h.Pool).GetPost(ctx, pgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.ListPostAcls404JSONResponse{
@@ -1038,13 +1178,9 @@ func (h *Handler) ListPostAcls(
 		}
 		return nil, err
 	}
-	readable, err := h.canReadPost(ctx, caller, full)
-	if err != nil {
-		return nil, err
-	}
-	if !readable {
+	if !canMutatePost(caller, cur.AuthorUserRef) {
 		return openapi.ListPostAcls403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
 	rows, err := New(h.Pool).ListPostAcls(ctx, pgID)
@@ -1118,7 +1254,68 @@ func (h *Handler) AddPostAcl(
 		return nil, fmt.Errorf("posts: add acl: %w", err)
 	}
 	h.cacheInvalidate(ctx, pgID)
+	h.notifyShare(ctx, caller.UserRef, cur, req.Body)
 	return openapi.AddPostAcl204Response{}, nil
+}
+
+// notifyShare tells the grantee a post was shared with them (#875).
+//
+// Before this, a share was completely silent AND invisible: nothing was
+// sent, and the browse feed's default `org-only` filter meant the post
+// never appeared in the recipient's grid either. Sharing only worked if
+// the sharer separately sent a link out of band. The notification is how
+// you LEARN; /account/shared-posts is where shares accumulate.
+//
+// Runs AFTER the row is written and deliberately returns nothing: the
+// grant is the user's action and it has already succeeded, so a notify
+// failure is logged and dropped rather than turned into a 500 that would
+// tell the author their share failed when it did not. Same best-effort
+// discipline as the @-mention emit in CreatePost.
+//
+// Only `user` principals notify. A `role` or `team` grant names no
+// single recipient — resolving one into a recipient set is a fan-out
+// this surface does not have (and role/team principals do not even grant
+// read yet; see readRule.sql). Skipping is the honest answer; inventing
+// a fan-out here would be a second, undertested membership rule.
+//
+// principal_id is TEXT in the schema and a user ref is a BIGINT, so a
+// row whose principal_id is not parseable as one is not a recipient. It
+// is logged rather than ignored: a user-typed grant that can never
+// notify is a data problem worth seeing, not a routine skip.
+func (h *Handler) notifyShare(
+	ctx context.Context,
+	actorRef int64,
+	post GetPostRow,
+	body *openapi.AclCreate,
+) {
+	if h.notifier == nil || body == nil || string(body.PrincipalType) != "user" {
+		return
+	}
+	recipient, err := strconv.ParseInt(body.PrincipalId, 10, 64)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.acl.notify.bad_principal",
+				slog.String("principal_id", body.PrincipalId),
+				slog.String("post_id", uuidString(post.ID)),
+			)
+		}
+		return
+	}
+	actor := actorRef
+	if err := h.notifier.Notify(ctx, recipient, &actor,
+		notifications.VerbPostSharedWithMe,
+		notifications.TargetKindPost,
+		uuidString(post.ID),
+		map[string]any{
+			notifications.PayloadKeyPostTitle: post.Title,
+		},
+	); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.acl.notify.error",
+			slog.Int64("recipient", recipient),
+			slog.String("post_id", uuidString(post.ID)),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 func (h *Handler) RemovePostAcl(
@@ -1235,7 +1432,10 @@ func canMutatePost(id *auth.Identity, authorRef int64) bool {
 	return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
 }
 
-// canReadPost gates the single-item read paths (GetPost, ListPostAcls).
+// canReadPost gates the single-item read path (GetPost). ListPostAcls
+// used to share it and no longer does — listing a post's grants is a
+// management question gated on canMutatePost since #876; see the note
+// above that handler.
 //
 // It does not decide anything itself: it runs the ONE read rule
 // (readRule.sql) as an EXISTS probe against the post's id, which is the

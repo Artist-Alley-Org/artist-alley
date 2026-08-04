@@ -185,6 +185,9 @@ const (
 	EventDirectMessageReceived = "direct_message_received"
 	EventBroadcastReceived     = "broadcast_received"
 
+	// #875 — someone granted you access to one of their posts.
+	EventPostSharedWithMe = "post_shared_with_me"
+
 	// Phase 1.17.L — resource access requests.
 	EventResourceRequestApproved = "resource_request_approved"
 	EventResourceRequestDenied   = "resource_request_denied"
@@ -221,6 +224,7 @@ var KnownEventTypes = []string{
 	EventFollowedPosts,
 	EventDirectMessageReceived,
 	EventBroadcastReceived,
+	EventPostSharedWithMe,
 	EventResourceRequestReceived,
 	EventResourceRequestApproved,
 	EventResourceRequestDenied,
