@@ -181,17 +181,29 @@ func (b *Builder) BuildCollectionManifest(entity EntityRef, members []EntityRef,
 		cm.Metadata = entity.Metadata
 	}
 
-	// Filter restricted/team members out of an anonymous manifest.
-	// Since #661 LoadCollectionMembers DOES splice the EntityAsset
-	// predicate, whose anonymous branch already requires
-	// sensitivity='public', so for an anonymous caller this loop is
-	// now belt-and-braces. It stays because it is the content-plane
-	// rule (ADR 0064) and the two planes are maintained separately:
-	// if the authenticated sensitivity rule ever lands (#210) this is
-	// where the manifest's answer comes from.
+	// Drop every member the caller fails visibility.MemberReadable on
+	// (#883). The flag is set by LoadCollectionMembers, so this manifest
+	// and the JSON post/collection APIs answer "may this caller see this
+	// member" from one function; the anonymous-only sensitivity check
+	// that used to live here is folded into it, along with the
+	// AUTHENTICATED case it never covered — a restricted member's TITLE
+	// used to ship as its Label to any signed-in caller.
+	//
+	// IIIF OMITS rather than emitting a placeholder, which is the one
+	// place #883 deliberately diverges from the JSON API. A Collection's
+	// items are DEREFERENCEABLE manifest references: a placeholder entry
+	// would point at /iiif/3/asset/{id}/manifest.json, every conforming
+	// viewer would follow it, and it would fail. IIIF has no "request
+	// access" affordance to make the broken reference worth anything, so
+	// the placeholder buys nothing here and costs interop. The visible
+	// placeholder lives on the surfaces a human reads.
+	//
+	// Fail-closed: MemberReadable's zero value is false, so a member ref
+	// that reached this builder without passing through
+	// LoadCollectionMembers is dropped rather than published.
 	items := make([]CollectionMember, 0, len(members))
 	for _, mem := range members {
-		if isAnonymous && (mem.Sensitivity == SensitivityRestricted || mem.Sensitivity == SensitivityTeam) {
+		if !mem.MemberReadable {
 			continue
 		}
 		items = append(items, CollectionMember{

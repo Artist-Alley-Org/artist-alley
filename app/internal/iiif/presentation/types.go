@@ -278,4 +278,11 @@ type EntityRef struct {
 	// missed or peer row deleted — see iiif/federation Resolver).
 	RemoteCanvasBase string
 	RemoteImageBase  string
+	// MemberReadable is set by LoadCollectionMembers ONLY, from
+	// visibility.MemberReadable for the requesting caller (#883). False
+	// means this member must not appear in the containing manifest at
+	// all — see BuildCollectionManifest for why IIIF omits rather than
+	// placeholders. Zero value false is the fail-closed default; the
+	// single-entity loaders never set it and never consult it.
+	MemberReadable bool
 }

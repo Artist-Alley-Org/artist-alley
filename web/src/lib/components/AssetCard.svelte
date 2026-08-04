@@ -37,6 +37,11 @@
 
   let { asset, mode = 'grid', tileSizes = DEFAULT_TILE_SIZES }: Props = $props();
 
+  // #883 — this row is a container-member placeholder for something the
+  // viewer may not see. Every title, link and action below is suppressed
+  // for it; see the CardThumb call. Only a container surface sets it.
+  const restricted = $derived(!!asset.restricted);
+
   // Grid reads as a clean dense wall (no frame, hover-only title). The
   // other modes keep the gallery frame + a persistent footer in
   // thumbnail. See CardThumb `framed`.
@@ -131,7 +136,7 @@
 <div
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
-  {#if detailed}
+  {#if detailed && !restricted}
     <!-- Details HEADER (#556). The owner's ask was "there should be a
          top to the thumbnail cards … title near the top": the title now
          LEADS the card instead of trailing it as a caption strip.
@@ -169,26 +174,37 @@
     pixelWidth={asset.pixel_width}
     pixelHeight={asset.pixel_height}
     titleAdjacent={detailed}
+    {restricted}
+    restrictedOwnerName={asset.owner_display_name ?? null}
   >
-    <!-- Whole-card navigation target. Hover here drives CardThumb's
-         sprite-scrub (an interactive element, so no a11y warning) and,
-         in masonry, the shared hover tooltip. The listeners hang off
-         THIS element and not the frame because it is exactly the tile's
-         box and it is interactive; `currentTarget` is therefore the
-         rect the tooltip anchors to. -->
-    <a
-      href="/assets/{asset.id}"
-      onmouseenter={tipEnter}
-      onmousemove={tipMove}
-      onmouseleave={tipLeave}
-      class="absolute inset-0 z-[1]"
-      aria-label={asset.title}
-    ></a>
+    {#if restricted}
+      <!-- #883 — no link, no menu, no checkbox, no hover title. The tile
+           is a statement that something is here the viewer cannot see;
+           every one of those affordances either navigates to a page that
+           would restate the restriction, or offers an action on an asset
+           the viewer has no handle on. The "request access" affordance
+           that belongs in this space is #881. -->
+    {:else}
+      <!-- Whole-card navigation target. Hover here drives CardThumb's
+           sprite-scrub (an interactive element, so no a11y warning) and,
+           in masonry, the shared hover tooltip. The listeners hang off
+           THIS element and not the frame because it is exactly the tile's
+           box and it is interactive; `currentTarget` is therefore the
+           rect the tooltip anchors to. -->
+      <a
+        href="/assets/{asset.id}"
+        onmouseenter={tipEnter}
+        onmousemove={tipMove}
+        onmouseleave={tipLeave}
+        class="absolute inset-0 z-[1]"
+        aria-label={asset.title}
+      ></a>
 
-    <!-- Multi-select checkbox (top-left). -->
-    <CardCheckbox id={asset.id} />
+      <!-- Multi-select checkbox (top-left). -->
+      <CardCheckbox id={asset.id} />
+    {/if}
 
-    {#if !detailed && !compact}
+    {#if !detailed && !compact && !restricted}
       <!-- Grid/feed: hover-only title overlay (clicks fall to the link).
            Thumbnail shows a persistent footer below instead; masonry
            shows the hover tooltip instead (#652) — see `compact`. -->
@@ -201,13 +217,15 @@
       </div>
     {/if}
 
-    <!-- Overflow menu (info / share / add-to-collection). ONE affordance
-         in every mode, including thumbnail — owner amendment 2026-07-25
-         to #556, superseding "actions visible in the details tile". -->
-    <CardMenu assetId={asset.id} detailPath="/assets/{asset.id}" />
+    {#if !restricted}
+      <!-- Overflow menu (info / share / add-to-collection). ONE affordance
+           in every mode, including thumbnail — owner amendment 2026-07-25
+           to #556, superseding "actions visible in the details tile". -->
+      <CardMenu assetId={asset.id} detailPath="/assets/{asset.id}" />
+    {/if}
   </CardThumb>
 
-  {#if detailed}
+  {#if detailed && !restricted}
     <!-- Details FOOTER: the secondary at-a-glance metadata. The title
          moved to the header (#556); this keeps the supporting fields
          below the image where they don't compete with it. -->
