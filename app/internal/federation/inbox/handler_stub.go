@@ -62,6 +62,15 @@ func BuildRegistry(d *Dispatcher, logger *slog.Logger) map[federation.ActivityTy
 		federation.ActivityUndo:                 stubHandler(federation.ActivityUndo, logger),
 		federation.ActivityAnnounce:             stubHandler(federation.ActivityAnnounce, logger),
 		federation.ActivityBlock:                stubHandler(federation.ActivityBlock, logger),
+		// #882 — when ActivityAdd stops being a stub and actually
+		// pins an object into a local collection, it MUST apply the
+		// same asset gate the HTTP path applies
+		// (collections.Handler.mayCollectAsset): the ROW plane
+		// (visibility.CanSee, EntityAsset) AND the CONTENT plane
+		// (visibility.CanReadContent, ADR 0064), with "unreadable"
+		// and "nonexistent" producing the SAME outcome. A remote
+		// actor must not be able to collect what a local one cannot,
+		// and the inbox is the easier surface to forget.
 		federation.ActivityAdd:                  stubHandler(federation.ActivityAdd, logger),
 		federation.ActivityRemove:               stubHandler(federation.ActivityRemove, logger),
 		federation.ActivityAAShare:              stubHandler(federation.ActivityAAShare, logger),
