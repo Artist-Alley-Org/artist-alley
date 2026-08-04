@@ -75,6 +75,10 @@ services:
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
+      # Fraction of the container ceiling below handed to GOMEMLIMIT.
+      # Read by app/internal/memlimit at boot; forwarded here because a
+      # value the Go process never sees is not a knob (#887).
+      AA_GOMEMLIMIT_RATIO: ${AA_GOMEMLIMIT_RATIO:-0.8}
       TZ: ${TZ:-UTC}
     # Memory ceiling for the app container (#781).
     #
@@ -91,7 +95,15 @@ services:
     # app/internal/memlimit), so this number is the single place the
     # ceiling is stated. Raise it for an instance with a big catalogue
     # and heavy preview concurrency; the runtime follows automatically.
-    mem_limit: ${AA_APP_MEM_LIMIT:-4g}
+    #
+    # 8g, not the original 4g (#887). A ~150-asset preview render storm
+    # was measured at 5.39 GB of cgroup `anon` at peak — 3.31 GB of it
+    # LIVE Go heap (concurrent decode buffers held by running jobs, which
+    # no amount of GC pacing can shrink), ~1.0 GB non-Go anon from the
+    # ffmpeg/ghostscript/node+chromium children that share this cgroup.
+    # A 4g ceiling cannot hold that peak at all, so any instance that
+    # renders previews was living on the kernel's mercy.
+    mem_limit: ${AA_APP_MEM_LIMIT:-8g}
     volumes:
       - aa-storage:/var/lib/aa-storage
     depends_on:
@@ -273,11 +285,12 @@ services:
       AA_MASTER_KEY: ${AA_MASTER_KEY:?AA_MASTER_KEY is required; see scripts/bootstrap.sh}
       AA_BOOTSTRAP_DEFAULT_ADMIN: "1"
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
+      AA_GOMEMLIMIT_RATIO: ${AA_GOMEMLIMIT_RATIO:-0.8}
       TZ: ${TZ:-UTC}
     # Same ceiling as `app` — this runs the identical binary and the
     # identical preview pipeline, so leaving it uncapped would recreate
     # exactly the asymmetry #781 removes.
-    mem_limit: ${AA_APP_MEM_LIMIT:-4g}
+    mem_limit: ${AA_APP_MEM_LIMIT:-8g}
     volumes:
       - aa-storage-b:/var/lib/aa-storage
     depends_on:
