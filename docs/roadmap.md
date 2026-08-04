@@ -637,10 +637,10 @@ map to the milestones below.
 > | **v0.6.0** ✅ | Public read surface + demo hardening *(shipped 2026-07-23)* |
 > | **v0.7.0** ✅ | **Browse correctness + visibility security** — cards render correctly (aspect ratio, masonry stability, overlays, blur-up, preview ladder) and the visibility leaks found while doing it (epic #665) *(shipped 2026-07-28)* |
 > | **v0.8.0** ✅ | **Operator & admin configuration** — the admin config spine (epic #519): editable vocabularies, hierarchy tree editor, open-vocabulary keywords, rich text, site-text + email-template overrides, and `fields.admin` as a grantable capability *(shipped 2026-08-03)* |
-> | v0.9.0 *(current)* | **User-facing surfaces** — preferences that take effect (#706, #736, #677 ✅), explicit shares that actually grant read (#667), account-tile completeness (#600), asset edit route (#549), one visual result surface (#850), social feed card (#557), teams browse + channels (#684, #577) |
+> | v0.9.0 *(current)* | **User-facing surfaces** — preferences that take effect (#706, #736, #677 ✅), explicit shares that actually grant read (#667 ✅ via #874/#879), account-tile completeness (#600), asset edit route (#549), one visual result surface (#850), social feed card (#557), teams browse + channels (#684, #577). The sharing arc grew a **visibility spine** as it landed: membership never widens an item's visibility (#883 ✅), a federated collection share stops at the members its grantor owns (#893 ✅), and you may only collect what you can content-read (#882 gate ✅). #899 is the tail — the full `Asset` record is still served to callers who cannot content-read it |
 > | v0.10.0 | Review & collaboration arc (Phase 1.18.B) *(was v0.8.0)* — plus the **articles** arc (epic #693, ADR 0073) and **workflow triggers & notification rules** (#520), both moved out of v0.9.0 on 2026-08-03 — now also carries the **3D animation arc** (epic #741, ADR 0078): addressable clips, extracted rig identity, and a shared animation library |
 > | v0.11.0 | Community, moderation & engagement *(was v0.9.0)* |
-> | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* |
+> | v0.12.0 | Sharing, bulk-ops & asset workflow *(was v0.10.0)* — the **workflow-state configurability** half lands here: the Phase 1.16 workflow editor + per-type state sets (epic #897), alongside asset gating (#40) and bulk tools (#521). The *enforcement* half (#895, #896) sits in v0.10.0 instead, because #530's review queue depends on it |
 > | v0.13.0 | Privacy, audit, observability & reporting *(was v0.11.0)* |
 > | v0.14.0 | Platform & extensibility (plugins / add-ons / MCP / imports) *(was v0.12.0)* |
 > | v0.15.0 | Monetization & premium DCC *(gated on v0.14 add-ons registry; was v0.13.0)* |
@@ -1469,7 +1469,9 @@ roughly in order of practical value to operators.
 
 ### Catalog / metadata — extant
 - **Fields & metadata** — real list of `field_definitions`.
-- **Workflow states** — real list of `workflow_states`.
+- **Workflow states** — real list of `workflow_states`. **Read-only** (`GET
+  /workflow/states`); there is no mutating endpoint, so `workflow.admin`
+  currently gates nothing. See the Workflow editor below.
 
 ### Catalog / metadata — to flesh out
 - **Fields editor** (Phase 1.16). Create / update / archive fields
@@ -1478,6 +1480,24 @@ roughly in order of practical value to operators.
 - **Workflow editor** (Phase 1.16). Build state machines: define
   states, transitions, required capabilities per transition,
   initial / terminal states, icon + color, requires-note flag.
+  **Tracked as epic #897 (v0.12.0)** since 2026-08-04 — this spec sat
+  without an issue, the same gap that produced #520. **Read the
+  2026-08-04 amendment to [ADR 0010](/adr/0010-permissions-teams-workflow/)
+  before starting**: the tables all exist, but
+  `workflow.Service.Transition()` has **zero production callers** and
+  `state_id` is written raw from client input, so the transition graph
+  and its per-transition capabilities are decorative and `workflow_audit`
+  is never written by the API. Enforcement is **#896 (v0.10.0)** and
+  lands first — #530's review queue depends on it, and an editor for a
+  state machine nothing enforces would be a settings page with no effect.
+  Open decisions carried on #897: whether workflow state may affect
+  visibility at all (the unread `visible_by_default` column proposes that
+  it should; ADR 0063/0064 argue against a second row-hiding plane), and
+  whether review and availability are one axis or two — ours currently
+  mixes them, since `archived`/`deleted` are availability while
+  `pending_review` is review. Also #895: the scheduled `change_state`
+  action resolves codes in domain `asset` while states are seeded under
+  `asset:1`, so its documented code form is dead on every stock install.
 - **Resource types** (Phase 1.16). Currently stub. Create resource
   types, attach fields, per-type variant set overrides, per-type
   workflow domain wiring.
