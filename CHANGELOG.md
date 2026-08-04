@@ -9,6 +9,45 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Four more tiles on your account page now lead somewhere.** The grid at
+  **/account** has always drawn every tile it knows about, whether or not the page
+  behind it existed, so a good number of them were a click into a "coming in a later
+  phase" panel. Four of those are now real (#600):
+
+  **Account → Following** lists the people you follow and the people who follow you, on
+  two tabs, with the date each connection started and an *Unfollow* button on your own
+  list. Clicking anyone opens their profile. There is no *remove a follower* button:
+  blocking is how you sever an incoming connection, and that lives on the profile page.
+  Read-only over endpoints that already existed — `GET /users/{ref}/following` and
+  `GET /users/{ref}/followers`, plus `DELETE /users/{ref}/follow` for the button.
+
+  **Account → Keyboard shortcuts** is the cheatsheet, and this is the first time an
+  ordinary signed-in user can reach one: the existing copy sits under **/admin/help**,
+  which shows a "no permission" panel to anyone without an admin capability. It also
+  got considerably longer, because the old list only covered video playback and the
+  search box. It now documents the viewer's navigation keys, the ebook reader, sprite
+  sheets, and the whole whiteboard — tools, clipboard, and zoom — grouped by where each
+  key works, with the caveats spelled out (there is no global shortcut; arrow keys mean
+  two things at once on a video in a feed; the whiteboard's F wins over the viewer's).
+  Every row was checked against the handler that implements it, and rows for keys we
+  never bound were dropped, including the old *Esc = exit fullscreen* line. Operators
+  see the same list at **/admin/help/shortcuts** — it is one catalogue rendered twice.
+
+  **Account → Help & support** points at the documentation site, the cheatsheet above,
+  and the project's issue tracker. It deliberately does not mirror the /admin/help
+  section, because every link there needs an admin capability to open.
+
+  **Account → Access requests** is not new — the page has existed since 1.17.E — but it
+  had no entry in the account menu, so nothing anywhere in the app linked to it. You
+  could only reach it by typing the URL. It now sits next to *Shared with me*, which is
+  its natural pair: one is access someone gave you, the other is access you asked for.
+  Requesting access from an asset you cannot open is still a separate piece of work
+  (#881).
+
+  Still placeholders, because each needs a backend that does not exist yet: bookmarks,
+  drafts, trash, activity log, stats, subscriptions, connected accounts, and AI
+  preferences. No-spec-impact.
+
 - **A post shared with you now tells you, and stays somewhere you can find it.**
   Since #667 a share genuinely grants read, but nothing announced it and nothing
   collected it: no notification was sent, and the browse grid shows the walled-garden
@@ -32,6 +71,19 @@ where applicable, otherwise note "no-spec-impact."
   separate rule and still does not work (#873). No-spec-impact.
 
 ### Fixed
+
+- **Two account tiles were filed as unbuilt long after their pages shipped.** *Saved
+  searches* and *Messages* were still marked "not built yet" in the account menu's
+  registry even though both pages had been working for releases. **Nothing on screen
+  changes** — the tile grid never filtered on that flag, so both tiles were already
+  visible and already opened their real pages. This is bookkeeping, not a feature, and
+  it is listed only because the flag now has teeth: a tile claiming to have a page is
+  checked against the actual route tree on every test run, so the next tile that
+  ships — or that is marked ready a release early — fails the build instead of waiting
+  for someone to click it and get a 404. Three tiles carried a wrong flag for a full
+  release with no signal at all (#600). The `mscrnt/artist-alley` GitHub links on the
+  admin help pages, left over from the move to the `Artist-Alley-Org` organisation, now
+  point at the current URLs. No-spec-impact.
 
 - **Sharing a post no longer shows the recipient the rest of the guest list.** Wiring
   grants into the read rule (#667) had a side effect nobody wanted: `GET

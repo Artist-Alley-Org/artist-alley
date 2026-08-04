@@ -13,7 +13,10 @@
 
 <p class="mb-6 text-sm text-fg-muted">{t('account.overview.intro')}</p>
 
-<div class="space-y-8">
+<!-- data-testid so tests can scope to the grid: the sidebar in
+     +layout.svelte renders the SAME hrefs, so a bare
+     a[href="/account/x"] locator matches twice. -->
+<div class="space-y-8" data-testid="account-tiles">
   {#each ACCOUNT_GROUPS as group (group.id)}
     <section>
       <header class="mb-3 flex items-center gap-2">
