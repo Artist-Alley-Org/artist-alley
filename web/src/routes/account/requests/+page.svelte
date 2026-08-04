@@ -45,6 +45,17 @@
     }
   }
 
+  // The expiry was interpolated raw, so the page rendered
+  // "Access expires: 2026-08-24T05:12:14.633384Z" at a user. It went
+  // unnoticed because nothing linked here until #600.
+  function formatDate(iso: string): string {
+    try {
+      return new Date(iso).toLocaleDateString();
+    } catch {
+      return iso;
+    }
+  }
+
   function stateBadge(s: ResourceRequest['state']): string {
     switch (s) {
       case 'pending':  return 'bg-warning/15 text-warning border border-warning/40';
@@ -86,7 +97,7 @@
                 <p class="mt-1 text-xs italic text-fg-muted">{t('account.requests.decision_reason')}: {r.decision_reason}</p>
               {/if}
               {#if r.expires_at}
-                <p class="mt-1 text-xs text-fg-muted">{t('account.requests.expires_at', { ts: r.expires_at })}</p>
+                <p class="mt-1 text-xs text-fg-muted">{t('account.requests.expires_at', { ts: formatDate(r.expires_at) })}</p>
               {/if}
             </div>
             <a href={`/assets/${r.target_asset_id}`} class="text-xs text-accent hover:underline">{t('account.requests.view_asset')}</a>

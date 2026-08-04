@@ -305,6 +305,31 @@
       "expires_at": "Access expires: {ts}",
       "view_asset": "View asset"
     },
+    "following": {
+      "title": "Following",
+      "intro": "People you follow, and the people following you.",
+      "tab_following": "Following",
+      "tab_followers": "Followers",
+      "empty_following": "You aren't following anyone yet. Follow someone from their profile and they'll show up here.",
+      "empty_followers": "Nobody follows you yet.",
+      "col_user": "User",
+      "col_since": "Since",
+      "col_actions": "Actions",
+      "unfollow": "Unfollow",
+      "load_error": "Could not load your follow lists.",
+      "unfollow_error": "Could not unfollow that user."
+    },
+    "help": {
+      "title": "Help & support",
+      "intro": "Documentation, the keyboard cheatsheet, and where to report a problem.",
+      "link_docs": "Documentation",
+      "desc_docs": "Guides and reference for everything in the app.",
+      "link_shortcuts": "Keyboard shortcuts",
+      "desc_shortcuts": "Every key the viewer, whiteboard, and search bar listen for.",
+      "link_issues": "Report a bug or request a feature",
+      "desc_issues": "The project's public issue tracker on GitHub.",
+      "self_hosted_note": "This install is self-hosted open source. There's no vendor helpdesk — for anything specific to this site, contact whoever runs it."
+    },
     "overview": {
       "title": "Overview",
       "intro": "Manage your profile, preferences, credentials, and the rest of your account."
@@ -378,6 +403,10 @@
         "title": "Shared with me",
         "blurb": "Posts other people have given you access to."
       },
+      "requests": {
+        "title": "Access requests",
+        "blurb": "Access you've asked for, and what approvers decided."
+      },
       "tokens": {
         "title": "API tokens",
         "blurb": "Personal access tokens for scripts and integrations."
@@ -408,7 +437,7 @@
       },
       "following": {
         "title": "Following",
-        "blurb": "People and tags you follow + your followers."
+        "blurb": "People you follow, and the people following you."
       },
       "help": {
         "title": "Help & support",
@@ -892,32 +921,6 @@
         "link_api": "API Explorer — every endpoint, live",
         "link_shortcuts": "Keyboard shortcuts",
         "link_release": "Release notes"
-      },
-      "shortcuts": {
-        "title": "Keyboard shortcuts",
-        "intro": "Shortcuts for the asset viewer and the global search bar. Viewer keys apply while an asset is open and no text field is focused.",
-        "group_playback": "Playback",
-        "group_loop": "Loop range",
-        "group_view": "View",
-        "group_search": "Search",
-        "play_pause": "Play / pause",
-        "play": "Play",
-        "pause": "Pause",
-        "step_back": "Step back one frame",
-        "frame_back": "Frame back (Shift = 10)",
-        "frame_fwd": "Frame forward (Shift = 10)",
-        "rate": "Playback rate (0.25× – 4×)",
-        "loop_in": "Set loop in-point",
-        "loop_out": "Set loop out-point",
-        "loop_clear": "Clear loop range",
-        "fullscreen": "Toggle fullscreen",
-        "reset_view": "Reset pan / zoom",
-        "goto_frame": "Go to frame",
-        "tile_mode": "Toggle tile preview",
-        "exit_fullscreen": "Exit fullscreen",
-        "search_nav": "Move through suggestions",
-        "search_go": "Run the search",
-        "search_close": "Close suggestions"
       },
       "release_notes": {
         "title": "Release notes",
@@ -2505,6 +2508,103 @@
     "edit_post": "Edit post…",
     "delete_post": "Delete post…",
     "actions_button": "Post actions"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "intro": "Every key the app listens for, grouped by where it works. There is no global shortcut — each set applies only while that surface is open, and none of them fire while you're typing in a text field.",
+    "group": {
+      "viewer_nav": "Asset viewer",
+      "playback": "Video & audio playback",
+      "loop": "Loop range",
+      "view": "Zoom & fullscreen",
+      "ebook": "Ebook reader",
+      "sprite": "Sprite sheets",
+      "whiteboard_tools": "Whiteboard tools",
+      "whiteboard_edit": "Whiteboard editing",
+      "search": "Search bar",
+      "text": "Tags & message boxes"
+    },
+    "note": {
+      "viewer_nav": "Left and right move between posts only when you opened the asset from a feed or collection.",
+      "playback": "Only on video and audio. Arrow keys step frames here too, so on a video in a feed they both step a frame and move to the next post.",
+      "whiteboard_edit": "While the whiteboard is open its keys win: F fits the drawing instead of going fullscreen."
+    },
+    "viewer": {
+      "sibling": "Previous / next post",
+      "within": "Previous / next asset in this post",
+      "toggle_pane": "Show or hide the side panel",
+      "close": "Close the viewer"
+    },
+    "playback": {
+      "play_pause": "Play / pause",
+      "play": "Play",
+      "pause": "Pause",
+      "step_back": "Step back one frame",
+      "frame_back": "Frame back (hold Shift for 10)",
+      "frame_fwd": "Frame forward (hold Shift for 10)",
+      "rate": "Playback speed (0.25× – 4×)",
+      "goto_frame": "Jump to a frame or timecode"
+    },
+    "loop": {
+      "in": "Mark the loop in-point",
+      "out": "Mark the loop out-point",
+      "clear": "Clear the loop range"
+    },
+    "view": {
+      "fullscreen": "Toggle fullscreen",
+      "reset": "Reset pan and zoom",
+      "tile": "Toggle tile preview (images)",
+      "zoom": "Zoom the canvas"
+    },
+    "ebook": {
+      "chapter": "Previous / next chapter"
+    },
+    "sprite": {
+      "play_pause": "Play / pause the animation",
+      "prev_frame": "Previous frame",
+      "next_frame": "Next frame",
+      "onion": "Toggle onion-skinning"
+    },
+    "wb": {
+      "select": "Select",
+      "pen": "Pen",
+      "marker": "Marker",
+      "highlighter": "Highlighter",
+      "eraser": "Eraser",
+      "line": "Line",
+      "arrow": "Arrow",
+      "rect": "Rectangle",
+      "ellipse": "Ellipse",
+      "triangle": "Triangle",
+      "bucket": "Bucket fill",
+      "eyedropper": "Eyedropper",
+      "text": "Text",
+      "lasso": "Lasso",
+      "crop": "Crop",
+      "swap_colors": "Swap primary and secondary colour",
+      "undo": "Undo",
+      "redo": "Redo",
+      "select_all": "Select everything",
+      "clipboard": "Copy · cut · paste",
+      "duplicate": "Duplicate the selection",
+      "delete": "Delete the selection",
+      "pan": "Pan the canvas",
+      "fit": "Fit the drawing to the window",
+      "reset_zoom": "Reset zoom",
+      "zoom": "Zoom in / out",
+      "exit": "Leave the whiteboard"
+    },
+    "search": {
+      "nav": "Move through recent searches",
+      "go": "Run the search",
+      "close": "Close the list, then clear the box"
+    },
+    "text": {
+      "add_tag": "Add the typed tag",
+      "remove_tag": "Remove the last tag (empty box)",
+      "send": "Send the message",
+      "newline": "Start a new line instead of sending"
+    }
   },
   "viewer_hotkeys": {
     "title": "Shortcuts",

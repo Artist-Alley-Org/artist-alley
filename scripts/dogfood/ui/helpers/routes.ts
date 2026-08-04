@@ -45,6 +45,12 @@ export const AUTHENTICATED_USER_ROUTES: RouteSpec[] = [
   { label: 'Account notifications',    path: '/account/notifications',      scope: 'ok' },
   { label: 'Account messages',         path: '/account/messages',           scope: 'ok' },
   { label: 'Account blocked users',    path: '/account/blocked',            scope: 'ok' },
+  { label: 'Account shared with me',   path: '/account/shared',             scope: 'ok' },
+  { label: 'Account saved searches',   path: '/account/saved-searches',     scope: 'ok' },
+  { label: 'Account access requests',  path: '/account/requests',           scope: 'ok' },
+  { label: 'Account following',        path: '/account/following',          scope: 'ok' },
+  { label: 'Account help',             path: '/account/help',               scope: 'ok' },
+  { label: 'Account shortcuts',        path: '/account/shortcuts',          scope: 'ok' },
 
   // Param routes: messages/[peer] requires a known peer ref;
   // skipped in smoke to avoid brittle dependency on seed data.
