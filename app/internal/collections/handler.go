@@ -941,6 +941,26 @@ func (h *Handler) AddCollectionResource(
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(in.AssetId), Valid: true}
 	assetIDStr := uuid.UUID(in.AssetId).String()
 
+	// #882 — the ASSET gate. Everything above authorises the
+	// COLLECTION; until this landed nothing looked at the asset at all,
+	// so any collection owner could pin any asset in the instance given
+	// its UUID, and a 404-vs-204 probe confirmed whether an arbitrary
+	// UUID existed.
+	//
+	// A refusal here is deliberately the SAME 404 the FK miss below
+	// returns — same status, same body. Anything else (403
+	// "forbidden", a distinct message) re-creates the enumeration
+	// oracle this check exists to remove.
+	collectible, err := h.mayCollectAsset(ctx, caller, uuid.UUID(in.AssetId))
+	if err != nil {
+		return nil, fmt.Errorf("collections: add resource: asset gate: %w", err)
+	}
+	if !collectible {
+		return openapi.AddCollectionResource404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+
 	// Gold-standard path: Add(object=asset, target=collection)
 	// per AP §6.6 / §7.8. 1.22.B-cleanup made activities required.
 	var fkAssetMissing bool
@@ -981,8 +1001,89 @@ func (h *Handler) AddCollectionResource(
 
 // errAssetMissing is the sentinel signalling FK-violation on
 // asset_id inside the WithEmission closure. Used to roll back +
-// return 404 without surfacing as a 500 server error.
+// return 404 without surfacing as a 500 server error. It is now a
+// race backstop rather than the primary path — mayCollectAsset
+// rejects an absent asset before any activity is emitted.
 var errAssetMissing = errors.New("collections: asset row absent")
+
+// mayCollectAsset answers "may this caller put THIS asset into a
+// collection" (#882). You may only collect what you can actually see.
+//
+// # Why this is not visibility.CanSee alone
+//
+// The obvious call — CanSee(EntityAsset) — gates NOTHING here. Per ADR
+// 0064 sensitivity lives on the CONTENT plane, not the row plane, so
+// EntityAsset's authenticated predicate is `deleted_at IS NULL` and
+// nothing more (visibility/predicate.go, EntityAsset branch; CanSee's
+// own doc says as much). Every authenticated caller is row-visible to
+// every undeleted asset, so a gate built on CanSee alone would return
+// true for a restricted asset it has never been allowed to view, and
+// would review as if it worked.
+//
+// # The rule
+//
+// The conjunction visibility.MemberReadable already documents
+// (visibility/member.go, "the CONJUNCTION of the two planes"): a caller
+// may collect an asset iff they could have reached that ROW standalone
+// AND could have reached its BYTES. MemberReadable itself is not
+// callable here — it takes an already-fetched MemberRow supplied by the
+// container queries — so this composes the same two planes from their
+// existing entry points rather than writing a third expression of the
+// rule (#892 / epic #665 consolidated exactly that duplication):
+//
+//   - ROW plane   — visibility.CanSee(EntityAsset): exists and is not
+//     soft-deleted. Load-bearing on its own account: ContentReadable
+//     never looks at deleted_at, so without this conjunct a caller
+//     could pin a deleted public asset — a member row the contents
+//     query then drops in SQL, i.e. an invisible phantom member.
+//   - CONTENT plane — visibility.CanReadContent (ADR 0064): the tier
+//     rule. Public admits everyone, team admits the asset's team,
+//     restricted / embargo / anything unrecognised admit only the owner
+//     and the two capability holders.
+//
+// # The short-circuits are inherited deliberately
+//
+// CanReadContent admits SystemAdmin and ContentReadAll at every tier,
+// and this path keeps both. ContentReadAll's whole purpose is a role
+// (the public demo's demo-viewer) that RENDERS a mostly-restricted
+// catalogue; a caller who is allowed to view every asset is by this
+// endpoint's own rule — "you may collect what you can see" — allowed to
+// collect them. Narrowing it here would put the add path out of step
+// with MemberReadable, which would then render the very members this
+// refused to create.
+//
+// # Fails closed
+//
+// A nonexistent asset stops at the ROW plane. CanReadContent wraps
+// pgx.ErrNoRows into an error (it is the "we could not load the row"
+// case), so the race in which the asset is deleted between the two
+// queries is folded into "not collectible" rather than surfacing as a
+// 500 — which would also be an oracle, since a 500 is distinguishable
+// from a 404.
+func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	caller := visibility.NewCaller(&id.UserRef)
+	caps := visibility.CapabilityChecker(func(code string) bool { return id.Can(code) })
+
+	visible, err := visibility.CanSee(ctx, h.Pool, visibility.EntityAsset, caller, assetID)
+	if err != nil {
+		return false, fmt.Errorf("row plane: %w", err)
+	}
+	if !visible {
+		return false, nil
+	}
+
+	readable, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, assetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("content plane: %w", err)
+	}
+	return readable, nil
+}
 
 // ---------------------------------------------------------------------------
 // RemoveCollectionResource

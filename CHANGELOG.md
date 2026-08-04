@@ -9,6 +9,33 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **You can only put something in a collection if you can actually see it.** Adding an
+  asset to a collection was authorised against the **collection** — "is this your
+  collection" — and never looked at the asset at all. Anyone who could create a
+  collection could therefore pin any asset on the instance, including one they had never
+  been allowed to view, given nothing but its UUID (#882).
+
+  Adding now requires the asset to be **readable by you**: it has to exist, not be in the
+  trash, and you have to be entitled to its content under its sensitivity tier — the same
+  standard that decides whether a collection member renders for you at all, rather than a
+  second, slightly different rule that could drift from it. Your own work is unaffected at
+  every tier, including drafts.
+
+  **Collecting other people's work still works**, which is the half worth stating: if you
+  can view it, you can collect it. That is the whole point of the feature, and this only
+  removes the cases where you could collect something you could never open.
+
+  It also closes a probe. An asset you cannot read and a UUID that does not exist now
+  produce the **identical** response — same status, same body — so the endpoint can no
+  longer be used to confirm that a guessed asset id is real. Nothing was exposed by the
+  old behaviour: a member you cannot read has rendered as a placeholder carrying only the
+  owner's name since #883. What it leaked was **existence**, and what it broke was the
+  integrity of the collection itself.
+
+  No-spec-impact. Removing from a collection is deliberately unchanged and still needs no
+  readability check: it only un-pins a row from a collection you already own, and gating
+  it would strand a member whose sensitivity was raised after you collected it.
+
 - **Sharing a collection with another instance now shares only the members you own.**
   A federated share on a collection granted the peer scope over **every** asset in it,
   and the only ownership check in the system sat on the container: you may share a
