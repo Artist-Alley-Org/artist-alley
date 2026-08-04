@@ -49,6 +49,11 @@ const (
 	VerbResourceRequestApproved = "resource_request_approved"            // emitter: L
 	VerbResourceRequestDenied   = "resource_request_denied"              // emitter: L
 
+	// #875 — a share is no longer silent. Emitted only for
+	// principal_type='user' grants; a role or team grant names no
+	// single recipient and notifies nobody.
+	VerbPostSharedWithMe = "post_shared_with_me" // emitter: posts.AddPostAcl
+
 	// System-generated (actor NULL); already-shipped emitters call
 	// these via the same Notify writer.
 	VerbLicenseExpiringSoon = "license_expiring_soon" // emitter: licensing.State re-verify ticker (planned hook)
