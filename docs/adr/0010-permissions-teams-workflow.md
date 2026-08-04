@@ -22,10 +22,63 @@ tags:
 excerpt: >-
   The authorization model laid down in migration 00002_capabilities_roles.sql (Phase 1.3) gave us three of the seven layers a real production permissions system needs:
 ---
+## Amendment (2026-08-04): Layer 7 is NOT implemented — and one shape changed
+
+~~The "fully implemented" claim below covers Layer 7.~~ It does not, and a
+verification pass on 2026-08-04 established that it never did. Layers 1–6 shipped
+as described; **Layer 7 shipped its schema and stopped.** Corrections, with
+evidence:
+
+- **`workflow.Transition()` has zero production callers.** The helper exists
+  (`app/internal/workflow/service.go:118`) and is covered by seven passing tests,
+  but nothing outside those tests calls it. The only non-test importer of
+  `internal/workflow` is `app/internal/http/api.go:300`, wiring the read-only
+  `GET /workflow/states` handler — the single workflow path in the API.
+- **Therefore the central-helper property this ADR argued for does not hold.**
+  `state_id` is written as a raw client-supplied UUID on create *and* on update:
+  `posts/handler.go:271-276`, `posts/queries.sql:36` (`UpdatePost` sets
+  `state_id = COALESCE(narg, state_id)`, so `PATCH /posts/{id}` reaches any state),
+  `assets/handler.go:318-319`, and `scheduledactions/executor.go:165`. The eleven
+  seeded `workflow_transitions` rows and their `required_capability` values are
+  never consulted, and `workflow_audit` is never written by the API.
+
+  The Decision section's claim that this design is *"the explicit fix for the
+  'every call site has to remember the permission check' anti-pattern"* is the
+  intent, not the current behaviour. Tracked as **#896**.
+- **States are seeded-only.** The `workflow.admin` capability is seeded but gates
+  no endpoint; there is no way to define a state or a transition without SQL
+  against the database. Only `post` and `asset:1` (Photo) have any states, so
+  every other asset type carries `state_id = NULL`. Tracked as **#897**.
+- **`visible_by_default` is unread.** It is set deliberately in the baseline
+  (false for draft/pending_review/archived/deleted) but no code consumes it.
+  Whether workflow state should gate visibility at all is **undecided**, and it
+  bears directly on ADR 0063/0064 — a second row-hiding plane keyed on state would
+  contradict the single-predicate arrangement those ADRs establish. Decide there
+  before building on it; part of #897.
+
+### Shape change: `domain TEXT`, not `asset_type_id UUID`
+
+The schema below specifies
+`workflow_states.asset_type_id UUID NOT NULL REFERENCES asset_types(id)`. **The
+implemented table has `domain TEXT NOT NULL` instead**, with an
+`asset:<resource_type_ref>` convention produced by
+`workflow.AssetDomain(int64) string` (`service.go:47`), plus a bare `post` domain.
+
+This supersedes the ADR's shape and the reason is sound: posts have no asset type,
+so an `asset_type_id` FK could not have expressed the `post` domain at all. Record
+the cost too — the key is stringly-typed with no referential integrity, so
+deleting an asset type silently orphans its states, and a typo is
+indistinguishable from an empty domain. That is not hypothetical: **#895** is a
+whole feature made dead by the difference between `asset` and `asset:1`.
+
+Read this amendment together with the memory `reference_workflow_states_baseline`,
+which holds the verified per-file detail.
+
 ## Implementation status (2026-06-19)
 
 The decision recorded here is **fully implemented** as of the
-1.17 arc landing on `dev`:
+1.17 arc landing on `dev` — **except Layer 7; see the 2026-08-04
+amendment above**:
 
 - **1.17.A — User approval states + admin approval workflow** ✅
   PR #138. Typed state machine, single-gate authn, session-cascade
@@ -248,6 +301,12 @@ ACL rows) covers the gap.
 to this post for 7 days") without a separate share-links table.
 
 ### Layer 7: Workflow states (configurable per resource type)
+
+> **Not implemented as written — read the 2026-08-04 amendment at the top before
+> designing against this section.** The tables exist and the central helper
+> exists, but nothing calls it; `asset_type_id` shipped as `domain TEXT`; and
+> "configurable" is aspirational (states are seeded, and there is no admin
+> surface). Issues **#895**, **#896**, **#897**.
 
 Each resource type owns its own state list and its own transition
 graph. A concept-art pipeline can run `idea → wip → review → final`;
