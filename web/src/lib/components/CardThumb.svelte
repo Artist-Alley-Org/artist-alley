@@ -45,6 +45,7 @@
     type SpriteCue,
   } from '$lib/util/spriteCues';
   import CardFallback from './CardFallback.svelte';
+  import CardRestricted from './CardRestricted.svelte';
 
   interface Props {
     /** Asset whose variants back the thumbnail (the cover asset for a
@@ -142,6 +143,14 @@
      *  plate reads it, to avoid printing the same string twice 8px
      *  apart; see CardFallback. */
     titleAdjacent?: boolean;
+    /** The caller may not see this member (#883). The server sent a
+     *  placeholder — no title, no extension, no asset id, no thumbhash —
+     *  so the tile states the restriction instead of rendering a thing
+     *  it was not given. Takes priority over every other branch. */
+    restricted?: boolean;
+    /** The asset owner's display name, the only asset-derived value a
+     *  restricted placeholder carries. Null when unresolvable. */
+    restrictedOwnerName?: string | null;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -167,10 +176,16 @@
     pixelWidth = null,
     pixelHeight = null,
     titleAdjacent = false,
+    restricted = false,
+    restrictedOwnerName = null,
     children,
   }: Props = $props();
 
-  const colUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/col` : '');
+  // A restricted tile never addresses the asset: no col variant, no
+  // ladder rung, no sprite sheet. Killing the URL at the source rather
+  // than relying on the render branch means an added branch cannot
+  // reintroduce the request.
+  const colUrl = $derived(assetId && !restricted ? `/api/v1/assets/${assetId}/variants/col` : '');
 
   // Responsive source set (#502/#589). Three conditions, all required:
   //
@@ -189,7 +204,9 @@
   // colUrl exactly as it did before this change.
   onMount(() => previewLadder.init());
   const srcset = $derived(
-    ladderAvailable && !fill && assetId ? (previewLadder.srcsetFor(assetId) ?? '') : '',
+    ladderAvailable && !fill && assetId && !restricted
+      ? (previewLadder.srcsetFor(assetId) ?? '')
+      : '',
   );
   // `src` is the fallback for a browser that ignores srcset, and the
   // thing the loader uses before it picks a candidate. The smallest
@@ -407,7 +424,8 @@
   // per asset for the session; the sheet is an ordinary browser image
   // cache hit on every hover after the first.
   $effect(() => {
-    if (!hovering || !scrubAvailable || !assetId || !spriteUrl || reducedMotion) return;
+    if (!hovering || !scrubAvailable || !assetId || !spriteUrl || reducedMotion || restricted)
+      return;
     let live = true;
     void loadSpriteCues(assetId).then((c) => {
       if (live) cues = c;
@@ -527,7 +545,15 @@
            ? 'after:ring-black/[0.07] dark:after:ring-white/[0.06]'
            : 'after:ring-black/[0.12] dark:after:ring-white/[0.10]'}"
 >
-  {#if isDoc}
+  {#if restricted}
+    <!-- #883 — the caller may not see this member. FIRST branch, before
+         anything that reads a title, an extension or an asset id: the
+         server sends none of those for a restricted member, and putting
+         this check anywhere below would mean the branches above are
+         trusted to have been handed nothing. Nothing here requests
+         bytes. -->
+    <CardRestricted ownerName={restrictedOwnerName} />
+  {:else if isDoc}
     <!-- Text/code assets get no rasterised preview variant at all, so
          the plate IS their tile rather than a fallback from one (#558). -->
     <CardFallback {title} {fileExtension} {assetType} {titleAdjacent} />

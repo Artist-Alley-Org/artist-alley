@@ -106,7 +106,7 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 		// the mapping above. BuildCollectionManifest still runs the
 		// content-plane check on the parent, so this is one expression
 		// removed, not one gate removed.
-		members, err := h.Loader.LoadCollectionMembers(r.Context(), id, caller, 200)
+		members, err := h.Loader.LoadCollectionMembers(r.Context(), id, caller, capsFrom(r), 200)
 		if err != nil {
 			return nil, err
 		}
@@ -132,6 +132,16 @@ func callerFrom(r *http.Request) visibility.Caller {
 		return visibility.NewCaller(&id.UserRef)
 	}
 	return visibility.NewCaller(nil)
+}
+
+// capsFrom is callerFrom's capability half, for the #883 member gate.
+// Nil for anonymous — it holds no capabilities, which MemberReadable
+// handles. Mirrors iiif.contentCaller / assets.contentCaller.
+func capsFrom(r *http.Request) visibility.CapabilityChecker {
+	if id := auth.IdentityFromContext(r.Context()); id != nil {
+		return func(code string) bool { return id.Can(code) }
+	}
+	return nil
 }
 
 // loadWithCache serves from the manifest cache when fresh.

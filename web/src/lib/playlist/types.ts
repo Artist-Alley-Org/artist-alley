@@ -43,6 +43,16 @@ export interface PlaylistItem {
   /** Asset shape the AssetViewer accepts. Pre-resolved so cursor
       changes don't pay an HTTP round-trip per nav. */
   asset: ViewAsset;
+  /** The viewer may not see this member (#883). The server sent a
+      placeholder — no title, no file hash, no metadata — so `asset`
+      carries only the id, and the shell shows the restricted plate
+      instead of mounting a view body. The item stays in the playlist on
+      purpose: dropping it would renumber every later position and hide
+      that a restriction exists at all. */
+  restricted?: boolean;
+  /** The owner's display name, the only asset-derived value a restricted
+      placeholder carries. Null when the server could not resolve one. */
+  ownerDisplayName?: string | null;
 }
 
 /** Reactive source the AssetPlaylist shell binds to.

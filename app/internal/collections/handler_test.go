@@ -650,8 +650,16 @@ func TestListCollectionResources_ParentGate(t *testing.T) {
 
 // TestListCollectionResources_RowFiltering covers the ROW half, which the
 // parent gate cannot: a PUBLIC collection may contain non-public assets.
-// Removing the predicate splice from the query fails this test and not
-// the parent-gate one — that separation is the point.
+// Weakening the member gate fails this test and not the parent-gate one —
+// that separation is the point.
+//
+// #883 changed the SHAPE of the answer, not the guarantee. A member the
+// caller may not see is no longer dropped from the list; it comes back as
+// a placeholder — `restricted: true` plus the collection_resources
+// columns, and not one asset field. So this asserts on the FIELDS rather
+// than on the row count, which is the stronger statement anyway: the row
+// count only ever proved the draft was not enumerable, and what actually
+// matters is that its title, status and file_hash do not ship.
 func TestListCollectionResources_RowFiltering(t *testing.T) {
 	pwd := os.Getenv("AA_DB_PASSWORD")
 	if pwd == "" {
@@ -681,7 +689,10 @@ func TestListCollectionResources_RowFiltering(t *testing.T) {
 		}
 	}
 
-	count := func(t *testing.T, r chi.Router) int {
+	// Decodes the contents page as raw maps — the key SET on the wire is
+	// the thing under test, and a struct cannot tell "absent" from
+	// "present and empty".
+	list := func(t *testing.T, r chi.Router) map[string]map[string]any {
 		t.Helper()
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/collections/"+colID+"/resources", nil))
@@ -689,24 +700,54 @@ func TestListCollectionResources_RowFiltering(t *testing.T) {
 			t.Fatalf("list: status=%d body=%s", rr.Code, rr.Body.String())
 		}
 		var page struct {
-			Items []struct {
-				AssetID string `json:"asset_id"`
-			} `json:"items"`
+			Items []map[string]any `json:"items"`
 		}
 		mustDecode(t, rr.Body.Bytes(), &page)
-		return len(page.Items)
+		out := make(map[string]map[string]any, len(page.Items))
+		for _, it := range page.Items {
+			id, _ := it["asset_id"].(string)
+			out[id] = it
+		}
+		return out
 	}
 
-	// The owner sees both — proves the pins landed and the query works.
-	if got := count(t, ownerRouter); got != 2 {
-		t.Fatalf("owner sees %d rows, want 2 (both pinned assets)", got)
+	// The owner sees both, in full — proves the pins landed and the query
+	// works, and that the gate is not simply redacting everything.
+	own := list(t, ownerRouter)
+	if len(own) != 2 {
+		t.Fatalf("owner sees %d rows, want 2 (both pinned assets)", len(own))
+	}
+	for _, id := range []string{pubAsset, draftAsset} {
+		if own[id]["restricted"] != false {
+			t.Errorf("owner: asset %s came back restricted=%v — an owner reads their own "+
+				"drafts through a container", id, own[id]["restricted"])
+		}
+		if own[id]["title"] == nil {
+			t.Errorf("owner: asset %s lost its title", id)
+		}
 	}
 
-	// An anonymous caller sees ONLY the published-public one. Without the
-	// predicate splice this returns 2 and leaks the draft's title,
-	// status and file_hash.
-	if got := count(t, anonRouter(t, pool)); got != 1 {
-		t.Errorf("anonymous sees %d rows, want 1 — a public collection's DRAFT contents "+
-			"must not be enumerable (asset predicate spliced into the resources query)", got)
+	// An anonymous caller gets BOTH rows, but the draft as a placeholder.
+	// Its title, status and file_hash — the three fields the old shape
+	// leaked — must be absent, not empty.
+	anon := list(t, anonRouter(t, pool))
+	if len(anon) != 2 {
+		t.Fatalf("anonymous sees %d rows, want 2 (the public one plus a placeholder "+
+			"for the draft — #883 keeps the member VISIBLE so the restriction is "+
+			"legible and #881 has something to attach to)", len(anon))
+	}
+	if anon[pubAsset]["restricted"] != false || anon[pubAsset]["title"] == nil {
+		t.Errorf("anonymous: the PUBLIC member should be untouched, got %v", anon[pubAsset])
+	}
+	if anon[draftAsset]["restricted"] != true {
+		t.Fatalf("anonymous: a public collection's DRAFT member must be a placeholder, got %v",
+			anon[draftAsset])
+	}
+	for _, k := range []string{"title", "status", "file_hash", "file_extension", "thumbhash",
+		"asset_type", "asset_created_at", "preview_available", "ladder_available", "scrub_available"} {
+		if _, present := anon[draftAsset][k]; present {
+			t.Errorf("anonymous: the draft placeholder shipped %q — a public collection's "+
+				"DRAFT contents must not be readable through it (%v)", k, anon[draftAsset])
+		}
 	}
 }

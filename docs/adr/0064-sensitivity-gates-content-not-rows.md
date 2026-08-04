@@ -116,6 +116,65 @@ equivalent worth testing is *anonymous* denial, not non-owner denial.
 Until the row-level story changes (Phase 1.28 blur-and-reveal, or #210), that asymmetry is the
 design, not a gap.
 
+### Amendment: membership never widens (recorded 2026-08-04, #883)
+
+"Sensitivity gates content, not rows" is a rule about an asset addressed **on its own**. It says
+nothing about an asset reached **through a container** — a post's members, a collection's
+contents — and the gap that left was live: `post_assets` joined the asset row with
+`deleted_at IS NULL` and nothing else, so a **public** post carrying a **restricted** member handed
+every caller, anonymous included, that member's title, description, file extension, byte size,
+free-form `metadata` (EXIF, GPS) and thumbhash. Measured, not inferred — see the baseline recorded
+on #883.
+
+The rule for that path:
+
+> **A member is readable iff the caller could have reached the asset standalone AND is entitled to
+> its content tier.** Row plane ∧ content plane, for the same caller.
+
+It lives in `visibility.MemberReadable`, and the three surfaces that expose a member (post
+contents, collection contents, IIIF collection manifests) all route through it, on the same
+argument as ADR 0063's predicate: one rule, one place.
+
+Three things worth recording, because each is easy to get backwards:
+
+- **It is a CONJUNCTION, so it can only ever be narrower than either plane.** That is what makes it
+  compatible with this ADR rather than a revision of it. Nothing here changes what a *standalone*
+  asset request returns, and nothing changes the browse feed. `assets.sensitivity` still gates
+  content, not rows.
+
+- **On the member path the content plane gates METADATA, not just bytes.** That does not follow
+  from the rule above — it is the owner's decision (2026-08-03): *"if a user views a public post
+  with a resource they don't have visibility for, it should show a placeholder... The placeholder
+  should never leak info. Not even title. Only the owner's name."* The tier that gates the bytes
+  therefore gates the columns too, on this path.
+
+- **The placeholder is an anti-widening guarantee, not a secrecy guarantee.** An authenticated
+  non-owner can still read that same title from `GET /assets/{id}` and from browse, because the
+  authenticated branch of the row predicate is soft-delete only — the deferral this ADR records.
+  For an ANONYMOUS caller, who cannot reach the row at all, it is both. The two converge if and
+  when #210 / Phase 1.28 tightens the row plane; until then, do not describe the placeholder as
+  making a title unreachable.
+
+Two deliberate divergences:
+
+- **Soft-delete is not in `MemberReadable`.** A deleted member is not restricted, it is gone;
+  announcing "something was here" would be both untrue and its own small disclosure. The container
+  queries drop those rows in SQL, and the matrix test asserts that division of labour by comparing
+  against the predicate with `IncludeSoftDeleted()`, which waives exactly that one conjunct.
+
+- **IIIF omits rather than placeholders.** Everywhere a person reads, a non-visible member renders
+  as a visible placeholder — that is what makes "request access" (#881) meaningful, and why the
+  member must not simply be dropped from the array. A IIIF Collection's `items` are
+  dereferenceable manifest references, so a placeholder entry would be a link every conforming
+  viewer follows and every one of them fails on. IIIF has no request-access affordance to make
+  that worth anything.
+
+A fourth surface was in scope and is not a serialization: a post's `search_text` folded in every
+member asset's own document, so the **result count** confirmed a restricted member's title to a
+caller who was never shown a field. Fixed in migration 00034, which also adds the trigger that
+rebuilds a post's document when a member asset changes — absent since the baseline, and the reason
+a renamed asset kept matching its old name in every post containing it.
+
 ### Where it is enforced
 
 At the **binary plane** — the handlers listed above — because that is where bytes are served and

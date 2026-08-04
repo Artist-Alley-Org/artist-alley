@@ -30,9 +30,15 @@
   // presentation fields are REQUIRED so a surface cannot hand-map a
   // narrower object and silently lose the media-type badge + sprite
   // scrub. See cardAsset.ts.
+  // #883 — `asset` is ABSENT on a member the viewer may not see, and
+  // `restricted` says so. Optional here for exactly that reason; every
+  // read below already goes through `?.`, and the cover branch checks
+  // the flag rather than inferring from the missing object.
   interface PostMemberSummary {
     asset_id: string;
-    asset: CardCoverAsset;
+    asset?: CardCoverAsset;
+    restricted?: boolean;
+    owner_display_name?: string;
   }
   interface Post {
     id: string;
@@ -79,7 +85,14 @@
   const coverAssetId = $derived(
     post.cover_asset_id ?? (post.members.length > 0 ? post.members[0].asset_id : null),
   );
-  const coverAsset = $derived(post.members.find((m) => m.asset_id === coverAssetId)?.asset);
+  const coverMember = $derived(post.members.find((m) => m.asset_id === coverAssetId));
+  const coverAsset = $derived(coverMember?.asset);
+  // #883 — the cover itself can be a member the viewer may not see. The
+  // tile then states the restriction and the owner instead of degrading
+  // to the generic no-preview plate, which would be indistinguishable
+  // from "this asset has no thumbnail yet".
+  const coverRestricted = $derived(!!coverMember?.restricted);
+  const coverOwnerName = $derived(coverMember?.owner_display_name ?? null);
   const coverThumbhash = $derived(coverAsset?.thumbhash ?? null);
   const coverHasFile = $derived(!!coverAsset?.file_hash);
   const coverPreviewAvailable = $derived(!!coverAsset?.preview_available);
@@ -246,6 +259,8 @@
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
     titleAdjacent={detailed}
+    restricted={coverRestricted}
+    restrictedOwnerName={coverOwnerName}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
          fallback). Hover here drives CardThumb's sprite-scrub and, in

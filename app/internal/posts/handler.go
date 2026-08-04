@@ -1506,10 +1506,17 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 		out.StateId = &v
 	}
 	for _, m := range members {
+		a := memberToAsset(m)
+		// Restricted is FALSE here and the asset is complete, always.
+		// This row is CACHED cross-caller (h.byID), so it must not carry
+		// any per-caller decision; enrichPreview re-derives #883's
+		// redaction on a fresh copy for each request. Baking it here
+		// would serve one caller's answer to the next — the same trap
+		// preview_available fell into (#471).
 		out.Members = append(out.Members, openapi.PostMember{
 			AssetId:   openapi_types.UUID(m.AssetID.Bytes),
 			SortOrder: int(m.SortOrder),
-			Asset:     memberToAsset(m),
+			Asset:     &a,
 		})
 	}
 	return out
@@ -1558,14 +1565,22 @@ func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
 // trips — joining `col` variant existence + the caller's team membership,
 // then decides readability in-Go via visibility.ContentReadable.
 //
+// It is ALSO the #883 redaction point: a member the caller fails
+// visibility.MemberReadable on is rewritten in place as a placeholder —
+// asset_id + sort_order + restricted + the owner's display name, and no
+// `asset` object at all. Same pass, same batched query, because it is the
+// same per-caller readability decision; splitting them would be two
+// expressions of one rule that can disagree.
+//
 // CACHE SAFETY (the reason the posts path was deferred): the full Post is
 // cached by id in h.byID, and its Members slice header aliases the cached
-// backing array. preview_available is PER-CALLER, so writing it into that
-// shared array would leak one caller's readability to the next. This
-// therefore replaces each post's Members with a FRESH slice (PostMember —
-// including its Asset — is a value, so copy() detaches it) and mutates
-// only the copy; the cached array is never touched. The cache keeps the
-// baked-in false, and every request re-derives the flag for its caller.
+// backing array. Readability is PER-CALLER, so writing it into that
+// shared array would leak one caller's answer to the next. This therefore
+// replaces each post's Members with a FRESH slice and mutates only the
+// copy. PostMember.Asset is a POINTER (#883 made it optional so a
+// placeholder can omit it), so copy() alone no longer detaches — the
+// Asset VALUE is cloned per member below, or the enrich would write
+// straight through into the cached object.
 func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) error {
 	caller := visibility.NewCaller(nil)
 	var caps visibility.CapabilityChecker
@@ -1580,7 +1595,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			continue
 		}
 		for _, m := range p.Members {
-			idSet[uuid.UUID(m.Asset.Id)] = struct{}{}
+			idSet[uuid.UUID(m.AssetId)] = struct{}{}
 		}
 	}
 	if len(idSet) == 0 {
@@ -1599,8 +1614,14 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		ladder = h.previewLadder(ctx)
 	}
 
+	// a.status + a.processing_status feed visibility.MemberReadable's
+	// row-plane conjuncts, and the owner display name is the ONE
+	// asset-derived value a #883 placeholder carries. Both ride this
+	// query rather than a second round-trip — the LEFT JOINs mirror
+	// users/queries.sql's projection.
 	rows, err := h.Pool.Query(ctx, `
-		SELECT a.id, a.sensitivity, a.owner_user_ref,
+		SELECT a.id, a.sensitivity, a.status, a.processing_status, a.owner_user_ref,
+		       COALESCE(NULLIF(up.display_name, ''), u.username, '') AS owner_display_name,
 		       (a.file_hash IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
@@ -1614,6 +1635,8 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       a.thumbhash,
 		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
+		LEFT JOIN "user" u         ON u.ref = a.owner_user_ref
+		LEFT JOIN user_profiles up ON up.user_ref = a.owner_user_ref
 		WHERE a.id = ANY($1::uuid[])`,
 		ids, caller.UserRef, ladder)
 	if err != nil {
@@ -1646,11 +1669,21 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// exists to close. Read per request instead; it costs one more column
 	// on a query that already runs.
 	hashes := make(map[uuid.UUID]string, len(idSet))
+	// #883 — per-caller member readability, and the owner display name
+	// that is the only thing a redacted member carries. A member whose id
+	// is MISSING from `readable` (the asset row vanished between the
+	// cached member list and this query) stays false and is therefore
+	// redacted: fail closed.
+	readable := make(map[uuid.UUID]bool, len(idSet))
+	ownerNames := make(map[uuid.UUID]string, len(idSet))
 	for rows.Next() {
 		var (
 			id        pgtype.UUID
 			sens      string
+			status    string
+			procState string
 			owner     *int64
+			ownerName string
 			hasCol    bool
 			hasLadder bool
 			hasScrub  bool
@@ -1659,7 +1692,8 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			pxW       *int32
 			pxH       *int32
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &hasScrub, &isMember, &thumb, &pxW, &pxH); err != nil {
+		if err := rows.Scan(&id, &sens, &status, &procState, &owner, &ownerName,
+			&hasCol, &hasLadder, &hasScrub, &isMember, &thumb, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
 		if pixeldims.Sane(pxW, pxH) {
@@ -1671,15 +1705,24 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			// every other surface already ships.
 			hashes[uuid.UUID(id.Bytes)] = base64.StdEncoding.EncodeToString(thumb)
 		}
-		// ONE readability decision feeds BOTH flags. Deriving
-		// ladder_available from anything other than the same
-		// ContentReadable call that gates preview_available would let the
-		// two disagree on a restricted asset — and a true ladder flag on
-		// gated bytes is a 403 the client walks straight into.
-		readable := visibility.ContentReadable(sens, owner, caller, caps, isMember)
-		avail[uuid.UUID(id.Bytes)] = hasCol && readable
-		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && readable
-		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && readable
+		// ONE readability decision feeds the three availability flags AND
+		// the #883 redaction. Deriving any of them from anything other
+		// than this single call would let them disagree on a restricted
+		// asset — a true ladder flag on gated bytes is a 403 the client
+		// walks straight into, and a false redaction flag on a gated row
+		// is the leak this issue closes.
+		ok := visibility.MemberReadable(visibility.MemberRow{
+			Sensitivity:      sens,
+			Status:           status,
+			ProcessingStatus: procState,
+			OwnerUserRef:     owner,
+			IsTeamMember:     isMember,
+		}, caller, caps)
+		readable[uuid.UUID(id.Bytes)] = ok
+		ownerNames[uuid.UUID(id.Bytes)] = ownerName
+		avail[uuid.UUID(id.Bytes)] = hasCol && ok
+		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && ok
+		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && ok
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("posts: preview enrich rows: %w", err)
@@ -1690,20 +1733,48 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			continue
 		}
 		fresh := make([]openapi.PostMember, len(p.Members))
-		copy(fresh, p.Members) // detaches from the cached backing array
-		for i := range fresh {
-			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
-			fresh[i].Asset.LadderAvailable = ladderOK[uuid.UUID(fresh[i].Asset.Id)]
-			fresh[i].Asset.ScrubAvailable = scrubOK[uuid.UUID(fresh[i].Asset.Id)]
-			fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = nil, nil
-			if wh, ok := dims[uuid.UUID(fresh[i].Asset.Id)]; ok {
-				w, h := wh[0], wh[1]
-				fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = &w, &h
+		for i, m := range p.Members {
+			id := uuid.UUID(m.AssetId)
+			if !readable[id] {
+				// The #883 placeholder, written as a complete literal so
+				// that a field added to PostMember later is absent by
+				// construction rather than by remembering to clear it.
+				// Asset is nil: the whole object is withheld, not
+				// blanked, so there is no empty-vs-withheld difference
+				// for a client to read anything off.
+				fresh[i] = openapi.PostMember{
+					AssetId:    m.AssetId,
+					SortOrder:  m.SortOrder,
+					Restricted: true,
+				}
+				if n := ownerNames[id]; n != "" {
+					v := n
+					fresh[i].OwnerDisplayName = &v
+				}
+				continue
 			}
-			fresh[i].Asset.Thumbhash = nil
-			if th, ok := hashes[uuid.UUID(fresh[i].Asset.Id)]; ok {
+			// CLONE the asset value. p.Members[i].Asset points into the
+			// cross-caller cache; mutating through it would write this
+			// caller's flags into every subsequent caller's response.
+			a := *m.Asset
+			a.PreviewAvailable = avail[id]
+			a.LadderAvailable = ladderOK[id]
+			a.ScrubAvailable = scrubOK[id]
+			a.PixelWidth, a.PixelHeight = nil, nil
+			if wh, ok := dims[id]; ok {
+				w, h := wh[0], wh[1]
+				a.PixelWidth, a.PixelHeight = &w, &h
+			}
+			a.Thumbhash = nil
+			if th, ok := hashes[id]; ok {
 				v := th
-				fresh[i].Asset.Thumbhash = &v
+				a.Thumbhash = &v
+			}
+			fresh[i] = openapi.PostMember{
+				AssetId:    m.AssetId,
+				SortOrder:  m.SortOrder,
+				Restricted: false,
+				Asset:      &a,
 			}
 		}
 		p.Members = fresh

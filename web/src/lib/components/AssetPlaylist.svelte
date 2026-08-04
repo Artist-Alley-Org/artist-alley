@@ -512,7 +512,27 @@
       </div>
     {:else if currentItem}
       <div class="relative flex flex-1 overflow-hidden bg-black">
-        {#if currentItem.asset.file_hash}
+        {#if currentItem.restricted}
+          <!-- #883 — the viewer may not see this member. FIRST branch:
+               everything below reads asset fields the server did not
+               send, and would render an untitled, preview-less asset
+               that looks like a failed render rather than a refusal.
+               No AssetViewer is mounted, so no byte request is made. -->
+          <div class="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center text-white/70">
+            <svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <p class="text-sm font-medium uppercase tracking-widest text-white">
+              {t('card.restricted.label')}
+            </p>
+            <p class="text-sm">
+              {currentItem.ownerDisplayName
+                ? t('card.restricted.owner', { owner: currentItem.ownerDisplayName })
+                : t('card.restricted.owner_unknown')}
+            </p>
+          </div>
+        {:else if currentItem.asset.file_hash}
           <!-- AssetViewer owns the canvas double-click gesture
                (toggles reviewMode). Wrapping it in another dblclick
                handler here would fight the toggle. -->
@@ -662,7 +682,18 @@
                   aria-label={t('viewer_playlist.show_asset_n', { n: i + 1 })}
                   aria-current={i === source.cursor ? 'true' : undefined}
                 >
-                  {#if item.asset.file_hash && item.asset.preview_available}
+                  {#if item.restricted}
+                    <!-- #883 — a lock, not the generic empty frame: the
+                         strip is where a viewer counts what is in the
+                         post, so a restricted member must read as
+                         withheld rather than as not-yet-rendered. -->
+                    <div class="flex h-full w-full items-center justify-center bg-surface text-fg-muted/60">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </div>
+                  {:else if item.asset.file_hash && item.asset.preview_available}
                     <img
                       src={colVariantUrl(item.asset.id)}
                       alt=""

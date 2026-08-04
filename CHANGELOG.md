@@ -215,6 +215,53 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **Putting someone's work in a post or collection no longer makes it more visible.**
+  A post carried a complete asset record for every member, gated by nothing. A
+  collection carried the same fields flat. So attaching a **restricted** asset to a
+  **public** post published its title, its description, its file extension, its exact
+  byte size, its free-form metadata blob — EXIF, including GPS coordinates — and its
+  thumbhash, which is a blurred rendering of the actual picture, to anyone who opened
+  the post. Anonymous visitors included, for whom that asset does not exist at all
+  anywhere else on the site (#883).
+
+  A member you may not see is now a **placeholder**: a lock, the word *Restricted*, and
+  the owner's display name. Nothing else. Not the title — that is the whole point, and
+  it is why the fields are **absent** from the response rather than blanked, so there is
+  no empty-versus-withheld difference to read anything off. The permitted key set is a
+  closed list — the membership row's own columns, a `restricted` flag, and
+  `owner_display_name` — checked by a test that asserts the payload is a **subset** of
+  it. No column of the asset record can cross that boundary, including one added next
+  year; denylisting the fields we know about today is exactly how the SSO `config` blob
+  leaked credentials, two entries down this list.
+
+  The placeholder is **visible, not hidden**. Dropping the member from the list would
+  have been the smaller change and it is the wrong one: it conceals that a restriction
+  exists, and there would be nothing to attach "request access" to (#881, next).
+
+  Who sees a member is now decided in one place for the three surfaces that expose one —
+  post contents, collection contents, and IIIF collection manifests — and it is the
+  conjunction of the two rules an asset already lives under: could you have opened that
+  asset on its own, **and** are you entitled to its content tier (ADR 0064). The IIIF
+  manifest was leaking a restricted member's title as its label to every signed-in
+  caller; the check there had only ever run for anonymous ones. It now omits such
+  members rather than showing a placeholder, because a IIIF collection's entries are
+  links that viewers follow and a placeholder would be a broken one.
+
+  **Search counted them too, which is worse than showing them.** A post's search
+  document absorbed the text of every member, so a public post containing a restricted
+  asset was returned for a phrase that appeared only in that asset's title. Nothing in
+  the response named the asset — the *result count* was the tell, and a stranger could
+  walk a title token by token off it without ever being shown a field. Post documents
+  now include only members that everyone can see, and — separately, because a filter is
+  only worth as much as its refresh — a post's document is now rebuilt when a member
+  asset is restricted, unpublished or renamed, which nothing did before. Renaming an
+  asset used to leave every post containing it matching the old name indefinitely.
+
+  Wire-format change: `PostMember.asset` is absent on a restricted member and
+  `PostMember.restricted` is new; `CollectionResource`'s asset-derived fields moved out
+  of `required` for the same reason and gained the same flag. On a member you *can* see,
+  every one of those fields is sent exactly as before.
+
 - **postcss bumped past a path-traversal advisory.** The web build's copy of `postcss`
   was 8.5.17, which auto-loads source maps in a way that can be pointed at files outside
   the project. Build-time only — nothing shipped to a browser was affected, and an
