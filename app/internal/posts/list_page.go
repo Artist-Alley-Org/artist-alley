@@ -154,6 +154,80 @@ LIMIT $9::INTEGER`)
 	return out, nil
 }
 
+// ListSharedWithMeGated returns one page of "posts somebody explicitly
+// shared with me" (#875): the posts on which this caller holds a live
+// post_acls grant. Newest-first on the same (posted_at, id) cursor key
+// as the feed.
+//
+// The predicate is liveGrantSQL — the SAME fragment readRule.sql ORs in
+// as its ACL disjunct, not a second copy of it. That is the whole design
+// of this surface: "shared with me" and "a grant lets me read this" must
+// be the same question, so a post can never appear here that
+// GET /posts/{id} then refuses, and expiry/revocation drop an item off
+// this page for free rather than because someone remembered to repeat
+// the `expires_at` clause.
+//
+// No further read-rule conjunct is applied, and that is not an omission.
+// ADR 0010 L6: a grant is purely additive, so a live grant alone is
+// sufficient authorization to read the post at any tier — the rule's own
+// disjunct sits at the top level for exactly that reason. AND-ing the
+// full rule in here would be a no-op on every row this query can return.
+//
+// Soft-delete is the caller's axis as always: a deleted post is not
+// shared content, and unlike the feed this surface has no admin
+// trash-view mode, so it is filtered unconditionally.
+//
+// An anonymous caller cannot reach this (the handler 401s first) and
+// would have no principal to match anyway.
+func (h *Handler) ListSharedWithMeGated(
+	ctx context.Context,
+	userRef int64,
+	cursorPostedAt pgtype.Timestamptz,
+	cursorID pgtype.UUID,
+	rowLimit int32,
+) ([]ListPostsPageRow, error) {
+	args := []any{
+		cursorPostedAt, // $1
+		cursorID,       // $2
+		rowLimit,       // $3
+		userRef,        // $4 — consumed by liveGrantSQL
+	}
+
+	sql := `SELECT ` + listPostsPageColumns + `
+FROM posts
+WHERE deleted_at IS NULL
+  AND ($1::TIMESTAMPTZ IS NULL
+       OR posted_at < $1::TIMESTAMPTZ
+       OR (posted_at = $1::TIMESTAMPTZ AND id < $2::UUID))
+  AND ` + liveGrantSQL("", 4) + `
+ORDER BY posted_at DESC, id DESC
+LIMIT $3::INTEGER`
+
+	rows, err := h.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("posts: shared with me: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ListPostsPageRow
+	for rows.Next() {
+		var i ListPostsPageRow
+		if err := rows.Scan(
+			&i.ID, &i.AuthorUserRef, &i.Title, &i.Description, &i.Visibility,
+			&i.CoverAssetID, &i.CoverThumbnailAssetID, &i.PostedAt,
+			&i.LikeCount, &i.CommentCount, &i.OriginServerID, &i.TeamID,
+			&i.StateID, &i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
+		); err != nil {
+			return nil, fmt.Errorf("posts: shared with me scan: %w", err)
+		}
+		out = append(out, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("posts: shared with me rows: %w", err)
+	}
+	return out, nil
+}
+
 // ListPostsByAssetGated returns the ids of posts the caller may read
 // whose members include the given asset (#478 slice-2, ADR 0070).
 // Bounded (no cursor) — an asset lands in few posts, and the client only

@@ -5532,7 +5532,15 @@ paths:
       description: |
         Returns every ACL row attached to this post. ACL rows are
         additive grants on top of the post's visibility and the
-        role / team-scope checks. Requires read access to the post.
+        role / team-scope checks.
+
+        Requires WRITE access to the post — author, `posts.admin` or
+        `system.admin` — not merely read access (#876). Who a post is
+        shared with, who granted it and when it expires is management
+        information about the post, not part of the post's content:
+        being able to read something must not disclose the rest of its
+        guest list. `collection_acls` has always drawn the line here;
+        this matches it.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -5560,6 +5568,12 @@ paths:
         Requires write access to the post (owner / posts.admin /
         system.admin) so a contributor can't grant access beyond
         their own ability to mutate.
+
+        A `user` grant also emits a `post_shared_with_me` notification
+        to the grantee (#875), so a share is not silent. `role` and
+        `team` grants name no single recipient and notify nobody.
+        Notification delivery is best-effort and runs after the row is
+        written: the grant stands whether or not the notification does.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -7532,6 +7546,53 @@ paths:
               schema: { $ref: "#/components/schemas/DirectMessageMarkReadResult" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /account/shared-posts:
+    get:
+      operationId: listPostsSharedWithMe
+      summary: Posts other people have explicitly shared with me
+      description: |
+        The "Shared with me" surface (#875). Returns the posts on
+        which the caller holds a live `post_acls` grant — the same
+        grant `POST /posts/{id}/acls` writes and the post read rule
+        honours, evaluated by the same SQL fragment so the two can
+        never disagree about what a grant means.
+
+        This exists because the browse feed deliberately does NOT
+        surface shares: `GET /posts` defaults to the `org-only` tier,
+        and widening that default would put low-volume, high-salience
+        content into the hottest query in the app. Shares are
+        announced by a `post_shared_with_me` notification and
+        accumulate here instead.
+
+        Expiry and revocation are evaluated in SQL: a grant whose
+        `expires_at` has passed, or whose row has been deleted,
+        drops off this list immediately. Soft-deleted posts never
+        appear. Newest-first, cursor-paginated on the same
+        (posted_at, id) key as the feed.
+      tags: [posts, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of posts shared with the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /account/notifications:
     get:

@@ -998,6 +998,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.social.SetMentions(mentionSvc)
 	s.posts.SetMentions(mentionSvc)
 
+	// #875 — "someone shared a post with you". Same adapter over the
+	// same writer, so a share notification goes through the identical
+	// block + channel-preference gating every other verb does.
+	s.posts.SetNotifier(socialNotifyAdapter{w: notifWriter})
+
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
 	// injected post-construction.
@@ -2914,6 +2919,9 @@ func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.Update
 
 func (s *apiServer) ListPosts(ctx context.Context, req openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
 	return s.posts.ListPosts(ctx, req)
+}
+func (s *apiServer) ListPostsSharedWithMe(ctx context.Context, req openapi.ListPostsSharedWithMeRequestObject) (openapi.ListPostsSharedWithMeResponseObject, error) {
+	return s.posts.ListPostsSharedWithMe(ctx, req)
 }
 func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
 	return s.posts.GetPostsByAsset(ctx, req)

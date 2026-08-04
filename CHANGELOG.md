@@ -7,7 +7,44 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Added
+
+- **A post shared with you now tells you, and stays somewhere you can find it.**
+  Since #667 a share genuinely grants read, but nothing announced it and nothing
+  collected it: no notification was sent, and the browse grid shows the walled-garden
+  `org-only` tier whatever you have been granted, so a shared post never appeared in
+  it. Sharing only worked if the sharer separately sent you a link (#875).
+
+  Two things change. Granting a person read on a post now sends them a notification —
+  *A post was shared with you* — naming the post and linking straight to it, delivered
+  through the same channel preferences and block rules as every other notification, so
+  you can mute it in Account → Preferences like any other event. And **Account → Shared
+  with me** is a new page listing every post someone has given you access to. Access
+  that lapses or is revoked drops off that page immediately; there is nothing to tidy
+  up. Grants to a `role` or `team` name no single recipient and notify nobody, matching
+  the fact that they do not grant read yet either.
+
+  The browse feed is deliberately unchanged. Shares are few and important, which makes
+  them worth announcing rather than burying in the busiest grid in the app — every
+  comparable tool reaches the same conclusion. New endpoint
+  `GET /account/shared-posts` returns the same `PostList` shape as the feed; new
+  notification verb `post_shared_with_me`. Finding a shared post by *search* is still a
+  separate rule and still does not work (#873). No-spec-impact.
+
 ### Fixed
+
+- **Sharing a post no longer shows the recipient the rest of the guest list.** Wiring
+  grants into the read rule (#667) had a side effect nobody wanted: `GET
+  /posts/{id}/acls` let anyone who could read a post list its grants, so sharing a post
+  with one person disclosed to them everybody else it was shared with, who granted each
+  one, and when each expires (#876). Any signed-in user could do the same for any
+  `org-only` post.
+
+  Listing a post's grants now requires the ability to edit the post — its author, or an
+  administrator. Who a post is shared with is management information about the post,
+  not part of its content, which is the line collections have always drawn. Nothing
+  about reading a shared post changes: the share still works, the post still opens, and
+  it still appears on your *Shared with me* page. No-spec-impact.
 
 - **Sharing a post with someone now actually shares it.** Granting a person read on
   one of your posts (`POST /posts/{id}/acls`) recorded the grant, listed it back, and
