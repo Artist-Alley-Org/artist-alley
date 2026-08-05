@@ -268,6 +268,80 @@ func TestListPosts_TierMatrix(t *testing.T) {
 	}
 }
 
+// TestListPostsPage_TrashViewStillAuthorizes is the soft-delete half of
+// #873, and it exists because that failure is SILENT.
+//
+// The read rule deliberately carries no `deleted_at` conjunct — soft-
+// delete is an orthogonal axis each caller owns, so the feed can offer
+// an admin-only include_deleted flag. Moving the rule into
+// visibility.Predicate, which DOES own soft-delete, put those two axes
+// in one expression for the first time; the danger is a shape where
+// waiving soft-delete waives an authorization disjunct with it. The
+// extra rows that would return look exactly like the deleted ones the
+// caller asked for, so nothing about the response says anything is
+// wrong.
+//
+// Both halves are asserted, because either one alone is passable by a
+// broken implementation: the trash view still SEES deleted posts, and it
+// still REFUSES the ones the caller may not read.
+func TestListPostsPage_TrashViewStillAuthorizes(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	deleted := map[string]uuid.UUID{}
+	for _, tier := range []string{"private", "org-only", "followers"} {
+		id := seedTierPost(t, pool, lvAuthor, tier)
+		if _, err := pool.Exec(t.Context(),
+			`UPDATE posts SET deleted_at = NOW() WHERE id = $1`, id); err != nil {
+			t.Fatalf("soft-delete %s: %v", tier, err)
+		}
+		deleted[tier] = id
+	}
+
+	includeDeleted := true
+	listed := func(id *auth.Identity) map[uuid.UUID]bool {
+		t.Helper()
+		rows, err := h.ListPostsPageGated(auth.WithIdentity(t.Context(), id), id,
+			ListPostsPageParams{IncludeDeleted: &includeDeleted, RowLimit: maxListLimit})
+		if err != nil {
+			t.Fatalf("ListPostsPageGated: %v", err)
+		}
+		out := map[uuid.UUID]bool{}
+		for _, r := range rows {
+			out[uuid.UUID(r.ID.Bytes)] = true
+		}
+		return out
+	}
+
+	// posts.admin: the trash view works — the private post is there —
+	// and it is still bounded by the rule, so the followers post they do
+	// not follow is not.
+	mod := listed(lvIdentity(lvModerator, CapPostsAdmin))
+	if !mod[deleted["private"]] {
+		t.Error("the admin trash view lost a soft-deleted PRIVATE post — include_deleted " +
+			"stopped showing deleted rows, which is the flag's entire purpose")
+	}
+	if mod[deleted["followers"]] {
+		t.Error("the admin trash view returned a followers-only post to a caller who does " +
+			"not follow the author — waiving soft-delete waived an authorization disjunct too")
+	}
+
+	// A non-admin caller passing the same flag (the handler gates it, but
+	// the query must not depend on that gate) still gets only what the
+	// rule admits.
+	str := listed(lvIdentity(lvStranger))
+	if str[deleted["private"]] {
+		t.Error("include_deleted handed a stranger another author's private post")
+	}
+	if str[deleted["followers"]] {
+		t.Error("include_deleted handed a stranger a followers-only post they cannot read")
+	}
+	if !str[deleted["org-only"]] {
+		t.Error("include_deleted dropped a soft-deleted org-only post the stranger may read — " +
+			"the soft-delete waiver did not take effect at all")
+	}
+}
+
 // TestListPosts_VisibilityFilterOnlyNarrows pins the semantics chosen for
 // #660: `?visibility=X` selects among the tiers the caller's identity
 // already admits. For a non-author `?visibility=private` therefore means

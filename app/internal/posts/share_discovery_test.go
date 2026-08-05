@@ -4,8 +4,8 @@
 // #875 + #876 — a share becomes discoverable, and stops disclosing the
 // guest list.
 //
-// #667 made a share WORK: readRule.sql grew a post_acls disjunct, so a
-// grantee can read the post. It left two holes, and this file covers
+// #667 made a share WORK: the post read rule grew a post_acls disjunct,
+// so a grantee can read the post. It left two holes, and this file covers
 // both:
 //
 //   - #875: nothing told the recipient. AddPostAcl emitted no
@@ -348,8 +348,9 @@ func TestAddPostAcl_UserGrantNotifiesTheGrantee(t *testing.T) {
 }
 
 // TestAddPostAcl_RoleAndTeamGrantsNotifyNobody. A role or team principal
-// names no single recipient, and neither grants read yet (readRule.sql
-// constrains principal_type='user'). Notifying a principal_id that
+// names no single recipient, and neither grants read yet
+// (visibility.PostLiveGrantSQL constrains principal_type='user').
+// Notifying a principal_id that
 // happens to parse as a user ref would page a stranger about a post
 // they still cannot open.
 func TestAddPostAcl_RoleAndTeamGrantsNotifyNobody(t *testing.T) {
@@ -433,8 +434,8 @@ func TestAddPostAcl_UnwiredNotifierStillGrants(t *testing.T) {
 // principal_id never matches, when the endpoint 500s into an empty page.
 // Pairing it with a future-dated grant on an otherwise identical post
 // makes the pair discriminate. Delete the `expires_at` clause from
-// liveGrantSQL and the `past` row starts appearing; break the query and
-// the `future` row stops.
+// visibility.PostLiveGrantSQL and the `past` row starts appearing;
+// break the query and the `future` row stops.
 func TestSharedWithMe_LiveGrantAppearsExpiredDoesNot(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)

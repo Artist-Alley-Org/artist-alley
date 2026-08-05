@@ -46,7 +46,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 
 -- The two post LIST queries (ListPostsPage, ListPostsByAsset) are NOT
 -- here. They live in list_page.go as hand-built SQL, because the read
--- rule they must apply is a runtime fragment (readRule.sql) and a sqlc
+-- rule they must apply is a runtime fragment (readRuleSQL) and a sqlc
 -- query is a static string — the same reason every splice site of
 -- visibility.Predicate is hand-built.
 --
@@ -138,7 +138,7 @@ DELETE FROM collection_posts WHERE collection_id = $1 AND post_id = $2;
 -- private post in a collection the day somebody wired it up is not a
 -- head start, it is a trap; deleting it is strictly better than
 -- auditing it. A future collection-posts listing must go through
--- posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
+-- the post read rule (posts.readRuleSQL) the way ListPostsByAssetGated does.
 
 -- ---------------------------------------------------------------------------
 -- ACLs (Phase 1.7.B-7b)

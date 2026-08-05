@@ -657,8 +657,14 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 
 // runPosts queries posts. Visibility gate composed via
 // visibility.Predicate — see the shared package (Phase 1.16.B-2).
+//
+// #873 — WithPostCaps is what makes this the same rule the browse feed
+// runs. Without it the predicate renders its `private` disjunct as
+// FALSE, and a moderator searching for a private post they can open from
+// the feed gets nothing back.
 func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityPost, visibility.NewCaller(q.CallerUserRef))
+	pred, err := visibility.Filter(ctx, visibility.EntityPost,
+		visibility.NewCaller(q.CallerUserRef), visibility.WithPostCaps(q.PostCaps))
 	if err != nil {
 		return nil, 0, err
 	}

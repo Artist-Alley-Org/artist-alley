@@ -5,7 +5,7 @@
 //
 // `POST /posts/{id}/acls` wrote a post_acls row that no read path ever
 // consulted, so a share was a button that stored a row and changed
-// nothing. readRule.sql now carries a post_acls disjunct, and because
+// nothing. The post read rule now carries a post_acls disjunct, and because
 // that one fragment feeds both the list paths and postReadable, the
 // grant lands on both at once.
 //
@@ -403,8 +403,8 @@ func TestPostReadRule_NonUserPrincipalsDoNotGrant(t *testing.T) {
 // TestPostAcl_GranteeReachesBothHTTPPaths drives the real handlers, not
 // the internal helpers: the grantee must find the post through
 // `GET /posts?visibility=explicit-share` AND fetch it through
-// `GET /posts/{id}`. The two share readRule.sql, so a disagreement here
-// means a splice site was missed rather than that the rule is wrong.
+// `GET /posts/{id}`. The two share one read rule, so a disagreement
+// here means a splice site was missed rather than that the rule is wrong.
 func TestPostAcl_GranteeReachesBothHTTPPaths(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)

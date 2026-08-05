@@ -88,6 +88,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// rule could not be expressed at all (search/doc.go called it
 		// "deliberately deferred").
 		query.Caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
+		// #873 — the post plane needs its own answer: posts.admin opens
+		// the `private` tier in the post read rule, which search now
+		// composes in full instead of a narrower copy of it.
+		query.PostCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
 	}
 
 	// Phase 1.16.B-3 — if the caller supplied a `dsl=` param

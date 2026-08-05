@@ -80,6 +80,17 @@ type Query struct {
 	// capabilities, which is the correct default for anonymous.
 	Caps visibility.ContentCaps
 
+	// PostCaps is the caller's post-plane capabilities, resolved at the
+	// same edge (#873). The post read rule's `private` tier opens for
+	// posts.admin / system.admin, and until search composed the whole
+	// rule there was nothing here to open it with.
+	//
+	// Separate from Caps rather than folded into it because they gate
+	// different planes: ContentCaps decides whether asset BYTES (and so
+	// asset fields) reach the caller, this decides which post ROWS
+	// exist. Both fold into the cache key.
+	PostCaps visibility.PostCaps
+
 	// Advanced is a placeholder for the B-2 advanced DSL
 	// (field:value, phrases, AND/OR/NOT). Nil in B-1; the engine
 	// ignores it. Kept here so the outer shape stays stable
