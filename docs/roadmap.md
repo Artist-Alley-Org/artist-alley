@@ -649,7 +649,7 @@ map to the milestones below.
 > | v0.18.0 | Physical archive mode *(was v0.16.0)* |
 > | v0.19.0 | Distribution & packaging *(was v0.17.0)* |
 > | v0.20.0 | Federation / multi-site / fediverse *(was v0.18.0)* |
-> | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) |
+> | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) — plus the **full mobile pass** (epic #903, owner 2026-08-04): the phone gets a *deliberately reduced* app (minimal menus, minimal viewer), because full capability belongs to the native Android/iOS apps (#802). Not to be spiked soon, but not after GA either |
 >
 > Locked sequencing: platform (now v0.14) **before** monetization/premium (now v0.15). Each GitHub milestone's issue list is authoritative.
 >
