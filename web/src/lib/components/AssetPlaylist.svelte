@@ -32,7 +32,7 @@
   import { onDestroy, onMount, type Snippet } from 'svelte';
   import AssetViewer from './viewers/AssetViewer.svelte';
   import { kindForAsset } from './viewers/controller';
-  import type { ToolDef } from './viewers/tools/contract';
+  import { snippetToolHookKey, type ToolDef } from './viewers/tools/contract';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
@@ -175,6 +175,15 @@
 
   const currentItem = $derived(source.items[source.cursor] ?? null);
   const hasMultipleItems = $derived(source.items.length > 1);
+
+  // #918 — the host's Details body, reached directly rather than through
+  // AssetViewer's tool registry, for the one state where no AssetViewer
+  // exists to carry it: a playlist with nothing in it. See the empty
+  // branch in the markup below. Undefined for hosts that contribute no
+  // details pane, which then get the bare message they always had.
+  const emptyHostPane = $derived(
+    (hostHooks?.[snippetToolHookKey('details')] as { body?: Snippet } | undefined)?.body,
+  );
   // When every member of the playlist is an audiobook (.m4b /
   // asset_type=11), the AudiobookTool's Tracks section in the side
   // panel becomes the canonical navigator and the strip below
@@ -752,9 +761,37 @@
         </div>
       {/if}
     {:else}
-      <!-- Loaded but no items: friendly empty state. -->
-      <div class="flex flex-1 items-center justify-center p-8 text-fg-muted">
-        <p>{t('viewer_playlist.empty')}</p>
+      <!-- Loaded but no items.
+           The message alone used to be the WHOLE of this branch, and
+           that is the other half of #918. Everything a host contributes
+           — the post header, the author, the ⋮ menu with edit / delete /
+           manage access — is threaded in as AssetViewer's Details tool,
+           and AssetViewer is only mounted by the `currentItem` branch
+           above. So a post whose last member was soft-deleted, or one
+           that never had a member (an article, ADR 0073), rendered one
+           grey sentence and nothing else, to its own author included.
+           Ungating the menu inside PostHost cannot help while the pane
+           carrying it is never mounted.
+           So render the host's pane beside the message. Same snippet,
+           same hook key AssetViewer resolves it under — this is the
+           fallback mount, not a second copy.
+
+           Stacks below 640px: side-by-side at 390px left the pane about
+           240px to render a post header, a ⋮ menu and a comment box in,
+           and clipped all three. The message is one line and can sit
+           above it. -->
+      <div class="flex flex-1 flex-col overflow-hidden sm:flex-row">
+        <div class="flex shrink-0 items-center justify-center p-8 text-center text-fg-muted sm:flex-1">
+          <p>{t('viewer_playlist.empty')}</p>
+        </div>
+        {#if emptyHostPane}
+          <aside
+            class="w-full flex-1 overflow-y-auto border-t border-border bg-surface sm:max-w-sm sm:flex-none sm:border-l sm:border-t-0"
+            data-testid="asset-playlist-empty-pane"
+          >
+            {@render emptyHostPane()}
+          </aside>
+        {/if}
       </div>
     {/if}
   </div>

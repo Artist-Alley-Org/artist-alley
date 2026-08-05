@@ -117,6 +117,32 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Changed
 
+- **A search no longer answers with a shelf of things you did not ask about.** The
+  **Featured** rail — the curated strip of collections an operator pins to the hub — sat
+  at the top of the browse page whether or not the page was still browse. Typing into the
+  navbar search box takes you to the same route with a `?q=`, so your results arrived
+  underneath a row of curated collections that had nothing to do with what you typed, and
+  the first thing on screen after a search was the thing you were looking at before it
+  (#908).
+
+  The rail now renders on **unfiltered browse only**. Search results are just the results.
+
+  Nothing else changes about it. An unfiltered browse still opens on the rail for
+  everyone, signed in or not — for a signed-out visitor it is the entire landing page
+  (posts are members-only), which is the case the rail exists for and the one worth being
+  careful about (ADR 0065, #417). Changing view mode, sort direction or the feed pill
+  keeps it, because those rearrange the same set of posts rather than asking a question.
+
+- **Creating a collection no longer asks you a question it already knows the answer to.**
+  The New collection dialog offered four visibility buttons — Private, Org-only,
+  Followers, Explicit share — pre-selected to **Private**, which is precisely what the
+  server picks when you say nothing. It was a required-looking decision, in front of a
+  collection that did not exist yet, whose default was already the safe answer and which
+  is a click away from being changed afterwards from **Edit details** (#914).
+
+  The dialog now asks for a name and a description. It says what you get — collections
+  start private — instead of asking you to choose it.
+
 - **Searching no longer feels like leaving the app.** Everywhere else in artist-alley,
   work is a wall of tiles: the artwork itself, at the size you chose, with the hover
   preview and the view mode you were last using. **/search** was the exception. It
@@ -177,6 +203,43 @@ where applicable, otherwise note "no-spec-impact."
   `thumbhash` — the name every other endpoint uses for the same value.
 
 ### Added
+
+- **You can now tell the feed to stop showing you doors you cannot open.** Since #899 and
+  #883, a piece of work you are not entitled to see comes back as a **placeholder** — a
+  tile that names its owner and says, in effect, "there is something here, and it is not
+  for you". That is the right default: it is honest about what exists, and it is what
+  #913's **Request access** button has to sit on. But on an instance where a lot of work
+  is restricted, a feed can be mostly placeholders, and for some readers that is a wall of
+  locked doors rather than a gallery.
+
+  **Settings → Preferences → Feed filters** now has **Hide items I don't have access to**.
+  Off by default; nothing changes for anyone who does not turn it on (#891).
+
+  With it on, three things happen, and the third is the one that took the thought:
+
+  - A restricted item is **left out** of a post rather than drawn as a placeholder.
+  - A post whose items are **all** restricted drops out of the feed entirely. The
+    alternative — an empty card where a post used to be — is worse than the placeholder it
+    replaced.
+  - **Your own posts never disappear.** A post you wrote can contain someone else's
+    restricted work, so the rule above, applied literally, would delete your own post from
+    your own feed because of a display setting. It does not. Your post stays, with its
+    restricted items hidden like anyone else's.
+
+  Two things it deliberately does **not** do. It cannot show you anything: the filter runs
+  strictly on top of the permission rule and only ever subtracts, so turning it on can
+  remove things from your feed and can never add one. And it stops at the feed — **open** a
+  post and you still see its placeholders, and can still ask for access. That is not an
+  oversight: the reason an all-restricted post leaves the feed is that an empty card is
+  worse than a placeholder, and hiding the items on the post page itself would put that
+  empty card back on the one screen the rule could not reach.
+
+  The trade it does make is stated in the setting's own help text rather than left to be
+  found: **Request access** lives on the placeholder tile, so while the filter is on that
+  button is not in your feed. It is still on the post.
+
+  The setting travels with your account, so it is the same on every device you sign in
+  from, and it applies from the first frame of the page rather than after a flicker.
 
 - **You can now share a post with someone.** Three rounds of work built the whole
   receiving half of post sharing — an ACL row on a post grants read (#667), the person you
@@ -335,6 +398,41 @@ where applicable, otherwise note "no-spec-impact."
   by #873.) No-spec-impact.
 
 ### Fixed
+
+- **A post with nothing attached to it now opens.** Not "renders badly" — did not open at
+  all. It showed a loading shimmer, forever, on a blank screen: no title, no description,
+  no comments, no author, and for its own author no **Edit post**, no **Delete post** and
+  no **Manage access**. Behind that shimmer the page was re-requesting the post as fast as
+  the network would carry it — **over 1,600 requests in six seconds**, measured, for as
+  long as the tab stayed open (#918).
+
+  Two faults stacked, and it took both to hide either. The post loader skipped a re-fetch
+  when it was already showing the post you asked for **and had at least one item to show**;
+  for a post with no items that second half was never true, so it re-fetched, which
+  re-rendered, which re-fetched. And every scrap of post detail — the header, the author,
+  the ⋮ menu — is contributed by the viewer's details panel, which the shell only mounts
+  when there is an item to view, so the empty state was a single grey sentence and nothing
+  else.
+
+  A post reaches this state without anyone doing anything strange: its last attachment gets
+  deleted, or it never had one (a text post, ADR 0073). It now loads once and renders the
+  post — description, likes, comments, and the author's own full menu — beside a plain "no
+  assets in this playlist".
+
+- **The ⋮ menu on a post no longer keys off how many items the post has.** The whole menu
+  was drawn only when there was at least one visible item. The guard was about the
+  **items**; the menu is about the **post**. The actions that operate on the contents (add
+  all to a collection, download all, tag all) are still hidden when there are no contents.
+  Everything that operates on the post — edit, delete, **Manage access** — stays (#918).
+
+- **Share is no longer offered on a collection that is not yours.** The action toolbar's
+  owner-only block closed one button early, so **Share** was drawn for every reader.
+  Clicking it opened the dialog, and the server — correctly — refused with *"not the
+  collection owner"*, which since #915 is now visible rather than silent. Nothing leaked;
+  it was simply an offer that could not be accepted, and the refusal was the first anyone
+  heard of it. Share now follows the same ownership rule as Edit and Upload here. **Copy
+  link** is unchanged for everyone: if you can open a collection, you can link to it
+  (#918).
 
 - **A post you can read is now a post you can find.** Search asked a narrower question
   than the feed did. Browse, `GET /posts/{id}` and the post-by-asset lookup all applied

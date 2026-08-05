@@ -858,9 +858,10 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 	cu.Capabilities = &caps
 }
 
-// hydrateAccountPrefs fills the three stored-preference fields on a
-// CurrentUser: language, theme, and default views. Reached through
-// [Handler.hydrateSessionUser], which is what producers call.
+// hydrateAccountPrefs fills the four stored-preference fields on a
+// CurrentUser: language, theme, default views, and feed filters.
+// Reached through [Handler.hydrateSessionUser], which is what producers
+// call.
 //
 // EVERY endpoint that returns a CurrentUser must call this, and that
 // is the whole reason it is a method rather than four lines inlined in
@@ -906,16 +907,17 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 // reading /setup/complete's body as a session, it needs this.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	var lang, theme string
-	var viewsJSON []byte
+	var viewsJSON, filtersJSON []byte
 	err := h.Pool.QueryRow(ctx, `
 		SELECT COALESCE(p.language, ''),
 		       COALESCE(p.theme, ''),
-		       COALESCE(up.default_views, '{}'::jsonb)
+		       COALESCE(up.default_views, '{}'::jsonb),
+		       COALESCE(up.feed_filters, '{}'::jsonb)
 		FROM (SELECT $1::bigint AS user_ref) k
 		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
 		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
 		userRef,
-	).Scan(&lang, &theme, &viewsJSON)
+	).Scan(&lang, &theme, &viewsJSON, &filtersJSON)
 	if err != nil {
 		// pgx.ErrNoRows is fine; we leave the fields nil.
 		return
@@ -931,6 +933,34 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 	if v, ok := decodeDefaultViews(viewsJSON); ok {
 		cu.DefaultViews = &v
 	}
+	if f, ok := decodeFeedFilters(filtersJSON); ok {
+		cu.FeedFilters = &f
+	}
+}
+
+// decodeFeedFilters parses the user_preferences.feed_filters blob into
+// the wire type (#891). Reports false when every filter is off, so
+// /auth/me omits the key for the overwhelming majority of accounts
+// rather than shipping an object of falses — which is also what keeps
+// this addition invisible to every session that has not opted in.
+//
+// Same "render hint, never fail the call" posture as decodeDefaultViews
+// above, and for the sharper reason: this field's whole job is to let
+// the browse page EXPLAIN a shorter feed. Failing /auth/me over an
+// unreadable preferences column would lock the user out of the page
+// where they could turn the filter off.
+func decodeFeedFilters(raw []byte) (openapi.UserPreferencesFeedFilters, bool) {
+	var f openapi.UserPreferencesFeedFilters
+	if len(raw) == 0 {
+		return f, false
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return openapi.UserPreferencesFeedFilters{}, false
+	}
+	if f.HideRestricted == nil || !*f.HideRestricted {
+		return openapi.UserPreferencesFeedFilters{}, false
+	}
+	return f, true
 }
 
 // decodeDefaultViews parses the user_preferences.default_views blob

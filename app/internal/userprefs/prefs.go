@@ -37,6 +37,40 @@ type Preferences struct {
 	// from NotificationChannels for that topic; cadence only refines
 	// *when* email fires when it IS enabled.
 	EmailCadence EmailCadences `json:"email_cadence"`
+	// FeedFilters are the content filters the browse feed subtracts with
+	// (#891). Distinct from DefaultViews, which only rearranges the same
+	// set.
+	FeedFilters FeedFilters `json:"feed_filters"`
+}
+
+// FeedFilters is the browse feed's per-user subtraction set (#891).
+//
+// Every member is a BOOLEAN THAT DEFAULTS TO FALSE, and that is a
+// contract rather than an accident: the zero value of this struct — what
+// a user with no preferences row, an empty `{}` blob, or a key this
+// build has never heard of all decode to — is "filter nothing", so the
+// feed a user gets before they touch anything is byte-for-byte the feed
+// they got before the filter existed.
+//
+// It can only SUBTRACT. Nothing here is ever consulted to decide whether
+// a caller MAY read something — that is visibility.FieldsReadable's job
+// and it has already run by the time these are applied (see
+// posts.applyHideRestricted). A filter that could add a row would be a
+// second expression of the read rule, which is the defect class epic
+// #665 exists for.
+type FeedFilters struct {
+	// HideRestricted drops the #883 placeholders from the feed: members
+	// the caller cannot read are omitted rather than rendered as "you
+	// can't see this", and a post whose members are ALL restricted drops
+	// out of the page entirely — unless the caller wrote it, because
+	// your own work does not disappear from your own feed over a display
+	// preference.
+	//
+	// Off by default. The placeholder is the more informative answer for
+	// most people (it is also where #913's "Request access" button
+	// lives), so this is for the reader who has decided they would
+	// rather not be shown doors they cannot open.
+	HideRestricted bool `json:"hide_restricted,omitempty"`
 }
 
 // EmailCadences maps an EventType → cadence ("immediate" | "hourly" |
@@ -357,11 +391,19 @@ func MarshalEmailCadence(c EmailCadences) ([]byte, error) {
 	return json.Marshal(c)
 }
 
-// UnmarshalPreferencesRow parses a DB row's three JSONB columns back
+// MarshalFeedFilters produces the feed_filters JSONB payload. Every
+// field is `omitempty`, so "all filters off" persists as `{}` — the
+// same bytes the column defaults to, which keeps a saved-but-untouched
+// preference indistinguishable from a never-saved one.
+func MarshalFeedFilters(f FeedFilters) ([]byte, error) {
+	return json.Marshal(f)
+}
+
+// UnmarshalPreferencesRow parses a DB row's four JSONB columns back
 // into the typed struct. A malformed column (only possible via direct
 // DB tampering) surfaces as a loud error rather than a silently-zeroed
 // value.
-func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Preferences, error) {
+func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON []byte) (Preferences, error) {
 	var p Preferences
 	if len(channelsJSON) > 0 {
 		if err := json.Unmarshal(channelsJSON, &p.NotificationChannels); err != nil {
@@ -387,6 +429,11 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Prefe
 	}
 	if p.EmailCadence == nil {
 		p.EmailCadence = EmailCadences{}
+	}
+	if len(filtersJSON) > 0 {
+		if err := json.Unmarshal(filtersJSON, &p.FeedFilters); err != nil {
+			return Preferences{}, fmt.Errorf("feed_filters: %w", err)
+		}
 	}
 	return p, nil
 }

@@ -6,6 +6,7 @@
   import { theme } from '$stores/theme.svelte';
   import { lang, t } from '$stores/lang.svelte';
   import { api } from '$api/client';
+  import { auth } from '$stores/auth.svelte';
   import type { components } from '$api/schema';
 
   // Local types mirror the openapi UserPreferencesResponse shape.
@@ -21,10 +22,17 @@
   type ViewSelections = NonNullable<
     components['schemas']['UserPreferencesRequest']['default_views']
   >;
+  // Same reasoning as ViewSelections: typed from the schema so a key
+  // this build's server does not know about cannot typecheck its way
+  // into a PATCH.
+  type FeedFilters = NonNullable<
+    components['schemas']['UserPreferencesRequest']['feed_filters']
+  >;
   interface PrefsResponse {
     notification_channels: Record<string, string[]>;
     email_cadence?: Record<string, string>;
     default_views: ViewSelections;
+    feed_filters: FeedFilters;
     known_event_types: string[];
     known_channels: string[];
     default_channels_by_event: Record<string, string[]>;
@@ -152,6 +160,15 @@
     });
   }
 
+  // Feed-filter toggle (#891). Same shape as setView — send the whole
+  // filter object with one key flipped.
+  async function setFeedFilter(key: keyof FeedFilters, value: boolean): Promise<void> {
+    if (!prefs) return;
+    await savePrefs({
+      feed_filters: { ...prefs.feed_filters, [key]: value },
+    });
+  }
+
   async function savePrefs(patch: Partial<PrefsResponse>): Promise<void> {
     if (!prefs || savingPrefs) return;
     savingPrefs = true;
@@ -160,10 +177,17 @@
         notification_channels: patch.notification_channels ?? prefs.notification_channels,
         email_cadence: patch.email_cadence ?? prefs.email_cadence ?? {},
         default_views: patch.default_views ?? prefs.default_views,
+        feed_filters: patch.feed_filters ?? prefs.feed_filters,
       };
       const r = await api.PATCH('/account/preferences', { body });
       if (r.data) {
         prefs = r.data as unknown as PrefsResponse;
+        // The feed filter also rides the SESSION (#891), because browse
+        // reads it on first paint to explain a shorter feed. Re-pull
+        // /auth/me so the banner agrees with the toggle without a
+        // reload — the same refresh the theme + language pickers get
+        // for free by writing through their own stores.
+        void auth.refresh();
         flashSaved();
       } else if (r.error) {
         loadError = (r.error as { error?: string } | undefined)?.error ?? t('account.preferences.notif_save_error');
@@ -377,6 +401,28 @@
             {/each}
           </select>
         </label>
+      </div>
+
+      <!-- #891 — a separate block from the view knobs above, because
+           they rearrange the same set of posts and this changes which
+           posts are in it. The help text spells out the consequence the
+           issue flagged: hiding the placeholder also hides #913's
+           "Request access" button on the browse grid, so the trade is
+           stated up front rather than discovered. -->
+      <div class="mt-4 border-t border-border pt-4">
+        <h4 class="mb-2 text-sm font-medium text-fg">{t('account.preferences.filters_title')}</h4>
+        <label class="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 shrink-0"
+            data-testid="pref-hide-restricted"
+            checked={prefs.feed_filters?.hide_restricted ?? false}
+            onchange={(e) => setFeedFilter('hide_restricted', (e.target as HTMLInputElement).checked)}
+            disabled={savingPrefs}
+          />
+          <span class="font-medium text-fg">{t('account.preferences.filters_hide_restricted')}</span>
+        </label>
+        <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.filters_hide_restricted_help')}</p>
       </div>
     {/if}
   </section>

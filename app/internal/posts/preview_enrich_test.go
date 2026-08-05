@@ -80,6 +80,15 @@ func peHash(id uuid.UUID) string {
 // pePostOwner, with a storage object and optionally a `col` variant.
 func seedPreviewAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string, withCol bool) uuid.UUID {
 	t.Helper()
+	return seedPreviewAssetOwned(t, pool, sensitivity, withCol, pePostOwner)
+}
+
+// seedPreviewAssetOwned is the same thing with the owner spelled out.
+// #891's tests need a restricted asset owned by someone OTHER than the
+// post's author — that combination is the whole reason "never hide the
+// caller's own post" is a rule and not an accident.
+func seedPreviewAssetOwned(t *testing.T, pool *pgxpool.Pool, sensitivity string, withCol bool, owner int64) uuid.UUID {
+	t.Helper()
 	ctx := context.Background()
 	id := uuid.New()
 	hash := peHash(id)
@@ -97,7 +106,7 @@ func seedPreviewAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string, with
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, file_hash)
 		 VALUES ($1,$2,$3,(SELECT MIN(ref) FROM asset_types),'active',$4,'ready',$5)`,
-		id, "pe-"+sensitivity, pePostOwner, sensitivity, hash); err != nil {
+		id, "pe-"+sensitivity, owner, sensitivity, hash); err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id) })

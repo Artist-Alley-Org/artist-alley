@@ -295,6 +295,13 @@
   const isOwner = $derived(
     !!auth.user && !!post && auth.user.ref === post.author_user_ref,
   );
+  // #918 — two separate questions the header menu used to conflate.
+  // `hasVisibleMembers` gates the items that ACT on the members ("add
+  // all", "download all", "tag all"). `hasMenuItems` exists only so the
+  // trigger doesn't open an empty panel — the single case where neither
+  // an owner action nor a member action qualifies.
+  const hasVisibleMembers = $derived(pl.source.items.length > 0);
+  const hasMenuItems = $derived(hasVisibleMembers || isOwner);
   const postedRelative = $derived(post ? relativeTime(post.posted_at) : '');
   const postedAbsolute = $derived(post ? new Date(post.posted_at).toLocaleString() : '');
 
@@ -700,48 +707,68 @@
           </div>
         {/if}
       </div>
-      <Menu align="right" panelClass="min-w-[12rem]">
-        {#snippet trigger({ open })}
-          <span
-            class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"
-            class:bg-surface-elevated={open}
-            aria-label={t('post_menu.actions_button')}
-            title={t('post_menu.actions_button')}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="5" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-              <circle cx="12" cy="19" r="1.5" />
-            </svg>
-          </span>
-        {/snippet}
-        {#if pl.source.items.length > 0}
-          <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-            {t('playlist_actions.add_all_to_collection')}
-          </button>
-          <button type="button" role="menuitem" onclick={bulkDownloadZip} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-            {t('playlist_actions.download_all_zip')}
-          </button>
-          <button type="button" role="menuitem" onclick={sharePlaylist} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-            {t('playlist_actions.share_playlist')}
-          </button>
+      <!-- #918 — the menu is about the POST; only the items that act on
+           the members are about the members. One `items.length > 0`
+           around the whole panel meant a post rendering no visible
+           members stripped its own author of edit, delete and (since
+           #915 moved it in here) manage access.
+
+           A post reaches zero members without anyone deleting it: its
+           only asset gets soft-deleted, or it never had one (an article,
+           ADR 0073). The author is then the one person who could still
+           act on it and the only one shown nothing to act with.
+
+           `hasMenuItems` keeps the trigger from opening an empty panel
+           in the one case where nothing at all qualifies — a reader on a
+           memberless post they did not write. -->
+      {#if hasMenuItems}
+        <Menu align="right" panelClass="min-w-[12rem]">
+          {#snippet trigger({ open })}
+            <span
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"
+              class:bg-surface-elevated={open}
+              aria-label={t('post_menu.actions_button')}
+              title={t('post_menu.actions_button')}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="5" r="1.5" />
+                <circle cx="12" cy="12" r="1.5" />
+                <circle cx="12" cy="19" r="1.5" />
+              </svg>
+            </span>
+          {/snippet}
+          {#if hasVisibleMembers}
+            <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.add_all_to_collection')}
+            </button>
+            <button type="button" role="menuitem" onclick={bulkDownloadZip} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.download_all_zip')}
+            </button>
+            <button type="button" role="menuitem" onclick={sharePlaylist} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.share_playlist')}
+            </button>
+          {/if}
           {#if isOwner}
-            <div class="my-1 h-px bg-border"></div>
+            {#if hasVisibleMembers}
+              <div class="my-1 h-px bg-border"></div>
+            {/if}
             <button type="button" role="menuitem" onclick={manageAccess} data-testid="post-manage-access" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('post_menu.manage_access')}
             </button>
-            <button type="button" role="menuitem" onclick={bulkTag} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-              {t('playlist_actions.bulk_tag')}
-            </button>
-            <button type="button" role="menuitem" onclick={editPost} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+            {#if hasVisibleMembers}
+              <button type="button" role="menuitem" onclick={bulkTag} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+                {t('playlist_actions.bulk_tag')}
+              </button>
+            {/if}
+            <button type="button" role="menuitem" onclick={editPost} data-testid="post-edit" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('post_menu.edit_post')}
             </button>
-            <button type="button" role="menuitem" onclick={deletePost} class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
+            <button type="button" role="menuitem" onclick={deletePost} data-testid="post-delete" class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
               {t('post_menu.delete_post')}
             </button>
           {/if}
-        {/if}
-      </Menu>
+        </Menu>
+      {/if}
     </header>
 
     <div class="p-4 text-sm">

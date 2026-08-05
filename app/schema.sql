@@ -181,6 +181,23 @@ $$;
 
 
 --
+-- Name: asset_member_post_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_member_post_search_text_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT post_id FROM public.post_assets WHERE asset_id = NEW.id LOOP
+        PERFORM public.rebuild_post_search_text(r.post_id);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: asset_type_acl_sweep_on_role_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -451,7 +468,13 @@ DECLARE asset_search TEXT; post_tag_text TEXT;
 BEGIN
     SELECT COALESCE(string_agg(COALESCE(a.search_text::text, ''), ' '), '') INTO asset_search
       FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
-     WHERE pa.post_id = p_post_id AND a.deleted_at IS NULL;
+     WHERE pa.post_id = p_post_id
+       AND a.deleted_at IS NULL
+       -- #883: only members every caller could see standalone
+       -- contribute their words to the shared post document.
+       AND a.sensitivity = 'public'
+       AND a.status = 'active'
+       AND a.processing_status = 'ready';
     SELECT COALESCE(string_agg(tag, ' '), '') INTO post_tag_text FROM post_tags WHERE post_id = p_post_id;
     UPDATE posts SET search_text =
         setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
@@ -2369,7 +2392,8 @@ CREATE TABLE public.user_preferences (
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL
+    email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL,
+    feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
 
@@ -2751,6 +2775,14 @@ ALTER TABLE ONLY public.digest_queue
 
 ALTER TABLE ONLY public.direct_messages
     ADD CONSTRAINT direct_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: email_template email_template_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_template
+    ADD CONSTRAINT email_template_pkey PRIMARY KEY (template_name, part);
 
 
 --
@@ -3143,14 +3175,6 @@ ALTER TABLE ONLY public.sessions
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_token_hash_key UNIQUE (token_hash);
-
-
---
--- Name: email_template email_template_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.email_template
-    ADD CONSTRAINT email_template_pkey PRIMARY KEY (template_name, part);
 
 
 --
@@ -4352,13 +4376,6 @@ CREATE INDEX idx_resource_request_pending_oldest_first ON public.resource_reques
 
 
 --
--- Name: resource_request_one_pending_per_ask; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX resource_request_one_pending_per_ask ON public.resource_request USING btree (requester_user_ref, target_asset_id, requested_capability) WHERE (state = 'pending'::text);
-
-
---
 -- Name: idx_sessions_impersonated_by_active; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4594,6 +4611,13 @@ CREATE INDEX posts_visibility_idx ON public.posts USING btree (visibility) WHERE
 --
 
 CREATE INDEX resource_request_decided_by_idx ON public.resource_request USING btree (decided_by_user_ref) WHERE (decided_by_user_ref IS NOT NULL);
+
+
+--
+-- Name: resource_request_one_pending_per_ask; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX resource_request_one_pending_per_ask ON public.resource_request USING btree (requester_user_ref, target_asset_id, requested_capability) WHERE (state = 'pending'::text);
 
 
 --
@@ -5003,6 +5027,13 @@ CREATE TRIGGER asset_type_acl_sweep_after_team_delete AFTER DELETE ON public.tea
 
 
 --
+-- Name: assets assets_member_post_search_text; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_member_post_search_text AFTER UPDATE OF search_text, sensitivity, status, processing_status, deleted_at ON public.assets FOR EACH ROW EXECUTE FUNCTION public.asset_member_post_search_text_trigger();
+
+
+--
 -- Name: assets assets_search_text_trigger; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5409,6 +5440,14 @@ ALTER TABLE ONLY public.digest_queue
 
 
 --
+-- Name: email_template email_template_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_template
+    ADD CONSTRAINT email_template_updated_by_user_ref_fkey FOREIGN KEY (updated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
 -- Name: email_verification_token email_verification_token_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5734,14 +5773,6 @@ ALTER TABLE ONLY public.search_visual_backfill_run
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_impersonated_by_user_ref_fkey FOREIGN KEY (impersonated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
-
-
---
--- Name: email_template email_template_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.email_template
-    ADD CONSTRAINT email_template_updated_by_user_ref_fkey FOREIGN KEY (updated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
 
 
 --
