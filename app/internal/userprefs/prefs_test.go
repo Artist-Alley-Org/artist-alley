@@ -136,7 +136,7 @@ func TestChannelsFor_NilReceiverSafe(t *testing.T) {
 // must produce a zero-value struct (not an error) because that's
 // what the first-visit-no-row case looks like upstream.
 func TestUnmarshalPreferencesRow_EmptyBytesProduceZero(t *testing.T) {
-	p, err := UnmarshalPreferencesRow(nil, nil, nil)
+	p, err := UnmarshalPreferencesRow(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("empty bytes should not error, got %v", err)
 	}
@@ -157,7 +157,7 @@ func TestUnmarshalPreferencesRow_RoundTrip(t *testing.T) {
 	}
 	channelsJSON, _ := MarshalNotificationChannels(want.NotificationChannels)
 	viewsJSON, _ := MarshalDefaultViews(want.DefaultViews)
-	got, err := UnmarshalPreferencesRow(channelsJSON, viewsJSON, nil)
+	got, err := UnmarshalPreferencesRow(channelsJSON, viewsJSON, nil, nil)
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestValidatePreferences_RejectsUnservableViewValues(t *testing.T) {
 // So this pins the VALUE, not just the absence of an error.
 func TestUnmarshalPreferencesRow_DropsStaleViewValues(t *testing.T) {
 	legacy := []byte(`{"home_tab":"trending","browse_layout":"masonry","browse_sort":"popular"}`)
-	got, err := UnmarshalPreferencesRow(nil, legacy, nil)
+	got, err := UnmarshalPreferencesRow(nil, legacy, nil, nil)
 	if err != nil {
 		t.Fatalf("a stale stored value must not error the read, got %v", err)
 	}

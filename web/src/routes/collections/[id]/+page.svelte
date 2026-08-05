@@ -389,20 +389,37 @@
         </button>
       {/if}
 
-      <button
-        type="button"
-        onclick={() => (shareOpen = true)}
-        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="18" cy="5" r="3" />
-          <circle cx="6" cy="12" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-        </svg>
-        {t('collections.share')}
-      </button>
+      <!-- #918 — Share grants ACL rows, and POST /collections/{id}/acls
+           refuses anyone who is not the owner. Offering the button to a
+           reader made the 403 ("not the collection owner", surfaced by
+           the #915 dialog) the FIRST thing they heard about it. Nothing
+           leaked, but an action that cannot succeed should not be on
+           offer.
+
+           `isOwner` and not "owner or collections admin", even though the
+           server also admits CapCollectionsAdmin / CapSystemAdmin: every
+           other management affordance on this page (edit, manage members,
+           set cover, delete) already gates on plain ownership, so
+           widening this one alone would make Share the only admin-visible
+           control on a toolbar of owner-only ones. Copy link stays
+           ungated below — anyone who can read the page can link to it. -->
+      {#if isOwner}
+        <button
+          type="button"
+          onclick={() => (shareOpen = true)}
+          data-testid="collection-detail-share-button"
+          class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3" />
+            <circle cx="6" cy="12" r="3" />
+            <circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
+          {t('collections.share')}
+        </button>
+      {/if}
 
       <button
         type="button"

@@ -137,7 +137,7 @@ func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, 
 	case err != nil:
 		return Preferences{}, err
 	default:
-		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence)
+		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters)
 		if err != nil {
 			return Preferences{}, err
 		}
@@ -181,41 +181,13 @@ func (h *Handler) PatchAccountPreferences(
 		}, nil
 	}
 
-	channelsJSON, err := MarshalNotificationChannels(prefs.NotificationChannels)
-	if err != nil {
+	// ONE write path, shared with UnsubscribeEmail. It used to be two
+	// copies of the same marshal-and-upsert, which is how a column
+	// added to the row gets persisted by one caller and silently reset
+	// to its default by the other — exactly what would have happened to
+	// feed_filters here (#891).
+	if err := h.savePreferences(ctx, id.UserRef, prefs); err != nil {
 		return nil, err
-	}
-	viewsJSON, err := MarshalDefaultViews(prefs.DefaultViews)
-	if err != nil {
-		return nil, err
-	}
-	cadenceJSON, err := MarshalEmailCadence(prefs.EmailCadence)
-	if err != nil {
-		return nil, err
-	}
-
-	q := New(h.pool)
-	if err := q.UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
-		UserRef:              id.UserRef,
-		NotificationChannels: channelsJSON,
-		DefaultViews:         viewsJSON,
-		EmailCadence:         cadenceJSON,
-	}); err != nil {
-		return nil, err
-	}
-
-	// Invalidate the cached row across this process AND every
-	// federated peer via the cache.Registry NOTIFY broadcast. The
-	// post-write notification writer might race to read prefs with
-	// stale defaults; we want that next read to hit the DB once + the
-	// freshly-saved values everywhere.
-	if h.byUser != nil {
-		if err := h.byUser.Invalidate(ctx, userKey(id.UserRef)); err != nil && h.logger != nil {
-			h.logger.LogAttrs(ctx, slog.LevelWarn, "userprefs.cache.invalidate.error",
-				slog.Int64("user_ref", id.UserRef),
-				slog.String("err", err.Error()),
-			)
-		}
 	}
 
 	if h.logger != nil {
@@ -262,10 +234,20 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		cadence[k] = v
 	}
 
+	// Always present, even when every filter is off. Unlike the view
+	// selections above — where "unset" and "the default" are genuinely
+	// different states the UI renders differently — a boolean filter has
+	// no third value, so an omitted object would just make the client
+	// guess `false` rather than read it.
+	filters := openapi.UserPreferencesFeedFilters{
+		HideRestricted: &p.FeedFilters.HideRestricted,
+	}
+
 	return openapi.UserPreferencesResponse{
 		NotificationChannels:   channels,
 		EmailCadence:           &cadence,
 		DefaultViews:           views,
+		FeedFilters:            filters,
 		KnownEventTypes:        append([]string(nil), KnownEventTypes...),
 		KnownChannels:          append([]string(nil), KnownChannels...),
 		DefaultChannelsByEvent: defaults,
@@ -299,10 +281,18 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 			cadence[k] = v
 		}
 	}
+	// Absent object, or an absent key inside it, means the filter is
+	// OFF — the same thing the zero value means. There is no "unset"
+	// state for a boolean to fall back to.
+	filters := FeedFilters{}
+	if body.FeedFilters != nil && body.FeedFilters.HideRestricted != nil {
+		filters.HideRestricted = *body.FeedFilters.HideRestricted
+	}
 	return Preferences{
 		NotificationChannels: channels,
 		DefaultViews:         views,
 		EmailCadence:         cadence,
+		FeedFilters:          filters,
 	}
 }
 
@@ -374,18 +364,48 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 	if err != nil {
 		return err
 	}
+	filtersJSON, err := MarshalFeedFilters(prefs.FeedFilters)
+	if err != nil {
+		return err
+	}
 	if err := New(h.pool).UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
 		UserRef:              ref,
 		NotificationChannels: channelsJSON,
 		DefaultViews:         viewsJSON,
 		EmailCadence:         cadenceJSON,
+		FeedFilters:          filtersJSON,
 	}); err != nil {
 		return err
 	}
+	// Invalidate the cached row across this process AND every federated
+	// peer via the cache.Registry NOTIFY broadcast. A reader racing this
+	// write should hit the DB once and see the freshly-saved values
+	// everywhere rather than serve a stale feed filter.
 	if h.byUser != nil {
-		_ = h.byUser.Invalidate(ctx, userKey(ref))
+		if err := h.byUser.Invalidate(ctx, userKey(ref)); err != nil && h.logger != nil {
+			h.logger.LogAttrs(ctx, slog.LevelWarn, "userprefs.cache.invalidate.error",
+				slog.Int64("user_ref", ref),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 	return nil
+}
+
+// HideRestrictedFeedMembers reports the caller's #891 browse-feed
+// filter. The cross-package entry point the posts handler calls once
+// per feed page — through the same 5-minute userprefs.by_user LRU as
+// ChannelsFor, so the hottest list in the app pays a PK lookup on cache
+// miss and nothing on a hit.
+//
+// A user with no preferences row returns false, which is the whole
+// default-off guarantee: the filter has to be asked for.
+func (h *Handler) HideRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
+	prefs, err := h.loadPreferences(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	return prefs.FeedFilters.HideRestricted, nil
 }
 
 // touch keeps the time import live for the (currently unused)

@@ -32,6 +32,20 @@ export interface AccountViewDefaults {
   browse_sort?: string | null;
 }
 
+/**
+ * The account's browse-feed content filters (#891), joined onto the
+ * session response from `user_preferences.feed_filters`.
+ *
+ * The FILTERING is the server's — `GET /posts` reads the stored
+ * preference and applies it, so nothing here decides what the feed
+ * contains. What the client needs is the FACT that it is on, on the
+ * same paint as the grid, so a shorter feed can say why it is shorter
+ * instead of popping an explanation in a frame later.
+ */
+export interface AccountFeedFilters {
+  hide_restricted?: boolean | null;
+}
+
 export interface AuthUser {
   ref: number;
   username: string;
@@ -49,6 +63,9 @@ export interface AuthUser {
    *  A SEED for devices with no local choice, never an override of one
    *  — the precedence rule lives in browseView.init() (#706). */
   defaultViews?: AccountViewDefaults | null;
+  /** Account-level browse-feed content filters (#891). Absent — not an
+   *  object of falses — for every account that has not opted in. */
+  feedFilters?: AccountFeedFilters | null;
   /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
@@ -228,6 +245,7 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     language: (u.language ?? null) as string | null,
     theme: (u.theme ?? null) as 'light' | 'dark' | 'system' | '' | null,
     defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
+    feedFilters: (u.feed_filters ?? null) as AccountFeedFilters | null,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

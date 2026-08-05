@@ -11498,6 +11498,27 @@ components:
             store can consult these synchronously in its `init()`
             rather than seeding itself from a second round-trip that
             lands after the grid has already painted.
+        feed_filters:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesFeedFilters"
+          description: |
+            The account's browse-feed content filters (#891), joined
+            from user_preferences at /auth/me time.
+
+            The filtering itself is the SERVER's — `GET /posts` reads
+            this preference and applies it, so no client can forget to
+            and no client can turn it off. What rides the session is the
+            fact that it is ON, because a feed that is quietly shorter
+            than it would otherwise be has to say so on the same paint
+            that renders it. Learning it from a second round-trip means
+            the browse page renders a thinner grid with no explanation
+            and then pops a banner in afterwards — the same first-paint
+            race #867 and #872 closed for `default_views`, `theme` and
+            `capabilities`, arriving at the same surface.
+
+            OMITTED when every filter is off, which is every account
+            that has not opted in — so this changes no existing session
+            response.
         capabilities:
           type: array
           items:
@@ -13795,6 +13816,62 @@ components:
             model, so both were labels over the default order.
           enum: ["", newest, oldest]
 
+    UserPreferencesFeedFilters:
+      type: object
+      description: |
+        Content the browse feed SUBTRACTS for this account (#891).
+
+        Sibling to `default_views`, and deliberately not a key inside
+        it: `default_views` rearranges the same set of posts, these
+        change which posts are in it. Every member is a boolean whose
+        default is `false`, so an account that has never touched this
+        object gets exactly the feed it got before the object existed.
+
+        SUBTRACTIVE ONLY. Nothing here is ever consulted to decide what
+        a caller MAY read — the post read rule and
+        `visibility.FieldsReadable` have both already run by the time
+        these apply. A filter that could ADD a row would be a second
+        expression of the read rule, and each of the two we have unpicked
+        (#892, #904) cost a sprint.
+      properties:
+        hide_restricted:
+          type: boolean
+          default: false
+          description: |
+            Drop the restricted-member placeholders (#883) from
+            `GET /posts` instead of rendering them.
+
+            Three rules, and the third is the one that matters:
+
+            1. A member the caller cannot read is OMITTED from
+               `members` rather than sent as a `restricted: true`
+               placeholder.
+            2. A post left with NO visible members — one that HAD
+               members and none survived — is omitted from the page.
+               A post with no members at all (an article, ADR 0073) is
+               unaffected: it was never showing you anything you
+               couldn't see.
+            3. A post the CALLER AUTHORED is never omitted, however
+               restricted its members are. An author's post can carry
+               other people's assets, so rule 2 alone would make your
+               own work vanish from your own feed over a display
+               preference.
+
+            Applies to `GET /posts` and stops there. `GET /posts/{id}` is
+            an explicit request for one post and answers with the
+            placeholders intact, which is not an omission: rule 2 exists
+            BECAUSE an all-restricted post rendering as an empty card is
+            worse than the placeholder it replaced, and filtering members
+            on the single-post read would rebuild that empty card on the
+            one surface rule 2 could not protect.
+
+            It also keeps the ask alive. #913's "Request access" button
+            lives on the placeholder, so it survives wherever the
+            placeholder does. The trade the preference DOES make — no
+            placeholders in the feed means no Request access in the feed
+            — is stated in the setting's own help text rather than left
+            to be discovered.
+
     UserPreferencesRequest:
       type: object
       description: |
@@ -13826,6 +13903,14 @@ components:
             Unknown event types or cadence values trigger a 400.
         default_views:
           $ref: "#/components/schemas/UserPreferencesViews"
+        feed_filters:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesFeedFilters"
+          description: |
+            Browse-feed content filters. Absent object, or an absent key
+            inside it, means the filter is OFF — there is no third state
+            for a boolean to fall back to, so this follows the
+            full-object-replacement contract like everything else here.
 
     UserPreferencesResponse:
       type: object
@@ -13839,6 +13924,7 @@ components:
       required:
         - notification_channels
         - default_views
+        - feed_filters
         - known_event_types
         - known_channels
         - default_channels_by_event
@@ -13856,6 +13942,15 @@ components:
             immediate. Values: immediate | hourly | daily | weekly.
         default_views:
           $ref: "#/components/schemas/UserPreferencesViews"
+        feed_filters:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesFeedFilters"
+          description: |
+            Browse-feed content filters, always present with every key
+            populated — unlike `default_views`, where "unset" and "the
+            default" are different states the UI renders differently, a
+            boolean filter has no third value, so omitting it would only
+            make the client guess `false` rather than read it.
         known_event_types:
           type: array
           items: { type: string }

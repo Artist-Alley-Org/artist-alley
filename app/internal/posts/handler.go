@@ -153,6 +153,11 @@ type Handler struct {
 	// silently, which is precisely the pre-#875 behaviour rather than a
 	// panic.
 	notifier notifier
+
+	// feedFilters resolves the caller's browse-feed content filters
+	// (#891) — today just "hide restricted members". See
+	// feed_filters.go for the seam and why nil means "filter nothing".
+	feedFilters feedFilterReader
 }
 
 // notifier is the notifications.Writer slice this package needs.
@@ -451,6 +456,18 @@ func (h *Handler) GetPost(
 	if err := h.enrichPreview(ctx, full); err != nil {
 		return nil, err
 	}
+	// #891 stops at the feed, and this is the line. The preference hides
+	// a post from a LIST when nothing in it is visible, precisely so the
+	// reader is never handed an empty card — "arguably worse than a
+	// placeholder" is the reason that rule exists. Applying the member
+	// half here would rebuild that empty card on the one surface it was
+	// avoided on: an all-restricted post opened by id would render a
+	// viewer with nothing in it and no statement of why.
+	//
+	// So a post asked for BY NAME answers with its placeholders, and
+	// #913's "Request access" button — which lives on the placeholder —
+	// survives the filter. Drive the setting from browse; open a post and
+	// you see what is actually in it.
 	return openapi.GetPost200JSONResponse(*full), nil
 }
 
@@ -884,6 +901,23 @@ func (h *Handler) ListPosts(
 	}
 	if err := h.enrichPreview(ctx, ptrs...); err != nil {
 		return nil, err
+	}
+
+	// #891 — the caller's "hide restricted content" preference, applied
+	// STRICTLY ON TOP of everything above. enrichPreview has just marked
+	// every member this caller may not read; applyHideRestricted reads
+	// that mark and nothing else, so the preference can only subtract
+	// from a page the read rule already decided. See feed_filters.go.
+	//
+	// After the cursor bookkeeping on purpose. `lastPostedAt`/`lastID`
+	// track the last row the QUERY returned, and `next_cursor` keys off
+	// `len(rows)`, so a page that hides three posts still hands back a
+	// cursor that resumes exactly where the SQL left off — it returns
+	// fewer items, never a different window. (`PostList` carries no
+	// total, so there is no count to disagree with what renders; the
+	// client's infinite scroll follows the cursor.)
+	if hide := h.hideRestricted(ctx, caller.UserRef); hide {
+		items = applyHideRestricted(items, caller.UserRef)
 	}
 
 	resp := openapi.PostList{Items: items}

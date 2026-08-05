@@ -174,7 +174,29 @@ export function createPostPlaylistSource(postId: string) {
    *  viewer, so menu bar / dialog chrome stay static. Used by hosts
    *  that swap posts in-place (browse-feed sibling navigation). */
   function setPostId(nextPostId: string) {
-    if (nextPostId === currentPostId && state.items.length > 0) return;
+    // The guard reads ONLY the id. It used to be
+    // `nextPostId === currentPostId && state.items.length > 0`, and the
+    // second half was an infinite loop waiting for a post with no
+    // members (#918).
+    //
+    // Two things combine. `state.items` is `$state`, so reading its
+    // length inside a function PostHost calls from an `$effect` makes
+    // that effect depend on it — and `load()` writes `state.items`
+    // every time. On any post with at least one member the write lands
+    // a non-empty array, the guard returns early on the next pass and
+    // it settles. On a post with NO members the array is empty after
+    // every load, so the guard never returns, the effect re-runs, and
+    // `load()` fires again — forever, re-requesting the post as fast as
+    // the network allows. `load()` also sets `loading = true` whenever
+    // items is empty, so the shell sits on its skeleton and the post
+    // never renders at all: no empty state, no chrome, no ⋮ menu.
+    //
+    // A memberless post is not exotic — its last member gets
+    // soft-deleted, or it never had one (an article, ADR 0073).
+    //
+    // Re-fetching the SAME post is `reload()`'s job, which is what an
+    // error path should call; it was never this function's.
+    if (nextPostId === currentPostId) return;
     currentPostId = nextPostId;
     void load();
   }

@@ -1003,6 +1003,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// block + channel-preference gating every other verb does.
 	s.posts.SetNotifier(socialNotifyAdapter{w: notifWriter})
 
+	// #891 — the browse feed's per-user content filters. Reads through
+	// the userprefs handler's own LRU (the same one ChannelsFor uses),
+	// so a feed page costs a cache hit rather than a query, and a PATCH
+	// to /account/preferences invalidates it process-wide + across peers.
+	s.posts.SetFeedFilters(userprefsFeedFilterAdapter{h: s.userprefs})
+
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
 	// injected post-construction.
@@ -2032,6 +2038,18 @@ func (a userprefsPrefsAdapter) ChannelsFor(ctx context.Context, ref int64, verb 
 
 func (a userprefsPrefsAdapter) CadenceFor(ctx context.Context, ref int64, verb string) (string, error) {
 	return a.h.CadenceFor(ctx, ref, verb)
+}
+
+// userprefsFeedFilterAdapter satisfies posts' feedFilterReader via
+// *userprefs.Handler (#891). Separate from userprefsPrefsAdapter above
+// because the two seams answer to different consumers — notifications
+// asks "which channels for this verb", posts asks "does this reader
+// want restricted members hidden" — and bundling them would make the
+// posts package depend on a notification-shaped interface.
+type userprefsFeedFilterAdapter struct{ h *userprefs.Handler }
+
+func (a userprefsFeedFilterAdapter) HideRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
+	return a.h.HideRestrictedFeedMembers(ctx, ref)
 }
 
 // socialNotifyAdapter satisfies the social package's Notifier

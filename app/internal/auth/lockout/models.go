@@ -1085,6 +1085,7 @@ type UserPreference struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	EmailCadence         []byte
+	FeedFilters          []byte
 }
 
 type UserProfile struct {

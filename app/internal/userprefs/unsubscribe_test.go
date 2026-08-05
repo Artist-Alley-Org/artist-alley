@@ -142,3 +142,33 @@ func itoaU(n int64) string {
 	}
 	return string(b[i:])
 }
+
+// An unrelated write must not reset a preference it does not mention.
+// Unsubscribe and the preferences PATCH now share one marshal-and-upsert
+// (savePreferences); when they were two copies, a column added to the
+// row was persisted by the one that had been updated and quietly
+// defaulted by the other. The one-click unsubscribe link is exactly the
+// write a user takes without thinking about their feed settings.
+func TestUnsubscribeEmail_PreservesFeedFilters(t *testing.T) {
+	pool := unsubTestPool(t)
+	h := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	ref := seedUnsubUser(t, pool)
+	ctx := context.Background()
+
+	if err := h.savePreferences(ctx, ref, Preferences{
+		NotificationChannels: NotificationChannels{EventMentionOfMe: {ChannelInApp, ChannelEmail}},
+		FeedFilters:          FeedFilters{HideRestricted: true},
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := h.UnsubscribeEmail(ctx, ref, EventMentionOfMe); err != nil {
+		t.Fatalf("unsubscribe: %v", err)
+	}
+	hide, err := h.HideRestrictedFeedMembers(ctx, ref)
+	if err != nil {
+		t.Fatalf("read filter: %v", err)
+	}
+	if !hide {
+		t.Fatal("unsubscribing from an email topic turned the user's feed filter off")
+	}
+}
