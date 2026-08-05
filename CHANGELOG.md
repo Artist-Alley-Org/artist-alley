@@ -175,8 +175,9 @@ where applicable, otherwise note "no-spec-impact."
   them worth announcing rather than burying in the busiest grid in the app — every
   comparable tool reaches the same conclusion. New endpoint
   `GET /account/shared-posts` returns the same `PostList` shape as the feed; new
-  notification verb `post_shared_with_me`. Finding a shared post by *search* is still a
-  separate rule and still does not work (#873). No-spec-impact.
+  notification verb `post_shared_with_me`. (Finding a shared post by *search* was a
+  separate rule that did not honour grants; that is fixed below, in the same release,
+  by #873.) No-spec-impact.
 
 ### Fixed
 
@@ -277,11 +278,11 @@ where applicable, otherwise note "no-spec-impact."
   what read paths honour; `role` and `team` principals can still be recorded but do not
   grant yet, exactly as for collections.
 
-  Two things a share still does not do, both unchanged by this and both tracked
-  separately: it does not put the post in the recipient's default browse grid (that
-  feed shows the walled-garden `org-only` tier and only that, whatever you have been
-  granted), and it does not make the post findable by *search*, which runs a separate
-  rule (#873). No-spec-impact.
+  One thing a share still does not do, unchanged by this and tracked separately: it
+  does not put the post in the recipient's default browse grid (that feed shows the
+  walled-garden `org-only` tier and only that, whatever you have been granted).
+  Searching for it *does* now work — #873, later in this same release, made the search
+  rule the browse rule. No-spec-impact.
 
 - **Admin pages no longer accuse administrators of lacking permission.** Opening an
   `/admin` page directly — a bookmark, a pasted link, a reload — showed a red *"You
