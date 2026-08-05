@@ -1,46 +1,69 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // /search — unified results page + facet sidebar (Phase 1.16.B-2).
+  // /search — ONE result surface (#850).
   //
-  // Reads ?q= from the URL, calls GET /api/v1/search + /search/facets,
-  // renders card list + collapsible facet groups; multi-select within
-  // a facet AND-joins across facets. "Save as collection" persists
-  // current results as a new collection.
+  // This page used to render its own text cards beside a fixed 16rem
+  // facet rail while every other browse surface — the home feed, the
+  // profile grids, a collection, "shared with me" — rendered the same
+  // rows through ContentGrid + AssetCard / PostCard / CollectionCard.
+  // Searching therefore felt like leaving the app: the same artwork you
+  // had been looking at as a tile came back as a line of text with
+  // `score 1.000` next to it.
+  //
+  // It now renders through the SAME ContentGrid, driven by the SAME
+  // global browseView store, with the SAME cards and the same hover
+  // previews and view modes. The card snippet switches on `hit.type`,
+  // the way UserProfile already does for its three mixed sections. What
+  // made that possible is the card payload the engine started shipping
+  // in #850 (app/internal/search/cards.go) — a hit carries what a tile
+  // renders from, so nothing here has to hydrate an id through a second
+  // endpoint.
+  //
+  // PostHost is mounted for the same reason /account/shared mounts it:
+  // PostCard's primary click writes `?post={id}` onto whatever URL it is
+  // on, so without a host here the click would dead-end.
+  //
+  // LAYOUT. No `max-w`. Every other browse surface is full-viewport
+  // width (the standing direction: 1080p baseline, 4K for art houses),
+  // and the old `max-w-6xl` capped results at ~1152px — on a 3840px
+  // display that is two thirds of the screen left empty beside a grid
+  // whose whole job is showing a lot of work at once. There is no reason
+  // for search to be the exception, so it is not one.
+  //
+  // FACETS. The rail is gone (#901). Counts live in a slide-over; the
+  // KIND filter (artwork / posts / collections) lives as chips over the
+  // grid, because that is the one dimension GET /search can actually
+  // filter on (`?types=`). See the comment on `kindOptions` for why the
+  // facet buckets themselves are counts and not controls.
 
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { t } from '$stores/lang.svelte';
+  import { browseView } from '$stores/browseView.svelte';
   import ThumbButtons from '$components/search/ThumbButtons.svelte';
+  import SearchSlideOver from '$components/search/SearchSlideOver.svelte';
+  import AdvancedQueryBuilder from '$components/search/AdvancedQueryBuilder.svelte';
+  import ContentGrid from '$components/ContentGrid.svelte';
+  import AssetCard from '$components/AssetCard.svelte';
+  import PostCard from '$components/PostCard.svelte';
+  import CollectionCard from '$components/CollectionCard.svelte';
+  import PostHost from '$components/PostHost.svelte';
+  import ViewControls from '$components/ViewControls.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
-
-  // #899 — a hit for an asset the caller cannot OPEN carries no
-  // columns. Everything except `type`, `id`, `restricted` and the
-  // scores is therefore OPTIONAL on the wire, and this type says so:
-  // declaring `title: string` here would let the template read a field
-  // the server deliberately did not send and render `undefined`.
-  type Hit = {
-    type: 'asset' | 'collection' | 'post';
-    id: string;
-    /** True when the caller may not see this asset's columns. */
-    restricted?: boolean;
-    /** Set only when `restricted` — the one asset-derived value the
-     *  placeholder carries, so it can say whose work it is. */
-    owner_display_name?: string;
-    title?: string;
-    summary?: string;
-    score: number;
-    created_at?: string;
-    updated_at?: string;
-    owner_user_ref?: number;
-    origin_server_id?: string;
-    extra?: Record<string, unknown>;
-  };
+  import {
+    hitAsCardAsset,
+    hitAsCollection,
+    hitAsPost,
+    hitMemberCount,
+    type HitType,
+    type SearchHit,
+  } from '$lib/search/hitCards';
 
   type SearchResponse = {
-    hits: Hit[];
+    hits: SearchHit[];
     next_cursor: string;
     total_count: number;
     total_count_capped: boolean;
@@ -52,7 +75,7 @@
   type FacetsResponse = { facets: Record<string, FacetResult> };
 
   let q = $state('');
-  let hits = $state<Hit[]>([]);
+  let hits = $state<SearchHit[]>([]);
   let cursor = $state('');
   let totalCount = $state(0);
   let totalCountCapped = $state(false);
@@ -60,7 +83,11 @@
   let loadingMore = $state(false);
   let error = $state('');
   let facets = $state<Record<string, FacetResult>>({});
-  let selectedFacets = $state<Record<string, Set<string>>>({});
+  // The kind filter. Empty = everything, which is what /search does when
+  // `types=` is absent.
+  let kinds = $state<HitType[]>([]);
+  let facetsOpen = $state(false);
+  let advancedOpen = $state(false);
   // Save-as-collection modal state.
   let saveOpen = $state(false);
   let saveName = $state('');
@@ -82,9 +109,68 @@
     return totalCount.toLocaleString();
   });
 
-  // dsl mode kicks in when the URL had ?dsl= — usually from the
-  // /search/advanced builder or a "Find similar assets" nav.
+  // dsl mode kicks in when the URL had ?dsl= — from the advanced builder
+  // panel or a "Find similar assets" nav.
   let dslMode = $state(false);
+
+  // The kind chips. THREE of them and no more, because these are the
+  // three things a hit can be and `?types=` is the only filter the
+  // search API accepts today.
+  //
+  // The facet buckets (tag / asset type / sensitivity / owner /
+  // extension) are deliberately NOT controls. GET /search takes no facet
+  // filter parameters — the DSL compiler produces Filters but the engine
+  // has no plumbing for them — so a checkbox beside a bucket would be an
+  // affordance that cannot do anything. It WAS one: the old sidebar's
+  // checkboxes set a local Set and re-queried nothing, with a comment
+  // saying so. Removing the control rather than restyling it is the
+  // honest half of "keep the facet counts": the counts are real and
+  // useful, the filtering was never there. Making them real is a change
+  // to the Engine's Query, not to this page.
+  const kindOptions: Array<{ id: HitType; labelKey: string }> = [
+    { id: 'asset', labelKey: 'search.kind.assets' },
+    { id: 'post', labelKey: 'search.kind.posts' },
+    { id: 'collection', labelKey: 'search.kind.collections' },
+  ];
+
+  const facetTotal = $derived(
+    Object.values(facets).reduce((n, f) => n + (f.buckets?.length ?? 0), 0),
+  );
+
+  // Facet group headings. The old rail printed the raw aggregator key —
+  // `ASSET_TYPE`, `EXTENSION` — which is a wire identifier, not a word.
+  // Unknown keys fall back to the key so a new aggregator is visible
+  // (untranslated) rather than invisible.
+  const FACET_LABELS: Record<string, string> = {
+    asset_type: 'search.facet.asset_type',
+    tag: 'search.facet.tag',
+    sensitivity: 'search.facet.sensitivity',
+    owner: 'search.facet.owner',
+    extension: 'search.facet.extension',
+  };
+  function facetLabel(key: string): string {
+    const k = FACET_LABELS[key];
+    return k ? t(k) : key;
+  }
+
+  // Hits mapped to card rows ONCE per result set rather than per render.
+  // ContentGrid keys on `id`, and the mapped row carries the hit beside
+  // its card props so the snippet reads one object instead of calling
+  // three mappers inline. `position` is the 1-based rank the relevance
+  // feedback endpoint records — derived here because ContentGrid's card
+  // snippet is (item, mode) and deliberately has no index.
+  const cards = $derived(
+    hits.map((h, i) => ({
+      id: h.id,
+      hit: h,
+      position: i + 1,
+      asset: h.type === 'asset' ? hitAsCardAsset(h) : null,
+      post: h.type === 'post' ? hitAsPost(h) : null,
+      memberCount: h.type === 'post' ? hitMemberCount(h) : 0,
+      collection: h.type === 'collection' ? hitAsCollection(h) : null,
+    })),
+  );
+  type SearchCardRow = (typeof cards)[number];
 
   /** Bumped by every runSearch and by snapshot restoration, so a
    *  result set that has been superseded can't land on top of a newer
@@ -112,6 +198,7 @@
     try {
       const params = new URLSearchParams({ limit: '25' });
       if (dslMode) params.set('dsl', query); else params.set('q', query);
+      if (kinds.length > 0) params.set('types', kinds.join(','));
       if (opts.append && cursor) params.set('cursor', cursor);
       const [searchResp, facetsResp] = await Promise.all([
         fetch(`/api/v1/search?${params.toString()}`, { credentials: 'include' }),
@@ -146,36 +233,62 @@
 
   function submit(e: Event) {
     e.preventDefault();
-    const url = new URL(page.url);
-    url.searchParams.set('q', q);
-    goto(url.pathname + url.search, { replaceState: false });
+    dslMode = false;
+    pushQueryToURL(q, false);
     void runSearch(q);
   }
 
-  function toggleFacet(type: string, value: string) {
-    const current = selectedFacets[type] ?? new Set<string>();
-    if (current.has(value)) {
-      current.delete(value);
-    } else {
-      current.add(value);
-    }
-    selectedFacets = { ...selectedFacets, [type]: current };
-    // For B-2 the toggle is a UI-only state marker; wiring facet
-    // filters into a re-issued /search query lands in a follow-up
-    // once /search accepts filter params. Documented in PR body.
+  /** Mirror the current query into the URL so a result page is a
+   *  shareable, back-navigable address — including the kind filter,
+   *  which is part of "what am I looking at". */
+  function pushQueryToURL(query: string, dsl: boolean) {
+    const url = new URL(page.url);
+    url.searchParams.delete('q');
+    url.searchParams.delete('dsl');
+    url.searchParams.set(dsl ? 'dsl' : 'q', query);
+    if (kinds.length > 0) url.searchParams.set('types', kinds.join(','));
+    else url.searchParams.delete('types');
+    url.searchParams.delete('advanced');
+    void goto(url.pathname + url.search, { replaceState: false, noScroll: true });
   }
 
-  function isSelected(type: string, value: string): boolean {
-    return (selectedFacets[type] ?? new Set()).has(value);
+  function toggleKind(kind: HitType) {
+    kinds = kinds.includes(kind) ? kinds.filter((k) => k !== kind) : [...kinds, kind];
+    if (!q) return;
+    pushQueryToURL(q, dslMode);
+    void runSearch(q);
   }
 
-  function clearFacets() {
-    selectedFacets = {};
+  function clearKinds() {
+    if (kinds.length === 0) return;
+    kinds = [];
+    if (!q) return;
+    pushQueryToURL(q, dslMode);
+    void runSearch(q);
+  }
+
+  function runAdvanced(dsl: string) {
+    advancedOpen = false;
+    dslMode = true;
+    q = dsl;
+    pushQueryToURL(dsl, true);
+    void runSearch(dsl);
   }
 
   onMount(() => {
+    // The grids read tile size + mode from the same store browse does,
+    // so a user's chosen view follows them into search.
+    browseView.init();
     const urlDSL = page.url.searchParams.get('dsl');
     const urlQ = page.url.searchParams.get('q');
+    const urlTypes = page.url.searchParams.get('types');
+    if (urlTypes) {
+      kinds = urlTypes
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s): s is HitType => s === 'asset' || s === 'post' || s === 'collection');
+    }
+    if (page.url.searchParams.get('advanced')) advancedOpen = true;
     if (urlDSL) {
       dslMode = true;
       q = urlDSL;
@@ -196,7 +309,8 @@
   interface SearchSnapshot {
     q: string;
     dsl: boolean;
-    hits: Hit[];
+    kinds: HitType[];
+    hits: SearchHit[];
     cursor: string;
     totalCount: number;
     totalCountCapped: boolean;
@@ -206,6 +320,7 @@
     capture: () => ({
       q,
       dsl: dslMode,
+      kinds,
       hits,
       cursor,
       totalCount,
@@ -217,6 +332,7 @@
       searchGen++;
       q = saved.q;
       dslMode = saved.dsl;
+      kinds = saved.kinds ?? [];
       hits = saved.hits;
       cursor = saved.cursor;
       totalCount = saved.totalCount;
@@ -227,14 +343,13 @@
     },
   });
 
-  function typeBadge(type: Hit['type']): string {
-    return type === 'asset' ? 'bg-info/15 text-info' : type === 'collection' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning';
-  }
+  // ?post={uuid} → overlay the post, same as browse and /account/shared.
+  const modalPostId = $derived(page.url.searchParams.get('post'));
 
-  function detailHref(h: Hit): string {
-    if (h.type === 'asset') return `/assets/${h.id}`;
-    if (h.type === 'collection') return `/collections/${h.id}`;
-    return `/posts/${h.id}`;
+  async function closeModal(): Promise<void> {
+    const target = new URL(page.url);
+    target.searchParams.delete('post');
+    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
   }
 
   async function submitSave() {
@@ -272,10 +387,10 @@
     savingSearch = true;
     saveSearchResult = '';
     try {
-      // Use ?dsl= as the stored query when the caller reached
-      // this page from /search/advanced (dslMode); otherwise treat
-      // the free-text q as the DSL string (single-token free-text
-      // parses cleanly).
+      // Use ?dsl= as the stored query when the caller composed this
+      // search in the advanced panel (dslMode); otherwise treat the
+      // free-text q as the DSL string (single-token free-text parses
+      // cleanly).
       const dslString = q;
       const resp = await fetch('/api/v1/search/saved', {
         method: 'POST',
@@ -306,162 +421,238 @@
   }
 </script>
 
-<svelte:head><title>{t('nav.advanced_search')} — {site.name}</title></svelte:head>
+<svelte:head><title>{t('search.page_title')} — {site.name}</title></svelte:head>
 
-<div class="mx-auto flex w-full max-w-6xl gap-6 px-6 py-8">
-  <!-- Facet sidebar -->
-  <aside class="w-64 shrink-0" data-testid="facet-sidebar">
-    <div class="sticky top-4 space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">{t('search.facets_heading')}</h2>
-        {#if Object.values(selectedFacets).some((s) => s.size > 0)}
-          <button
-            type="button"
-            onclick={clearFacets}
-            class="rounded px-2 py-0.5 text-xs text-accent hover:bg-surface-elevated"
-          >{t('common.clear_all')}</button>
-        {/if}
-      </div>
-      {#each Object.entries(facets) as [type, res] (type)}
-        {#if res.buckets && res.buckets.length > 0}
-          <div class="rounded-md border border-border bg-surface p-3">
-            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">{type}</div>
-            <ul class="space-y-1 text-sm">
-              {#each res.buckets.slice(0, 10) as b (b.value)}
-                <li>
-                  <label class="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isSelected(type, b.value)}
-                      onchange={() => toggleFacet(type, b.value)}
-                      class="h-3.5 w-3.5"
-                    />
-                    <span class="flex-1 truncate">{b.label ?? b.value}</span>
-                    <span class="text-xs text-fg-muted">{b.count}</span>
-                  </label>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
-      {/each}
-    </div>
-  </aside>
+<!-- Full viewport width + the same px-4/sm:px-6 padding as the browse
+     feed and the profile grids, so the shared TileGrid resolves the SAME
+     column count and search reads as one grid system with them. -->
+<div class="w-full px-4 py-6 sm:px-6">
+  <form onsubmit={submit} class="mb-4 flex flex-wrap gap-2">
+    <input
+      bind:value={q}
+      type="search"
+      placeholder={t('search.query_placeholder')}
+      data-testid="search-input"
+      class="min-h-11 min-w-0 flex-1 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-fg
+             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    />
+    <button
+      type="submit"
+      class="min-h-11 rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent hover:bg-accent/90"
+    >{t('common.search')}</button>
+  </form>
 
-  <!-- Main results column — <section> not <main> to keep the outer
-       layout's single <main> element authoritative (Playwright
-       strict-mode locator('main') requires this). -->
-  <section class="flex-1 min-w-0">
-    <div class="mb-4 flex items-center justify-between gap-3">
-      <h1 class="font-display text-3xl font-semibold">{t('nav.advanced_search')}</h1>
-      <div class="flex items-center gap-2">
-        <a
-          href="/search/advanced"
-          class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
-        >{t('search.advanced_builder')}</a>
-        {#if hits.length > 0}
-          <button
-            type="button"
-            onclick={() => { saveSearchOpen = true; saveSearchName = q; }}
-            class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
-            data-testid="save-search"
-          >{t('search.save_search_button')}</button>
-          <button
-            type="button"
-            onclick={() => { saveOpen = true; saveName = q; }}
-            class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
-            data-testid="save-as-collection"
-          >{t('search.save_as_collection')}</button>
-        {/if}
-      </div>
-    </div>
+  <!-- The chip row: what you are looking at, and the two panels. It
+       WRAPS — at 390px it reflows onto two lines instead of scrolling the
+       page sideways, which is what the fixed rail it replaces could not
+       do (#901). Every control is min-h-11 (44px), the coarse-pointer tap
+       target, verified at 390px with a touch pointer. -->
+  <div class="mb-4 flex flex-wrap items-center gap-2" data-testid="search-chips">
+    <button
+      type="button"
+      onclick={clearKinds}
+      aria-pressed={kinds.length === 0}
+      class="inline-flex min-h-11 items-center rounded-full border px-3 py-1.5 text-sm transition-colors
+             {kinds.length === 0
+               ? 'border-accent bg-accent text-on-accent'
+               : 'border-border bg-surface text-fg-muted hover:border-border-strong hover:text-fg'}"
+      data-testid="kind-chip-all"
+    >{t('search.kind.all')}</button>
 
-    <form onsubmit={submit} class="mb-6 flex gap-2">
-      <input
-        bind:value={q}
-        type="search"
-        placeholder={t('search.query_placeholder')}
-        data-testid="search-input"
-        class="flex-1 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-fg
-               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
+    {#each kindOptions as k (k.id)}
+      {@const active = kinds.includes(k.id)}
       <button
-        type="submit"
-        class="rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent hover:bg-accent/90"
-      >{t('common.search')}</button>
-    </form>
+        type="button"
+        onclick={() => toggleKind(k.id)}
+        aria-pressed={active}
+        class="inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors
+               {active
+                 ? 'border-accent bg-accent text-on-accent'
+                 : 'border-border bg-surface text-fg-muted hover:border-border-strong hover:text-fg'}"
+        data-testid="kind-chip-{k.id}"
+      >
+        {t(k.labelKey)}
+        {#if active}
+          <!-- The removable half of the pill: an active chip states what
+               it is filtering AND how to stop. -->
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        {/if}
+      </button>
+    {/each}
 
-    {#if error}
-      <div role="alert" class="mb-4 rounded border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
-        {error}
-      </div>
-    {/if}
+    <span class="mx-1 hidden h-6 w-px bg-border sm:inline-block" aria-hidden="true"></span>
 
-    {#if !loading && hits.length > 0}
-      <p class="mb-3 text-sm text-fg-muted" data-testid="search-total-count">
+    <button
+      type="button"
+      onclick={() => (facetsOpen = true)}
+      disabled={facetTotal === 0}
+      class="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5
+             text-sm text-fg-muted hover:border-border-strong hover:text-fg disabled:opacity-40"
+      data-testid="open-facets"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="4" y1="6" x2="20" y2="6" /><line x1="7" y1="12" x2="17" y2="12" /><line x1="10" y1="18" x2="14" y2="18" />
+      </svg>
+      {t('search.facets_heading')}
+    </button>
+
+    <button
+      type="button"
+      onclick={() => (advancedOpen = true)}
+      class="inline-flex min-h-11 items-center rounded-full border border-border bg-surface px-3 py-1.5 text-sm
+             text-fg-muted hover:border-border-strong hover:text-fg"
+      data-testid="open-advanced"
+    >{t('search.advanced_builder')}</button>
+  </div>
+
+  {#if error}
+    <div role="alert" class="mb-4 rounded border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+      {error}
+    </div>
+  {/if}
+
+  {#if !loading && hits.length > 0}
+    <!-- The count, and beside it the two things you can DO with a result
+         set. They are deliberately not chips: the row above filters what
+         you are looking at, these two act on it, and mixing the two
+         kinds in one wrapping row cost three lines of a 390px screen
+         before any artwork appeared. -->
+    <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <p class="text-sm text-fg-muted" data-testid="search-total-count">
         {t('search.counter', { n: hits.length, total: activeCount })}
       </p>
-    {/if}
-
-    {#if loading}
-      <p class="text-sm text-fg-muted">{t('search.searching')}</p>
-    {:else if hits.length === 0 && q}
-      <p class="text-sm text-fg-muted">{t('search.no_matches')}</p>
-    {/if}
-
-    <ul class="space-y-3">
-      {#each hits as h, i (h.type + ':' + h.id)}
-        <li class="rounded-md border border-border bg-surface p-3 hover:border-border-strong" data-testid="search-hit">
-          <a href={detailHref(h)} class="block">
-            <div class="mb-1 flex items-center gap-2">
-              <span class="rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {typeBadge(h.type)}">{h.type}</span>
-              {#if h.origin_server_id}
-                <span class="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-muted">{t('search.federated_badge')}</span>
-              {/if}
-              <span class="ml-auto text-xs text-fg-muted">score {h.score.toFixed(3)}</span>
-            </div>
-            {#if h.restricted}
-              <!-- The #899 placeholder. It says two things and no more:
-                   that something is here, and whose it is — which is what
-                   makes "request access" (#881) meaningful. There is no
-                   title to fall back to; the server sent none. -->
-              <h2 class="text-base font-semibold text-fg-muted italic">{t('card.restricted.label')}</h2>
-              <p class="mt-1 text-sm text-fg-muted">
-                {h.owner_display_name
-                  ? t('card.restricted.owner', { owner: h.owner_display_name })
-                  : t('card.restricted.owner_unknown')}
-              </p>
-            {:else}
-              <h2 class="text-base font-semibold text-fg">{h.title || t('common.untitled')}</h2>
-              {#if h.summary}
-                <p class="mt-1 text-sm text-fg-muted">{h.summary}</p>
-              {/if}
-            {/if}
-          </a>
-          {#if h.type === 'asset' && !h.restricted}
-            <!-- The relevance-feedback buttons address an asset the
-                 caller can open. Offering them on a placeholder invites
-                 a request that 404s. -->
-            <div class="mt-2 flex justify-end">
-              <ThumbButtons dsl={q} hitAssetId={h.id} hitPosition={i + 1} />
-            </div>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-
-    {#if cursor}
-      <div class="mt-4 flex justify-center">
+      <div class="ml-auto flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onclick={() => runSearch(q, { append: true })}
-          disabled={loadingMore}
-          class="rounded-md border border-border bg-surface px-4 py-1.5 text-sm hover:border-border-strong disabled:opacity-50"
-        >{loadingMore ? t('common.loading') : t('common.load_more')}</button>
+          onclick={() => { saveSearchOpen = true; saveSearchName = q; }}
+          class="inline-flex min-h-11 items-center rounded-md border border-border bg-surface px-3 py-1.5 text-sm
+                 text-fg-muted hover:border-border-strong hover:text-fg"
+          data-testid="save-search"
+        >{t('search.save_search_button')}</button>
+        <button
+          type="button"
+          onclick={() => { saveOpen = true; saveName = q; }}
+          class="inline-flex min-h-11 items-center rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
+          data-testid="save-as-collection"
+        >{t('search.save_as_collection')}</button>
       </div>
-    {/if}
-  </section>
+    </div>
+  {/if}
+
+  {#if !loading && hits.length === 0 && q}
+    <p class="text-sm text-fg-muted">{t('search.no_matches')}</p>
+  {:else if !loading && !q}
+    <!-- Landing on /search with no query. Not an "advanced search"
+         headline page — an invitation to type, and nothing else on
+         screen competing with the input above. -->
+    <p class="text-sm text-fg-muted" data-testid="search-idle">{t('search.idle')}</p>
+  {/if}
+
+  <!-- ONE result surface: the same grid, the same cards, the same view
+       modes as browse. The score is deliberately absent — an artist
+       looking at their own work does not need `score 1.000` on every
+       tile, and the ordering it describes is visible in the layout. -->
+  <ContentGrid mode={browseView.mode} items={cards} tileMin={browseView.tileMin} {loading}>
+    {#snippet card(item, mode)}
+      {@const row = item as SearchCardRow}
+      {#if row.post}
+        <PostCard
+          post={row.post}
+          memberCount={row.memberCount}
+          {mode}
+          feed={mode === 'feed'}
+          tileSizes={browseView.tileSizes}
+        />
+      {:else if row.collection}
+        <CollectionCard collection={row.collection} />
+      {:else if row.asset}
+        <!-- Relevance feedback (Phase 1.16.B-5) as a hover OVERLAY, not a
+             strip under the tile.
+
+             A strip was the first attempt and it broke the thing this
+             issue is about: grid is a zero-gap contact sheet (#555/#560),
+             so a row of buttons below asset tiles — and not below post or
+             collection tiles — made the wall ragged, and search stopped
+             looking like browse the moment a mixed page loaded. The
+             overlay costs the grid nothing.
+
+             Bottom-LEFT, because every other corner is claimed: checkbox
+             + media-type badge top-left of the THUMB, ⋮ menu top-right,
+             multi-asset badge bottom-right. Revealed on hover AND on
+             focus-within, so it is keyboard-reachable rather than
+             pointer-only. -->
+        <div class="group/hit relative">
+          <AssetCard asset={row.asset} {mode} tileSizes={browseView.tileSizes} />
+          {#if !row.hit.restricted}
+            <!-- Offering feedback on a placeholder invites a request that
+                 404s, so a withheld hit does not get the control. -->
+            <div
+              class="pointer-events-none absolute bottom-1 left-1 z-[3] rounded-md bg-black/60 px-1 opacity-0
+                     backdrop-blur-sm transition-opacity duration-200
+                     group-hover/hit:pointer-events-auto group-hover/hit:opacity-100
+                     focus-within:pointer-events-auto focus-within:opacity-100"
+            >
+              <ThumbButtons dsl={q} hitAssetId={row.hit.id} hitPosition={row.position} />
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {/snippet}
+  </ContentGrid>
+
+  {#if cursor}
+    <div class="mt-4 flex justify-center">
+      <button
+        type="button"
+        onclick={() => runSearch(q, { append: true })}
+        disabled={loadingMore}
+        class="min-h-11 rounded-md border border-border bg-surface px-4 py-1.5 text-sm hover:border-border-strong disabled:opacity-50"
+      >{loadingMore ? t('common.loading') : t('common.load_more')}</button>
+    </div>
+  {/if}
 </div>
+
+<!-- The same floating mode switcher + sort bar every other browse
+     surface mounts (#511), so switching to masonry on the home feed and
+     then searching lands you in masonry. -->
+<ViewControls />
+
+{#if modalPostId}
+  <PostHost postId={modalPostId} onClose={closeModal} />
+{/if}
+
+<!-- Facet counts. A panel, not a rail: the rail was a `w-64 shrink-0`
+     column that could not fit beside a grid at 390px (#901). -->
+<SearchSlideOver open={facetsOpen} title={t('search.facets_heading')} onclose={() => (facetsOpen = false)}>
+  <p class="mb-4 text-sm text-fg-muted">{t('search.facets_intro')}</p>
+  <div class="space-y-4">
+    {#each Object.entries(facets) as [type, res] (type)}
+      {#if res.buckets && res.buckets.length > 0}
+        <div class="rounded-md border border-border bg-surface-elevated p-3">
+          <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">{facetLabel(type)}</div>
+          <ul class="space-y-1 text-sm">
+            {#each res.buckets.slice(0, 10) as b (b.value)}
+              <li class="flex items-center gap-2">
+                <span class="min-w-0 flex-1 truncate">{b.label ?? b.value}</span>
+                <span class="shrink-0 tabular-nums text-xs text-fg-muted">{b.count}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    {/each}
+  </div>
+</SearchSlideOver>
+
+<!-- The advanced builder — a panel composing the same query, hidden
+     until asked for. It used to be /search/advanced, a separate
+     destination with its own empty state; that made "advanced" a mode
+     rather than an affordance. -->
+<SearchSlideOver open={advancedOpen} title={t('search.advanced.heading')} onclose={() => (advancedOpen = false)}>
+  <AdvancedQueryBuilder onsubmit={runAdvanced} />
+</SearchSlideOver>
 
 <!-- Save-as-collection modal -->
 {#if saveOpen}
@@ -479,7 +670,7 @@
         <input
           bind:value={saveName}
           type="text"
-          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
+          class="min-h-11 w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       {#if saveResult}
@@ -489,13 +680,13 @@
         <button
           type="button"
           onclick={() => (saveOpen = false)}
-          class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
+          class="min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
         >{t('common.cancel')}</button>
         <button
           type="button"
           onclick={submitSave}
           disabled={saving || !saveName.trim()}
-          class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
+          class="min-h-11 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
         >{saving ? t('common.saving') : t('search.save_collection.submit')}</button>
       </div>
     </div>
@@ -523,7 +714,7 @@
         <input
           bind:value={saveSearchName}
           type="text"
-          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
+          class="min-h-11 w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       <label class="mb-3 block text-sm">
@@ -533,14 +724,14 @@
           type="number"
           min="15"
           step="15"
-          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
+          class="min-h-11 w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         />
       </label>
       <label class="mb-3 block text-sm">
         <span class="mb-1 block text-fg-muted">{t('search.save_search.channel_label')}</span>
         <select
           bind:value={saveSearchChannel}
-          class="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
+          class="min-h-11 w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm"
         >
           <option value="email">{t('search.save_search.channel_email')}</option>
           <option value="none">{t('search.save_search.channel_none')}</option>
@@ -553,13 +744,13 @@
         <button
           type="button"
           onclick={() => (saveSearchOpen = false)}
-          class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
+          class="min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
         >{t('common.cancel')}</button>
         <button
           type="button"
           onclick={submitSaveSearch}
           disabled={savingSearch || !saveSearchName.trim()}
-          class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
+          class="min-h-11 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
         >{savingSearch ? t('common.saving') : t('search.save_search.submit')}</button>
       </div>
     </div>

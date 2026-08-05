@@ -177,6 +177,102 @@ func TestSearchHit_RestrictedIsAllowListed(t *testing.T) {
 	}
 }
 
+// hwCardKeys is the set of presentation fields #850 added to a readable
+// asset hit's `extra`. Every one of them is a column #899 withholds from
+// a restricted asset's payload — `file_extension` IS the media type,
+// `thumbhash` is a blurred picture of the content — so widening the
+// payload had to be done THROUGH the readability gate, not beside it.
+var hwCardKeys = []string{
+	"asset_type", "file_hash", "file_extension", "thumbhash",
+	"preview_available", "ladder_available", "scrub_available",
+	"pixel_width", "pixel_height",
+}
+
+// TestSearchHit_CardPayloadNeverReachesARestrictedRow is the #850 half of
+// the invariant, and it is written as a SUBSET check on the serialized
+// response rather than on a rendered card: the JSON is the leak.
+//
+// Run red-first against a build whose runAssets emits the card extras
+// unconditionally and it fails on the first key — which is the shape the
+// obvious implementation of "search returns card-shaped rows" has.
+func TestSearchHit_CardPayloadNeverReachesARestrictedRow(t *testing.T) {
+	pool := coPool(t)
+	hwSeedOwner(t, pool)
+	restricted := hwSeedAsset(t, pool, hwPhrase+" unreleased boss theme", "restricted")
+
+	stranger := hwStranger
+	m := hwHit(t, NewEngine(pool), &stranger, visibility.ContentCaps{}, restricted)
+
+	// The allow-list is unchanged by the widening. That is the assertion:
+	// a richer readable payload must not have grown the restricted one.
+	for k := range m {
+		if !hwHitAllowList[k] {
+			t.Errorf("withheld hit carried key %q — #850 widened the payload past the #899 gate", k)
+		}
+	}
+	if _, present := m["extra"]; present {
+		t.Fatal("withheld hit ships an `extra` bag at all; the card payload rides in it, " +
+			"so its mere presence is the leak")
+	}
+	// And the fields by name, so a failure says WHICH one got out rather
+	// than only that the key set grew.
+	raw := string(mustMarshal(t, m))
+	for _, k := range hwCardKeys {
+		if strings.Contains(raw, `"`+k+`"`) {
+			t.Errorf("withheld hit serialises %q — that is an asset column #899 withholds", k)
+		}
+	}
+}
+
+// TestSearchHit_ReadableRowCarriesTheCardPayload is the counterweight,
+// and it is the acceptance criterion for the sprint: a hit the caller may
+// open has to carry what a card renders from, or /search goes back to
+// text rows. Without this a withhold-everything implementation passes the
+// test above.
+func TestSearchHit_ReadableRowCarriesTheCardPayload(t *testing.T) {
+	pool := coPool(t)
+	hwSeedOwner(t, pool)
+	public := hwSeedAsset(t, pool, hwPhrase+" public splash art", "public")
+
+	stranger := hwStranger
+	m := hwHit(t, NewEngine(pool), &stranger, visibility.ContentCaps{}, public)
+	extraRaw, ok := m["extra"]
+	if !ok {
+		t.Fatal("a readable asset hit has no `extra` bag — nothing to render a tile from")
+	}
+	var extra map[string]json.RawMessage
+	if err := json.Unmarshal(extraRaw, &extra); err != nil {
+		t.Fatalf("extra is not an object: %v", err)
+	}
+	for _, k := range hwCardKeys {
+		if _, present := extra[k]; !present {
+			t.Errorf("readable hit's extra is missing %q — the card contract (cardAsset.ts) "+
+				"requires it, and a surface that drops a presentation field silently loses "+
+				"the media-type badge and the blur-up (#595)", k)
+		}
+	}
+	// The fixture seeds file_extension='ogg' and a four-byte thumbhash, so
+	// these two are checked for VALUE, not just presence: "present but
+	// always null" is how a card feed dies quietly.
+	var ext string
+	if err := json.Unmarshal(extra["file_extension"], &ext); err != nil || ext != "ogg" {
+		t.Errorf("file_extension = %q, want %q — CardThumb reads the media TYPE off this alone", ext, "ogg")
+	}
+	var thumb string
+	if err := json.Unmarshal(extra["thumbhash"], &thumb); err != nil || thumb == "" {
+		t.Errorf("thumbhash = %q, want the base64 of the seeded bytes", thumb)
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
 // TestSearchHit_EntitledCallersUnaffected is the other half: the owner
 // and the two capability holders get the full hit. content.read.all in
 // particular exists so the demo-viewer role can render a

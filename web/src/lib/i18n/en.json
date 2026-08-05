@@ -13,12 +13,10 @@
     "blogs": "Blogs",
     "collections": "Collections",
     "review": "Review",
-    "advanced_search": "Advanced search",
-    "upload_button_title": "Upload (or drop files anywhere)"
+    "upload_button_title": "Upload (or drop files anywhere)",
+    "search_page": "Search"
   },
   "search": {
-    "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
-    "coming_soon": "Advanced search is not yet available. For now, the navbar input runs a full-text search.",
     "facets_heading": "Facets",
     "advanced_builder": "Advanced builder",
     "save_search_button": "Save search",
@@ -56,7 +54,6 @@
       "saved": "Saved. Runs every {minutes} minutes."
     },
     "advanced": {
-      "title": "Advanced search",
       "heading": "Advanced search",
       "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
       "freetext_label": "Free-text query (optional)",
@@ -96,6 +93,22 @@
       "err_not_configured": "Visual search isn't configured on this instance.",
       "err_unavailable": "The visual-search service is temporarily unavailable. Try again shortly.",
       "err_generic": "Reverse-image search failed. Try again."
+    },
+    "page_title": "Search",
+    "idle": "Search the library — artwork, posts and collections in one place.",
+    "facets_intro": "What is in these results. Counts reflect what you can open.",
+    "kind": {
+      "all": "Everything",
+      "assets": "Artwork",
+      "posts": "Posts",
+      "collections": "Collections"
+    },
+    "facet": {
+      "asset_type": "Type",
+      "tag": "Tags",
+      "sensitivity": "Sensitivity",
+      "owner": "Owner",
+      "extension": "File type"
     }
   },
   "blogs": {

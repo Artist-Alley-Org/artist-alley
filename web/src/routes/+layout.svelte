@@ -312,10 +312,24 @@
                 placeholder={t('nav.search_placeholder')}
               />
             </div>
+            <!-- The entry point to the search SURFACE (#850).
+                 It used to read "Advanced search" and it pointed here
+                 already — the label named a page (`/search/advanced`)
+                 that no longer exists, and the destination it actually
+                 opens is now just search: one result grid, with the kind
+                 filter, the facet counts and the query builder inside
+                 it. So the control is named after where it goes.
+
+                 It CARRIES whatever is in the box beside it. A control
+                 labelled "Search" sitting next to a search input, that
+                 navigates away and silently drops what you typed, is a
+                 trap — and renaming it without wiring it would have
+                 built one. Empty box ⇒ plain `/search`. -->
             <a
-              href="/search"
-              title={t('nav.advanced_search')}
-              aria-label={t('nav.advanced_search')}
+              href={searchValue.trim() ? `/search?q=${encodeURIComponent(searchValue.trim())}` : '/search'}
+              title={t('nav.search_page')}
+              aria-label={t('nav.search_page')}
+              data-testid="nav-search-page"
               class="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted hover:bg-state-hover hover:text-fg"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -326,7 +340,7 @@
                 <circle cx="12" cy="18" r="1.5" />
                 <circle cx="19" cy="6"  r="1.5" />
               </svg>
-              <span class="hidden lg:inline">{t('nav.advanced_search')}</span>
+              <span class="hidden lg:inline">{t('nav.search_page')}</span>
             </a>
           </div>
         {:else}

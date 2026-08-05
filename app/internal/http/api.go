@@ -1440,6 +1440,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.posts.SetPreviewLadder(ladderReader)
 	s.collections.SetPreviewLadder(ladderReader)
 	s.featuredDomain.SetPreviewLadder(ladderReader)
+	// #850 — a search hit now carries the same card payload a browse row
+	// does, so the search engine is the fifth surface that has to report
+	// ladder_available, and it reads the SAME configured ladder. A
+	// separately-constructed reader here would be a fifth cache that
+	// could disagree with browse for a request or two after an operator
+	// edits the config — and the tile the user is looking at would flip
+	// between the responsive srcset and the square `col` crop depending
+	// on which page they reached it from.
+	if s.searchService != nil {
+		s.searchService.Engine().SetPreviewLadder(ladderReader)
+	}
 	return s
 }
 

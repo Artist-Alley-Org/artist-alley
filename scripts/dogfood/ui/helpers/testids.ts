@@ -21,7 +21,13 @@ export const testIds = {
   nav: {
     brand:            'nav-brand',
     search:           'nav-search',
-    advancedSearch:   'nav-advanced-search',
+    // The link to the search SURFACE. Renamed from `advancedSearch` /
+    // `nav-advanced-search` in #850: the label named `/search/advanced`,
+    // a page that no longer exists — the builder is a panel inside
+    // /search now. It was also registered here and never applied to the
+    // element, which is why the two specs that use it located it by
+    // accessible name and both broke the moment the name changed.
+    searchPage:       'nav-search-page',
     upload:           'nav-upload-button',
     notifications:    'nav-notifications-button',
     messages:         'nav-messages-button',

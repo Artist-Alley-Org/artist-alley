@@ -95,7 +95,6 @@ const TRACKED_FILES = [
   'src/routes/posts/[id]/+page.svelte',
   'src/routes/setup/+page.svelte',
   'src/routes/search/+page.svelte',
-  'src/routes/search/advanced/+page.svelte',
   'src/routes/collections/+page.svelte',
   'src/routes/collections/[id]/+page.svelte',
   'src/lib/components/CollectionModal.svelte',
@@ -113,6 +112,10 @@ const TRACKED_FILES = [
   'src/lib/components/upload/ThumbnailPicker.svelte',
   // — 1.55.W reverse-image dropzone —
   'src/lib/components/search/ReverseImageDropzone.svelte',
+  // — #850 one result surface: the advanced builder became a panel and
+  //   the facet rail became a slide-over —
+  'src/lib/components/search/AdvancedQueryBuilder.svelte',
+  'src/lib/components/search/SearchSlideOver.svelte',
   // — #737 field-options editor —
   'src/lib/components/FieldEditor.svelte',
   // — #774 surfaces whose keys were dead until the resolution guard
