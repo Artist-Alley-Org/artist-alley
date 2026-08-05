@@ -60,6 +60,44 @@ For a caller requesting an asset's bytes (original or any derivative):
 - **`embargo`** — as `restricted`, and denies by default.
 - **`embargo`** — as `restricted`. The date-based auto-lift and the per-asset allowlist are ADR 0020 Phase 1.28 machinery that does not exist yet; **until it does, embargo denies by default.** Failing closed on the strictest tier is the correct interim.
 
+### Amended 2026-08-05 (#881, PR #913) — the workflow half shipped; the grant path is still deferred, and there is now a marker capability holding the seam open
+
+**Do not "clean up" the capability `content.access.request`. It confers nothing on purpose.**
+
+#881 shipped the request *workflow*: a "Request access" affordance on the restricted
+placeholder, a notification to the asset's owner, and an **ownership disjunct** on the decide
+gate so the artist whose work was requested can answer — previously they could not, unless an
+operator handed them a global `share.grant`.
+
+That disjunct nearly shipped as a privilege-escalation route, and the reason is the hazard this
+very section already names. `resource_request.requested_capability` is **requester-controlled**;
+`Grant` inserts it into `user_capability_grants` **verbatim and globally** (its own comment:
+*"team_id is NULL (global grant) … the grant matches what the requester asked for without further
+scoping"*). While only `share.grant` / `system.admin` holders could decide, that was contained —
+those people are already trusted. **Widening the gate to every asset owner would have let anyone
+submit `system.admin` against a stranger's asset and talk them into approving it from a panel
+that looks like it is about a picture.**
+
+So the owner disjunct is **capability-scoped**: an owner may decide only requests naming
+`content.access.request` (migration 00035), and the submit endpoint defaults to that marker so
+the UI never names a capability at all. An explicitly-named code is still accepted — the endpoint
+predates the button and admin tooling asks for specific capabilities — but such a request remains
+decidable only by a real approver.
+
+**The marker confers nothing.** `ContentReadable` consults exactly two codes (`system.admin`,
+`content.read.all`) and no gate anywhere reads this one. A granted request therefore means *the
+owner agreed*, not *and now you can see it* — and the dialog says so in as many words rather than
+leaving the user to discover it.
+
+**The deferral below is therefore still in force**, and its stated blocker is only half gone: the
+vocabulary problem was resolved by #434, but the **mechanism** — a grant that means *this object*
+— does not exist, because `user_capability_grants` has no per-object scope at all (only
+`team_id`). That is **#912**, which also carries the design question of whether ADR 0010 Layer 6's
+additive ACL model is already the right shape rather than a new dimension on capabilities.
+
+`content.access.request` is the seam between the two halves. When #912 lands, it is the thing that
+should start meaning something — not the thing to delete.
+
 ### Why the grant path is deferred (amended 2026-07-19)
 
 The obvious rule — "an approved `resource_request` unlocks the bytes" — is **unsafe as the
