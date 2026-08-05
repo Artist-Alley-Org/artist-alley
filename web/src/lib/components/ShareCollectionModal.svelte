@@ -14,7 +14,7 @@
   import { onMount } from 'svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
-  import CollectionModal from './CollectionModal.svelte';
+  import Modal from './Modal.svelte';
 
   interface Props {
     open: boolean;
@@ -123,7 +123,7 @@
   }
 </script>
 
-<CollectionModal title={t('collections.share_title')} {open} {onclose} panelClass="max-w-xl">
+<Modal title={t('collections.share_title')} {open} {onclose} panelClass="max-w-xl">
   <div class="space-y-4">
     <!-- Copy link -->
     <section class="rounded-md border border-border bg-surface px-3 py-2">
@@ -215,4 +215,4 @@
       {t('common.done')}
     </button>
   {/snippet}
-</CollectionModal>
+</Modal>

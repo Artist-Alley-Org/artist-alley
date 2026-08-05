@@ -3027,6 +3027,9 @@ func (s *apiServer) RequestAssetAccess(ctx context.Context, req openapi.RequestA
 func (s *apiServer) ListOwnRequests(ctx context.Context, req openapi.ListOwnRequestsRequestObject) (openapi.ListOwnRequestsResponseObject, error) {
 	return s.requestsHTTP.ListOwnRequests(ctx, req)
 }
+func (s *apiServer) ListIncomingRequests(ctx context.Context, req openapi.ListIncomingRequestsRequestObject) (openapi.ListIncomingRequestsResponseObject, error) {
+	return s.requestsHTTP.ListIncomingRequests(ctx, req)
+}
 func (s *apiServer) ListAdminRequests(ctx context.Context, req openapi.ListAdminRequestsRequestObject) (openapi.ListAdminRequestsResponseObject, error) {
 	return s.requestsHTTP.ListAdminRequests(ctx, req)
 }

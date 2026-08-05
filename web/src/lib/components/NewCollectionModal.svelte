@@ -6,7 +6,7 @@
 
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
-  import CollectionModal from './CollectionModal.svelte';
+  import Modal from './Modal.svelte';
 
   interface CreatedCollection {
     id: string;
@@ -64,7 +64,7 @@
   }
 </script>
 
-<CollectionModal title={t('collections.new_title')} {open} {onclose}>
+<Modal title={t('collections.new_title')} {open} {onclose}>
   <div class="space-y-3">
     {#if error}
       <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
@@ -121,4 +121,4 @@
       {submitting ? t('collections.creating') : t('collections.create')}
     </button>
   {/snippet}
-</CollectionModal>
+</Modal>

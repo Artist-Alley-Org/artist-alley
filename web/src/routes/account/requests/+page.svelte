@@ -1,14 +1,25 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // /account/requests — the caller's own resource requests
-  // (Phase 1.17.E). Shows pending + decided requests with state
-  // badges. Read-only; the decision happens at /admin/requests.
+  // /account/requests — both directions of the request workflow.
+  //
+  // OUTGOING (Phase 1.17.E): the caller's own requests with state
+  // badges. Read-only — someone else decides these.
+  //
+  // INCOMING (#881): pending requests against assets the caller OWNS,
+  // with the same decision panel /admin/requests uses. This half exists
+  // because the person with the strongest claim to decide had no route
+  // to: /admin/requests is gated on requests.read / share.grant, which
+  // an artist has no reason to hold, so every request on their own work
+  // needed an administrator. The section renders only when there is
+  // something to decide — an account with no incoming requests should
+  // not grow a permanent empty panel about a workflow it never uses.
 
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import RequestQueue, { type QueuedRequest } from '$components/RequestQueue.svelte';
 
   interface ResourceRequest {
     id: string;
@@ -23,8 +34,13 @@
   }
 
   let items = $state<ResourceRequest[]>([]);
+  let incoming = $state<QueuedRequest[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  // Survives the incoming section emptying out — see RequestQueue's
+  // `ondecided` note. Deciding the last request removes the panel, and
+  // a confirmation rendered inside it would go with it.
+  let decided = $state<string | null>(null);
 
   onMount(() => {
     void refresh();
@@ -40,9 +56,20 @@
         return;
       }
       items = ((r.data as { items?: ResourceRequest[] }).items ?? []) as ResourceRequest[];
+      await refreshIncoming();
     } finally {
       loading = false;
     }
+  }
+
+  // Kept separate from refresh() so deciding a row re-reads the queue
+  // without blanking the outgoing list underneath it.
+  async function refreshIncoming() {
+    const r = await api.GET('/account/requests/incoming', {
+      params: { query: { limit: 100, offset: 0 } },
+    });
+    if (r.error) return;
+    incoming = ((r.data as { items?: QueuedRequest[] }).items ?? []) as QueuedRequest[];
   }
 
   // The expiry was interpolated raw, so the page rendered
@@ -73,6 +100,34 @@
     <h1 class="text-2xl font-semibold text-fg">{t('account.requests.title')}</h1>
     <p class="mt-1 text-sm text-fg-muted">{t('account.requests.intro')}</p>
   </header>
+
+  {#if decided}
+    <p
+      role="status"
+      data-testid="decision-recorded"
+      class="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success"
+    >
+      {decided}
+    </p>
+  {/if}
+
+  {#if incoming.length > 0}
+    <section class="space-y-2" data-testid="incoming-requests">
+      <h2 class="text-lg font-semibold text-fg">{t('account.requests.incoming_title')}</h2>
+      <p class="text-sm text-fg-muted">
+        {t('account.requests.incoming_intro', { total: incoming.length })}
+      </p>
+      <RequestQueue
+        items={incoming}
+        testidPrefix="incoming-request"
+        ondecided={async (msg) => {
+          decided = msg;
+          await refreshIncoming();
+        }}
+      />
+    </section>
+    <h2 class="pt-2 text-lg font-semibold text-fg">{t('account.requests.outgoing_title')}</h2>
+  {/if}
 
   {#if loading}
     <p class="text-fg-muted">{t('common.loading')}</p>

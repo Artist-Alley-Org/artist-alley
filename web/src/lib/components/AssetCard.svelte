@@ -176,6 +176,7 @@
     titleAdjacent={detailed}
     {restricted}
     restrictedOwnerName={asset.owner_display_name ?? null}
+    requestAssetId={restricted ? asset.id : null}
   >
     {#if restricted}
       <!-- #883 — no link, no menu, no checkbox, no hover title. The tile

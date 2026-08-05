@@ -5,7 +5,7 @@
 
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
-  import CollectionModal from './CollectionModal.svelte';
+  import Modal from './Modal.svelte';
   import CollectionFieldsSection from './CollectionFieldsSection.svelte';
 
   interface Collection {
@@ -92,7 +92,7 @@
   }
 </script>
 
-<CollectionModal title={t('collections.edit_title')} {open} {onclose}>
+<Modal title={t('collections.edit_title')} {open} {onclose}>
   <div class="space-y-3">
     {#if error}
       <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
@@ -161,4 +161,4 @@
       {submitting ? t('collections.saving') : t('common.save')}
     </button>
   {/snippet}
-</CollectionModal>
+</Modal>

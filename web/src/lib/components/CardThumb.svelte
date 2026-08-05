@@ -151,6 +151,15 @@
     /** The asset owner's display name, the only asset-derived value a
      *  restricted placeholder carries. Null when unresolvable. */
     restrictedOwnerName?: string | null;
+    /** Offer "request access" on the restricted plate (#881), against
+     *  this asset id. Null (the default) is a plate with no ask.
+     *
+     *  Separate from `assetId` on purpose. `assetId` is "what would this
+     *  tile show bytes for", and it is deliberately never dereferenced
+     *  on a restricted tile; this is "what is the viewer asking about".
+     *  A PostCard passes a cover id as the former and nothing as the
+     *  latter — see CardRestricted's prop note. */
+    requestAssetId?: string | null;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -178,6 +187,7 @@
     titleAdjacent = false,
     restricted = false,
     restrictedOwnerName = null,
+    requestAssetId = null,
     children,
   }: Props = $props();
 
@@ -552,7 +562,7 @@
          this check anywhere below would mean the branches above are
          trusted to have been handed nothing. Nothing here requests
          bytes. -->
-    <CardRestricted ownerName={restrictedOwnerName} />
+    <CardRestricted ownerName={restrictedOwnerName} assetId={requestAssetId} />
   {:else if isDoc}
     <!-- Text/code assets get no rasterised preview variant at all, so
          the plate IS their tile rather than a fallback from one (#558). -->

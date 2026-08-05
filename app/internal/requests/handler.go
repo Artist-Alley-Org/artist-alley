@@ -41,10 +41,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
+	"github.com/mscrnt/artist-alley/app/internal/notifications"
 )
 
 // CapShareGrant is the capability code an approver needs to decide
@@ -63,6 +67,32 @@ const CapShareGrant = "share.grant"
 // (share.grant) still reads the queue they act on; this cap lets a
 // read-only auditor role view it without being able to decide (#356).
 const CapRequestsRead = "requests.read"
+
+// CapSystemAdmin is the wildcard. Spelled here rather than reached for
+// as a literal at three gate sites.
+const CapSystemAdmin = "system.admin"
+
+// CapAccessRequest is the capability the "request access" affordance
+// submits, and the ONLY one an asset's owner may decide (migration
+// 00035, #881).
+//
+// It confers nothing. No gate reads it — visibility.ContentReadable
+// consults exactly system.admin and content.read.all — so granting it
+// means "the owner agreed", not "and now you can see it". Per-asset
+// unlocking is #912; ADR 0064's "Why the grant path is deferred" still
+// holds, and the UI says so rather than implying an unlock that will
+// not happen.
+//
+// Its narrowness is what makes the owner disjunct in http.go safe.
+// requested_capability is requester-controlled input, so an owner who
+// could decide ANY request could be talked into granting system.admin
+// from a panel on their own work. See the migration for the full note.
+const CapAccessRequest = "content.access.request"
+
+// approverCapabilities are the codes whose global holders act on the
+// request queue. Used for the create-time notification fan-out — NOT as
+// an authorisation answer; the gates below ask auth directly.
+var approverCapabilities = []string{CapShareGrant, CapSystemAdmin}
 
 // SubmitInput is the parameter list for Submit. Kept as a struct
 // so future fields (priority, team_scope_request, etc.) don't
@@ -160,20 +190,41 @@ var ErrRequestNotFound = errors.New("requests: not found")
 // constraint violation into a clean 400 that names the problem.
 var ErrUnknownCapability = errors.New("requests: unknown capability")
 
-// Submit creates a fresh pending request. The handler is permissive
-// about WHO may ask — any authenticated user may submit a request, and
-// the approver gate decides whether to grant — but the capability named
-// must exist. It is deliberately NOT permissive about the string
-// itself: this field feeds an authorisation decision, so it may only
-// name a real capability (#434).
+// Submit files a pending request, or returns the caller's existing one.
 //
-// Note what this does not settle: a real capability is not necessarily
-// a REQUESTABLE one. Nothing stops a request naming system.admin, and
-// that rule belongs to the grant path (ADR 0064). Audit fires alongside the row
-// insert; the per-admin pending-count cache is wildcard-evicted
-// so every approver's badge picks up the new pending entry on
-// their next read.
-func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput) (ResourceRequest, error) {
+// The handler is permissive about WHO may ask — any authenticated user
+// may submit a request, and the decide gate settles whether to grant —
+// but the capability named must exist. It is deliberately NOT permissive
+// about the string itself: this field feeds an authorisation decision,
+// so it may only name a real capability (#434).
+//
+// # Duplicate asks (#881)
+//
+// created=false means the ask already existed and this call changed
+// nothing. One ask is (requester, asset, capability), and the rule is:
+//
+//   - A second ask while the first is still PENDING coalesces onto it.
+//     It is the same question asked twice, and filing it again would put
+//     two rows in the approver's queue for one decision — the approver
+//     would have to deny one of them, which writes a "denied" the
+//     requester never earned.
+//   - A DECIDED request does not block a new one. denied and expired are
+//     terminal for the ROW, not for the person; state.go already says
+//     re-issuing means "a new resource_request row rather than walking a
+//     row backwards". Reading terminality as "denied once, never again"
+//     would turn a single no into a permanent one, which no surface
+//     tells the user is happening. A granted-then-expired request in
+//     particular MUST be re-askable, or expiry would be a one-way door.
+//
+// Concurrency is settled by the storage layer, not by this read: two
+// simultaneous submits both see no pending row, both INSERT, and the
+// partial unique index (migration 00035) fails the loser with 23505.
+// The loser re-reads the winner and returns created=false, so the
+// coalesce holds under a double-click as well as a slow one.
+//
+// Audit fires only on a real insert. So does the notification — an
+// approver should not be re-pinged because the requester refreshed.
+func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput) (row ResourceRequest, created bool, err error) {
 	q := New(h.Pool)
 
 	var known bool
@@ -181,20 +232,46 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 		`SELECT EXISTS (SELECT 1 FROM capabilities WHERE code = $1)`,
 		in.RequestedCapability,
 	).Scan(&known); err != nil {
-		return ResourceRequest{}, fmt.Errorf("requests: capability lookup: %w", err)
+		return ResourceRequest{}, false, fmt.Errorf("requests: capability lookup: %w", err)
 	}
 	if !known {
-		return ResourceRequest{}, fmt.Errorf("%w: %q", ErrUnknownCapability, in.RequestedCapability)
+		return ResourceRequest{}, false, fmt.Errorf("%w: %q", ErrUnknownCapability, in.RequestedCapability)
 	}
 
-	row, err := q.InsertResourceRequest(ctx, InsertResourceRequestParams{
+	ask := FindPendingRequestForAskParams{
+		RequesterUserRef:    in.RequesterUserRef,
+		TargetAssetID:       pgtype.UUID{Bytes: in.TargetAssetID, Valid: true},
+		RequestedCapability: in.RequestedCapability,
+	}
+	existing, err := q.FindPendingRequestForAsk(ctx, ask)
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return ResourceRequest{}, false, fmt.Errorf("requests: find pending: %w", err)
+	}
+
+	row, err = q.InsertResourceRequest(ctx, InsertResourceRequestParams{
 		RequesterUserRef:    in.RequesterUserRef,
 		TargetAssetID:       pgtype.UUID{Bytes: in.TargetAssetID, Valid: true},
 		RequestedCapability: in.RequestedCapability,
 		Reason:              in.Reason,
 	})
 	if err != nil {
-		return ResourceRequest{}, fmt.Errorf("requests: insert: %w", err)
+		// Lost the race against a concurrent identical submit. The
+		// winner's row IS the answer to this call — same requester,
+		// same asset, same capability, still pending.
+		// SQLSTATE 23505 = unique_violation, spelled as the literal
+		// the rest of the tree spells it (assets.isPgUniqueViolation,
+		// mcp_registry.Create).
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			existing, findErr := q.FindPendingRequestForAsk(ctx, ask)
+			if findErr == nil {
+				return existing, false, nil
+			}
+		}
+		return ResourceRequest{}, false, fmt.Errorf("requests: insert: %w", err)
 	}
 
 	if h.audit != nil {
@@ -206,12 +283,37 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 			in.Reason)
 	}
 
+	h.notifySubmitted(ctx, row)
+
 	// Local LRU evict + broadcast in one call. cache.Cache.Invalidate
 	// does both (cache.go:Invalidate); the package-level
 	// InvalidatePendingCountAll is broadcast-only for cross-
 	// package callers that don't hold the local cache reference.
 	h.invalidateCount(ctx)
 
+	return row, true, nil
+}
+
+// AssetOwnerRef resolves who owns the asset a request targets.
+//
+// Delegates to shares.ObjectOwnerRef — the single expression of "who
+// owns this shareable object" (#893). A second ownership notion here is
+// exactly what epic #665 exists to prevent, and #892 and #904 each spent
+// a sprint undoing one. ok=false is "no resolvable owner" and every
+// caller reads it as a denial, per that function's fail-closed contract.
+func (h *Handler) AssetOwnerRef(ctx context.Context, assetID uuid.UUID) (int64, bool, error) {
+	return shares.ObjectOwnerRef(ctx, h.Pool, federation.ShareObjectKindAsset, assetID)
+}
+
+// Get reads one request by id. ErrRequestNotFound when there is none.
+func (h *Handler) Get(ctx context.Context, id uuid.UUID) (ResourceRequest, error) {
+	row, err := New(h.Pool).GetResourceRequest(ctx, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ResourceRequest{}, ErrRequestNotFound
+		}
+		return ResourceRequest{}, fmt.Errorf("requests: get: %w", err)
+	}
 	return row, nil
 }
 
@@ -456,6 +558,38 @@ func (h *Handler) ListPending(ctx context.Context, limit, offset int32) ([]Resou
 		ListPendingRequestsParams{Limit: limit, Offset: offset})
 }
 
+// ListPendingForOwner returns pending requests against assets the
+// caller owns, oldest first. The owner-facing half of #881: an artist
+// whose work was requested needs a queue they can reach without holding
+// share.grant, because /admin/requests is gated on capabilities they
+// have no reason to hold.
+func (h *Handler) ListPendingForOwner(ctx context.Context, ownerRef int64, limit, offset int32) ([]ResourceRequest, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return New(h.Pool).ListPendingRequestsForOwner(ctx,
+		ListPendingRequestsForOwnerParams{
+			OwnerUserRef: &ownerRef,
+			Limit:        limit,
+			Offset:       offset,
+		})
+}
+
+// CountPendingForOwner is the badge value for ListPendingForOwner.
+// Uncached: it is per-owner, so the single-key cache the global count
+// uses cannot hold it, and a per-owner key would need its own
+// invalidation edge for a number one page reads.
+func (h *Handler) CountPendingForOwner(ctx context.Context, ownerRef int64) (int64, error) {
+	n, err := New(h.Pool).CountPendingRequestsForOwner(ctx, &ownerRef)
+	if err != nil {
+		return 0, fmt.Errorf("requests: count pending for owner: %w", err)
+	}
+	return n, nil
+}
+
 // CountPending returns the total pending count. Cache-fronted
 // under the single key "all" because at MVP every approver sees
 // the same unfiltered count; the per-approver capability filter
@@ -487,6 +621,94 @@ func (h *Handler) CountPending(ctx context.Context, approverRef int64) (int64, e
 // internals
 // ---------------------------------------------------------------------------
 
+// notifySubmitted tells the people who can act that a request arrived
+// (#881).
+//
+// Before this, the only Notify in the package fired on the DECIDE path,
+// to the requester. Creating a request notified nobody: the approver
+// queue filled in silence and /admin/requests was a page you had to
+// think to visit. A request nobody is told about is a request nobody
+// answers, which is what made the placeholder's "ask" meaningless.
+//
+// Recipients: the asset's owner (the person with the strongest claim to
+// decide, and since #881 the person who CAN) plus the global holders of
+// the approver capabilities. Deduplicated, and the requester is never
+// notified of their own ask — Writer.Notify drops self-notifications
+// anyway, but relying on that would make the dedupe depend on a
+// downstream implementation detail.
+//
+// # What the payload may say
+//
+// The requester may not see this asset's title, and neither the owner's
+// notification nor the approvers' carries one. The keys here are exactly
+// the ones the decide-path notification already uses, minus the decision
+// fields — ids and a capability code, no titles, no filenames, no
+// reason text. Approvers who need the detail open the queue, where the
+// per-row gate applies. Keeping the two payloads the same shape also
+// means one allow-list test covers both.
+//
+// Best-effort throughout: a failed lookup or a failed send logs at WARN
+// and the request stands. The row is the source of truth; the queue is
+// still correct even if nobody was pinged.
+func (h *Handler) notifySubmitted(ctx context.Context, row ResourceRequest) {
+	if h.notifier == nil {
+		return
+	}
+	requestID := uuid.UUID(row.ID.Bytes)
+	assetID := uuid.UUID(row.TargetAssetID.Bytes)
+
+	recipients := make([]int64, 0, 4)
+	seen := map[int64]bool{row.RequesterUserRef: true}
+	add := func(ref int64) {
+		if seen[ref] {
+			return
+		}
+		seen[ref] = true
+		recipients = append(recipients, ref)
+	}
+
+	if ownerRef, ok, err := h.AssetOwnerRef(ctx, assetID); err != nil {
+		h.warn(ctx, "requests.notify.owner_lookup_failed", requestID, err)
+	} else if ok {
+		add(ownerRef)
+	}
+
+	holders, err := New(h.Pool).ListGlobalCapabilityHolders(ctx, approverCapabilities)
+	if err != nil {
+		h.warn(ctx, "requests.notify.approver_lookup_failed", requestID, err)
+	}
+	for _, ref := range holders {
+		add(ref)
+	}
+
+	payload := map[string]any{
+		"request_id": requestID.String(),
+		"capability": row.RequestedCapability,
+		"asset_id":   assetID.String(),
+	}
+	actor := row.RequesterUserRef
+	for _, ref := range recipients {
+		if err := h.notifier.Notify(ctx, ref, &actor,
+			notifications.VerbResourceRequestReceived,
+			notifications.TargetKindRequest, requestID.String(),
+			payload,
+		); err != nil {
+			h.warn(ctx, "requests.notify.failed", requestID, err)
+		}
+	}
+}
+
+// warn is the package's one best-effort failure log shape.
+func (h *Handler) warn(ctx context.Context, msg string, requestID uuid.UUID, err error) {
+	if h.Logger == nil {
+		return
+	}
+	h.Logger.LogAttrs(ctx, slog.LevelWarn, msg,
+		slog.String("request_id", requestID.String()),
+		slog.String("err", err.Error()),
+	)
+}
+
 // notifyDecision pushes a "your request was decided" notification
 // to the requester via the existing notifications.Writer.Notify
 // path. Best-effort — failure logs at WARN; the decision stands.
@@ -498,9 +720,9 @@ func (h *Handler) notifyDecision(ctx context.Context, pre ResourceRequest, in De
 	if h.notifier == nil {
 		return
 	}
-	verb := "resource_request_denied"
+	verb := notifications.VerbResourceRequestDenied
 	if granted {
-		verb = "resource_request_approved"
+		verb = notifications.VerbResourceRequestApproved
 	}
 	payload := map[string]any{
 		"request_id":      in.RequestID.String(),
@@ -514,13 +736,9 @@ func (h *Handler) notifyDecision(ctx context.Context, pre ResourceRequest, in De
 	actor := in.ApproverRef
 	err := h.notifier.Notify(ctx,
 		pre.RequesterUserRef, &actor,
-		verb, "request", in.RequestID.String(),
+		verb, notifications.TargetKindRequest, in.RequestID.String(),
 		payload)
-	if err != nil && h.Logger != nil {
-		h.Logger.LogAttrs(ctx, slog.LevelWarn,
-			"requests.notify.failed",
-			slog.String("request_id", in.RequestID.String()),
-			slog.String("err", err.Error()),
-		)
+	if err != nil {
+		h.warn(ctx, "requests.notify.failed", in.RequestID, err)
 	}
 }

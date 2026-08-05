@@ -100,6 +100,11 @@ func (*PanicShim) ListOwnRequests(context.Context, openapi.ListOwnRequestsReques
 	panic("PanicShim: ListOwnRequests called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListIncomingRequests panics by default; test shims override.
+func (*PanicShim) ListIncomingRequests(context.Context, openapi.ListIncomingRequestsRequestObject) (openapi.ListIncomingRequestsResponseObject, error) {
+	panic("PanicShim: ListIncomingRequests called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // DisableMyTOTP panics by default; test shims override.
 func (*PanicShim) DisableMyTOTP(context.Context, openapi.DisableMyTOTPRequestObject) (openapi.DisableMyTOTPResponseObject, error) {
 	panic("PanicShim: DisableMyTOTP called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

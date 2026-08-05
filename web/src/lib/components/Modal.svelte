@@ -1,12 +1,17 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // Generic modal dialog wrapper for the collection hub.
+  // The generic modal dialog wrapper: overlay, backdrop-click close,
+  // Escape close, focus-into-panel on open and focus-restore on close.
   //
-  // Used by NewCollectionModal / EditCollectionModal / ShareCollection
-  // Modal so they share the same overlay + esc-to-close + focus trap
-  // behaviour. Kept here (not promoted to a `Modal.svelte`) until a
-  // second feature surface needs the exact same shape.
+  // Was CollectionModal.svelte, whose header said it stayed collection-
+  // scoped "until a second feature surface needs the exact same shape".
+  // #881's request-access dialog is that surface, so it was renamed
+  // rather than copied — a fourth bespoke `role="dialog"` would be a
+  // fourth place for the focus-restore and Escape handling to drift.
+  //
+  // Consumers: NewCollectionModal / EditCollectionModal /
+  // ShareCollectionModal / RequestAccessDialog.
 
   import { onDestroy, onMount } from 'svelte';
   import { t } from '$stores/lang.svelte';
@@ -51,10 +56,39 @@
       previousFocus = null;
     }
   });
+
+  /** Move the overlay out of whatever box it was declared in.
+   *
+   *  `position: fixed` is relative to the VIEWPORT only while no
+   *  ancestor establishes a containing block — and `contain`,
+   *  `container-type`, `transform` and `filter` all do. Driven in a
+   *  browser from a restricted grid tile (#881), the overlay rendered
+   *  inside the tile and was clipped by it: CardRestricted's plate is
+   *  `container-type: size`, which is exactly one of those. Every
+   *  caller that ever mounts this from inside a card, a viewer pane or
+   *  a transformed surface would hit the same thing, so the fix belongs
+   *  here rather than at each call site.
+   *
+   *  The target is the nearest OPEN native `<dialog>` if there is one,
+   *  and `document.body` otherwise. A `<dialog>` opened modally lives
+   *  in the browser's top layer, and anything appended to the body
+   *  renders beneath it and swallows every click — which is the other
+   *  half of the same bug, seen from the asset viewer. Resolved before
+   *  the move, while the node is still where it was declared. */
+  function portal(node: HTMLElement) {
+    const host = node.closest('dialog[open]') ?? document.body;
+    host.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
 </script>
 
 {#if open}
   <div
+    use:portal
     role="dialog"
     aria-modal="true"
     aria-label={title}

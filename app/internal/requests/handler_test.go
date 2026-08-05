@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestSubmit_CreatesPendingRow_AuditFires(t *testing.T) {
 	noter := newNoter()
 	h := newHandlerE(t, pool, rec, noter)
 
-	out, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+	out, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",
@@ -71,7 +72,7 @@ func TestGrant_PendingToGranted_InsertsGrantWithRequestRef(t *testing.T) {
 	noter := newNoter()
 	h := newHandlerE(t, pool, rec, noter)
 
-	row, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+	row, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",
@@ -120,8 +121,11 @@ func TestGrant_PendingToGranted_InsertsGrantWithRequestRef(t *testing.T) {
 	if rec.grantedCalls.Load() != 1 {
 		t.Errorf("RequestGranted calls = %d, want 1", rec.grantedCalls.Load())
 	}
-	if noter.calls.Load() != 1 {
-		t.Errorf("notifier calls = %d, want 1", noter.calls.Load())
+	// Asserted by VERB, not by total: since #881 a Submit also notifies
+	// (the owner + every approver), so a total would move with the
+	// number of admins in the test database.
+	if got := noter.withVerb("resource_request_approved"); len(got) != 1 {
+		t.Errorf("resource_request_approved notifications = %d, want 1", len(got))
 	}
 }
 
@@ -135,7 +139,7 @@ func TestGrant_AlreadyDecided_Rejects(t *testing.T) {
 	noter := newNoter()
 	h := newHandlerE(t, pool, rec, noter)
 
-	row, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+	row, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",
@@ -170,7 +174,7 @@ func TestDeny_PendingToDenied_NoGrantInserted(t *testing.T) {
 	noter := newNoter()
 	h := newHandlerE(t, pool, rec, noter)
 
-	row, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+	row, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",
@@ -217,7 +221,7 @@ func TestMarkExpired_GrantedToExpired(t *testing.T) {
 	noter := newNoter()
 	h := newHandlerE(t, pool, rec, noter)
 
-	row, _ := h.Submit(context.Background(), nil, requests.SubmitInput{
+	row, _, _ := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",
@@ -260,7 +264,7 @@ func TestMarkExpired_NonGranted_Noop(t *testing.T) {
 	noter := newNoter()
 	h := newHandlerE(t, pool, rec, noter)
 
-	row, _ := h.Submit(context.Background(), nil, requests.SubmitInput{
+	row, _, _ := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",
@@ -308,12 +312,12 @@ func TestListForRequester_FiltersByRequester(t *testing.T) {
 	h := newHandlerE(t, pool, rec, noter)
 
 	for i := 0; i < 3; i++ {
-		_, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
+		_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
 			RequesterUserRef: a, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
 		})
 	}
 	for i := 0; i < 2; i++ {
-		_, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
+		_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
 			RequesterUserRef: b, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
 		})
 	}
@@ -338,7 +342,7 @@ func TestCountPending_UsesCache(t *testing.T) {
 	h := newHandlerE(t, pool, rec, noter)
 
 	requester := seedUserForRequests(t, pool)
-	_, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
+	_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef: requester, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
 	})
 
@@ -353,7 +357,7 @@ func TestCountPending_UsesCache(t *testing.T) {
 	// Second call returns the cached value — verify by making
 	// another pending row + asserting the second call still
 	// returns the old count.
-	_, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
+	_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef: requester, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
 	})
 	// Submit wildcards the cache, so the next CountPending re-reads.
@@ -463,15 +467,51 @@ func (r *auditRecording) RequestExpired(_ context.Context, _ int64, _, _ string,
 	r.expiredCalls.Add(1)
 }
 
+// notifiedCall is one recorded Notify. Kept whole rather than counted,
+// because #881 added a SECOND emitter to this package (create-time, to
+// the owner + approvers) and a bare total can no longer tell the two
+// apart — a Grant test asserting "one notification" would pass on a
+// build that emitted two creates and no decision.
+type notifiedCall struct {
+	Recipient int64
+	Actor     *int64
+	Verb      string
+	TargetKnd string
+	TargetID  string
+	Payload   map[string]any
+}
+
 type notifierRecording struct {
 	calls atomic.Int32
+
+	mu   sync.Mutex
+	sent []notifiedCall
 }
 
 func newNoter() *notifierRecording { return &notifierRecording{} }
 
-func (n *notifierRecording) Notify(_ context.Context, _ int64, _ *int64, _, _, _ string, _ map[string]any) error {
+func (n *notifierRecording) Notify(_ context.Context, recipient int64, actor *int64, verb, kind, targetID string, payload map[string]any) error {
 	n.calls.Add(1)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sent = append(n.sent, notifiedCall{
+		Recipient: recipient, Actor: actor, Verb: verb,
+		TargetKnd: kind, TargetID: targetID, Payload: payload,
+	})
 	return nil
+}
+
+// withVerb returns every recorded call carrying verb.
+func (n *notifierRecording) withVerb(verb string) []notifiedCall {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []notifiedCall
+	for _, c := range n.sent {
+		if c.Verb == verb {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // TestSubmit_UnknownCapabilityRejected covers #434: requested_capability
@@ -492,7 +532,7 @@ func TestSubmit_UnknownCapabilityRejected(t *testing.T) {
 
 	h := newHandlerE(t, pool, newAuditRec(), newNoter())
 
-	_, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+	_, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "totally.made.up",
@@ -507,7 +547,7 @@ func TestSubmit_UnknownCapabilityRejected(t *testing.T) {
 
 	// A real seeded capability must still work — otherwise this
 	// validation would pass by rejecting everything.
-	if _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+	if _, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
 		TargetAssetID:       uuid.New(),
 		RequestedCapability: "posts.publish",

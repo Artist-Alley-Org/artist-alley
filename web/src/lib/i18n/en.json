@@ -232,7 +232,9 @@
       "label": "Restricted",
       "owner": "by {owner}",
       "owner_unknown": "Owner not shown",
-      "sr": "This item is restricted. You do not have access to it."
+      "sr": "This item is restricted. You do not have access to it.",
+      "ask": "Request access",
+      "asked": "Requested"
     }
   },
   "selection": {
@@ -322,7 +324,10 @@
       "empty": "You haven't submitted any requests.",
       "decision_reason": "Decision reason",
       "expires_at": "Access expires: {ts}",
-      "view_asset": "View asset"
+      "view_asset": "View asset",
+      "incoming_title": "Requests for your work",
+      "incoming_intro": "{total} pending. You decide these because they are about assets you own.",
+      "outgoing_title": "Requests you sent"
     },
     "following": {
       "title": "Following",
@@ -2914,5 +2919,19 @@
     "term_unknown": "“{term}” isn't one of this field's terms, and this field doesn't accept new ones.",
     "term_unslugifiable": "A term needs at least one letter or number.",
     "truncated": "Showing the first {count} — keep typing to narrow it down."
+  },
+  "request_access": {
+    "title": "Request access",
+    "body": "Ask {owner} for access to this item. They decide.",
+    "body_owner_unknown": "Ask the owner for access to this item. They decide.",
+    "no_unlock_yet": "Approval records that the owner agreed. It does not reveal the item yet — per-item access is still being built, and you will not be able to open this until it is.",
+    "reason_label": "Why you are asking (optional)",
+    "reason_placeholder": "A line about what you need it for",
+    "send": "Send request",
+    "sending": "Sending…",
+    "error": "Could not send the request. Try again."
+  },
+  "requests": {
+    "grant_does_not_unlock": "Granting records that you agreed. It does not yet give the requester access to the item — per-item access is still being built."
   }
 }
