@@ -100,6 +100,31 @@ soft-delete semantics, and the audit trail.
 - **The `showcase` default must be written explicitly**, not inferred. A NULL kind
   is a third state nobody designed.
 
+### Addendum: a post with zero members is a REACHABLE state (recorded 2026-08-05, #918)
+
+An article is the obvious post with nothing attached, but it is not the only one, and until
+#918 the zero-member case was effectively untested — which cost two stacked defects that
+between them made such a post **fail to open at all**. Recorded so nobody treats the state as
+hypothetical again:
+
+- **The API refuses to create one.** `POST /posts` rejects an empty `members` array with
+  `400 "members: at least one asset required"` (verified 2026-08-05). So the state is not
+  reachable by construction through the current endpoint.
+- **It is reachable by deletion.** Soft-delete the last member's asset and the post remains,
+  with zero visible members. That is an ordinary thing to do, not an edge case someone has to
+  go looking for.
+- Whatever the article surface ends up being, it will need a create path that produces exactly
+  this shape — so the renderer has to handle it regardless.
+
+The failure it produced is worth naming because it was invisible rather than loud: the post
+loader's re-fetch guard read `state.items.length > 0`, which is never true here, so the post
+re-requested itself indefinitely (measured at over 1,600 requests in six seconds) and sat on a
+loading skeleton forever. Separately, every scrap of post chrome — header, author, the actions
+menu — is contributed as the viewer's Details tool, which only mounts when there is an item to
+view, so even once loading stopped the empty branch was a single line of grey text. Both are
+fixed; the lesson is that "no members" is a first-class render state for posts, not an error
+path.
+
 ## Consequences
 
 - Articles are federated by the same machinery as posts, for free — no second wire

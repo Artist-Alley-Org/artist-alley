@@ -169,9 +169,14 @@ The rule for that path:
 > **A member is readable iff the caller could have reached the asset standalone AND is entitled to
 > its content tier.** Row plane ∧ content plane, for the same caller.
 
-It lives in `visibility.MemberReadable`, and the three surfaces that expose a member (post
+It lives in `visibility.FieldsReadable`, and the three surfaces that expose a member (post
 contents, collection contents, IIIF collection manifests) all route through it, on the same
 argument as ADR 0063's predicate: one rule, one place.
+
+*(Named `MemberReadable` when this amendment was written; renamed to `FieldsReadable` shortly
+afterwards when #899 found the same leak on surfaces that are not "members" at all, making the
+old name too narrow for what it decides. The rename is recorded in a comment at
+`app/internal/visibility/fields.go:37`. Symbol updated here 2026-08-05 — the rule is unchanged.)*
 
 Three things worth recording, because each is easy to get backwards:
 
@@ -212,6 +217,57 @@ member asset's own document, so the **result count** confirmed a restricted memb
 caller who was never shown a field. Fixed in migration 00034, which also adds the trigger that
 rebuilds a post's document when a member asset changes — absent since the baseline, and the reason
 a renamed asset kept matching its old name in every post containing it.
+
+### Amendment: a display preference may only subtract (recorded 2026-08-05, #891, PR #919)
+
+Everything above is about what a caller **may** see. #891 introduced the first thing that
+changes what a caller **is shown** without changing what they may see: an account preference
+(`user_preferences.feed_filters.hide_restricted`) that drops restricted members — and
+all-restricted posts — from the browse feed instead of rendering the #883 placeholders.
+
+A preference that removes rows from a visibility-filtered feed is close enough to the read rule
+to be dangerous, so the boundary is worth stating rather than leaving to be inferred from the
+one implementation:
+
+> **A display preference may only ever SUBTRACT from what the read rule already returned. It
+> must compose with the single readability evaluation rather than re-derive it, and it must not
+> reach the detail path.**
+
+Three clauses, each load-bearing:
+
+- **Subtractive only.** The filter reads one already-computed field, `PostMember.Restricted`,
+  and cannot widen: a restricted member carries no `asset` payload at all — it was withheld
+  upstream, not blanked — so the most the preference can do is decline to render a placeholder.
+  Turning it on can remove things from a response and can never add one. A filter that could add
+  a row would be a second expression of the read rule.
+
+- **Compose, do not re-derive.** `Restricted` is written in exactly one place, `enrichPreview`,
+  off the same `visibility.FieldsReadable` call that decides `preview_available`,
+  `ladder_available` and `scrub_available`. The filter is therefore *incapable* of disagreeing
+  with the rule, because it does not know the rule. This is the defect class epic #665 exists
+  for, and #892 and #904 each spent a sprint deleting one instance of it.
+
+- **The feed only — NOT the detail path.** `applyHideRestricted` has exactly one call site, in
+  `ListPosts`. This is the clause most likely to be "cleaned up" by someone who reads the
+  preference as a global user setting and notices it is applied inconsistently, so the reason is
+  recorded here: extending it to `GetPost` was **tried during implementation and reverted**,
+  because it reproduces the outcome the design explicitly rejected. An all-restricted post that
+  drops out of the feed does so precisely because an empty card is worse than a placeholder;
+  applying the same filter on the post page puts that empty card back on the one screen the rule
+  cannot reach, and takes #881/#913's **Request access** button with it. The preference's help
+  text states that trade-off to the user rather than leaving it to be discovered.
+
+Two corollaries recorded because both are real off-by-ones:
+
+- **"No visible members" is not "no members."** A post with no members at all — an article,
+  ADR 0073 — was never showing the caller something withheld, so there is nothing to hide.
+  Only a post that *had* members and now shows none is dropped.
+
+- **A caller's own post is never dropped.** A post can carry other people's restricted assets,
+  so its author can be exactly the person who cannot read them. The rule above applied literally
+  would delete an author's own work from their own feed over a display setting. Their members
+  are still filtered — that is about what you can see, and does not change because you wrote the
+  caption — but the post stays.
 
 ### Where it is enforced
 
