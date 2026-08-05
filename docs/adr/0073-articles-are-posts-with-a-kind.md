@@ -68,10 +68,16 @@ rule itself instead of *obtaining* it from the one component that owns it
 (#650, #657, #660, #661; epic #665). Each copy was correct when written, and each
 drifted when the shared rule moved. None was caught by a test.
 
-`posts` visibility now lives in exactly one place — `app/internal/posts/read_rule.go`
-renders the rule once and is spliced into the feed, the by-asset lookup **and**
-`canReadPost`, so the list and single-item paths are literally the same SQL and
-cannot disagree (#666).
+`posts` visibility now lives in exactly one place — `app/internal/visibility/post_rule.go`
+renders the rule once and is spliced into the feed, the by-asset lookup, the
+single-item gate **and** the three search surfaces, so every path is literally the
+same SQL and they cannot disagree (#666, #873). It lived in
+`app/internal/posts/read_rule.go` until #873, which found the sixth expression this
+section warns about already in the tree: `visibility.Filter`'s own `EntityPost`
+branch, still rendering `public OR author` while `posts` rendered the real rule.
+The moral holds and gains a corollary — "one place" has to mean the place every
+reader can reach, and a package-private rule guarantees the surfaces outside that
+package will write their own.
 
 A parallel `articles` table would need its **own** visibility expression: its own
 predicate splice, its own single-item gate, its own agreement test. That is a

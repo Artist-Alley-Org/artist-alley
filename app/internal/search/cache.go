@@ -129,6 +129,12 @@ func keyForQuery(q Query) string {
 	sb.WriteByte('|')
 	sb.WriteString(q.Caps.CacheKey())
 	sb.WriteByte('|')
+	// #873 — and the post capabilities, for the same reason in the same
+	// direction: `posts.admin` widens which post ROWS the result set
+	// contains, so a caller who loses it would otherwise keep being
+	// served the cached wider page for the rest of the TTL.
+	sb.WriteString(q.PostCaps.CacheKey())
+	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')
 	// Phase 1.16.B-3 — vector-hint identifier folds into the key

@@ -180,6 +180,30 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A post you can read is now a post you can find.** Search asked a narrower question
+  than the feed did. Browse, `GET /posts/{id}` and the post-by-asset lookup all applied
+  the real rule — your own posts at every tier, public and **org-only**, `followers`
+  posts by people you follow, `private` posts if you moderate, and anything explicitly
+  **shared with you** — while `/search`, the search **facets** and the search-box
+  **autocomplete** applied only "public, or written by me". Everything else was dropped
+  from your results. No error, no message, no empty state that explained itself; the
+  post was on your feed and simply did not exist as far as search was concerned (#873).
+
+  `org-only` is the default tier for a post, so in practice most of the corpus was
+  unfindable. Typing a post's exact title returned nothing. The tag counts beside your
+  results were computed the same way, so a tag that appears only on org-only posts read
+  `0` or went missing entirely — and an undercount looks exactly like a correct count.
+  Autocomplete would not complete a title it had no business hiding.
+
+  All four surfaces now compose **one expression of the rule**, in one place, so they
+  can no longer answer differently. **This widens what search returns.** It returns more
+  posts than it did — specifically, the posts you could already open from your feed and
+  from their own page. It does **not** widen who may read a post: a post becoming
+  findable does not make its restricted members' fields readable, an expired share still
+  grants nothing, and administrators' trash view still applies the same authorization it
+  did before. Nothing became readable that was not readable yesterday; things you could
+  read became reachable through the search box. No-spec-impact for federation.
+
 - **The app container's memory ceiling was too low, and it was killing itself.** On
   our own CI host the app process was OOM-killed by the kernel roughly once every 90
   minutes — eleven times in sixteen hours — always against the container's *own*

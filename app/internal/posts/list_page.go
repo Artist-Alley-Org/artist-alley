@@ -12,13 +12,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // The two post list queries, with the read rule spliced in (#660).
 //
 // Why these are hand-built SQL rather than the sqlc queries they replace
 // (ListPostsPage / ListPostsByAsset, both deleted from queries.sql):
-// readRule.sql returns a runtime fragment and sqlc queries are static
+// readRuleSQL returns a runtime fragment and sqlc queries are static
 // strings with fixed placeholders — the same reason every other splice
 // site of visibility.Predicate is hand-built (see assets/list_page.go).
 //
@@ -29,7 +30,7 @@ import (
 
 // ListPostsPageParams carries the caller-supplied filters for one feed
 // page. Visibility is a NARROWING filter only: it selects among the
-// tiers the caller's identity already admits (readRule), and can never
+// tiers the caller's identity already admits (the read rule), and can never
 // widen them. `?visibility=private` therefore means "the private posts I
 // may read" — my own, plus everyone's for a moderator — not "everyone's
 // private posts", which is what it used to mean.
@@ -104,7 +105,10 @@ func (h *Handler) ListPostsPageGated(
 		p.CursorID,        // $8
 		p.RowLimit,        // $9
 	}
-	ruleFrag, ruleArgs := readRuleFor(id).sql("posts", len(args))
+	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
+	if err != nil {
+		return nil, err
+	}
 	args = append(args, ruleArgs...)
 
 	var b strings.Builder
@@ -159,8 +163,10 @@ LIMIT $9::INTEGER`)
 // post_acls grant. Newest-first on the same (posted_at, id) cursor key
 // as the feed.
 //
-// The predicate is liveGrantSQL — the SAME fragment readRule.sql ORs in
-// as its ACL disjunct, not a second copy of it. That is the whole design
+// The predicate is visibility.PostLiveGrantSQL — the SAME fragment the
+// post read rule ORs in as its ACL disjunct, not a second copy of it.
+// It moved to the shared package with the rest of the rule (#873) and is
+// exported for this one caller. That is the whole design
 // of this surface: "shared with me" and "a grant lets me read this" must
 // be the same question, so a post can never appear here that
 // GET /posts/{id} then refuses, and expiry/revocation drop an item off
@@ -190,7 +196,7 @@ func (h *Handler) ListSharedWithMeGated(
 		cursorPostedAt, // $1
 		cursorID,       // $2
 		rowLimit,       // $3
-		userRef,        // $4 — consumed by liveGrantSQL
+		userRef,        // $4 — consumed by PostLiveGrantSQL
 	}
 
 	sql := `SELECT ` + listPostsPageColumns + `
@@ -199,7 +205,7 @@ WHERE deleted_at IS NULL
   AND ($1::TIMESTAMPTZ IS NULL
        OR posted_at < $1::TIMESTAMPTZ
        OR (posted_at = $1::TIMESTAMPTZ AND id < $2::UUID))
-  AND ` + liveGrantSQL("", 4) + `
+  AND ` + visibility.PostLiveGrantSQL("", 4) + `
 ORDER BY posted_at DESC, id DESC
 LIMIT $3::INTEGER`
 
@@ -245,7 +251,10 @@ func (h *Handler) ListPostsByAssetGated(
 	assetID uuid.UUID,
 ) ([]pgtype.UUID, error) {
 	args := []any{assetID} // $1
-	ruleFrag, ruleArgs := readRuleFor(id).sql("p", len(args))
+	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "p", len(args))
+	if err != nil {
+		return nil, err
+	}
 	args = append(args, ruleArgs...)
 
 	sql := `SELECT p.id

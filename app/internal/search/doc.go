@@ -51,7 +51,19 @@
 //     completion is the title) and on the asset facets (which count
 //     only rows the caller could open).
 //   - collections: public OR owner OR a live ACL grant.
-//   - posts: public OR authored by caller.
+//   - posts: the full post read rule — authored by the caller, OR
+//     public/org-only, OR private with posts.admin, OR followers where
+//     the caller follows the author, OR a live post_acls grant. This
+//     line used to read "public OR authored by caller", and it was
+//     accurate: the browse feed composed the rich rule from an
+//     unexported copy in the posts package, and these three surfaces
+//     composed a coarser second one, so an org-only post you could open
+//     from your feed did not exist in search — no error, no empty state,
+//     just absence, with the tag facet and the completions wrong the
+//     same way (#873). The rule now lives in visibility (post_rule.go)
+//     and both sides splice it. Caps: the `private` disjunct needs the
+//     caller's posts.admin, so Query/Request carry a resolved
+//     visibility.PostCaps and the search cache key folds it in.
 //
 // by_image.go's anonymous branch was the last hand-rolled copy of the
 // asset floor and now delegates to the predicate too (#210). Any

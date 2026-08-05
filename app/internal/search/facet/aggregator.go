@@ -92,6 +92,12 @@ type Request struct {
 	// buildAssetVisibilityAppendedSQL for why. Zero value = none.
 	Caps visibility.ContentCaps
 
+	// PostCaps is the caller's post-plane capabilities (#873). The tag
+	// aggregator counts through posts, so it composes the post read
+	// rule in full and needs the capability that opens its `private`
+	// tier. Zero value = none.
+	PostCaps visibility.PostCaps
+
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
 	Timeout time.Duration

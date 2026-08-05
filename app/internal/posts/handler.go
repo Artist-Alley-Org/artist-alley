@@ -66,9 +66,14 @@ const cacheDomainPostByID = "post.id"
 
 // Capability gates. `posts.admin` lets a moderator edit/delete any
 // post; `system.admin` is the global override.
+//
+// Aliases of the shared package's constants rather than fresh literals:
+// the post READ rule consults the same two codes from inside
+// visibility (#873), and two spellings of a capability code is the same
+// class of defect as two spellings of the rule that reads it.
 const (
-	CapPostsAdmin  = "posts.admin"
-	CapSystemAdmin = "system.admin"
+	CapPostsAdmin  = visibility.PostsAdmin
+	CapSystemAdmin = visibility.SystemAdmin
 )
 
 const maxListLimit = 200
@@ -165,9 +170,9 @@ type notifier interface {
 // `followers` tier as public whenever the seam was unwired — a fixture
 // convenience that would have opened every followers-tier post on any
 // boot-order slip. The follow check is now a conjunct of the one read
-// rule (readRule.sql), evaluated against user_follows in the same query
-// that returns the rows, so there is nothing to inject and nothing to
-// degrade to.
+// rule (visibility.postReadableExpr), evaluated against user_follows in
+// the same query that returns the rows, so there is nothing to inject
+// and nothing to degrade to.
 
 // SetPreviewLadder installs the cached configured-ladder reader (#591).
 func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
@@ -764,7 +769,7 @@ func (h *Handler) ListPosts(
 	// equivalent of legacy 'public' for the walled-garden feed).
 	//
 	// `?visibility=` NARROWS within what the caller may read; it never
-	// widens it. Authorization is the read rule's job (readRule.sql,
+	// widens it. Authorization is the read rule's job (readRuleSQL,
 	// spliced into the query below), so this parameter is a plain
 	// display filter: `?visibility=private` means "the private posts I
 	// may read" — my own, plus everyone's for a moderator — and
@@ -998,7 +1003,7 @@ func (h *Handler) ListPostsSharedWithMe(
 // Anonymous admission is decided upstream by the public-mode gate
 // (auth.PublicSurfaceRoutes): with public mode off an anonymous request
 // never reaches here. Visibility is the same read rule the feed and
-// GetPost use (readRule.sql) rather than a tier list restated here —
+// GetPost use (readRuleSQL) rather than a tier list restated here —
 // anonymous sees the public tier, an authenticated caller additionally
 // sees org-only, their own posts at every tier, followed authors'
 // followers-tier posts, and (as a moderator) private ones. Bounded
@@ -1275,8 +1280,9 @@ func (h *Handler) AddPostAcl(
 // Only `user` principals notify. A `role` or `team` grant names no
 // single recipient — resolving one into a recipient set is a fan-out
 // this surface does not have (and role/team principals do not even grant
-// read yet; see readRule.sql). Skipping is the honest answer; inventing
-// a fan-out here would be a second, undertested membership rule.
+// read yet; see visibility.PostLiveGrantSQL). Skipping is the honest
+// answer; inventing a fan-out here would be a second, undertested
+// membership rule.
 //
 // principal_id is TEXT in the schema and a user ref is a BIGINT, so a
 // row whose principal_id is not parseable as one is not a recipient. It
@@ -1438,7 +1444,7 @@ func canMutatePost(id *auth.Identity, authorRef int64) bool {
 // above that handler.
 //
 // It does not decide anything itself: it runs the ONE read rule
-// (readRule.sql) as an EXISTS probe against the post's id, which is the
+// (readRuleSQL) as an EXISTS probe against the post's id, which is the
 // same fragment ListPostsPageGated filters the feed with. That is the
 // #660 fix — before it, this function was the real rule and the list
 // query was a second, weaker restatement of it, so the list returned

@@ -388,23 +388,51 @@ func TestMatrix_Collections(t *testing.T) {
 
 // --- posts -----------------------------------------------------------
 
+// TestMatrix_Posts pins the FULL post read rule (#873). This branch used
+// to render `public OR author` while the browse feed composed a rich
+// rule out of an unexported copy in the posts package, so every splice
+// site here — search, the tag facet, the completions — silently dropped
+// rows their caller could read anywhere else.
+//
+// The relationship tiers are the widened cases: org-only (the default
+// tier), followers-you-follow, private-with-posts.admin, and a live
+// post_acls grant. The expired grant is the one that must stay OUT, and
+// it is in this table rather than a separate test because expiry is a
+// property of the same disjunct.
 func TestMatrix_Posts(t *testing.T) {
 	pool := matrixPool(t)
 	ctx := context.Background()
-	const author int64 = 4140021
-	const other int64 = 4140022
+	const (
+		author    int64 = 4140021
+		other     int64 = 4140022
+		follower  int64 = 4140023
+		grantee   int64 = 4140024
+		moderator int64 = 4140025
+	)
 
 	type seed struct {
 		name       string
 		visibility string
 		deleted    bool
-		anonSees   bool
+		grant      string // "", "live" or "expired" — to `grantee`
+		// Who sees it. One column per caller class, stated
+		// independently of the SQL so a wrong rule cannot look right.
+		anon, byAuthor, byOther, byFollower, byGrantee, byModerator bool
 	}
 	seeds := []seed{
-		{"public", "public", false, true},
-		{"private", "private", false, false},
-		{"org-only", "org-only", false, false},
-		{"public but deleted", "public", true, false},
+		{name: "public", visibility: "public",
+			anon: true, byAuthor: true, byOther: true, byFollower: true, byGrantee: true, byModerator: true},
+		{name: "org-only", visibility: "org-only",
+			byAuthor: true, byOther: true, byFollower: true, byGrantee: true, byModerator: true},
+		{name: "private", visibility: "private",
+			byAuthor: true, byModerator: true},
+		{name: "followers", visibility: "followers",
+			byAuthor: true, byFollower: true},
+		{name: "explicit-share, live grant", visibility: "explicit-share", grant: "live",
+			byAuthor: true, byGrantee: true},
+		{name: "explicit-share, expired grant", visibility: "explicit-share", grant: "expired",
+			byAuthor: true},
+		{name: "public but deleted", visibility: "public", deleted: true},
 	}
 
 	ids := make([]uuid.UUID, len(seeds))
@@ -422,37 +450,83 @@ func TestMatrix_Posts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("seed %q: %v (does migration 00008 allow 'public'?)", s.name, err)
 		}
+		if s.grant != "" {
+			expiry := "NOW() + INTERVAL '1 day'"
+			if s.grant == "expired" {
+				expiry = "NOW() - INTERVAL '1 day'"
+			}
+			// $2::BIGINT::TEXT, in that order — principal_id is TEXT and
+			// a ref is a bigint, and a bare ::TEXT tells Postgres the
+			// PARAMETER is text, at which point pgx cannot encode an
+			// int64 into it. Same cast, same reason, as the rule's own
+			// grant disjunct (#874).
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO post_acls (post_id, principal_type, principal_id, permission, expires_at)
+				VALUES ($1, 'user', $2::BIGINT::TEXT, 'read', `+expiry+`)`, id, grantee); err != nil {
+				t.Fatalf("seed %q grant: %v", s.name, err)
+			}
+		}
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM posts WHERE id = ANY($1::uuid[])`, ids)
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM post_acls WHERE post_id = ANY($1::uuid[])`, ids)
+		_, _ = pool.Exec(c, `DELETE FROM posts WHERE id = ANY($1::uuid[])`, ids)
 	})
 
-	t.Run("anonymous sees only public non-deleted posts", func(t *testing.T) {
-		got := visibleIDs(t, pool, EntityPost, anonCaller(), "posts", ids)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_follows (follower_user_ref, followee_user_ref) VALUES ($1,$2)
+		 ON CONFLICT DO NOTHING`, follower, author); err != nil {
+		t.Fatalf("seed follow: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM user_follows WHERE follower_user_ref = $1`, follower)
+	})
+
+	cases := []struct {
+		name   string
+		caller Caller
+		caps   PostCaps
+		pick   func(seed) bool
+	}{
+		{"anonymous", anonCaller(), PostCaps{}, func(s seed) bool { return s.anon }},
+		{"author", userCaller(author), PostCaps{}, func(s seed) bool { return s.byAuthor }},
+		{"stranger", userCaller(other), PostCaps{}, func(s seed) bool { return s.byOther }},
+		{"follower", userCaller(follower), PostCaps{}, func(s seed) bool { return s.byFollower }},
+		{"grantee", userCaller(grantee), PostCaps{}, func(s seed) bool { return s.byGrantee }},
+		{"posts.admin", userCaller(moderator), PostCaps{SeesAllPrivate: true}, func(s seed) bool { return s.byModerator }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := visibleIDsOpts(t, pool, EntityPost, c.caller, "posts", ids, WithPostCaps(c.caps))
+			for i, s := range seeds {
+				want := c.pick(s)
+				if got[ids[i]] != want {
+					t.Errorf("%s: %q visible=%v, want %v", c.name, s.name, got[ids[i]], want)
+				}
+			}
+		})
+	}
+
+	// Soft-delete is the orthogonal axis, and the trap: the option
+	// waives `deleted_at IS NULL` and NOTHING ELSE. An admin trash view
+	// must not shed an authorization disjunct along with the soft-delete
+	// conjunct — that failure is silent, because the extra rows it
+	// returns look exactly like the deleted ones it was asked for.
+	t.Run("IncludeSoftDeleted waives only the soft-delete conjunct", func(t *testing.T) {
+		got := visibleIDsOpts(t, pool, EntityPost, userCaller(other), "posts", ids,
+			IncludeSoftDeleted(), WithPostCaps(PostCaps{}))
 		for i, s := range seeds {
-			if got[ids[i]] != s.anonSees {
-				t.Errorf("anonymous: %q visible=%v, want %v", s.name, got[ids[i]], s.anonSees)
+			// The deleted row is now IN (it is a public post); every
+			// authorization answer is otherwise unchanged.
+			want := s.byOther || (s.deleted && s.visibility == "public")
+			if got[ids[i]] != want {
+				t.Errorf("stranger + IncludeSoftDeleted: %q visible=%v, want %v", s.name, got[ids[i]], want)
 			}
 		}
-	})
-
-	t.Run("author sees own non-deleted posts (unchanged)", func(t *testing.T) {
-		got := visibleIDs(t, pool, EntityPost, userCaller(author), "posts", ids)
-		for i, s := range seeds {
-			want := !s.deleted
-			if got[ids[i]] != want {
-				t.Errorf("author: %q visible=%v, want %v", s.name, got[ids[i]], want)
-			}
-		}
-	})
-
-	t.Run("authenticated non-author sees only public (unchanged)", func(t *testing.T) {
-		got := visibleIDs(t, pool, EntityPost, userCaller(other), "posts", ids)
-		for i, s := range seeds {
-			want := s.visibility == "public" && !s.deleted
-			if got[ids[i]] != want {
-				t.Errorf("non-author: %q visible=%v, want %v", s.name, got[ids[i]], want)
-			}
+		if got[ids[2]] {
+			t.Error("IncludeSoftDeleted handed a stranger the author's PRIVATE post — " +
+				"the trash view waived an authorization disjunct along with soft-delete")
 		}
 	})
 }

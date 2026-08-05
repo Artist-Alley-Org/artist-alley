@@ -209,12 +209,19 @@ func (extensionAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Reque
 // tagAgg counts post_tags grouped by tag string. Visibility is
 // applied via posts (join through post_tags → posts) so restricted
 // posts' tags never leak into counts.
+//
+// #873 — the count is only right if the predicate is the same one the
+// feed runs. It was not: this composed `public OR author` while browse
+// composed the full rule, so every tag that appears only on org-only or
+// followers posts was counted as though those posts did not exist. Under-
+// counting is the failure that looks like nothing at all.
 type tagAgg struct{}
 
 func (tagAgg) Type() FacetType { return FacetTag }
 
 func (tagAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([]Bucket, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityPost, req.Caller)
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, req.Caller,
+		visibility.WithPostCaps(req.PostCaps))
 	if err != nil {
 		return nil, err
 	}
