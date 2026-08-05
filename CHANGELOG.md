@@ -157,6 +157,13 @@ where applicable, otherwise note "no-spec-impact."
   the same query. Reverse-image search moved with it. `/search?advanced=1` opens it
   directly.
 
+  The button beside the navbar search box changed with it. It read **Advanced search**
+  and it has always gone to `/search` — so the label named a page that no longer exists,
+  while the place it opens is now simply where you search. It reads **Search**, and it
+  **carries whatever you have typed in the box** rather than dropping it: a control named
+  after a search box next to it, that navigated away and lost your query, would be a
+  trap.
+
   **The relevance score is no longer printed on every result.** An artist does not need
   to be told that their own drawing scored 1.000; the ordering it describes is the
   ordering on screen. Thumbs-up / thumbs-down feedback is still there, on hover over the

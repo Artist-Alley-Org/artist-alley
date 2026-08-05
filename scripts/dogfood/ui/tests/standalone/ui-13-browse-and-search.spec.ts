@@ -44,11 +44,57 @@ test.describe('UI-13 browse + search', () => {
     await expectPageRendersCleanly(page);
   });
 
-  test('Advanced search link goes to /search', async ({ page }) => {
+  // browse → search navigation. Renamed with the control in #850 (it
+  // read "Advanced search" and pointed at a page that is now a panel);
+  // located by test id so the next rename does not break it.
+  //
+  // The landing assertion got STRONGER rather than weaker, because
+  // /search stopped being a text list: it now renders through the same
+  // ContentGrid as browse, so the result of this navigation is a wall of
+  // the same tiles. Asserting only the URL would have let the page come
+  // back as a column of text and still pass.
+  test('search-surface link navigates browse → /search and lands on the grid', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('link', { name: 'Advanced search' }).click();
+    await page.locator(tid('nav-search-page')).click();
     await expect(page).toHaveURL(/\/search\b/);
     await expectPageRendersCleanly(page);
+    // The kind chips are the search surface's own chrome — present at
+    // every width, so this is not a viewport-dependent assertion.
+    await expect(page.locator(tid('kind-chip-all'))).toBeVisible();
+  });
+
+  // The search surface renders the SAME cards as browse (#850). Before
+  // it, a hit was a `<li data-testid="search-hit">` carrying a title, a
+  // one-line summary and `score 1.000`; there is no such element now,
+  // and an asset hit is an /assets/{id} tile like every other grid.
+  test('search results render as tiles, not text rows', async ({ page }) => {
+    await page.goto('/');
+    // Search for a word taken from a post that IS on the feed, so the
+    // result set is non-empty by construction. A hardcoded query would
+    // make this test pass vacuously through the empty state on any
+    // install whose seed does not happen to contain it — the
+    // "accepted-but-empty" shape that makes a green assertion worthless.
+    const firstPost = page.locator('a[href^="/posts/"]').first();
+    await expect(firstPost).toBeVisible();
+    const title = (await firstPost.getAttribute('aria-label')) ?? '';
+    const term = (title.match(/[A-Za-z]{5,}/g) ?? [])[0] ?? '';
+    expect(term, `no searchable word in the first post's title: "${title}"`).toBeTruthy();
+
+    await page.locator(tid('nav-search')).fill(term);
+    await page.locator(tid('nav-search-page')).click();
+    await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${term}`, 'i'));
+    await expectPageRendersCleanly(page);
+
+    // A hit is a TILE — a link into the entity, inside the shared grid.
+    // Before #850 it was a `<li data-testid="search-hit">` carrying a
+    // title, a one-line summary and `score 1.000`.
+    const tiles = page.locator(
+      'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
+    );
+    await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="search-hit"]')).toHaveCount(0);
+    // And the raw relevance score is not printed on results any more.
+    await expect(page.locator('main')).not.toContainText(/score \d\.\d{3}/);
   });
 
   test('feed filter tabs are reachable', async ({ page }) => {

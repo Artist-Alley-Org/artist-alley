@@ -44,9 +44,33 @@ test.describe('UI-07 top navbar', () => {
     await expect(page).toHaveURL(/\/\?.*q=/);
   });
 
-  test('Advanced search link goes to /search', async ({ page }) => {
-    const link = page.getByRole('link', { name: 'Advanced search' });
+  // #850 renamed this control from "Advanced search" to "Search". The
+  // old label named `/search/advanced`, a separate page that is now a
+  // panel inside /search — but the LINK always pointed at /search, so
+  // what changed is the name, not the destination.
+  //
+  // Located by test id AND asserted for its accessible name: the id is
+  // what stops the next rename from breaking the spec, and the name
+  // assertion is what keeps the control an advertised affordance rather
+  // than a bare icon. Dropping the name check would have made this test
+  // survive the rename while covering less than it did before.
+  test('search-surface link is named and goes to /search', async ({ page }) => {
+    const link = page.locator(tid('nav-search-page'));
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAccessibleName('Search');
     await expect(link).toHaveAttribute('href', '/search');
+  });
+
+  // The other half of the rename. A control labelled "Search" beside a
+  // search input that navigated away and dropped what you had typed
+  // would be a trap, so the link carries the box's contents (#850).
+  test('search-surface link carries what is typed in the nav search box', async ({ page }) => {
+    await page.goto('/');
+    await page.locator(tid('nav-search')).fill('quenlibrium');
+    await expect(page.locator(tid('nav-search-page'))).toHaveAttribute(
+      'href',
+      '/search?q=quenlibrium',
+    );
   });
 
   test('upload button is visible', async ({ page }) => {
