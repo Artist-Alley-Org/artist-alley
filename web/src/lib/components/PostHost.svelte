@@ -25,6 +25,7 @@
   import CommentsThread from './CommentsThread.svelte';
   import FollowButton from './FollowButton.svelte';
   import Menu from './Menu.svelte';
+  import ShareEntityModal from './ShareEntityModal.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
   import DetailsIcon from './viewers/tools/DetailsTool/Icon.svelte';
@@ -492,6 +493,17 @@
   function sharePlaylist() {
     stubAction('Share playlist');
   }
+  // Manage access — the author-facing entry point onto post_acls
+  // (#880). #667 made a `post_acls` row confer read and #875 notified
+  // the grantee, but nothing in the product could write the row; this
+  // menu item is that missing entry point. It sits with edit / delete
+  // because it is an author-only mutation of the post, not a read-only
+  // affordance like "share playlist" (which copies a link).
+  let shareOpen = $state(false);
+
+  function manageAccess() {
+    shareOpen = true;
+  }
   function editPost() {
     stubAction('Edit post');
   }
@@ -715,6 +727,9 @@
           </button>
           {#if isOwner}
             <div class="my-1 h-px bg-border"></div>
+            <button type="button" role="menuitem" onclick={manageAccess} data-testid="post-manage-access" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('post_menu.manage_access')}
+            </button>
             <button type="button" role="menuitem" onclick={bulkTag} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('playlist_actions.bulk_tag')}
             </button>
@@ -972,6 +987,22 @@
         <CommentsThread postId={post.id} />
       </div>
     </div>
+
+    <!-- Mounted INSIDE this snippet, not at the component's top level,
+         and that placement is load-bearing. AssetPlaylist renders the
+         social pane inside a native <dialog>, which the browser puts in
+         the top layer; Modal.svelte portals itself to the nearest OPEN
+         <dialog> and falls back to <body>. Declared at the top level of
+         PostHost there is no such ancestor, so the dialog wins the
+         stacking contest and the share modal renders UNDERNEATH the
+         viewer — present in the DOM, invisible, and unclickable. Driven
+         in a browser that reads as "the menu item does nothing". -->
+    <ShareEntityModal
+      open={shareOpen}
+      kind="post"
+      id={post.id}
+      onclose={() => (shareOpen = false)}
+    />
   {/if}
 {/snippet}
 

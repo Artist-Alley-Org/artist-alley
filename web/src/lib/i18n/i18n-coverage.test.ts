@@ -129,6 +129,11 @@ const TRACKED_FILES = [
   //   dialog's copy is the only place the app tells a user what a
   //   granted request does and does not do, and an operator override
   //   has to be able to reach it. —
+  // — #880 the share loop. The dialog is the only place the app states
+  //   what a grant does, how long it lasts, and which principal kinds
+  //   are inert, so its copy is exactly the kind an operator override
+  //   has to be able to reach. —
+  'src/lib/components/ShareEntityModal.svelte',
   'src/lib/components/CardRestricted.svelte',
   'src/lib/components/RequestAccessDialog.svelte',
   'src/lib/components/RequestQueue.svelte',
