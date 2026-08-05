@@ -20,6 +20,7 @@
   import CardThumb from './CardThumb.svelte';
   import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
+  import { auth } from '$stores/auth.svelte';
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
@@ -43,6 +44,11 @@
   interface Post {
     id: string;
     title: string;
+    /** Required on the API's `Post` schema; optional here only because
+     *  a couple of hand-built card feeds narrow the object. Absent means
+     *  "not provably mine", which hides the manage-access action rather
+     *  than offering one that 403s. */
+    author_user_ref?: number;
     cover_asset_id?: string | null;
     created_at: string;
     like_count: number;
@@ -95,6 +101,17 @@
   // floor, so the overlay carries the ⋮ menu and the checkbox and
   // nothing else. See the twin in AssetCard.
   const compact = $derived(mode === 'masonry');
+
+  // Only the author gets the manage-access action (#880). The API gate
+  // is `canMutatePost` — author, `posts.admin` or `system.admin` — and
+  // this deliberately checks only the first: the card has the author ref
+  // and not the caller's capabilities, so widening the client-side test
+  // would mean guessing. An admin who needs the dialog opens the post,
+  // where PostHost asks the same question with the post loaded. Guessing
+  // wide here would show admins-in-waiting a menu item that 403s.
+  const isAuthor = $derived(
+    !!auth.user && post.author_user_ref !== undefined && post.author_user_ref === auth.user.ref,
+  );
 
   // Pick the cover asset id (explicit cover → first member → nothing),
   // then resolve its summary from members. CardThumb turns these into
@@ -343,7 +360,11 @@
     <!-- Overflow menu. ONE affordance in every mode, including thumbnail
          — owner amendment 2026-07-25 to #556. add-to-collection targets
          the cover asset. -->
-    <CardMenu assetId={coverAssetId} detailPath="/posts/{post.id}" />
+    <CardMenu
+      assetId={coverAssetId}
+      detailPath="/posts/{post.id}"
+      manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+    />
   </CardThumb>
 
   {#if detailed}

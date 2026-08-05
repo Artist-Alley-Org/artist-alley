@@ -35,7 +35,7 @@
   import ViewControls from '$components/ViewControls.svelte';
   import Menu from '$components/Menu.svelte';
   import EditCollectionModal from '$components/EditCollectionModal.svelte';
-  import ShareCollectionModal from '$components/ShareCollectionModal.svelte';
+  import ShareEntityModal from '$components/ShareEntityModal.svelte';
 
   interface Collection {
     id: string;
@@ -525,9 +525,10 @@
     onclose={() => (editOpen = false)}
     onsaved={handleSaved}
   />
-  <ShareCollectionModal
+  <ShareEntityModal
     open={shareOpen}
-    collectionId={collection.id}
+    kind="collection"
+    id={collection.id}
     onclose={() => (shareOpen = false)}
   />
 {/if}

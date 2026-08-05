@@ -178,6 +178,41 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **You can now share a post with someone.** Three rounds of work built the whole
+  receiving half of post sharing — an ACL row on a post grants read (#667), the person you
+  share with gets a notification and the post lands on their "Shared with me" (#875), and
+  they cannot enumerate the rest of the guest list (#876). All of it worked, and there was
+  no way to create a grant. `GET/POST/DELETE /posts/{id}/acls` had **zero callers in the
+  frontend**; "Share" on a card copied a link (#880).
+
+  Posts now have **Manage access…**, on the post's own ⋮ menu and on the ⋮ of a post card
+  you authored. It is the same dialog collections have always had, generalised rather than
+  copied — one share surface for both, so the next change lands in one place.
+
+  Three things the dialog does that the collection-only version did not:
+
+  - **You type a username, not a database id.** The field used to be free text
+    placeholdered "id or username", and a username typed into it wrote a row that granted
+    nothing and notified nobody — the grant is keyed on the numeric user ref, which the
+    typed name never matched. The name is now resolved before the grant is written: a
+    typo is an error on screen, not a dead row nobody sees. The list of current grants
+    reads back as names too, so you can tell who you shared with.
+  - **A share can expire.** Never / 1 hour / 24 hours / 7 days / 30 days, or a date you
+    pick. An expired grant stops granting on its own — the read rule checks it, so there
+    is nothing to come back and revoke — and the post drops off the other person's
+    "Shared with me" when it lapses. Expiry was always settable through the API and never
+    offered in the app.
+  - **It only offers grants that work.** The picker used to offer *user*, *role* and
+    *team*. Only *user* confers anything: role and team are ADR 0010 Layer 5 and are
+    unimplemented on both the post and the collection read rule, so those two options
+    recorded a row that looked like access and was not. The dialog now grants to users
+    only. Any role or team row already in a list is still shown, marked as granting
+    nothing yet, rather than quietly hidden.
+
+  Unchanged: who may grant (the author, or `posts.admin` / `system.admin`), what a grant
+  confers, and who may see the guest list. This is an entry point onto the existing rules,
+  not a new one.
+
 - **A restricted item that says "no" now also says "you can ask".** A restricted asset you
   cannot open renders as a placeholder carrying its owner's name and nothing else (#883,
   #899). That was the whole of it: the tile stated a refusal and offered no way past it,

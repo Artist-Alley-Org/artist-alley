@@ -12,11 +12,23 @@
   //
   // Actions (unchanged from the row):
   //   info  — link to the detail page. Read-only, always shown.
-  //   share — copy the absolute permalink (mirrors ViewerMenuBar). Read-only.
+  //   copy-link — copy the absolute permalink (mirrors ViewerMenuBar).
+  //           Read-only. Named for what it does: the key used to be
+  //           `card.tools.share`, which read as the access flow next to
+  //           the one that actually is.
   //   add-to-collection — opens CollectionPicker. WRITE action, gated on
   //           logged-in AND not the read-only demo (site.demoMode). The
   //           demo blocks writes at the nginx edge (ADR 0060), so the tool
   //           is hidden rather than shown as a 403 dead-end.
+  //   manage-access — opens ShareEntityModal on the card's entity (#880).
+  //           Present only when the caller passes `manageAccess`, which
+  //           the card does only for its OWNER. A SIBLING of "copy link",
+  //           not a submenu under it: the two are peers (one hands out a
+  //           URL, one hands out permission), and this panel is portaled
+  //           and fixed-positioned from the trigger rect, so a nested
+  //           popover would need a second layer of the same clamping and
+  //           focus plumbing to buy nothing. AssetCard never passes it —
+  //           assets have no ACL surface (that is #912).
   //
   // Why a bespoke menu and not $components/Menu.svelte: that primitive
   // positions its panel `absolute` inside the trigger's box. A grid card
@@ -38,6 +50,7 @@
   import { t } from '$stores/lang.svelte';
   import { portal } from '$lib/util/portal';
   import CollectionPicker from './CollectionPicker.svelte';
+  import ShareEntityModal from './ShareEntityModal.svelte';
 
   interface Props {
     /** Asset to add to a collection (cover asset for a Post). Null hides
@@ -46,9 +59,15 @@
     /** Canonical detail path, e.g. `/assets/{id}` or `/posts/{id}`. Info
      *  navigates here; share copies `origin + detailPath`. */
     detailPath: string;
+    /** The ACL-bearing entity this card stands for, when the viewer may
+     *  manage it. Null / absent hides the manage-access action — which
+     *  is the case for every asset card and for any post the viewer did
+     *  not author. The card decides ownership; this component only
+     *  renders what it is handed. */
+    manageAccess?: { kind: 'post' | 'collection'; id: string } | null;
   }
 
-  let { assetId, detailPath }: Props = $props();
+  let { assetId, detailPath, manageAccess = null }: Props = $props();
 
   // Write actions show only for a logged-in user on a non-demo install.
   // (No dedicated content-write capability exists — collections gate on
@@ -178,6 +197,14 @@
     pickerOpen = false;
   }
 
+  let shareOpen = $state(false);
+  function openShare(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    shareOpen = true;
+    close(false);
+  }
+
   const item =
     'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-fg ' +
     'hover:bg-surface-elevated focus:bg-surface-elevated focus:outline-none';
@@ -249,9 +276,18 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><polyline points="16 6 12 2 8 6" /><line x1="12" y1="2" x2="12" y2="15" />
         </svg>
-        {t('card.tools.share')}
+        {t('card.tools.copy_link')}
       {/if}
     </button>
+
+    {#if canWrite && manageAccess}
+      <button type="button" role="menuitem" onclick={openShare} data-testid="card-manage-access" class={item}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" />
+        </svg>
+        {t('card.tools.manage_access')}
+      </button>
+    {/if}
 
     {#if canWrite && assetId}
       <button type="button" role="menuitem" onclick={openPicker} class={item}>
@@ -266,4 +302,13 @@
 
 {#if pickerOpen && assetId}
   <CollectionPicker assetIds={[assetId]} onClose={closePicker} />
+{/if}
+
+{#if manageAccess}
+  <ShareEntityModal
+    open={shareOpen}
+    kind={manageAccess.kind}
+    id={manageAccess.id}
+    onclose={() => (shareOpen = false)}
+  />
 {/if}
