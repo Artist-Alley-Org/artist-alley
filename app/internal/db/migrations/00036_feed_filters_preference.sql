@@ -6,7 +6,7 @@
 -- Give #891 somewhere to live: a per-user bag of BROWSE-FEED CONTENT
 -- FILTERS, starting with "hide members I'm not entitled to see".
 --
--- ## Why a jsonb column and not `hide_restricted boolean`
+-- ## Why a jsonb column and not `show_restricted boolean`
 --
 -- `user_preferences` is one jsonb bag PER CONCERN — notification_channels
 -- (which channels for which event), default_views (which layout/tab/sort),
@@ -25,10 +25,36 @@
 -- ## Why NOT NULL DEFAULT '{}'
 --
 -- Same as its three siblings. An absent key inside the blob means "the
--- build's default for this filter", and every filter's default is OFF, so
--- an existing row and a brand-new one both read as "filter nothing" —
--- which is what makes the preference's default-off guarantee a property of
--- the storage rather than of remembering to write it.
+-- build's default for this filter", so an existing row and a brand-new one
+-- both read as THE DEFAULT FEED — which is what makes the guarantee a
+-- property of the storage rather than of remembering to write it.
+--
+-- ## The key names carry the default; the storage never does (#921)
+--
+-- That guarantee is about ABSENCE, not about any particular behaviour, and
+-- the two came apart at #921. This column shipped with one key,
+-- `hide_restricted`, defaulting to false — and at the time "absent" and
+-- "filter nothing" were the same sentence, so the comment above said both.
+-- #921 made hiding restricted work the DEFAULT feed, which broke that
+-- sentence in half: absent still had to mean the build's default, but the
+-- build's default was no longer "filter nothing".
+--
+-- The fix went into the NAME, not the default. The key is now
+-- `show_restricted`, still defaulting to false, so absent still decodes to
+-- the Go zero value and the zero value is still the default experience.
+-- The rule the next key here must follow:
+--
+--   NAME EACH KEY SO THAT `false` IS WHAT THIS BUILD DOES BY DEFAULT.
+--
+-- The alternative — leaving a key called `hide_restricted` and defaulting
+-- it to true — would have left an absent key meaning the exact opposite of
+-- what its name asserts, in a column whose entire contract is what absence
+-- means. Pre-release, with no operators to migrate, the rename is free;
+-- there is no compatibility shim and none is wanted.
+--
+-- Note there is no 00037. Nothing about the SHAPE changed: same jsonb
+-- column, same default, a different key spelled inside it. Editing this
+-- file in place is correct while the schema is still pre-release.
 
 -- +goose Up
 

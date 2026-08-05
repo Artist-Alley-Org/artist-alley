@@ -939,16 +939,22 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 }
 
 // decodeFeedFilters parses the user_preferences.feed_filters blob into
-// the wire type (#891). Reports false when every filter is off, so
-// /auth/me omits the key for the overwhelming majority of accounts
-// rather than shipping an object of falses — which is also what keeps
-// this addition invisible to every session that has not opted in.
+// the wire type (#891). Reports false when every key is at its zero
+// value, so /auth/me omits the object for the overwhelming majority of
+// accounts rather than shipping an object of falses — which is also what
+// keeps this key invisible to every session on the build's defaults.
+//
+// #921 inverted the default and this held with no change of SHAPE, only
+// of which accounts are the majority: the key is now `show_restricted`
+// and it is still the opted-IN accounts that carry an object. Preserve
+// that. "Omit when nil-or-false" is what makes an absent object and a
+// default account the same fact on the wire.
 //
 // Same "render hint, never fail the call" posture as decodeDefaultViews
 // above, and for the sharper reason: this field's whole job is to let
-// the browse page EXPLAIN a shorter feed. Failing /auth/me over an
-// unreadable preferences column would lock the user out of the page
-// where they could turn the filter off.
+// the browse page EXPLAIN its feed. Failing /auth/me over an unreadable
+// preferences column would lock the user out of the page where they
+// could change the setting.
 func decodeFeedFilters(raw []byte) (openapi.UserPreferencesFeedFilters, bool) {
 	var f openapi.UserPreferencesFeedFilters
 	if len(raw) == 0 {
@@ -957,7 +963,7 @@ func decodeFeedFilters(raw []byte) (openapi.UserPreferencesFeedFilters, bool) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return openapi.UserPreferencesFeedFilters{}, false
 	}
-	if f.HideRestricted == nil || !*f.HideRestricted {
+	if f.ShowRestricted == nil || !*f.ShowRestricted {
 		return openapi.UserPreferencesFeedFilters{}, false
 	}
 	return f, true

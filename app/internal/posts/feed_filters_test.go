@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// #891 — the "hide restricted members" browse preference.
+// #891 / #921 — restricted placeholders are subtracted from the browse
+// feed BY DEFAULT, and `show_restricted` puts them back.
+//
+// #891 shipped the machinery as an opt-in (`hide_restricted`, default
+// off). #921 measured that default wrong — 27 of one seeded account's 82
+// posts were entirely placeholders — and inverted it. The THREE RULES
+// below did not change; what changed is which branch is the common one,
+// and what the nil/error seams degrade TO.
 //
 // Two layers, on purpose:
 //
@@ -10,16 +17,18 @@
 //     off-by-one lives: "a post with NO members" and "a post whose
 //     members are all restricted" are different states and must stay
 //     different.
-//   - TestListPosts_HideRestricted_* drive the real GET /posts handler
+//   - TestListPosts_ShowRestricted_* drive the real GET /posts handler
 //     and assert on the SERIALIZED response, because that is the
 //     contract — a grid that happens to render the right thing off a
 //     wrong payload is not the same fact. They skip without
 //     AA_DB_PASSWORD, like every other integration test here.
 //
-// The load-bearing case is TestListPosts_HideRestricted_NeverHidesOwn:
-// a post can carry other people's restricted assets, so the "all
-// members restricted → drop the post" rule would otherwise delete an
-// author's own work from their own feed over a display preference.
+// The load-bearing case is the caller's OWN all-restricted post: a post
+// can carry other people's restricted assets, so the "all members
+// restricted → drop the post" rule would otherwise delete an author's
+// own work from their own feed. That case now fires for EVERY author by
+// default rather than for the handful who opted in, which is what makes
+// it worth two assertions rather than one.
 
 package posts
 
@@ -43,12 +52,12 @@ const (
 
 // ffStub is the feedFilterReader seam under test control.
 type ffStub struct {
-	hide bool
+	show bool
 	err  error
 }
 
-func (s ffStub) HideRestrictedFeedMembers(context.Context, int64) (bool, error) {
-	return s.hide, s.err
+func (s ffStub) ShowRestrictedFeedMembers(context.Context, int64) (bool, error) {
+	return s.show, s.err
 }
 
 // ---------------------------------------------------------------------------
@@ -238,46 +247,13 @@ func ffPlant(t *testing.T, pool *pgxpool.Pool) ffFixture {
 	}
 }
 
-// Preference OFF must be byte-for-byte the pre-#891 feed. This is the
-// regression pin: everything else in this file describes a change, and
-// this one describes the change NOT happening.
-func TestListPosts_HideRestricted_OffIsUnchanged(t *testing.T) {
-	pool := previewPool(t)
-	fx := ffPlant(t, pool)
-
-	unwired := peHandler(pool) // no seam at all — the pre-#891 handler
-	_, before := ffFeed(t, unwired, ffCaller)
-
-	off := peHandler(pool)
-	off.SetFeedFilters(ffStub{hide: false})
-	_, after := ffFeed(t, off, ffCaller)
-
-	if string(before) != string(after) {
-		t.Fatal("preference off changed the feed payload; it must be identical to the unwired handler")
-	}
-
-	page, _ := ffFeed(t, off, ffCaller)
-	for _, id := range []uuid.UUID{fx.mixed, fx.allRestricted, fx.noMembers, fx.mineRestricted} {
-		if ffFind(page, id) == nil {
-			t.Errorf("post %v missing from the unfiltered feed", id)
-		}
-	}
-	// And the placeholders are still there to be hidden later.
-	mixed := ffFind(page, fx.mixed)
-	if n := len(mixed.Members); n != 2 {
-		t.Fatalf("unfiltered mixed post has %d members, want 2 (one of them a placeholder)", n)
-	}
-}
-
-// Preference ON: the three subtractions and the two things it must not
-// touch, all read off one page.
-func TestListPosts_HideRestricted_On(t *testing.T) {
-	pool := previewPool(t)
-	fx := ffPlant(t, pool)
-
-	h := peHandler(pool)
-	h.SetFeedFilters(ffStub{hide: true})
-	page, _ := ffFeed(t, h, ffCaller)
+// ffAssertDefaultFeed reads the five discriminating facts about a page
+// served under the #921 DEFAULT. Shared by the stored-preference case
+// and the nil-seam case, because "the seam is missing" and "the seam
+// said false" must be the same feed and asserting that twice by hand is
+// how the two drift.
+func ffAssertDefaultFeed(t *testing.T, page openapi.PostList, fx ffFixture) {
+	t.Helper()
 
 	// 1. A post with SOME restricted members stays; those members go.
 	mixed := ffFind(page, fx.mixed)
@@ -309,7 +285,9 @@ func TestListPosts_HideRestricted_On(t *testing.T) {
 
 	// 4. THE BOUNDARY: the caller's OWN post survives with zero visible
 	//    members. It carries somebody else's restricted assets, so rule 2
-	//    alone would delete it from its author's feed.
+	//    alone would delete it from its author's feed — and since #921
+	//    that would happen to every author by default, not to the few who
+	//    opted in.
 	mine := ffFind(page, fx.mineRestricted)
 	if mine == nil {
 		t.Fatal("the caller's OWN post was hidden from their own feed")
@@ -319,43 +297,141 @@ func TestListPosts_HideRestricted_On(t *testing.T) {
 	}
 }
 
-// A post asked for BY NAME is untouched by the preference — it keeps
-// its placeholders, and therefore keeps #913's "Request access" button.
-//
-// This is the deliberate boundary, not an omission. The post-level rule
-// exists BECAUSE an all-restricted post rendering as an empty card is
-// worse than the placeholder it replaced; filtering members here would
-// rebuild that empty card on the one surface that avoided it.
-func TestGetPost_HideRestricted_IsUntouched(t *testing.T) {
+// THE #921 HEADLINE: a caller who has never touched preferences gets no
+// placeholders. Asserted on the serialized page, because "the feed hides
+// them by default" is a statement about bytes on the wire.
+func TestListPosts_ShowRestricted_DefaultHides(t *testing.T) {
 	pool := previewPool(t)
 	fx := ffPlant(t, pool)
 
 	h := peHandler(pool)
-	h.SetFeedFilters(ffStub{hide: true})
+	h.SetFeedFilters(ffStub{show: false}) // what a row-less account reads as
+	page, _ := ffFeed(t, h, ffCaller)
 
-	for _, tc := range []struct {
+	ffAssertDefaultFeed(t, page, fx)
+}
+
+// The nil seam — a test that never wired it, or a boot-order slip —
+// must produce the DEFAULT feed and not a third behaviour. Byte-for-byte
+// against the stored default, because the two are meant to be
+// indistinguishable and a field-level compare would let a new key drift
+// between them unnoticed.
+//
+// This inverted at #921 and the literal did not move: `false` used to
+// mean "show everything", it now means "hide the placeholders", and both
+// seams answer `false` because both fail to whatever the build's default
+// is. See posts.showRestricted.
+func TestListPosts_ShowRestricted_NilSeamIsTheDefault(t *testing.T) {
+	pool := previewPool(t)
+	fx := ffPlant(t, pool)
+
+	unwired := peHandler(pool) // no seam at all
+	page, nilSeam := ffFeed(t, unwired, ffCaller)
+
+	stored := peHandler(pool)
+	stored.SetFeedFilters(ffStub{show: false})
+	_, defaulted := ffFeed(t, stored, ffCaller)
+
+	if string(nilSeam) != string(defaulted) {
+		t.Fatal("an unwired seam served a different feed from the stored default; the two must be identical")
+	}
+	ffAssertDefaultFeed(t, page, fx)
+}
+
+// Preference ON restores the pre-#921 feed exactly: every post back,
+// every placeholder back, and #913's Request access with them. This is
+// the regression pin in the other direction — the opt-in has to be worth
+// opting into.
+func TestListPosts_ShowRestricted_OnIsTheUnfilteredFeed(t *testing.T) {
+	pool := previewPool(t)
+	fx := ffPlant(t, pool)
+
+	h := peHandler(pool)
+	h.SetFeedFilters(ffStub{show: true})
+	page, _ := ffFeed(t, h, ffCaller)
+
+	for _, id := range []uuid.UUID{fx.mixed, fx.allRestricted, fx.noMembers, fx.mineRestricted} {
+		if ffFind(page, id) == nil {
+			t.Errorf("post %v missing from the unfiltered feed", id)
+		}
+	}
+
+	// The placeholders themselves, not just the rows that carry them.
+	mixed := ffFind(page, fx.mixed)
+	if mixed == nil {
+		t.Fatal("the mixed post is missing from the unfiltered feed")
+	}
+	if n := len(mixed.Members); n != 2 {
+		t.Fatalf("unfiltered mixed post has %d members, want 2 (one of them a placeholder)", n)
+	}
+	if !hasRestrictedMember(*mixed) {
+		t.Error("the mixed post came back with no placeholder; turning the setting on restored nothing")
+	}
+	allRest := ffFind(page, fx.allRestricted)
+	if allRest == nil {
+		t.Fatal("the all-restricted post is missing from the unfiltered feed")
+	}
+	if n := len(allRest.Members); n != 2 || !hasRestrictedMember(*allRest) {
+		t.Errorf("all-restricted post has %d members and restricted=%v, want 2 placeholders",
+			n, hasRestrictedMember(*allRest))
+	}
+}
+
+// THE BOUNDARY GUARD. A post asked for BY NAME is untouched — it keeps
+// its placeholders, and therefore keeps #913's "Request access" button.
+//
+// This is a deliberate boundary, not an omission. The post-level rule
+// exists BECAUSE an all-restricted post rendering as an empty card is
+// worse than the placeholder it replaced; filtering members here would
+// rebuild that empty card on the one surface that avoided it. Extending
+// the filter to GetPost was tried during #891 and reverted.
+//
+// #921 raises the stakes rather than changing the assertion: the posts
+// covered here are now the ones the feed drops from EVERY default
+// caller's page, so the detail path is where they can still be reached
+// at all. Both settings are exercised — the boundary is about the
+// SURFACE, not about what the reader asked for. If anyone ever filters
+// the detail path, this must fail.
+func TestGetPost_HideRestricted_IsUntouched(t *testing.T) {
+	pool := previewPool(t)
+	fx := ffPlant(t, pool)
+
+	for _, seam := range []struct {
 		name string
-		id   uuid.UUID
-		want int
+		show bool
 	}{
-		{"all members restricted", fx.allRestricted, 2},
-		{"some members restricted", fx.mixed, 2},
+		{"default (feed hides these)", false},
+		{"opted into placeholders", true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, err := h.GetPost(ctxAs(ffCaller), openapi.GetPostRequestObject{Id: openapi_types.UUID(tc.id)})
-			if err != nil {
-				t.Fatalf("get post: %v", err)
-			}
-			ok, isOK := resp.(openapi.GetPost200JSONResponse)
-			if !isOK {
-				t.Fatalf("post was refused: %T — a display preference must never gate a read", resp)
-			}
-			p := openapi.Post(ok)
-			if len(p.Members) != tc.want {
-				t.Fatalf("members = %d, want %d — GET by id is outside the filter", len(p.Members), tc.want)
-			}
-			if !hasRestrictedMember(p) {
-				t.Error("the placeholder is gone, and #913's Request access button with it")
+		t.Run(seam.name, func(t *testing.T) {
+			h := peHandler(pool)
+			h.SetFeedFilters(ffStub{show: seam.show})
+
+			for _, tc := range []struct {
+				name string
+				id   uuid.UUID
+				want int
+			}{
+				{"all members restricted", fx.allRestricted, 2},
+				{"some members restricted", fx.mixed, 2},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					resp, err := h.GetPost(ctxAs(ffCaller), openapi.GetPostRequestObject{Id: openapi_types.UUID(tc.id)})
+					if err != nil {
+						t.Fatalf("get post: %v", err)
+					}
+					ok, isOK := resp.(openapi.GetPost200JSONResponse)
+					if !isOK {
+						t.Fatalf("post was refused: %T — a display preference must never gate a read", resp)
+					}
+					p := openapi.Post(ok)
+					if len(p.Members) != tc.want {
+						t.Fatalf("members = %d, want %d — GET by id is outside the filter", len(p.Members), tc.want)
+					}
+					if !hasRestrictedMember(p) {
+						t.Error("the placeholder is gone, and #913's Request access button with it")
+					}
+				})
 			}
 		})
 	}
@@ -370,18 +446,33 @@ func hasRestrictedMember(p openapi.Post) bool {
 	return false
 }
 
-// The seam failing must not silently shorten anyone's feed. A display
-// preference degrades toward showing everything, which can leak nothing:
-// the redaction that protects the content already ran in enrichPreview.
-func TestListPosts_HideRestricted_ErrorShowsEverything(t *testing.T) {
+// A failed preference lookup serves THE DEFAULT FEED — not the reader's
+// stored setting, and not "everything".
+//
+// This inverted at #921 and it is the subtle half of the sprint. Under
+// #891 the seam degraded toward showing everything, on the reasoning
+// that a display preference can leak nothing (still true: enrichPreview
+// already did the redaction, and a restricted member carries no `asset`
+// at all). But "show everything" is now the rejected experience, so a
+// prefs blip would have repainted every affected reader's feed as the
+// wall of locked doors #921 exists to remove — a loud, instance-wide
+// surprise triggered by a component unrelated to what they are looking
+// at. Degrading to the default shortens the feed of the minority who
+// opted in, and shortens it to exactly what everyone else sees.
+//
+// The stub says `show: true` on purpose: the error must WIN over the
+// stored value, or this test would pass on a seam that simply ignored
+// the error.
+func TestListPosts_ShowRestricted_ErrorServesTheDefault(t *testing.T) {
 	pool := previewPool(t)
 	fx := ffPlant(t, pool)
 
 	h := peHandler(pool)
-	h.SetFeedFilters(ffStub{hide: true, err: context.DeadlineExceeded})
+	h.SetFeedFilters(ffStub{show: true, err: context.DeadlineExceeded})
 	page, _ := ffFeed(t, h, ffCaller)
 
-	if ffFind(page, fx.allRestricted) == nil {
-		t.Error("a failed preference lookup hid a post; it must fall back to unfiltered")
+	if ffFind(page, fx.allRestricted) != nil {
+		t.Error("a failed preference lookup served the stored value; it must fall back to the default feed")
 	}
+	ffAssertDefaultFeed(t, page, fx)
 }
