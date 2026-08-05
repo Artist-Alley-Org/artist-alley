@@ -221,9 +221,11 @@ a renamed asset kept matching its old name in every post containing it.
 ### Amendment: a display preference may only subtract (recorded 2026-08-05, #891, PR #919)
 
 Everything above is about what a caller **may** see. #891 introduced the first thing that
-changes what a caller **is shown** without changing what they may see: an account preference
-(`user_preferences.feed_filters.hide_restricted`) that drops restricted members — and
-all-restricted posts — from the browse feed instead of rendering the #883 placeholders.
+changes what a caller **is shown** without changing what they may see: ~~an account preference
+(`user_preferences.feed_filters.hide_restricted`) that drops~~ **(amended 2026-08-05, #921 —
+the key is now `feed_filters.show_restricted` and hiding is the DEFAULT rather than an opt-in;
+see the next amendment)** a browse feed that drops restricted members — and
+all-restricted posts — instead of rendering the #883 placeholders.
 
 A preference that removes rows from a visibility-filtered feed is close enough to the read rule
 to be dangerous, so the boundary is worth stating rather than leaving to be inferred from the
@@ -268,6 +270,69 @@ Two corollaries recorded because both are real off-by-ones:
   would delete an author's own work from their own feed over a display setting. Their members
   are still filtered — that is about what you can see, and does not change because you wrote the
   caption — but the post stays.
+
+### Amendment: hiding is the DEFAULT, and the key is renamed to say so (recorded 2026-08-05, #921, PR #924)
+
+The amendment above describes hiding as an **opt-in**. It is now the **default**, and the rest of
+that amendment — the subtractive-only clause, the compose-do-not-re-derive clause, the
+feed-only clause, and both corollaries — is **unchanged and still binding**. Only the default
+moved.
+
+**Why.** #891 shipped the machinery on the theory that the placeholder is the more informative
+answer. It was measured on the stock seed dataset and it was not: `olaf.lindgren` (ref 23, zero
+capabilities) got **82 posts of which 27 were entirely placeholders — a third of the grid**. An
+instance where teams genuinely share within themselves is worse. The owner's framing
+(2026-08-05): *"We shouldn't show the restricted file in the regular feed… it would only show in
+reposted assets and stuff in collections. That way they can still see the collection and that
+there are restricted files in there without flooding the regular feed."*
+
+The principle the default now encodes, which is also the rule for every future surface:
+
+> **A placeholder belongs where the user ASKED A QUESTION or OPENED A CONTAINER. Not where they
+> were handed a feed.**
+
+That is what makes the three surfaces consistent rather than inconsistent: `GET /posts/{id}` is a
+question, a collection's contents are an opened container, and the browse feed is neither.
+
+**What did NOT change — and this is the whole point.** The read rule is untouched. `ListPosts`
+still *receives* every row the rule returns; `applyHideRestricted` subtracts afterwards off one
+already-computed field. Two layers, and only the lower one moved:
+
+| layer | before #921 | after #921 | changed? |
+|---|---|---|---|
+| the access **rule** | does not exclude rows; sensitivity gates content, not rows | identical | **NO** |
+| the default **presentation** | renders every row the rule returned | subtracts restricted ones in the feed | **YES** |
+
+ADR 0020's *"the row still exists in every feed"* is narrowed to match — see its 2026-08-05
+amendment. Nothing about who may read what moves; what moves is what the feed chooses to draw.
+
+**Inverted the KEY, did not flip the default.** `feed_filters.hide_restricted` became
+`feed_filters.show_restricted`, still defaulting to `false`. Migration 00036's storage guarantee
+is written around *an absent key means the build's default*, and defaulting a key called
+`hide_restricted` to `true` would have left an absent key asserting the reverse of its own name.
+The rule for the next key in that column: **name it so `false` is what the build does by
+default.** Pre-release, no compatibility shim.
+
+**The nil/error seam inverted with it.** `posts.showRestricted` answers `false` on a nil seam or
+a failed prefs lookup — the same literal as before, the opposite behaviour, and correct for the
+same reason both times: **both seams fail to the build's default.** Failing toward "show
+everything" would now mean a prefs blip repaints an affected reader's feed as the wall of locked
+doors this amendment exists to remove. Neither direction can leak: the redaction already ran in
+`enrichPreview`, and a restricted member carries no `asset` payload at all.
+
+**A forward fork, recorded so it is not rediscovered.** ADR 0020 specifies server-baked
+**blurred** thumbnails with a lock icon for restricted assets in Phase 1.28. A blurred tile is a
+genuinely different proposition from a "you cannot have this" placeholder — it shows the shape of
+the work rather than only its absence. Whether hiding-by-default is still right once blur-and-reveal
+lands is **an open question, deliberately not resolved here**. Revisit this amendment when 1.28 is
+scoped.
+
+**Consequence for the browse page.** #891 shipped a one-line note on `/` — *"items you don't have
+access to are hidden by your preferences"* with a link to change it — because an opted-in
+reader's grid was shorter than everyone else's. Under the default both halves became false (the
+reader set no preference, and the feed is not shorter than anyone else's), and it would have
+fired on every browse paint for every reader. It was removed in PR #924. A "there is more here
+you cannot open" affordance, if wanted, is a fresh design question rather than that note inverted.
 
 ### Where it is enforced
 

@@ -52,9 +52,44 @@ binary plane. It was in every surface that describes a row.
   `owner_display_name`. The owner's rule, verbatim (2026-08-03): *"The
   placeholder should never leak info. Not even title. Only the owner's name."*
 
-The row still exists in every feed, which is 0020's and 0064's shared position
+~~The row still exists in every feed, which is 0020's and 0064's shared position
 and is what makes "request access" (#881) mean anything. Nothing here removes a
-row.
+row.~~ **Narrowed 2026-08-05 (#921) — see the amendment below.**
+
+## Amendment (2026-08-05): the RULE still returns the row; the default FEED no longer draws it (#921)
+
+The struck sentence above conflated two layers, and #921 pulled them apart. Read as
+a statement about the **access rule**, it is still exactly true and still 0020's and
+0064's shared position. Read as a statement about **what the browse feed renders by
+default**, it stopped being true when #921 made hiding restricted placeholders the
+default rather than an opt-in.
+
+| layer | before #921 | after #921 | changed? |
+|---|---|---|---|
+| the access **rule** | does not exclude rows; sensitivity gates content, not rows | identical | **NO** |
+| the default **presentation** | renders every row the rule returned | subtracts restricted ones in the feed | **YES** |
+
+`ListPosts` still *receives* every row the rule returns. `applyHideRestricted` subtracts
+afterwards, reading one already-computed field (`PostMember.Restricted`, written in exactly
+one place off the single `visibility.FieldsReadable` call). **Nothing about who may read what
+moved.** What moved is what the feed chooses to draw.
+
+**"Request access" still means something**, which was the struck sentence's real point. #913's
+button lives on the placeholder, and the placeholder still renders on `GET /posts/{id}` and in
+collection contents — the two surfaces where a reader **asked a question** or **opened a
+container**. It is the feed, where they were handed a grid they did not ask for, that stopped
+drawing them. Measured motivation: one seeded account's feed was 82 posts of which 27 were
+entirely placeholders.
+
+**A fork this ADR should reconsider when Phase 1.28 lands.** The Decision section below specifies
+server-baked **blurred** thumbnails with a lock icon for `restricted` and `embargo` assets. A
+blurred tile is a genuinely different proposition from a "you cannot have this" placeholder — it
+shows the shape of the work rather than only its absence, so the busyness argument that motivated
+#921 may not survive it. **Whether hiding-by-default is still right once blur-and-reveal ships is
+an open question, deliberately left open here.** Do not treat #921 as having settled it.
+
+Full reasoning, including the `hide_restricted` → `show_restricted` rename and the inverted
+nil/error seam, lives in ADR 0064's 2026-08-05 amendment.
 
 **Two places where the implementation is narrower than what 0020 says, deliberately:**
 
