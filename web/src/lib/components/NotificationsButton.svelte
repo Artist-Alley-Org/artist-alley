@@ -130,6 +130,10 @@
       void goto(`/posts/${n.target_id}`);
     } else if (n.target_kind === 'user' && n.target_id) {
       void goto(`/users/by-ref/${n.target_id}`);
+    } else if (n.target_kind === 'request') {
+      // #881 — both request surfaces live here: the owner's decision
+      // queue and the requester's own list.
+      void goto('/account/requests');
     } else if (n.target_kind === 'comment' && n.target_id) {
       // Comments don't have a dedicated route yet — fall through to
       // notifications page where the renderer at least shows the

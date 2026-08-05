@@ -2838,7 +2838,21 @@ paths:
       description: |
         Creates a `pending` resource_request for the calling user
         against the target asset. Any authenticated user may submit
-        a request; the approver decides via /admin/requests.
+        a request; the asset's owner — or an approver — decides.
+        Owners see their queue at GET /account/requests/incoming.
+
+        Repeating an ask you already have pending returns **200** with
+        the existing request, unchanged. One ask is
+        (requester, asset, capability); asking twice is the same
+        question, not a second one. A DECIDED request does not block a
+        new ask — `denied` is terminal for the row, not for the person.
+
+        Granting a request does **not** currently unlock the asset.
+        `user_capability_grants` has no per-object scope, so there is no
+        capability meaning "you may view this one asset"; a grant here
+        records that the owner agreed. Per-asset unlocking is tracked
+        separately (#912) and ADR 0064 documents the deferral. Clients
+        must not tell the user that approval will reveal the asset.
 
         When the approver grants the request, a row lands in
         user_capability_grants with `request_ref` populated — the
@@ -2859,16 +2873,33 @@ paths:
           application/json:
             schema:
               type: object
-              required: [capability]
               properties:
                 capability:
                   type: string
-                  description: Capability code being requested.
+                  description: |
+                    Capability code being requested. **Optional**, and
+                    the request-access UI never sends one: it defaults
+                    to `content.access.request`, an inert marker code
+                    that confers no access on its own.
+
+                    The field is requester-controlled input, so a
+                    request naming any other code — including
+                    `system.admin` — is decidable only by a holder of
+                    `share.grant` or `system.admin`, never by the
+                    asset's owner.
                 reason:
                   type: string
                   maxLength: 1000
                   description: Optional free-text justification.
       responses:
+        "200":
+          description: |
+            An identical ask was already pending. The existing request
+            is returned unchanged; nothing was created and nobody was
+            notified again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
         "201":
           description: Request created.
           content:
@@ -2907,6 +2938,56 @@ paths:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/ResourceRequest" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/requests/incoming:
+    get:
+      operationId: listIncomingRequests
+      summary: List pending requests against assets the caller owns
+      description: |
+        The owner-facing decision queue. Returns pending
+        resource_request rows whose target asset the caller owns,
+        oldest first.
+
+        No capability is required and none would help: the gate is the
+        ownership join itself, so a caller sees requests on their own
+        work and nothing else. This exists because /admin/requests is
+        gated on `requests.read` / `share.grant` — capabilities an
+        artist has no reason to hold — which left the person with the
+        strongest claim to decide unable to reach the queue.
+
+        Decisions go to POST /admin/requests/{id}/decide, which accepts
+        the asset's owner for requests naming `content.access.request`.
+      tags: [requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Pending requests against the caller's own assets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ResourceRequest" }
+                  total:
+                    type: integer
+                    format: int64
+                    description: Total pending count against the caller's assets.
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -2966,7 +3047,21 @@ paths:
         grant is the same value the operator supplied here; the
         CapabilitySweeper reaps both together when it fires.
 
-        Requires `share.grant` capability OR `system.admin`.
+        Requires `share.grant` OR `system.admin` — **or** ownership of
+        the requested asset, for requests naming
+        `content.access.request` only. The owner disjunct is narrower on
+        purpose: `requested_capability` is requester-controlled, so an
+        owner who could decide any request could be induced to grant
+        `system.admin` from a panel about their own artwork.
+
+        A grant does **not** unlock the asset's bytes. There is no
+        per-object capability scope, so approval records agreement, not
+        access — see #912 and ADR 0064.
+
+        A caller who is neither an approver nor the owner gets 403 for
+        every failure, including a request id that does not exist: a 404
+        here would let a non-approver probe for request ids and read off
+        which capability each names.
       tags: [requests]
       security:
         - cookieAuth: []

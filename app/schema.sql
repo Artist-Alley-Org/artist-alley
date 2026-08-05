@@ -4352,6 +4352,13 @@ CREATE INDEX idx_resource_request_pending_oldest_first ON public.resource_reques
 
 
 --
+-- Name: resource_request_one_pending_per_ask; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX resource_request_one_pending_per_ask ON public.resource_request USING btree (requester_user_ref, target_asset_id, requested_capability) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: idx_sessions_impersonated_by_active; Type: INDEX; Schema: public; Owner: -
 --
 

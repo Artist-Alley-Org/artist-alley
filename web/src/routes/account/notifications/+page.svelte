@@ -113,10 +113,17 @@
       void goto(`/posts/${n.target_id}`);
     } else if (n.target_kind === 'user' && n.target_id) {
       void goto(`/users/by-ref/${n.target_id}`);
+    } else if (n.target_kind === 'request') {
+      // #881 — the request surfaces are both at /account/requests: the
+      // queue you decide from and the list you track your own asks in.
+      // A "request awaiting your approval" that went nowhere when
+      // clicked was a notification asking for an action it did not
+      // offer a route to.
+      void goto('/account/requests');
     }
-    // Comments + license + request target_kinds stay on this page
-    // until those domains get dedicated routes; the inbox card still
-    // shows the excerpt + payload so the user knows what happened.
+    // Comment + license target_kinds stay on this page until those
+    // domains get dedicated routes; the inbox card still shows the
+    // excerpt + payload so the user knows what happened.
   }
 
   function verbLabel(n: NotificationItem): string {

@@ -97,7 +97,7 @@ const TRACKED_FILES = [
   'src/routes/search/+page.svelte',
   'src/routes/collections/+page.svelte',
   'src/routes/collections/[id]/+page.svelte',
-  'src/lib/components/CollectionModal.svelte',
+  'src/lib/components/Modal.svelte',
   'src/lib/components/SearchBar.svelte',
   'src/lib/components/NavUploadButton.svelte',
   'src/lib/components/UserMenu.svelte',
@@ -125,6 +125,15 @@ const TRACKED_FILES = [
   'src/lib/components/SimilarAssetsPanel.svelte',
   'src/lib/components/AssetTagBadge.svelte',
   'src/lib/components/FieldValueInput.svelte',
+  // — #881 the request-access loop. Tracked from the start: the
+  //   dialog's copy is the only place the app tells a user what a
+  //   granted request does and does not do, and an operator override
+  //   has to be able to reach it. —
+  'src/lib/components/CardRestricted.svelte',
+  'src/lib/components/RequestAccessDialog.svelte',
+  'src/lib/components/RequestQueue.svelte',
+  'src/routes/account/requests/+page.svelte',
+  'src/routes/admin/requests/+page.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)

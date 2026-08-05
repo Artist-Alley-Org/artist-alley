@@ -36,7 +36,9 @@
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
+  import RequestAccessDialog from './RequestAccessDialog.svelte';
 
   interface Props {
     source: PlaylistSource;
@@ -391,6 +393,11 @@
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
       return;
     }
+    // A modal opened FROM the shell owns the keyboard while it is up
+    // (#881). Without this, Escape closes the whole playlist out from
+    // under the request dialog instead of dismissing it, and the user
+    // loses their place as well as what they typed.
+    if (askOpenFor) return;
     switch (e.key) {
       // ← / → navigate between sibling PLAYLISTS in the surrounding
       // context (next post in the feed, next collection, etc). The
@@ -473,6 +480,16 @@
   function colVariantUrl(assetId: string): string {
     return `/api/v1/assets/${assetId}/variants/col`;
   }
+
+  // #881 — "request access" state for restricted members.
+  //
+  // Keyed by asset id rather than a single boolean because a playlist
+  // walks between members: a flat `asked` flag would follow the cursor
+  // and label the next restricted member as already-asked. The set is
+  // session-local optimism over the server's answer; a reload re-reads
+  // the truth from /account/requests.
+  let askOpenFor: string | null = $state(null);
+  let askedFor: string[] = $state([]);
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -531,6 +548,27 @@
                 ? t('card.restricted.owner', { owner: currentItem.ownerDisplayName })
                 : t('card.restricted.owner_unknown')}
             </p>
+            <!-- #881 — the same ask as the grid tile, at the one other
+                 place a restricted member is rendered. Nothing here
+                 names the asset: the id is posted, never printed, and
+                 the label is a fixed string. -->
+            {#if auth.user}
+              <button
+                type="button"
+                data-testid="request-access-open"
+                disabled={askedFor.includes(currentItem.asset.id)}
+                aria-label={askedFor.includes(currentItem.asset.id)
+                  ? t('card.restricted.asked')
+                  : t('card.restricted.ask')}
+                class="mt-1 rounded-md border border-white/35 px-3 py-1.5 text-sm text-white
+                       hover:bg-white/10 disabled:cursor-default disabled:opacity-60"
+                onclick={() => (askOpenFor = currentItem.asset.id)}
+              >
+                {askedFor.includes(currentItem.asset.id)
+                  ? t('card.restricted.asked')
+                  : t('card.restricted.ask')}
+              </button>
+            {/if}
           </div>
         {:else if currentItem.asset.file_hash}
           <!-- AssetViewer owns the canvas double-click gesture
@@ -720,6 +758,29 @@
       </div>
     {/if}
   </div>
+
+  <!-- #881 — INSIDE the <dialog>, and that is load-bearing.
+       This shell is a native `<dialog open>`, which the browser puts in
+       the TOP LAYER. A fixed-position overlay mounted as a sibling
+       renders beneath it and cannot be clicked: driven in a browser, the
+       request dialog was invisible and every click on its Send button
+       was swallowed by the playlist behind it. A descendant of the
+       <dialog> shares its top-layer stacking context and behaves.
+
+       Keyed on the asset id it was opened for, so walking to another
+       restricted member cannot leave a dialog pointed at the previous
+       one. -->
+  {#if askOpenFor}
+    <RequestAccessDialog
+      assetId={askOpenFor}
+      ownerName={currentItem?.ownerDisplayName ?? null}
+      open={true}
+      onclose={() => (askOpenFor = null)}
+      onsubmitted={() => {
+        if (askOpenFor) askedFor = [...askedFor, askOpenFor];
+      }}
+    />
+  {/if}
 </dialog>
 
 <!-- Hotkey legend — passed through AssetViewer and rendered as the

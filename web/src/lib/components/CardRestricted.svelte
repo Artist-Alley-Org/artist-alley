@@ -25,8 +25,23 @@
   // The frame is CardFallback's — same matte, same hatch, same size
   // container and tier breakpoints — so a restricted tile sits in a grid
   // of no-preview tiles without reading as a different kind of object.
+  //
+  // ## The ask (#881)
+  //
+  // A placeholder that says "no" now also says "you can ask". The button
+  // is rendered only when the caller passed an `assetId` AND someone is
+  // signed in — an anonymous visitor has no account to file a request
+  // against, and a disabled control that never explains itself is worse
+  // than none.
+  //
+  // The button carries no asset text. Its label and aria-label are the
+  // fixed string "Request access"; the id goes into the POST and never
+  // into the DOM. Everything the dialog is allowed to say is in
+  // RequestAccessDialog's header.
 
+  import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
+  import RequestAccessDialog from './RequestAccessDialog.svelte';
 
   interface Props {
     /** The asset owner's display name, or null when the server could not
@@ -34,13 +49,29 @@
      *  neutral line rather than an empty one — a blank where a name
      *  belongs reads as a rendering bug. */
     ownerName?: string | null;
+    /** The restricted asset's id, when the caller wants the tile to
+     *  offer "request access". Null (the default) renders the plate
+     *  alone.
+     *
+     *  Opt-in rather than derived from the id the tile already has,
+     *  because "there is a restricted asset here" and "asking about it
+     *  is the sensible next move" are different claims. A PostCard whose
+     *  COVER is restricted is a visible post the viewer can open; the
+     *  ask belongs on the member inside it, not on a tile that navigates
+     *  somewhere else. */
+    assetId?: string | null;
   }
 
-  let { ownerName = null }: Props = $props();
+  let { ownerName = null, assetId = null }: Props = $props();
 
   const ownerLine = $derived(
     ownerName ? t('card.restricted.owner', { owner: ownerName }) : t('card.restricted.owner_unknown'),
   );
+
+  let dialogOpen = $state(false);
+  let asked = $state(false);
+
+  const canAsk = $derived(!!assetId && !!auth.user);
 </script>
 
 <div class="plate absolute inset-0 text-fg-muted" data-card-restricted="true">
@@ -61,9 +92,39 @@
     </span>
     <span class="label">{t('card.restricted.label')}</span>
     <span class="owner">{ownerLine}</span>
+    {#if canAsk}
+      <!-- z-10 clears the tile's own frame layers. The button is the
+           only interactive thing on a restricted tile — AssetCard
+           renders no link, no menu and no checkbox here — so nothing
+           competes with it for the click. -->
+      <button
+        type="button"
+        data-testid="request-access-open"
+        class="ask relative z-10"
+        disabled={asked}
+        aria-label={asked ? t('card.restricted.asked') : t('card.restricted.ask')}
+        onclick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dialogOpen = true;
+        }}
+      >
+        {asked ? t('card.restricted.asked') : t('card.restricted.ask')}
+      </button>
+    {/if}
   </div>
   <span class="sr-only">{t('card.restricted.sr')}</span>
 </div>
+
+{#if assetId}
+  <RequestAccessDialog
+    {assetId}
+    {ownerName}
+    open={dialogOpen}
+    onclose={() => (dialogOpen = false)}
+    onsubmitted={() => (asked = true)}
+  />
+{/if}
 
 <style>
   /* Geometry is CardFallback's, deliberately — see the header note. The
@@ -141,6 +202,29 @@
     margin-inline-end: 0.5ch;
   }
 
+  /* The ask. Sized in container units like the rest of the plate so it
+     shrinks with the tile rather than overflowing a floor-tier one, and
+     hidden entirely below the tier where the plate stops being a column
+     (see the container query) — at that size the row is label + owner
+     on one line and a third element would push the owner out. */
+  .ask {
+    display: none;
+    border-radius: 0.375rem;
+    border: 1px solid color-mix(in oklab, currentColor 35%, transparent);
+    padding: 0.3em 0.85em;
+    font-size: clamp(0.6875rem, 3.2cqmin, 0.8125rem);
+    line-height: 1.2;
+    color: var(--color-fg);
+    white-space: nowrap;
+  }
+  .ask:hover:not(:disabled) {
+    background: color-mix(in oklab, currentColor 12%, transparent);
+  }
+  .ask:disabled {
+    opacity: 0.65;
+    cursor: default;
+  }
+
   @container plate (min-height: 7rem) {
     .stack {
       flex-direction: column;
@@ -158,6 +242,10 @@
     .owner {
       font-size: clamp(0.6875rem, 3.4cqmin, 0.8125rem);
       letter-spacing: 0.08em;
+    }
+    .ask {
+      display: inline-block;
+      margin-top: 0.35em;
     }
   }
 </style>

@@ -24,6 +24,66 @@ func (q *Queries) CountPendingRequests(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
+const countPendingRequestsForOwner = `-- name: CountPendingRequestsForOwner :one
+SELECT COUNT(*)::BIGINT
+FROM resource_request rr
+JOIN assets a ON a.id = rr.target_asset_id
+WHERE rr.state = 'pending'
+  AND a.owner_user_ref = $1
+  AND a.deleted_at IS NULL
+`
+
+// Badge value for the owner queue. Same predicate as
+// ListPendingRequestsForOwner; kept adjacent so they change together.
+func (q *Queries) CountPendingRequestsForOwner(ctx context.Context, ownerUserRef *int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingRequestsForOwner, ownerUserRef)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const findPendingRequestForAsk = `-- name: FindPendingRequestForAsk :one
+SELECT id, requester_user_ref, target_asset_id, requested_capability,
+       reason, state, decided_at, decided_by_user_ref, decision_reason,
+       expires_at, requested_at
+FROM resource_request
+WHERE requester_user_ref = $1
+  AND target_asset_id = $2
+  AND requested_capability = $3
+  AND state = 'pending'
+`
+
+type FindPendingRequestForAskParams struct {
+	RequesterUserRef    int64
+	TargetAssetID       pgtype.UUID
+	RequestedCapability string
+}
+
+// The coalesce read (#881). One ask is (requester, asset, capability);
+// a second one while the first is still pending is the same question
+// asked twice, not a new question, so Submit returns this row instead
+// of filing another. Matches the partial unique index
+// resource_request_one_pending_per_ask exactly — if these two ever
+// disagree, the INSERT's 23505 recovery path reads nothing back.
+func (q *Queries) FindPendingRequestForAsk(ctx context.Context, arg FindPendingRequestForAskParams) (ResourceRequest, error) {
+	row := q.db.QueryRow(ctx, findPendingRequestForAsk, arg.RequesterUserRef, arg.TargetAssetID, arg.RequestedCapability)
+	var i ResourceRequest
+	err := row.Scan(
+		&i.ID,
+		&i.RequesterUserRef,
+		&i.TargetAssetID,
+		&i.RequestedCapability,
+		&i.Reason,
+		&i.State,
+		&i.DecidedAt,
+		&i.DecidedByUserRef,
+		&i.DecisionReason,
+		&i.ExpiresAt,
+		&i.RequestedAt,
+	)
+	return i, err
+}
+
 const getGrantsByRequestRef = `-- name: GetGrantsByRequestRef :many
 SELECT user_ref, capability_code, granted_at, granted_by_user_ref,
        note, team_id, expires_at, request_ref
@@ -140,6 +200,67 @@ func (q *Queries) InsertResourceRequest(ctx context.Context, arg InsertResourceR
 	return i, err
 }
 
+const listGlobalCapabilityHolders = `-- name: ListGlobalCapabilityHolders :many
+SELECT DISTINCT h.ref
+FROM (
+    SELECT ur.user_ref AS ref, rc.capability_code AS code
+      FROM user_roles ur
+      JOIN role_capabilities rc ON rc.role_id = ur.role_id
+     WHERE ur.team_id IS NULL
+       AND rc.capability_code = ANY($1::text[])
+    UNION
+    SELECT g.user_ref AS ref, g.capability_code AS code
+      FROM user_capability_grants g
+     WHERE g.team_id IS NULL
+       AND g.capability_code = ANY($1::text[])
+       AND (g.expires_at IS NULL OR g.expires_at > NOW())
+) h
+JOIN "user" u ON u.ref = h.ref AND u.approved = 1
+WHERE NOT EXISTS (
+    SELECT 1 FROM user_capability_revokes r
+     WHERE r.user_ref = h.ref
+       AND r.team_id IS NULL
+       AND r.capability_code = h.code
+)
+`
+
+// Notification fan-out for a newly created request (#881): every user
+// who could act on it. Resolves a capability the same way
+// UserHoldsSystemAdmin does — role grant UNION explicit grant, minus an
+// explicit revoke, approved users only — but for a SET of codes and
+// returning the holders rather than answering about one of them.
+//
+// Team-scoped rows are excluded (team_id IS NULL on both sides): the
+// approver queue this feeds is the global one, and a team-scoped
+// approver has no view of a request that names no team.
+//
+// The revoke check is per-code, not per-caller: a user revoked
+// share.grant but holding system.admin is still an approver, and a
+// coarser NOT EXISTS over the whole code set would silently drop them.
+//
+// This is a NOTIFICATION list, never an authorisation answer. The
+// decide gate resolves the caller's own capabilities through auth;
+// appearing here confers nothing.
+func (q *Queries) ListGlobalCapabilityHolders(ctx context.Context, dollar_1 []string) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listGlobalCapabilityHolders, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var ref int64
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		items = append(items, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingRequests = `-- name: ListPendingRequests :many
 SELECT id, requester_user_ref, target_asset_id, requested_capability,
        reason, state, decided_at, decided_by_user_ref, decision_reason,
@@ -163,6 +284,70 @@ type ListPendingRequestsParams struct {
 // gate is the authoritative filter.
 func (q *Queries) ListPendingRequests(ctx context.Context, arg ListPendingRequestsParams) ([]ResourceRequest, error) {
 	rows, err := q.db.Query(ctx, listPendingRequests, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ResourceRequest
+	for rows.Next() {
+		var i ResourceRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.RequesterUserRef,
+			&i.TargetAssetID,
+			&i.RequestedCapability,
+			&i.Reason,
+			&i.State,
+			&i.DecidedAt,
+			&i.DecidedByUserRef,
+			&i.DecisionReason,
+			&i.ExpiresAt,
+			&i.RequestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingRequestsForOwner = `-- name: ListPendingRequestsForOwner :many
+SELECT rr.id, rr.requester_user_ref, rr.target_asset_id,
+       rr.requested_capability, rr.reason, rr.state, rr.decided_at,
+       rr.decided_by_user_ref, rr.decision_reason, rr.expires_at,
+       rr.requested_at
+FROM resource_request rr
+JOIN assets a ON a.id = rr.target_asset_id
+WHERE rr.state = 'pending'
+  AND a.owner_user_ref = $1
+  AND a.deleted_at IS NULL
+ORDER BY rr.requested_at ASC
+LIMIT $2
+OFFSET $3
+`
+
+type ListPendingRequestsForOwnerParams struct {
+	OwnerUserRef *int64
+	Limit        int32
+	Offset       int32
+}
+
+// Owner-facing queue (/account/requests/incoming, #881): pending
+// requests against assets THIS user owns. Oldest first, same ordering
+// as the approver queue.
+//
+// Joins assets rather than trusting a denormalised owner column on the
+// request: ownership is the assets table's fact, and #665 exists
+// because a second copy of it drifts. The Go path resolves the same
+// fact through shares.ObjectOwnerRef; both read assets.owner_user_ref.
+//
+// Soft-deleted assets drop out. An owner has no decision to make about
+// access to something they deleted.
+func (q *Queries) ListPendingRequestsForOwner(ctx context.Context, arg ListPendingRequestsForOwnerParams) ([]ResourceRequest, error) {
+	rows, err := q.db.Query(ctx, listPendingRequestsForOwner, arg.OwnerUserRef, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

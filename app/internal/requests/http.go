@@ -61,33 +61,61 @@ func (h *HTTPHandler) RequestAssetAccess(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if req.Body == nil || req.Body.Capability == "" {
+	if req.Body == nil {
 		return openapi.RequestAssetAccess400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "capability is required"},
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
+	}
+	// `capability` is OPTIONAL and defaults to CapAccessRequest (#881).
+	//
+	// The UI never sends one, and that is the point. ADR 0064: "the field
+	// is requester-controlled input … the only thing between that and the
+	// file is an administrator clicking grant on a free-text value the
+	// requester chose." A button on a placeholder must not be a way to
+	// name your own capability, and the default is the inert marker code
+	// that owners are allowed to decide.
+	//
+	// An explicit code is still accepted — the endpoint predates the
+	// button and admin tooling asks for specific capabilities — but such
+	// a request is only decidable by a real approver, never by the asset's
+	// owner. See DecideAdminRequest.
+	capability := req.Body.Capability
+	if capability == nil || *capability == "" {
+		capability = ptr(CapAccessRequest)
 	}
 	reason := ""
 	if req.Body.Reason != nil {
 		reason = *req.Body.Reason
 	}
-	row, err := h.domain.Submit(ctx, auth.RequestFromContext(ctx), SubmitInput{
+	row, created, err := h.domain.Submit(ctx, auth.RequestFromContext(ctx), SubmitInput{
 		RequesterUserRef:    id.UserRef,
 		TargetAssetID:       uuid.UUID(req.Id),
-		RequestedCapability: req.Body.Capability,
+		RequestedCapability: *capability,
 		Reason:              reason,
 	})
 	if err != nil {
 		if errors.Is(err, ErrUnknownCapability) {
 			return openapi.RequestAssetAccess400JSONResponse{
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
-					Error: "unknown capability: " + req.Body.Capability,
+					Error: "unknown capability: " + *capability,
 				},
 			}, nil
 		}
 		return nil, fmt.Errorf("requests: submit: %w", err)
 	}
+	if !created {
+		// The caller already had this ask pending. 200, not 201 — a
+		// 201 would claim a row was created and hand the client a
+		// "requested" id it would then file a duplicate against on the
+		// next render. See Handler.Submit for the coalescing rule.
+		return openapi.RequestAssetAccess200JSONResponse(rowToAPI(row)), nil
+	}
 	return openapi.RequestAssetAccess201JSONResponse(rowToAPI(row)), nil
 }
+
+// ptr is the one-line address-of helper the openapi optional fields
+// need. Package-local; the codebase has no shared generic for it.
+func ptr[T any](v T) *T { return &v }
 
 // ---------------------------------------------------------------------------
 // GET /account/requests
@@ -117,6 +145,54 @@ func (h *HTTPHandler) ListOwnRequests(
 	}
 	resp := openapi.ListOwnRequests200JSONResponse{}
 	resp.Items = items
+	return resp, nil
+}
+
+// ---------------------------------------------------------------------------
+// GET /account/requests/incoming
+// ---------------------------------------------------------------------------
+
+// ListIncomingRequests is the OWNER's queue: pending requests against
+// assets this caller owns (#881).
+//
+// No capability gate, and none is possible — the gate IS the ownership
+// join in the query. The caller sees requests on their own work and
+// nothing else, which is why this lives under /account rather than
+// /admin: an artist has no reason to hold requests.read, and before
+// this the only queue was one they could not open.
+func (h *HTTPHandler) ListIncomingRequests(
+	ctx context.Context,
+	req openapi.ListIncomingRequestsRequestObject,
+) (openapi.ListIncomingRequestsResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ListIncomingRequests401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	limit := int32(50)
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+	offset := int32(0)
+	if req.Params.Offset != nil {
+		offset = int32(*req.Params.Offset)
+	}
+	rows, err := h.domain.ListPendingForOwner(ctx, id.UserRef, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("requests: list pending for owner: %w", err)
+	}
+	total, err := h.domain.CountPendingForOwner(ctx, id.UserRef)
+	if err != nil {
+		return nil, fmt.Errorf("requests: count pending for owner: %w", err)
+	}
+	items := make([]openapi.ResourceRequest, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, rowToAPI(r))
+	}
+	resp := openapi.ListIncomingRequests200JSONResponse{}
+	resp.Items = items
+	resp.Total = total
 	return resp, nil
 }
 
@@ -187,11 +263,33 @@ func (h *HTTPHandler) DecideAdminRequest(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	// Coarse approver gate first; per-asset-team scoping below.
-	if !id.Can(CapShareGrant) && !id.Can("system.admin") {
-		return openapi.DecideAdminRequest403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: CapShareGrant + " capability required"},
-		}, nil
+	// Approver gate — three disjuncts (#881).
+	//
+	//   share.grant | system.admin   → decide anything
+	//   the asset's OWNER            → decide access requests on it
+	//
+	// The owner disjunct exists because the person with the strongest
+	// claim to decide was the one person who could not: an artist whose
+	// work was requested had no route unless an operator handed them a
+	// global grant capability, so every request routed through an
+	// administrator who knows nothing about the work.
+	//
+	// It is NARROWER than the other two, deliberately.
+	// requested_capability is requester-controlled input, so "the owner
+	// may decide requests on their asset" without a capability
+	// restriction would let anyone submit `system.admin` against a
+	// stranger's asset and talk them into approving it from a panel that
+	// looks like it is about a picture. An owner therefore decides only
+	// CapAccessRequest — the marker code that confers nothing (migration
+	// 00035) — and everything else still needs a real approver.
+	if !id.Can(CapShareGrant) && !id.Can(CapSystemAdmin) {
+		if err := h.ownerMayDecide(ctx, id.UserRef, uuid.UUID(req.Id)); err != nil {
+			return openapi.DecideAdminRequest403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+					Error: CapShareGrant + " capability or ownership of the requested asset required",
+				},
+			}, nil
+		}
 	}
 
 	reason := ""
@@ -236,6 +334,44 @@ func (h *HTTPHandler) DecideAdminRequest(
 		return nil, fmt.Errorf("requests: decide: %w", err)
 	}
 	return openapi.DecideAdminRequest200JSONResponse(rowToAPI(row)), nil
+}
+
+// errNotOwner is the single failure value of ownerMayDecide. The caller
+// renders one 403 for every reason it can fail, so the distinctions are
+// deliberately not surfaced.
+var errNotOwner = errors.New("requests: caller is not the owner of the requested asset")
+
+// ownerMayDecide answers the owner disjunct of the decide gate: may
+// this NON-approver decide this request?
+//
+// Yes only when both hold:
+//
+//  1. The request names CapAccessRequest. See the gate comment — the
+//     capability is requester-controlled, so an owner's authority is
+//     scoped to the one code that grants nothing.
+//  2. The caller owns the asset the request targets, per
+//     shares.ObjectOwnerRef — the single expression of object ownership
+//     (#893/#665), which fails closed on a missing row, a NULL owner, or
+//     a kind with no owner column.
+//
+// Every failure is the same error, and the caller renders 403 rather
+// than 404 for all of them. A caller who is not an approver must not be
+// able to tell a request id that exists from one that does not, or which
+// capability an existing one names; a 404 here would be an oracle for
+// both.
+func (h *HTTPHandler) ownerMayDecide(ctx context.Context, callerRef int64, requestID uuid.UUID) error {
+	row, err := h.domain.Get(ctx, requestID)
+	if err != nil {
+		return errNotOwner
+	}
+	if row.RequestedCapability != CapAccessRequest {
+		return errNotOwner
+	}
+	ownerRef, ok, err := h.domain.AssetOwnerRef(ctx, uuid.UUID(row.TargetAssetID.Bytes))
+	if err != nil || !ok || ownerRef != callerRef {
+		return errNotOwner
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

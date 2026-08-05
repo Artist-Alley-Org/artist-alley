@@ -178,6 +178,65 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A restricted item that says "no" now also says "you can ask".** A restricted asset you
+  cannot open renders as a placeholder carrying its owner's name and nothing else (#883,
+  #899). That was the whole of it: the tile stated a refusal and offered no way past it,
+  and the request workflow behind it — a full typed lifecycle with a requester list, an
+  approver queue and a decision dialog — had **no entry point anywhere in the app**.
+  Nothing in the frontend had ever called `POST /assets/{id}/request-access` (#881).
+
+  The placeholder now carries a **Request access** button, on the grid tile and on the
+  restricted member inside a post. It opens a short dialog — an optional line about why
+  you are asking — and files the request. Signed-in viewers only: an anonymous visitor
+  has no account to ask from, so they get the plate as before rather than a button that
+  cannot work.
+
+  **The placeholder still leaks nothing.** The button's label, its aria-label and every
+  word of the dialog are fixed strings plus the owner's display name. The asset's id is
+  posted and never rendered. The rule is the owner's — *"the placeholder should never
+  leak info. Not even title. Only the owner's name."* — and it is now held by a test that
+  takes every string the tile puts in the DOM, attributes included, and requires each one
+  to be on an allow-list, so a field added later fails by default instead of shipping.
+
+- **Someone is told when a request arrives, and the artist can answer it themselves.**
+  Two gaps made "request access" a message into a void even once it could be sent.
+
+  **Nobody was notified.** The only notification in the request lifecycle fired on the
+  *decision*, to the requester. Creating a request pinged no one — the approver queue
+  filled in silence and `/admin/requests` was a page you had to think to visit. A new
+  request now notifies the asset's **owner** and every approver, through the existing
+  notification pipeline, so it inherits your channel preferences and block settings. The
+  notification carries ids and nothing else: no title, no filename, not even the reason
+  you wrote.
+
+  **The owner could not decide it.** Deciding required `share.grant` or `system.admin` —
+  operator capabilities an artist has no reason to hold — so the person with the
+  strongest claim to answer a request about their own work was the one person who
+  couldn't, and every request routed through an administrator who knows nothing about
+  the piece. An asset's owner can now grant or deny requests on their own assets, from a
+  new **Requests for your work** section on **/account/requests**, holding no capability
+  at all. The section appears only when there is something to decide.
+
+  That widening is deliberately narrow. A request names a capability, and that name is
+  chosen by the *requester* — so an owner who could decide any request could be talked
+  into granting `system.admin` from a panel that looks like it is about a picture. An
+  owner can therefore decide only requests naming `content.access.request`, the code the
+  Request access button submits, which grants nothing on its own. Everything else still
+  needs a real approver.
+
+  **Asking twice is not asking twice.** Repeating a request you already have pending
+  returns the one you already sent, rather than filing a duplicate the approver would
+  have to deny. A request that was **denied** does not block a new one: a refusal is
+  final for that request, not for you.
+
+  **What approval does not do — and we say so in the app.** Granting a request records
+  that the owner agreed. It does **not** currently reveal the asset, because there is no
+  way yet to say "this one person may view this one asset" — capability grants have no
+  per-asset scope, and the only capability that opens restricted content opens *all* of
+  it. That is a known deferral (ADR 0064), tracked as #912. Both the request dialog and
+  the decision panel say it in as many words, because a granted request that silently
+  changes nothing would be worse than no button at all.
+
 - **Four more tiles on your account page now lead somewhere.** The grid at
   **/account** has always drawn every tile it knows about, whether or not the page
   behind it existed, so a good number of them were a click into a "coming in a later
