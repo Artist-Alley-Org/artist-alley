@@ -314,8 +314,8 @@
             </div>
             <a
               href="/search"
-              title={t('nav.advanced_search')}
-              aria-label={t('nav.advanced_search')}
+              title={t('nav.search_page')}
+              aria-label={t('nav.search_page')}
               class="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted hover:bg-state-hover hover:text-fg"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -326,7 +326,7 @@
                 <circle cx="12" cy="18" r="1.5" />
                 <circle cx="19" cy="6"  r="1.5" />
               </svg>
-              <span class="hidden lg:inline">{t('nav.advanced_search')}</span>
+              <span class="hidden lg:inline">{t('nav.search_page')}</span>
             </a>
           </div>
         {:else}

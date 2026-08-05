@@ -163,6 +163,80 @@ func TestEngineRun_CollectionHitCarriesNoFeaturedFlag(t *testing.T) {
 	}
 }
 
+// TestEngineRun_PostHitResolvesItsCoverFromTheFirstMember pins the one
+// piece of genuinely new logic in #850's post payload.
+//
+// PostCard's cover order is "explicit cover_asset_id → first member →
+// nothing". A payload that shipped only `cover_asset_id` would render a
+// blank tile for every post that never set one — which is most of them,
+// because the upload flow only writes it when the author picks a cover.
+// The engine therefore resolves the same fallback the card would, in
+// SQL, and this asserts it against a post with a member and no explicit
+// cover.
+func TestEngineRun_PostHitResolvesItsCoverFromTheFirstMember(t *testing.T) {
+	pool := byImagePool(t)
+	ctx := context.Background()
+	assetID, _, postID := seedSchemaProbeRows(t, pool)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO post_assets (post_id, asset_id, sort_order) VALUES ($1, $2, 0)`,
+		postID, assetID); err != nil {
+		t.Fatalf("seed post membership: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM post_assets WHERE post_id = $1`, postID)
+	})
+
+	caller := schemaProbeOwner
+	res, err := (&Engine{Pool: pool}).Run(ctx, Query{
+		Text:          schemaProbeToken,
+		CallerUserRef: &caller,
+		Types:         []HitType{HitTypePost},
+		Limit:         25,
+	})
+	if err != nil {
+		t.Fatalf("post search: %v", err)
+	}
+	for _, h := range res.Hits {
+		if h.ID != postID {
+			continue
+		}
+		var extra struct {
+			CoverAssetID *string `json:"cover_asset_id"`
+			MemberCount  int64   `json:"member_count"`
+			Members      []struct {
+				AssetID string          `json:"asset_id"`
+				Asset   *map[string]any `json:"asset"`
+			} `json:"members"`
+		}
+		if err := json.Unmarshal(h.ExtraJSON, &extra); err != nil {
+			t.Fatalf("post extras are not an object: %v", err)
+		}
+		if extra.CoverAssetID == nil || *extra.CoverAssetID != assetID.String() {
+			t.Fatalf("cover_asset_id = %v, want the sole member %s — a post with no explicit "+
+				"cover must fall back to its first member, the same order PostCard uses",
+				extra.CoverAssetID, assetID)
+		}
+		if extra.MemberCount != 1 {
+			t.Errorf("member_count = %d, want 1", extra.MemberCount)
+		}
+		if len(extra.Members) != 1 || extra.Members[0].Asset == nil {
+			t.Fatalf("post hit carried %d members with no asset payload; PostCard renders the "+
+				"cover off members[].asset", len(extra.Members))
+		}
+		for _, k := range []string{"file_hash", "file_extension", "thumbhash",
+			"preview_available", "ladder_available", "scrub_available",
+			"pixel_width", "pixel_height"} {
+			if _, ok := (*extra.Members[0].Asset)[k]; !ok {
+				t.Errorf("cover asset payload is missing %q — the card feed contract (#595) "+
+					"requires it", k)
+			}
+		}
+		return
+	}
+	t.Fatalf("seeded post %s absent from a post-only search", postID)
+}
+
 // TestEngineRun_AnonymousNotWidened pins acceptance 5. Fixing the SQL
 // must not change who sees what: an anonymous caller still gets the
 // public asset and post but NOT the private collection.

@@ -65,9 +65,26 @@
      *  hover-only title); thumbnail = framed "details" tile with a
      *  persistent metadata footer. */
     mode?: ViewMode;
+    /** The true size of the post's membership, when the caller's row
+     *  carries fewer members than the post has (#850).
+     *
+     *  A search hit ships ONE member — the cover — because a tile renders
+     *  one image and joining a whole membership per hit would be an
+     *  unbounded query for pixels nobody looks at. The multi-asset badge
+     *  still has to tell the truth, so the count travels beside the
+     *  member instead of being inferred from the array's length.
+     *  Undefined ⇒ the array IS the membership, which is the case on
+     *  every list endpoint. */
+    memberCount?: number;
   }
 
-  let { post, feed = false, tileSizes = DEFAULT_TILE_SIZES, mode = 'grid' }: Props = $props();
+  let {
+    post,
+    feed = false,
+    tileSizes = DEFAULT_TILE_SIZES,
+    mode = 'grid',
+    memberCount: memberCountProp,
+  }: Props = $props();
 
   // Grid reads clean/dense (no frame, hover-only title); the other modes
   // keep the gallery frame + a persistent footer in thumbnail.
@@ -155,7 +172,7 @@
       : `p-[2px] rounded-[4px] bg-thumb-matte hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
   );
 
-  const memberCount = $derived(post.members.length);
+  const memberCount = $derived(memberCountProp ?? post.members.length);
 
   // The corner conflict was a THREE-way fight, not the two the brief
   // described (#578). Top-left already hosts the select checkbox AND

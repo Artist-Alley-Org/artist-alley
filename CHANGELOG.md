@@ -115,6 +115,60 @@ where applicable, otherwise note "no-spec-impact."
   the hole would have been reachable never opens. No-spec-impact — no wire format
   changes, and no existing share row is revoked or altered.
 
+### Changed
+
+- **Searching no longer feels like leaving the app.** Everywhere else in artist-alley,
+  work is a wall of tiles: the artwork itself, at the size you chose, with the hover
+  preview and the view mode you were last using. **/search** was the exception. It
+  returned a column of text rows — a title, a line of description, and `score 1.000`
+  beside each one — in a narrow column with a fixed filter rail down the left. The same
+  piece of art you had been looking at as a tile a second earlier came back as a line of
+  type. Search results are now the SAME grid, the SAME cards, and the SAME view modes as
+  browse: grid, masonry, feed, thumbnail. Switch the home feed to masonry and your
+  searches are masonry (#850).
+
+  That was not a styling change. A search hit only ever carried a title, a summary and a
+  blur-up thumbnail — nothing a tile could be drawn from — which is why the page rendered
+  text in the first place. A hit now carries what a card needs: the file type (so the
+  video and 3D badges appear and the hover scrub plays), the responsive image rungs, the
+  recorded dimensions that let a masonry tile reserve its shape before the image loads,
+  and — for a post — its cover art, its like and comment counts and how many pieces it
+  bundles. A collection hit carries its visibility so the tile badges it. **None of that
+  reaches a caller who cannot open the asset**: a restricted result is still a
+  placeholder carrying its id, the marker and the owner's name, and nothing else. The
+  widening went *through* the same permission check the rest of the app uses, not around
+  it.
+
+  Three more things changed with it:
+
+  **The filter rail is gone.** It was a fixed 16rem column that could not fit beside a
+  grid on a phone, so /search scrolled sideways at 390px (#901). Facet counts now open in
+  a panel — the same panel at every width, so there is nothing to retrofit for small
+  screens later — and the kind filter (**Everything / Artwork / Posts / Collections**)
+  sits as chips over the results, where it filters for real and stays in the URL so a
+  filtered result page is a link you can send someone. The facet counts themselves are
+  counts, not controls: the search API accepts no facet filters yet, and the checkboxes
+  that used to sit beside those numbers never filtered anything.
+
+  **The advanced query builder is a panel, not a page.** It used to be its own
+  destination at `/search/advanced`, which made "advanced" a separate *mode* of
+  searching — you left your results, built a query somewhere else, and arrived back at a
+  different page. It now opens over the results you are already looking at and composes
+  the same query. Reverse-image search moved with it. `/search?advanced=1` opens it
+  directly.
+
+  **The relevance score is no longer printed on every result.** An artist does not need
+  to be told that their own drawing scored 1.000; the ordering it describes is the
+  ordering on screen. Thumbs-up / thumbs-down feedback is still there, on hover over the
+  tile.
+
+  Results also use the whole window now instead of a ~1150px column, which on a wide
+  display is the difference between five tiles and eleven.
+
+  No-spec-impact for federation. **Wire-format change:** a `/search` hit's `extra` object
+  gained per-type presentation fields, and its `thumbhash_b64` key is now spelled
+  `thumbhash` — the name every other endpoint uses for the same value.
+
 ### Added
 
 - **Four more tiles on your account page now lead somewhere.** The grid at

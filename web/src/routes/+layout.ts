@@ -61,7 +61,6 @@ const PUBLIC_MODE_ROUTE_IDS = new Set([
   '/collections/[id]',
   '/assets/[id]',
   '/search',
-  '/search/advanced',
 ]);
 
 // Reachable without a session ONLY when the install accepts
