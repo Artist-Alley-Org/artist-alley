@@ -204,18 +204,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
-- **You can now tell the feed to stop showing you doors you cannot open.** Since #899 and
-  #883, a piece of work you are not entitled to see comes back as a **placeholder** — a
-  tile that names its owner and says, in effect, "there is something here, and it is not
-  for you". That is the right default: it is honest about what exists, and it is what
-  #913's **Request access** button has to sit on. But on an instance where a lot of work
-  is restricted, a feed can be mostly placeholders, and for some readers that is a wall of
-  locked doors rather than a gallery.
+- **The feed no longer shows you doors you cannot open.** Since #899 and #883, a piece of
+  work you are not entitled to see comes back as a **placeholder** — a tile that names its
+  owner and says, in effect, "there is something here, and it is not for you". It is honest
+  about what exists, and it is what #913's **Request access** button has to sit on. But on
+  an instance where a lot of work is restricted, a feed can be mostly placeholders, and
+  that is a wall of locked doors rather than a gallery. On our own seed data one account's
+  feed was 82 posts of which **27 were entirely placeholders** — a third of the grid.
 
-  **Settings → Preferences → Feed filters** now has **Hide items I don't have access to**.
-  Off by default; nothing changes for anyone who does not turn it on (#891).
+  So the browse feed **leaves them out by default** (#891 built it, #921 made it the
+  default). The line we settled on, which is why the other screens behave differently: a
+  placeholder belongs where you **asked a question** or **opened a container** — not where
+  you were handed a feed.
 
-  With it on, three things happen, and the third is the one that took the thought:
+  Three things happen in the feed, and the third is the one that took the thought:
 
   - A restricted item is **left out** of a post rather than drawn as a placeholder.
   - A post whose items are **all** restricted drops out of the feed entirely. The
@@ -223,20 +225,25 @@ where applicable, otherwise note "no-spec-impact."
     replaced.
   - **Your own posts never disappear.** A post you wrote can contain someone else's
     restricted work, so the rule above, applied literally, would delete your own post from
-    your own feed because of a display setting. It does not. Your post stays, with its
-    restricted items hidden like anyone else's.
+    your own feed. It does not. Your post stays, with its restricted items hidden like
+    anyone else's.
 
-  Two things it deliberately does **not** do. It cannot show you anything: the filter runs
-  strictly on top of the permission rule and only ever subtracts, so turning it on can
-  remove things from your feed and can never add one. And it stops at the feed — **open** a
-  post and you still see its placeholders, and can still ask for access. That is not an
-  oversight: the reason an all-restricted post leaves the feed is that an empty card is
-  worse than a placeholder, and hiding the items on the post page itself would put that
-  empty card back on the one screen the rule could not reach.
+  **Where the placeholders still are, unchanged:** **open** a post and you see them, and
+  can still ask for access. Look inside a **collection** and you see them there too — so
+  you can tell there is restricted work in a project without it flooding your feed. Neither
+  of those is an oversight. The reason an all-restricted post leaves the feed is that an
+  empty card is worse than a placeholder, and hiding the items on the post page itself
+  would put that empty card back on the one screen the rule could not reach.
 
-  The trade it does make is stated in the setting's own help text rather than left to be
-  found: **Request access** lives on the placeholder tile, so while the filter is on that
-  button is not in your feed. It is still on the post.
+  It cannot show you anything you could not already see. The rule about what you may read
+  runs first and is completely untouched by this; the feed only decides how much of its own
+  answer to draw.
+
+  **Want them back?** **Settings → Preferences → Feed filters → Show items I don't have
+  access to** restores the old feed exactly, placeholders and all. The trade is stated in
+  the setting's own help text rather than left to be found: **Request access** lives on the
+  placeholder tile, so while that setting is off the button is not in your feed — open the
+  post, or a collection it is in, to ask.
 
   The setting travels with your account, so it is the same on every device you sign in
   from, and it applies from the first frame of the page rather than after a flicker.

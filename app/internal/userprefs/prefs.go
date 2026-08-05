@@ -43,34 +43,55 @@ type Preferences struct {
 	FeedFilters FeedFilters `json:"feed_filters"`
 }
 
-// FeedFilters is the browse feed's per-user subtraction set (#891).
+// FeedFilters is the browse feed's per-user presentation set (#891,
+// default inverted by #921).
 //
 // Every member is a BOOLEAN THAT DEFAULTS TO FALSE, and that is a
 // contract rather than an accident: the zero value of this struct — what
 // a user with no preferences row, an empty `{}` blob, or a key this
-// build has never heard of all decode to — is "filter nothing", so the
-// feed a user gets before they touch anything is byte-for-byte the feed
-// they got before the filter existed.
+// build has never heard of all decode to — is THE BUILD'S DEFAULT FEED.
+// Each key is therefore NAMED so that `false` is the default experience,
+// not so that `false` is "no filtering". #921 is what made those two
+// things different: hiding restricted work became the default, so the
+// key that used to be `hide_restricted` is now `show_restricted` and the
+// storage guarantee survives untouched — absent still means "whatever
+// this build does by default".
+//
+// Renaming rather than flipping a default is the whole point. Leaving
+// the key called `hide_restricted` and defaulting it to TRUE would have
+// made an absent key mean the opposite of what the name asserts, which
+// is precisely how the next reader gets it backwards.
 //
 // It can only SUBTRACT. Nothing here is ever consulted to decide whether
 // a caller MAY read something — that is visibility.FieldsReadable's job
 // and it has already run by the time these are applied (see
 // posts.applyHideRestricted). A filter that could add a row would be a
 // second expression of the read rule, which is the defect class epic
-// #665 exists for.
+// #665 exists for. That is still true with the default inverted: the
+// feed's UNFILTERED state is the set of rows the read rule returned, and
+// `show_restricted` selects between "all of it" and "all of it minus the
+// placeholders". It never reaches past the rule's output.
 type FeedFilters struct {
-	// HideRestricted drops the #883 placeholders from the feed: members
-	// the caller cannot read are omitted rather than rendered as "you
-	// can't see this", and a post whose members are ALL restricted drops
-	// out of the page entirely — unless the caller wrote it, because
-	// your own work does not disappear from your own feed over a display
+	// ShowRestricted keeps the #883 placeholders in the browse feed.
+	//
+	// OFF by default, and off means the feed SUBTRACTS them: members the
+	// caller cannot read are omitted rather than rendered as "you can't
+	// see this", and a post whose members are ALL restricted drops out of
+	// the page entirely — unless the caller wrote it, because your own
+	// work does not disappear from your own feed over a display
 	// preference.
 	//
-	// Off by default. The placeholder is the more informative answer for
-	// most people (it is also where #913's "Request access" button
-	// lives), so this is for the reader who has decided they would
-	// rather not be shown doors they cannot open.
-	HideRestricted bool `json:"hide_restricted,omitempty"`
+	// #921 inverted this. #891 shipped the machinery as an opt-in on the
+	// theory that the placeholder is the more informative answer; a
+	// measurement on the stock seed dataset said otherwise — a third of
+	// one account's 82-post feed was entirely placeholders. The principle
+	// the default now encodes: a placeholder belongs where the user asked
+	// a question (a post opened by name) or opened a container (a
+	// collection), not where they were handed a feed.
+	//
+	// Turning it ON restores the pre-#921 feed exactly, placeholders and
+	// #913's "Request access" button included.
+	ShowRestricted bool `json:"show_restricted,omitempty"`
 }
 
 // EmailCadences maps an EventType → cadence ("immediate" | "hourly" |
@@ -392,9 +413,12 @@ func MarshalEmailCadence(c EmailCadences) ([]byte, error) {
 }
 
 // MarshalFeedFilters produces the feed_filters JSONB payload. Every
-// field is `omitempty`, so "all filters off" persists as `{}` — the
-// same bytes the column defaults to, which keeps a saved-but-untouched
-// preference indistinguishable from a never-saved one.
+// field is `omitempty`, so "every key at its zero value" persists as
+// `{}` — the same bytes the column defaults to, which keeps a
+// saved-but-untouched preference indistinguishable from a never-saved
+// one. Since #921 that zero value is "the build's default feed" rather
+// than "no filtering"; see FeedFilters for why the keys are named so
+// those stay the same thing.
 func MarshalFeedFilters(f FeedFilters) ([]byte, error) {
 	return json.Marshal(f)
 }

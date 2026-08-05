@@ -2044,12 +2044,12 @@ func (a userprefsPrefsAdapter) CadenceFor(ctx context.Context, ref int64, verb s
 // *userprefs.Handler (#891). Separate from userprefsPrefsAdapter above
 // because the two seams answer to different consumers — notifications
 // asks "which channels for this verb", posts asks "does this reader
-// want restricted members hidden" — and bundling them would make the
+// want restricted members shown" — and bundling them would make the
 // posts package depend on a notification-shaped interface.
 type userprefsFeedFilterAdapter struct{ h *userprefs.Handler }
 
-func (a userprefsFeedFilterAdapter) HideRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
-	return a.h.HideRestrictedFeedMembers(ctx, ref)
+func (a userprefsFeedFilterAdapter) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
+	return a.h.ShowRestrictedFeedMembers(ctx, ref)
 }
 
 // socialNotifyAdapter satisfies the social package's Notifier

@@ -415,14 +415,14 @@
           <input
             type="checkbox"
             class="mt-0.5 h-4 w-4 shrink-0"
-            data-testid="pref-hide-restricted"
-            checked={prefs.feed_filters?.hide_restricted ?? false}
-            onchange={(e) => setFeedFilter('hide_restricted', (e.target as HTMLInputElement).checked)}
+            data-testid="pref-show-restricted"
+            checked={prefs.feed_filters?.show_restricted ?? false}
+            onchange={(e) => setFeedFilter('show_restricted', (e.target as HTMLInputElement).checked)}
             disabled={savingPrefs}
           />
-          <span class="font-medium text-fg">{t('account.preferences.filters_hide_restricted')}</span>
+          <span class="font-medium text-fg">{t('account.preferences.filters_show_restricted')}</span>
         </label>
-        <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.filters_hide_restricted_help')}</p>
+        <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.filters_show_restricted_help')}</p>
       </div>
     {/if}
   </section>

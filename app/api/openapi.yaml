@@ -13819,29 +13819,51 @@ components:
     UserPreferencesFeedFilters:
       type: object
       description: |
-        Content the browse feed SUBTRACTS for this account (#891).
+        What the browse feed shows this account beyond the read rule's
+        own output (#891, default inverted by #921).
 
         Sibling to `default_views`, and deliberately not a key inside
         it: `default_views` rearranges the same set of posts, these
         change which posts are in it. Every member is a boolean whose
-        default is `false`, so an account that has never touched this
-        object gets exactly the feed it got before the object existed.
+        default is `false`, and each is NAMED so that `false` is the
+        build's default experience — so an account that has never touched
+        this object gets the same feed as every other default account,
+        and an absent key never means the opposite of what its name says.
+
+        #921 is why that naming rule is stated rather than assumed. Its
+        one member used to be `hide_restricted`, default `false`; hiding
+        became the default, and the key was RENAMED rather than having
+        its default flipped, because `hide_restricted: true`-by-default
+        would have made an absent key assert the reverse of its own name.
 
         SUBTRACTIVE ONLY. Nothing here is ever consulted to decide what
         a caller MAY read — the post read rule and
         `visibility.FieldsReadable` have both already run by the time
         these apply. A filter that could ADD a row would be a second
         expression of the read rule, and each of the two we have unpicked
-        (#892, #904) cost a sprint.
+        (#892, #904) cost a sprint. Inverting the default did not weaken
+        this: the ceiling is still exactly what the rule returned, and
+        these keys only choose how much of it is drawn.
       properties:
-        hide_restricted:
+        show_restricted:
           type: boolean
           default: false
           description: |
-            Drop the restricted-member placeholders (#883) from
-            `GET /posts` instead of rendering them.
+            Keep the restricted-member placeholders (#883) in
+            `GET /posts` instead of subtracting them.
 
-            Three rules, and the third is the one that matters:
+            **Default `false` — the feed hides them (#921).** #891
+            shipped this machinery as an opt-in on the theory that the
+            placeholder is the more informative answer. Measured against
+            the stock seed dataset, a reader with no capabilities got 82
+            posts of which 27 were entirely placeholders: a third of the
+            grid was locked doors. The principle the default now encodes
+            is that a placeholder belongs where the reader ASKED A
+            QUESTION or OPENED A CONTAINER, not where they were handed a
+            feed.
+
+            With the default (`false`), three rules, and the third is the
+            one that matters:
 
             1. A member the caller cannot read is OMITTED from
                `members` rather than sent as a `restricted: true`
@@ -13855,22 +13877,28 @@ components:
                restricted its members are. An author's post can carry
                other people's assets, so rule 2 alone would make your
                own work vanish from your own feed over a display
-               preference.
+               default.
+
+            Set it `true` and `GET /posts` returns the pre-#921 payload
+            exactly: every placeholder present, every all-restricted post
+            back in the page.
 
             Applies to `GET /posts` and stops there. `GET /posts/{id}` is
             an explicit request for one post and answers with the
-            placeholders intact, which is not an omission: rule 2 exists
-            BECAUSE an all-restricted post rendering as an empty card is
-            worse than the placeholder it replaced, and filtering members
-            on the single-post read would rebuild that empty card on the
-            one surface rule 2 could not protect.
+            placeholders intact whatever this is set to, which is not an
+            inconsistency: rule 2 exists BECAUSE an all-restricted post
+            rendering as an empty card is worse than the placeholder it
+            replaced, and filtering members on the single-post read would
+            rebuild that empty card on the one surface rule 2 could not
+            protect. Collection contents render placeholders for the same
+            reason — an opened container should say what is in it.
 
             It also keeps the ask alive. #913's "Request access" button
             lives on the placeholder, so it survives wherever the
-            placeholder does. The trade the preference DOES make — no
-            placeholders in the feed means no Request access in the feed
-            — is stated in the setting's own help text rather than left
-            to be discovered.
+            placeholder does: the post page and collections. The trade
+            the DEFAULT makes — no placeholders in the feed means no
+            Request access in the feed — is stated in the setting's own
+            help text rather than left to be discovered.
 
     UserPreferencesRequest:
       type: object

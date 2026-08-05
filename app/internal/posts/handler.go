@@ -903,11 +903,28 @@ func (h *Handler) ListPosts(
 		return nil, err
 	}
 
-	// #891 — the caller's "hide restricted content" preference, applied
-	// STRICTLY ON TOP of everything above. enrichPreview has just marked
-	// every member this caller may not read; applyHideRestricted reads
-	// that mark and nothing else, so the preference can only subtract
-	// from a page the read rule already decided. See feed_filters.go.
+	// #921 — restricted placeholders are subtracted from the feed BY
+	// DEFAULT, applied STRICTLY ON TOP of everything above. enrichPreview
+	// has just marked every member this caller may not read;
+	// applyHideRestricted reads that mark and nothing else, so this can
+	// only subtract from a page the read rule already decided. See
+	// feed_filters.go.
+	//
+	// Read the condition as "unless the reader asked for them back".
+	// #891 shipped this as an opt-in and the default was measured wrong:
+	// a third of one seeded account's 82-post feed was entirely
+	// placeholders. The line the default draws — a placeholder belongs
+	// where you asked a question or opened a container, not where you
+	// were handed a feed — is why GetPost (an explicit request for one
+	// post) and collection contents (an opened container) both still
+	// render them, and why extending this filter to either would be a
+	// bug and not a consistency fix.
+	//
+	// NOTHING ABOUT THE READ RULE MOVED. ListPosts still receives every
+	// row the rule returns; this subtracts afterwards off one
+	// already-computed field. ADR 0020 and ADR 0064 are amended to name
+	// that split — the rule is unchanged, the default PRESENTATION is
+	// not.
 	//
 	// After the cursor bookkeeping on purpose. `lastPostedAt`/`lastID`
 	// track the last row the QUERY returned, and `next_cursor` keys off
@@ -916,7 +933,7 @@ func (h *Handler) ListPosts(
 	// fewer items, never a different window. (`PostList` carries no
 	// total, so there is no count to disagree with what renders; the
 	// client's infinite scroll follows the cursor.)
-	if hide := h.hideRestricted(ctx, caller.UserRef); hide {
+	if show := h.showRestricted(ctx, caller.UserRef); !show {
 		items = applyHideRestricted(items, caller.UserRef)
 	}
 

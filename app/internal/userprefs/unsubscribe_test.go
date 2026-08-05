@@ -157,18 +157,18 @@ func TestUnsubscribeEmail_PreservesFeedFilters(t *testing.T) {
 
 	if err := h.savePreferences(ctx, ref, Preferences{
 		NotificationChannels: NotificationChannels{EventMentionOfMe: {ChannelInApp, ChannelEmail}},
-		FeedFilters:          FeedFilters{HideRestricted: true},
+		FeedFilters:          FeedFilters{ShowRestricted: true},
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	if err := h.UnsubscribeEmail(ctx, ref, EventMentionOfMe); err != nil {
 		t.Fatalf("unsubscribe: %v", err)
 	}
-	hide, err := h.HideRestrictedFeedMembers(ctx, ref)
+	show, err := h.ShowRestrictedFeedMembers(ctx, ref)
 	if err != nil {
 		t.Fatalf("read filter: %v", err)
 	}
-	if !hide {
-		t.Fatal("unsubscribing from an email topic turned the user's feed filter off")
+	if !show {
+		t.Fatal("unsubscribing from an email topic reset the user's feed setting to the default")
 	}
 }

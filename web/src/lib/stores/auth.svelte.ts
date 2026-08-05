@@ -33,17 +33,23 @@ export interface AccountViewDefaults {
 }
 
 /**
- * The account's browse-feed content filters (#891), joined onto the
- * session response from `user_preferences.feed_filters`.
+ * The account's browse-feed content preferences (#891, default inverted
+ * by #921), joined onto the session response from
+ * `user_preferences.feed_filters`.
  *
  * The FILTERING is the server's — `GET /posts` reads the stored
  * preference and applies it, so nothing here decides what the feed
- * contains. What the client needs is the FACT that it is on, on the
- * same paint as the grid, so a shorter feed can say why it is shorter
- * instead of popping an explanation in a frame later.
+ * contains. What the client needs is the FACT of the setting, on the
+ * same paint as the grid, so the feed can explain its own shape instead
+ * of popping an explanation in a frame later.
+ *
+ * Absent for every account on the build's defaults: `/auth/me` omits the
+ * object when every key is at its zero value, and since #921 the zero
+ * value is "hide the placeholders" rather than "show everything". Read
+ * an absent object as the DEFAULT feed, never as "unfiltered".
  */
 export interface AccountFeedFilters {
-  hide_restricted?: boolean | null;
+  show_restricted?: boolean | null;
 }
 
 export interface AuthUser {
@@ -63,8 +69,8 @@ export interface AuthUser {
    *  A SEED for devices with no local choice, never an override of one
    *  — the precedence rule lives in browseView.init() (#706). */
   defaultViews?: AccountViewDefaults | null;
-  /** Account-level browse-feed content filters (#891). Absent — not an
-   *  object of falses — for every account that has not opted in. */
+  /** Account-level browse-feed content preferences (#891/#921). Absent —
+   *  not an object of falses — for every account on the defaults. */
   feedFilters?: AccountFeedFilters | null;
   /**
    * Non-null when the session was minted via

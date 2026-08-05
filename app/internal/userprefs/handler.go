@@ -240,7 +240,7 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 	// no third value, so an omitted object would just make the client
 	// guess `false` rather than read it.
 	filters := openapi.UserPreferencesFeedFilters{
-		HideRestricted: &p.FeedFilters.HideRestricted,
+		ShowRestricted: &p.FeedFilters.ShowRestricted,
 	}
 
 	return openapi.UserPreferencesResponse{
@@ -281,12 +281,14 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 			cadence[k] = v
 		}
 	}
-	// Absent object, or an absent key inside it, means the filter is
-	// OFF — the same thing the zero value means. There is no "unset"
-	// state for a boolean to fall back to.
+	// Absent object, or an absent key inside it, decodes to the zero
+	// value — which since #921 is the build's DEFAULT feed, not "no
+	// filtering". There is no "unset" state for a boolean to fall back
+	// to, which is exactly why the keys are named so that `false` is the
+	// default experience (see FeedFilters).
 	filters := FeedFilters{}
-	if body.FeedFilters != nil && body.FeedFilters.HideRestricted != nil {
-		filters.HideRestricted = *body.FeedFilters.HideRestricted
+	if body.FeedFilters != nil && body.FeedFilters.ShowRestricted != nil {
+		filters.ShowRestricted = *body.FeedFilters.ShowRestricted
 	}
 	return Preferences{
 		NotificationChannels: channels,
@@ -392,20 +394,25 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 	return nil
 }
 
-// HideRestrictedFeedMembers reports the caller's #891 browse-feed
-// filter. The cross-package entry point the posts handler calls once
-// per feed page — through the same 5-minute userprefs.by_user LRU as
-// ChannelsFor, so the hottest list in the app pays a PK lookup on cache
-// miss and nothing on a hit.
+// ShowRestrictedFeedMembers reports whether the caller has asked to keep
+// the #883 placeholders in their browse feed (#891, inverted by #921).
+// The cross-package entry point the posts handler calls once per feed
+// page — through the same 5-minute userprefs.by_user LRU as ChannelsFor,
+// so the hottest list in the app pays a PK lookup on cache miss and
+// nothing on a hit.
 //
 // A user with no preferences row returns false, which is the whole
-// default-off guarantee: the filter has to be asked for.
-func (h *Handler) HideRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
+// default guarantee: since #921 the placeholders are hidden unless the
+// reader asks for them back. `false` on the error path means the same
+// thing it means everywhere else here — the DEFAULT feed — so a failed
+// lookup degrades to the experience every other account is having rather
+// than to a surprising one. See posts.showRestricted for the seam.
+func (h *Handler) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
 	prefs, err := h.loadPreferences(ctx, ref)
 	if err != nil {
 		return false, err
 	}
-	return prefs.FeedFilters.HideRestricted, nil
+	return prefs.FeedFilters.ShowRestricted, nil
 }
 
 // touch keeps the time import live for the (currently unused)
