@@ -107,6 +107,22 @@ expressive brushes stay available for anyone who wants them.
 
 ### 3. The scrubber shows where the annotations are
 
+**Amended 2026-08-06 — clustering is the normal case, not an edge case.** A reviewer leaves several
+notes within one shot, and adjacent frames collapse to the same pixel at any realistic timeline
+width. So markers cluster by construction, and a cluster is **the notes list filtered to that frame
+range** — not a separate tooltip model with its own data (see the review-loop amendment below:
+one query, two renderings).
+
+Three consequences:
+
+- **Markers are namespaced by producer.** Annotations, A/B comparison (#8) and review triage (#530)
+  will all want to publish markers; clearing one producer's must not clear another's. Same
+  named-ownership principle as the playback locks.
+- **Hovering shows the frame, not just a label.** A thumbnail of the annotated frame with the note's
+  first line is what makes a timeline scannable; a tick tells you only that *something* is there.
+- **Colour carries resolution status.** Once a note can be `open` or `addressed`, the timeline
+  becomes a progress bar for the review itself, which is the whole point of running one.
+
 The timeline renders a marker per annotated frame, positioned by frame index.
 This is the feature that turns a review recording into a review *document* —
 a reviewer scrubs to the marks rather than hunting for them, and the density
@@ -285,6 +301,58 @@ Putting playback commands in a CRDT would be a category error: converging on a s
 exactly the "straggler yanks every follower backwards" failure, and a command's value expires.
 The reference routes both down one channel; separating them is the improvement.
 
+### Amendment 2026-08-06 — the review LOOP, and why we do not need a link between a note and a drawing
+
+The sections above treat annotation as a drawing problem. It is not: the drawing is one field of a
+**review note**, and the loop that matters is *leave a note on a frame → it appears in the timeline
+and in the notes list → clicking it returns to that exact frame with the drawing shown*.
+
+Prior art builds that loop from **two entities and a link**: an annotation row, a comment row, and
+a `(timestamp, annotation-id)` pair pattern-matched out of the comment's **text**. That has three
+failure modes — editing the prose can break the link, deleting the drawing leaves the note pointing
+at nothing, and the timestamp is a display string parsed back into seconds. It also forces a UI
+ordering rule (*seek first, then load the drawing, or the strokes paint over whatever frame
+happened to be on screen*) that a caller can get wrong.
+
+**We do not need the link, because we do not need two entities.**
+
+> **A review note is a `comments` row scoped to a frame, which MAY carry strokes.**
+
+`comments` already carries `annotation_type` and `annotation_data`, and the baseline's
+`comments_annotation_type_check` already admits **`'frame'`** alongside the `'whiteboard'` and
+`'text-range'` values in use today. The partial index `comments_annotation_idx (target_kind,
+target_id, annotation_type)` is already the timeline-marker query. This is a declared,
+unimplemented seam — not a new table.
+
+What that inherits, none of which the prior art has:
+
+- **Threading** — `parent_id` / `root_id` / `depth`. A review disagreement is a reply, not a second
+  top-level note. Prior art has a flat list.
+- **Federation** — `origin_server_id`, `peer_id`, `actor_uri`, `activity_uri`. A note on a peer's
+  asset travels as a comment already does. Prior art does not federate at all.
+- Soft delete, edit tracking, likes, and the existing notification and moderation substrate.
+
+And the failure modes disappear rather than being handled: there is no link to break, no dangling
+reference (the strokes are a column of the row that owns them), and no ordering hazard, because
+**navigation is one operation — "show note N" — not a seek the caller must remember to do first.**
+Do not expose seek-then-load as two public steps; a sequencing rule that has to be documented is a
+sequencing rule someone gets wrong.
+
+**A note without strokes is a timestamped comment. Strokes without prose are a note with an empty
+body.** One entity serves both; splitting them is what creates the link in the first place.
+
+#### Two things to add that the prior art does not have
+
+- **Resolution.** A review note is `open` or `addressed`. Nothing in `comments` expresses that
+  today (`resolved_at` exists elsewhere in the schema for unrelated subjects). Without it a review
+  is a chat log; with it, it is a workflow with a finish line — and the timeline can colour
+  unresolved notes differently, which is what makes a long review scannable. This is the single
+  highest-value addition and it is one nullable column plus a verb.
+- **The timeline and the notes list are ONE query, two renderings.** Same rows, different filter —
+  the timeline filters to a frame range, the panel to a thread. Building them as separate stores is
+  how they drift, and it is why a marker cluster can simply *be* the notes list scoped to that
+  range rather than a bespoke tooltip model.
+
 ### Amendment 2026-08-05 — the shape of a synced review session (#5)
 
 Recorded here rather than in a new ADR because it constrains this player's API surface. The
@@ -315,9 +383,19 @@ architecture; we do not ship sidecars).
 
 ### Amendment 2026-08-05 — two things the annotation model was missing (#6)
 
-- **Strokes record the canvas dimensions they were drawn at.** Without them, an annotation drawn
-  over a 720p proxy replays misaligned over a 4K original. Store the drawing surface's size with
-  the stroke set and rescale on replay; do not assume the asset's native dimensions.
+- **Stroke coordinates are normalised (0..1) or in native pixels — never screen pixels.**
+  *(Corrected 2026-08-06. This bullet previously said "record the canvas dimensions they were
+  drawn at and rescale on replay". That is the weaker answer — it is what a reference
+  implementation's schema does, while that same implementation's own newer guidance says to
+  normalise. Normalised coordinates make the dimensions unnecessary rather than making them
+  load-bearing.)*
+
+- **The overlay tracks the rendered IMAGE box, not the element box.** With `object-fit: contain`
+  the two differ by the letterbox, and an overlay aligned to the element draws every stroke in the
+  wrong place — subtly, and only on assets whose aspect ratio does not match the viewport. The
+  geometry must be republished on resize, fullscreen and device rotation, and consumers redraw
+  from it. This is not a detail of the drawing engine; it is the contract between the player and
+  anything layered over it.
 - **Layers.** A review annotation is not one stroke set but an ordered stack of named,
   individually visible layers. It is how one reviewer's marks stay separable from another's, and
   how a note can be toggled off without being deleted. §4's ghosting is a *view* of adjacent
