@@ -275,7 +275,48 @@ The primary path is:
 - Owner → always readable and writable.
 
 ACLs grant *additional* access beyond those defaults. They never
-restrict below them. Schema:
+restrict below them.
+
+#### Amendment 2026-08-06 (#916, PR #932) — the three ACL surfaces do NOT accept the same principals
+
+`principal_type` admits `user | role | team` on all three `*_acls` tables, and the CHECK
+constraint is identical on each. **That uniformity is misleading, and the API now says so.**
+
+| surface | `user` | `role` / `team` |
+|---|---|---|
+| `asset_type_acls` | works | **works** — `assettype/queries.sql` resolves them against `user_roles` and `team_memberships` |
+| `post_acls` | works | **inert** — the read rule gates on `principal_type = 'user'` before it looks at `principal_id` |
+| `collection_acls` | works | **inert** — same |
+
+Role and team scoping *on content* is Layer 5, and Layer 5 is implemented for **capabilities**
+(`Can(code, InTeam(id))`, pre-expanded through `team_closure`) but **not for content ACL rows**.
+So a role or team grant on a post or collection was written, matched by nothing, and answered
+`204`.
+
+**Decision: the content ACL surfaces reject `role` and `team` with a 400 rather than storing an
+inert row.** An API that accepts a reference it knows confers no access, and reports success, is
+the same defect as accepting a username where a numeric ref is required — which is what #916 was.
+Fixing one and not the other would have fixed half a bug.
+
+Consequences worth stating:
+
+- **This reversed an existing test.** `TestAddPostAcl_RoleAndTeamGrantsNotifyNobody` asserted the
+  rows *were* stored, on the reasoning that *"notifies nobody is not licence to skip the grant"*.
+  That reasoning was correct **about the notify path** — a notifier failure must never roll back a
+  real grant — but it was applied to a grant that was never real.
+- **`asset_type_acls` is deliberately exempt** and validates shape only. The distinction lives in
+  one place, `internal/acls`: `ValidatePrincipalRef` (shape) versus `ValidateContentPrincipal`
+  (shape **and** inertness, returning `ErrPrincipalInert`). One implementation, three call sites.
+- **When Layer 5 extends to content ACLs, delete the validator call** — a 400 is trivially
+  reversible. A table of inert rows would not have been: nothing distinguishes "granted before it
+  worked" from "granted after" without archaeology.
+- Pre-release, so there were no stored grants to preserve.
+
+**A related divergence is NOT settled by this amendment**: `ListCollectionAcls` admits any caller
+when the collection is `public`, while `ListPostAcls` requires owner-or-mutate. Tracked as **#933**;
+whichever way it goes, the two surfaces should agree.
+
+Schema:
 
 ```sql
 CREATE TABLE post_acls (
