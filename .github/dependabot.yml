@@ -1,6 +1,12 @@
 # Dependabot — keeps deps current across the four ecosystems we ship.
 # All PRs target `dev` so CI gates them and the manual dev → main
 # merge stays the promotion path.
+#
+# One entry per ECOSYSTEM PER DIRECTORY: dependabot does not recurse, so a
+# manifest in an unlisted directory is invisible to it no matter how many
+# entries of that ecosystem already exist. That is how three `ip-address`
+# CVEs rode into the runtime image via scripts/threejs (#905). When you add
+# a package.json, go.mod or Dockerfile anywhere in the tree, add it here too.
 
 version: 2
 
@@ -90,6 +96,90 @@ updates:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
 
+  # Headless three.js preview renderer (#498, ADR 0069). NOT dev-only: the
+  # `threejs-deps` stage in BOTH Dockerfiles installs from this lockfile and
+  # copies node_modules into the runtime image, so anything vulnerable here
+  # ships in the published artifact. It was watched by nothing until #905,
+  # which is why three `ip-address` alerts (one high) sat open — dependabot
+  # raises security ALERTS for any lockfile in the repo, but only opens
+  # security-update PRs for directories listed here. Same shape as the /web
+  # block above; no `ignore` block, because the typescript hold there is
+  # specific to SvelteKit's peer range and does not apply to this tree.
+  - package-ecosystem: npm
+    directory: /scripts/threejs
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    target-branch: dev
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: scope
+    labels:
+      - deps
+      - npm
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
+
+  # Playwright-driven UI dogfood suite. Dev/CI-only — never shipped — but it
+  # is the gate that catches API↔UI contract drift, so a silently-stale
+  # @playwright/test is a real hole. Found by the #905 sweep.
+  - package-ecosystem: npm
+    directory: /scripts/dogfood/ui
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    target-branch: dev
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: scope
+    labels:
+      - deps
+      - npm
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
+
+  # Seed-dataset image tooling (#604) — sharp/libvips. Dev-only, but sharp
+  # wraps a native image codec stack, which is exactly the kind of dependency
+  # that accrues CVEs unattended. Found by the #905 sweep.
+  - package-ecosystem: npm
+    directory: /seed/scripts
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    target-branch: dev
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: scope
+    labels:
+      - deps
+      - npm
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
+
   # GitHub Actions — pin updates land alongside the workflows.
   - package-ecosystem: github-actions
     directory: /
@@ -119,6 +209,36 @@ updates:
   # Production Dockerfile base images.
   - package-ecosystem: docker
     directory: /
+    schedule:
+      interval: monthly
+    target-branch: dev
+    commit-message:
+      prefix: "chore(docker)"
+    labels:
+      - deps
+      - docker
+
+  # Local-compose app image. The docker ecosystem does NOT recurse, so
+  # `directory: /` above covers the root Dockerfile and nothing else — this
+  # one was unwatched (#905 sweep). It declares its runtime stage
+  # independently of the root Dockerfile, and ci.yml already has a parity
+  # gate over the two ("3D renderer present in both Dockerfiles"), so
+  # letting only one of them get base-image bumps is drift the CI job will
+  # eventually fail on.
+  - package-ecosystem: docker
+    directory: /infra/docker/app
+    schedule:
+      interval: monthly
+    target-branch: dev
+    commit-message:
+      prefix: "chore(docker)"
+    labels:
+      - deps
+      - docker
+
+  # Local-compose web (Vite dev server) image — same recursion gap.
+  - package-ecosystem: docker
+    directory: /infra/docker/web
     schedule:
       interval: monthly
     target-branch: dev

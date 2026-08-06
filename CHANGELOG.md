@@ -115,6 +115,30 @@ where applicable, otherwise note "no-spec-impact."
   the hole would have been reachable never opens. No-spec-impact — no wire format
   changes, and no existing share row is revoked or altered.
 
+- **Three known CVEs stop shipping inside the published image, and the blind spot that
+  let them sit there is closed.** `ip-address` — one **high**, two medium — reached us
+  through puppeteer's proxy-resolution chain in the headless three.js preview renderer.
+  That renderer is not developer tooling: both the release Dockerfile and the
+  local-compose one install `scripts/threejs/package-lock.json` and copy the resulting
+  `node_modules` into the runtime stage, so the vulnerable code was in the artifact an
+  operator would actually run. It is now at 10.4.0, a plain transitive bump — the two
+  direct dependencies, `puppeteer` and `three`, are untouched, and no `overrides` block
+  was needed, because the range `socks` already declares admits the patched version.
+
+  **The reason these sat open is the part worth fixing.** Dependabot raises security
+  *alerts* for any lockfile in the repository, but it only opens a *fix* PR for
+  directories listed in its config — and that config watched four directories, none of
+  them this one. Nothing was ever going to bump it. `scripts/threejs`,
+  `scripts/dogfood/ui` and `seed/scripts` each have their own `package.json` and
+  lockfile and are now watched on the same weekly cadence as `web/`; the two
+  `infra/docker/` images are now watched alongside the root Dockerfile, which the docker
+  updater never covered because it does not recurse into subdirectories. Without that
+  second half the next advisory would have waited exactly as long as these did.
+
+  No behaviour change: the renderer's own smoke test — chromium launching and rendering
+  all ten model formats, which is the code path the proxy chain sits in — passes against
+  a locally built production image. No-spec-impact (#905).
+
 ### Changed
 
 - **A search no longer answers with a shelf of things you did not ask about.** The
