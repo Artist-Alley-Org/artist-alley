@@ -334,6 +334,32 @@ reader set no preference, and the feed is not shorter than anyone else's), and i
 fired on every browse paint for every reader. It was removed in PR #924. A "there is more here
 you cannot open" affordance, if wanted, is a fresh design question rather than that note inverted.
 
+### Open seam 2026-08-06 (#930, PR #936) — a mutation capability does not confer readability
+
+`assets.admin` (ADR 0010 Layer 5, amended the same day) lets a team-scoped holder edit, delete and
+restore a colleague's asset. **It grants no read access.** `visibility.FieldsReadable` does not
+consult it, so such a holder can edit an asset's title and still be shown the withheld placeholder
+when they open it.
+
+**That is this ADR's model working as designed** — sensitivity gates *content*, and a mutation
+capability is not a content-tier grant. Wiring it into `FieldsReadable` would make an
+administrative grant a **read-widening** act, which is the coupling every amendment here has
+avoided.
+
+**It is also visibly odd**, and it is recorded as open rather than settled because the two answers
+are different products:
+
+- **Mutation implies readability** — intuitive, removes "I deleted a thing I was never shown", but
+  granting a team lead the tidy-up right silently clears them for every restricted asset in their
+  team.
+- **They stay orthogonal** — an art director may reorganise a library including work they are not
+  cleared to view, which is a real requirement where embargoed material exists. But then the
+  interface owes that person an explanation, or the placeholder reads as a bug forever.
+
+Tracked as **#939**. Whoever resolves it should record the reasoning here — the failure mode is a
+future reader noticing the seam and "fixing" it in whichever direction they happen to prefer,
+which is how a content-gating spine gets quietly repealed.
+
 ### Where it is enforced
 
 At the **binary plane** — the handlers listed above — because that is where bytes are served and

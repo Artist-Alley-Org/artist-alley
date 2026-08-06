@@ -277,6 +277,61 @@ The primary path is:
 ACLs grant *additional* access beyond those defaults. They never
 restrict below them.
 
+#### Amendment 2026-08-06 (#930, PR #936) — Layer 5 reaches content mutation, and a mutate gate must not also be a grant gate
+
+Layer 5 was implemented for capability *resolution* (`Can(code, InTeam(id))`, `scopedCaps`
+pre-expanded through `team_closure`) and **never called by a content handler**. `UpdateAsset` and
+`DeleteAsset` had no authorisation at all — any authenticated caller could edit or delete any
+asset, while only a super-admin could restore. Posts and collections were gated; assets were the
+outlier.
+
+`assets.admin` now exists, and `canMutateAsset` is `owner ∨ Can(cap, InTeam(team)) ∨ Can(cap) ∨
+system.admin`. That is the "an art director manages their team's files, a team member does not
+manage a colleague's" requirement, and it is Layer 4's closure doing the cascading.
+
+**Two findings worth recording, because both were invisible until something depended on them:**
+
+**1. `posts.admin` and `collections.admin` had never been grantable.** They existed as Go string
+constants and were **never rows in `capabilities`**. Since `user_capability_grants.capability_code`
+and `role_capabilities.capability_code` are both FK-constrained to `capabilities(code)`, neither
+could ever be granted to a user or a role — so both moderator gates were, in practice,
+`system.admin`-only. A whole permission tier was declared and unreachable. Seeded in 00037.
+
+**⛔ 2. A gate that guards editing must NOT also guard granting.** `canMutatePost` had **seven**
+call sites, and one of them was `AddPostAcl`. Adding the team-scoped disjunct to it — which is what
+the sprint brief instructed — would have let a team-scoped holder **grant a stranger read access to
+a colleague's post**. The escalation hid behind the gate's *name*: it reads as "may edit this post"
+and in fact answered "may administer this post", including who else may reach it.
+
+The rule this establishes:
+
+> **Scope a capability to what the operation DOES, not to the object it acts on.** Mutation and
+> access-widening are different rights over the same row and need different gates.
+
+So the post surface now splits:
+
+| gate | team-scoped? | guards |
+|---|---|---|
+| `canMutatePost` | **yes** | edit, delete, restore, and the rest |
+| `canWidenPostAccess` | **no** — owner ∨ *global* `posts.admin` ∨ `system.admin` | post `visibility`, `AddPostAcl` |
+
+`RemovePostAcl` deliberately keeps the wider gate: revoking narrows access, and narrowing is not
+an escalation.
+
+The same logic gates `assets.status` to owner + `system.admin` rather than to `assets.admin`:
+`visibility/predicate.go` requires `status='active'` for the anonymous read branch, so publishing
+a colleague's draft **is** the disclosure act even though `AssetUpdate` carries no `visibility`
+field. (Delegating publication deliberately, via the unwired `assets.publish`, is **#938**.)
+
+**This is the second privilege escalation to reach a sprint brief** — see ADR 0064's 2026-08-05
+amendment for the first (#881, a decide gate scoped to its principal but not its payload). Both
+were caught in implementation. The common shape: *a gate was widened without enumerating what it
+authorised.*
+
+**One seam left open on purpose**: a holder of `assets.admin` may mutate an asset whose content
+they cannot read — `visibility.FieldsReadable` knows nothing about the capability. Whether mutation
+should imply readability is **#939**, and it is a product decision rather than an oversight.
+
 #### Amendment 2026-08-06 (#916, PR #932) — the three ACL surfaces do NOT accept the same principals
 
 `principal_type` admits `user | role | team` on all three `*_acls` tables, and the CHECK
