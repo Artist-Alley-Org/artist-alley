@@ -3,7 +3,6 @@ info:
   title: artist-alley API
   version: 0.8.0
   description: |
-    TEMPORARY #942 DRIFT PROBE - reverted in the next commit.
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
 
