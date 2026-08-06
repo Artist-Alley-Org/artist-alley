@@ -266,6 +266,26 @@ func (h *Handler) CreatePost(
 		coverThumbnailID = pgtype.UUID{Bytes: uuid.UUID(*in.CoverThumbnailAssetId), Valid: true}
 	}
 
+	// #922 — the member gate. Every asset named in the body has to be
+	// one this caller can actually read, and it runs BEFORE the
+	// transaction opens so a refusal never writes a post row it then
+	// has to roll back.
+	//
+	// The refusal is the same shape as the FK-violation 404 below,
+	// deliberately: an unreadable asset and a nonexistent one must be
+	// indistinguishable, or POST /posts becomes a UUID-existence probe.
+	for _, m := range in.Members {
+		ok, gErr := h.mayAttachAsset(ctx, id, uuid.UUID(m.AssetId))
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: member gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + m.AssetId.String()},
+			}, nil
+		}
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("posts: begin tx: %w", err)
@@ -306,6 +326,9 @@ func (h *Handler) CreatePost(
 	}
 
 	// Members. Idempotent on (post_id, asset_id) so de-dupes on input.
+	// The FK branch below is a RACE BACKSTOP since #922 — the gate
+	// above already refused every absent asset — kept because the asset
+	// can still be hard-deleted between the two.
 	for _, m := range in.Members {
 		if err := q.AddPostAsset(ctx, AddPostAssetParams{
 			PostID:    row.ID,
@@ -1163,12 +1186,32 @@ func (h *Handler) AddPostAsset(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
+	// #922 — the same member gate CreatePost applies. A gate on create
+	// alone would not be a gate: this endpoint attaches an asset to an
+	// EXISTING post and is reachable by exactly the same callers.
+	//
+	// canMutatePost above answered "may you change this post"; this
+	// answers the separate question "may you reach this asset". Both
+	// are required — the first is about the container, the second about
+	// the thing being put in it.
+	attachable, err := h.mayAttachAsset(ctx, caller, uuid.UUID(req.Body.AssetId))
+	if err != nil {
+		return nil, fmt.Errorf("posts: member gate: %w", err)
+	}
+	if !attachable {
+		return openapi.AddPostAsset404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Body.AssetId), Valid: true}
 	if err := q.AddPostAsset(ctx, AddPostAssetParams{
 		PostID:    pgID,
 		AssetID:   pgAsset,
 		SortOrder: int32Or(req.Body.SortOrder, 0),
 	}); err != nil {
+		// Race backstop since #922; the gate above refuses an absent
+		// asset before this runs.
 		if isFKError(err, "post_assets_asset_id_fkey") {
 			return openapi.AddPostAsset404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
@@ -1579,6 +1622,47 @@ func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 // ---------------------------------------------------------------------------
 // Authorization helpers
 // ---------------------------------------------------------------------------
+
+// mayAttachAsset answers "may this caller make THIS asset a member of a
+// post" (#922).
+//
+// # What was wrong before
+//
+// The members loop handled exactly one failure — a foreign-key
+// violation became a 404 — and there was no readability check at all.
+// Any authenticated caller could name any asset UUID as a member of
+// their own post, including assets they had never been allowed to view.
+//
+// That does not leak the CONTENT: ADR 0064's member conjunction still
+// runs per-caller at render time, so a viewer who is not independently
+// entitled sees a placeholder carrying the real owner's name. What it
+// permitted is unwanted ASSOCIATION — attaching someone's restricted
+// work to your post without their consent, so that everyone who IS
+// entitled to see it meets it framed by you.
+//
+// Whether referencing another artist's work should be a first-class
+// feature with consent rules is #923, a policy question above this
+// floor. This is only the floor.
+//
+// # Why it is not a second rule
+//
+// The two-plane conjunction lives in visibility.CanAttachAsset, which
+// the collection surface calls through collections.mayCollectAsset
+// (#882). This is the posts-side adapter over the same function, not a
+// second readability notion — epic #665, and the sprints #892 and #904
+// each spent deleting one.
+func (h *Handler) mayAttachAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAttachAsset(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		assetID,
+	)
+}
 
 // canMutatePost returns true if the caller can edit/delete this post.
 // Author, system.admin, a global posts.admin, or a posts.admin scoped

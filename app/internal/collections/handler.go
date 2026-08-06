@@ -1041,67 +1041,29 @@ var errAssetMissing = errors.New("collections: asset row absent")
 //
 // # The rule
 //
-// The conjunction visibility.FieldsReadable already documents
-// (visibility/member.go, "the CONJUNCTION of the two planes"): a caller
-// may collect an asset iff they could have reached that ROW standalone
-// AND could have reached its BYTES. FieldsReadable itself is not
-// callable here — it takes an already-fetched MemberRow supplied by the
-// container queries — so this composes the same two planes from their
-// existing entry points rather than writing a third expression of the
-// rule (#892 / epic #665 consolidated exactly that duplication):
+// The two-plane conjunction that answers it — CanSee(EntityAsset) AND
+// CanReadContent — lives in visibility.CanAttachAsset, which carries the
+// full reasoning: why each plane is load-bearing on its own account, why
+// the SystemAdmin / ContentReadAll short-circuits are inherited, and why
+// it fails closed. #922 needed the identical question on the post
+// surface, so the composition moved beside the planes it composes rather
+// than being copied — a second expression of a security rule is the
+// defect epic #665 exists to remove.
 //
-//   - ROW plane   — visibility.CanSee(EntityAsset): exists and is not
-//     soft-deleted. Load-bearing on its own account: ContentReadable
-//     never looks at deleted_at, so without this conjunct a caller
-//     could pin a deleted public asset — a member row the contents
-//     query then drops in SQL, i.e. an invisible phantom member.
-//   - CONTENT plane — visibility.CanReadContent (ADR 0064): the tier
-//     rule. Public admits everyone, team admits the asset's team,
-//     restricted / embargo / anything unrecognised admit only the owner
-//     and the two capability holders.
-//
-// # The short-circuits are inherited deliberately
-//
-// CanReadContent admits SystemAdmin and ContentReadAll at every tier,
-// and this path keeps both. ContentReadAll's whole purpose is a role
-// (the public demo's demo-viewer) that RENDERS a mostly-restricted
-// catalogue; a caller who is allowed to view every asset is by this
-// endpoint's own rule — "you may collect what you can see" — allowed to
-// collect them. Narrowing it here would put the add path out of step
-// with FieldsReadable, which would then render the very members this
-// refused to create.
-//
-// # Fails closed
-//
-// A nonexistent asset stops at the ROW plane. CanReadContent wraps
-// pgx.ErrNoRows into an error (it is the "we could not load the row"
-// case), so the race in which the asset is deleted between the two
-// queries is folded into "not collectible" rather than surfacing as a
-// 500 — which would also be an oracle, since a 500 is distinguishable
-// from a 404.
+// This wrapper is the collections-side adapter: nil / identity handling,
+// and the auth.Identity → visibility.Caller + CapabilityChecker
+// translation.
 func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
 	if id == nil {
 		return false, nil
 	}
-	caller := visibility.NewCaller(&id.UserRef)
-	caps := visibility.CapabilityChecker(func(code string) bool { return id.Can(code) })
-
-	visible, err := visibility.CanSee(ctx, h.Pool, visibility.EntityAsset, caller, assetID)
-	if err != nil {
-		return false, fmt.Errorf("row plane: %w", err)
-	}
-	if !visible {
-		return false, nil
-	}
-
-	readable, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, assetID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("content plane: %w", err)
-	}
-	return readable, nil
+	return visibility.CanAttachAsset(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		assetID,
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,8 +1151,9 @@ func (h *Handler) ListCollectionAcls(
 		}
 		return nil, err
 	}
-	// canRead: owner always; public visibility always; otherwise need
-	// mutate to view the ACL list (a stricter rule than read).
+	// Requires WRITE access — owner, collections.admin or system.admin.
+	// Read access is deliberately NOT enough (#933), which is the same
+	// rule #876 settled for ListPostAcls.
 	//
 	// #661 flagged this as a hand-maintained restatement of
 	// visibility.Filter that should be consolidated onto it. It is
@@ -1198,16 +1161,23 @@ func (h *Handler) ListCollectionAcls(
 	// folding it into the predicate would WIDEN access rather than
 	// consolidate it. The authenticated EntityCollection predicate is
 	// `public OR owner OR a live collection_acls grant`; this gate
-	// drops the grant disjunct (a read-grantee may use the collection
-	// without seeing who else was granted what) and adds a
-	// collections.admin / system.admin bypass the predicate
-	// deliberately refuses to carry. "Who may read the grant list" is
-	// a management question, not the row-visibility question ADR 0063
-	// answers.
+	// drops BOTH the public disjunct and the grant disjunct, and adds a
+	// collections.admin / system.admin bypass the predicate deliberately
+	// refuses to carry. "Who may read the grant list" is a management
+	// question, not the row-visibility question ADR 0063 answers.
+	//
+	// The public disjunct was the #933 leak. `visibility = 'public'` is
+	// a statement about the collection's CONTENTS. It says nothing about
+	// who the owner individually shared it with — that is a statement
+	// about the owner's working relationships, and admitting every
+	// authenticated caller to it handed out each grantee's principal_id
+	// and permission level to anyone with an account and no connection
+	// to the collection. The comment above this gate already argued for
+	// the tighter rule while the condition below it did the opposite.
 	//
 	// The soft-delete dimension is covered upstream: getByIDCached
 	// reads GetCollection, which filters `deleted_at IS NULL`.
-	if row.OwnerUserRef != caller.UserRef && row.Visibility != "public" && !canMutateCollection(caller, row) {
+	if !canMutateCollection(caller, row) {
 		return openapi.ListCollectionAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -1393,11 +1363,25 @@ const (
 // carries an override capability. The PHP layer still owns shared
 // collection permissions through `collection_grants`; that table
 // arrives in Phase 1.11.C.
+//
+// The two guards mirror canMutatePost (#936): an anonymous identity is
+// never a principal, and ref 0 is the anonymous SENTINEL rather than a
+// user, so it must not match on either side of the ownership
+// comparison. `collections.owner_user_ref` is `bigint NOT NULL`, so
+// there is no NULL-owner case to trap the way assets have — but a row
+// written with owner_user_ref = 0 would otherwise be "owned" by every
+// anonymous caller. No user holds ref 0 today; that is data, not a
+// structural guarantee.
+//
+// Deliberately NOT mirrored from canMutatePost: the team-scoped
+// disjunct. `collections` has no team_id column at all, so auth.InTeam
+// would have nothing to scope against. Giving collections a team is a
+// schema decision, not a hardening.
 func canMutateCollection(id *auth.Identity, row Collection) bool {
-	if id == nil {
+	if id == nil || id.IsAnonymous() {
 		return false
 	}
-	if row.OwnerUserRef == id.UserRef {
+	if id.UserRef != 0 && row.OwnerUserRef != 0 && row.OwnerUserRef == id.UserRef {
 		return true
 	}
 	return id.Can(CapCollectionsAdmin) || id.Can(CapSystemAdmin)
