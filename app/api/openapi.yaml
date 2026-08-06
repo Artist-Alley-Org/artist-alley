@@ -5484,6 +5484,14 @@ paths:
         already in storage (POST /storage/objects) and the asset
         entities are already created (POST /assets); this endpoint
         ties them together with the descriptive metadata.
+
+        Every asset named in `members` must be one the caller can
+        actually read — the same two-plane rule
+        `addCollectionResource` applies (#922, #882, ADR 0064). An
+        asset the caller cannot read answers `404` with the identical
+        body a nonexistent UUID gets, so the endpoint is not a
+        UUID-existence probe. Nothing is written when a member is
+        refused: the gate runs before the transaction opens.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -5683,10 +5691,9 @@ paths:
         being able to read something must not disclose the rest of its
         guest list.
 
-        This was previously documented as matching `collection_acls`.
-        It does not: `listCollectionAcls` additionally admits any
-        authenticated caller when the collection is `public`. That
-        claim came from the same stale description #917 corrects.
+        `listCollectionAcls` applies the same rule. It used to diverge
+        — it additionally admitted any authenticated caller when the
+        collection was `public` — and #933 closed that.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -6185,6 +6192,16 @@ paths:
     post:
       operationId: addPostAsset
       summary: Attach an existing asset to a post
+      description: |
+        Two independent gates apply (#922). Write access to the POST —
+        author, `posts.admin` or `system.admin` — answers "may you
+        change this container", and read access to the ASSET answers
+        "may you reach the thing being put in it". Both are required.
+
+        The asset gate is the same two-plane rule `createPost` and
+        `addCollectionResource` apply (ADR 0064). An asset the caller
+        cannot read answers `404` with the identical body a nonexistent
+        UUID gets.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -6609,25 +6626,22 @@ paths:
         additive grants on top of the collection's visibility +
         collection_grant rows.
 
-        Visible to the collection's OWNER, to any authenticated caller
-        when the collection is `public`, and to `collections.admin` /
-        `system.admin`. NOT visible to someone holding only a read
-        grant: who else was granted what is management information
-        about the collection rather than part of its content, so the
-        grant disjunct that the row-visibility predicate carries is
-        deliberately dropped here (#661).
+        Requires WRITE access to the collection — owner,
+        `collections.admin` or `system.admin` — not merely read access
+        (#933). Who else was granted what, by whom, and until when is
+        management information about the collection rather than part of
+        its content, so the grant disjunct that the row-visibility
+        predicate carries is deliberately dropped here (#661).
 
-        This description previously said "requires read access to the
-        collection", which was wrong in both directions — it excluded
-        the admin bypass and it implied a read grantee could see the
-        list. #876 reasoned from that sentence when designing the post
-        equivalent (#917).
+        A `public` collection is no exception, and that is the #933
+        change. `visibility: public` says the collection's CONTENTS are
+        public; it says nothing about who the owner individually shared
+        it with. Admitting every authenticated caller to the grant list
+        disclosed each grantee's principal and permission level to
+        anyone with an account and no connection to the collection.
 
-        Note this is NOT the same rule `listPostAcls` applies: that one
-        has no `public` disjunct, so a public POST does not disclose its
-        guest list while a public COLLECTION does. The divergence is
-        real and unresolved; it is a permissions question, not a
-        documentation one.
+        This is now the same rule `listPostAcls` applies (#876). The
+        two surfaces no longer diverge.
       tags: [collections]
       security:
         - cookieAuth: []

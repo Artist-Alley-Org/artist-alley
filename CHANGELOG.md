@@ -9,6 +9,38 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **A public collection handed out its guest list.** Listing the access grants on a
+  collection passed for the owner, for an administrator — and for **anyone at all with
+  an account**, as long as the collection was `public`. Every grant row came back: who
+  the collection had been shared with, at what permission level, by whom, and when it
+  expires (#933).
+
+  Marking a collection `public` is a statement about what is *in* it. It is not a
+  statement about **who the owner individually shared it with** — that is information
+  about the owner's working relationships, and it was reaching people with no connection
+  to the collection whatsoever. Posts settled this same question a while back; the
+  collection surface never got the same treatment.
+
+  Listing a collection's grants now requires **write** access — owner,
+  `collections.admin`, or `system.admin`. Someone who holds only a read grant can still
+  use the collection; they no longer learn who else was let in. The two surfaces now
+  apply the same rule.
+
+- **You could put someone else's restricted work in your post.** Creating a post, or
+  attaching a file to an existing one, checked only that the file *existed* — never that
+  you were allowed to see it. Any signed-in account could name any file on the instance
+  as part of its own post (#922).
+
+  This never exposed the file itself: viewers who are not independently entitled see a
+  placeholder carrying the real owner's name, exactly as before. What it allowed is
+  **unwanted association** — attaching an artist's restricted work to your post without
+  their consent, so that everyone who *is* entitled to see it meets it framed by you.
+
+  Both paths now apply the same rule the collection surface already applied: you may
+  attach a file you can actually read. A file you cannot read answers the same "not
+  found" a made-up ID does, so the endpoint cannot be used to probe which IDs are real.
+  Nothing is written when a member is refused.
+
 - **Anyone signed in could edit or delete anyone's assets.** `PATCH /assets/{id}` and
   `DELETE /assets/{id}` checked one thing: that you were logged in. Not that you owned
   the asset, not that you had any standing over it — just that you had an account. Any
