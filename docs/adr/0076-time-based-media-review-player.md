@@ -222,6 +222,62 @@ appearing dead.
 **6. Remote-originated changes are marked, so they are not re-broadcast.** Without an explicit
 "this came from a peer" flag, a synced session feeds back on itself.
 
+### Amendment 2026-08-05 — where we go FURTHER than the prior art
+
+The mechanisms above are adopted because they are correct. These four are places the reference
+design is weaker than what we can build, and the reasons are ours, not inherited.
+
+**1. Make a bad frame reference DETECTABLE, not merely avoided.** §7 and the rejects section stop
+at "capture the frame at draw time." That prevents the *known* failure; it does nothing when the
+rate itself was wrong — a container mis-declaring 30 for 29.97, later corrected by a better probe.
+So a frame reference is stored **over-determined**: the frame index, the rate and its provenance,
+*and* the media time the player believed it displayed. Any two of those predict the third, so a
+disagreement beyond one frame is a **detectable** corrupt reference rather than a silent
+misplacement. The reference implementation's ±1-frame search exists precisely because it could not
+tell "close enough" from "wrong"; storing the redundancy is what buys that distinction. Cheap —
+three scalars on a row we are already writing.
+
+**2. Leases, not locks.** Named locks released by their owner (mechanism 5) have no answer for an
+owner that never releases: a crashed tab, a closed laptop, a dropped connection freezes the
+playhead for everyone with no recovery but a reload. A claim is therefore a **lease with an
+expiry, renewed while the holder is alive**, and it lapses on its own. Same ergonomics, no wedged
+sessions. This matters more for us than for the reference because our sessions are multi-user by
+design.
+
+**3. There is no unauthenticated relay to reason about.** The reference is careful that its relay
+performs no authorisation and that possession of a socket proves nothing — correct, and forced on
+it by the relay being a separate service. Because our stream is an endpoint in the same binary,
+behind the same session and capability middleware as every other read, that caveat does not need
+handling: it stops existing. The consequence worth naming is **revocation** — access lost
+mid-session must stop the event flow, which a detached relay holding an opened socket cannot do
+and we can. Every event is subject to the same visibility rule as the asset it concerns.
+
+**4. One real-time substrate, not two.** ⭐ The reference synchronises strokes with a bespoke
+protocol: an incremental instruction stream plus a full state broadcast every ~20 instructions.
+That converges only approximately — the periodic full state exists to paper over whatever the
+diff stream lost — and it is a second sync protocol to own.
+
+But **a review annotation is the whiteboard's problem**: strokes on a canvas, edited live by
+several people. The whiteboard arc already commits to **Yjs CRDT collaboration with an awareness
+protocol** (Phase 1.20). Annotations must ride that same substrate rather than grow a parallel
+one, for the same reason this ADR forbids a second drawing engine — two sync protocols diverge
+within a release, and the one used less often is the one that rots.
+
+CRDT convergence also removes the machinery the bespoke design needs: no periodic full-state
+broadcast, no sequence-gap replay path, late joiners and reconnecting clients converge by
+construction, and presence cursors come from awareness rather than a hand-rolled participant list.
+
+**The split that makes this work — and it is a real distinction, not a hedge:**
+
+| | substrate | why |
+|---|---|---|
+| **Annotation state** — strokes, layers, visibility | **Yjs document**, shared with the whiteboard | convergent, replayable, offline-tolerant; it is *state* |
+| **Playback commands** — play/pause/seek/rate/range | **plain SSE events + POST** | ephemeral; a seek that arrives late must be *dropped*, never merged |
+
+Putting playback commands in a CRDT would be a category error: converging on a stale seek is
+exactly the "straggler yanks every follower backwards" failure, and a command's value expires.
+The reference routes both down one channel; separating them is the improvement.
+
 ### Amendment 2026-08-05 — the shape of a synced review session (#5)
 
 Recorded here rather than in a new ADR because it constrains this player's API surface. The
@@ -260,25 +316,40 @@ architecture; we do not ship sidecars).
   how a note can be toggled off without being deleted. §4's ghosting is a *view* of adjacent
   frames; layers are a *structure* within one frame. They compose, and both are needed.
 
-  The reference implementation caps layers at **4**. We should not copy the number without
-  knowing whether it is a UI constraint or a storage one — but the existence of *some* cap is
-  worth keeping: an unbounded layer stack on a per-frame annotation is a rendering cost paid on
-  every frame of playback.
+  **A layer belongs to an author, not to a slot.** The reference caps layers at a fixed 4, which
+  approximates the real requirement — keeping one reviewer's marks separable from another's — with
+  a magic number that a fifth reviewer breaks. Layers are therefore **author-scoped by default**:
+  joining a review gives you your own, and "hide everyone but Priya" is a filter over authorship
+  rather than a hunt through a numbered stack. Additional layers within your own marks stay
+  available for people who want them.
+
+  Keep a bound, but bound the thing that actually costs: **layers rendered per frame**, not layers
+  stored. Compositing is paid on every frame of playback; storage is not.
+
+- **Session permissions use the ACL model we already have.** The reference carries an `acl_json`
+  blob on the session row. We have a typed ACL substrate — principal type, permission, and
+  `expires_at` — already enforcing post and collection sharing. A JSON permission blob on a new
+  table would be a **second expression of the access rule**, which is the defect class epic #665
+  exists for and which #892 and #904 each spent a sprint deleting. A review session is a shareable
+  object; it gets the same ACLs as the other shareable objects, and it inherits expiry for free —
+  which is exactly right for a review that should stop granting access when it is over.
 
 **Strokes travel as instructions, not pixels.** The live path shares vector draw commands and
 re-renders them locally; it never ships a raster. That is what makes a shared annotation
 resolution-independent (see the canvas-dimensions point above) and cheap enough to send while a
-stroke is still being drawn. Two consequences worth fixing now:
+stroke is still being drawn.
 
-- **Diff stream plus periodic full state.** Send incremental instructions as they happen, and
-  periodically send the complete set so a late joiner — or a client that dropped a packet —
-  resynchronises without a special "catch me up" path. The reference sends a full state roughly
-  every 20 instructions, and also on stroke end.
-- **Persist on stroke end, throttle during.** A long stroke should not issue a write per sample.
+This constrains the annotation *format*, which is why it lives here rather than in #5: an
+instruction list must be replayable **out of order** and **at a different canvas size** than it
+was authored at. Out-of-order replayability is not an extra requirement bolted on for the network
+— it is what makes the CRDT substrate above viable, and a format that only replays in sequence
+would force the bespoke protocol back on us.
 
-These belong in this ADR rather than #5's because they constrain the annotation *format*: an
-instruction list has to be replayable out of order and at a different canvas size than it was
-authored at.
+**Persist on stroke end, throttle during.** A long stroke must not issue a write per sample.
+
+Note what the CRDT choice deletes from this list: no periodic full-state broadcast, no
+sequence-gap detection, no catch-up path for late joiners. Those are all workarounds for a
+transport that can lose a message, and they stop being needed when the format converges.
 
 ## What this explicitly rejects
 
