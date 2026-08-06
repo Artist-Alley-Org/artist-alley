@@ -3800,6 +3800,20 @@ paths:
         known `updated_at` value as `if_unchanged_since` in the
         body; if the row has been edited since, the server returns
         409 with the current `updated_at` so the client can reload.
+
+        AUTHORISATION. The asset's owner, a holder of `assets.admin`
+        (globally, or scoped to the asset's team or any ancestor of
+        it), or `system.admin`. Anyone else gets 403 and the row is
+        not touched. Until #930 this checked only that the caller was
+        signed in, so any account could rewrite any asset.
+
+        `status` is held to a NARROWER gate than the rest of the body:
+        the owner or `system.admin` only. Publication decides who can
+        REACH the asset — an anonymous reader requires
+        `status = 'active'` — so it is a disclosure decision rather
+        than content management, and `assets.admin` does not confer it.
+        A non-owner sending the status the asset already has is fine;
+        only a CHANGE is refused.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -3821,6 +3835,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -3840,6 +3856,16 @@ paths:
 
         Accepts optional `{reason}` body captured
         into `deleted_reason` for the admin recovery-window audit.
+
+        AUTHORISATION is the same gate as `PATCH /assets/{id}`: the
+        owner, a holder of `assets.admin` (global or scoped to the
+        asset's team or an ancestor of it), or `system.admin`. Anyone
+        else gets 403 and the row is not touched. Until #930 this
+        checked only that the caller was signed in, so any account
+        could delete any asset while only `system.admin` could restore.
+
+        The caller is recorded in `deleted_by_user_ref`, which is what
+        `POST /admin/assets/{id}/restore` then lets them undo.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -3856,6 +3882,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3869,14 +3897,25 @@ paths:
       operationId: restoreAsset
       summary: Restore a soft-deleted asset
       description: |
-        Admin-only. Clears `deleted_at` + `deleted_reason` on the
-        asset row and fires an `admin.asset.restored` audit event
-        carrying the prior reason + how long the asset had been
-        soft-deleted.
+        Clears `deleted_at` + `deleted_reason` on the asset row and
+        fires an `admin.asset.restored` audit event carrying the prior
+        reason + how long the asset had been soft-deleted.
+
+        AUTHORISATION turns on WHO DELETED IT, not on the caller's
+        standing authority (#931): you may undo your own delete, and
+        `system.admin` may undo any. Nothing else. That keeps restore
+        authority matched to delete authority — whoever passed the
+        delete gate can reverse themselves — while an administrator's
+        removal is not silently undone by the owner the moment it
+        lands; the owner asks for restoration instead.
+
+        A row whose `deleted_by_user_ref` is NULL — deleted before this
+        was recorded, or removed by a system-scheduled retention
+        action — is restorable by `system.admin` only.
 
         Returns 404 if the asset is already live (or doesn't
-        exist). Returns 401 for anonymous callers; 403 for
-        non-admins.
+        exist). Returns 401 for anonymous callers; 403 when the caller
+        did not delete it.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -5598,9 +5637,17 @@ paths:
       operationId: restorePost
       summary: Restore a soft-deleted post
       description: |
-        Admin-only. Clears `deleted_at` + `deleted_reason` on the
-        post row and fires an `admin.post.restored` audit event.
-        Returns 404 if the post is already live (or doesn't exist).
+        Clears `deleted_at` + `deleted_reason` on the post row and
+        fires an `admin.post.restored` audit event.
+
+        AUTHORISATION is the same rule as
+        `POST /admin/assets/{id}/restore`: you may undo your own
+        delete, `system.admin` may undo any, and a NULL
+        `deleted_by_user_ref` is restorable by `system.admin` only
+        (#931).
+
+        Returns 404 if the post is already live (or doesn't exist);
+        403 when the caller did not delete it.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -6422,9 +6469,17 @@ paths:
       operationId: restoreCollection
       summary: Restore a soft-deleted collection
       description: |
-        Admin-only. Clears `deleted_at` + `deleted_reason` on the
-        collection row and fires an `admin.collection.restored`
-        audit event. Returns 404 if already live (or doesn't exist).
+        Clears `deleted_at` + `deleted_reason` on the collection row
+        and fires an `admin.collection.restored` audit event.
+
+        AUTHORISATION is the same rule as
+        `POST /admin/assets/{id}/restore`: you may undo your own
+        delete, `system.admin` may undo any, and a NULL
+        `deleted_by_user_ref` is restorable by `system.admin` only
+        (#931).
+
+        Returns 404 if already live (or doesn't exist); 403 when the
+        caller did not delete it.
       tags: [collections]
       security:
         - cookieAuth: []

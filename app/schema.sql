@@ -915,6 +915,7 @@ CREATE TABLE public.assets (
     sensitivity text DEFAULT 'public'::text NOT NULL,
     page_count integer,
     deleted_reason text,
+    deleted_by_user_ref bigint,
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1119,6 +1120,7 @@ CREATE TABLE public.collections (
     smart_query text,
     deleted_at timestamp with time zone,
     deleted_reason text,
+    deleted_by_user_ref bigint,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -1926,6 +1928,7 @@ CREATE TABLE public.posts (
     cover_thumbnail_asset_id uuid,
     subtitle_track_override jsonb,
     deleted_reason text,
+    deleted_by_user_ref bigint,
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 

@@ -265,6 +265,21 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 	return i, err
 }
 
+const getPostDeletedBy = `-- name: GetPostDeletedBy :one
+SELECT deleted_by_user_ref
+  FROM posts
+ WHERE id = $1 AND deleted_at IS NOT NULL
+`
+
+// Who soft-deleted this post. pgx.ErrNoRows when the row is live or
+// absent — the two cases the restore path already conflates.
+func (q *Queries) GetPostDeletedBy(ctx context.Context, id pgtype.UUID) (*int64, error) {
+	row := q.db.QueryRow(ctx, getPostDeletedBy, id)
+	var deleted_by_user_ref *int64
+	err := row.Scan(&deleted_by_user_ref)
+	return deleted_by_user_ref, err
+}
+
 const listPostAcls = `-- name: ListPostAcls :many
 
 
@@ -537,17 +552,20 @@ func (q *Queries) ReplacePostTags(ctx context.Context, arg ReplacePostTagsParams
 }
 
 const softDeletePost = `-- name: SoftDeletePost :exec
-UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type SoftDeletePostParams struct {
-	ID            pgtype.UUID
-	DeletedReason *string
+	ID               pgtype.UUID
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
+// deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
+// restore gate reads it, so every soft-delete path has to write it.
 func (q *Queries) SoftDeletePost(ctx context.Context, arg SoftDeletePostParams) error {
-	_, err := q.db.Exec(ctx, softDeletePost, arg.ID, arg.DeletedReason)
+	_, err := q.db.Exec(ctx, softDeletePost, arg.ID, arg.DeletedReason, arg.DeletedByUserRef)
 	return err
 }
 

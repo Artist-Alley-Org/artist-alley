@@ -19,7 +19,7 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason;
+          deleted_at, deleted_reason, deleted_by_user_ref;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
@@ -27,7 +27,7 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason
+       deleted_at, deleted_reason, deleted_by_user_ref
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -38,7 +38,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason
+       deleted_at, deleted_reason, deleted_by_user_ref
 FROM collections
 WHERE id = $1;
 
@@ -56,7 +56,7 @@ WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason;
+          deleted_at, deleted_reason, deleted_by_user_ref;
 
 -- name: ClearCollectionExpiresAt :exec
 -- Separate query because COALESCE can't express "explicitly set to NULL".
@@ -69,9 +69,19 @@ UPDATE collections SET expires_at = NULL, updated_at = NOW() WHERE id = $1;
 -- coordinator hard-deletes past sysconfig.CollectionRetentionDays,
 -- at which point collection_resources / collection_posts /
 -- collection_acls cascade via their existing FK ON DELETE CASCADE.
+--
+-- deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
+-- restore gate reads it, so every soft-delete path has to write it.
 UPDATE collections
-SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetCollectionDeletedBy :one
+-- Who soft-deleted this collection. pgx.ErrNoRows when the row is live
+-- or absent — the two cases the restore path already conflates.
+SELECT deleted_by_user_ref
+  FROM collections
+ WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- name: ListCollectionsPage :many
 -- NOT THE ENFORCEMENT PATH, and NOT dead either. It applies no
@@ -98,7 +108,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason
+       deleted_at, deleted_reason, deleted_by_user_ref
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)

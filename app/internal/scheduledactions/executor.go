@@ -120,7 +120,18 @@ func (e *executor) softDelete(ctx context.Context, q *Queries, auditQ *audit.Que
 	if reason != "" {
 		reasonArg = &reason
 	}
-	n, err := q.ExecAssetSoftDelete(ctx, ExecAssetSoftDeleteParams{ID: id, DeletedReason: reasonArg})
+	// The second soft-delete path for assets (the other is
+	// assets.Handler.DeleteAsset), and it has to record a deleter too
+	// or a scheduled delete would land with deleted_by_user_ref NULL
+	// while an interactive one recorded it. a.CreatedBy is the user who
+	// scheduled the action, and is itself nil for a system-scheduled
+	// retention delete — which fails closed: nobody self-restores a row
+	// nobody is recorded as having deleted (#931).
+	n, err := q.ExecAssetSoftDelete(ctx, ExecAssetSoftDeleteParams{
+		ID:               id,
+		DeletedReason:    reasonArg,
+		DeletedByUserRef: a.CreatedBy,
+	})
 	if err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}

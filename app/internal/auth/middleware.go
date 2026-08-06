@@ -358,6 +358,29 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 	})
 }
 
+// LoadIdentity builds the Identity the request middleware would hand a
+// handler for this user — global capabilities AND team-scoped grants,
+// closure-expanded — without going through a session or a token.
+//
+// It exists because `scopedCaps` is unexported and there is no other
+// way for a gate outside this package to be exercised against a REAL
+// scoped grant. Hand-constructing an Identity literal, which is what
+// every other package's tests do, can only ever populate the global
+// list — so a test for "a grant scoped to team X reaches X's
+// descendants" written that way would assert against a map the test
+// itself built rather than against the closure expansion the resolver
+// performs. That is the difference between testing the gate and
+// testing the fixture (#930).
+//
+// Same failure mode as loadCapabilities: a lookup error leaves the cap
+// sets empty rather than failing, so the caller can do nothing
+// privileged.
+func (r *Resolver) LoadIdentity(ctx context.Context, userRef int64) *Identity {
+	id := &Identity{UserRef: userRef, AuthMethod: "session"}
+	r.loadCapabilities(ctx, New(r.Pool), id)
+	return id
+}
+
 // loadCapabilities populates id.Capabilities (global) and id.scopedCaps
 // (team-scoped, closure-expanded). Reads through the caps cache when
 // present; on miss runs EffectiveScopedCapabilitiesForUser and

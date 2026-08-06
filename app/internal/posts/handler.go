@@ -509,7 +509,7 @@ func (h *Handler) UpdatePost(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, current.AuthorUserRef) {
+	if !canMutatePost(caller, current.AuthorUserRef, current.TeamID) {
 		return openapi.UpdatePost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -537,6 +537,19 @@ func (h *Handler) UpdatePost(
 		if !validVisibility(s) {
 			return openapi.UpdatePost400JSONResponse{
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
+			}, nil
+		}
+		// The disclosure boundary. canMutatePost now admits a
+		// team-scoped posts.admin (#930); changing `visibility` is a
+		// decision about who can REACH the post, not about what it
+		// says, and is held to the narrower gate. Compared against the
+		// current value so a PATCH that merely echoes the visibility
+		// back is not refused.
+		if s != current.Visibility && !canWidenPostAccess(caller, current.AuthorUserRef) {
+			return openapi.UpdatePost403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+					Error: "changing a post's visibility is reserved to its author",
+				},
 			}, nil
 		}
 		visPtr = &s
@@ -643,7 +656,7 @@ func (h *Handler) DeletePost(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.DeletePost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -668,9 +681,13 @@ func (h *Handler) DeletePost(
 		err := h.activities.WithEmission(ctx, activities.EmissionInput{
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
+			// deleted_by_user_ref is what makes the delete undoable
+			// by the person who did it (#931) — see canRestorePost.
+			deleter := caller.UserRef
 			return New(tx).SoftDeletePost(ctx, SoftDeletePostParams{
-				ID:            pgID,
-				DeletedReason: softDeleteReasonPtr(reason),
+				ID:               pgID,
+				DeletedReason:    softDeleteReasonPtr(reason),
+				DeletedByUserRef: &deleter,
 			})
 		})
 		if err != nil {
@@ -692,7 +709,11 @@ func (h *Handler) DeletePost(
 // ---------------------------------------------------------------------------
 
 // RestorePost clears deleted_at + deleted_reason on a soft-deleted
-// post. Admin-only. See assets.Handler.RestoreAsset for the shape.
+// post. See assets.Handler.RestoreAsset for the shape and
+// canRestorePost for the rule: you undo your own delete, system.admin
+// undoes any. Previously system.admin only, while DeletePost was open
+// to the author — so an author could delete their post and then not
+// get it back (#931).
 func (h *Handler) RestorePost(
 	ctx context.Context,
 	req openapi.RestorePostRequestObject,
@@ -703,9 +724,21 @@ func (h *Handler) RestorePost(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	deletedBy, err := New(h.Pool).GetPostDeletedBy(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RestorePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("posts: load deleted_by: %w", err)
+	}
+	if !canRestorePost(id, deletedBy) {
 		return openapi.RestorePost403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "this post was deleted by someone else; ask an administrator to restore it",
+			},
 		}, nil
 	}
 	if h.SoftDelete == nil {
@@ -1125,7 +1158,7 @@ func (h *Handler) AddPostAsset(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.AddPostAsset403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -1168,7 +1201,7 @@ func (h *Handler) RemovePostAsset(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.RemovePostAsset403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -1235,7 +1268,7 @@ func (h *Handler) ListPostAcls(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.ListPostAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -1290,9 +1323,21 @@ func (h *Handler) AddPostAcl(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	// NOT canMutatePost. Writing an ACL row hands a named principal
+	// access to the post — the same lever as `visibility`, reached
+	// through a different endpoint, and therefore held to the same
+	// narrower gate (#930). Widening canMutatePost to team-scoped
+	// grants without this would have let a team lead share a
+	// colleague's private post with whoever they liked.
+	//
+	// RemovePostAcl deliberately keeps the wider gate: revoking a grant
+	// narrows access, and a management capability that can tidy up but
+	// not hand out is the right asymmetry.
+	if !canWidenPostAccess(caller, cur.AuthorUserRef) {
 		return openapi.AddPostAcl403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "granting access to a post is reserved to its author",
+			},
 		}, nil
 	}
 	// The principal has to be a reference the read rule can actually
@@ -1412,7 +1457,7 @@ func (h *Handler) RemovePostAcl(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.RemovePostAcl403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -1536,15 +1581,85 @@ func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 // ---------------------------------------------------------------------------
 
 // canMutatePost returns true if the caller can edit/delete this post.
-// Author, system.admin, or posts.admin.
-func canMutatePost(id *auth.Identity, authorRef int64) bool {
-	if id == nil {
+// Author, system.admin, a global posts.admin, or a posts.admin scoped
+// to the post's team.
+//
+// The team-scoped disjunct is #930's other half: an art director whose
+// grant is scoped to one team could not manage that team's posts,
+// because this only ever consulted GLOBAL grants. teamID comes from
+// `posts.team_id`, which is NULLABLE — a post with no team has no
+// scope for InTeam to check, so the disjunct is skipped rather than
+// treated as "no scope required, therefore anyone passes".
+//
+// The closure walk is already done: the resolver pre-expands scoped
+// grants through `team_closure`, so a grant on a parent team covers
+// every descendant without this function knowing the hierarchy exists.
+func canMutatePost(id *auth.Identity, authorRef int64, teamID pgtype.UUID) bool {
+	if id == nil || id.IsAnonymous() {
 		return false
 	}
-	if id.UserRef == authorRef {
+	// Authorship. Ref 0 is the anonymous sentinel and is never a
+	// principal on either side of the comparison.
+	if id.UserRef != 0 && authorRef != 0 && id.UserRef == authorRef {
+		return true
+	}
+	if id.Can(CapSystemAdmin) {
+		return true
+	}
+	if teamID.Valid && id.Can(CapPostsAdmin, auth.InTeam(uuid.UUID(teamID.Bytes))) {
+		return true
+	}
+	return id.Can(CapPostsAdmin)
+}
+
+// canWidenPostAccess is the narrower question canMutatePost is not:
+// may this caller change WHO CAN REACH the post, as opposed to what it
+// says? Author, global posts.admin, or system.admin — deliberately not
+// a holder who arrives only through the new team-scoped disjunct.
+//
+// Two endpoints reach that lever and both use this gate:
+//
+//   - `PATCH /posts/{id}` carries `visibility`, so extending
+//     canMutatePost to team-scoped grants would otherwise have handed a
+//     team lead the power to flip a colleague's private post to
+//     org-only.
+//   - `AddPostAcl` writes a grant row naming a principal, which is the
+//     same widening reached through a different endpoint. Gating it on
+//     canMutatePost — as it was, before canMutatePost grew a
+//     team-scoped disjunct — would have let a team lead share a
+//     colleague's private post with anyone they chose.
+//
+// Removing an ACL is NOT here: revoking narrows access, and a
+// management capability that can tidy up but not hand out is the right
+// asymmetry.
+//
+// That is a disclosure decision, and "manage my team's posts" is not a
+// grant of it — the same boundary migration 00037 draws for
+// `assets.admin` and `status`.
+//
+// Global posts.admin keeps it: that is the instance moderator role and
+// this change is not the place to renegotiate what it means.
+func canWidenPostAccess(id *auth.Identity, authorRef int64) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	if id.UserRef != 0 && authorRef != 0 && id.UserRef == authorRef {
 		return true
 	}
 	return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
+}
+
+// canRestorePost decides who may undo a soft delete. Mirrors
+// assets.canRestoreDeleted exactly — you undo your own delete,
+// system.admin undoes any — and the reasoning lives there.
+func canRestorePost(id *auth.Identity, deletedBy *int64) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	if id.Can(CapSystemAdmin) {
+		return true
+	}
+	return deletedBy != nil && *deletedBy != 0 && id.UserRef != 0 && *deletedBy == id.UserRef
 }
 
 // canReadPost gates the single-item read path (GetPost). ListPostAcls
