@@ -119,18 +119,35 @@ working tree is never touched. The step is idempotent and always
 exits 0 — a clean workspace, or one that doesn't exist yet on a
 brand-new runner, is a no-op rather than a failure.
 
-GitHub-hosted jobs (`ubuntu-latest`, e.g. ci.yml's
-`codegen-drift`) get a fresh workspace per run and deliberately
-do **not** carry the step.
+As of #942 **every** job in `ci.yml` is self-hosted and every one
+of them carries the step. This paragraph previously read "GitHub-
+hosted jobs (`ubuntu-latest`, e.g. ci.yml's `codegen-drift`) get a
+fresh workspace per run and deliberately do **not** carry the
+step" — `codegen-drift` was the last hosted job in that file, and
+moving it here is exactly what made the sentence false. The four
+remaining `ubuntu-latest` jobs in the repo live in other workflows
+(`adr-frontmatter-check.yml`, `dependabot-automerge.yml` ×2,
+`mdx-hazard-check.yml`); those do still get a fresh VM per run and
+still, correctly, omit the step.
 
-**Future hardening, not implemented:** the runner supports
-`ACTIONS_RUNNER_HOOK_JOB_STARTED`, a script the runner executes
-before every job, which would centralise this sweep instead of
-repeating it per job. It isn't used here because these runners
-are provisioned from the Unraid container template above — the
-hook would be one more piece of host-side state to re-create on
-reprovision, and it would silently not exist on any runner added
-without it. The in-workflow step travels with the repo.
+A second thing the reused workspace makes load-bearing:
+`actions/checkout`'s `clean` input, which defaults to `true` and
+runs `git clean -ffdx && git reset --hard HEAD` before fetching.
+On a fresh VM that default is a no-op; here it is the only reason
+a generated file left dirty by an earlier job on the same runner
+cannot be carried into the next job's `git status --porcelain`.
+Do not set `clean: false` on a self-hosted job without working out
+what that lets survive between runs.
+
+**Also wired host-side:** `ACTIONS_RUNNER_HOOK_JOB_STARTED`
+(`/hooks/job-started.sh`, added 2026-07-16) performs the same
+sweep before every job on all three runners, so this is belt and
+braces. This section used to file that hook under "future
+hardening, not implemented"; it is implemented. The in-workflow
+step stays anyway, and is the one to keep if you have to choose:
+the hook is host-side state provisioned from the Unraid container
+template above, so it would silently not exist on any runner added
+without it, whereas the step travels with the repo.
 
 ## Tested with
 
