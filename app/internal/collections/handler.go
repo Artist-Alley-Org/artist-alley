@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/acls"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
@@ -1245,6 +1246,16 @@ func (h *Handler) AddCollectionAcl(
 	if !canMutateCollection(caller, row) {
 		return openapi.AddCollectionAcl403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the collection owner"},
+		}, nil
+	}
+	// Same boundary check as AddPostAcl — collection_acls has the
+	// identical shape and the identical read rule, so it had the
+	// identical defect (#916).
+	if err := acls.ValidateContentPrincipal(
+		string(req.Body.PrincipalType), req.Body.PrincipalId,
+	); err != nil {
+		return openapi.AddCollectionAcl400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	var expires pgtype.Timestamptz

@@ -414,6 +414,37 @@ func (q *Queries) ListPostTags(ctx context.Context, postID pgtype.UUID) ([]strin
 	return items, nil
 }
 
+const postIDsForAsset = `-- name: PostIDsForAsset :many
+SELECT post_id FROM post_assets WHERE asset_id = $1
+`
+
+// Every post that lists this asset as a member. Drives cache
+// invalidation when the ASSET changes in a way that changes what
+// ListPostAssets returns — soft-delete and restore, which flip the
+// `a.deleted_at IS NULL` half of that join without touching any post
+// row (#920). No visibility filter: this answers "whose cached copy is
+// now wrong", which is every holder, not just the ones a given reader
+// may see.
+func (q *Queries) PostIDsForAsset(ctx context.Context, assetID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, postIDsForAsset, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var post_id pgtype.UUID
+		if err := rows.Scan(&post_id); err != nil {
+			return nil, err
+		}
+		items = append(items, post_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const removeCollectionPost = `-- name: RemoveCollectionPost :exec
 DELETE FROM collection_posts WHERE collection_id = $1 AND post_id = $2
 `

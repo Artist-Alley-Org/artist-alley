@@ -45,6 +45,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/acls"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
@@ -1294,6 +1295,21 @@ func (h *Handler) AddPostAcl(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
+	// The principal has to be a reference the read rule can actually
+	// match, and the type has to be one this surface honours. Before
+	// #916 neither was checked: `principal_id` is TEXT, so a username
+	// went straight into the column, the read rule compared it against
+	// `$n::BIGINT::TEXT` and never matched, and the caller got a 204
+	// for a grant that did nothing. notifyShare below was the only code
+	// that noticed — it parses the same value, and on failure it told
+	// the log rather than the caller.
+	if err := acls.ValidateContentPrincipal(
+		string(req.Body.PrincipalType), req.Body.PrincipalId,
+	); err != nil {
+		return openapi.AddPostAcl400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
 
 	var expires pgtype.Timestamptz
 	if req.Body.ExpiresAt != nil {
@@ -1469,6 +1485,48 @@ func (h *Handler) cacheInvalidate(ctx context.Context, id pgtype.UUID) {
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// InvalidateForAsset drops the cached copy of every post that lists
+// assetID as a member. It is the cross-package entry point assets/
+// calls after a write that changes whether the asset is a member the
+// API will render — soft-delete and restore.
+//
+// Why this is needed at all: ListPostAssets joins `assets` with
+// `a.deleted_at IS NULL`, so the QUERY has always been right. What was
+// wrong is that soft-deleting an asset writes only the asset row, and
+// the post cache is keyed on the post. Nothing on the delete path told
+// the post cache that its answer had changed, so `GET /posts/{id}`
+// went on serving the deleted asset in full — title, description,
+// file hash, byte size — until the process restarted (#920).
+//
+// Uses Registry.InvalidateNow rather than Emit: the caller's next read
+// can be the very next request, so the local LRU has to be dropped
+// synchronously and not via a NOTIFY round-trip.
+//
+// Best-effort and nil-safe. A cache invalidation failing must not turn
+// a completed delete into a 500 — the same discipline cacheInvalidate
+// applies. Returns the first error purely so callers can log it.
+func InvalidateForAsset(
+	ctx context.Context,
+	registry *cache.Registry,
+	pool *pgxpool.Pool,
+	assetID uuid.UUID,
+) error {
+	if registry == nil || pool == nil {
+		return nil
+	}
+	ids, err := New(pool).PostIDsForAsset(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
+	if err != nil {
+		return fmt.Errorf("posts: post ids for asset %s: %w", assetID, err)
+	}
+	var firstErr error
+	for _, id := range ids {
+		if err := registry.InvalidateNow(ctx, cacheDomainPostByID, uuidString(id)); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }

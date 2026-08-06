@@ -74,6 +74,16 @@ ON CONFLICT (post_id, asset_id) DO UPDATE SET
 -- name: RemovePostAsset :exec
 DELETE FROM post_assets WHERE post_id = $1 AND asset_id = $2;
 
+-- name: PostIDsForAsset :many
+-- Every post that lists this asset as a member. Drives cache
+-- invalidation when the ASSET changes in a way that changes what
+-- ListPostAssets returns — soft-delete and restore, which flip the
+-- `a.deleted_at IS NULL` half of that join without touching any post
+-- row (#920). No visibility filter: this answers "whose cached copy is
+-- now wrong", which is every holder, not just the ones a given reader
+-- may see.
+SELECT post_id FROM post_assets WHERE asset_id = $1;
+
 -- name: ListPostAssets :many
 -- Members of a post, in display order, joined onto the asset row so
 -- the API can return the full member shape in one call (no N+1).

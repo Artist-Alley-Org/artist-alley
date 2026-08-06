@@ -50,6 +50,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -162,6 +163,12 @@ type Handler struct {
 	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
 	epubChapters *cache.Cache[[]byte]
 
+	// registry is kept for cross-package invalidations. Soft-deleting
+	// or restoring an asset changes what every post holding it renders,
+	// and those posts are cached in posts/ (#920). Nil-safe — the
+	// helper no-ops on a nil registry.
+	registry *cache.Registry
+
 	// similarReader is the embeddings-side seam for the
 	// /assets/{id}/similar endpoint. Injected post-construction via
 	// SetSimilarReader to avoid pulling ai/embeddings into this
@@ -238,7 +245,7 @@ func (h *Handler) ladder(ctx context.Context) []string {
 }
 
 func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry, sysCfg *sysconfig.Store) *Handler {
-	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg}
+	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg, registry: registry}
 	if registry != nil {
 		// 5_000 keys × ~512 bytes/entry ≈ 2.5MB resident. Working set
 		// is "active assets being reviewed" which is well under that
@@ -1190,7 +1197,27 @@ func (h *Handler) DeleteAsset(
 			)
 		}
 	}
+	h.invalidateHoldingPosts(ctx, uuid.UUID(pgID.Bytes), "delete")
 	return openapi.DeleteAsset204Response{}, nil
+}
+
+// invalidateHoldingPosts evicts the cached copy of every post holding
+// this asset. Soft-delete and restore both change what those posts
+// render without writing to any post row, so nothing else on either
+// path would evict them and the stale answer survived until the process
+// restarted (#920).
+//
+// Best-effort: the asset write has already committed and succeeded, so
+// a cache failure is logged, not propagated. Same discipline as the
+// storage-unpin step above.
+func (h *Handler) invalidateHoldingPosts(ctx context.Context, assetID uuid.UUID, op string) {
+	if err := posts.InvalidateForAsset(ctx, h.registry, h.Pool, assetID); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.posts_cache.invalidate.error",
+			slog.String("asset_id", assetID.String()),
+			slog.String("op", op),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1232,6 +1259,10 @@ func (h *Handler) RestoreAsset(
 		}
 		return nil, fmt.Errorf("assets: restore: %w", err)
 	}
+	// Restore is the same bug wearing the other hat: without this the
+	// asset stays MISSING from its posts until a restart, because the
+	// cached copies were evicted on delete and re-populated without it.
+	h.invalidateHoldingPosts(ctx, uuid.UUID(req.Id), "restore")
 	return openapi.RestoreAsset204Response{}, nil
 }
 
