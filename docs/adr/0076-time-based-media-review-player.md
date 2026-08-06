@@ -181,6 +181,105 @@ Therefore:
   above is deliberately independent of *how* a frame is produced, so switching
   the decode path later does not invalidate stored annotations.
 
+### Amendment 2026-08-05 — the mechanisms §7 asked for, from a working implementation
+
+§7 states the frame-accuracy risk and says to "degrade the addressing rather than present a
+frame number that is confidently wrong" — without saying how a caller would *know*. A
+prior-art pass over a shipped review player (a private codebase; patterns only, no code) supplied
+the missing mechanisms. Each is recorded as a decision, because §7 is unimplementable without
+them.
+
+**1. The player is the sole authority on frame rate, and the rate is resolved server-side.**
+Probe it during ingest (we already run ffprobe in the media pipeline) and publish it to the
+client. Browser-side detection is a **fallback only**: `requestVideoFrameCallback` cannot
+reliably distinguish 29.97 from 30 on a short clip, which is precisely the error that puts a
+stroke on the wrong picture. Never assume 30.
+
+**2. Frame data carries the PROVENANCE of the rate that produced it**, not just the rate.
+Expose where the number came from — probed / declared in metadata / detected in-browser /
+defaulted — and treat anything written under "defaulted" as untrustworthy. This is the concrete
+form of §7's trustworthiness gate: a UI can refuse to write a frame-scoped annotation, or mark it
+provisional, instead of silently recording a guess. The Consequences below already require an
+annotation to carry its rate; this adds that the rate must carry its own confidence.
+
+**3. Seek to the MIDDLE of a frame's display interval, never to its boundary.** Boundary
+seeking is subject to float error and decodes the neighbouring frame. This is the single most
+load-bearing implementation detail for §7's round-trip requirement, and it is not discoverable
+from the spec — only from having been burned by it.
+
+**4. One funnel for every playback mutation.** Play, pause, seek, step, rate and in/out range all
+go through a single code path that applies clamping, range limits and lock checks. Anything
+touching the media element directly bypasses the gating. Same argument as ADR 0063 for the
+visibility predicate: one enforcement point, or the rule is advisory.
+
+**5. Playback locks are NAMED and released by their owner.** A feature that needs the playhead
+frozen — drawing is the obvious one — claims a lock under its own name; playback resumes only
+when every claim is released. A shared boolean lets two consumers clobber each other, and this
+player will have at least three (annotation, comparison, presentation). When an action is
+refused, emit an event carrying the owners responsible, so the UI can say *why* rather than
+appearing dead.
+
+**6. Remote-originated changes are marked, so they are not re-broadcast.** Without an explicit
+"this came from a peer" flag, a synced session feeds back on itself.
+
+### Amendment 2026-08-05 — the shape of a synced review session (#5)
+
+Recorded here rather than in a new ADR because it constrains this player's API surface. The
+transport decision is the operator's (2026-08-05): **Server-Sent Events plus ordinary POSTs, not
+a WebSocket framework** — and in our single Go binary, not a separate service (see the target
+architecture; we do not ship sidecars).
+
+- **Carry commands, never media.** Every client plays its own copy; the session relays
+  *play / pause / seek-to-frame / rate / range*. This is why synced review stays frame-accurate
+  where screen-sharing cannot: quality is bounded by each viewer's own file, not the presenter's
+  uplink.
+- **The transport performs NO authorisation.** Session membership is minted by the API, which
+  enforces identity and per-asset read access. Possession of a live connection is never proof of
+  permission — the same posture ADR 0063 takes for reads.
+- **The transport holds no durable state.** Room membership is in-memory and disposable; the
+  database remains the system of record. A refresh must not destroy a room, so an empty room gets
+  a grace period before it is reaped.
+- **Drop stale commands.** A delayed packet that arrives after its moment must be discarded, or a
+  straggler yanks every follower backwards.
+- **Features claim NAMED CHANNELS on the one connection, and payloads are forwarded verbatim.**
+  The relay must not inspect, validate, store, or keep an allowlist of event names — otherwise
+  every new review feature requires editing shared server code, coupling unrelated features
+  together. Unknown inbound channels are ignored, which is also what makes version skew between
+  peers survivable (relevant once sessions federate).
+- **Session roles**: a presenter drives; attendees may *leave sync and stay in the room* rather
+  than only leave; presenter control can be requested and handed over. "Follow" is a per-attendee
+  state, not a property of the room.
+
+### Amendment 2026-08-05 — two things the annotation model was missing (#6)
+
+- **Strokes record the canvas dimensions they were drawn at.** Without them, an annotation drawn
+  over a 720p proxy replays misaligned over a 4K original. Store the drawing surface's size with
+  the stroke set and rescale on replay; do not assume the asset's native dimensions.
+- **Layers.** A review annotation is not one stroke set but an ordered stack of named,
+  individually visible layers. It is how one reviewer's marks stay separable from another's, and
+  how a note can be toggled off without being deleted. §4's ghosting is a *view* of adjacent
+  frames; layers are a *structure* within one frame. They compose, and both are needed.
+
+  The reference implementation caps layers at **4**. We should not copy the number without
+  knowing whether it is a UI constraint or a storage one — but the existence of *some* cap is
+  worth keeping: an unbounded layer stack on a per-frame annotation is a rendering cost paid on
+  every frame of playback.
+
+**Strokes travel as instructions, not pixels.** The live path shares vector draw commands and
+re-renders them locally; it never ships a raster. That is what makes a shared annotation
+resolution-independent (see the canvas-dimensions point above) and cheap enough to send while a
+stroke is still being drawn. Two consequences worth fixing now:
+
+- **Diff stream plus periodic full state.** Send incremental instructions as they happen, and
+  periodically send the complete set so a late joiner — or a client that dropped a packet —
+  resynchronises without a special "catch me up" path. The reference sends a full state roughly
+  every 20 instructions, and also on stroke end.
+- **Persist on stroke end, throttle during.** A long stroke should not issue a write per sample.
+
+These belong in this ADR rather than #5's because they constrain the annotation *format*: an
+instruction list has to be replayable out of order and at a different canvas size than it was
+authored at.
+
 ## What this explicitly rejects
 
 - **A separate video player and audio player.** Already avoided; recorded here
@@ -191,6 +290,16 @@ Therefore:
 - **Storing ghosting/opacity on the annotation.** It is a view preference.
 - **Re-deriving a stroke's frame from a timestamp after the fact.** Seek
   rounding makes that lossy; capture the frame at draw time.
+
+  **Confirmed empirically 2026-08-05.** A shipped review implementation does exactly this — it
+  persists a seconds value and recovers the frame later as `round(seconds × fps)`. The cost is
+  visible in its own source as tolerance constants: matching an annotation to a frame needs a
+  **±1 frame** window plus a **0.05 s** time window, because the round-trip does not land where it
+  started. A ±1-frame match means a stroke can render on the neighbouring picture, which is the
+  precise failure §7 describes — and it degrades silently, looking like sloppy drawing rather than
+  a bug. The same codebase's newer integration guidance tells consumers to store the integer frame
+  number and the rate instead, so the author reached this conclusion independently. **Our rejection
+  stands, now with evidence rather than reasoning: the fudge factor IS the cost of the design.**
 
 ## Consequences
 
