@@ -650,10 +650,82 @@ map to the milestones below.
 > | v0.19.0 | Distribution & packaging *(was v0.17.0)* |
 > | v0.20.0 | Federation / multi-site / fediverse *(was v0.18.0)* |
 > | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) — plus the **full mobile pass** (epic #903, owner 2026-08-04): the phone gets a *deliberately reduced* app (minimal menus, minimal viewer), because full capability belongs to the native Android/iOS apps (#802). Not to be spiked soon, but not after GA either |
+> | **v1.0.0-rc.N** | ⭐ **Release candidate — the gate between "the roadmap is done" and "1.0.0 is tagged"** (owner, 2026-08-06). Every epic and issue closed, then we ship an RC and **ask real people to run it against their own work** before GA. See [Release candidate](#release-candidate) below — it is a phase with entry and exit criteria, not a tag |
 >
 > Locked sequencing: platform (now v0.14) **before** monetization/premium (now v0.15). Each GitHub milestone's issue list is authoritative.
 >
 > **Why the split matters beyond tidiness.** The two halves of the old v0.7.0 had no dependency on each other — admin configuration does not block browse correctness, and vice versa — so holding them in one milestone meant neither could ship. Separating them makes v0.7.0 tag-able on work that is already largely done.
+
+## Release candidate
+
+Added 2026-08-06 on the owner's direction:
+
+> *"We are going to need to have a release candidate when we finish the roadmap and all
+> epics/issues. This is where we try to get users to test it for me and make sure there aren't any
+> other bugs before we cut the 1.0.0 release."*
+
+**Entry:** every milestone through v1.0.0 at zero open issues, every epic closed. The RC is not a
+parallel track — it starts when the roadmap is finished.
+
+**Exit:** an explicit owner decision, not a timer. The useful bar is *no open RC-reported issue
+that would be a release-blocker*, with the blocker definition agreed **before** the RC ships so it
+cannot be argued down under pressure to tag.
+
+### The pipeline is already ready — this is a process phase, not an engineering one
+
+Verified 2026-08-06 against `.github/workflows/release.yml`:
+
+- The tag trigger is `v*.*.*`, which **does** match `v1.0.0-rc.1`, so an RC tags through the normal
+  path with no workflow change.
+- **`:latest` is already guarded** — `type=raw,value=latest,enable=${{ !contains(tag, '-') }}`
+  (`:148`). A tag containing `-` never becomes `:latest`, so an RC cannot displace the stable image
+  for existing users.
+- The GitHub release is **automatically marked prerelease** — `*-*) extra_flags="--prerelease"`
+  (`:76-79`).
+
+One thing to confirm at the time rather than assume: `docker/metadata-action`'s documented default
+is to skip the `{{major}}` and `{{major}}.{{minor}}` tags for prereleases, which is what stops an
+RC from overwriting `:1.0` and `:1`. That is the action's behaviour, not something our workflow
+states, so **verify it on the first RC tag** before trusting it.
+
+### ⛔ What the RC costs us BEFORE it starts — the part worth planning for now
+
+**The pre-release volatility policy ends the moment an RC reaches a real user.** Today we work
+under "pre-release, everything is wipeable": schemas get edited in place, migrations are rewritten
+rather than added, and "there are no stored rows to preserve" is a legitimate argument — one used
+as recently as #916 this month to justify refusing previously-accepted data.
+
+The instant someone runs an RC against their own library, that argument is gone:
+
+- **Migrations must migrate**, not recreate. No more editing a shipped migration in place.
+- **Breaking schema changes need a path**, or a tester loses their work and tells everyone.
+- **An RC → GA upgrade must be clean.** If it is not, the RC has taught testers that upgrading is
+  dangerous, which is the opposite of what an RC is for.
+
+So the last pre-RC milestone should include a deliberate **"stop being volatile"** step: freeze the
+migration history, and state the upgrade promise the RC is making. Do not discover this on the day.
+
+### What has to exist before we ask anyone to test
+
+- **A way to run it.** Testers need their **own** instance with their **own** work — the public
+  demo is read-only and proves nothing about migrations, scale, or their formats. Native packages
+  (`.deb`/`.rpm`, static binaries, Homebrew) are already a v1.0.0 target and the RC is exactly what
+  they are for; if they slip, the RC is Docker-only and we should say so up front.
+- **A reporting channel that reaches us**, sized for people who are doing us a favour. A GitHub
+  issue template is the durable path; Discord already exists and is where a tester will actually
+  say "this looked wrong". Both, with the Discord thread triaged into issues rather than treated as
+  the record.
+- **A stated scope for testing.** "Find bugs" produces nothing. Ask for specific journeys —
+  ingest your real library, run a review session, share with a colleague, upgrade to the next RC.
+- **A feature freeze.** New features during an RC invalidate the testing already done. Bug fixes
+  and RC-reported regressions only; anything else waits for v1.1.0.
+
+### Why this is worth doing rather than tagging straight to GA
+
+Everything we have tested so far, we tested. The seeded catalogue is ours, the formats are ours,
+the workflows are the ones we thought of. An RC is the first contact with libraries we did not
+curate, hardware we do not own, and people who will do things in an order we did not anticipate —
+which is precisely the class of bug that no amount of internal verification finds.
 
 
 
