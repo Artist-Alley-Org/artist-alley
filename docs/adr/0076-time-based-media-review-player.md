@@ -98,6 +98,13 @@ Annotations reuse the **existing brush engine**. A second drawing
 implementation for review would drift from the whiteboard's within a release
 — same class of duplication this ADR forbids for the player itself.
 
+**Reusing the engine does not mean inheriting the painting tuning** (recorded 2026-08-05, #926).
+The default pen runs velocity-driven width modulation — `thinning: 0.5` with simulated pressure —
+which is right for expressive drawing and wrong for markup: on a mouse it makes a line swell and
+pinch with hand speed, so a circle round a problem reads as wobbly rather than deliberate. Review
+annotation therefore defaults to a **constant-width markup preset** of the same engine. The
+expressive brushes stay available for anyone who wants them.
+
 ### 3. The scrubber shows where the annotations are
 
 The timeline renders a marker per annotated frame, positioned by frame index.
