@@ -266,22 +266,29 @@ func (h *Handler) CreatePost(
 		coverThumbnailID = pgtype.UUID{Bytes: uuid.UUID(*in.CoverThumbnailAssetId), Valid: true}
 	}
 
-	// #922 — the member gate. Every asset named in the body has to be
-	// one this caller can actually read, and it runs BEFORE the
-	// transaction opens so a refusal never writes a post row it then
-	// has to roll back.
+	// #922 — the member gate, widened to the covers by #941. Every
+	// asset the BODY names has to be one this caller can actually read,
+	// and it runs BEFORE the transaction opens so a refusal never
+	// writes a post row it then has to roll back.
 	//
 	// The refusal is the same shape as the FK-violation 404 below,
 	// deliberately: an unreadable asset and a nonexistent one must be
 	// indistinguishable, or POST /posts becomes a UUID-existence probe.
-	for _, m := range in.Members {
-		ok, gErr := h.mayAttachAsset(ctx, id, uuid.UUID(m.AssetId))
+	//
+	// The covers are here rather than in a check of their own because
+	// the rule has exactly one home (visibility.CanAttachAsset, ADR
+	// 0064) and consolidating it there was the whole point of #922.
+	// Only the EXPLICIT covers are added: the implicit cover is
+	// members[0], already in this list, and re-gating it would just
+	// double the query count on the common path.
+	for _, aid := range attachablesOf(in) {
+		ok, gErr := h.mayAttachAsset(ctx, id, aid)
 		if gErr != nil {
 			return nil, fmt.Errorf("posts: member gate: %w", gErr)
 		}
 		if !ok {
 			return openapi.CreatePost404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + m.AssetId.String()},
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + aid.String()},
 			}, nil
 		}
 	}
@@ -320,6 +327,18 @@ func (h *Handler) CreatePost(
 		if isFKError(err, "posts_team_id_fkey") {
 			return openapi.CreatePost404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+		// Cover RACE BACKSTOP, the counterpart of the member one below
+		// (#941). The gate above already refused every cover this
+		// caller cannot read, absent ones included, so reaching here
+		// means the asset was hard-deleted in the gap. Before #941 an
+		// unreadable-or-absent cover fell straight through to the
+		// wrapped error and answered 500 — an unhandled SQLSTATE 23503
+		// dressed up as a server fault.
+		if id, is := fkCoverAsset(err, coverID, coverThumbnailID); is {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + id},
 			}, nil
 		}
 		return nil, fmt.Errorf("posts: create: %w", err)
@@ -577,9 +596,32 @@ func (h *Handler) UpdatePost(
 		}
 		visPtr = &s
 	}
+	// #941 — the cover gate on the UPDATE path. A gate that only
+	// guards CreatePost is not a gate: PATCH /posts/{id} sets
+	// `cover_asset_id` on an existing post, so the same unreadable
+	// asset walks in one call later. #922 learned this once already,
+	// with POST /posts/{id}/assets.
+	//
+	// Placed AFTER canMutatePost on purpose. The post-level refusal has
+	// to be settled first, or a caller who may not touch this post at
+	// all would learn from the 404-vs-403 which asset UUIDs exist.
+	//
+	// The tx is open, but nothing has been written into it yet and the
+	// deferred Rollback covers the return — so, as on create, a refusal
+	// leaves no row behind.
 	var coverPtr pgtype.UUID
 	if in.CoverAssetId != nil {
-		coverPtr = pgtype.UUID{Bytes: uuid.UUID(*in.CoverAssetId), Valid: true}
+		coverID := uuid.UUID(*in.CoverAssetId)
+		ok, gErr := h.mayAttachAsset(ctx, caller, coverID)
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: cover gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.UpdatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + coverID.String()},
+			}, nil
+		}
+		coverPtr = pgtype.UUID{Bytes: coverID, Valid: true}
 	}
 
 	if _, err := q.UpdatePost(ctx, UpdatePostParams{
@@ -592,6 +634,14 @@ func (h *Handler) UpdatePost(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.UpdatePost404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+			}, nil
+		}
+		// Cover race backstop — see CreatePost. Same 404 body as the
+		// gate above, so "you may not read it" and "it is gone" stay
+		// indistinguishable on this path too (#941).
+		if id, is := fkCoverAsset(err, coverPtr, pgtype.UUID{}); is {
+			return openapi.UpdatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + id},
 			}, nil
 		}
 		return nil, fmt.Errorf("posts: update: %w", err)
@@ -2189,6 +2239,46 @@ func int32Or(p *int, def int32) int32 {
 		return def
 	}
 	return int32(*p)
+}
+
+// attachablesOf lists every asset a PostCreate body names, in the
+// order the refusal message should report them: members first (so the
+// #922 behaviour is byte-identical for a body with no explicit cover),
+// then the explicit cover, then the explicit cover thumbnail.
+//
+// The implicit cover is deliberately absent. When `cover_asset_id` is
+// omitted the handler copies members[0], which is already in this list;
+// adding it again would double the gate query on the path almost every
+// upload takes.
+func attachablesOf(in *openapi.PostCreate) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(in.Members)+2)
+	for _, m := range in.Members {
+		out = append(out, uuid.UUID(m.AssetId))
+	}
+	if in.CoverAssetId != nil {
+		out = append(out, uuid.UUID(*in.CoverAssetId))
+	}
+	if in.CoverThumbnailAssetId != nil {
+		out = append(out, uuid.UUID(*in.CoverThumbnailAssetId))
+	}
+	return out
+}
+
+// fkCoverAsset maps a foreign-key violation on either cover column back
+// to the UUID that caused it, so the 404 can name the same asset the
+// gate would have named. Returns false for any other error.
+//
+// The thumbnail constraint name CONTAINS neither of the other two as a
+// substring, which matters because isFKError matches on substring:
+// posts_cover_asset_id_fkey vs posts_cover_thumbnail_asset_id_fkey.
+func fkCoverAsset(err error, cover, thumb pgtype.UUID) (string, bool) {
+	switch {
+	case isFKError(err, "posts_cover_thumbnail_asset_id_fkey"):
+		return uuidString(thumb), true
+	case isFKError(err, "posts_cover_asset_id_fkey"):
+		return uuidString(cover), true
+	}
+	return "", false
 }
 
 func isFKError(err error, constraint string) bool {
