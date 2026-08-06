@@ -154,6 +154,45 @@ equivalent worth testing is *anonymous* denial, not non-owner denial.
 Until the row-level story changes (Phase 1.28 blur-and-reveal, or #210), that asymmetry is the
 design, not a gap.
 
+### Amendment 2026-08-06 (#922, PR #940) — the ATTACH rule has one home now
+
+The membership amendment below governs what a container **shows**. There is a second, distinct
+question — **what may a caller put INTO a container they control?** — and until now it had two
+answers in two packages.
+
+> **A caller may attach an asset iff they could have reached it standalone AND are entitled to its
+> content tier** — the row plane and the content plane, conjoined, for the same caller.
+
+That composition now lives in **`visibility.CanAttachAsset`**, beside the two planes it composes,
+and both container packages call it through thin identity adapters (`collections.mayCollectAsset`,
+`posts.mayAttachAsset`).
+
+**Why it moved rather than being copied.** #882 built this inside `collections.Handler`. #922
+needed the identical question on the post surface, and a second copy of a security rule is the
+defect class epic #665 exists to remove — #892 and #904 each spent a sprint deleting one. So the
+sprint that added the post gate also **retired the collection copy into the shared rule**. One
+expression, two callers.
+
+**It is a conjunction, so it can only ever narrow.** Nothing here changes what a *standalone* asset
+request returns, and nothing changes any read path. It decides a **write**.
+
+Two things worth recording because both were surprises:
+
+- **The gate needed two call sites on posts, not one.** `CreatePost`'s members loop *and*
+  `POST /posts/{id}/assets`, which previously gated the post via `canMutatePost` and never the
+  asset. A create-only gate is not a gate.
+- ⭐ **The gate CREATES indistinguishability; it does not preserve it.** #922 and its brief both
+  described a `404 "asset not found"` as the existing behaviour for a bad member UUID. That path
+  was **unreachable** for a single-member body: the cover defaults to `members[0]`, so the cover
+  foreign key fires on the post INSERT first and surfaced as an unhandled **500**
+  (`SQLSTATE 23503`). Refusing at the gate is what makes an unreadable asset and a nonexistent one
+  answer alike — which is the property that closes the oracle.
+
+**Still open**: the post's `cover_asset_id` / `cover_thumbnail_asset_id` are **not** routed through
+this rule when supplied explicitly (**#941**). No association renders — both resolution paths are
+content-gated — but a bad cover still 500s on the FK, which is the same shape this amendment just
+fixed for members.
+
 ### Amendment: membership never widens (recorded 2026-08-04, #883)
 
 "Sensitivity gates content, not rows" is a rule about an asset addressed **on its own**. It says
