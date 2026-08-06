@@ -347,29 +347,57 @@ func TestAddPostAcl_UserGrantNotifiesTheGrantee(t *testing.T) {
 	}
 }
 
-// TestAddPostAcl_RoleAndTeamGrantsNotifyNobody. A role or team principal
-// names no single recipient, and neither grants read yet
-// (visibility.PostLiveGrantSQL constrains principal_type='user').
-// Notifying a principal_id that
-// happens to parse as a user ref would page a stranger about a post
-// they still cannot open.
-func TestAddPostAcl_RoleAndTeamGrantsNotifyNobody(t *testing.T) {
+// TestAddPostAcl_RoleAndTeamGrantsAreRefused.
+//
+// BEHAVIOUR CHANGE (#916). This test previously asserted the opposite:
+// that a role or team grant on a post is STORED and merely notifies
+// nobody, on the reasoning that "notifies nobody is not licence to skip
+// the grant". That reasoning was about the NOTIFY path — it is correct
+// that a notifier failure must not roll back a real grant — but it was
+// applied to a grant that was never real.
+//
+// A role or team grant on a post confers nothing and cannot come to
+// confer anything without a schema-level change: both content read
+// rules gate on `principal_type = 'user'` before they ever look at
+// principal_id (visibility.PostLiveGrantSQL, the collection predicate),
+// because role/team scoping on content is ADR 0010 Layer 5 and
+// unimplemented. So the row was written, matched by nothing, and
+// reported to the caller as 204.
+//
+// That is the SAME defect #916 is about — the API accepting a
+// reference it knows confers no access and answering "no content" as
+// though it had worked. Fixing it for usernames but not for role and
+// team would be fixing half a bug. Pre-release there are no stored
+// grants to preserve, and a 400 is trivially reversible where a table
+// full of inert rows is not.
+//
+// Reverse this and the assertion below by deleting the validator call
+// in AddPostAcl, if the decision goes the other way.
+func TestAddPostAcl_RoleAndTeamGrantsAreRefused(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)
 	fake := &fakeNotifier{}
 	h.SetNotifier(fake)
 
 	postID := seedTierPost(t, pool, shAuthor, "explicit-share")
-	shGrantVia(t, h, shAuthor, postID, "role", shGranteePrincipal, nil)
-	shGrantVia(t, h, shAuthor, postID, "team", shGranteePrincipal, nil)
+	roleResp := shGrantVia(t, h, shAuthor, postID, "role", shGranteePrincipal, nil)
+	teamResp := shGrantVia(t, h, shAuthor, postID, "team", shGranteePrincipal, nil)
 
+	if _, is := roleResp.(openapi.AddPostAcl400JSONResponse); !is {
+		t.Errorf("role grant returned %T, want 400 — a grant that confers nothing "+
+			"must not be reported as success", roleResp)
+	}
+	if _, is := teamResp.(openapi.AddPostAcl400JSONResponse); !is {
+		t.Errorf("team grant returned %T, want 400", teamResp)
+	}
 	if len(fake.calls) != 0 {
 		t.Errorf("role/team grants produced %d notifications, want 0: %+v", len(fake.calls), fake.calls)
 	}
-	// Both rows must still exist — "notifies nobody" is not licence to
-	// skip the grant.
-	if n := shACLRowCount(t, pool, postID, shGranteePrincipal); n != 2 {
-		t.Errorf("post_acls holds %d rows for the principal, want the 2 that were granted", n)
+	// The point of the fix: nothing was written. A status-only
+	// assertion would pass on a handler that 400s AFTER inserting.
+	if n := shACLRowCount(t, pool, postID, shGranteePrincipal); n != 0 {
+		t.Errorf("post_acls holds %d rows after two refused grants, want 0 — "+
+			"the handler rejected the request but still wrote", n)
 	}
 }
 

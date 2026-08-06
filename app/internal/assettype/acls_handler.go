@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/mscrnt/artist-alley/app/internal/acls"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
@@ -106,16 +107,21 @@ func (h *Handler) AddAssetTypeAcl(
 		}, nil
 	}
 	body := req.Body
-	if body.PrincipalId == "" {
-		return openapi.AddAssetTypeAcl400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "principal_id is required"},
-		}, nil
-	}
 	pt := strings.ToLower(string(body.PrincipalType))
 	perm := strings.ToLower(string(body.Permission))
-	if pt != "user" && pt != "role" && pt != "team" {
+	// Unlike post_acls / collection_acls, this surface honours all
+	// three principal types — ListRestrictedAssetTypes and
+	// HasAssetTypeAccess resolve role and team membership properly —
+	// so the full set is admitted and only the REFERENCE SHAPE is
+	// checked: a numeric user ref, or a UUID for a role or team.
+	//
+	// The shape check is the #916 fix. This handler already rejected an
+	// empty principal_id and an unknown principal_type, which made it
+	// the strictest of the three ACL writers, but "non-empty" still let
+	// a username through into a column nothing would ever match it in.
+	if err := acls.ValidatePrincipalRef(pt, body.PrincipalId); err != nil {
 		return openapi.AddAssetTypeAcl400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "principal_type must be user|role|team"},
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	if perm != "read" && perm != "write" && perm != "admin" {

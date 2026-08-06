@@ -157,6 +157,32 @@ func (r *Registry) Emit(ctx context.Context, domain, key string) error {
 	return publish(ctx, r.Pool, Payload{Domain: domain, Key: key, Op: "upsert"})
 }
 
+// InvalidateNow is Cache.Invalidate for a caller that does not hold the
+// typed Cache: it drops the key from THIS process's cache immediately
+// and then broadcasts to peers.
+//
+// Emit alone is not equivalent. A bare Emit reaches the local process
+// only by round-tripping through Postgres and back down the LISTEN
+// connection, so for a window after the write returns, this instance
+// still serves the stale entry from its own LRU. That window is small
+// but it is on the wrong side of "the write returned 204" — a client
+// that writes and immediately reads can observe the pre-write value,
+// which is exactly the class of bug #920 was.
+//
+// Cross-package invalidation helpers should prefer this over Emit
+// whenever the write and the subsequent read can be the same request
+// chain. Unknown domains are a no-op locally and still broadcast, since
+// the domain may be registered on a peer but not here.
+func (r *Registry) InvalidateNow(ctx context.Context, domain, key string) error {
+	r.mu.RLock()
+	inv := r.domains[domain]
+	r.mu.RUnlock()
+	if inv != nil {
+		inv.invalidate(key)
+	}
+	return r.Emit(ctx, domain, key)
+}
+
 // EmitFlushAll publishes a wildcard cache-flush NOTIFY that purges every
 // registered cache on every receiving instance. It takes a raw pool
 // rather than a Registry so a process that owns no cache — the seeder —

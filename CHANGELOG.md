@@ -430,6 +430,45 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Deleting an asset now removes it from the posts it was in.** Deleting an asset
+  reported success, and the asset really was deleted — its bytes stopped being served and
+  it left the browse grid. But every **post** that included it went on showing it: the
+  title, the description, the full SHA-256, the byte size, the dimensions, the metadata.
+  Not a stale thumbnail — the whole record, served fresh on every request, to everyone,
+  indefinitely. Restarting the server was the only thing that cleared it (#920).
+
+  The database was right the entire time; the query that lists a post's contents has
+  always skipped deleted assets. What was wrong is that deleting an asset never told the
+  posts holding it that their cached copy was now wrong, because deleting an asset does
+  not touch any post. Now it does, and so does **restoring** one — restore had the mirror
+  image of the same fault, where an asset you brought back stayed missing from its posts
+  until a restart.
+
+  Worth stating plainly: for as long as a post outlived the asset in it, "delete" did not
+  mean deleted anywhere someone was looking at that post. No-spec-impact; no wire-format
+  change.
+
+- **Sharing something with a username no longer silently does nothing.** `POST
+  /posts/{id}/acls` and the collection equivalent take a `principal_id`, and that field
+  wants a numeric user **reference**, not a name. Passing a username — the obvious thing
+  to pass — was accepted, stored, and answered **204 No Content**, exactly as a successful
+  share does. Nothing was shared. The row could never match anyone, the person was never
+  notified, and there was no way to tell from the outside: the grant appeared in the
+  access list looking real (#916).
+
+  The API already knew. The notification step parses the same value, and when it failed to
+  it wrote a line to the server log and returned — after the useless row had been written.
+  It now rejects the request with **400** and says what the field wants, and writes
+  nothing.
+
+  The same check covers asset-type ACLs, where a role or team id must be a UUID.
+
+  **`role` and `team` grants on a post or collection are now refused** rather than stored.
+  They were in the same position as a username: recorded, and matched by nothing, because
+  group-based access to content is not built yet. They now return 400 saying so. Grant to
+  individual users instead. (Asset-type ACLs are unaffected — role and team work properly
+  there and continue to.)
+
 - **A post with nothing attached to it now opens.** Not "renders badly" — did not open at
   all. It showed a loading shimmer, forever, on a blank screen: no title, no description,
   no comments, no author, and for its own author no **Edit post**, no **Delete post** and

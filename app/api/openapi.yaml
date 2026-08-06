@@ -5634,8 +5634,12 @@ paths:
         shared with, who granted it and when it expires is management
         information about the post, not part of the post's content:
         being able to read something must not disclose the rest of its
-        guest list. `collection_acls` has always drawn the line here;
-        this matches it.
+        guest list.
+
+        This was previously documented as matching `collection_acls`.
+        It does not: `listCollectionAcls` additionally admits any
+        authenticated caller when the collection is `public`. That
+        claim came from the same stale description #917 corrects.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -6548,8 +6552,27 @@ paths:
       description: |
         Returns every ACL row attached to this collection. ACLs are
         additive grants on top of the collection's visibility +
-        collection_grant rows. Requires read access to the
-        collection.
+        collection_grant rows.
+
+        Visible to the collection's OWNER, to any authenticated caller
+        when the collection is `public`, and to `collections.admin` /
+        `system.admin`. NOT visible to someone holding only a read
+        grant: who else was granted what is management information
+        about the collection rather than part of its content, so the
+        grant disjunct that the row-visibility predicate carries is
+        deliberately dropped here (#661).
+
+        This description previously said "requires read access to the
+        collection", which was wrong in both directions — it excluded
+        the admin bypass and it implied a read grantee could see the
+        list. #876 reasoned from that sentence when designing the post
+        equivalent (#917).
+
+        Note this is NOT the same rule `listPostAcls` applies: that one
+        has no `public` disjunct, so a public POST does not disclose its
+        guest list while a public COLLECTION does. The divergence is
+        real and unresolved; it is a permissions question, not a
+        documentation one.
       tags: [collections]
       security:
         - cookieAuth: []
@@ -16638,6 +16661,24 @@ components:
         principal_id:
           type: string
           maxLength: 64
+          pattern: "^([0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          description: |
+            A REFERENCE, not a name. BIGINT `user.ref` when
+            principal_type=user; the row's UUID when it is role or team.
+
+            The pattern admits the union of both forms because one
+            schema serves all three principal types; the handler
+            enforces the type-specific half and rejects a mismatch with
+            400. Passing a username here used to be accepted and stored,
+            producing a grant that no read rule could ever match (#916).
+
+            Which principal types actually CONFER access depends on the
+            surface. `asset_type_acls` honours all three. `post_acls`
+            and `collection_acls` honour `user` only — their read rules
+            gate on `principal_type = 'user'` because role/team scoping
+            on content is ADR 0010 Layer 5 and unimplemented — so those
+            two endpoints reject role and team with 400 rather than
+            storing a grant that does nothing.
         permission:
           type: string
           enum: [read, write, admin]
