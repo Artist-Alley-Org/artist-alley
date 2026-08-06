@@ -334,6 +334,56 @@ reader set no preference, and the feed is not shorter than anyone else's), and i
 fired on every browse paint for every reader. It was removed in PR #924. A "there is more here
 you cannot open" affordance, if wanted, is a fresh design question rather than that note inverted.
 
+### ✅ DECIDED 2026-08-06 (#939) — a mutation capability confers the FIELD plane, never the BYTES
+
+*(The seam recorded below was opened the same day and is now closed. Owner delegated the decision;
+a prior-art pass supplied a third option neither of the framings below had considered.)*
+
+**The question as originally posed — "does mutation imply readability?" — is malformed**, because
+there is no single "readability" to imply. Mainstream products in this space treat
+**view / search / download / edit as independent rights**: display-and-search restriction is
+configured separately from download restriction, and metadata-field visibility is its own control.
+
+**This ADR already splits at exactly that seam**, which is why the third option fits so cleanly:
+
+| plane | mechanism | question |
+|---|---|---|
+| field | `visibility.FieldsReadable` | may they see title / description / tags? |
+| binary | `CanReadContent` + the binary handlers | may they obtain the bytes? |
+
+**Decision: a capability that permits mutation confers FIELD-plane readability for the objects it
+governs. It never confers the binary plane.**
+
+So a team-scoped `assets.admin` holder sees the title they are editing, and still cannot download
+a `restricted` asset. That removes the absurdity — nobody deletes a thing they were never shown —
+**without** turning an ADR 0010 capability grant into a content-tier grant, which is what
+"mutation implies full readability" would have done and what every amendment in this ADR has
+avoided.
+
+Note the thumbnail lands on the **binary** side: the thumbhash is withheld precisely because
+*"a thumbhash IS a blur"* (see the amendment above). So the result is a **richer placeholder** —
+real fields, no picture — rather than a blank card. That also discharges the UI obligation the
+orthogonal option would have carried, because the interface stops looking broken on its own.
+
+#### ⛔ The implementation constraint that comes with it — applies regardless
+
+Write-without-read is a legitimate, long-established pattern (file permissions exist to allow
+modification without disclosure; the formal term for the operation is a *blind write*). But there
+is a documented leak class: a system that ignores the **interaction** between read and write
+privileges lets a caller submit writes evaluated against source data rather than only against data
+they may see — **which lets them learn about data they cannot read**.
+
+Applied here: validation errors, conflict responses and the returned representation are all
+oracles. *"Title must differ from current"* discloses the current title to someone the read rule
+would refuse.
+
+> **A mutation response must never disclose more than the read plane would have.**
+
+That holds under this decision and would have held under either alternative. It is the part most
+likely to be missed, because it lives in error paths rather than in the gate.
+
+#### Historical — the seam as first recorded
+
 ### Open seam 2026-08-06 (#930, PR #936) — a mutation capability does not confer readability
 
 `assets.admin` (ADR 0010 Layer 5, amended the same day) lets a team-scoped holder edit, delete and
