@@ -41,8 +41,17 @@ RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: SoftDeletePost :exec
-UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+-- deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
+-- restore gate reads it, so every soft-delete path has to write it.
+UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetPostDeletedBy :one
+-- Who soft-deleted this post. pgx.ErrNoRows when the row is live or
+-- absent — the two cases the restore path already conflates.
+SELECT deleted_by_user_ref
+  FROM posts
+ WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- The two post LIST queries (ListPostsPage, ListPostsByAsset) are NOT
 -- here. They live in list_page.go as hand-built SQL, because the read

@@ -95,8 +95,9 @@ type Asset struct {
 	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
 	Sensitivity string `json:"sensitivity"`
 	// For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.
-	PageCount     *int32  `json:"page_count"`
-	DeletedReason *string `json:"deleted_reason"`
+	PageCount        *int32  `json:"page_count"`
+	DeletedReason    *string `json:"deleted_reason"`
+	DeletedByUserRef *int64  `json:"deleted_by_user_ref"`
 }
 
 type AssetAlternate struct {
@@ -280,9 +281,10 @@ type Collection struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	SearchText     interface{}        `json:"search_text"`
 	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
-	SmartQuery    *string            `json:"smart_query"`
-	DeletedAt     pgtype.Timestamptz `json:"deleted_at"`
-	DeletedReason *string            `json:"deleted_reason"`
+	SmartQuery       *string            `json:"smart_query"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	DeletedReason    *string            `json:"deleted_reason"`
+	DeletedByUserRef *int64             `json:"deleted_by_user_ref"`
 }
 
 type CollectionAcl struct {
@@ -773,6 +775,7 @@ type Post struct {
 	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
 	SubtitleTrackOverride []byte  `json:"subtitle_track_override"`
 	DeletedReason         *string `json:"deleted_reason"`
+	DeletedByUserRef      *int64  `json:"deleted_by_user_ref"`
 }
 
 type PostAcl struct {

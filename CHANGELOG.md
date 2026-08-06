@@ -9,6 +9,67 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **Anyone signed in could edit or delete anyone's assets.** `PATCH /assets/{id}` and
+  `DELETE /assets/{id}` checked one thing: that you were logged in. Not that you owned
+  the asset, not that you had any standing over it — just that you had an account. Any
+  account could therefore retitle, re-tag, rewrite the metadata of, or soft-delete
+  **every asset on the instance**. Posts have gated on `posts.admin` and collections on
+  `collections.admin` since they were written; assets were the outlier (#930).
+
+  The damage was lopsided. Deleting took an account. **Undoing** took `system.admin` —
+  so one ordinary user could remove a studio's entire library and nobody below a
+  super-administrator could put it back.
+
+  Both endpoints now answer **403**, and the row is untouched. You may edit or delete an
+  asset if you own it, if you hold the new `assets.admin` capability, or if you are a
+  `system.admin`.
+
+- **`assets.admin` — manage a team's files without owning them.** A new capability for
+  the case the owner asked for: *"a concept art director should be able to manage a file
+  of someone on their team"*, while *"members shouldn't be able to change other
+  member['s work]"*. Grant it **scoped to a team** and it covers that team **and every
+  team beneath it** — a grant on a division reaches its squads without granting anything
+  outside the division. Grant it globally and it covers the instance.
+
+  It does **not** confer publication. Changing an asset's `status` is what decides
+  whether a stranger can see the asset at all, so it is a decision about disclosure
+  rather than about content, and it stays with the owner and `system.admin`. A team lead
+  can fix your title; they cannot push your unfinished work live. The same line is drawn
+  for posts: a *team-scoped* `posts.admin` can now manage its team's posts but can
+  neither change a post's `visibility` nor **grant anyone access to it** — both are the
+  same lever reached through different endpoints. (A global `posts.admin` is the instance
+  moderator role and is unchanged.)
+
+  Sharing a team with someone still grants you nothing over their files. Only the
+  capability does.
+
+- **Team-scoped moderators could not moderate.** `posts.admin` was only ever consulted as
+  a *global* grant, so an art director whose grant was scoped to one team could not touch
+  that team's posts. It is now scope-aware, the same way `assets.admin` is.
+
+- **`posts.admin` and `collections.admin` were impossible to grant.** Both existed only
+  as strings inside the server. Neither was ever a row in the capabilities table, and
+  every grant path is foreign-keyed to that table — so granting either one, to a person
+  or to a role, failed outright. The two moderator gates that read them could only ever
+  be satisfied by a full `system.admin`. Both are now real capabilities you can grant.
+  Doing so is still a deliberate act: neither is attached to any role, and seeding a
+  capability gives nobody anything until an administrator hands it out.
+
+### Added
+
+- **You can undo your own delete.** Assets, posts and collections now record **who**
+  deleted them, and restoring is no longer administrators-only: if you deleted it, you
+  can put it back. If someone else deleted it, you cannot — you ask for it back instead,
+  which is the case the owner described as *"users should be able to recover their own
+  deleted files, unless deleted by an admin. Then they would need to request for
+  restoration"* (#931). The request-and-approve flow for that second case is not built
+  yet; #931 stays open for it.
+
+  Whoever could delete a thing can now reverse themselves, including a team lead acting
+  under a scoped `assets.admin`. Anything deleted before this release, and anything
+  removed by the automatic retention sweeper, has no recorded deleter and remains
+  restorable by a `system.admin` only.
+
 - **An asset you cannot open no longer hands you its metadata.** A `restricted` asset
   owned by someone else refused you its **bytes** — `/file`, `/download` and every
   `/variants/*` returned 404, correctly, and always had. It then described itself in full

@@ -575,9 +575,13 @@ func (h *Handler) DeleteCollection(
 	err = h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity: em.Activity,
 	}, func(tx pgx.Tx) error {
+		// deleted_by_user_ref is what makes the delete undoable by the
+		// person who did it (#931) — see canRestoreCollection.
+		deleter := caller.UserRef
 		return New(tx).DeleteCollection(ctx, DeleteCollectionParams{
-			ID:            pgID,
-			DeletedReason: softDeleteReasonPtr(reason),
+			ID:               pgID,
+			DeletedReason:    softDeleteReasonPtr(reason),
+			DeletedByUserRef: &deleter,
 		})
 	})
 	if err != nil {
@@ -595,7 +599,10 @@ func (h *Handler) DeleteCollection(
 // ---------------------------------------------------------------------------
 
 // RestoreCollection clears deleted_at + deleted_reason on a soft-
-// deleted collection. Admin-only.
+// deleted collection. See canRestoreCollection for the rule: you undo
+// your own delete, system.admin undoes any. Previously system.admin
+// only, while DeleteCollection was open to the owner — so an owner
+// could delete their collection and then not get it back (#931).
 func (h *Handler) RestoreCollection(
 	ctx context.Context,
 	req openapi.RestoreCollectionRequestObject,
@@ -606,15 +613,26 @@ func (h *Handler) RestoreCollection(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	deletedBy, err := New(h.Pool).GetCollectionDeletedBy(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RestoreCollection404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("collections: load deleted_by: %w", err)
+	}
+	if !canRestoreCollection(id, deletedBy) {
 		return openapi.RestoreCollection403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "this collection was deleted by someone else; ask an administrator to restore it",
+			},
 		}, nil
 	}
 	if h.SoftDelete == nil {
 		return nil, fmt.Errorf("collections: RestoreCollection: SoftDelete service unwired")
 	}
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	if err := h.SoftDelete.RestoreCollection(ctx, nil, uuid.UUID(req.Id), id.UserRef); err != nil {
 		if errors.Is(err, softdelete.ErrNotDeleted) || errors.Is(err, softdelete.ErrNotFound) {
 			return openapi.RestoreCollection404JSONResponse{
@@ -1383,6 +1401,22 @@ func canMutateCollection(id *auth.Identity, row Collection) bool {
 		return true
 	}
 	return id.Can(CapCollectionsAdmin) || id.Can(CapSystemAdmin)
+}
+
+// canRestoreCollection decides who may undo a soft delete. Mirrors
+// assets.canRestoreDeleted exactly — you undo your own delete,
+// system.admin undoes any — and the reasoning lives there.
+//
+// deletedBy is nil for a row deleted before migration 00037; that
+// fails closed to system.admin.
+func canRestoreCollection(id *auth.Identity, deletedBy *int64) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	if id.Can(CapSystemAdmin) {
+		return true
+	}
+	return deletedBy != nil && *deletedBy != 0 && id.UserRef != 0 && *deletedBy == id.UserRef
 }
 
 // ---------------------------------------------------------------------------

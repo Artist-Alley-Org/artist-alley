@@ -505,6 +505,22 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 	return i, err
 }
 
+const getAssetDeletedBy = `-- name: GetAssetDeletedBy :one
+SELECT deleted_by_user_ref
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NOT NULL
+`
+
+// Who soft-deleted this asset. Errors with pgx.ErrNoRows when the row
+// is live or absent, which is the same answer the restore path gives
+// those two cases anyway.
+func (q *Queries) GetAssetDeletedBy(ctx context.Context, id pgtype.UUID) (*int64, error) {
+	row := q.db.QueryRow(ctx, getAssetDeletedBy, id)
+	var deleted_by_user_ref *int64
+	err := row.Scan(&deleted_by_user_ref)
+	return deleted_by_user_ref, err
+}
+
 const getAssetForAIBridge = `-- name: GetAssetForAIBridge :one
 
 SELECT
@@ -569,6 +585,40 @@ func (q *Queries) GetAssetForAIBridge(ctx context.Context, id pgtype.UUID) (GetA
 		&i.FileHash,
 		&i.FileExtension,
 		&i.ExistingTagsJson,
+	)
+	return i, err
+}
+
+const getAssetMutationSubject = `-- name: GetAssetMutationSubject :one
+SELECT owner_user_ref, team_id, status, updated_at
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetAssetMutationSubjectRow struct {
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+	Status       string
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// The authorisation probe behind UpdateAsset / DeleteAsset. Deliberately
+// NOT GetAsset: the mutation gate needs `team_id` (for the team-scoped
+// `assets.admin` disjunct) and a nullable `owner_user_ref`, and widening
+// GetAssetRow to carry team_id would change the shape every read path
+// projects from. `status` comes along because the publication boundary
+// in UpdateAsset compares against the current value, and `updated_at`
+// because the optimistic-concurrency check needs the same row — one
+// read, so the gate and the conflict check can never disagree about
+// which version of the row they looked at.
+func (q *Queries) GetAssetMutationSubject(ctx context.Context, id pgtype.UUID) (GetAssetMutationSubjectRow, error) {
+	row := q.db.QueryRow(ctx, getAssetMutationSubject, id)
+	var i GetAssetMutationSubjectRow
+	err := row.Scan(
+		&i.OwnerUserRef,
+		&i.TeamID,
+		&i.Status,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1152,17 +1202,23 @@ func (q *Queries) SetAssetThumbhashIfMissing(ctx context.Context, arg SetAssetTh
 
 const softDeleteAsset = `-- name: SoftDeleteAsset :exec
 UPDATE assets
-SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type SoftDeleteAssetParams struct {
-	ID            pgtype.UUID
-	DeletedReason *string
+	ID               pgtype.UUID
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
+// deleted_by_user_ref records WHO removed the row, because #931's
+// restore rule turns on it: you may undo your own delete, and an
+// admin's delete is undone by that admin or by system.admin. NULL is
+// the honest answer for a system-scheduled retention delete, and it
+// fails closed — nobody self-restores a row whose deleter is unknown.
 func (q *Queries) SoftDeleteAsset(ctx context.Context, arg SoftDeleteAssetParams) error {
-	_, err := q.db.Exec(ctx, softDeleteAsset, arg.ID, arg.DeletedReason)
+	_, err := q.db.Exec(ctx, softDeleteAsset, arg.ID, arg.DeletedReason, arg.DeletedByUserRef)
 	return err
 }
 

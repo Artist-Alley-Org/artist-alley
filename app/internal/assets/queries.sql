@@ -67,9 +67,36 @@ SET metadata   = COALESCE(metadata, '{}'::jsonb) || sqlc.arg('metadata')::jsonb,
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL;
 
 -- name: SoftDeleteAsset :exec
+-- deleted_by_user_ref records WHO removed the row, because #931's
+-- restore rule turns on it: you may undo your own delete, and an
+-- admin's delete is undone by that admin or by system.admin. NULL is
+-- the honest answer for a system-scheduled retention delete, and it
+-- fails closed — nobody self-restores a row whose deleter is unknown.
 UPDATE assets
-SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetAssetMutationSubject :one
+-- The authorisation probe behind UpdateAsset / DeleteAsset. Deliberately
+-- NOT GetAsset: the mutation gate needs `team_id` (for the team-scoped
+-- `assets.admin` disjunct) and a nullable `owner_user_ref`, and widening
+-- GetAssetRow to carry team_id would change the shape every read path
+-- projects from. `status` comes along because the publication boundary
+-- in UpdateAsset compares against the current value, and `updated_at`
+-- because the optimistic-concurrency check needs the same row — one
+-- read, so the gate and the conflict check can never disagree about
+-- which version of the row they looked at.
+SELECT owner_user_ref, team_id, status, updated_at
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetAssetDeletedBy :one
+-- Who soft-deleted this asset. Errors with pgx.ErrNoRows when the row
+-- is live or absent, which is the same answer the restore path gives
+-- those two cases anyway.
+SELECT deleted_by_user_ref
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- name: ListAssetsPage :many
 -- NOT THE ENFORCEMENT PATH. This query applies no visibility predicate,

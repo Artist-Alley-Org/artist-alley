@@ -990,6 +990,153 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 }
 
 // ---------------------------------------------------------------------------
+// Authorization helpers
+// ---------------------------------------------------------------------------
+
+// CapAssetsAdmin lets a holder manage assets that are not theirs —
+// metadata edit, soft-delete, and undo of their own delete. Named to
+// read alike beside posts.CapPostsAdmin ("posts.admin") and
+// collections' "collections.admin", the two capabilities it behaves
+// like; migration 00037 seeds it.
+//
+// It is scope-aware. A grant with `user_capability_grants.team_id = X`
+// covers X and every descendant of X, because the resolver
+// pre-expands scoped grants through `team_closure` before Can() ever
+// runs (auth/middleware.go). That is what makes "a concept art
+// director may manage a file belonging to someone on their team" one
+// call rather than a tree walk.
+//
+// It does NOT confer publication — see canMutateAsset's note on the
+// publication boundary and the design note in migration 00037.
+const CapAssetsAdmin = "assets.admin"
+
+// canMutateAsset decides whether the caller may edit or delete this
+// asset. Owner, a team-scoped or global `assets.admin`, or
+// `system.admin`.
+//
+// Assets were the outlier here: UpdateAsset and DeleteAsset checked
+// only that the caller was authenticated, so any signed-in account
+// could rewrite or remove every asset in the instance (#930). Posts
+// and collections have had canMutatePost / canMutateCollection since
+// they were written. This is deliberately ONE helper serving both
+// handlers rather than two inline checks, because two copies of a
+// security rule drift and the drift is the bug.
+//
+// The three arguments come from GetAssetMutationSubject, and each of
+// the two nullable ones is a trap:
+//
+//   - ownerRef is *int64: `assets.owner_user_ref` is NULLABLE. A
+//     NULL owner must match NOBODY. Dereferencing it blind panics;
+//     treating nil as "unowned, so fair game" would hand every
+//     ownerless asset to every caller. Only system.admin reaches one.
+//
+//   - teamID may be invalid: `assets.team_id` is NULLABLE too. An
+//     asset with no team has no scope for InTeam to check, so the
+//     scoped disjunct is SKIPPED and the caller falls back to owner
+//     or a GLOBAL grant. It must never fall back to "no scope
+//     required, therefore anyone passes" — a team-scoped grant holder
+//     gets nothing from a team-less asset.
+//
+// And the caller side has the third: the anonymous sentinel carries
+// UserRef 0 (auth.Identity.IsAnonymous). visibility/content.go
+// documents the same hazard on the read path — an asset owned by ref
+// 0 would make a bare `*ownerRef == id.UserRef` hand ownership to
+// every anonymous visitor. So non-anonymity is established BEFORE any
+// ownership comparison, and ref 0 is refused as an owner outright.
+func canMutateAsset(id *auth.Identity, ownerRef *int64, teamID pgtype.UUID) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	// system.admin is the global override everywhere. Checked first so
+	// it reaches NULL-owner and team-less assets too.
+	if id.Can(auth.SuperAdminCapability) {
+		return true
+	}
+	// Ownership. Both sides must be a real user: ref 0 is the anonymous
+	// sentinel, never a principal, on either side of the comparison.
+	if ownerRef != nil && *ownerRef != 0 && id.UserRef != 0 && *ownerRef == id.UserRef {
+		return true
+	}
+	// Team-scoped grant — only when the asset actually HAS a team.
+	if teamID.Valid {
+		if id.Can(CapAssetsAdmin, auth.InTeam(uuid.UUID(teamID.Bytes))) {
+			return true
+		}
+	}
+	// Global grant. Reached for a team-less asset, and for an asset in
+	// a team the caller holds no scoped grant over.
+	return id.Can(CapAssetsAdmin)
+}
+
+// canSetAssetStatus decides whether the caller may change an asset's
+// publication status, which is a STRICTLY narrower question than
+// canMutateAsset: owner or system.admin only.
+//
+// The dangerous permission is never "edit the thing", it is "change
+// who can reach the thing". On an asset that lever is `status`:
+// visibility/predicate.go demands `status = 'active'` before an
+// anonymous reader may see the row, so flipping a colleague's draft to
+// active publishes their unfinished work to the open internet, and
+// flipping their active asset to draft retracts it. A team lead
+// granted "manage my team's files" was granted content management, not
+// a disclosure decision — the same separation Kubernetes draws by
+// withholding its `escalate` / `bind` verbs from ordinary edit rights.
+//
+// The vocabulary already anticipated the split: `assets.publish`,
+// `assets.archive`, `assets.review`, `assets.submit` and
+// `assets.unarchive` are separate workflow verbs (seeded in 00002, not
+// yet wired to any gate). Publication being unbundled already is what
+// lets `assets.admin` sit beside them without absorbing it.
+func canSetAssetStatus(id *auth.Identity, ownerRef *int64) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	if id.Can(auth.SuperAdminCapability) {
+		return true
+	}
+	return ownerRef != nil && *ownerRef != 0 && id.UserRef != 0 && *ownerRef == id.UserRef
+}
+
+// canRestoreDeleted decides who may undo a soft delete, for any of the
+// three soft-deletable entities. The rule is deliberately about the
+// DELETER, not about the caller's standing authority (#931):
+//
+//	"users should be able to recover their own deleted files, unless
+//	 deleted by an admin. Then they would need to request for
+//	 restoration."
+//
+// So: you may undo your own delete, and system.admin may undo any.
+// Nothing else. That single rule satisfies both halves at once —
+//
+//   - Restore authority matches delete authority. Whoever could delete
+//     it can undo it, because the deleter is by construction someone
+//     who passed the delete gate. Before this, delete was open to every
+//     authenticated user and restore was system.admin only, which is
+//     the asymmetry #931 objects to; conditioning restore on the
+//     caller's authority INSTEAD of on the deleter would just move that
+//     asymmetry one level up.
+//
+//   - An admin's delete is not silently reversible by the owner. If it
+//     were "owner OR deleter", an owner could undo a moderation action
+//     the instant it landed. Asking for restoration is the intended
+//     path there; the request flow itself is #931's other half and is
+//     not built yet.
+//
+// deletedBy is nil for a row deleted before migration 00037 and for a
+// system-scheduled retention delete (scheduled_actions.created_by is
+// nullable). Both mean "we do not know who did this", and both fail
+// closed to system.admin.
+func canRestoreDeleted(id *auth.Identity, deletedBy *int64) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	if id.Can(auth.SuperAdminCapability) {
+		return true
+	}
+	return deletedBy != nil && *deletedBy != 0 && id.UserRef != 0 && *deletedBy == id.UserRef
+}
+
+// ---------------------------------------------------------------------------
 // UpdateAsset
 // ---------------------------------------------------------------------------
 
@@ -997,7 +1144,8 @@ func (h *Handler) UpdateAsset(
 	ctx context.Context,
 	req openapi.UpdateAssetRequestObject,
 ) (openapi.UpdateAssetResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil || caller.IsAnonymous() {
 		return openapi.UpdateAsset401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
@@ -1052,35 +1200,58 @@ func (h *Handler) UpdateAsset(
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := New(tx)
 
+	// Read the row the gate and the concurrency check both need,
+	// inside the tx and BEFORE the UPDATE. Order matters twice over:
+	//
+	//   - Before the UPDATE, so a refused caller changes nothing. A
+	//     gate that answers 403 after writing is a gate that does not
+	//     exist, and a status-only assertion would not catch it.
+	//   - Inside the tx, so the authorisation decision and the
+	//     optimistic-concurrency comparison are made against the same
+	//     version of the row that the UPDATE then locks.
+	subject, err := q.GetAssetMutationSubject(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: load mutation subject: %w", err)
+	}
+	if !canMutateAsset(caller, subject.OwnerUserRef, subject.TeamID) {
+		return openapi.UpdateAsset403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "you may not edit this asset"},
+		}, nil
+	}
+	// The publication boundary. `assets.admin` is content management;
+	// changing `status` is a disclosure decision, and canSetAssetStatus
+	// is the narrower gate that says so. Compared against the CURRENT
+	// value so a no-op PATCH that merely echoes the status back is not
+	// refused — the boundary is about CHANGING who can reach the asset.
+	if statusPtr != nil && *statusPtr != subject.Status && !canSetAssetStatus(caller, subject.OwnerUserRef) {
+		return openapi.UpdateAsset403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "changing an asset's publication status is reserved to its owner",
+			},
+		}, nil
+	}
+
 	// Phase 1.16 optimistic-concurrency check. Done inside the tx
 	// so two simultaneous edits can't both pass the gate + both
 	// commit (the tx isolation guarantees this row is locked by
 	// the UPDATE that follows). Caller opts in by passing
 	// if_unchanged_since; absent = legacy last-write-wins.
 	if in.IfUnchangedSince != nil {
-		var currentUpdatedAt time.Time
-		err := tx.QueryRow(ctx,
-			`SELECT updated_at FROM assets WHERE id = $1 AND deleted_at IS NULL`,
-			pgID,
-		).Scan(&currentUpdatedAt)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return openapi.UpdateAsset404JSONResponse{
-					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-				}, nil
-			}
-			return nil, fmt.Errorf("assets: load updated_at: %w", err)
-		}
 		// Truncate both sides to microsecond precision — Postgres
 		// stores timestamptz at µs while Go's JSON marshalling
 		// round-trips at ns. A bare equality check would false-
 		// positive on the trailing ns.
-		stored := currentUpdatedAt.Truncate(time.Microsecond)
+		stored := subject.UpdatedAt.Time.Truncate(time.Microsecond)
 		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
 		if !stored.Equal(sent) {
 			return openapi.UpdateAsset409JSONResponse{
 				Error:     "asset was edited by someone else after your last load; reload and try again",
-				UpdatedAt: currentUpdatedAt,
+				UpdatedAt: subject.UpdatedAt.Time,
 			}, nil
 		}
 	}
@@ -1149,7 +1320,8 @@ func (h *Handler) DeleteAsset(
 	ctx context.Context,
 	req openapi.DeleteAssetRequestObject,
 ) (openapi.DeleteAssetResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil || caller.IsAnonymous() {
 		return openapi.DeleteAsset401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
@@ -1168,22 +1340,42 @@ func (h *Handler) DeleteAsset(
 		}
 		return nil, err
 	}
+	// Same gate as UpdateAsset, same helper, checked before the write.
+	// GetAssetRow carries owner_user_ref but not team_id — widening it
+	// would change the row shape every read path projects from, so the
+	// scope comes from the dedicated authorisation probe.
+	subject, err := q.GetAssetMutationSubject(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.DeleteAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: load mutation subject: %w", err)
+	}
+	if !canMutateAsset(caller, subject.OwnerUserRef, subject.TeamID) {
+		return openapi.DeleteAsset403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "you may not delete this asset"},
+		}, nil
+	}
 	reason := extractSoftDeleteReason(req.Body)
 	if len(reason) > softDeleteReasonMaxLen {
 		return openapi.DeleteAsset400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "reason exceeds 500 chars"},
 		}, nil
 	}
+	// deleted_by_user_ref is what makes the delete undoable by the
+	// person who did it (#931) — see canRestoreDeleted.
+	deleter := caller.UserRef
 	if err := q.SoftDeleteAsset(ctx, SoftDeleteAssetParams{
-		ID:            pgID,
-		DeletedReason: softDeleteReasonPtr(reason),
+		ID:               pgID,
+		DeletedReason:    softDeleteReasonPtr(reason),
+		DeletedByUserRef: &deleter,
 	}); err != nil {
 		return nil, fmt.Errorf("assets: soft-delete: %w", err)
 	}
 	if h.Audit != nil {
-		if id := auth.IdentityFromContext(ctx); id != nil {
-			h.Audit.AdminAssetSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), id.UserRef, reason)
-		}
+		h.Audit.AdminAssetSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), caller.UserRef, reason)
 	}
 	if row.FileHash != nil {
 		if err := h.Storage.RemovePin(ctx, storage.PinRef{
@@ -1225,8 +1417,15 @@ func (h *Handler) invalidateHoldingPosts(ctx context.Context, assetID uuid.UUID,
 // ---------------------------------------------------------------------------
 
 // RestoreAsset clears deleted_at + deleted_reason on a soft-deleted
-// asset. Admin-only. 404 if the asset is already live (or doesn't
-// exist); 403 for non-admin authenticated callers; 401 for anon.
+// asset. 404 if the asset is already live (or doesn't exist); 403 for
+// a caller who didn't delete it and isn't system.admin; 401 for anon.
+//
+// Until #931 this was system.admin ONLY, while DeleteAsset was open to
+// every authenticated user — anyone could remove a studio's library and
+// nobody below super-admin could undo it. The gate is now
+// canRestoreDeleted: you undo your own delete, system.admin undoes any.
+// See that helper for why the rule turns on the DELETER rather than on
+// the caller's standing authority.
 //
 // The audit event fires from softdelete.Service.RestoreAsset itself
 // so the write + audit stay together.
@@ -1240,9 +1439,23 @@ func (h *Handler) RestoreAsset(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	deletedBy, err := New(h.Pool).GetAssetDeletedBy(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Live or absent — the same 404 the restore itself gives
+			// those two cases.
+			return openapi.RestoreAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: load deleted_by: %w", err)
+	}
+	if !canRestoreDeleted(id, deletedBy) {
 		return openapi.RestoreAsset403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "this asset was deleted by someone else; ask an administrator to restore it",
+			},
 		}, nil
 	}
 	if h.SoftDelete == nil {
