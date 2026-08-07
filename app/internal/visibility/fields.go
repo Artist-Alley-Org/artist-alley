@@ -25,6 +25,31 @@ type FieldsRow struct {
 	ProcessingStatus string
 	OwnerUserRef     *int64
 	IsTeamMember     bool
+
+	// TeamID is the asset's `team_id`, nil when it has none. RAW data,
+	// unlike IsTeamMember beside it: it is the scope
+	// [AssetMutationCaps.MayMutate] matches a scoped `assets.admin`
+	// grant against, and the answer depends on the CALLER's team set,
+	// which no per-row SQL expression here has.
+	TeamID *uuid.UUID
+
+	// CallerMayMutate is the pre-computed answer to "may this caller
+	// edit or delete this asset by capability" — #939 / ADR 0064.
+	// Set it with [FieldsRow.ApplyMutationCaps]; the zero value is
+	// false, which fails CLOSED (a surface that never sets it withholds
+	// exactly as it did before the capability existed).
+	CallerMayMutate bool
+}
+
+// ApplyMutationCaps fills [FieldsRow.CallerMayMutate] from the caller's
+// resolved capabilities and this row's TeamID.
+//
+// One call per scanned row, immediately after the scan, at every
+// surface — rather than each surface open-coding the match — so the
+// team-less-asset trap documented on [AssetMutationCaps.MayMutate] has
+// exactly one expression.
+func (r *FieldsRow) ApplyMutationCaps(m AssetMutationCaps) {
+	r.CallerMayMutate = m.MayMutate(r.TeamID)
 }
 
 // FieldsReadable decides whether a caller may receive an asset's
@@ -98,7 +123,69 @@ type FieldsRow struct {
 // [ContentReadable]; a NULL owner never matches; and the anonymous
 // sentinel (UserRef 0) can never match an asset owned by ref 0, both
 // guards inherited from the same place.
+// # The mutation disjunct (#939, ADR 0064)
+//
+// ADR 0064 decided on 2026-08-06 that *"a capability that permits
+// mutation confers FIELD-plane readability for the objects it governs.
+// It never confers the binary plane."* So a team-scoped `assets.admin`
+// holder sees the title they are editing, and still cannot download a
+// restricted asset — nobody deletes a thing they were never shown, and
+// an ADR 0010 capability grant still does not become a content-tier
+// grant.
+//
+// That disjunct is HERE and deliberately NOT inside [ContentReadable].
+// ContentReadable governs the BYTES: it backs CanReadContent and the
+// binary handlers, and it has a SQL twin, [ContentReadableSQL], held to
+// it by TestContentReadableSQL_MatchesGo. Putting the disjunct there
+// would hand a mutation holder the originals of every restricted asset
+// in their team — the exact coupling every amendment in ADR 0064 has
+// avoided — and would have to be transcribed into the SQL twin to keep
+// that test passing, which is how you would notice too late.
+//
+// It is also deliberately not in [PreviewReadable], which is the same
+// conjunction WITHOUT this disjunct. See that function for why the
+// picture does not follow the fields.
 func FieldsReadable(row FieldsRow, caller Caller, caps CapabilityChecker) bool {
+	if PreviewReadable(row, caller, caps) {
+		return true
+	}
+	// The FIELD plane only. row.CallerMayMutate is the resolved
+	// `assets.admin` answer for THIS asset's team — see
+	// [FieldsRow.ApplyMutationCaps]. Zero value denies, so a surface
+	// that has not been wired behaves exactly as it did before.
+	return row.CallerMayMutate
+}
+
+// PreviewReadable decides whether a caller may receive an asset's
+// PICTURE — the `thumbhash` blur-up placeholder, and the
+// `preview_available` / `ladder_available` / `scrub_available` flags
+// that tell a client a rendition is fetchable.
+//
+// It is [FieldsReadable] MINUS the mutation disjunct, and the two
+// separated on 2026-08-06 (#939). Before that they were one function,
+// because before that there was no way to pass one and fail the other.
+//
+// # Why the picture does not follow the fields
+//
+// ADR 0064's decision confers the field plane on a mutation holder and
+// explicitly does NOT confer the binary plane, and it places the
+// thumbnail on the BINARY side: the thumbhash is withheld precisely
+// because *"a thumbhash IS a blur"* — it is a low-fidelity copy of the
+// image, so shipping it to someone refused the original ships the
+// original's content at lower resolution. The intended result is a
+// RICHER PLACEHOLDER — real fields, no picture — not a readable asset.
+//
+// The three availability flags ride the same plane for a different
+// reason: they are a promise the binary handlers must keep. Deriving
+// them from the field plane would set them true for a caller whose
+// /file and /variants requests are then refused by [ContentReadable],
+// which is a 403 the client walks straight into.
+//
+// So every surface makes TWO decisions from one row: FieldsReadable for
+// the columns, PreviewReadable for the picture and the flags. A surface
+// that uses FieldsReadable for both silently hands a mutation holder
+// the blur.
+func PreviewReadable(row FieldsRow, caller Caller, caps CapabilityChecker) bool {
 	// SystemAdmin (wildcard) and ContentReadAll (binary plane, #474)
 	// short-circuit both planes, exactly as they do in ContentReadable.
 	// ContentReadAll admitting METADATA as well as bytes is deliberate:
@@ -143,13 +230,22 @@ func FieldsReadable(row FieldsRow, caller Caller, caps CapabilityChecker) bool {
 // Column order, which callers scan positionally:
 //
 //	sensitivity, status, processing_status, owner_user_ref,
-//	is_team_member, owner_display_name
+//	team_id, is_team_member, owner_display_name
+//
+// `team_id` is RAW, not a decided answer like `is_team_member` beside
+// it, and it is the one column here that is not decidable in SQL: it
+// gets matched in Go against the caller's closure-expanded
+// `assets.admin` team set (see [AssetMutationCaps]), which the auth
+// resolver computed at request time from role inheritance, grants,
+// revokes and `team_closure` together. Re-deriving that here would be a
+// second, narrower expression of the capability resolver.
 func FieldsColumnsSQL(alias, callerArg string) string {
 	p := ""
 	if alias != "" {
 		p = alias + "."
 	}
 	return p + `sensitivity, ` + p + `status, ` + p + `processing_status, ` + p + `owner_user_ref,
+	       ` + p + `team_id,
 	       (` + p + `team_id IS NOT NULL AND EXISTS (
 	            SELECT 1 FROM team_memberships tm
 	             WHERE tm.team_id = ` + p + `team_id AND tm.user_ref = ` + callerArg + `::BIGINT)) AS is_team_member,
@@ -175,11 +271,17 @@ type FieldsPool interface {
 // Fails CLOSED — a missing row returns the zero FieldsRow and an error,
 // and the zero FieldsRow denies on every tier, because an asset we
 // cannot load is an asset whose columns we do not hand out.
+// `mut` is the caller's resolved asset-mutation capabilities (#939);
+// pass the zero value for a surface that does not honour them, which
+// denies. It is a parameter rather than something the query resolves
+// because the team set lives on the caller's Identity, which this
+// package deliberately cannot see.
 func LoadFieldsRow(
 	ctx context.Context,
 	pool FieldsPool,
 	caller Caller,
 	assetID uuid.UUID,
+	mut AssetMutationCaps,
 ) (FieldsRow, string, error) {
 	var (
 		row       FieldsRow
@@ -189,9 +291,10 @@ func LoadFieldsRow(
 		`SELECT `+FieldsColumnsSQL("assets", "$2")+` FROM assets WHERE id = $1`,
 		assetID, caller.UserRef,
 	).Scan(&row.Sensitivity, &row.Status, &row.ProcessingStatus,
-		&row.OwnerUserRef, &row.IsTeamMember, &ownerName)
+		&row.OwnerUserRef, &row.TeamID, &row.IsTeamMember, &ownerName)
 	if err != nil {
 		return FieldsRow{}, "", fmt.Errorf("visibility.LoadFieldsRow: %w", err)
 	}
+	row.ApplyMutationCaps(mut)
 	return row, ownerName, nil
 }

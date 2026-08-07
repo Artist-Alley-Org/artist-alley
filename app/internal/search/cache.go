@@ -135,6 +135,15 @@ func keyForQuery(q Query) string {
 	// served the cached wider page for the rest of the TTL.
 	sb.WriteString(q.PostCaps.CacheKey())
 	sb.WriteByte('|')
+	// #939 — and the asset-mutation scope, same reason, same direction:
+	// `assets.admin` widens the FIELDS a restricted asset's card
+	// carries, so a caller who LOSES it would otherwise keep being
+	// served the cached titles, descriptions and tags for the rest of
+	// the TTL. Folding a per-caller value in costs no cross-caller hit
+	// rate, because the key already includes the caller's user_ref —
+	// see AssetMutationCaps.CacheKey for the full argument.
+	sb.WriteString(q.MutationCaps.CacheKey())
+	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')
 	// Phase 1.16.B-3 — vector-hint identifier folds into the key

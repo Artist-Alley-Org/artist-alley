@@ -41,6 +41,19 @@ func callerOf(q Query) (visibility.Caller, visibility.CapabilityChecker) {
 	return visibility.NewCaller(q.CallerUserRef), q.Caps.Checker()
 }
 
+// mutCapsOf is the caller's resolved asset-mutation capabilities (#939),
+// carried on the Query rather than read from the request context.
+//
+// That is not incidental. The engine runs behind a result CACHE whose
+// key is built from the Query value alone (cache.go), and on a hit no
+// per-row readability code executes at all. A capability read from
+// anywhere but the Query would therefore be absent from the key, which
+// is exactly the stale-unredacted-cache defect #899 closed. Anything
+// that widens a projection must travel by a route the key can see.
+func mutCapsOf(q Query) visibility.AssetMutationCaps {
+	return q.MutationCaps
+}
+
 // callerRefOf is the bare user_ref the FieldsColumnsSQL fragment binds
 // for its team-membership EXISTS. Anonymous carries
 // visibility.AnonymousCaller (0), which matches no membership row.

@@ -884,8 +884,16 @@ func (h *Handler) ListCollectionResources(
 	// caps only short-circuits preview_available for SystemAdmin /
 	// content.read.all (#471); it does not affect row visibility.
 	var caps visibility.CapabilityChecker
+	// #939 — the caller's `assets.admin` scope, which widens the FIELD
+	// plane of a restricted member (ADR 0064). Resolved beside caps
+	// because it is the same question asked of a different plane.
+	var mutCaps visibility.AssetMutationCaps
 	if id := auth.IdentityFromContext(ctx); id != nil {
 		caps = func(code string) bool { return id.Can(code) }
+		mutCaps = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 	}
 	fetch := limit + 1
 	rows, err := ListCollectionResourcesPageGated(ctx, h.Pool, caller, caps,
@@ -895,6 +903,7 @@ func (h *Handler) ListCollectionResources(
 			CursorAddedAt:   cursorAdded,
 			RowLimit:        fetch,
 			Ladder:          h.ladder(ctx),
+			MutationCaps:    mutCaps,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)

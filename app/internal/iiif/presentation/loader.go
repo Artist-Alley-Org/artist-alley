@@ -214,7 +214,10 @@ func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID, caller visibi
 //
 // caps may be nil (anonymous, or a caller with no capability checker) —
 // visibility.FieldsReadable handles that.
-func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, caller visibility.Caller, caps visibility.CapabilityChecker, limit int) ([]EntityRef, error) {
+//
+// `mut` is the caller's resolved `assets.admin` scope (#939); the zero
+// value denies, which is the pre-#939 behaviour.
+func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, caller visibility.Caller, caps visibility.CapabilityChecker, mut visibility.AssetMutationCaps, limit int) ([]EntityRef, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -232,7 +235,8 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		       a.created_at, a.updated_at,
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
-		             WHERE tm.team_id = a.team_id AND tm.user_ref = $3::BIGINT)) AS is_team_member
+		             WHERE tm.team_id = a.team_id AND tm.user_ref = $3::BIGINT)) AS is_team_member,
+		       a.team_id
 		  FROM collection_resources cr
 		  JOIN assets a ON a.id = cr.asset_id
 		 WHERE cr.collection_id = $1
@@ -256,9 +260,10 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 			origin    *uuid.UUID
 			ext       *string
 			isTeam    bool
+			teamID    *uuid.UUID
 		)
 		if err := rows.Scan(&ref.ID, &ref.Title, &sens, &status, &procState, &owner,
-			&origin, &ext, &ref.CreatedAt, &ref.UpdatedAt, &isTeam); err != nil {
+			&origin, &ext, &ref.CreatedAt, &ref.UpdatedAt, &isTeam, &teamID); err != nil {
 			return nil, err
 		}
 		ref.Kind = EntityAsset
@@ -268,13 +273,22 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		if ext != nil {
 			ref.FileExtension = *ext
 		}
-		ref.MemberReadable = visibility.FieldsReadable(visibility.FieldsRow{
+		// #939 — the FIELD plane, which is all a IIIF collection member
+		// carries: an id and a label. There is no picture here to split
+		// off (the tiles live behind visibility.CanReadContent in
+		// iiif/http.go, and a restricted asset's manifest is a stub), so
+		// a scoped `assets.admin` holder sees the titles of the members
+		// they administer and still gets no pixels.
+		fr := visibility.FieldsRow{
 			Sensitivity:      sens,
 			Status:           status,
 			ProcessingStatus: procState,
 			OwnerUserRef:     owner,
 			IsTeamMember:     isTeam,
-		}, caller, caps)
+			TeamID:           teamID,
+		}
+		fr.ApplyMutationCaps(mut)
+		ref.MemberReadable = visibility.FieldsReadable(fr, caller, caps)
 		out = append(out, ref)
 	}
 	return out, rows.Err()

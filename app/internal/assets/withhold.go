@@ -51,6 +51,15 @@ func withheldAsset(id openapi_types.UUID, ownerDisplayName string) openapi.Asset
 // withholdSingleAsset applies the #899 rule to a single-asset payload,
 // loading the row's readability inputs for this caller.
 //
+// ⚠️ It currently has NO CALLERS. The paths named below reach the same
+// rule through enrichAssetDerived instead, which loads the same
+// FieldsRow and applies the same withholding inline. Noted rather than
+// quietly deleted while wiring #939 — the comment used to assert those
+// call sites as fact, and a reader trusting it would conclude the
+// single-asset paths were gated somewhere they are not. They ARE gated;
+// just not here. Kept in step with the rest of the plane so it cannot
+// come back wrong if something does call it.
+//
 // The single-asset paths (GetAsset, UpdateAsset, the create/dedup
 // splice) reach one asset at a time and have no readability decision in
 // hand, so this one does its own round trip — the same trade
@@ -68,11 +77,25 @@ func (h *Handler) withholdSingleAsset(ctx context.Context, a openapi.Asset) (ope
 		return a, nil
 	}
 	caller, caps := contentCaller(ctx)
-	row, ownerName, err := visibility.LoadFieldsRow(ctx, h.Pool, caller, assetID)
+	row, ownerName, err := visibility.LoadFieldsRow(ctx, h.Pool, caller, assetID, mutationCaps(ctx))
 	if err != nil {
 		return withheldAsset(a.Id, ""), err
 	}
 	if visibility.FieldsReadable(row, caller, caps) {
+		// #939 — the fields are readable, the PICTURE may not be. A
+		// caller who reaches this row only through `assets.admin` gets a
+		// richer placeholder, not a rendered asset: ADR 0064 puts the
+		// thumbhash on the binary side because a thumbhash IS a blur.
+		//
+		// This is also the mutation-response oracle the ADR calls out.
+		// UpdateAsset returns through here, so the representation a
+		// write hands back is held to the same read plane as a GET —
+		// it cannot disclose more than the caller could have read.
+		if !visibility.PreviewReadable(row, caller, caps) {
+			a.Thumbhash = nil
+			no := false
+			a.PreviewAvailable, a.LadderAvailable, a.ScrubAvailable = &no, &no, &no
+		}
 		return a, nil
 	}
 	return withheldAsset(a.Id, ownerName), nil

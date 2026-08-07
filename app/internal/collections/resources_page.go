@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -54,6 +55,10 @@ type ListCollectionResourcesPageGatedParams struct {
 	// Ladder is the operator's CONFIGURED preview variant keys (#591).
 	// Empty means "unknown" and resolves to ladder_available = false.
 	Ladder []string
+	// MutationCaps is the caller's resolved `assets.admin` scope
+	// (#939). Widens the FIELD plane only — never the picture, never
+	// the bytes. The zero value denies, so omitting it fails closed.
+	MutationCaps visibility.AssetMutationCaps
 }
 
 // ListCollectionResourcesPageGatedRow is a contents row plus the derived
@@ -132,7 +137,8 @@ func ListCollectionResourcesPageGated(
              WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'sprites.vtt')) AS has_scrub_variant,
        (a.team_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM team_memberships tm
-             WHERE tm.team_id = a.team_id AND tm.user_ref = $5::BIGINT)) AS caller_is_team_member
+             WHERE tm.team_id = a.team_id AND tm.user_ref = $5::BIGINT)) AS caller_is_team_member,
+       a.team_id
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 LEFT JOIN "user" u          ON u.ref = a.owner_user_ref
@@ -167,6 +173,7 @@ LIMIT $4::INTEGER`
 			hasFullLadder      bool
 			hasScrubVariant    bool
 			callerIsTeamMember bool
+			assetTeamID        *uuid.UUID
 		)
 		if err := rows.Scan(
 			&i.CollectionID, &i.AssetID, &i.SortOrder, &i.Pinned,
@@ -177,16 +184,28 @@ LIMIT $4::INTEGER`
 			&sensitivity, &processingStatus, &ownerUserRef, &ownerDisplayName,
 			&pixelWidth, &pixelHeight,
 			&hasColVariant, &hasFullLadder, &hasScrubVariant, &callerIsTeamMember,
+			&assetTeamID,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list resources scan: %w", err)
 		}
-		readable := visibility.FieldsReadable(visibility.FieldsRow{
+		fr := visibility.FieldsRow{
 			Sensitivity:      sensitivity,
 			Status:           i.Status,
 			ProcessingStatus: processingStatus,
 			OwnerUserRef:     ownerUserRef,
 			IsTeamMember:     callerIsTeamMember,
-		}, caller, caps)
+			TeamID:           assetTeamID,
+		}
+		fr.ApplyMutationCaps(p.MutationCaps)
+		readable := visibility.FieldsReadable(fr, caller, caps)
+		// #939 — the FIELD plane admits a scoped `assets.admin` holder;
+		// the PICTURE plane does not. ADR 0064 keeps the thumbhash and
+		// the availability flags on the binary side, so a holder gets a
+		// richer placeholder rather than a rendered tile.
+		picture := visibility.PreviewReadable(fr, caller, caps)
+		if !picture {
+			i.Thumbhash = nil
+		}
 		if !readable {
 			// Placeholder: keep the collection_resources columns, drop
 			// EVERY asset column. Constructed from a ZERO row rather than
@@ -209,9 +228,12 @@ LIMIT $4::INTEGER`
 		}
 		row := ListCollectionResourcesPageGatedRow{
 			ListCollectionResourcesPageRow: i,
-			PreviewAvailable:               hasColVariant,
-			LadderAvailable:                hasFullLadder,
-			ScrubAvailable:                 hasScrubVariant,
+			// AND with `picture`, not `readable` (#939): these three are
+			// a promise the binary handlers must keep, and they still
+			// refuse a mutation holder.
+			PreviewAvailable: hasColVariant && picture,
+			LadderAvailable:  hasFullLadder && picture,
+			ScrubAvailable:   hasScrubVariant && picture,
 		}
 		if pixeldims.Sane(pixelWidth, pixelHeight) {
 			row.PixelWidth, row.PixelHeight = pixelWidth, pixelHeight

@@ -1948,9 +1948,16 @@ func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
 func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) error {
 	caller := visibility.NewCaller(nil)
 	var caps visibility.CapabilityChecker
+	// #939 — the caller's `assets.admin` scope. Widens the FIELD plane
+	// of a restricted member (ADR 0064) and nothing else.
+	var mut visibility.AssetMutationCaps
 	if id := auth.IdentityFromContext(ctx); id != nil {
 		caller = visibility.NewCaller(&id.UserRef)
 		caps = func(code string) bool { return id.Can(code) }
+		mut = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 	}
 
 	idSet := make(map[uuid.UUID]struct{})
@@ -1996,6 +2003,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
 		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member,
+		       a.team_id,
 		       a.thumbhash,
 		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
@@ -2055,38 +2063,48 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			thumb     []byte
 			pxW       *int32
 			pxH       *int32
+			teamID    *uuid.UUID
 		)
 		if err := rows.Scan(&id, &sens, &status, &procState, &owner, &ownerName,
-			&hasCol, &hasLadder, &hasScrub, &isMember, &thumb, &pxW, &pxH); err != nil {
+			&hasCol, &hasLadder, &hasScrub, &isMember, &teamID, &thumb, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
 		if pixeldims.Sane(pxW, pxH) {
 			dims[uuid.UUID(id.Bytes)] = [2]int32{*pxW, *pxH}
 		}
-		if len(thumb) > 0 {
-			// Base64 on the wire, matching assets.rowToAPI — the
-			// frontend decoder takes either form and this is the one
-			// every other surface already ships.
-			hashes[uuid.UUID(id.Bytes)] = base64.StdEncoding.EncodeToString(thumb)
-		}
-		// ONE readability decision feeds the three availability flags AND
-		// the #883 redaction. Deriving any of them from anything other
-		// than this single call would let them disagree on a restricted
-		// asset — a true ladder flag on gated bytes is a 403 the client
-		// walks straight into, and a false redaction flag on a gated row
-		// is the leak this issue closes.
-		ok := visibility.FieldsReadable(visibility.FieldsRow{
+		// TWO decisions from one row (#939). `ok` is the FIELD plane and
+		// admits a scoped `assets.admin` holder; `picture` is the same
+		// conjunction WITHOUT that disjunct and gates the blur plus the
+		// three availability flags, because ADR 0064 puts the thumbhash
+		// on the binary side — "a thumbhash IS a blur" — and the flags
+		// are a promise the binary handlers still refuse to keep.
+		//
+		// They agree for every caller except a mutation holder, so the
+		// original invariant (flags and redaction never disagree on a
+		// restricted asset) is preserved: a true ladder flag on gated
+		// bytes is still impossible.
+		fr := visibility.FieldsRow{
 			Sensitivity:      sens,
 			Status:           status,
 			ProcessingStatus: procState,
 			OwnerUserRef:     owner,
 			IsTeamMember:     isMember,
-		}, caller, caps)
+			TeamID:           teamID,
+		}
+		fr.ApplyMutationCaps(mut)
+		ok := visibility.FieldsReadable(fr, caller, caps)
+		picture := visibility.PreviewReadable(fr, caller, caps)
+		if len(thumb) > 0 && picture {
+			// Base64 on the wire, matching assets.rowToAPI — the
+			// frontend decoder takes either form and this is the one
+			// every other surface already ships.
+			hashes[uuid.UUID(id.Bytes)] = base64.StdEncoding.EncodeToString(thumb)
+		}
 		readable[uuid.UUID(id.Bytes)] = ok
 		ownerNames[uuid.UUID(id.Bytes)] = ownerName
-		avail[uuid.UUID(id.Bytes)] = hasCol && ok
-		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && ok
-		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && ok
+		avail[uuid.UUID(id.Bytes)] = hasCol && picture
+		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && picture
+		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && picture
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("posts: preview enrich rows: %w", err)

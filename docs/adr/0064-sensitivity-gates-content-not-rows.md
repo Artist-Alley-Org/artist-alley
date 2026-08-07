@@ -421,6 +421,66 @@ would refuse.
 That holds under this decision and would have held under either alternative. It is the part most
 likely to be missed, because it lives in error paths rather than in the gate.
 
+#### As implemented (#939, 2026-08-06) — the field plane needed a THIRD predicate
+
+Implementing the decision surfaced something the decision text assumes but the code did not
+provide: **there was no "picture" plane to withhold**. The thumbhash and the three availability
+flags (`preview_available`, `ladder_available`, `scrub_available`) were all derived from the single
+`FieldsReadable` boolean at every surface. Widening that one function — the whole of the change as
+originally scoped — would therefore have shipped the blur *and* flipped the flags true for exactly
+the caller the decision refuses, at the browse list, search, post previews, collection contents and
+`GET /assets/{id}` alike. "The thumbhash stays withheld" is not a property that survives on its
+own; it had to be built.
+
+So the conjunction was split in two:
+
+| plane | mechanism | question | mutation cap? |
+|---|---|---|---|
+| field | `visibility.FieldsReadable` | title / description / tags / metadata / hash / size / dims | **yes** |
+| picture | `visibility.PreviewReadable` | the thumbhash blur + the three availability flags | **no** |
+| binary | `CanReadContent` + the binary handlers | the bytes themselves | **no** |
+
+`PreviewReadable` is the *pre-#939* `FieldsReadable`, unchanged; `FieldsReadable` is now
+`PreviewReadable OR CallerMayMutate`. Every surface makes two decisions from one row. The flags sit
+on the picture plane for a second reason beyond the blur: they are a promise the binary handlers
+must keep, and a `true` flag on gated bytes is a 403 the client walks straight into.
+
+`ContentReadable` and its SQL twin `ContentReadableSQL` are **untouched**, which is the structural
+check that the disjunct landed on the right plane — had it gone into `ContentReadable`, keeping
+`TestContentReadableSQL_MatchesGo` green would have required transcribing it into the SQL twin, and
+the bytes would have moved.
+
+**The capability is resolved in Go, not re-derived in SQL.** Computing "does this caller hold
+`assets.admin` over this row's team" as an `EXISTS` against `user_capability_grants` in the SELECT
+list looks cheaper and is wrong: `auth.EffectiveScopedCapabilitiesForUser` resolves a scoped
+capability from **four** inputs — grants, `role_capabilities` reached through a recursive walk of
+`roles.parent_id` carrying the `user_roles.team_id` that seeded it, `user_capability_revokes`
+subtracted at the exact `(code, team_id)` pair NULLs-not-distinct, and only then the `team_closure`
+fan-out. A grants-only expression misses every capability conferred through a **team-scoped role
+assignment**, which is the ordinary way an operator confers one — silently, and in the direction
+that half-ships the feature. The resolver's answer is read out of `Identity` instead
+(`Identity.ScopedTeams`), carried as `visibility.AssetMutationCaps`, and matched against a `team_id`
+column the field fragment now selects as raw data.
+
+**`ContentCaps` stays two booleans and its `CacheKey` stays two bytes.** The mutation scope is a
+third resolved struct rather than more fields on it, because this capability is team-scoped and its
+honest resolved form is a *set*.
+
+**The cache-staleness seam is closed rather than matched.** `is_team_member` has long had the
+property that leaving a team does not evict a cached search result, and matching that precedent was
+the cheap option. It was rejected because closing it costs nothing: `keyForQuery` already includes
+the caller's `user_ref`, so folding per-caller capability state in causes **zero** cross-caller
+cache fragmentation — it invalidates only that caller's entries, only when that caller's own grants
+change. Left open, a **revoked** holder would keep being served the cached titles, descriptions and
+tags of restricted assets for the rest of the TTL. The `is_team_member` instance remains open and
+is recorded in `AssetMutationCaps.CacheKey` so the next sweep finds it already known.
+
+On the oracle constraint: `UpdateAsset` returns its representation through `enrichAssetDerived`,
+the same path `GET /assets/{id}` uses, so a write response is held to the read plane by
+construction rather than by a second rule. There is no "title must differ" validation to leak
+through, and the 409 conflict body carries only `updated_at`, which is reachable past
+`canMutateAsset` and now readable anyway.
+
 #### Historical — the seam as first recorded
 
 ### Open seam 2026-08-06 (#930, PR #936) — a mutation capability does not confer readability

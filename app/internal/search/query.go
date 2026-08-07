@@ -346,6 +346,7 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 	// unfiltered ids; the per-row decision below no longer depends on
 	// that promise.
 	caller, caps := callerOf(q)
+	mut := mutCapsOf(q)
 	rows, err := e.Pool.Query(ctx, `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
@@ -377,11 +378,12 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 		dest := append([]any{
 			&id, &title, &descr, &owner, &origin, &thumb, &created, &updated,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
-			&fr.IsTeamMember, &ownerName,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		}, card.scanDest()...)
 		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
+		fr.ApplyMutationCaps(mut)
 		if !visibility.FieldsReadable(fr, caller, caps) {
 			// The projection carries nothing but the marker and the
 			// owner's name — note the thumbhash in particular is a
@@ -391,7 +393,10 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 			byID[id] = Hit{Restricted: true, OwnerDisplayName: ownerName}
 			continue
 		}
-		extra := assetCardExtra(card, thumb, true)
+		// PreviewReadable, not `true` (#939): a mutation holder reaches
+		// this branch on the field plane and must still get no blur and
+		// no availability flags.
+		extra := assetCardExtra(card, thumb, visibility.PreviewReadable(fr, caller, caps))
 		byID[id] = Hit{
 			Title:          title,
 			Summary:        truncate(descr, 240),
@@ -489,6 +494,7 @@ var ErrEmptyQuery = errors.New("search: query text is required")
 // AND clause is appended by the shared helper.
 func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
 	caller, caps := callerOf(q)
+	mut := mutCapsOf(q)
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, 0, err
@@ -563,11 +569,12 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		dest := append([]any{
 			&id, &title, &descr, &owner, &origin, &thumb, &created, &updated, &score,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
-			&fr.IsTeamMember, &ownerName,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		}, card.scanDest()...)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, 0, err
 		}
+		fr.ApplyMutationCaps(mut)
 		// #899 — the row STAYS (ADR 0064 gates content, not rows), but
 		// an asset the caller cannot open hands over none of its
 		// columns. The predicate above decided whether the row is
@@ -583,7 +590,8 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 			}, ownerName))
 			continue
 		}
-		extra := assetCardExtra(card, thumb, true)
+		// PreviewReadable, not `true` (#939) — see enrichAssetHits.
+		extra := assetCardExtra(card, thumb, visibility.PreviewReadable(fr, caller, caps))
 		hits = append(hits, Hit{
 			Type:           HitTypeAsset,
 			ID:             id,

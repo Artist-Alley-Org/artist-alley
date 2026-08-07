@@ -417,7 +417,7 @@ func TestIIIFCollectionMembers_AnonymousRowPlane(t *testing.T) {
 	f := seedIIIF(t, pool)
 
 	members, err := NewLoader(pool).LoadCollectionMembers(
-		context.Background(), f.collections["coll-public"], visibility.NewCaller(nil), nil, 200)
+		context.Background(), f.collections["coll-public"], visibility.NewCaller(nil), nil, visibility.AssetMutationCaps{}, 200)
 	if err != nil {
 		t.Fatalf("LoadCollectionMembers: %v", err)
 	}

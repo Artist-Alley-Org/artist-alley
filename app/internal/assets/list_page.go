@@ -62,6 +62,12 @@ type ListAssetsPageGatedParams struct {
 	// means "unknown", which LadderSatisfiedSQL resolves to false — the
 	// client then falls back to the single `col` rung.
 	Ladder []string
+	// MutationCaps is the caller's resolved `assets.admin` scope
+	// (#939). It widens the FIELD plane only — a holder sees the
+	// titles of restricted assets in their team and still gets no
+	// picture and no bytes. The zero value denies, so omitting it
+	// fails closed.
+	MutationCaps visibility.AssetMutationCaps
 }
 
 // listAssetsPageColumns mirrors the sqlc query's SELECT list exactly.
@@ -223,12 +229,13 @@ LIMIT $7::INTEGER`)
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
 			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
-			&fr.IsTeamMember, &ownerName,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 			&pixelWidth, &pixelHeight,
 			&hasColVariant, &hasFullLadder, &hasScrubVariant,
 		); err != nil {
 			return nil, fmt.Errorf("assets: list page scan: %w", err)
 		}
+		fr.ApplyMutationCaps(p.MutationCaps)
 		// ONE readability decision feeds the three availability flags AND
 		// the #899 field withholding, for the same reason the post
 		// preview enrich does it that way: a true ladder flag on gated
@@ -239,11 +246,19 @@ LIMIT $7::INTEGER`)
 		// plane, and the two differ on a caller who passes the tier but
 		// not the row's workflow state.
 		readable := visibility.FieldsReadable(fr, caller, caps)
+		// #939 — the three flags AND the thumbhash follow the PICTURE
+		// plane, which a mutation capability does not confer (ADR 0064:
+		// "a thumbhash IS a blur"). The field withholding follows
+		// `readable`. One row, two decisions, both from the same pass.
+		picture := visibility.PreviewReadable(fr, caller, caps)
+		if !picture {
+			i.Thumbhash = nil
+		}
 		row := ListAssetsPageGatedRow{
 			ListAssetsPageRow: i,
-			PreviewAvailable:  hasColVariant && readable,
-			LadderAvailable:   hasFullLadder && readable,
-			ScrubAvailable:    hasScrubVariant && readable,
+			PreviewAvailable:  hasColVariant && picture,
+			LadderAvailable:   hasFullLadder && picture,
+			ScrubAvailable:    hasScrubVariant && picture,
 			Readable:          readable,
 			OwnerDisplayName:  ownerName,
 		}

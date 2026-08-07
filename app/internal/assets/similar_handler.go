@@ -229,6 +229,10 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 	}
 	defer rows.Close()
 
+	// Resolved ONCE for the batch, not per row — the team set is
+	// per-caller, not per-asset (#939).
+	mut := mutationCaps(ctx)
+
 	var out []openapi.Asset
 	for rows.Next() {
 		var r GetAssetRow
@@ -240,13 +244,20 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 			&r.OriginServerID, &r.StateID, &r.ProcessingStatus, &r.Thumbhash,
 			&r.CreatedAt, &r.UpdatedAt,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
-			&fr.IsTeamMember, &ownerName,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		); err != nil {
 			return nil, err
 		}
+		fr.ApplyMutationCaps(mut)
 		if !visibility.FieldsReadable(fr, caller, caps) {
 			out = append(out, withheldAsset(openapi_types.UUID(r.ID.Bytes), ownerName))
 			continue
+		}
+		// #939 — fields yes, picture no. A caller reaching this row only
+		// through `assets.admin` gets the columns without the blur; ADR
+		// 0064 keeps the thumbhash on the binary side.
+		if !visibility.PreviewReadable(fr, caller, caps) {
+			r.Thumbhash = nil
 		}
 		// Tags fetched per-asset would be N+1; for the similar panel,
 		// the consumer surfaces a compact card without the tag chips,

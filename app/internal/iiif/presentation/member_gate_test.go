@@ -87,7 +87,7 @@ func TestIIIFCollectionMembers_MemberReadableMatchesTheJSONAPI(t *testing.T) {
 	ref := mgStranger
 	caller := visibility.NewCaller(&ref)
 	members, err := NewLoader(pool).LoadCollectionMembers(
-		context.Background(), f.collections["coll-public"], caller, nil, 200)
+		context.Background(), f.collections["coll-public"], caller, nil, visibility.AssetMutationCaps{}, 200)
 	if err != nil {
 		t.Fatalf("LoadCollectionMembers: %v", err)
 	}
