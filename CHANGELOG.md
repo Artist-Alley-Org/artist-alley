@@ -120,6 +120,26 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Publishing can be handed to someone other than the owner.** Making a file live, retiring
+  it, or bringing it back were reserved to whoever uploaded it and to system administrators.
+  A team lead trusted to manage a library could edit and delete files, and could not publish
+  one (#938).
+
+  Three separate permissions now exist, and each covers only the moves it names — publish,
+  archive, un-archive. Someone given the power to retire work cannot use it to make work
+  public, which matters because making a file **live** is what makes it visible to people
+  who are not signed in. That one act always requires the publish permission, by whichever
+  route it is reached.
+
+  The two halves of managing a file are also separated now. Being trusted to publish does
+  not carry the power to rewrite a title, and being trusted to edit does not carry the power
+  to publish. Previously the two came bundled, which is why neither could be delegated on
+  its own.
+
+  ⚠️ **Currently this only works for permissions granted across the whole instance, not for
+  ones scoped to a single team** — nothing yet assigns a file to a team, so a team-scoped
+  grant has nothing to match against. Being fixed (#953).
+
 - **Someone who manages your team's files can now read their details — but still can't
   open them.** A team lead with permission to edit, delete and restore their team's work
   was, until now, shown the same blank placeholder as a stranger. They could rename a file
