@@ -9,6 +9,37 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **A post's cover picture skipped the check its other pictures got.** Naming a file as a
+  post's cover — rather than as one of its contents — was never checked against whether
+  you were allowed to open that file. The contents had been checked since the previous
+  release; the cover had not, on either creating a post or editing one (#941).
+
+  Nothing was ever shown that shouldn't have been: a viewer who isn't entitled to a file
+  still sees a placeholder with its real owner's name. What it allowed was the same
+  **unwanted association** the contents check closed — building your post around someone
+  else's restricted work without their say-so.
+
+  Both paths now apply the same rule, and a file you can't open answers the same "not
+  found" a made-up ID does, so the endpoint can't be used to fish for which files exist.
+  Nothing is written when a cover is refused.
+
+### Fixed
+
+- **Renaming a file left the old name showing everywhere else.** Editing a file's title
+  or description updated the file — and nothing else. Every post containing it, and every
+  IIIF manifest describing it, went on serving the old text until the server happened to
+  restart (#935).
+
+  This is the same staleness that was fixed for deleting and restoring a file in the
+  previous release, on the path people actually use every day. It survived because
+  attention went to the dramatic operations: deletion looks like it should invalidate
+  things, an ordinary edit doesn't.
+
+  Permanently deleting a file had a related gap. Because the database removes a file's
+  subtitle tracks and post memberships automatically, that cleanup happened in parts of
+  the system that never ran any code — so they kept answering from before the deletion.
+  Those caches are now told explicitly.
+
 - **A public collection handed out its guest list.** Listing the access grants on a
   collection passed for the owner, for an administrator — and for **anyone at all with
   an account**, as long as the collection was `public`. Every grant row came back: who
