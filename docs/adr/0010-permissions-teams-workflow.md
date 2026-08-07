@@ -420,6 +420,11 @@ Consequences worth stating:
   the API has `team_id = NULL` and only a *global* publication grant reaches it. The team-scoped
   path is correct and tested, and is unreachable until something assigns assets to teams — the same
   limitation `assets.admin` has carried since #930, recorded here rather than re-derived later.
+  **Tracked as #953**, which scopes the missing write path and notes the wider blast radius: with
+  `team_id` always NULL, `is_team_member` is always false, so the **`team` sensitivity tier admits
+  nobody** either — `ContentReadable` is `case "team": return isTeamMember`. Three sprints of
+  team-scoped delegation (#930, #939, #938) are correct in code and unreachable in production for
+  the same one reason.
 
 Schema:
 
