@@ -4,18 +4,33 @@
 // Phase 1.18.B-3 — subtitle track domain handler.
 //
 // Owns the (GetForAsset, Upsert, Delete) trio + cache management
-// + the cross-package InvalidateForAsset hook that assets/ calls
-// after hard-deleting an asset row.
+// + the cross-package InvalidateForAsset hook the hard-delete path
+// calls after an asset row is destroyed.
 //
 // # Why the explicit InvalidateForAsset entry point
 //
 // FK + CASCADE on asset_subtitle_tracks.asset_id means an asset
 // hard-delete wipes the track rows automatically — DB state is
 // consistent. But our cache.Cache[T] LRU is in-process state
-// that the schema doesn't know about. The assets/ HardDelete
-// path explicitly calls subtitles.InvalidateForAsset(h, assetID)
-// so a stale read after delete returns the empty slice (not the
-// pre-delete cached tracks).
+// that the schema doesn't know about, and GetForAsset is
+// read-through: it answers from the LRU without ever looking at
+// the asset. So the tracks of a destroyed asset are served
+// verbatim until the process restarts.
+//
+// # Where the call actually comes from (#935)
+//
+// This comment previously said "the assets/ HardDelete path
+// explicitly calls subtitles.InvalidateForAsset(h, assetID)". That
+// was never true and there was no such call anywhere — the only
+// InvalidateForAsset invoked from assets/ is posts.InvalidateForAsset,
+// a different function that happens to share the name.
+//
+// There is also no HardDelete in assets/ to call it: DeleteAsset is a
+// SOFT delete, and the hard delete lives in softdelete.Service's
+// retention GC. That is where the CASCADE fires, so that is where the
+// eviction belongs. The composition root (internal/http/api.go) wires
+// it via Service.OnAssetsHardDeleted, alongside the other caches the
+// same CASCADE empties.
 //
 // This is the same pattern other packages use for cross-cutting
 // cache invalidation (cache.Registry NOTIFY broadcasts handle the
@@ -204,9 +219,14 @@ func (h *Handler) Count(ctx context.Context, assetID uuid.UUID) (int64, error) {
 	return h.queries.CountSubtitleTracksForAsset(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
 }
 
-// InvalidateForAsset is the cross-package entry point assets/
-// calls in its HardDelete path. FK CASCADE wipes the rows; this
-// clears the cache.
+// InvalidateForAsset is the cross-package entry point the asset
+// hard-delete path calls. FK CASCADE wipes the rows; this clears the
+// cache that would otherwise keep serving them.
+//
+// The caller is softdelete.Service.OnAssetsHardDeleted, wired at the
+// composition root — see the package doc for why it is not in assets/,
+// and for the claim this function carried for two phases while having
+// no callers at all (#935).
 //
 // nil-safe handler: if subtitles isn't wired in a particular
 // build (test fixtures), the call is a no-op.

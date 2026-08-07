@@ -19,7 +19,7 @@
 // marked live whose only match is /account/[stub] is exactly the bug
 // class #600 documented, and only the stricter check catches it.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, sep } from 'node:path';
 
@@ -33,12 +33,23 @@ export const staticDir = join(webRoot, 'static');
 /** Sentinel standing in for an interpolated (dynamic) href segment. */
 export const DYN = ' dyn';
 
+// readdirSync({ withFileTypes: true }) returns the entry KIND alongside
+// the name, from the one directory read. The previous shape called
+// statSync on every entry, which is a second syscall per file for
+// information the readdir already had — 330 files under web/src, so 330
+// avoidable round trips, and on a mounted filesystem that alone was
+// ~1.2s of the link-integrity suite's runtime (#934).
+//
+// Behavioural note: Dirent.isDirectory() reports on the entry itself,
+// where statSync follows symlinks. So a symlinked directory is now
+// handed to onFile instead of being descended into. That is the safer
+// default for a source-tree walk (no cycles, no escaping the tree), and
+// there are no symlinks under web/src or web/static.
 export function walk(dir: string, onFile: (path: string) => void): void {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const st = statSync(full);
-    if (st.isDirectory()) {
-      if (entry === 'node_modules') continue;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules') continue;
       walk(full, onFile);
     } else {
       onFile(full);
@@ -46,11 +57,27 @@ export function walk(dir: string, onFile: (path: string) => void): void {
   }
 }
 
+// Both scans below are memoised for the life of the process.
+//
+// They are pure functions of a source tree that cannot change during a
+// vitest run, and each consumer calls them at least once — so without
+// this the same directory tree is walked several times per file and
+// once more per file that imports this module. Cache invalidation is
+// not a concern here for the same reason it is not a concern for
+// `import`: the inputs are frozen before the first call.
+let routeTableCache: string[] | null = null;
+let staticSetCache: Set<string> | null = null;
+
 // Every +page.svelte defines a navigable route. The directory path
 // (minus route groups) is the route id, e.g.
 //   routes/assets/[id]/+page.svelte  -> /assets/[id]
 //   routes/+page.svelte              -> /
+//
+// Returns a fresh array each call: link-integrity's red-first proof
+// filters the table to remove a route, and a shared mutable array would
+// make one test's setup visible to the next.
 export function buildRouteTable(): string[] {
+  if (routeTableCache) return routeTableCache.slice();
   const routes: string[] = [];
   walk(routesDir, (file) => {
     if (!file.endsWith(`${sep}+page.svelte`) && !file.endsWith('+page.svelte')) return;
@@ -61,11 +88,13 @@ export function buildRouteTable(): string[] {
       .filter((s) => !/^\(.*\)$/.test(s)); // drop route groups (group)
     routes.push('/' + segs.join('/'));
   });
-  return routes;
+  routeTableCache = routes;
+  return routes.slice();
 }
 
 /** Non-route link targets that still resolve, e.g. /favicon.svg. */
 export function buildStaticSet(): Set<string> {
+  if (staticSetCache) return staticSetCache;
   const out = new Set<string>();
   try {
     walk(staticDir, (file) => {
@@ -74,6 +103,7 @@ export function buildStaticSet(): Set<string> {
   } catch {
     // no static dir — fine
   }
+  staticSetCache = out;
   return out;
 }
 

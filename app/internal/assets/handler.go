@@ -47,6 +47,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/iiif/presentation"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -169,6 +170,20 @@ type Handler struct {
 	// helper no-ops on a nil registry.
 	registry *cache.Registry
 
+	// manifests is the IIIF Presentation manifest cache (#935).
+	// presentation.LoadAsset selects the asset's title + description
+	// and applies EntityAsset's ROW predicate, so a PATCH, a delete
+	// and a restore each change what the manifest says — and the
+	// manifest is cached under its own domain, which nothing on those
+	// paths was evicting.
+	//
+	// Injected post-construction via SetManifestCache: the cache is
+	// built at the composition root AFTER this handler (it needs the
+	// same registry), and a constructor parameter would have forced
+	// that ordering to change. Nil-safe on every method, so tests and
+	// any build without IIIF wired simply no-op.
+	manifests *presentation.Cache
+
 	// similarReader is the embeddings-side seam for the
 	// /assets/{id}/similar endpoint. Injected post-construction via
 	// SetSimilarReader to avoid pulling ai/embeddings into this
@@ -207,6 +222,12 @@ type SimilarNeighbour struct {
 // SetSimilarReader injects the embeddings-side reader for the
 // /assets/{id}/similar endpoint. Boot wire is the only caller.
 func (h *Handler) SetSimilarReader(r SimilarReader) { h.similarReader = r }
+
+// SetManifestCache injects the IIIF Presentation manifest cache so
+// asset writes can evict it (#935). Boot wire is the only caller; the
+// cache is constructed after this handler, which is why this is a
+// setter and not a constructor argument.
+func (h *Handler) SetManifestCache(c *presentation.Cache) { h.manifests = c }
 
 // VisualEmbedDispatcher is the narrow surface this package needs from
 // the visualembed package. *visualembed.Dispatcher satisfies it. The
@@ -1300,6 +1321,14 @@ func (h *Handler) UpdateAsset(
 		return nil, fmt.Errorf("assets: commit: %w", err)
 	}
 
+	// #935. This path invalidated NOTHING — not even the posts cache
+	// #920 wired into delete and restore. Editing an asset's title left
+	// every post holding it, and its IIIF manifest, serving the old one
+	// until the process restarted: the identical defect #920 fixed, on
+	// the path nobody covered, and reachable by any owner clicking
+	// Save.
+	h.invalidateDerivedCaches(ctx, uuid.UUID(pgID.Bytes), "update")
+
 	// Same shape a GET returns (#655). The UPDATE's RETURNING row carries
 	// no preview / ladder / dimension columns, so without this a PATCH
 	// answered `preview_available: false` for an asset whose GET answers
@@ -1389,22 +1418,46 @@ func (h *Handler) DeleteAsset(
 			)
 		}
 	}
-	h.invalidateHoldingPosts(ctx, uuid.UUID(pgID.Bytes), "delete")
+	h.invalidateDerivedCaches(ctx, uuid.UUID(pgID.Bytes), "delete")
 	return openapi.DeleteAsset204Response{}, nil
 }
 
-// invalidateHoldingPosts evicts the cached copy of every post holding
-// this asset. Soft-delete and restore both change what those posts
-// render without writing to any post row, so nothing else on either
-// path would evict them and the stale answer survived until the process
-// restarted (#920).
+// invalidateDerivedCaches evicts every OTHER domain's cached answer
+// that this asset write just changed. An asset write touches only the
+// asset row, but three caches key on something else entirely and none
+// of them can see it happen:
+//
+//   - posts/ caches the whole rendered post, joined asset payloads
+//     included, keyed on the POST (#920);
+//   - iiif/presentation caches the manifest, which carries the asset's
+//     title and description, keyed on its own domain (#935).
+//
+// Called from all three write paths — update, delete, restore —
+// because all three change what those caches would answer:
+//
+//	PATCH    retitles the asset. Both caches serve the OLD title.
+//	DELETE   removes it from posts (the join reads deleted_at) and
+//	         from the manifest (the row predicate does).
+//	RESTORE  is the same bug wearing the other hat: the copies were
+//	         evicted on delete and repopulated WITHOUT the asset.
+//
+// The stale answer survives until the process restarts, which is what
+// identifies all of this as invalidation rather than a read-rule gap —
+// and what let #920 sit unnoticed on the delete path.
 //
 // Best-effort: the asset write has already committed and succeeded, so
 // a cache failure is logged, not propagated. Same discipline as the
-// storage-unpin step above.
-func (h *Handler) invalidateHoldingPosts(ctx context.Context, assetID uuid.UUID, op string) {
+// storage-unpin step above. Both callees are nil-safe.
+func (h *Handler) invalidateDerivedCaches(ctx context.Context, assetID uuid.UUID, op string) {
 	if err := posts.InvalidateForAsset(ctx, h.registry, h.Pool, assetID); err != nil && h.Logger != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.posts_cache.invalidate.error",
+			slog.String("asset_id", assetID.String()),
+			slog.String("op", op),
+			slog.String("err", err.Error()),
+		)
+	}
+	if err := presentation.InvalidateAssetOn(ctx, h.manifests, assetID); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.manifest_cache.invalidate.error",
 			slog.String("asset_id", assetID.String()),
 			slog.String("op", op),
 			slog.String("err", err.Error()),
@@ -1475,7 +1528,7 @@ func (h *Handler) RestoreAsset(
 	// Restore is the same bug wearing the other hat: without this the
 	// asset stays MISSING from its posts until a restart, because the
 	// cached copies were evicted on delete and re-populated without it.
-	h.invalidateHoldingPosts(ctx, uuid.UUID(req.Id), "restore")
+	h.invalidateDerivedCaches(ctx, uuid.UUID(req.Id), "restore")
 	return openapi.RestoreAsset204Response{}, nil
 }
 

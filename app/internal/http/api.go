@@ -634,6 +634,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// invalidations via the existing LISTEN/NOTIFY channel.
 	s.iiifCounter = iiif.NewHealthCounter(0)
 	s.iiifManifestCache = presentation.NewCache(cacheReg)
+	// #935 — an asset PATCH / delete / restore changes the manifest
+	// (LoadAsset selects title + description and applies EntityAsset's
+	// row predicate), so the assets handler has to be able to evict it.
+	// A setter because the cache is built here, after the handler.
+	s.assets.SetManifestCache(s.iiifManifestCache)
 	s.iiifFedResolver = iiiffederation.NewResolver(pool)
 	s.iiifLoader = presentation.NewLoader(pool)
 	s.iiifBuilder = presentation.NewBuilder(presentation.BuilderConfig{
@@ -875,6 +880,50 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// initial tick at boot (idempotent via next-tick timestamp key).
 		{
 			sdSvc := softdelete.NewService(pool, auditRec)
+			// #935 — the hard-delete cache fan-out. This is the one
+			// asset write that reaches other domains through the
+			// SCHEMA: ON DELETE CASCADE on asset_subtitle_tracks and
+			// post_assets empties rows in packages the GC has never
+			// heard of, and the in-process LRUs those packages keep go
+			// on answering from the pre-delete world until a restart.
+			//
+			// Listed here, at the composition root, rather than
+			// scattered into softdelete/ — one place to read off which
+			// caches a hard delete touches, and no dependency
+			// inversion on three domain packages.
+			//
+			// Best-effort by construction: every callee is nil-safe and
+			// returns at most an error we log. The delete has already
+			// committed; a cache miss-to-evict must not turn a
+			// completed GC pass into a failed job.
+			sdSvc.OnAssetsHardDeleted = func(ctx context.Context, ids []uuid.UUID) {
+				for _, id := range ids {
+					// Subtitle tracks: CASCADE wiped the rows, but
+					// GetForAsset is read-through and would keep
+					// serving the cached slice. This is the call site
+					// subtitles/handler.go has claimed in prose since
+					// 1.18.B-3 while having zero callers.
+					subtitles.InvalidateForAsset(s.subtitles, id)
+					// The IIIF manifest is built from the asset row
+					// that no longer exists.
+					if err := presentation.InvalidateAssetOn(ctx, s.iiifManifestCache, id); err != nil {
+						logger.LogAttrs(ctx, slog.LevelWarn, "softdelete.gc.manifest_cache.invalidate.error",
+							slog.String("asset_id", id.String()),
+							slog.String("err", err.Error()),
+						)
+					}
+					// #920 on a third path. Its two wired call sites
+					// are the SOFT delete and the restore; the CASCADE
+					// on post_assets drops the membership here too, and
+					// nothing was evicting the holding posts.
+					if err := posts.InvalidateForAsset(ctx, cacheReg, pool, id); err != nil {
+						logger.LogAttrs(ctx, slog.LevelWarn, "softdelete.gc.posts_cache.invalidate.error",
+							slog.String("asset_id", id.String()),
+							slog.String("err", err.Error()),
+						)
+					}
+				}
+			}
 			jobSvc.Registry.Register(&softdelete.CoordinatorJob{
 				Service:   sdSvc,
 				Sysconfig: sysCfg,
