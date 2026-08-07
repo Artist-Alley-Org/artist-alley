@@ -416,15 +416,16 @@ Consequences worth stating:
   descriptions to say so. They gate the exit from `pending_review`, which does not exist; building
   it is a schema decision for #895/#896/#897, and **#951** carries the choice between building it
   and deleting the two codes.
-- **The seam is `assets.team_id`.** Nothing in production writes it, so every asset created through
-  the API has `team_id = NULL` and only a *global* publication grant reaches it. The team-scoped
-  path is correct and tested, and is unreachable until something assigns assets to teams — the same
-  limitation `assets.admin` has carried since #930, recorded here rather than re-derived later.
-  **Tracked as #953**, which scopes the missing write path and notes the wider blast radius: with
-  `team_id` always NULL, `is_team_member` is always false, so the **`team` sensitivity tier admits
-  nobody** either — `ContentReadable` is `case "team": return isTeamMember`. Three sprints of
-  team-scoped delegation (#930, #939, #938) are correct in code and unreachable in production for
-  the same one reason.
+- **The seam was `assets.team_id`.** ~~Nothing in production writes it, so every asset created
+  through the API has `team_id = NULL` and only a *global* publication grant reaches it.~~
+  **Superseded 2026-08-07 by #953 / PR #955** — `AssetCreate` now carries an optional `team_id`, so
+  the team-scoped path is reachable through the API.
+
+  ⚠️ **The original claim here was wrong and is preserved struck through as a caution.** The seeder
+  had been writing the column all along (`app/internal/seed/queries.sql`, ~1,900 rows in a seeded
+  install); the search that "proved" its absence required `team_id` and `INSERT INTO assets` on one
+  line, and that INSERT is multi-line. **To assert that nothing writes a column, query the data.**
+  The real gap was narrower: the seeder could assign a team, the API could not.
 
 Schema:
 
@@ -789,3 +790,50 @@ backfill.
   resource has no team and falls back to visibility-only checks.
   Default to nullable; revisit if a real install demands every
   resource have a team.
+
+---
+
+### Amendment 2026-08-07 (#954 + #953, PR #955) — who may put something in a team
+
+`team_id` on `posts` and `assets` is an **authorization input, not a label**. It decides who may
+mutate the row — `canMutatePost` / `canMutateAsset` consult a Layer-5 scoped grant only when the row
+carries a team — and for assets it also decides who may read it at `sensitivity='team'`.
+
+It had been treated as neither. `CreatePost` accepted a **caller-asserted** `team_id` with only the
+foreign key guarding it, so a post could be attributed to any team on the instance (#954). Assets
+had the opposite defect: no API field at all, so only the seeder could assign one (#953).
+
+**Decision: one rule, one implementation — `visibility.CanAssignToTeam`.** A caller may assign to a
+team when they are a **direct member** of it, hold a **team-scoped** admin grant over it, or are
+`system.admin`. Two thin adapters call it; nothing else expresses the rule.
+
+Three parts of that are not obvious and are the reason this amendment exists:
+
+- **A GLOBAL admin grant is deliberately insufficient.** `ScopedTeams` excludes globals and the
+  wildcard by design, and assignment honours that. A global `posts.admin` is the *instance-moderator*
+  role; #954 is precisely about content appearing in a studio's space it has nothing to do with, and
+  a moderator is not thereby a member of every studio. `system.admin` is the sole escape hatch.
+- **Membership is DIRECT; grants close over the hierarchy.** The asymmetry is deliberate.
+  Delegated administration expands through `team_closure` (Layer 5), but membership does not —
+  `is_team_member` is a plain `EXISTS` against `team_memberships` in `ContentReadable`,
+  `ContentReadableSQL` and `FieldsColumnsSQL`, with no closure walk anywhere. A parent-team member
+  permitted to assign into a descendant would hand out an audience they are not in, and could not
+  read the result themselves. Direct is also the narrower reading, so it fails closed.
+- **A soft-deleted team is unassignable by anyone**, `system.admin` included. The FK is
+  `REFERENCES public.teams(id) ON DELETE SET NULL` and never consults `teams.deleted_at`, so without
+  an explicit liveness probe a deleted team would satisfy it silently. The probe runs *before* the
+  authorization disjunction.
+
+**The capability is per-entity** — `posts.admin` for posts, `assets.admin` for assets — because
+assignment is what *confers* the team-scoped mutation right over the new row, so the code naming
+that right is the one entitled to hand it out. A single cross-entity code would let a holder of one
+plant rows in the other's space; a new `teams.assign` code would be held by nobody and seeded by
+nothing, which is how the team tier reached the state #953 describes in the first place.
+
+**Refusals are indistinguishable.** An unauthorised-but-real team returns byte-identical output to a
+nonexistent one; otherwise the endpoint is a team-existence probe across the instance. Same
+discipline as #922 / #941 / #952.
+
+**Not decided here: reassignment.** Neither `PostUpdate` nor `AssetUpdate` carries `team_id`. Moving
+a row between teams changes who may mutate it *and* who may read it at the team tier, and wants its
+own gate rather than a shared one.
