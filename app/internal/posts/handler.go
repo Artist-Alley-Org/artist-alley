@@ -293,6 +293,37 @@ func (h *Handler) CreatePost(
 		}
 	}
 
+	// #954 — the team gate. `team_id` used to be taken verbatim from the
+	// body with the FOREIGN KEY as its only validation, so any EXISTING
+	// team id was accepted: a post could be attributed to any studio on
+	// the instance, which also handed that team's `posts.admin` holders
+	// edit and delete rights over it.
+	//
+	// The rule has one home — visibility.CanAssignToTeam, shared with
+	// assets.CreateAsset (#953) — and the refusal is deliberately the
+	// SAME 404 the FK violation below answers with, so an unauthorised
+	// team and a nonexistent one are indistinguishable and POST /posts
+	// does not become a team-existence probe.
+	//
+	// The grant half asks about `posts.admin`: that is already the "I
+	// manage this team's posts" claim, and it is exactly the right
+	// assignment confers on the receiving team. ScopedTeams deliberately
+	// excludes GLOBAL holdings — see CanAssignToTeam.
+	//
+	// Runs before the transaction opens, like the member gate above, so
+	// a refusal never writes a row it has to roll back.
+	if in.TeamId != nil {
+		ok, gErr := h.mayAssignToTeam(ctx, id, uuid.UUID(*in.TeamId))
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: team gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("posts: begin tx: %w", err)
@@ -1711,6 +1742,36 @@ func (h *Handler) mayAttachAsset(ctx context.Context, id *auth.Identity, assetID
 		visibility.NewCaller(&id.UserRef),
 		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
 		assetID,
+	)
+}
+
+// mayAssignToTeam adapts an *auth.Identity to visibility.CanAssignToTeam
+// — the SHARED rule behind `PostCreate.team_id` (#954) and
+// `AssetCreate.team_id` (#953). assets.Handler has the mirror-image
+// adapter; the rule itself exists once.
+//
+// It is a method for the same reason mayAttachAsset is: CreatePost
+// declares a local `visibility` string for the post's visibility tier,
+// which shadows the package name at that call site.
+//
+// The capability the SCOPED half asks about is `posts.admin`, the same
+// code canMutatePost consults. That is deliberate rather than a shared
+// cross-entity code: assignment CONFERS the team-scoped mutation right
+// on the receiving team, so the code that names that right is the one
+// entitled to hand it out. `assets.admin` plays the identical role on
+// the asset side, and a single code for both would let a holder of one
+// plant rows in the other's space.
+func (h *Handler) mayAssignToTeam(ctx context.Context, id *auth.Identity, teamID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAssignToTeam(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		id.ScopedTeams(CapPostsAdmin),
+		teamID,
 	)
 }
 

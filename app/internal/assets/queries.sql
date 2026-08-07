@@ -2,15 +2,15 @@
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash
+    state_id, processing_status, thumbhash, team_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at;
+          created_at, updated_at, team_id;
 
 -- name: GetAsset :one
 -- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -22,7 +22,7 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, team_id
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -54,7 +54,7 @@ WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at;
+          created_at, updated_at, team_id;
 
 -- name: MergeAssetMetadata :exec
 -- Shallow-merge an incoming JSONB blob into the existing metadata
@@ -78,10 +78,14 @@ WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetAssetMutationSubject :one
 -- The authorisation probe behind UpdateAsset / DeleteAsset. Deliberately
--- NOT GetAsset: the mutation gate needs `team_id` (for the team-scoped
--- `assets.admin` disjunct) and a nullable `owner_user_ref`, and widening
--- GetAssetRow to carry team_id would change the shape every read path
--- projects from. `status` comes along because the publication boundary
+-- NOT GetAsset: the mutation gate needs a nullable `owner_user_ref`
+-- alongside `team_id` (for the team-scoped `assets.admin` disjunct), and
+-- it must answer for a row the caller may not be entitled to read at
+-- all — a gate that borrowed the read projection would be one edit away
+-- from inheriting the read rule's filters. (`team_id` is now on the read
+-- projection too, since #953 made it settable and therefore something a
+-- client has to be able to observe; that does not merge the two.)
+-- `status` comes along because the publication boundary
 -- in UpdateAsset compares against the current value, and `updated_at`
 -- because the optimistic-concurrency check needs the same row — one
 -- read, so the gate and the conflict check can never disagree about
@@ -120,7 +124,7 @@ SELECT deleted_by_user_ref
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, deleted_at, deleted_reason
+       created_at, updated_at, deleted_at, deleted_reason, team_id
 FROM assets
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)

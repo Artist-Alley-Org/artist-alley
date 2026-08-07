@@ -149,15 +149,15 @@ const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash
+    state_id, processing_status, thumbhash, team_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at
+          created_at, updated_at, team_id
 `
 
 type CreateAssetParams struct {
@@ -174,6 +174,7 @@ type CreateAssetParams struct {
 	StateID          pgtype.UUID
 	ProcessingStatus string
 	Thumbhash        []byte
+	TeamID           pgtype.UUID
 }
 
 type CreateAssetRow struct {
@@ -193,6 +194,7 @@ type CreateAssetRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
@@ -210,6 +212,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.StateID,
 		arg.ProcessingStatus,
 		arg.Thumbhash,
+		arg.TeamID,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -229,6 +232,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -274,7 +278,7 @@ const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, team_id
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -296,6 +300,7 @@ type GetAssetRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
 }
 
 // Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -324,6 +329,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -603,10 +609,14 @@ type GetAssetMutationSubjectRow struct {
 }
 
 // The authorisation probe behind UpdateAsset / DeleteAsset. Deliberately
-// NOT GetAsset: the mutation gate needs `team_id` (for the team-scoped
-// `assets.admin` disjunct) and a nullable `owner_user_ref`, and widening
-// GetAssetRow to carry team_id would change the shape every read path
-// projects from. `status` comes along because the publication boundary
+// NOT GetAsset: the mutation gate needs a nullable `owner_user_ref`
+// alongside `team_id` (for the team-scoped `assets.admin` disjunct), and
+// it must answer for a row the caller may not be entitled to read at
+// all — a gate that borrowed the read projection would be one edit away
+// from inheriting the read rule's filters. (`team_id` is now on the read
+// projection too, since #953 made it settable and therefore something a
+// client has to be able to observe; that does not merge the two.)
+// `status` comes along because the publication boundary
 // in UpdateAsset compares against the current value, and `updated_at`
 // because the optimistic-concurrency check needs the same row — one
 // read, so the gate and the conflict check can never disagree about
@@ -884,7 +894,7 @@ const listAssetsPage = `-- name: ListAssetsPage :many
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, deleted_at, deleted_reason
+       created_at, updated_at, deleted_at, deleted_reason, team_id
 FROM assets
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT IS NULL OR owner_user_ref = $2::BIGINT)
@@ -930,6 +940,7 @@ type ListAssetsPageRow struct {
 	UpdatedAt        pgtype.Timestamptz
 	DeletedAt        pgtype.Timestamptz
 	DeletedReason    *string
+	TeamID           pgtype.UUID
 }
 
 // NOT THE ENFORCEMENT PATH. This query applies no visibility predicate,
@@ -987,6 +998,7 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.DeletedReason,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -1233,7 +1245,7 @@ WHERE id = $5 AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at
+          created_at, updated_at, team_id
 `
 
 type UpdateAssetParams struct {
@@ -1261,6 +1273,7 @@ type UpdateAssetRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -1291,6 +1304,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }

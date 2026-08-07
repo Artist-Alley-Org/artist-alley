@@ -319,6 +319,40 @@ func (h *Handler) CreateAsset(
 		}, nil
 	}
 
+	// #953 — the team gate, the SAME rule POST /posts runs (#954), from
+	// the same home (visibility.CanAssignToTeam). Before this there was
+	// no way at all to put an uploaded asset in a team: the seeder set
+	// the column, the API never could, so `sensitivity='team'`,
+	// team-scoped `assets.admin` (#930), the team-scoped field plane
+	// (#939) and team-scoped publication (#938) all worked on seeded
+	// rows and on nothing a user made.
+	//
+	// The grant half asks about `assets.admin`, the code
+	// canMutateAsset consults — assignment is what CONFERS that
+	// team-scoped right over this row, so the code that names the right
+	// is the one entitled to hand it out.
+	//
+	// Runs BEFORE the dedup pre-check and before the transaction: a
+	// refusal must not first tell the caller whether they already own a
+	// file with these bytes, and must never write a row it rolls back.
+	//
+	// The refusal is 404 "team not found" — identical to the FK
+	// violation below, so an unauthorised team and a nonexistent one
+	// cannot be told apart.
+	var teamID pgtype.UUID
+	if in.TeamId != nil {
+		ok, gErr := h.mayAssignToTeam(ctx, id, uuid.UUID(*in.TeamId))
+		if gErr != nil {
+			return nil, fmt.Errorf("assets: team gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.CreateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+		teamID = pgtype.UUID{Bytes: uuid.UUID(*in.TeamId), Valid: true}
+	}
+
 	metadataJSON, err := encodeMetadata(in.Metadata)
 	if err != nil {
 		return nil, err
@@ -440,8 +474,18 @@ func (h *Handler) CreateAsset(
 		StateID:          stateID,
 		ProcessingStatus: processingStatus,
 		Thumbhash:        thumbhashBytes,
+		TeamID:           teamID,
 	})
 	if err != nil {
+		// The team gate above already refused every team this caller
+		// cannot assign to, absent ones included, so a 23503 here means
+		// the team was hard-deleted in the gap. Same 404 as the gate —
+		// a race must not be distinguishable from a refusal either.
+		if isFKViolation(err, "assets_team_id_fkey") {
+			return openapi.CreateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
 		// Race-loser: a concurrent upload won the unique
 		// constraint between our pre-check + this INSERT. Re-
 		// fetch + return the same dedup-response the pre-check
@@ -852,6 +896,49 @@ func isPgUniqueViolation(err error) bool {
 		return pe.Code == "23505"
 	}
 	return false
+}
+
+// isFKViolation reports whether err is a Postgres SQLSTATE 23503
+// (foreign_key_violation) raised by the NAMED constraint. Twin of
+// posts.isFKError; matched on SQLSTATE + constraint name, never on
+// message text, which varies across Postgres versions.
+//
+// The constraint name matters as much as the code: a bare "23503 means
+// team not found" would answer 404 "team not found" for a violation of
+// any other FK on the row, which is how a 500 gets dressed up as a
+// client error.
+func isFKViolation(err error, constraint string) bool {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code == "23503" && pe.ConstraintName == constraint
+	}
+	return false
+}
+
+// mayAssignToTeam adapts an *auth.Identity to
+// visibility.CanAssignToTeam — the SHARED rule behind
+// `AssetCreate.team_id` (#953) and `PostCreate.team_id` (#954).
+// posts.Handler has the mirror-image adapter; the rule itself exists
+// once, in `visibility`, for the reason epic #665 exists.
+//
+// The SCOPED half asks about `assets.admin` — the code canMutateAsset
+// consults, and the right assignment confers on the receiving team.
+// Posts ask about `posts.admin` for exactly the same reason. A single
+// cross-entity code would let a holder of one plant rows in the other's
+// space; a NEW code would be held by nobody, which is how the team tier
+// got into the state #953 describes.
+func (h *Handler) mayAssignToTeam(ctx context.Context, id *auth.Identity, teamID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAssignToTeam(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		id.ScopedTeams(CapAssetsAdmin),
+		teamID,
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -1576,9 +1663,12 @@ func (h *Handler) DeleteAsset(
 		return nil, err
 	}
 	// Same gate as UpdateAsset, same helper, checked before the write.
-	// GetAssetRow carries owner_user_ref but not team_id — widening it
-	// would change the row shape every read path projects from, so the
-	// scope comes from the dedicated authorisation probe.
+	// The scope comes from the dedicated authorisation probe rather than
+	// the read projection: the gate must answer for a row this caller
+	// may have no entitlement to read, and borrowing the read query
+	// would leave it one edit away from inheriting the read filters.
+	// (GetAssetRow does carry team_id since #953 made it settable; that
+	// is a projection for the client, not a substitute for this.)
 	subject, err := q.GetAssetMutationSubject(ctx, pgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2326,6 +2416,13 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		v := openapi_types.UUID(row.StateID.Bytes)
 		a.StateId = &v
 	}
+	// #953 — the team an asset was created into. Absent, not null, when
+	// it has none: the common case, and the same absence discipline the
+	// rest of this projection uses.
+	if row.TeamID.Valid {
+		v := openapi_types.UUID(row.TeamID.Bytes)
+		a.TeamId = &v
+	}
 	if len(row.Thumbhash) > 0 {
 		// Base64-encoded for JSON transport. The frontend
 		// thumbhash decoder accepts both base64 and the raw byte
@@ -2351,6 +2448,7 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 // have a marshaller for.
 func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 	return GetAssetRow{
+		TeamID:           r.TeamID,
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
@@ -2372,6 +2470,7 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 
 func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 	return GetAssetRow{
+		TeamID:           r.TeamID,
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
@@ -2393,6 +2492,7 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 	return GetAssetRow{
+		TeamID:           r.TeamID,
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
