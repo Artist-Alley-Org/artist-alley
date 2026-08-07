@@ -1048,8 +1048,10 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 // director may manage a file belonging to someone on their team" one
 // call rather than a tree walk.
 //
-// It does NOT confer publication — see canMutateAsset's note on the
-// publication boundary and the design note in migration 00037.
+// It does NOT confer publication. That is a separate set of verbs —
+// CapAssetsPublish / CapAssetsArchive / CapAssetsUnarchive below, wired
+// by #938 — and the design note in migration 00037 explains why the two
+// were never allowed to merge.
 //
 // The string is declared ONCE, in `visibility`, because #939 made the
 // read gate consult it too and `assets` imports `visibility` (the edge
@@ -1115,33 +1117,174 @@ func canMutateAsset(id *auth.Identity, ownerRef *int64, teamID pgtype.UUID) bool
 	return id.Can(CapAssetsAdmin)
 }
 
-// canSetAssetStatus decides whether the caller may change an asset's
-// publication status, which is a STRICTLY narrower question than
-// canMutateAsset: owner or system.admin only.
+// The publication verbs (#938). Seeded in migration 00001 and granted
+// to roles there, they gated NOTHING until this file consulted them:
+// changing `status` was owner-or-system.admin, so publication could not
+// be delegated at all. An operator who granted `assets.publish` to a
+// lead had delegated nothing and had no way to find that out — the
+// "accepted but inert" defect class, in capability clothing.
 //
-// The dangerous permission is never "edit the thing", it is "change
-// who can reach the thing". On an asset that lever is `status`:
+// They are deliberately SEPARATE from CapAssetsAdmin. `assets.admin` is
+// content management; `status` is a disclosure lever, because
 // visibility/predicate.go demands `status = 'active'` before an
-// anonymous reader may see the row, so flipping a colleague's draft to
-// active publishes their unfinished work to the open internet, and
-// flipping their active asset to draft retracts it. A team lead
-// granted "manage my team's files" was granted content management, not
-// a disclosure decision — the same separation Kubernetes draws by
-// withholding its `escalate` / `bind` verbs from ordinary edit rights.
+// anonymous reader may see the row. Folding these into `assets.admin`
+// would undo the boundary #936 drew — the same separation Kubernetes
+// draws by withholding `escalate` / `bind` from ordinary edit rights.
 //
-// The vocabulary already anticipated the split: `assets.publish`,
-// `assets.archive`, `assets.review`, `assets.submit` and
-// `assets.unarchive` are separate workflow verbs (seeded in 00002, not
-// yet wired to any gate). Publication being unbundled already is what
-// lets `assets.admin` sit beside them without absorbing it.
-func canSetAssetStatus(id *auth.Identity, ownerRef *int64) bool {
+// `assets.submit` and `assets.review` are NOT here. Their seeded
+// descriptions name a `pending_review` status, and the live constraint
+// is `CHECK (status = ANY (ARRAY['draft','active','archived']))` — they
+// gate the exit from a state that does not exist, so there is nothing
+// to enforce. Adding it is a schema decision belonging to #895/#896/
+// #897; #951 tracks the choice between building it and deleting them.
+// Migration 00038 rewrites their descriptions to say so plainly, so an
+// operator reading the capabilities table is not sold a no-op.
+const (
+	CapAssetsPublish   = "assets.publish"
+	CapAssetsArchive   = "assets.archive"
+	CapAssetsUnarchive = "assets.unarchive"
+)
+
+// assetStatusCapabilities maps a status transition onto the capability
+// codes a NON-OWNER must hold to perform it, and reports whether the
+// pair is one this handler recognises (an unknown pair fails closed).
+//
+// The live enum is `draft | active | archived`, so there are six
+// ordered pairs, and the three verbs do not partition them one-to-one.
+// The rule that resolves the overlaps, and the reason for it:
+//
+//	ENTERING `active` ALWAYS requires assets.publish, with no
+//	substitute.
+//
+// That is the only security-critical clause. `active` is the state the
+// anonymous read branch tests for, so `→ active` is THE disclosure act;
+// if any other verb could reach it, that verb would silently be a
+// publication right and the separation above would be decorative.
+// LEAVING `active` is not a disclosure — it only removes reach — so it
+// does not need the same protection, and the remaining transitions are
+// governed by whichever verb names them.
+//
+//	draft     → active    publish              the verb's own transition
+//	archived  → active    publish + unarchive  a disclosure AND an exit from archived
+//	draft     → archived  archive              entering archived; source is irrelevant,
+//	                                           neither state is publicly reachable
+//	active    → archived  archive              retiring published work; de-disclosure
+//	archived  → draft     unarchive            leaving archived, to a private state
+//	active    → draft     publish              retraction — the inverse of the publish
+//	                                           decision, and there is no `assets.unpublish`
+//
+// Two of those deserve their reasoning stated, because the mapping is
+// not forced:
+//
+//   - `draft → archived` takes `archive` alone. Archiving a draft is
+//     entering the archive, which is what the verb means; requiring
+//     `publish` too would mean a lead who may retire work cannot retire
+//     work that was never published, which is nonsense, and neither
+//     endpoint is anonymously readable so nothing is disclosed.
+//
+//   - `active → draft` (unpublishing) takes `publish`. Whoever may
+//     decide a thing is public may decide it is not — retraction is the
+//     publish decision pointing the other way, and it is exactly what
+//     the withheld right in #936 described. Handing it to `archive`
+//     would make `archive` mean two different things, and handing it to
+//     nobody would leave a published asset un-retractable by the very
+//     person trusted to have published it.
+//
+// `archived → active` requiring BOTH is the one conjunction, and it is
+// deliberate: an `unarchive` holder must not be able to publish (that
+// is a side door into `active`), and a `publish` holder does not
+// thereby get to decide what comes out of the archive. `unarchive`
+// alone is still a real, useful grant — it performs `archived → draft`,
+// returning work to its owner for rework.
+func assetStatusCapabilities(from, to string) ([]string, bool) {
+	switch {
+	case from == to:
+		return nil, true
+	case to == "active" && from == "draft":
+		return []string{CapAssetsPublish}, true
+	case to == "active" && from == "archived":
+		return []string{CapAssetsPublish, CapAssetsUnarchive}, true
+	case to == "archived":
+		return []string{CapAssetsArchive}, true
+	case to == "draft" && from == "archived":
+		return []string{CapAssetsUnarchive}, true
+	case to == "draft" && from == "active":
+		return []string{CapAssetsPublish}, true
+	}
+	return nil, false
+}
+
+// canTransitionAssetStatus decides whether the caller may move this
+// asset from `from` to `to`. It REPLACES canSetAssetStatus, which
+// answered the coarser "may you touch status at all" as owner-or-
+// system.admin; there is deliberately no second predicate beside this
+// one, because two copies of a security rule drift and the drift is the
+// bug (the note on canMutateAsset says the same thing).
+//
+// It mirrors canMutateAsset's shape exactly — anonymous refused,
+// system.admin, owner, team-scoped grant, global grant — and for the
+// same reasons, including the two nullable traps documented there:
+// a NULL owner matches nobody, and a team-less asset SKIPS the scoped
+// disjunct rather than treating "no scope required" as "anyone passes".
+//
+// It resolves the scoped question through id.Can(code, auth.InTeam(…))
+// and nothing else. That is not a shortcut, it is the only correct
+// route: `Identity.scopedCaps` is built by the resolver from FOUR
+// inputs — direct grants, role_capabilities reached by a recursive walk
+// of roles.parent_id carrying user_roles.team_id, minus
+// user_capability_revokes, then expanded through team_closure. A
+// team-scoped ROLE assignment produces ZERO rows in
+// user_capability_grants, and these three verbs are granted through a
+// role in the baseline (role_capabilities, 00001), so any hand-rolled
+// derivation from the grants table would miss precisely the path that
+// matters here.
+//
+// Every required code must pass. See assetStatusCapabilities for which
+// codes each transition requires and why.
+func canTransitionAssetStatus(
+	id *auth.Identity,
+	ownerRef *int64,
+	teamID pgtype.UUID,
+	from, to string,
+) bool {
 	if id == nil || id.IsAnonymous() {
 		return false
 	}
+	// system.admin is the global override everywhere, and reaches
+	// NULL-owner and team-less assets too.
 	if id.Can(auth.SuperAdminCapability) {
 		return true
 	}
-	return ownerRef != nil && *ownerRef != 0 && id.UserRef != 0 && *ownerRef == id.UserRef
+	// The owner keeps their own publication lever, unconditionally.
+	// Both sides must be a real user: ref 0 is the anonymous sentinel.
+	if ownerRef != nil && *ownerRef != 0 && id.UserRef != 0 && *ownerRef == id.UserRef {
+		return true
+	}
+	codes, known := assetStatusCapabilities(from, to)
+	if !known {
+		return false
+	}
+	for _, code := range codes {
+		if !hasAssetCapability(id, code, teamID) {
+			return false
+		}
+	}
+	// codes is empty only for from == to, which the handler does not
+	// route here; treat it as permitted rather than as a bare `true`
+	// for an unrecognised pair, which the !known branch already caught.
+	return true
+}
+
+// hasAssetCapability answers one capability code against one asset's
+// team scope, the way canMutateAsset does inline: prefer the
+// team-scoped question when the asset actually HAS a team, and fall
+// back to a GLOBAL holding. A team-scoped grant confers nothing on a
+// team-less asset.
+func hasAssetCapability(id *auth.Identity, code string, teamID pgtype.UUID) bool {
+	if teamID.Valid && id.Can(code, auth.InTeam(uuid.UUID(teamID.Bytes))) {
+		return true
+	}
+	return id.Can(code)
 }
 
 // canRestoreDeleted decides who may undo a soft delete, for any of the
@@ -1265,22 +1408,59 @@ func (h *Handler) UpdateAsset(
 		}
 		return nil, fmt.Errorf("assets: load mutation subject: %w", err)
 	}
-	if !canMutateAsset(caller, subject.OwnerUserRef, subject.TeamID) {
-		return openapi.UpdateAsset403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "you may not edit this asset"},
-		}, nil
+	// ONE request, TWO planes, and #938 is the issue that separated them.
+	//
+	// `assets.admin` is content management. `status` is a disclosure
+	// lever — visibility/predicate.go demands `status = 'active'` before
+	// an anonymous reader may see the row — and the publication verbs
+	// govern it. Before this the handler required content-management
+	// authority for the whole request, which had two consequences: the
+	// publication verbs enforced nothing, and publication could not be
+	// delegated WITHOUT also handing over the power to rewrite. Both
+	// halves of that bundling are the bug.
+	//
+	// So each plane is gated by its own rule and neither implies the
+	// other. `changesStatus` is compared against the CURRENT value, so a
+	// PATCH that merely echoes the status back is not a transition —
+	// the boundary is about CHANGING who can reach the asset.
+	touchesContent := titlePtr != nil || descPtr != nil || metaJSON != nil || in.Tags != nil
+	changesStatus := statusPtr != nil && *statusPtr != subject.Status
+
+	// The content plane. Skipped ONLY for a request whose sole effect is
+	// a status transition. A no-op PATCH still lands here — it commits an
+	// UPDATE and bumps updated_at, so it is a write on someone's asset
+	// even when no column changes value.
+	if touchesContent || !changesStatus {
+		if !canMutateAsset(caller, subject.OwnerUserRef, subject.TeamID) {
+			return openapi.UpdateAsset403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "you may not edit this asset"},
+			}, nil
+		}
 	}
-	// The publication boundary. `assets.admin` is content management;
-	// changing `status` is a disclosure decision, and canSetAssetStatus
-	// is the narrower gate that says so. Compared against the CURRENT
-	// value so a no-op PATCH that merely echoes the status back is not
-	// refused — the boundary is about CHANGING who can reach the asset.
-	if statusPtr != nil && *statusPtr != subject.Status && !canSetAssetStatus(caller, subject.OwnerUserRef) {
-		return openapi.UpdateAsset403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
-				Error: "changing an asset's publication status is reserved to its owner",
-			},
-		}, nil
+	// The publication plane, gated PER TRANSITION: which verb is needed
+	// depends on which way the status moves.
+	//
+	// A holder who passes here but not the content gate still cannot read
+	// what they published if the read rule refuses them — the 200 body is
+	// built by enrichAssetDerived, which applies the #899/#939 field
+	// withholding to every openapi.Asset this handler emits. A publish
+	// grant is a right to decide reachability, not a side door into the
+	// field plane.
+	if changesStatus {
+		if !canTransitionAssetStatus(caller, subject.OwnerUserRef, subject.TeamID, subject.Status, *statusPtr) {
+			// Name the capability. A bare "forbidden" leaves an operator
+			// guessing which of three verbs they failed to grant, and the
+			// codes are already visible to them in the admin capability
+			// list.
+			codes, _ := assetStatusCapabilities(subject.Status, *statusPtr)
+			msg := fmt.Sprintf("changing this asset's status from %q to %q is reserved to its owner", subject.Status, *statusPtr)
+			if len(codes) > 0 {
+				msg += " or a holder of " + strings.Join(codes, " and ")
+			}
+			return openapi.UpdateAsset403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: msg},
+			}, nil
+		}
 	}
 
 	// Phase 1.16 optimistic-concurrency check. Done inside the tx

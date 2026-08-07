@@ -371,6 +371,56 @@ Consequences worth stating:
 when the collection is `public`, while `ListPostAcls` requires owner-or-mutate. Tracked as **#933**;
 whichever way it goes, the two surfaces should agree.
 
+#### Amendment 2026-08-07 (#938, PR #952) — publication is delegable, per verb
+
+The 2026-08-06 (#930) amendment above says *"the same logic gates `assets.status` to owner +
+`system.admin` rather than to `assets.admin`"* and calls delegating it **#938**. That is now
+implemented, and the sentence should be read as history: `assets.status` is gated to owner,
+`system.admin`, **or the publication verb the specific transition requires**.
+
+`assets.publish`, `assets.archive` and `assets.unarchive` were seeded in the baseline, granted to a
+role there, listed in the admin capability surface — and consulted by nothing. That is the same
+*accepted-but-inert* defect as #916's ACL rows: an operator granted one, believed they had
+delegated publication, and had not.
+
+The live enum is `draft | active | archived` — there is no `published` and no `pending_review` —
+so the three verbs do not partition the six ordered transitions one-to-one. **One clause resolves
+every overlap:**
+
+> **Entering `active` always requires `assets.publish`, with no substitute.**
+
+`active` is the state `visibility/predicate.go` tests for on the anonymous read branch, so
+`→ active` is *the* disclosure act. A second route into it would silently turn some other verb into
+a publication right. Leaving `active` is not a disclosure — it only removes reach — so the rest are
+governed by whichever verb names them:
+
+| transition | requires | why |
+|---|---|---|
+| `draft → active` | `publish` | the verb's own transition |
+| `archived → active` | `publish` **and** `unarchive` | a disclosure *and* an exit from the archive; neither holder gets the other's decision |
+| `draft → archived` | `archive` | entering the archive; neither endpoint is publicly reachable |
+| `active → archived` | `archive` | retiring published work is a de-disclosure |
+| `archived → draft` | `unarchive` | leaving the archive, to a private state |
+| `active → draft` | `publish` | retraction is the publish decision reversed, and there is no `assets.unpublish` |
+
+Consequences worth stating:
+
+- **The two planes in `UpdateAsset` are now gated separately, and neither implies the other.** A
+  content edit needs `canMutateAsset`; a status transition needs the matching verb. Requiring
+  `assets.admin` *as well* would have meant publication could not be delegated without also handing
+  over the power to rewrite — the same bundling this ADR's rule rejects, pointed the other way.
+- **No new field-plane exposure.** A publication-only holder's `200` body is built by
+  `enrichAssetDerived`, which already applies the #899/#939 withholding, so a publish grant is a
+  right to decide reachability and not a side door into reading what you published.
+- **`assets.submit` and `assets.review` remain unenforced**, and migration 00038 rewrites their
+  descriptions to say so. They gate the exit from `pending_review`, which does not exist; building
+  it is a schema decision for #895/#896/#897, and **#951** carries the choice between building it
+  and deleting the two codes.
+- **The seam is `assets.team_id`.** Nothing in production writes it, so every asset created through
+  the API has `team_id = NULL` and only a *global* publication grant reaches it. The team-scoped
+  path is correct and tested, and is unreachable until something assigns assets to teams — the same
+  limitation `assets.admin` has carried since #930, recorded here rather than re-derived later.
+
 Schema:
 
 ```sql
