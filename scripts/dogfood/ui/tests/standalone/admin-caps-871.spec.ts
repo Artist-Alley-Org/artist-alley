@@ -32,6 +32,9 @@ import path from 'node:path';
 
 const SHOT_DIR = process.env.SHOT_DIR ?? '/tmp';
 const NO_PERMISSION = "You don't have permission to view this page.";
+// #956 — the degraded panel. Distinct copy, because the whole point is
+// that a user (and a test) can tell the two apart.
+const CAPS_UNAVAILABLE = "We couldn't check what you're allowed to do";
 
 interface FlashRecorder {
   __permHits?: number;
@@ -142,4 +145,113 @@ test('the frame sampler detects the panel text when it is present', async ({ pag
   );
   const { hits } = await flashCount(page);
   expect(hits, 'the sampler failed to notice the panel text it exists to find').toBeGreaterThan(0);
+});
+
+// ── #956 — "could not determine your rights" ≠ "you have none" ───────
+//
+// The nightly failure that produced this issue rendered
+// NO_PERMISSION at an administrator who demonstrably held system.admin
+// one second earlier. The mechanism: the server's capability lookup
+// failed, hydrateCapabilities omitted the key, and the client's
+// fallback ("absent means holds nothing") was faithfully rendered as a
+// permission refusal. Four triage passes went into narrowing that,
+// because the panel is byte-identical to the one a genuinely powerless
+// account sees — so neither the run log, nor the operator, nor a test
+// could say which had happened.
+//
+// The stimulus here is the WIRE SHAPE, not a stubbed function. That is
+// deliberate: /auth/me returning `capabilities_status: "unavailable"`
+// is the entire contract between the two halves of the fix, and
+// app/internal/auth/session_capabilities_test.go
+// (TestHydrateCapabilities_FailedLookupReportsUnavailable) pins that a
+// failing resolver really does produce this shape. Route interception
+// is how this side gets to assume it without a broken database.
+//
+// Note the route is intercepted BEFORE goto, so the degraded body is
+// what +layout.ts's boot fetch receives — i.e. this exercises the cold
+// navigate, which is the only path that reaches the admin gate with a
+// fresh session (test 8 of the nightly; see the pass-5 correction on
+// #956 for why markReady is not involved).
+async function withUnavailableCapabilities(page: Page): Promise<void> {
+  await page.route('**/api/v1/auth/me', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    // Exactly what the server sends when EffectiveCapabilitiesForUser
+    // errors: the key omitted, the status saying why.
+    delete body.capabilities;
+    body.capabilities_status = 'unavailable';
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
+test('a degraded capability lookup says so instead of denying permission', async ({ page }) => {
+  await withUnavailableCapabilities(page);
+  await page.goto('/admin/federation/peers');
+
+  await expect(
+    page.getByText(CAPS_UNAVAILABLE),
+    'a failed capability lookup did not surface as its own state — this is the ' +
+      '#956 defect, where a resolver blip is indistinguishable from having no rights',
+  ).toBeVisible({ timeout: 15_000 });
+
+  // The half that must NOT change. Failing closed on rights is correct
+  // and stays correct; the fix is about the explanation, and a fix that
+  // made the explanation honest by also showing the page would be a
+  // privilege escalation.
+  const text = (await page.locator('body').innerText()).trim();
+  expect(
+    text,
+    'the degraded state accused the administrator of lacking permission — ' +
+      'the two states must stay distinguishable',
+  ).not.toContain(NO_PERMISSION);
+
+  await page.screenshot({
+    path: path.join(SHOT_DIR, '956-admin-caps-unavailable.png'),
+    fullPage: true,
+  });
+});
+
+test('a degraded capability lookup renders NO admin controls', async ({ page }) => {
+  await withUnavailableCapabilities(page);
+  await page.goto('/admin/federation/peers');
+  await expect(page.getByText(CAPS_UNAVAILABLE)).toBeVisible({ timeout: 15_000 });
+
+  // The sidebar renders only inside the gate's granted branch, so its
+  // absence is proof the gate stayed shut. Asserted alongside the
+  // page's own heading: "the shell is hidden" and "the content is
+  // hidden" are two claims and this state owes both.
+  await expect(
+    adminShell(page),
+    'the admin sidebar rendered on a session whose rights are unknown',
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'Federation peers' }),
+    'the gated page rendered on a session whose rights are unknown',
+  ).toHaveCount(0);
+});
+
+// The other direction, and the one a fix could plausibly break: an
+// account that genuinely holds nothing must still be TOLD it holds
+// nothing. If this started showing the retry panel, the change would
+// have replaced one wrong answer with another — and this one loops
+// forever, because retrying resolves the same empty set every time.
+test('an account that genuinely holds nothing still gets the permission panel', async ({ page }) => {
+  await page.route('**/api/v1/auth/me', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    // The lookup SUCCEEDED. It just came back empty.
+    body.capabilities = [];
+    body.capabilities_status = 'resolved';
+    await route.fulfill({ response: res, json: body });
+  });
+  await page.goto('/admin/federation/peers');
+
+  await expect(page.getByText(NO_PERMISSION)).toBeVisible({ timeout: 15_000 });
+  const text = (await page.locator('body').innerText()).trim();
+  expect(
+    text,
+    'a resolved-but-empty capability set was reported as an error the user could retry — ' +
+      'it is not an error, and retrying it will never produce a different answer',
+  ).not.toContain(CAPS_UNAVAILABLE);
+  await expect(adminShell(page)).toHaveCount(0);
 });

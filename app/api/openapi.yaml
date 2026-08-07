@@ -11546,7 +11546,7 @@ components:
           description: 0..100 — share of en keys this catalogue translates.
     CurrentUser:
       type: object
-      required: [ref, username, auth_method]
+      required: [ref, username, auth_method, capabilities_status]
       properties:
         ref:
           type: integer
@@ -11640,11 +11640,53 @@ components:
             at real admins until the follow-up landed. One response, one
             decision, no window.
 
-            Best-effort, like the preference fields: a failed lookup
-            omits the key rather than failing the session call, and the
-            client falls back to holding nothing — the safe direction.
-            Absent and empty therefore both mean "assume no
-            capabilities".
+            OMITTED when `capabilities_status` is `unavailable`. Read
+            that field first: this one is only meaningful when the
+            lookup succeeded.
+        capabilities_status:
+          type: string
+          enum: [resolved, unavailable]
+          description: |
+            Whether `capabilities` above could be determined for this
+            session. THREE outcomes, not two, and the difference between
+            the last two is the whole point of this field (#956):
+
+              * `resolved` + a non-empty list — the caller holds those
+                codes.
+              * `resolved` + an empty list — the lookup succeeded and
+                the account genuinely holds nothing.
+              * `unavailable` — the lookup FAILED. `capabilities` is
+                omitted and says nothing whatsoever about what this
+                account holds.
+
+            Before this field existed, the second and third collapsed
+            into one wire shape, and the SPA rendered "You don't have
+            permission to view this page." for both. That panel is
+            correct for a powerless account and a lie for a resolver
+            blip, and neither the operator reading it nor a test
+            asserting on it could tell which had happened — which is
+            exactly how #956's nightly failure survived four triage
+            passes.
+
+            Clients MUST fail closed on `unavailable`: grant nothing,
+            render no gated control. What they MUST NOT do is describe
+            it as a permission decision. It is the absence of one, and
+            the honest surface is an error with a retry.
+
+            This is a status, not a permission: `unavailable` never
+            widens what a caller may do, and every action is enforced
+            server-side against a freshly resolved set regardless of
+            what any session response said.
+
+            Required, and deliberately so. Making it optional and
+            treating absent as "unknown" was the smaller diff and the
+            wrong one: `capabilities` is ALREADY legitimately absent
+            from POST /setup/complete, whose response omits it while
+            the admin's role is committed. Overloading absence would
+            have made that response assert a degraded state that is not
+            true, and would have let any future producer that forgets a
+            field silently emit an error state on a healthy session. A
+            required enum makes every producer answer the question.
         impersonated_by:
           type: object
           nullable: true

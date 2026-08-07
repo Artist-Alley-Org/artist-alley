@@ -617,6 +617,8 @@
   "admin": {
     "title": "Admin",
     "intro": "Manage the install. Changes here affect every user on this server.",
+    "caps_unavailable_title": "We couldn't check what you're allowed to do",
+    "caps_unavailable_body": "The server couldn't work out your permissions just now, so this page is hidden until it can. This isn't a decision about your account — nothing has changed about what you're allowed to do. Try again in a moment.",
     "status": {
       "live": "Live",
       "stub": "Stub"

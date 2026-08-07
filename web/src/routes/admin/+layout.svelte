@@ -3,9 +3,20 @@
 <script lang="ts">
   // /admin/* layout — sidebar nav + capability gate.
   //
-  // Renders nothing (just a "no permission" panel) when the caller
-  // lacks `system.admin`. The backend enforces every action anyway;
-  // this is the UX hide.
+  // Renders no admin surface at all to a caller who cannot open one.
+  // The backend enforces every action anyway; this is the UX hide.
+  //
+  // The gate has three outcomes, and keeping them three is the point
+  // (#956):
+  //
+  //   not ready          → loading
+  //   caps unavailable   → "could not determine your rights" + retry
+  //   ready, no caps     → "you don't have permission"
+  //
+  // The middle one used to fall through to the last, so a failed
+  // capability lookup on the server accused a real administrator of
+  // holding no rights. Both still grant exactly nothing; only the
+  // explanation differs, and the explanation is the whole fix.
 
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
@@ -27,6 +38,40 @@
   // Every page still enforces its own cap server-side; this is the UX
   // gate that stops a read-only role seeing a bare "no permission".
   const canSeeAdmin = $derived(auth.canSeeAdmin);
+
+  // #956 — the gate has THREE answers, not two. `canSeeAdmin` is false
+  // both for an account that holds nothing and for a session whose
+  // capabilities the server could not resolve, and until this branch
+  // existed the layout rendered the same permission refusal for both.
+  // That sentence is correct for the first and a lie for the second,
+  // and the nightly that hit it burned four triage passes precisely
+  // because neither an operator nor a test could tell which had
+  // happened.
+  //
+  // It is checked BEFORE canSeeAdmin so the more specific state wins,
+  // and it changes only the explanation: `auth.can()` and
+  // `auth.canSeeAdmin` both refuse throughout, so this branch renders
+  // no sidebar, no tiles, and no children.
+  const capsUnavailable = $derived(auth.capsUnavailable);
+
+  let retrying = $state(false);
+
+  async function retryCapabilities(): Promise<void> {
+    if (retrying) return;
+    retrying = true;
+    try {
+      await auth.refresh();
+      // A retry that comes back with no session at all is a signed-out
+      // session, not a degraded one — send them to sign in rather than
+      // leaving them on an admin URL that can never resolve. onMount's
+      // identical redirect has already run and will not run again.
+      if (!auth.user) {
+        await goto('/login?next=' + encodeURIComponent(page.url.pathname));
+      }
+    } finally {
+      retrying = false;
+    }
+  }
   const visibleSections = $derived(
     ADMIN_SECTIONS.filter((s) => s.tiles.some((t) => auth.canSeeTile(t))),
   );
@@ -51,6 +96,31 @@
 <div class="flex h-full overflow-hidden">
   {#if !auth.ready}
     <div class="flex-1 p-6 text-fg-muted">{t('common.loading')}</div>
+  {:else if capsUnavailable}
+    <!--
+      "We could not work out what you may do" — NOT "you may do
+      nothing" (#956). Grants exactly as much as the panel below it
+      does (nothing: no sidebar, no tiles, no children), and differs
+      only in telling the truth about why, with the one action that can
+      actually change the answer.
+    -->
+    <div class="flex-1 p-6">
+      <div
+        role="alert"
+        class="space-y-3 rounded-lg border border-warning/40 bg-warning-container p-4 text-sm text-on-warning-container"
+      >
+        <p class="font-medium">{t('admin.caps_unavailable_title')}</p>
+        <p>{t('admin.caps_unavailable_body')}</p>
+        <button
+          type="button"
+          class="rounded-md border border-warning/50 px-3 py-1.5 font-medium hover:bg-state-hover disabled:opacity-60"
+          disabled={retrying}
+          onclick={retryCapabilities}
+        >
+          {retrying ? t('common.loading') : t('common.retry')}
+        </button>
+      </div>
+    </div>
   {:else if !canSeeAdmin}
     <div class="flex-1 p-6">
       <div class="rounded-lg border border-danger/40 bg-danger-container p-4 text-sm text-on-danger-container">
