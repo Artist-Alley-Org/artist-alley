@@ -92,13 +92,22 @@ function isApiOrExternal(path: string): boolean {
 describe('internal link integrity', () => {
   const routes = buildRouteTable();
   const staticSet = buildStaticSet();
+  // Scanned ONCE for the whole describe, alongside the route table.
+  //
+  // extractLinks() reads every .svelte/.ts file under web/src, and it
+  // was being called separately by the guard test and by the main
+  // assertion — the same ~330 files walked and read twice per run, for
+  // a result that cannot differ between the two calls. That second scan
+  // was most of why the last test in this file sat on vitest's 5s
+  // default and failed two runs in three (#934).
+  const links = extractLinks();
 
   it('has a non-trivial route table and finds links (guards the guard)', () => {
     // If the scanner silently found nothing, every assertion below would
     // vacuously pass. Fail loudly instead.
     expect(routes.length).toBeGreaterThan(10);
     expect(routes).toContain('/');
-    expect(extractLinks().length).toBeGreaterThan(20);
+    expect(links.length).toBeGreaterThan(20);
   });
 
   it('rejects a bogus route target (proves the matcher actually discriminates)', () => {
@@ -123,7 +132,7 @@ describe('internal link integrity', () => {
 
   it('every internal href resolves to a real route', () => {
     const dead: string[] = [];
-    for (const { path, file } of extractLinks()) {
+    for (const { path, file } of links) {
       if (isApiOrExternal(path)) continue;
       if (resolvable(path, routes, staticSet)) continue;
       if (KNOWN_GAPS.has(normalizeShape(path))) continue; // pre-existing, tracked
