@@ -232,3 +232,43 @@ backend behind it, and per-domain config picks `in-process` vs
   multi-instance scaling demands it.
 - Search-result caching — needs ADR 0010 (search DSL) first so the
   cache key shape is stable.
+
+---
+
+### Amendment 2026-08-06 (#935, PR #945) — writes that reach other domains through the SCHEMA
+
+This ADR describes how a cache is invalidated by *the code that owns the write*. That is the
+common case and it is unchanged. It does not cover the case where a write empties rows in a
+package that never runs — and that gap produced two live staleness bugs.
+
+**A hard delete is the one asset write that crosses domains through the database rather than
+through code.** `asset_subtitle_tracks` and `post_assets` carry `ON DELETE CASCADE`, so deleting
+an asset removes rows in packages the deleting code has never heard of. **The database ends up
+consistent; the in-process LRUs those packages keep do not, and nothing in the database can tell
+them.** A read-through cache goes on answering from the pre-delete world until the process
+restarts.
+
+The decision:
+
+- **A write whose effects propagate via schema-level CASCADE owes an explicit cache fan-out.**
+  Consistency in Postgres is not consistency in the caches, and the FK gives no callback.
+- **The fan-out belongs at the composition root, behind a hook on the writing service** — here
+  `softdelete.Service.OnAssetsHardDeleted`. Calling the affected domains directly would give a
+  generic GC primitive imports of `subtitles`, `posts` and `iiif/presentation`, inverting the
+  dependency direction for three domains at once. The hook keeps one readable list of which
+  caches a hard delete touches.
+- **Best-effort, never propagating.** The write has already committed; a failure to evict must
+  not turn a completed job into a failed one. Log and continue — the same discipline the
+  storage-unpin step already uses.
+
+**The corollary that actually bit us: every mutating path needs the sweep, not just the dramatic
+ones.** `UpdateAsset` — an ordinary metadata PATCH — invalidated **nothing at all**, so renaming
+an asset left every holding post and its IIIF manifest serving the old title until a restart.
+That is the same defect #920 fixed for delete and restore, on the path users actually hit, and it
+survived because attention went to the destructive operations. The helper is now
+`assets.invalidateDerivedCaches` and runs on **update, delete and restore**.
+
+**A cross-package `Invalidate*` helper with no callers is a claim, not a mechanism.** Three such
+helpers existed; two were genuinely unwired and one was correct-as-is, and *all three* had doc
+comments asserting callers that did not exist. When adding one, wire it in the same change or say
+in its doc why nothing calls it — see [[feedback_a_comment_is_not_a_call_site]].
