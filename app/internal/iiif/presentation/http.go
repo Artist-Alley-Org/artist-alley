@@ -106,7 +106,7 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 		// the mapping above. BuildCollectionManifest still runs the
 		// content-plane check on the parent, so this is one expression
 		// removed, not one gate removed.
-		members, err := h.Loader.LoadCollectionMembers(r.Context(), id, caller, capsFrom(r), 200)
+		members, err := h.Loader.LoadCollectionMembers(r.Context(), id, caller, capsFrom(r), mutCapsFrom(r), 200)
 		if err != nil {
 			return nil, err
 		}
@@ -142,6 +142,25 @@ func capsFrom(r *http.Request) visibility.CapabilityChecker {
 		return func(code string) bool { return id.Can(code) }
 	}
 	return nil
+}
+
+// mutCapsFrom resolves the caller's `assets.admin` scope (#939) for the
+// FIELD plane of a collection's member list. Separate from capsFrom
+// because that checker answers GLOBAL codes only and this capability is
+// team-scoped, so the team set has to travel as data.
+//
+// Safe against the manifest cache: an AUTHENTICATED collection manifest
+// is never cached (see loadWithCache), and this can only widen for an
+// authenticated caller.
+func mutCapsFrom(r *http.Request) visibility.AssetMutationCaps {
+	id := auth.IdentityFromContext(r.Context())
+	if id == nil {
+		return visibility.AssetMutationCaps{}
+	}
+	return visibility.ResolveAssetMutationCaps(
+		func(code string) bool { return id.Can(code) },
+		id.ScopedTeams(visibility.AssetsAdmin),
+	)
 }
 
 // loadWithCache serves from the manifest cache when fresh.

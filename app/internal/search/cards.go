@@ -98,10 +98,21 @@ func (r *assetCardRow) scanDest() []any {
 // assetCardExtra builds the `extra` bag for a READABLE asset hit.
 //
 // Only ever called past visibility.FieldsReadable — see the package note
-// above. `readable` is threaded in anyway rather than assumed, because
-// the three availability flags have to AND with it at exactly one place
-// and this is that place.
-func assetCardExtra(r assetCardRow, thumbhash []byte, readable bool) []byte {
+// above. `picture` is threaded in anyway rather than assumed, because
+// the three availability flags AND the thumbhash have to AND with it at
+// exactly one place and this is that place.
+//
+// #939 — `picture` is visibility.PreviewReadable, NOT FieldsReadable.
+// The two diverge for a caller who reaches this row only through a
+// team-scoped `assets.admin`: ADR 0064 gives them the fields and
+// withholds the picture, because a thumbhash IS a blur and the
+// availability flags are a promise the binary handlers still refuse to
+// keep for them. Passing `true` here (which this took literally, from
+// both call sites, before #939) hands that caller the blur.
+func assetCardExtra(r assetCardRow, thumbhash []byte, picture bool) []byte {
+	if !picture {
+		thumbhash = nil
+	}
 	out := map[string]any{
 		"asset_type":     r.AssetType,
 		"file_hash":      r.FileHash,
@@ -112,9 +123,9 @@ func assetCardExtra(r assetCardRow, thumbhash []byte, readable bool) []byte {
 		// the card contract in cardAsset.ts asks for that name. The old
 		// spelling was unique to this endpoint and read by nothing.
 		"thumbhash":         encodeThumbhash(thumbhash),
-		"preview_available": r.HasCol && readable,
-		"ladder_available":  r.HasLadder && readable,
-		"scrub_available":   r.HasScrub && readable,
+		"preview_available": r.HasCol && picture,
+		"ladder_available":  r.HasLadder && picture,
+		"scrub_available":   r.HasScrub && picture,
 	}
 	// A pair or neither, never a half-populated one the client has to
 	// re-validate before dividing (pixeldims.Sane is the one definition).
@@ -248,6 +259,7 @@ func (e *Engine) loadPostCovers(ctx context.Context, q Query, ids []uuid.UUID) (
 		return out, nil
 	}
 	caller, caps := callerOf(q)
+	mut := mutCapsOf(q)
 	rows, err := e.Pool.Query(ctx, `
 		SELECT assets.id, assets.thumbhash,
 		       `+visibility.FieldsColumnsSQL("assets", "$2")+`,
@@ -271,25 +283,31 @@ func (e *Engine) loadPostCovers(ctx context.Context, q Query, ids []uuid.UUID) (
 		dest := append([]any{
 			&id, &thumb,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
-			&fr.IsTeamMember, &ownerName,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		}, card.scanDest()...)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
-		// ONE readability decision feeds the three availability flags AND
-		// the placeholder, the same discipline as list_page.go and
-		// posts.enrichPreview.
+		fr.ApplyMutationCaps(mut)
+		// TWO decisions from one row (#939): the FIELD plane decides the
+		// placeholder, the PICTURE plane decides the blur and the three
+		// availability flags. They diverge only for an `assets.admin`
+		// holder, who is owed the columns and refused the image.
 		readable := visibility.FieldsReadable(fr, caller, caps)
+		picture := visibility.PreviewReadable(fr, caller, caps)
 		m := &postCardMember{
 			AssetID:          id,
 			Readable:         readable,
 			OwnerDisplayName: ownerName,
 		}
 		if readable {
-			// The flags need no further AND: this branch IS the readable
-			// one, and the unreadable branch ships no asset object at all.
 			m.Card = &card
-			m.Thumbhash = thumb
+			m.Card.HasCol = card.HasCol && picture
+			m.Card.HasLadder = card.HasLadder && picture
+			m.Card.HasScrub = card.HasScrub && picture
+			if picture {
+				m.Thumbhash = thumb
+			}
 		}
 		out[id] = m
 	}

@@ -91,6 +91,19 @@ type Query struct {
 	// exist. Both fold into the cache key.
 	PostCaps visibility.PostCaps
 
+	// MutationCaps is the caller's `assets.admin` scope, resolved at the
+	// same edge (#939, ADR 0064). A holder is owed the FIELDS of the
+	// assets they may edit — otherwise they administer titles they
+	// cannot see — and is still refused the picture and the bytes.
+	//
+	// A third resolved struct rather than two more booleans on Caps
+	// because this capability is TEAM-SCOPED: the honest resolved form
+	// is a set of team IDs, and ContentCaps' contract is two global
+	// booleans and a two-byte cache key. It folds into the key for the
+	// same revoke-direction reason the other two do; see
+	// visibility.AssetMutationCaps.CacheKey.
+	MutationCaps visibility.AssetMutationCaps
+
 	// Advanced is a placeholder for the B-2 advanced DSL
 	// (field:value, phrases, AND/OR/NOT). Nil in B-1; the engine
 	// ignores it. Kept here so the outer shape stays stable

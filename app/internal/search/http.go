@@ -88,6 +88,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// rule could not be expressed at all (search/doc.go called it
 		// "deliberately deferred").
 		query.Caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
+		// #939 — the asset-mutation scope, resolved at the SAME edge as
+		// the other two so it reaches the cache key with them.
+		query.MutationCaps = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 		// #873 — the post plane needs its own answer: posts.admin opens
 		// the `private` tier in the post read rule, which search now
 		// composes in full instead of a narrower copy of it.

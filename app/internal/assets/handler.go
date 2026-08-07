@@ -954,11 +954,18 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 	// same function the container surfaces and the browse list use, so
 	// the four cannot drift (#899).
 	detCaller, detCaps := contentCaller(ctx)
-	fieldsRow, ownerName, err := visibility.LoadFieldsRow(ctx, h.Pool, detCaller, assetID)
+	fieldsRow, ownerName, err := visibility.LoadFieldsRow(ctx, h.Pool, detCaller, assetID, mutationCaps(ctx))
 	if err != nil {
 		return fmt.Errorf("assets: readability inputs: %w", err)
 	}
 	readable := visibility.FieldsReadable(fieldsRow, detCaller, detCaps)
+	// #939 — TWO decisions from one row. `readable` is the FIELD plane
+	// and now admits a team-scoped `assets.admin` holder; `picture` is
+	// the same conjunction WITHOUT that disjunct, and gates the
+	// thumbhash blur plus the three availability flags. A mutation
+	// holder gets a richer placeholder — real fields, no picture — per
+	// ADR 0064.
+	picture := visibility.PreviewReadable(fieldsRow, detCaller, detCaps)
 	if !readable {
 		// Replace the WHOLE value, not selected fields — see
 		// withheldAsset's doc for why this is a literal and not a
@@ -974,6 +981,13 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 	// not a hot loop, and this is the same trade the tag-details query
 	// above already makes.
 	//
+	// The blur is the picture, not a field (#939). ADR 0064 puts the
+	// thumbhash on the BINARY side — "a thumbhash IS a blur" — so a
+	// caller who reaches these columns only through a mutation
+	// capability gets the fields with the picture cleared.
+	if !picture {
+		out.Thumbhash = nil
+	}
 	// Reached only when `readable` — a source resolution is a fact about
 	// a file, and #899 retired the earlier reasoning that dimensions ride
 	// the same plane as the row rather than the same plane as the bytes.
@@ -1003,6 +1017,13 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		).Scan(&hasCol, &hasLadder, &hasScrub); err != nil {
 			return fmt.Errorf("assets: variant check: %w", err)
 		}
+		// AND with `picture`, not `readable` (#939): these three are a
+		// promise the binary handlers must keep, and those still refuse a
+		// mutation holder. A true flag on gated bytes is a 403 the client
+		// walks straight into.
+		hasCol = hasCol && picture
+		hasLadder = hasLadder && picture
+		hasScrub = hasScrub && picture
 		out.PreviewAvailable = &hasCol
 		out.LadderAvailable = &hasLadder
 		out.ScrubAvailable = &hasScrub
@@ -1029,7 +1050,12 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 //
 // It does NOT confer publication — see canMutateAsset's note on the
 // publication boundary and the design note in migration 00037.
-const CapAssetsAdmin = "assets.admin"
+//
+// The string is declared ONCE, in `visibility`, because #939 made the
+// read gate consult it too and `assets` imports `visibility` (the edge
+// only runs that way). This alias keeps the name readable at the write
+// sites below; it is not a second declaration.
+const CapAssetsAdmin = visibility.AssetsAdmin
 
 // canMutateAsset decides whether the caller may edit or delete this
 // asset. Owner, a team-scoped or global `assets.admin`, or
@@ -1636,6 +1662,7 @@ func (h *Handler) ListAssets(
 		CursorID:        cursorID,
 		RowLimit:        fetch,
 		Ladder:          h.ladder(ctx),
+		MutationCaps:    mutationCaps(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assets: list: %w", err)
@@ -1726,6 +1753,28 @@ func contentCaller(ctx context.Context) (visibility.Caller, visibility.Capabilit
 		return visibility.NewCaller(&id.UserRef), func(code string) bool { return id.Can(code) }
 	}
 	return visibility.NewCaller(nil), nil
+}
+
+// mutationCaps resolves the caller's asset-mutation capabilities for
+// the READ gates (#939, ADR 0064) — the field plane a mutation holder
+// is owed, never the bytes.
+//
+// Separate from contentCaller because it is a different plane and a
+// different shape: contentCaller hands out a CapabilityChecker that
+// answers GLOBAL codes only (`id.Can(code)` with no InTeam option), and
+// `assets.admin` is team-scoped, so a scoped-only holder answers false
+// through that checker. The team set has to travel as data.
+//
+// Anonymous resolves to the zero value, which permits nothing.
+func mutationCaps(ctx context.Context) visibility.AssetMutationCaps {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return visibility.AssetMutationCaps{}
+	}
+	return visibility.ResolveAssetMutationCaps(
+		func(code string) bool { return id.Can(code) },
+		id.ScopedTeams(visibility.AssetsAdmin),
+	)
 }
 
 func (h *Handler) DownloadAssetFile(

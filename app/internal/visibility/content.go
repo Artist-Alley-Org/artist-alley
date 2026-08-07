@@ -29,6 +29,21 @@ const SystemAdmin = "system.admin"
 // exactly the codes granted to it.
 const ContentReadAll = "content.read.all"
 
+// AssetsAdmin lets a holder MUTATE assets that are not theirs —
+// metadata edit, soft-delete, restore. Seeded by migration 00037 and
+// enforced by assets.canMutateAsset; ADR 0010 Layer 5 makes it
+// TEAM-SCOPED, so a grant on team X covers X and every descendant.
+//
+// It lives here, not in the assets package, because [FieldsReadable]
+// consults it and `assets` imports this package — the dependency only
+// runs one way. `assets` references THIS constant; there is deliberately
+// no second declaration of the string.
+//
+// Per ADR 0064 (#939) holding it confers the FIELD plane and NOTHING
+// else: see [FieldsReadable] for the disjunct and [PreviewReadable] for
+// the plane it is deliberately absent from.
+const AssetsAdmin = "assets.admin"
+
 // CapabilityChecker answers "does this caller hold capability X".
 // Declared as a func rather than an interface because auth.Identity.Can
 // takes variadic options, so it does not satisfy a plain Can(string)
