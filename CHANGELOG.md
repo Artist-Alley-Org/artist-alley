@@ -9,6 +9,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **You could be told you lacked permission when the server simply couldn't tell.** If working
+  out what an administrator was allowed to do failed — a momentary database hiccup was
+  enough — the answer came back looking exactly like "you are allowed nothing", and the
+  admin area told them, in red, that they did not have permission to view the page (#956).
+
+  There was no way to tell that apart from genuinely lacking access: not for the person
+  reading it, and not for our own tests, which is why a nightly failure caused by it took
+  four rounds of investigation to pin down.
+
+  The server now says which of the two it means. Being unable to determine your permissions
+  still shows you nothing you are not entitled to — that part was already right and has not
+  changed — but it now reads as a temporary problem to retry rather than an accusation.
+
 - **You could label a post with a studio you have nothing to do with.** Creating a post let you
   name any team on the instance as its owner, and nothing checked whether you were in it. The
   only thing standing in the way was that the team had to exist (#954).
