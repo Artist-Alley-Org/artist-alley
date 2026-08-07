@@ -3644,6 +3644,12 @@ paths:
         `asset:<new-asset-id>` and the caller's prior `user:` pin
         for that hash is dropped (the bytes are now owned by the
         asset, not the uploader).
+
+        Answers **404** when `team_id` names a team that does not
+        exist OR one this caller may not assign to — the two are
+        deliberately the same response, so this endpoint cannot be
+        used to enumerate the instance's teams. See
+        `AssetCreate.team_id`.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -3676,6 +3682,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: |
             Asset with the same content hash already exists in the
@@ -12744,6 +12752,18 @@ components:
           format: uuid
           nullable: true
           description: Optional workflow state (domain = 'asset').
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The team this asset is scoped to, or absent when it has
+            none — which is the common case. Set at create time via
+            `AssetCreate.team_id` (#953) and not changeable afterwards.
+
+            It is on the FIELD plane, so a withheld asset does not
+            carry it: which studio holds a file you may not open is a
+            fact about that file.
         processing_status:
           type: string
           enum: [pending, ready, failed]
@@ -13174,6 +13194,28 @@ components:
             `workflow_state` whose `domain = 'asset'`. When omitted,
             the asset is placed in the `asset` domain's initial state
             (or NULL if the domain has none).
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional — scope the asset to a team (#953). Mirrors
+            `PostCreate.team_id`, and is gated by the same rule: you
+            may assign to a team you are a DIRECT MEMBER of, one you
+            hold a team-scoped `assets.admin` over (closure-expanded,
+            so a grant on a parent team reaches its descendants), or
+            any team if you hold `system.admin`.
+
+            `team_id` is an authorization input, not a label. It is the
+            scope a team-scoped `assets.admin` grant matches against,
+            and at `sensitivity = 'team'` it is what makes the asset
+            readable by that team — so assigning is a disclosure act.
+
+            A team you may not assign to answers **404 `team not
+            found`**, byte-identical to a team that does not exist, so
+            this endpoint cannot be used to enumerate the instance's
+            teams. Reassignment after creation is deliberately NOT
+            offered: `AssetUpdate` carries no `team_id`.
     AssetUpdate:
       type: object
       description: |

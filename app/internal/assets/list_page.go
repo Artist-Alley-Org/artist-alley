@@ -75,7 +75,7 @@ type ListAssetsPageGatedParams struct {
 const listAssetsPageColumns = `id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, deleted_at, deleted_reason`
+       created_at, updated_at, deleted_at, deleted_reason, team_id`
 
 // ListAssetsPageGatedRow is a browse row plus the derived
 // preview_available flag (#471). Embeds the sqlc row so callers keep
@@ -227,7 +227,7 @@ LIMIT $7::INTEGER`)
 			&i.ID, &i.Title, &i.Description, &i.AssetType, &i.OwnerUserRef, &i.Status,
 			&i.FileHash, &i.FileExtension, &i.FileSizeBytes, &i.Metadata,
 			&i.OriginServerID, &i.StateID, &i.ProcessingStatus, &i.Thumbhash,
-			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
+			&i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason, &i.TeamID,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
 			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 			&pixelWidth, &pixelHeight,

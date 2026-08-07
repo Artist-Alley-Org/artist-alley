@@ -219,7 +219,7 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 		SELECT id, title, description, asset_type, owner_user_ref, status,
 		       file_hash, file_extension, file_size_bytes, metadata,
 		       origin_server_id, state_id, processing_status, thumbhash,
-		       created_at, updated_at,
+		       created_at, updated_at, team_id,
 		       `+visibility.FieldsColumnsSQL("assets", "$2")+`
 		FROM assets
 		WHERE id = ANY($1)`+frag,
@@ -242,7 +242,7 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 			&r.ID, &r.Title, &r.Description, &r.AssetType, &r.OwnerUserRef, &r.Status,
 			&r.FileHash, &r.FileExtension, &r.FileSizeBytes, &r.Metadata,
 			&r.OriginServerID, &r.StateID, &r.ProcessingStatus, &r.Thumbhash,
-			&r.CreatedAt, &r.UpdatedAt,
+			&r.CreatedAt, &r.UpdatedAt, &r.TeamID,
 			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
 			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		); err != nil {
