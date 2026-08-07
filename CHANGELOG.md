@@ -120,6 +120,24 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Someone who manages your team's files can now read their details — but still can't
+  open them.** A team lead with permission to edit, delete and restore their team's work
+  was, until now, shown the same blank placeholder as a stranger. They could rename a file
+  they had never been allowed to see, and delete one they had never been shown (#939).
+
+  They now see the **written details** — title, description, tags, the rest of the
+  metadata — for exactly the files they are entitled to manage. They still cannot see the
+  **picture**, not even the blurred preview, and still cannot download the original. The
+  result is a fuller placeholder rather than an open door.
+
+  This deliberately does not turn a management permission into a viewing permission. Those
+  remain separate: being trusted to tidy up a library is not the same as being cleared to
+  look at everything in it, and a great many studios need exactly that distinction for
+  work under embargo or licensed from someone else.
+
+  A permission granted on a parent team reaches the teams beneath it, as it already did
+  everywhere else.
+
 - **You can undo your own delete.** Assets, posts and collections now record **who**
   deleted them, and restoring is no longer administrators-only: if you deleted it, you
   can put it back. If someone else deleted it, you cannot — you ask for it back instead,
