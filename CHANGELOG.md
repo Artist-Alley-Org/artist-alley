@@ -9,6 +9,31 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **You could label a post with a studio you have nothing to do with.** Creating a post let you
+  name any team on the instance as its owner, and nothing checked whether you were in it. The
+  only thing standing in the way was that the team had to exist (#954).
+
+  Nothing became visible that wasn't already — but the label is not just a label. A post
+  attached to a studio can be edited and deleted by the people who manage that studio's work.
+  So the field quietly handed strangers authority over your post, and put your post in their
+  space.
+
+  You can now only attach something to a team you actually belong to, or one you have been
+  given the job of managing. A team that exists but isn't yours answers exactly the same as one
+  that doesn't exist, so the field can't be used to find out which studios are on an instance.
+
+- **You can put your own upload in a team.** Files could belong to a team — the permission
+  rules, the team-only visibility tier and the whole management story were built on it — but
+  there was no way to say so when uploading. Only the sample-data tool could do it, which meant
+  a demo could show something the product could not actually do (#953).
+
+  Uploading now takes an optional team, under the same rule as posts above. A file in a team can
+  be seen by that team when marked team-only, and managed by whoever manages that team's work.
+
+  ⚠️ **This is set when the file is created and cannot be changed afterwards.** Moving a file
+  between teams changes both who can edit it and who can see it, so it needs its own thought
+  rather than being folded in here.
+
 - **A post's cover picture skipped the check its other pictures got.** Naming a file as a
   post's cover — rather than as one of its contents — was never checked against whether
   you were allowed to open that file. The contents had been checked since the previous
