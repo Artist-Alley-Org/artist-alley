@@ -5,7 +5,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -167,11 +169,15 @@ func TestLoginAndMe_AgreeOnCapabilities(t *testing.T) {
 }
 
 // A user with no role at all must come back with an EMPTY list, not an
-// absent one. Both read as "holds nothing" at the client, so this is
-// not about the gate's answer — it is about the response saying which
-// it means. Absent is reserved for "the lookup failed", and collapsing
-// the two would make a broken capability query indistinguishable from
-// a correctly powerless account in any log or bug report.
+// absent one, and must be reported `resolved` — because the lookup
+// genuinely succeeded and the honest answer genuinely is "nothing".
+//
+// This is the case #956's degraded state must never be confused with,
+// in EITHER direction. The client renders "you don't have permission"
+// here and must go on doing so; if this account started rendering "we
+// could not determine your rights" the fix would have made the product
+// worse, by turning a true statement into a retry loop that never
+// resolves.
 func TestSession_CapabilitiesEmptyForRolelessUser(t *testing.T) {
 	withFixture(t, func(ctx context.Context, fx *fixture) {
 		// withFixture already pre-cleans user_roles, grants and
@@ -185,6 +191,162 @@ func TestSession_CapabilitiesEmptyForRolelessUser(t *testing.T) {
 		mustDecode(t, resp, &cu)
 		if got := capsOf(t, cu); len(got) != 0 {
 			t.Errorf("roleless user got caps %v, want none", got)
+		}
+		if cu.CapabilitiesStatus != openapi.Resolved {
+			t.Errorf("roleless user got capabilities_status=%q, want %q — "+
+				"a powerless account is a RESOLVED answer, not a failed lookup (#956)",
+				cu.CapabilitiesStatus, openapi.Resolved)
+		}
+	})
+}
+
+// #956 — a failed capability lookup must be distinguishable on the wire
+// from an account that holds nothing.
+//
+// # Why this is a direct call rather than an HTTP round-trip
+//
+// Every other test in this file drives the real router, and for good
+// reason (account_prefs_session_test.go's lesson: the observable has to
+// be the response). This one cannot. The defect is what the handler
+// does when the capability QUERY fails while the session itself
+// succeeds, and both run on the same pool — there is no way to break
+// one from the outside without breaking the other, so an HTTP-level
+// version of this test would be testing a 500, which is a different
+// bug. The seam is the function.
+//
+// What makes that acceptable is that the two halves of the contract are
+// pinned in different places and meet in the middle: this asserts a
+// failing resolver produces `unavailable` with NO capability list, and
+// scripts/dogfood/ui/tests/standalone/admin-caps-871.spec.ts asserts
+// that a session carrying exactly that shape renders the degraded panel
+// and no admin controls. Neither half proves the behaviour alone.
+func TestHydrateCapabilities_FailedLookupReportsUnavailable(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		// A closed pool fails every query deterministically, with no
+		// network and no timing. That is the whole stimulus: any
+		// resolver error at all, not one specific pg error code.
+		broken := openPool(t, os.Getenv("AA_DB_PASSWORD"))
+		broken.Close()
+
+		h := &Handler{Pool: broken}
+		cu := openapi.CurrentUser{Ref: fx.userRef, Username: fx.username, AuthMethod: "session"}
+		h.hydrateCapabilities(ctx, fx.userRef, &cu)
+
+		if cu.CapabilitiesStatus != openapi.Unavailable {
+			t.Errorf("failed lookup reported capabilities_status=%q, want %q — "+
+				"this is the #956 defect: the client cannot tell a broken resolver "+
+				"from a powerless account, so it tells an administrator they have "+
+				"no permission", cu.CapabilitiesStatus, openapi.Unavailable)
+		}
+		// The list must be ABSENT, not empty. An empty array alongside
+		// `unavailable` would be a claim about the account that this
+		// response is in no position to make.
+		if cu.Capabilities != nil {
+			t.Errorf("failed lookup still published a capability list (%v); "+
+				"it must omit the key entirely", *cu.Capabilities)
+		}
+	})
+}
+
+// The success path of the same function, so the test above cannot pass
+// by the status being hardwired to `unavailable`. Two assertions that
+// can only both hold if the branch is real.
+func TestHydrateCapabilities_SuccessfulLookupReportsResolved(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		seedSessionCapRole(t, ctx, fx, "test_956_Resolved", "test.956.ok")
+
+		h := &Handler{Pool: fx.pool}
+		cu := openapi.CurrentUser{Ref: fx.userRef, Username: fx.username, AuthMethod: "session"}
+		h.hydrateCapabilities(ctx, fx.userRef, &cu)
+
+		if cu.CapabilitiesStatus != openapi.Resolved {
+			t.Fatalf("working lookup reported capabilities_status=%q, want %q",
+				cu.CapabilitiesStatus, openapi.Resolved)
+		}
+		assertHasAll(t, capsOf(t, cu), "test.956.ok")
+	})
+}
+
+// `capabilities_status` is a REQUIRED wire field whose Go zero value
+// ("") is not a member of its enum, so a producer that forgets to set
+// it ships a response no client can read — and the client's fail-closed
+// mapping (mapCapsStatus) would read it as `unavailable`, i.e. a
+// healthy admin session rendering the degraded panel forever.
+//
+// Same "one schema, several producers" reasoning as
+// TestLoginAndMe_AgreeOnCapabilities above, and the same reason it is
+// worth its own test: the defect class is not "endpoint X forgot a
+// field", it is "N endpoints return CurrentUser and only some of them
+// fill it in".
+func TestSession_CapabilitiesStatusOnEveryProducer(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		seedSessionCapRole(t, ctx, fx, "test_956_Producers", "test.956.producers")
+
+		body := openapi.LoginJSONRequestBody{Username: fx.username, Password: fx.password}
+		loginResp := fx.call(t, http.MethodPost, "/auth/login", body, nil)
+		if loginResp.StatusCode != http.StatusOK {
+			t.Fatalf("login status=%d body=%s", loginResp.StatusCode, readBody(loginResp))
+		}
+		var cookie *http.Cookie
+		for _, c := range loginResp.Cookies() {
+			if c.Name == SessionCookieName {
+				cookie = c
+				break
+			}
+		}
+		if cookie == nil {
+			t.Fatal("no rs_session cookie set")
+		}
+		var fromLogin openapi.CurrentUser
+		mustDecode(t, loginResp, &fromLogin)
+
+		meResp := fx.call(t, http.MethodGet, "/auth/me", nil, cookie)
+		if meResp.StatusCode != http.StatusOK {
+			t.Fatalf("me status=%d body=%s", meResp.StatusCode, readBody(meResp))
+		}
+		var fromMe openapi.CurrentUser
+		mustDecode(t, meResp, &fromMe)
+
+		for name, cu := range map[string]openapi.CurrentUser{"login": fromLogin, "me": fromMe} {
+			if !cu.CapabilitiesStatus.Valid() {
+				t.Errorf("%s returned capabilities_status=%q, which is not a member of the enum "+
+					"— the client reads anything it does not recognise as `unavailable`, so this "+
+					"ships a permanent degraded panel to a healthy session (#956)",
+					name, cu.CapabilitiesStatus)
+				continue
+			}
+			if cu.CapabilitiesStatus != openapi.Resolved {
+				t.Errorf("%s returned capabilities_status=%q on a healthy lookup, want %q",
+					name, cu.CapabilitiesStatus, openapi.Resolved)
+			}
+		}
+	})
+}
+
+// The raw JSON, not the decoded struct. `capabilities_status` is
+// required, so it must be a key on the wire — and a decode into a Go
+// struct with a non-pointer field cannot tell an absent key from an
+// empty one, which is exactly the distinction the client's fail-closed
+// mapping turns on.
+func TestSession_CapabilitiesStatusIsOnTheWire(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		cookie := fx.loginAndGetCookie(t)
+		resp := fx.call(t, http.MethodGet, "/auth/me", nil, &cookie)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, readBody(resp))
+		}
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode raw: %v", err)
+		}
+		got, ok := raw["capabilities_status"]
+		if !ok {
+			t.Fatal("/auth/me omitted `capabilities_status` from the response body — " +
+				"the client reads an absent status as `unavailable` and renders the " +
+				"degraded panel to every session (#956)")
+		}
+		if string(got) != `"resolved"` {
+			t.Errorf("capabilities_status on the wire = %s, want \"resolved\"", got)
 		}
 	})
 }

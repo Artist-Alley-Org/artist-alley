@@ -416,17 +416,29 @@ jobs:
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
 
+      # Same two settings, same reasoning, as ui-nightly's upload (#956):
+      # upload-artifact@v4 excludes hidden files by default and every
+      # path here is dot-prefixed, so this step has been reporting a
+      # one-second success and uploading nothing on every red PR run.
+      # `include-hidden-files: true` makes it collect the report;
+      # `if-no-files-found: error` makes a future empty upload announce
+      # itself instead of passing as coverage. The dead
+      # `apply-state-*.json` glob is dropped — nothing writes it.
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: pw-report-standalone-${{ github.run_id }}
+          # The negation drops Playwright's storageState, which carries
+          # the suite's live admin session cookie — see the nightly's
+          # copy of this step for the reasoning.
           path: |
             scripts/dogfood/ui/.pw-report/
             scripts/dogfood/ui/.pw-results/
-            apply-state-*.json
+            !scripts/dogfood/ui/.pw-results/admin-state.json
+          include-hidden-files: true
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       # Job-queue state on failure (#768). `docker compose logs
       # --tail=200` is the wrong instrument for "was the worker busy
@@ -446,7 +458,12 @@ jobs:
 
       - name: Container logs on failure
         if: failure()
-        run: docker compose logs --tail=200
+        # Shared action (#956) so "captured nothing" reds the step
+        # instead of passing silently. No dogfood profile here — ui-pr
+        # runs studio-a only.
+        uses: ./.github/actions/container-logs
+        with:
+          tail: "200"
 
       - name: Detach runner from the compose network
         if: always()

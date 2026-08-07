@@ -84,18 +84,58 @@ export interface AuthUser {
 // Mirrors `Identity.SuperAdminCapability` in app/internal/auth.
 const SYSTEM_ADMIN = 'system.admin';
 
+/**
+ * Mirrors `CurrentUser.capabilities_status` (#956). `resolved` means
+ * `caps` is authoritative — an empty array then means the account
+ * genuinely holds nothing. `unavailable` means the server could not
+ * determine the set at all, and `caps` says nothing about the account.
+ *
+ * Those are not two ways of saying "no rights". Collapsing them is what
+ * let a resolver blip render an administrator a permission refusal.
+ */
+export type CapsStatus = 'resolved' | 'unavailable';
+
 class AuthState {
   user = $state<AuthUser | null>(null);
   ready = $state(false);
-  /** Capability codes the caller holds globally. Loaded by refresh(). */
+  /** Capability codes the caller holds globally. Loaded by refresh().
+   *  Only meaningful when `capsStatus === 'resolved'`. */
   caps = $state<string[]>([]);
+  /**
+   * Whether `caps` above could be determined. Assigned by the same
+   * setter, from the same response, as `caps` itself — see adopt().
+   *
+   * Defaults to `resolved` because the pre-boot state is "signed out,
+   * holding nothing", which is a determination, not a failure. Nothing
+   * gated reads this before `ready` anyway.
+   */
+  capsStatus = $state<CapsStatus>('resolved');
+
+  /**
+   * True when the server told us it could not work out what this
+   * account may do. Surfaces MUST still grant nothing (`can()` returns
+   * false throughout), but they must describe THIS rather than a
+   * permission decision: the honest render is an error with a retry,
+   * not "you don't have permission to view this page".
+   */
+  get capsUnavailable(): boolean {
+    return this.capsStatus === 'unavailable';
+  }
 
   /**
    * `system.admin` short-circuits every check, matching the backend's
    * Identity.Can. Used by the admin menu visibility gate and any
    * capability-aware UI bits.
+   *
+   * Unknown rights are NO rights (#956). The explicit guard is belt to
+   * `adopt()`'s braces: the server omits `capabilities` whenever it
+   * reports `unavailable`, so `caps` is already empty on that path —
+   * but "the gate cannot open on a set we do not trust" is the rule,
+   * and a rule enforced only by a coincidence of another layer is one
+   * refactor from being untrue.
    */
   can(code: string): boolean {
+    if (this.capsUnavailable) return false;
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
     return this.caps.includes(code);
   }
@@ -111,6 +151,8 @@ class AuthState {
    * that reference it inside their own $derived/effect stay reactive.
    */
   get canSeeAdmin(): boolean {
+    // Unknown rights are no rights (#956) — same rule as can().
+    if (this.capsUnavailable) return false;
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
     return ADMIN_TILE_CAPS.some((c) => this.caps.includes(c));
   }
@@ -138,18 +180,25 @@ class AuthState {
    * /auth/me, /auth/login and /auth/register) as the signed-in
    * identity.
    *
-   * The ONE place `user` and `caps` are assigned, and they are assigned
-   * together, from the same response, synchronously (#871). That is the
-   * whole invariant: `ready` is what the capability-gated surfaces wait
-   * on, so any path that can publish a user without their capabilities
-   * is a path that can tell an administrator they have no permission.
-   * Fetching the caps separately is exactly such a path — it is how
-   * the /admin gate came to flash a red panel at real admins — so
-   * there is no setter for one without the other.
+   * The ONE place `user`, `caps` and `capsStatus` are assigned, and
+   * they are assigned together, from the same response, synchronously
+   * (#871). That is the whole invariant: `ready` is what the
+   * capability-gated surfaces wait on, so any path that can publish a
+   * user without their capabilities is a path that can tell an
+   * administrator they have no permission. Fetching the caps separately
+   * is exactly such a path — it is how the /admin gate came to flash a
+   * red panel at real admins — so there is no setter for one without
+   * the other.
+   *
+   * `capsStatus` joins the set for the same reason and travels with it
+   * (#956): a capability list and the question "is this list real?" are
+   * one fact, and reading them a frame apart would recreate #871 with
+   * an extra step.
    */
   private adopt(u: Record<string, unknown>): void {
     this.user = mapUser(u);
     this.caps = mapCaps(u);
+    this.capsStatus = mapCapsStatus(u);
   }
 
   /** Re-fetch the current session from the server. */
@@ -158,6 +207,10 @@ class AuthState {
     if (error || !data) {
       this.user = null;
       this.caps = [];
+      // Not a degraded capability lookup: there is no session to
+      // resolve capabilities FOR. Anonymous genuinely holds nothing,
+      // and +layout.ts sends a user-less visitor to /login anyway.
+      this.capsStatus = 'resolved';
     } else {
       this.adopt(data);
     }
@@ -193,12 +246,15 @@ class AuthState {
     await api.POST('/auth/logout');
     this.user = null;
     this.caps = [];
+    this.capsStatus = 'resolved';
   }
 
-  /** Drop in-memory state without a network call. Used on 401. */
+  /** Drop in-memory state without a network call. Used on 401.
+   *  Signed out is a determination, not a failed one — see refresh(). */
   clear(): void {
     this.user = null;
     this.caps = [];
+    this.capsStatus = 'resolved';
   }
 
   /**
@@ -259,12 +315,34 @@ function mapUser(u: Record<string, unknown>): AuthUser {
 }
 
 /** Read `CurrentUser.capabilities` off a session body. Absent, null or
- *  malformed all mean "holds nothing" — the safe fallback, and the one
- *  the server documents for a failed capability lookup. */
+ *  malformed all yield an empty set — the safe fallback. WHY it is
+ *  empty is `capabilities_status`'s job, not this function's; read
+ *  mapCapsStatus() alongside it and never treat an empty array on its
+ *  own as "the account has no rights" (#956). */
 function mapCaps(u: Record<string, unknown>): string[] {
   const c = u.capabilities;
   if (!Array.isArray(c)) return [];
   return c.filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * Read `CurrentUser.capabilities_status` off a session body (#956).
+ *
+ * Strict allowlist, and the direction is deliberate: ONLY the literal
+ * `'resolved'` is taken as "this list is real". Anything else — absent,
+ * null, a typo, a value from a schema version this build does not know
+ * — reads as `unavailable`.
+ *
+ * That is the safe direction on both axes at once. `unavailable` grants
+ * nothing (can() returns false throughout), so an unrecognised body can
+ * never widen access; and it renders as "we could not determine your
+ * rights, retry" rather than "you have no permission", so an
+ * unrecognised body can never accuse the user of something untrue
+ * either. Defaulting the other way would restore the exact conflation
+ * this field exists to end, and would do it silently.
+ */
+function mapCapsStatus(u: Record<string, unknown>): CapsStatus {
+  return u.capabilities_status === 'resolved' ? 'resolved' : 'unavailable';
 }
 
 function extractError(err: unknown): string | undefined {

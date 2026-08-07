@@ -1,0 +1,66 @@
+name: Container logs
+description: >-
+  Dump this run's container logs into the job log, and FAIL if there are
+  none (#956).
+
+  Why the failure matters more than the dump: on ui-nightly run
+  31160803362 the `Container logs on failure` step reported success and
+  the two artifact uploads beside it reported success, and between them
+  they produced one artifact of zero bytes and half a stack's logs. A
+  triage that starts from "the evidence steps are green" and finds no
+  evidence spends its first pass discovering that the pipeline is
+  vacuous rather than reading the failure. A diagnostic step that
+  silently succeeds is worse than no step at all, because it reads as
+  coverage.
+
+  So this action treats "captured nothing" as a failure of the capture,
+  not as a quiet no-op. The enclosing job has already failed by the time
+  this runs (`if: failure()`), so the extra red step costs no signal —
+  it converts a silent gap into a named one.
+
+inputs:
+  profiles:
+    description: >-
+      Extra compose profile flags, e.g. "--profile dogfood". Profile-gated
+      services are INVISIBLE to a bare `docker compose logs`: on the run
+      above, the dogfood stack's studio-b half (app-b / nginx-b /
+      postgres-b) contributed zero lines because the flag was missing, so
+      "the container logs" meant "half of them" and nobody could tell from
+      reading them.
+    required: false
+    default: ""
+  tail:
+    description: Lines per service to dump.
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - name: Dump container logs
+      shell: bash
+      env:
+        PROFILES: ${{ inputs.profiles }}
+        TAIL: ${{ inputs.tail }}
+      run: |
+        set -uo pipefail
+        # shellcheck disable=SC2086
+        out="$(docker compose $PROFILES logs --no-color --tail="$TAIL" 2>&1)"
+        rc=$?
+        printf '%s\n' "$out"
+
+        # Strip whitespace to decide emptiness: `docker compose logs`
+        # against a project whose containers are already gone exits 0
+        # and prints a single newline, which a plain `[ -z "$out" ]`
+        # would not catch.
+        if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+          echo "::error::container-logs captured NOTHING for project '${COMPOSE_PROJECT_NAME:-<unset>}'." \
+            "The stack was already torn down, never came up, or COMPOSE_PROJECT_NAME/COMPOSE_FILE do not" \
+            "resolve to it from this step. Whatever the cause, this run has no container-side evidence" \
+            "and the failure above cannot be triaged from it (#956)."
+          exit 1
+        fi
+        if [ "$rc" -ne 0 ]; then
+          echo "::error::docker compose logs exited $rc — output above may be partial (#956)."
+          exit "$rc"
+        fi

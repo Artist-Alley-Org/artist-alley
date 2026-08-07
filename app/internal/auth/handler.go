@@ -833,15 +833,43 @@ func (h *Handler) hydrateSessionUser(ctx context.Context, userRef int64, cu *ope
 // i.e. the UI would offer a control that 403s. Global-only is the
 // shape GET /auth/me/capabilities already publishes.
 //
-// Best-effort, matching hydrateAccountPrefs: on error the key is
-// omitted and the client falls back to holding nothing. That is the
-// safe direction — a transient DB blip hides admin UI for a moment, it
-// does not hand anybody a capability, and every action is enforced
-// server-side regardless of what this list said.
+// Still best-effort, matching hydrateAccountPrefs: a failed lookup does
+// not fail the session call. Failing the call would be worse than the
+// bug — /auth/me is the boot gate for the WHOLE app, so a capability
+// blip would lock a user out of the browse page rather than out of
+// /admin.
+//
+// What changed in #956 is not the direction, it is the expressiveness.
+// Failing closed on rights is right and stays; the response now also
+// says WHICH closed door the client is looking at, via
+// `capabilities_status`:
+//
+//   - resolved   — `capabilities` is authoritative. An empty list means
+//     the account genuinely holds nothing.
+//   - unavailable — the lookup failed. `capabilities` is omitted and
+//     carries no information about this account.
+//
+// Before that field, those two were one wire shape. A transient
+// resolver error handed an administrator an empty capability set, and
+// web/src/routes/admin/+layout.svelte rendered "You don't have
+// permission to view this page." — a sentence that is true for a
+// powerless account and false for a database blip, with nothing on the
+// wire to tell them apart. Neither the operator reading the panel nor a
+// test asserting on it could distinguish them, which is why the nightly
+// that hit this took four triage passes to narrow. The client still
+// grants nothing on `unavailable`; it just stops calling it a
+// permission decision.
+//
+// EVERY branch below assigns the status. That is the invariant this
+// function owns: `CurrentUser.CapabilitiesStatus` is a required wire
+// field whose Go zero value ("") is not a member of the enum, so a
+// branch that returns without setting it ships an invalid response.
+// TestSession_CapabilitiesStatusOnEveryProducer pins it.
 func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	if id := IdentityFromContext(ctx); id != nil && id.UserRef == userRef && id.Capabilities != nil {
 		caps := append([]string{}, id.Capabilities...)
 		cu.Capabilities = &caps
+		cu.CapabilitiesStatus = openapi.Resolved
 		return
 	}
 	caps, err := New(h.Pool).EffectiveCapabilitiesForUser(ctx, userRef)
@@ -850,12 +878,17 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.caps.session_hydrate.error",
 				slog.Int64("user_ref", userRef), slog.String("err", err.Error()))
 		}
+		// Leave Capabilities nil. `unavailable` is what makes that
+		// absence mean "unknown" rather than "none" — an empty slice
+		// here would be a claim we cannot support.
+		cu.CapabilitiesStatus = openapi.Unavailable
 		return
 	}
 	if caps == nil {
 		caps = []string{}
 	}
 	cu.Capabilities = &caps
+	cu.CapabilitiesStatus = openapi.Resolved
 }
 
 // hydrateAccountPrefs fills the four stored-preference fields on a
@@ -900,11 +933,20 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 // dependency plumbed in to fill a response the client immediately
 // discards — the setup page calls auth.refresh() (i.e. /auth/me) the
 // line after it lands, so the session the operator actually browses on
-// is fully hydrated regardless. Note this is now a real omission
-// rather than a provable no-op: /setup/complete commits the admin's
-// role assignment before it builds the response, so the capability
-// list it leaves absent is one that exists. If anything ever starts
-// reading /setup/complete's body as a session, it needs this.
+// is fully hydrated regardless. It is still a real omission rather
+// than a provable no-op: /setup/complete commits the admin's role
+// assignment before it builds the response, so the capability list it
+// leaves absent is one that exists.
+//
+// What #956 changed is that the omission is now DECLARED. That handler
+// sets capabilities_status: unavailable, so anything that ever starts
+// reading its body as a session gets "this response cannot tell you
+// your rights" — a retry — instead of a silently empty set that the
+// /admin gate would render as "you don't have permission". It is also
+// why that status field is required rather than "absent means
+// unknown": `capabilities` is legitimately absent there while the
+// account demonstrably holds things, so absence alone could never have
+// carried the meaning.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	var lang, theme string
 	var viewsJSON, filtersJSON []byte

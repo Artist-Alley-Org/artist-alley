@@ -530,7 +530,11 @@ jobs:
 
       - name: Container logs on failure
         if: failure()
-        run: docker compose logs --tail=200
+        # Shared action (#956) so "captured nothing" reds the step
+        # instead of passing silently.
+        uses: ./.github/actions/container-logs
+        with:
+          tail: "200"
 
       - name: Stop the stack
         # always(): a red run leaks exactly as much as a green one — both
