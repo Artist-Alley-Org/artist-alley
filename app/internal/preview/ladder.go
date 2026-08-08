@@ -189,7 +189,7 @@ func fanVariants(ctx context.Context, in ladderInput) error {
 		if variantDone(ctx, in.Storage, in.Hash, v.Key, in.Overwrite) {
 			continue
 		}
-		dst := resizeFor(in.Src, v)
+		dst := resizeFor(ctx, in.Src, v)
 		var buf bytes.Buffer
 		ctype, err := encodeImage(&buf, dst, v)
 		if err != nil {

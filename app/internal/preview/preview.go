@@ -47,7 +47,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	xdraw "golang.org/x/image/draw"
 
 	// Decoder registrations for image.Decode.
 	_ "golang.org/x/image/bmp"
@@ -301,7 +300,7 @@ func mimeForExt(ext string) string {
 }
 
 func (h *RasterHandler) writeVariant(ctx context.Context, hash string, src image.Image, v sysconfig.PreviewVariant) error {
-	dst := resizeFor(src, v)
+	dst := resizeFor(ctx, src, v)
 	var buf bytes.Buffer
 	contentType, err := encodeImage(&buf, dst, v)
 	if err != nil {
@@ -326,7 +325,7 @@ func (h *RasterHandler) writeVariant(ctx context.Context, hash string, src image
 // resize + encode
 // ---------------------------------------------------------------------------
 
-func resizeFor(src image.Image, v sysconfig.PreviewVariant) image.Image {
+func resizeFor(ctx context.Context, src image.Image, v sysconfig.PreviewVariant) image.Image {
 	b := src.Bounds()
 	w, hh := b.Dx(), b.Dy()
 	if w <= 0 || hh <= 0 {
@@ -342,7 +341,7 @@ func resizeFor(src image.Image, v sysconfig.PreviewVariant) image.Image {
 		if side <= 0 {
 			return src
 		}
-		return resizeCover(src, side)
+		return resizeCover(ctx, src, side)
 	default:
 		longest := maxInt(w, hh)
 		if v.SkipUpscale && longest <= v.MaxDim {
@@ -362,17 +361,17 @@ func resizeFor(src image.Image, v sysconfig.PreviewVariant) image.Image {
 		if dh < 1 {
 			dh = 1
 		}
-		return resizeContain(src, dw, dh)
+		return resizeContain(ctx, src, dw, dh)
 	}
 }
 
-func resizeContain(src image.Image, dw, dh int) image.Image {
+func resizeContain(ctx context.Context, src image.Image, dw, dh int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+	scaleHQ(ctx, dst, dst.Bounds(), src, src.Bounds(), draw.Over)
 	return dst
 }
 
-func resizeCover(src image.Image, side int) image.Image {
+func resizeCover(ctx context.Context, src image.Image, side int) image.Image {
 	b := src.Bounds()
 	w, hh := b.Dx(), b.Dy()
 	if w <= 0 || hh <= 0 || side <= 0 {
@@ -387,7 +386,7 @@ func resizeCover(src image.Image, side int) image.Image {
 		sw = (w * side) / hh
 	}
 	scaled := image.NewRGBA(image.Rect(0, 0, sw, sh))
-	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, b, draw.Over, nil)
+	scaleHQ(ctx, scaled, scaled.Bounds(), src, b, draw.Over)
 	x0 := (sw - side) / 2
 	y0 := (sh - side) / 2
 	if x0 < 0 {
