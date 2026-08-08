@@ -9,6 +9,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **Changing a post's small cover picture did nothing, and said it worked.** The field was
+  documented, accepted, and answered "saved" — while leaving the picture exactly as it was.
+  Everything behind it was in place; the one step that actually writes the value had been
+  missed (#946).
+
+  It now saves. And, like the main cover picture before it, you can only point it at a file
+  you are allowed to open — a file you cannot see answers the same "not found" a made-up one
+  does, so it cannot be used to work out which files exist.
+
 - **You could be told you lacked permission when the server simply couldn't tell.** If working
   out what an administrator was allowed to do failed — a momentary database hiccup was
   enough — the answer came back looking exactly like "you are allowed nothing", and the
