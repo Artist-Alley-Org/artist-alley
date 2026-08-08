@@ -203,6 +203,30 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **When the server runs out of memory, it now leaves something to read.** The app was being
+  killed by its own container ceiling roughly eleven times in sixteen hours, and from outside
+  the process there was no way to tell an honest peak from a slow leak — both climb, both die
+  at the ceiling. The previous answer was to raise the ceiling, which turns one of those into
+  "fine" and the other into "the same crash, later" (#888).
+
+  The server now writes a memory line every fifteen seconds carrying three different views:
+  what the Go runtime thinks it is using, what the container is actually charged (the only
+  number that decides whether it gets killed), and a per-command breakdown of the helper
+  programs it has spawned — ffmpeg, ghostscript, headless Chromium and the rest. Those three
+  regularly disagree by gigabytes, and the third is what explains the gap.
+
+  When the container passes 80 % of its ceiling it also writes a heap profile and a full
+  stack dump to a small ring of files that keeps the five most recent and deletes the rest.
+  Nobody has to be watching, and nothing has to be switched on beforehand.
+
+  The boot log now states the memory ceiling actually in force and where it came from, read
+  back out of the running process rather than from what was intended.
+
+  Every part of this is adjustable, and switching it off is one setting — see
+  `AA_MEM_SAMPLE_INTERVAL` and its siblings in `docs/install/config/aa.env.example`.
+  Profiles land in a container-local directory and never under the storage root, because a
+  heap profile contains whatever the server was holding at the time.
+
 - **Publishing can be handed to someone other than the owner.** Making a file live, retiring
   it, or bringing it back were reserved to whoever uploaded it and to system administrators.
   A team lead trusted to manage a library could edit and delete files, and could not publish
