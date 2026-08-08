@@ -48,6 +48,22 @@ var grantOnlyCapabilities = map[string]string{
 	"share.grant": "00003 + 00039: catalogue-only, 'a code an operator hands to a named approver, " +
 		"never a tier default'. Approving a request inserts a user_capability_grants row naming a " +
 		"requester-controlled code, so it must never ride along on a read-only tier.",
+	"system.asset_types.admin": "00001: 'Edit asset_type definitions and manage their per-type ACLs'. " +
+		"An admin WRITE (assettype/acls_handler.go gates grant + revoke on it, not just the list), so it " +
+		"is not an Auditor cap; and Admin reaches it through the system.admin wildcard, so a role default " +
+		"would grant nobody anything they lack. Same class as assets.admin / collections.admin / " +
+		"posts.admin: the operator delegates per-type ACL administration to a named account. " +
+		"#961 also gave its admin tile this cap so the hand-out is discoverable (sections.ts).",
+	"users.approve": "users/admin.go: 'Distinct from users.write so a future \"User Approver\" role can " +
+		"move accounts through pending → active → disabled without inheriting role-assignment + " +
+		"grant/revoke rights.' #961: that role is a COMPOSITION an operator builds at /admin/roles " +
+		"(users.read + users.approve), not a tier we ship — one capability does not justify a seeded " +
+		"role, and Admin already performs the lifecycle through the system.admin wildcard.",
+	"users.password.reset": "00001: 'Issue a one-shot password reset for any user (admin helpdesk " +
+		"action)'. #961: a write over another person's credentials, so not an Auditor cap; and the " +
+		"helpdesk tier it names is the same operator composition as users.approve. Admin performs the " +
+		"reset through the system.admin wildcard — auth/password_handler.go checks Can, which the " +
+		"wildcard satisfies.",
 
 	// --- Deliberately ungranted, including to system.admin.
 	"content.read.all": "00014: 'Deliberately NOT granted to anything here.' The demo's read-only " +
@@ -89,20 +105,21 @@ var grantOnlyCapabilities = map[string]string{
 // two are never confused. Filing one of these under "grant-only" would
 // launder a bug into a design decision. Fixing one means deleting its
 // entry here and granting it, not editing the reason.
-var unreachableBacklog = map[string]string{
-	"system.audit.read": "00011: 'That capability exists so an operator can create a read-only auditor " +
-		"role.' 00039 created that role and did not grant it. Live tile (sections.ts, automation/audit).",
-	"system.jobs.read": "00005: 'so an auditor role can watch the pipeline without the system.admin " +
-		"wildcard.' Six live tiles under sections.ts jobs/.",
-	"system.storage.read": "00006: 'so an auditor role can answer \"what is using the disk\" without the " +
-		"system.admin wildcard.' Four live tiles under sections.ts storage/.",
-	"system.asset_types.admin": "Gates three handlers in assettype/acls_handler.go; baseline-seeded, " +
-		"no role holds it, and its admin tile carries no cap at all so the page 403s on use.",
-	"users.approve": "users/admin.go: 'so a future \"User Approver\" role can move accounts through " +
-		"pending → active → disabled.' That role does not exist.",
-	"users.password.reset": "Gates the helpdesk reset in auth/password_handler.go; the baseline " +
-		"describes it as an 'admin helpdesk action' but no role holds it.",
-}
+//
+// IT IS EMPTY, AND THAT IS THE POINT (#961). The six entries #958 filed
+// here are resolved: migration 00040 grants `system.audit.read`,
+// `system.jobs.read` and `system.storage.read` to Auditor — the role
+// each of 00011 / 00005 / 00006 names in its own header — and the other
+// three moved up to grantOnlyCapabilities with the sources describing
+// them as operator hand-outs rather than tier defaults.
+//
+// The map stays declared rather than being deleted with its checks. An
+// empty backlog is a state the test asserts is reachable, not a section
+// that no longer exists: adding an entry here is how a future sprint
+// admits "this is #958 again, and it is not fixed yet", which is a more
+// honest edit than quietly widening grantOnlyCapabilities. If it is
+// still empty at the next audit, nothing has regressed.
+var unreachableBacklog = map[string]string{}
 
 // TestEveryCapabilityIsReachableOrExempt is the standing invariant.
 func TestEveryCapabilityIsReachableOrExempt(t *testing.T) {
@@ -195,13 +212,39 @@ func TestEveryCapabilityIsReachableOrExempt(t *testing.T) {
 		}
 	}
 
-	// ── 3. The six codes 00039 granted are reachable ──────────────────
+	// ── 3. The nine codes the Auditor migrations granted are reachable ─
 	//
-	// Stated positively so a regression in 00039 fails HERE too, with a
-	// message about reachability, rather than only in the migration test.
+	// Stated positively so a regression in 00039 / 00040 fails HERE too,
+	// with a message about reachability, rather than only in the
+	// migration tests.
 	for _, code := range auditorGrantedCaps {
 		if !held[code] {
 			t.Errorf("capability %q is held by no role — migration 00039 should have granted it to Auditor.", code)
 		}
+	}
+	for _, code := range auditorAdminReadCaps {
+		if !held[code] {
+			t.Errorf("capability %q is held by no role — migration 00040 should have granted it to Auditor.", code)
+		}
+	}
+
+	// ── 4. The backlog is empty, and stays that way ───────────────────
+	//
+	// #961 closed the last six entries. The staleness pass above already
+	// rejects a listed code that some role now holds, but it says nothing
+	// about a NEW entry, and "add it to the backlog" is the cheapest way
+	// to make a future unreachable capability stop failing this test.
+	// Naming the empty state as an assertion makes that a deliberate,
+	// visible edit — you have to delete this check to do it quietly.
+	if len(unreachableBacklog) != 0 {
+		var codes []string
+		for code := range unreachableBacklog {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		t.Errorf("unreachableBacklog is not empty: %v.\n"+
+			"    #961 emptied it. A capability nobody can hold is either granted to a role in a "+
+			"migration, or grant-only with the source that says so — the backlog is for admitting an "+
+			"UNFIXED #958, not for parking new ones.", codes)
 	}
 }
