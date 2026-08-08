@@ -133,21 +133,79 @@ class LangState {
    * Called once from +layout.svelte's onMount.
    */
   init(): void {
-    // 1. Cookie wins for the initial paint (no network).
+    // 1. Cookie, else the browser's own preference. No network.
     const cookiePref = readCookie(COOKIE_NAME);
-    // 2. Auth user profile — overrides cookie if non-empty (DB is
-    //    the canonical source once signed in).
-    const profilePref = (auth.user as unknown as { language?: string } | null)?.language ?? '';
-
-    const chosen = profilePref || cookiePref || '';
-    this.pref = chosen;
-    this.resolved = chosen ? resolveLocale(chosen) : resolveLocale(systemPref());
+    this.pref = cookiePref;
+    this.resolved = cookiePref ? resolveLocale(cookiePref) : resolveLocale(systemPref());
+    // 2. The account, which outranks the device — the DB is canonical
+    //    once signed in. Delegated rather than repeated: syncFromAccount
+    //    runs on every path that publishes a user (#869) and this one
+    //    runs at mount, so two copies of "does the account win" would be
+    //    two rules to keep in step, and the drift would present as the
+    //    same user getting a different language depending on which ran
+    //    last. Whichever fires here is a no-op when auth.user is null.
+    this.syncFromAccount();
 
     // Apply the cached overrides synchronously, then refresh from the
     // server. Mirrors appearance.init() — same first-paint problem,
     // same shape of answer.
     this.overrides = readOverrideCache();
     void this.refreshOverrides();
+  }
+
+  /**
+   * Adopt the signed-in account's `language` (#869).
+   *
+   * Called from AuthState.adopt(), which is the one place `user` is
+   * assigned — so this runs on the sign-in path (login()), the boot
+   * path (hydrateFrom(), via +layout.ts) and the re-fetch path
+   * (refresh()) alike, and cannot be reached by a fourth path that
+   * forgets to call it.
+   *
+   * init() alone does not cover this and cannot. The root layout mounts
+   * ONCE, so init() runs against whatever `auth.user` held at that
+   * moment: for a visitor who lands on /login that is null, and their
+   * account language would then never be applied until a full reload
+   * picked it up off the profile. theme.syncFromAccount() exists for
+   * exactly the same gap; this is the language half of it.
+   *
+   * PRECEDENCE IS THE OPPOSITE OF THEME'S, and deliberately so. Theme
+   * returns early when the device cookie is set — the device has spoken
+   * and the account does not argue. Language overwrites it: the ACCOUNT
+   * is canonical once signed in, which is the precedence init() has
+   * always applied (`profilePref || cookiePref`) and which now lives
+   * here alone. A language is a property of the person; a colour scheme
+   * is a property of the screen they happen to be sitting at.
+   *
+   * It writes no cookie and sends no PATCH. Both belong to set(), the
+   * explicit-choice path; mirroring a value the server just told us
+   * back to the server is a write nobody asked for, and claiming the
+   * device cookie on the account's behalf would outlive the session.
+   */
+  syncFromAccount(): void {
+    const account = (auth.user as unknown as { language?: string | null } | null)?.language ?? '';
+    // Null / absent / empty is the NORMAL state, not a fault: it is the
+    // stored value for every account that has never picked a language,
+    // and it means "follow this device". Falling back to the cookie
+    // then navigator.language then en is correct, and silent, because
+    // nothing was asked for and nothing is being ignored.
+    if (!account) return;
+    const resolved = resolveLocale(account);
+    // An UNRECOGNISED tag is a different thing and gets a warning.
+    // UserProfileUpdate.language is validated only by maxLength server-
+    // side, so `de` or `en_US` or a typo can genuinely be stored; the
+    // account asked for something and is about to be handed English
+    // instead. That is the right fallback and the wrong thing to do
+    // quietly — the person sees a language they did not choose and has
+    // no way to find out why.
+    if (resolved !== account && resolved !== account.split('-')[0]) {
+      console.warn(
+        `[i18n] account language ${JSON.stringify(account)} is not a supported locale `
+        + `(${SUPPORTED_LOCALES.map((l) => l.code).join(', ')}); rendering ${resolved}`,
+      );
+    }
+    this.pref = account;
+    this.resolved = resolved;
   }
 
   /**

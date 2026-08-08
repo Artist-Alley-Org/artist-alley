@@ -189,6 +189,28 @@
       "embedding_pending": "Embedding pending — check back after the indexer catches up.",
       "empty": "No similar assets in your library yet.",
       "distance_label": "cosine distance: {d}"
+    },
+    "edit": {
+      "title": "Edit asset",
+      "back": "Back to asset",
+      "field_title": "Title",
+      "field_description": "Description",
+      "field_tags": "Tags",
+      "field_status": "Status",
+      "tag_placeholder": "Add a tag and press Enter",
+      "tag_remove": "Remove tag {tag}",
+      "tags_replace_note": "Saving replaces this asset's whole tag list.",
+      "status_draft": "Draft — only you and your team can find it",
+      "status_active": "Published — anyone who can reach this site can see it",
+      "status_archived": "Archived — kept, but out of the way",
+      "status_note": "Publishing decides who can reach this asset, not how it looks.",
+      "error_save": "Couldn't save this asset.",
+      "forbidden_heading": "You can't edit this asset",
+      "forbidden_body": "It belongs to someone else, and your account doesn't hold the rights to change other people's work.",
+      "forbidden_demo": "The demo is read-only, so nothing here can be changed.",
+      "conflict_heading": "Somebody else edited this first",
+      "conflict_body": "This asset changed on the server after you opened this form. Reload to see their version, or save anyway to replace it with yours.",
+      "conflict_overwrite": "Save anyway"
     }
   },
   "card": {
@@ -199,7 +221,8 @@
       "copy_link": "Copy link",
       "copied": "Link copied",
       "manage_access": "Manage access…",
-      "add_to_collection": "Add to collection…"
+      "add_to_collection": "Add to collection…",
+      "edit": "Edit…"
     },
     "select": {
       "label": "Select",
@@ -541,8 +564,8 @@
       "views_title": "Default views",
       "views_intro": "Where browse opens on a device you haven’t set up by hand. Changing the view while you browse only affects that device and leaves these settings alone.",
       "filters_title": "Feed filters",
-      "filters_show_restricted": "Show items I don\u2019t have access to",
-      "filters_show_restricted_help": "By default your browse feed leaves out work you can\u2019t open, and a post whose items are all restricted doesn\u2019t appear at all \u2014 except your own posts, which always stay. Turn this on and those items come back as a \u201cyou don\u2019t have access\u201d tile. The Request access button sits on that tile, so while this is off you won\u2019t find it in your feed \u2014 open the post itself, or a collection it\u2019s in, to ask.",
+      "filters_show_restricted": "Show items I don’t have access to",
+      "filters_show_restricted_help": "By default your browse feed leaves out work you can’t open, and a post whose items are all restricted doesn’t appear at all — except your own posts, which always stay. Turn this on and those items come back as a “you don’t have access” tile. The Request access button sits on that tile, so while this is off you won’t find it in your feed — open the post itself, or a collection it’s in, to ask.",
       "views_use_default": "Use default",
       "views_home_tab": "Home tab",
       "views_home_tab_latest": "Latest",

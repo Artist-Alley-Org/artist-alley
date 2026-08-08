@@ -20,6 +20,12 @@
   //           logged-in AND not the read-only demo (site.demoMode). The
   //           demo blocks writes at the nginx edge (ADR 0060), so the tool
   //           is hidden rather than shown as a 403 dead-end.
+  //   edit  — links to the entity's edit route (#549). WRITE action, and
+  //           like manage-access it appears only when the CARD hands one
+  //           over: the card knows whose work it is, this menu does not.
+  //           A link and not a modal because the edit surface is a route
+  //           (/assets/{id}/edit), which keeps it reload-safe, linkable,
+  //           and gate-able server-side on its own load.
   //   manage-access — opens ShareEntityModal on the card's entity (#880).
   //           Present only when the caller passes `manageAccess`, which
   //           the card does only for its OWNER. A SIBLING of "copy link",
@@ -65,9 +71,16 @@
      *  not author. The card decides ownership; this component only
      *  renders what it is handed. */
     manageAccess?: { kind: 'post' | 'collection'; id: string } | null;
+    /** Where this card's edit surface lives, when the viewer may plausibly
+     *  reach it (#549). Null / absent hides the edit action. Same division
+     *  of labour as `manageAccess`: the CARD owns the ownership question,
+     *  this component only renders what it is handed — and the edit route
+     *  itself re-answers it authoritatively, so a card that guesses
+     *  generously costs a page, not a silent failure. */
+    editPath?: string | null;
   }
 
-  let { assetId, detailPath, manageAccess = null }: Props = $props();
+  let { assetId, detailPath, manageAccess = null, editPath = null }: Props = $props();
 
   // Write actions show only for a logged-in user on a non-demo install.
   // (No dedicated content-write capability exists — collections gate on
@@ -279,6 +292,15 @@
         {t('card.tools.copy_link')}
       {/if}
     </button>
+
+    {#if canWrite && editPath}
+      <a href={editPath} role="menuitem" onclick={openInfo} data-testid="card-edit" class={item}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+        {t('card.tools.edit')}
+      </a>
+    {/if}
 
     {#if canWrite && manageAccess}
       <button type="button" role="menuitem" onclick={openShare} data-testid="card-manage-access" class={item}>

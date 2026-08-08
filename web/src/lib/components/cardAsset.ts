@@ -83,6 +83,19 @@ export interface CardAsset {
    *  restricted placeholder is allowed to carry. Null/absent when the
    *  server could not resolve one. */
   owner_display_name?: string | null;
+  /** Who owns this asset, when the surface knows (#549). Drives the
+   *  card's edit affordance and nothing about presentation, which is
+   *  why it is OPTIONAL where the four presentation fields above are
+   *  required: a hand-mapped row that omits it loses a menu item on
+   *  that one surface, not the tile's identity, and `/assets/{id}/edit`
+   *  remains reachable and answers the permission question itself.
+   *
+   *  Nullable as well as optional, because the column is: an asset can
+   *  genuinely have no owner (only system.admin may mutate one), and
+   *  `null` must never read as "mine". Absent on a `restricted`
+   *  placeholder by design — see owner_display_name above; a ref there
+   *  would be a second way to ask who holds a withheld row. */
+  owner_user_ref?: number | null;
 }
 
 /** The asset payload joined into a post member — the same presentation

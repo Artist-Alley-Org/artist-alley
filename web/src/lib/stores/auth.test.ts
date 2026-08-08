@@ -9,6 +9,8 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { auth } from './auth.svelte';
+import { lang } from './lang.svelte';
+import { DEFAULT_LOCALE } from '$lib/i18n/locales';
 
 afterEach(() => {
   // Reset shared singleton state between cases. `capsStatus` is part of
@@ -187,5 +189,68 @@ describe('canSeeTile', () => {
     expect(auth.canSeeTile({})).toBe(true);
     expect(auth.canSeeTile({ cap: 'system.jobs.read' })).toBe(true);
     expect(auth.canSeeTile({ public: true })).toBe(true);
+  });
+});
+
+// #869 — the account's LANGUAGE is applied, not merely stored.
+//
+// The bug was narrow and easy to re-introduce: mapUser() copied
+// `language` onto the user object and nothing called it. lang.init()
+// read the profile too, but it runs once from the root layout's
+// onMount — so a cold navigate was already right and signing in on
+// /login was not, because by then init() had come and gone against a
+// null user. Hanging the apply on adopt() is what makes the two agree,
+// and these cases pin it to adopt() rather than to any one caller: a
+// fourth path that publishes a user gets the behaviour for free, and a
+// refactor that drops the call fails here.
+describe('adopt applies the account language (#869)', () => {
+  afterEach(() => {
+    lang.pref = '';
+    lang.resolved = DEFAULT_LOCALE;
+  });
+
+  it('applies a supported language off the session body', () => {
+    auth.hydrateFrom({
+      ref: 5, username: 'pierre', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'fr',
+    });
+    expect(lang.resolved).toBe('fr');
+    expect(lang.pref).toBe('fr');
+  });
+
+  it('resolves a regional tag down to its language', () => {
+    // The server validates `language` by maxLength alone, so "fr-CA"
+    // is a value an account can genuinely hold.
+    auth.hydrateFrom({
+      ref: 6, username: 'chantal', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'fr-CA',
+    });
+    expect(lang.resolved).toBe('fr');
+  });
+
+  it('leaves the device preference alone when the account has none', () => {
+    // Null/absent is the stored value for every account that never
+    // picked one, and it means "follow this device" — so a sign-in
+    // must not overwrite a locale the device already resolved.
+    lang.pref = 'es';
+    lang.resolved = 'es';
+    auth.hydrateFrom({
+      ref: 7, username: 'nolang', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: null,
+    });
+    expect(lang.resolved).toBe('es');
+    expect(lang.pref).toBe('es');
+  });
+
+  it('falls back to the default for an unrecognised tag', () => {
+    auth.hydrateFrom({
+      ref: 8, username: 'klaus', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'de',
+    });
+    expect(lang.resolved).toBe(DEFAULT_LOCALE);
   });
 });

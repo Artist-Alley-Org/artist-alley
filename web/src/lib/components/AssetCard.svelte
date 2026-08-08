@@ -11,6 +11,7 @@
   import CardThumb from './CardThumb.svelte';
   import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
+  import { auth } from '$stores/auth.svelte';
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
@@ -124,6 +125,27 @@
     hovering = false;
     if (compact) cardTooltip.leave(asset.id);
   }
+
+  // The card's edit affordance (#549). Offered when this viewer is
+  // plainly entitled to it: the owner, or a holder of the global
+  // content-management grant. Both are disjuncts of canMutateAsset
+  // (assets/handler.go) that the client can evaluate exactly.
+  //
+  // The two it CANNOT evaluate are left out, and each errs in the safe
+  // direction for a menu item. A team-scoped assets.admin grant is
+  // invisible to auth.caps (documented there as the GLOBAL set), so a
+  // scoped holder gets no shortcut from this menu — /assets/{id}/edit
+  // is still linkable and still lets them in. And an asset whose
+  // owner_user_ref the surface did not carry reads as "not mine",
+  // because a menu item that appears for everyone on a hand-mapped grid
+  // is worse than one that appears on most of them.
+  const canEdit = $derived(
+    !!auth.user
+      && (
+        (asset.owner_user_ref != null && asset.owner_user_ref === auth.user.ref)
+        || auth.can('assets.admin')
+      ),
+  );
 </script>
 
 <!--
@@ -219,10 +241,14 @@
     {/if}
 
     {#if !restricted}
-      <!-- Overflow menu (info / share / add-to-collection). ONE affordance
+      <!-- Overflow menu (info / copy link / edit / add-to-collection). ONE affordance
            in every mode, including thumbnail — owner amendment 2026-07-25
            to #556, superseding "actions visible in the details tile". -->
-      <CardMenu assetId={asset.id} detailPath="/assets/{asset.id}" />
+      <CardMenu
+        assetId={asset.id}
+        detailPath="/assets/{asset.id}"
+        editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+      />
     {/if}
   </CardThumb>
 

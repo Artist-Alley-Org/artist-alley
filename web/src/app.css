@@ -23,8 +23,11 @@
  *
  *   role              dark            light
  *   surface           13%             95%      page
- *   surface-elevated  21%             98.5%    cards, nav, popovers
- *   surface-overlay   26%             100%     modals
+ *   surface-elevated  21%             98.5%    cards, nav, popovers, modals
+ *
+ * TWO rungs, not three. A `surface-overlay` tier was declared for
+ * modals and never referenced by anything; #678 removed it. See the
+ * note beside the ladder in the @theme block.
  *
  * Elevation runs the same direction in both (elevated is LIGHTER than
  * the page), so a card lifts identically whichever exposure you are in.
@@ -74,24 +77,47 @@
   /* ══ DARK — the default (#590) ══════════════════════════════════════
        Everything below is the brand theme. `html.light` overrides it. */
 
-  /* ── Surfaces (3-tier ladder; M3 rule: elevation by surface swap, not
+  /* ── Surfaces (2-tier ladder; M3 rule: elevation by surface swap, not
        shadow). Cool blue-grey off-black; oklch(13%) rather than pure
        black so OLED keeps breathing room and thumbnails read. Elevated
        bumps to 21% so cards stand ~8 L points off the page. */
   --color-surface:          oklch(13% 0.015 250);   /* page bg */
   --color-surface-elevated: oklch(21% 0.022 250);   /* cards, popovers, nav */
-  --color-surface-overlay:  oklch(26% 0.022 250);   /* modals, dialogs */
 
   /* ── Hover fill for controls that already carry a SOLID background
        (the footer pills, the filter segments). Not a tier of the
        elevation ladder — a state.
-       Controls used to hover to `surface-overlay`, which is wrong twice
-       over: the delta is 5 L points here and only 1.5 in light, and in
-       light `overlay` is LIGHTER than `elevated`, so hovering a
-       near-white pill pushed it further toward white. This token moves
-       AWAY from the surface in whichever direction is visible — lighter
-       against dark, darker against light — with ~9 L points of travel. */
+       Controls used to hover to a third surface tier, `surface-overlay`
+       (deleted, #678 — see the note below the ladder), which was wrong
+       twice over: the delta was 5 L points in dark and only 1.5 in
+       light, and in light that tier was LIGHTER than `elevated`, so
+       hovering a near-white pill pushed it further toward white. This
+       token moves AWAY from the surface in whichever direction is
+       visible — lighter against dark, darker against light — with ~9 L
+       points of travel. */
   --color-surface-hover: oklch(30% 0.024 250);
+
+  /* ── THE LADDER IS TWO RUNGS, not three (#678).
+       There was a `--color-surface-overlay` here (26% dark / 100%
+       light), declared for "modals, dialogs", and referenced by exactly
+       nothing — no utility, no var(). It was already known dead: #594
+       measured that Tailwind emitted no such variable and the comment
+       on --color-border-strong below said so outright, while the
+       declaration stayed. A token that documents its own deadness is
+       worse than no token, because the next reader takes
+       `bg-surface-overlay` for a real utility and writes a class that
+       silently resolves to nothing.
+       One measured correction to #594's note, because it matters for
+       the next dead token: only the @THEME half vanished. Tailwind v4
+       tree-shakes @theme vars no utility references, so the dark
+       declaration generated nothing — but the `html.light` override is
+       ordinary CSS inside @layer base, not @theme, so it was passed
+       through verbatim and shipped 45 bytes of a variable no rule ever
+       read. Deleting the pair removes exactly that one line from the
+       built stylesheet and changes nothing else.
+       Modals sit on `surface-elevated`, same as cards and popovers. If
+       a third tier is ever genuinely wanted, add it in the commit that
+       uses it — a rung nothing stands on is not a ladder. */
 
   /* ── Thumbnail matte — the backdrop artwork sits on in a card.
        DELIBERATELY NOT `surface` (#590 amendment). It used to be the
@@ -132,13 +158,18 @@
        border-subtle  a divider that is quieter still.
 
        border-strong was 45% here (2.71 / 2.38 / 2.09 against surface /
-       elevated / overlay — under the floor on all three) and is 54%
-       (3.98 / 3.51 / 3.07). Picked against OVERLAY even though NOTHING
-       uses that tier today (measured: Tailwind does not even emit
-       `--color-surface-overlay`, because no utility references it, see
-       #594) — it is the lightest declared surface, so a control border
-       chosen against it stays correct if the modal tier is ever wired,
-       and the cost of the margin is nil. */
+       elevated / and the since-deleted overlay tier — under the floor
+       on all three) and is 54% (3.98 / 3.51 / 3.07 against the same
+       three). It was picked against OVERLAY: the lightest declared
+       surface and therefore the worst case, chosen deliberately even
+       though nothing used that tier, so the value would stay correct if
+       the modal tier were ever wired. #678 deleted the tier instead
+       (measured under #594: Tailwind never emitted the variable,
+       because no utility referenced it). The 54% STAYS — it clears 3:1
+       against both surviving surfaces with room to spare, and
+       re-deriving it against `elevated` would buy a hair of contrast
+       nobody can see for a value that has to move again the day a third
+       tier arrives. */
   --color-border:        oklch(28% 0.020 250);
   --color-border-strong: oklch(54% 0.020 250);
   --color-border-subtle: oklch(22% 0.020 250);
@@ -203,11 +234,13 @@
          (elevated is lighter than the page). */
     --color-surface:          oklch(95%   0.008 250);  /* page bg */
     --color-surface-elevated: oklch(98.5% 0.005 250);  /* cards, popovers, nav */
-    --color-surface-overlay:  oklch(100%  0.003 250);  /* modals, dialogs */
+    /* Two rungs here as well — see the note in the dark block for the
+       third one that was declared, never referenced, and is gone. */
 
     /* ── Hover fill — see the dark block. DARKER than elevated here,
          because the surface is light; hovering toward white (which is
-         what `surface-overlay` did) is invisible on a 98.5% pill. */
+         what the deleted overlay tier did) is invisible on a 98.5%
+         pill. */
     --color-surface-hover: oklch(92% 0.010 250);
 
     /* ── Thumbnail matte — see the dark block. Darker than the page
@@ -225,9 +258,10 @@
 
     /* ── Structural — see the dark block for the role split (#594).
          border-strong was 68% (2.49 / 2.76 / 2.87 against surface /
-         elevated / overlay) and is 60% (3.41 / 3.77 / 3.93). Picked
-         against SURFACE here, which is the darkest of the three and so
-         the worst case in this exposure — the mirror of dark's. */
+         elevated / the since-deleted overlay tier) and is 60% (3.41 /
+         3.77 / 3.93). Picked against SURFACE here, which is the darkest
+         of them and so the worst case in this exposure — the mirror of
+         dark's, and unaffected by #678 removing the third tier. */
     --color-border:        oklch(87% 0.012 250);
     --color-border-strong: oklch(60% 0.018 250);
     --color-border-subtle: oklch(92% 0.008 250);
