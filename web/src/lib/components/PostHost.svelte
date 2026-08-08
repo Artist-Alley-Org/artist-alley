@@ -476,8 +476,15 @@
   function stubAction(label: string) {
     alert(`${label} — coming soon (stub).`);
   }
-  function editTags(_assetId: string) {
-    stubAction('Edit tags');
+  // No longer a stub (#549): the viewer's Edit ▸ Edit tags is the
+  // in-context entry to the asset edit route, which is where tags are
+  // edited. Edit metadata stays stubbed on purpose — that route
+  // deliberately does not offer `metadata`, because PATCH /assets/{id}
+  // REPLACES the blob and the blob is extractor-written; per-field
+  // metadata editing is #552. Pointing this item at a page that does
+  // not do what it says would be the worse half of a stub.
+  function editTags(id: string) {
+    void goto(`/assets/${id}/edit`);
   }
   function editMetadata(_assetId: string) {
     stubAction('Edit metadata');

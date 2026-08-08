@@ -141,6 +141,14 @@ export function hitAsCardAsset(h: SearchHit): CardAsset {
     pixel_width: num(e.pixel_width),
     pixel_height: num(e.pixel_height),
     restricted: false,
+    // Off the HIT, not out of `extra` — the search response carries it
+    // as a top-level field on every non-restricted row. Copied because
+    // the card's edit affordance reads it (#549); dropping it here is
+    // the #595 shape exactly (the value is on the wire, the hand-map
+    // forgets it, and the tile silently loses a feature with no type
+    // error), which is why the restricted branch above omits it
+    // DELIBERATELY and this one does not omit it at all.
+    owner_user_ref: h.owner_user_ref ?? null,
   };
 }
 
