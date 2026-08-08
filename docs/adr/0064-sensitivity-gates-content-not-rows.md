@@ -188,10 +188,16 @@ Two things worth recording because both were surprises:
   (`SQLSTATE 23503`). Refusing at the gate is what makes an unreadable asset and a nonexistent one
   answer alike — which is the property that closes the oracle.
 
-**Still open**: the post's `cover_asset_id` / `cover_thumbnail_asset_id` are **not** routed through
-this rule when supplied explicitly (**#941**). No association renders — both resolution paths are
-content-gated — but a bad cover still 500s on the FK, which is the same shape this amendment just
-fixed for members.
+~~**Still open**: the post's `cover_asset_id` / `cover_thumbnail_asset_id` are **not** routed through
+this rule when supplied explicitly (**#941**).~~ **CLOSED — both columns now route through
+`visibility.CanAttachAsset`.** `cover_asset_id` in **#941** (create and update), and
+`cover_thumbnail_asset_id` in **#946 / PR #959** (`e4d699ee`).
+
+⚠️ **They closed nearly three weeks apart, and the gap is the lesson.** #941 gated the column
+everyone was looking at; the thumbnail sat beside it, declared in `openapi.yaml`, with a
+`sqlc.narg` waiting for it, **never passed to `UpdatePostParams` at all** — so it answered 200 to
+every write and changed nothing. A gate applied to one column of a pair is an invitation to wire
+the other one ungated later. **When a rule covers a column, enumerate its siblings.**
 
 ### Amendment: membership never widens (recorded 2026-08-04, #883)
 
