@@ -29,6 +29,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/logging"
 	"github.com/mscrnt/artist-alley/app/internal/memlimit"
 	"github.com/mscrnt/artist-alley/app/internal/memwatch"
+	"github.com/mscrnt/artist-alley/app/internal/preview"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
@@ -260,6 +261,15 @@ func run() error {
 		CgroupLimit: memRes.CgroupLimit,
 		Ratio:       memRes.Ratio,
 	})
+	// The preview pipeline's resample budget derives from the ceiling
+	// applied just above (#887), so it is stated on the line after it.
+	// Nothing configures this directly — which is exactly why it has to
+	// be readable: a derived bound nobody can see is indistinguishable
+	// from no bound at all when the next storm is being diagnosed.
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "preview.scale_budget",
+		slog.Int64("bytes", preview.ScaleBudgetBytes()),
+		slog.Int64("gomemlimit_bytes", memRes.Effective),
+	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

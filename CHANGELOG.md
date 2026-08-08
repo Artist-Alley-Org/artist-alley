@@ -108,6 +108,45 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Building previews no longer pushes the server into being killed.** A catalogue-wide
+  preview rebuild could take the app to its own memory ceiling and have the kernel
+  terminate it mid-run — leaving half-finished jobs and errors that read as though they
+  came from somewhere else entirely (#887).
+
+  Resizing a picture needs a scratch buffer sized by the **source**, not by the thumbnail
+  coming out of it: a 6780×7071 photo costs 889 MB of scratch to produce its largest
+  preview. Eight workers doing that at once put several gigabytes in memory at the same
+  instant, and Go's collector sizes its own next run against that — so several more
+  gigabytes of already-finished work piled up behind it. A measured rebuild peaked at
+  93.6 % of the ceiling and touched it.
+
+  Resizes now share a memory budget derived from the container's limit, so the cheap ones
+  — nine in ten — never wait and only the expensive ones take turns. The 3D turntable
+  sheet, which resized 36 same-sized frames and threw its buffer away between every one,
+  now keeps one buffer for the set. The same rebuild peaks at 78.8 % and finishes in the
+  same time (158 s against 163 s), and every preview it writes is byte-for-byte the file
+  it wrote before.
+
+  An idle server also holds a gigabyte less afterwards. Once a rebuild finished — no
+  children left running, the Go side collected back down to 165 MB — the container still
+  held **1.02 GB** it never gave back. That memory belongs to the C image encoder, which
+  keeps a separate pool per thread and only ever hands back the first one. Capped at two
+  pools, the same idle server settles at **0.14 GB**, with no measurable cost in time.
+
+- **A container that renders previews for weeks no longer runs out of process slots.**
+  Rendering shells out to ffmpeg, ghostscript, unar and a headless browser, and those
+  spawn children of their own. The app cleaned up the programs it started directly, but
+  the grandchildren they left behind had nobody to collect them: one rebuild ended with
+  328 dead-but-not-collected entries, climbing and never released (#890).
+
+  Nothing visible went wrong until the table filled, at which point the next thing that
+  needed to start a program simply couldn't — a failure that looks like a broken render
+  or a broken upload, not like a leak. A short-lived CI container never lived long enough
+  to notice; the demo box runs for weeks.
+
+  The image now starts a small init process that collects them. The same rebuild ends with
+  none, and a program that fails still reports the exit code it actually failed with.
+
 - **Renaming a file left the old name showing everywhere else.** Editing a file's title
   or description updated the file — and nothing else. Every post containing it, and every
   IIIF manifest describing it, went on serving the old text until the server happened to

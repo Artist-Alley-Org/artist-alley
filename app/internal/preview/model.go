@@ -822,6 +822,16 @@ func (h *ModelHandler) writeSprites(ctx context.Context, hash, framesDir string)
 	total := modelSpriteCols * modelSpriteRows
 	sheet := image.NewRGBA(image.Rect(0, 0, modelSpriteCols*modelSpriteCell, modelSpriteRows*modelSpriteCell))
 
+	// One scaler for the whole grid. Every turntable frame is res×res
+	// and every cell is modelSpriteCell², so all 36 resamples share the
+	// same (dw, dh, sw, sh) — which is the only condition under which
+	// x/image/draw will pool its scratch buffer instead of allocating a
+	// fresh one per call. On the measured storm this single loop was
+	// 1,476 of 1,793 scale operations and 5.80 GB of 23.31 GB of
+	// scratch (#887). The scaler is local, so the pooled buffer dies
+	// with this function rather than staying resident.
+	var scaler reusableScaler
+
 	loaded := 0
 	for i := 0; i < total; i++ {
 		framePath := filepath.Join(framesDir, fmt.Sprintf("frame_%04d.png", i))
@@ -840,7 +850,7 @@ func (h *ModelHandler) writeSprites(ctx context.Context, hash, framesDir string)
 		x := (i % modelSpriteCols) * modelSpriteCell
 		y := (i / modelSpriteCols) * modelSpriteCell
 		cell := image.Rect(x, y, x+modelSpriteCell, y+modelSpriteCell)
-		xdraw.CatmullRom.Scale(sheet, cell, img, img.Bounds(), xdraw.Over, nil)
+		scaler.scale(ctx, sheet, cell, img, img.Bounds(), xdraw.Over)
 		loaded++
 	}
 	if loaded == 0 {

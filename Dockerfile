@@ -151,8 +151,11 @@ LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
 # through its own dependency tree. Those are RENDER-time dependencies, so
 # a green build proves nothing about them — scripts/threejs/smoke.mjs,
 # which CI runs against this image, is what actually proves it.
+#
+# tini: PID 1, so the orphaned grandchildren of a render get reaped
+# (#890) — see the ENTRYPOINT at the bottom of this stage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata curl libwebp7 \
+        ca-certificates tzdata curl libwebp7 tini \
         ffmpeg librsvg2-bin poppler-utils ghostscript imagemagick unar \
         chromium \
  && rm -rf /var/lib/apt/lists/* \
@@ -180,6 +183,25 @@ COPY --chown=app:app web/src/lib/3d/modelLoader.js web/src/lib/3d/defaultLightin
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Cap glibc's malloc arenas (#887).
+#
+# The binary is cgo'd: chai2010/webp compiles libwebp's C in, and every
+# WebP variant the preview ladder writes allocates through glibc rather
+# than the Go heap. glibc gives each thread its own arena, up to
+# 8 × ncores — 192 on the 24-core CI host — and it only ever trims the
+# MAIN arena's top. So the per-thread arenas grow to the storm's high
+# water and stay there: measured 1.02 GB of non-Go anonymous RSS still
+# resident at idle, with the Go heap collected down to 165 MB and every
+# child process gone. With MALLOC_ARENA_MAX=2 the same storm settles at
+# 0.14 GB, and it costs nothing measurable in time (163 s against 158 s
+# for the rebuild, inside run-to-run spread).
+#
+# This is glibc-only. It works here because the runtime stage is
+# debian-bookworm-slim (glibc 2.36, `ldd --version` inside the image);
+# on a musl base it would be silently ignored, so an Alpine rebase has
+# to re-measure rather than assume this line still does something.
+ENV MALLOC_ARENA_MAX=2
+
 USER app
 WORKDIR /app
 
@@ -197,4 +219,28 @@ VOLUME ["/var/lib/aa-storage"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
 
-ENTRYPOINT ["/app/aa"]
+# tini as PID 1 rather than /app/aa directly (#890).
+#
+# The preview pipeline spawns process TREES, not single children:
+# node → headless chromium → chrome_crashpad_handler, plus ffmpeg,
+# ghostscript, pdftoppm, unar and ImageMagick. os/exec reaps the DIRECT
+# child of each exec.Command; the grandchildren those children leave
+# behind are orphaned and reparented to PID 1. With the Go binary as
+# PID 1 nothing ever called wait() for them, so one measured render
+# storm ended with 328 zombies climbing monotonically — and a container
+# that runs for weeks walks into PID exhaustion, which surfaces as a
+# fork failure somewhere unrelated rather than as "we leaked PIDs".
+#
+# Deliberately NOT a SIGCHLD reap loop inside the Go process. A
+# wait4(-1, WNOHANG) loop in `aa` races os/exec's own Cmd.Wait for the
+# same children: whichever call wakes first consumes the exit status
+# and the loser gets ECHILD, so a FAILED ffmpeg run stops reporting its
+# real exit code. That is a worse defect than the zombies. tini cannot
+# hit that race — a process only reaps its own children, and `aa`'s
+# subprocesses are tini's GRANDchildren. They reach tini only after
+# being orphaned, which is after os/exec has finished with them.
+#
+# In the image rather than `init: true` in compose, because reaping is
+# a property of this image: every deployment of it gets the fix, not
+# only the operators who run our compose file.
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/aa"]
