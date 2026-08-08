@@ -13600,6 +13600,16 @@ components:
           type: string
           format: uuid
           nullable: true
+          description: |
+            Standalone cover thumbnail (not a post member). Gated on
+            content-readability exactly as `cover_asset_id` is: an
+            asset the caller cannot read is refused with the SAME 404
+            a nonexistent one gets, so this field cannot be used to
+            probe which asset UUIDs exist.
+
+            Before #946 this property was declared here and silently
+            dropped by the handler — the request answered 200 and the
+            column was unchanged.
         state_id:
           type: string
           format: uuid
