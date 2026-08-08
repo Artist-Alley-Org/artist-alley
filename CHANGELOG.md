@@ -9,6 +9,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **You can edit a file's details.** Title, description and tags were changeable through the
+  API and through nothing you could click — there was no edit screen, and the card's edit
+  entry was a placeholder that opened a "coming soon" box (#549).
+
+  There is now an edit page, reachable from the card. If someone else changes the file while
+  you have it open, saving tells you rather than quietly overwriting their work.
+
+  Whoever owns a file can also publish, archive or restore it from there. That control only
+  appears to people who can actually use it.
+
+- **Signing in now shows the site in your language straight away.** An account set to French
+  saw English until something else happened to reload the page (#869).
+
 - **A read-only administrator role now exists.** Seven permissions for reading admin
   screens — federation peers, the access-request queue, licence status, activity history and
   others — had been defined for months and given to nobody. The only way to let someone read
