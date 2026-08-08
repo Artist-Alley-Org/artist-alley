@@ -108,6 +108,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **"Oldest first" now actually shows oldest first.** The feed's sort toggle sent its choice
+  to a server that never read it, so both directions returned newest-first. Now the order —
+  and the paging underneath it — genuinely follow the toggle, and scrolling deep in either
+  direction neither skips nor repeats a post (#868).
+
+- **A typo in an upload no longer prints database internals.** Creating a file with a bad
+  type, workflow state or upload reference answered with a raw database-constraint message —
+  the kind of text that names tables and columns to whoever sent the request. All three now
+  answer with a plain sentence naming the field. Nothing else changed (#966).
+
+- **The page now tells assistive tech what language it is in.** A screen reader on a French
+  session was reading French text with English pronunciation rules, because the page still
+  declared itself English. It declares the real language now, the first paint arrives in the
+  right language instead of flashing English, and signing out returns a shared machine to the
+  default rather than leaving the previous person's language behind (#967).
+
 - **Building previews no longer pushes the server into being killed.** A catalogue-wide
   preview rebuild could take the app to its own memory ceiling and have the kernel
   terminate it mid-run — leaving half-finished jobs and errors that read as though they
