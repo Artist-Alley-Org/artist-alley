@@ -127,6 +127,12 @@ where applicable, otherwise note "no-spec-impact."
   same time (158 s against 163 s), and every preview it writes is byte-for-byte the file
   it wrote before.
 
+  An idle server also holds a gigabyte less afterwards. Once a rebuild finished — no
+  children left running, the Go side collected back down to 165 MB — the container still
+  held **1.02 GB** it never gave back. That memory belongs to the C image encoder, which
+  keeps a separate pool per thread and only ever hands back the first one. Capped at two
+  pools, the same idle server settles at **0.14 GB**, with no measurable cost in time.
+
 - **A container that renders previews for weeks no longer runs out of process slots.**
   Rendering shells out to ffmpeg, ghostscript, unar and a headless browser, and those
   spawn children of their own. The app cleaned up the programs it started directly, but

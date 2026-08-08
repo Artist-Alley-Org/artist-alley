@@ -183,6 +183,25 @@ COPY --chown=app:app web/src/lib/3d/modelLoader.js web/src/lib/3d/defaultLightin
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Cap glibc's malloc arenas (#887).
+#
+# The binary is cgo'd: chai2010/webp compiles libwebp's C in, and every
+# WebP variant the preview ladder writes allocates through glibc rather
+# than the Go heap. glibc gives each thread its own arena, up to
+# 8 × ncores — 192 on the 24-core CI host — and it only ever trims the
+# MAIN arena's top. So the per-thread arenas grow to the storm's high
+# water and stay there: measured 1.02 GB of non-Go anonymous RSS still
+# resident at idle, with the Go heap collected down to 165 MB and every
+# child process gone. With MALLOC_ARENA_MAX=2 the same storm settles at
+# 0.14 GB, and it costs nothing measurable in time (163 s against 158 s
+# for the rebuild, inside run-to-run spread).
+#
+# This is glibc-only. It works here because the runtime stage is
+# debian-bookworm-slim (glibc 2.36, `ldd --version` inside the image);
+# on a musl base it would be silently ignored, so an Alpine rebase has
+# to re-measure rather than assume this line still does something.
+ENV MALLOC_ARENA_MAX=2
+
 USER app
 WORKDIR /app
 
