@@ -79,6 +79,16 @@ services:
       # Read by app/internal/memlimit at boot; forwarded here because a
       # value the Go process never sees is not a knob (#887).
       AA_GOMEMLIMIT_RATIO: ${AA_GOMEMLIMIT_RATIO:-0.8}
+      # Memory instrumentation (#888). Forwarded explicitly for the
+      # same reason the ratio above is: a value the Go process never
+      # sees is not a knob. Defaults are ON — the evidence has to
+      # already be collected when the container dies, and an opt-in
+      # trail is one nobody switched on before the 03:00 OOM kill.
+      AA_MEM_SAMPLE_INTERVAL: ${AA_MEM_SAMPLE_INTERVAL:-15s}
+      AA_MEM_CAPTURE_THRESHOLD: ${AA_MEM_CAPTURE_THRESHOLD:-0.8}
+      AA_MEM_CAPTURE_DIR: ${AA_MEM_CAPTURE_DIR:-/tmp/aa-memcapture}
+      AA_MEM_CAPTURE_KEEP: ${AA_MEM_CAPTURE_KEEP:-5}
+      AA_MEM_CAPTURE_MIN_INTERVAL: ${AA_MEM_CAPTURE_MIN_INTERVAL:-2m}
       TZ: ${TZ:-UTC}
     # Memory ceiling for the app container (#781).
     #
@@ -286,6 +296,16 @@ services:
       AA_BOOTSTRAP_DEFAULT_ADMIN: "1"
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
       AA_GOMEMLIMIT_RATIO: ${AA_GOMEMLIMIT_RATIO:-0.8}
+      # Memory instrumentation (#888). Forwarded explicitly for the
+      # same reason the ratio above is: a value the Go process never
+      # sees is not a knob. Defaults are ON — the evidence has to
+      # already be collected when the container dies, and an opt-in
+      # trail is one nobody switched on before the 03:00 OOM kill.
+      AA_MEM_SAMPLE_INTERVAL: ${AA_MEM_SAMPLE_INTERVAL:-15s}
+      AA_MEM_CAPTURE_THRESHOLD: ${AA_MEM_CAPTURE_THRESHOLD:-0.8}
+      AA_MEM_CAPTURE_DIR: ${AA_MEM_CAPTURE_DIR:-/tmp/aa-memcapture}
+      AA_MEM_CAPTURE_KEEP: ${AA_MEM_CAPTURE_KEEP:-5}
+      AA_MEM_CAPTURE_MIN_INTERVAL: ${AA_MEM_CAPTURE_MIN_INTERVAL:-2m}
       TZ: ${TZ:-UTC}
     # Same ceiling as `app` — this runs the identical binary and the
     # identical preview pipeline, so leaving it uncapped would recreate

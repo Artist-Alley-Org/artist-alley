@@ -28,6 +28,7 @@ import (
 	aahttp "github.com/mscrnt/artist-alley/app/internal/http"
 	"github.com/mscrnt/artist-alley/app/internal/logging"
 	"github.com/mscrnt/artist-alley/app/internal/memlimit"
+	"github.com/mscrnt/artist-alley/app/internal/memwatch"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
@@ -246,21 +247,30 @@ func run() error {
 	// limit into an OOM kill. Derived, never hardcoded — the ceiling
 	// lives in compose and differs per environment.
 	memRes := memlimit.Apply(cfg.GoMemLimitRatio)
-	if memRes.Applied {
-		logger.LogAttrs(context.Background(), slog.LevelInfo, "gomemlimit.applied",
-			slog.Int64("cgroup_limit_bytes", memRes.CgroupLimit),
-			slog.Int64("gomemlimit_bytes", memRes.Limit),
-			slog.Float64("ratio", memRes.Ratio),
-			slog.String("source", memRes.Source),
-		)
-	} else {
-		logger.LogAttrs(context.Background(), slog.LevelInfo, "gomemlimit.not_applied",
-			slog.String("reason", memRes.Source),
-		)
-	}
+	// One line, always, whichever path was taken — and the value read
+	// BACK OUT of the runtime rather than the one we meant to set
+	// (#888). Two messages ("applied" / "not_applied") meant an
+	// operator grepping a failed run had to know both names and could
+	// not tell "derived correctly" from "silently left alone" without
+	// reading prose.
+	memwatch.LogLimit(context.Background(), logger, memwatch.LimitReport{
+		Effective:   memRes.Effective,
+		SourceKind:  memRes.Kind,
+		Detail:      memRes.Source,
+		CgroupLimit: memRes.CgroupLimit,
+		Ratio:       memRes.Ratio,
+	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Memory instrumentation (#888). Started before migrations so the
+	// sample series covers the whole process lifetime — a boot that
+	// dies during a heavy migration is exactly the kind of death that
+	// currently leaves nothing behind. Runs until ctx is cancelled.
+	if mw := memwatch.New(cfg.MemWatch, logger); mw.Enabled() {
+		go mw.Run(ctx)
+	}
 
 	// Opt-in pprof on its own listener — off unless AA_PPROF_ADDR is
 	// set, and never mounted on the application router. See

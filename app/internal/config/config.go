@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mscrnt/artist-alley/app/internal/memlimit"
+	"github.com/mscrnt/artist-alley/app/internal/memwatch"
 )
 
 // Config holds every knob the app reads. Add a field here when you need a
@@ -63,6 +64,17 @@ type Config struct {
 	// wins over the derived value. See internal/memlimit for why the
 	// default reserve is 20 % rather than the ecosystem's 10 %.
 	GoMemLimitRatio float64
+
+	// Memory instrumentation (#888). Unlike PprofAddr this is ON by
+	// default: the question it answers ("what is holding 5 GB, and is
+	// it bounded?") can only be answered from evidence that was
+	// already being collected when the container died. An opt-in
+	// evidence trail is one nobody has switched on at 03:00 in CI.
+	//
+	// Sampling costs sub-millisecond CPU per interval and a few
+	// hundred bytes of log; captures cost a forced GC and a profile
+	// write, and only fire near the ceiling behind a rate limit.
+	MemWatch memwatch.Config
 
 	// Auth — must match the PHP side exactly during the transition
 	// since both worlds hash passwords with the same pepper. Pulled
@@ -161,7 +173,14 @@ func Load() (Config, error) {
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
 		PprofAddr:         envStr("AA_PPROF_ADDR", ""),
 		GoMemLimitRatio:   envFloat("AA_GOMEMLIMIT_RATIO", memlimit.DefaultRatio),
-		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
+		MemWatch: memwatch.Config{
+			Interval:           envDuration("AA_MEM_SAMPLE_INTERVAL", memwatch.DefaultInterval),
+			Threshold:          envFloat("AA_MEM_CAPTURE_THRESHOLD", memwatch.DefaultThreshold),
+			CaptureDir:         envStr("AA_MEM_CAPTURE_DIR", memwatch.DefaultCaptureDir),
+			CaptureKeep:        envInt("AA_MEM_CAPTURE_KEEP", memwatch.DefaultKeep),
+			CaptureMinInterval: envDuration("AA_MEM_CAPTURE_MIN_INTERVAL", memwatch.DefaultMinInterval),
+		},
+		ScrambleKey: envStr("AA_SCRAMBLE_KEY", ""),
 
 		BootstrapAdminPath:    envStr("AA_BOOTSTRAP_ADMIN_PATH", "/var/lib/artist-alley"),
 		BootstrapDefaultAdmin: envBool("AA_BOOTSTRAP_DEFAULT_ADMIN", false),
