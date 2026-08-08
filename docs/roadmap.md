@@ -647,7 +647,7 @@ map to the milestones below.
 > | v0.16.0 | AI & creative tooling *(was v0.14.0)* |
 > | v0.17.0 | RS migration tool *(was v0.15.0)* |
 > | v0.18.0 | Physical archive mode *(was v0.16.0)* |
-> | v0.19.0 | Distribution & packaging *(was v0.17.0)* |
+> | v0.19.0 | Distribution & packaging *(was v0.17.0)* — now also the **install & first-run experience** (epic #969, filed 2026-08-08): a first-boot installer page that works before the database exists, generates every secret itself, and writes the config file it then lets you edit — plus bare-metal templates, so non-Docker installs are first-class. Entangled with #242's single-binary work; the release-candidate phase validates every install shape end-to-end |
 > | v0.20.0 | Federation / multi-site / fediverse *(was v0.18.0)* |
 > | **v1.0.0** | Release readiness (i18n, IIIF/search tails, dev-hygiene, preview-arc tail) — plus the **full mobile pass** (epic #903, owner 2026-08-04): the phone gets a *deliberately reduced* app (minimal menus, minimal viewer), because full capability belongs to the native Android/iOS apps (#802). Not to be spiked soon, but not after GA either |
 > | **v1.0.0-rc.N** | ⭐ **Release candidate — the gate between "the roadmap is done" and "1.0.0 is tagged"** (owner, 2026-08-06). Every epic and issue closed, then we ship an RC and **ask real people to run it against their own work** before GA. See [Release candidate](#release-candidate) below — it is a phase with entry and exit criteria, not a tag |
