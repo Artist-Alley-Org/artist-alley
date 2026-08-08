@@ -23,8 +23,14 @@ where applicable, otherwise note "no-spec-impact."
   so giving that power to a read-only role would have created a way out of it. It stays with
   the roles that already had it.
 
-  ⚠️ **Three admin screens are still unreachable for this role** — audit, jobs and storage —
-  because their permissions have the same gap. Being fixed (#961).
+  The audit, jobs and storage screens are readable by it too — their permissions had the same
+  gap, and their own notes said all along that they existed for exactly this kind of role
+  (#961). Reading the audit log does **not** include the personal details inside it; that
+  stays a separate permission nobody was given.
+
+  Someone given the job of managing asset-type permissions can now also find the page for it.
+  It was reachable only by a full super-administrator, so the permission could be handed out
+  with no way to use it.
 
 - **Changing a post's small cover picture did nothing, and said it worked.** The field was
   documented, accepted, and answered "saved" — while leaving the picture exactly as it was.
