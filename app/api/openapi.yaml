@@ -5459,6 +5459,30 @@ paths:
           schema:
             type: string
             enum: [latest, following]
+        - name: dir
+          in: query
+          required: false
+          description: |
+            Sort direction over the feed's `(posted_at, id)` key.
+
+            - `desc` (default) — newest first.
+            - `asc` — oldest first.
+
+            It moves the KEYSET COMPARISON as well as the `ORDER BY`,
+            because a cursor is only meaningful relative to the order
+            that produced it. A `desc` cursor replayed against an `asc`
+            page would ask for "older than X" while the page walks
+            forward, which skips rows and then repeats them.
+
+            A cursor therefore belongs to ONE direction. Flipping `dir`
+            mid-scroll means starting a new scan: send no `cursor` on
+            the first request after the flip. The browse page already
+            works this way — its result-set identity key includes the
+            direction, so changing it resets the accumulated pages.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: limit
           in: query
           required: false
