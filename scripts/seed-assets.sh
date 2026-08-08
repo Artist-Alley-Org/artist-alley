@@ -6,13 +6,19 @@
 # Two-step per file:
 #   1. POST /api/v1/storage/objects with the raw bytes + X-Content-Type.
 #      The server dedups by sha256 and returns { hash, deduped, ... }.
-#   2. POST /api/v1/assets with { title, resource_type, file_hash }
+#   2. POST /api/v1/assets with { title, asset_type, file_hash }
 #      to create the asset row that re-pins the bytes under the
 #      asset's UUID.
 #
+# The field is `asset_type` and the flag is `--asset-type` (#966). Both
+# were `resource_type` — the pre-fork name — long after `AssetCreate`
+# stopped accepting it, so the create step sent a body with no
+# `asset_type` in it at all, the column defaulted to 0, and the row hit
+# a foreign key. Anyone following this script got a 500 per file.
+#
 # Usage:
 #   ./scripts/seed-assets.sh <source-dir> [--limit N] [--session TOKEN]
-#                            [--resource-type N] [--base-url URL]
+#                            [--asset-type N] [--base-url URL]
 #                            [--shuffle]
 #
 # Examples:
@@ -24,7 +30,7 @@
 #   - Picks images by extension (jpg/jpeg/png/gif/webp). Other files
 #     are skipped silently.
 #   - Title is the filename minus extension.
-#   - Resource type defaults to 1 (Photo, per the seeded resource_type
+#   - Asset type defaults to 1 (Photo, per the seeded asset_types
 #     table).
 #   - Auth: session token from --session OR AA_SESSION env. If
 #     neither is set, the script prompts.
@@ -39,7 +45,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC=""
 LIMIT=0           # 0 = no cap
 SESSION="${AA_SESSION:-}"
-RESOURCE_TYPE=1
+ASSET_TYPE=1
 BASE_URL="http://localhost:8088"
 SHUFFLE="no"
 
@@ -47,7 +53,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --limit)         LIMIT="$2"; shift 2 ;;
         --session)       SESSION="$2"; shift 2 ;;
-        --resource-type) RESOURCE_TYPE="$2"; shift 2 ;;
+        --asset-type)    ASSET_TYPE="$2"; shift 2 ;;
         --base-url)      BASE_URL="${2%/}"; shift 2 ;;
         --shuffle)       SHUFFLE="yes"; shift ;;
         -h|--help)
@@ -133,12 +139,12 @@ for file in "${FILES[@]}"; do
 import json, sys
 print(json.dumps({
     "title": sys.argv[1],
-    "resource_type": int(sys.argv[2]),
+    "asset_type": int(sys.argv[2]),
     "file_hash": sys.argv[3],
     "file_extension": sys.argv[4],
     "status": "active",
 }))
-' "$stem" "$RESOURCE_TYPE" "$hash" "${name##*.}")
+' "$stem" "$ASSET_TYPE" "$hash" "${name##*.}")
 
     create=$(curl -s -o /tmp/aa-seed-create.json -w '%{http_code}' -X POST "${BASE_URL}/api/v1/assets" \
         -H "Cookie: user=${SESSION}" \
@@ -157,7 +163,18 @@ print(json.dumps({
     # Lightweight progress — every 10 items or at end.
     if [ $((i % 10)) -eq 0 ] || [ "$i" -eq "$PLANNED" ]; then
         elapsed=$((SECONDS - START))
-        rate=$(awk "BEGIN { if ($elapsed > 0) printf \"%.1f\", $i / $elapsed; else print \"-\"; }")
+        # The zero-elapsed guard has to be in BASH, not in awk. Both
+        # `$i` and `$elapsed` are interpolated by the shell before awk
+        # ever sees them, so a fast run handed gawk the literal
+        # `if (0 > 0) printf "%.1f", 6 / 0`, and gawk folds that
+        # constant division at PARSE time — the guard it sits behind
+        # never runs. Every short run ended with "awk: division by zero
+        # attempted" on stderr next to a successful summary.
+        if [ "$elapsed" -gt 0 ]; then
+            rate=$(awk "BEGIN { printf \"%.1f\", $i / $elapsed }")
+        else
+            rate="-"
+        fi
         printf '\r[%4d/%d] ok  rate %s/s  ok=%d deduped=%d err=%d   ' "$i" "$PLANNED" "$rate" "$OK" "$DEDUPED" "$ERR"
     fi
 done
