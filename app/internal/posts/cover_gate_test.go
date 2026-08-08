@@ -130,6 +130,22 @@ func cgCoverOf(t *testing.T, pool *pgxpool.Pool, postID uuid.UUID) uuid.UUID {
 	return *got
 }
 
+// cgThumbOf is cgCoverOf for the OTHER cover column. #946 is entirely
+// about this column's persisted value: PATCH answered 200 whether or
+// not the write happened, so only the table can tell the two apart.
+func cgThumbOf(t *testing.T, pool *pgxpool.Pool, postID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var got *uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT cover_thumbnail_asset_id FROM posts WHERE id = $1`, postID).Scan(&got); err != nil {
+		t.Fatalf("read cover_thumbnail_asset_id: %v", err)
+	}
+	if got == nil {
+		return uuid.Nil
+	}
+	return *got
+}
+
 func cgCleanupPost(t *testing.T, pool *pgxpool.Pool, postID uuid.UUID) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -383,6 +399,232 @@ func TestUpdatePost_CoverGate(t *testing.T) {
 		}
 		if got := cgCoverOf(t, pool, postID); got != strangerPublic {
 			t.Errorf("posts.cover_asset_id = %v, want %v", got, strangerPublic)
+		}
+	})
+}
+
+// TestUpdatePost_CoverThumbnail is #946: the SECOND cover column on the
+// UPDATE path.
+//
+// # The defect this pins
+//
+// `PostUpdate.cover_thumbnail_asset_id` was declared in openapi.yaml and
+// `UpdatePostParams.CoverThumbnailAssetID` existed in the generated
+// query — and `UpdatePost` never mentioned the field between them. It
+// therefore arrived as a NULL narg, `COALESCE` kept the current value,
+// and the caller got **200 for a write that never happened**. Both ends
+// of the plumbing were built; the middle was never connected.
+//
+// A 400 would have been honest. The 200 is what makes this worth a test:
+// every layer looks correct in isolation, and any UI built on it would
+// appear to work and show the old value on the next read.
+//
+// # Why every assertion here reads the TABLE
+//
+// The response body is `Post`, rendered from the row the UPDATE
+// returned — but before the fix that row was simply the unchanged
+// current row, so a body assertion and a "did the write land" assertion
+// were the same statement said twice. Only `posts.cover_thumbnail_asset_id`
+// distinguishes "changed it" from "returned what was already there".
+//
+// # Why it cannot just be wired
+//
+// #941 gated `cover_asset_id` on visibility.CanAttachAsset precisely so
+// an unreadable asset could not be pinned to a post. Connecting the
+// thumbnail without the same gate re-opens that hole on the one column
+// nobody was watching — and this column has its own FK
+// (posts_cover_thumbnail_asset_id_fkey), so it is a second door, not a
+// second handle on the first. So the refusal cases below are the same
+// cases TestUpdatePost_CoverGate runs, restated on this column.
+//
+// `state_id` has the identical plumbing defect on this handler and is
+// deliberately NOT wired here — see #949, blocked on #895/#896/#897.
+func TestUpdatePost_CoverThumbnail(t *testing.T) {
+	h := wireWriteHandler(t)
+	pool := h.Pool
+
+	ownAsset := seedPreviewAssetOwned(t, pool, "restricted", false, cgAuthor)
+	ownSecond := seedPreviewAssetOwned(t, pool, "public", false, cgAuthor)
+	strangerRestricted := seedPreviewAssetOwned(t, pool, "restricted", false, cgStranger)
+	strangerDeleted := seedPreviewAssetOwned(t, pool, "public", false, cgStranger)
+	mgSoftDelete(t, pool, strangerDeleted)
+	strangerPublic := seedPreviewAssetOwned(t, pool, "public", false, cgStranger)
+	missing := uuid.New()
+
+	patchThumb := func(t *testing.T, postID, thumb uuid.UUID) openapi.UpdatePostResponseObject {
+		t.Helper()
+		c := openapi_types.UUID(thumb)
+		resp, err := h.UpdatePost(ctxAs(cgAuthor), openapi.UpdatePostRequestObject{
+			Id:   openapi_types.UUID(postID),
+			Body: &openapi.PostUpdate{CoverThumbnailAssetId: &c},
+		})
+		if err != nil {
+			t.Fatalf("UpdatePost: %v", err)
+		}
+		return resp
+	}
+
+	// ── The red-first assertion. THIS is #946. ────────────────────
+	t.Run("the write actually lands", func(t *testing.T) {
+		postID := seedTierPost(t, pool, cgAuthor, "public")
+
+		resp := patchThumb(t, postID, ownAsset)
+		if _, is := resp.(openapi.UpdatePost200JSONResponse); !is {
+			t.Fatalf("response is %T, want 200", resp)
+		}
+		if got := cgThumbOf(t, pool, postID); got != ownAsset {
+			t.Fatalf("posts.cover_thumbnail_asset_id = %v, want %v — the PATCH answered 200 "+
+				"and changed nothing. This is #946: the field is declared on PostUpdate and "+
+				"accepted by UpdatePostParams, and the handler never passed it, so it arrived "+
+				"NULL and COALESCE kept the old value", got, ownAsset)
+		}
+
+		// A second PATCH, so this is a real update and not just
+		// "NULL → something" working by accident on a blank column.
+		if _, is := patchThumb(t, postID, ownSecond).(openapi.UpdatePost200JSONResponse); !is {
+			t.Fatalf("second PATCH: want 200")
+		}
+		if got := cgThumbOf(t, pool, postID); got != ownSecond {
+			t.Errorf("posts.cover_thumbnail_asset_id = %v, want %v — REPLACING an existing "+
+				"thumbnail must work, not only setting a blank one", got, ownSecond)
+		}
+	})
+
+	// ── The gate. Same rule, second column. ───────────────────────
+	t.Run("an unreadable thumbnail is refused and writes nothing", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			asset uuid.UUID
+			why   string
+		}{
+			{
+				name:  "stranger's restricted asset",
+				asset: strangerRestricted,
+				why: "THE discriminating case: row-visible, not content-readable. Wiring " +
+					"this column without visibility.CanAttachAsset re-opens exactly the " +
+					"hole #941 closed on cover_asset_id",
+			},
+			{
+				name:  "soft-deleted public asset",
+				asset: strangerDeleted,
+				why: "the ROW conjunct on its own account — ContentReadable never reads " +
+					"deleted_at, so a content-plane-only gate would pin a deleted asset here",
+			},
+			{
+				name:  "nonexistent uuid",
+				asset: missing,
+				why: "without a gate this is SQLSTATE 23503 on " +
+					"posts_cover_thumbnail_asset_id_fkey; unhandled it answers 500, which " +
+					"is itself distinguishable from the case above",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				postID := seedTierPost(t, pool, cgAuthor, "public")
+				resp := patchThumb(t, postID, tc.asset)
+				if _, is := resp.(openapi.UpdatePost404JSONResponse); !is {
+					t.Fatalf("response is %T, want UpdatePost404JSONResponse — the caller is "+
+						"the post's own author, so canMutatePost admits them outright and only "+
+						"an ASSET gate can refuse this\nwhy this case exists: %s", resp, tc.why)
+				}
+				if got := cgThumbOf(t, pool, postID); got != uuid.Nil {
+					t.Errorf("posts.cover_thumbnail_asset_id = %v, want unset — a 404 that "+
+						"still wrote the column is not a refusal", got)
+				}
+			})
+		}
+	})
+
+	// ── The oracle assertion. ─────────────────────────────────────
+	t.Run("unreadable and nonexistent are indistinguishable", func(t *testing.T) {
+		postID := seedTierPost(t, pool, cgAuthor, "public")
+
+		unreadable, is := patchThumb(t, postID, strangerRestricted).(openapi.UpdatePost404JSONResponse)
+		if !is {
+			t.Fatalf("unreadable thumbnail: want 404")
+		}
+		nonexistent, is := patchThumb(t, postID, missing).(openapi.UpdatePost404JSONResponse)
+		if !is {
+			t.Fatalf("nonexistent thumbnail: want 404")
+		}
+		// Identical once the caller's own echoed UUID is removed. Any
+		// other difference turns PATCH /posts/{id} into a UUID-existence
+		// probe, one call at a time.
+		wantUnreadable := "asset not found: " + strangerRestricted.String()
+		wantMissing := "asset not found: " + missing.String()
+		if unreadable.Error != wantUnreadable || nonexistent.Error != wantMissing {
+			t.Fatalf("refusal bodies differ in more than the echoed UUID:\n"+
+				"  unreadable:  %q (want %q)\n  nonexistent: %q (want %q)",
+				unreadable.Error, wantUnreadable, nonexistent.Error, wantMissing)
+		}
+	})
+
+	// ── The negative control. Read gate, not owner gate. ──────────
+	t.Run("stranger's public asset is still a valid thumbnail", func(t *testing.T) {
+		postID := seedTierPost(t, pool, cgAuthor, "public")
+		resp := patchThumb(t, postID, strangerPublic)
+		if _, is := resp.(openapi.UpdatePost200JSONResponse); !is {
+			t.Fatalf("response is %T, want 200 — a deny-everything gate passes every "+
+				"refusal case above and fails only here", resp)
+		}
+		if got := cgThumbOf(t, pool, postID); got != strangerPublic {
+			t.Errorf("posts.cover_thumbnail_asset_id = %v, want %v", got, strangerPublic)
+		}
+	})
+
+	// ── Both columns in one PATCH. ────────────────────────────────
+	//
+	// The two gates run in sequence and the FK backstop has to name the
+	// right UUID for whichever column tripped it — fkCoverAsset takes
+	// both, and passing the same value twice, or the zero UUID for the
+	// thumbnail, would only ever show up here.
+	t.Run("cover and thumbnail together", func(t *testing.T) {
+		postID := seedTierPost(t, pool, cgAuthor, "public")
+		cover := openapi_types.UUID(ownSecond)
+		thumb := openapi_types.UUID(ownAsset)
+		resp, err := h.UpdatePost(ctxAs(cgAuthor), openapi.UpdatePostRequestObject{
+			Id:   openapi_types.UUID(postID),
+			Body: &openapi.PostUpdate{CoverAssetId: &cover, CoverThumbnailAssetId: &thumb},
+		})
+		if err != nil {
+			t.Fatalf("UpdatePost: %v", err)
+		}
+		if _, is := resp.(openapi.UpdatePost200JSONResponse); !is {
+			t.Fatalf("response is %T, want 200", resp)
+		}
+		if got := cgCoverOf(t, pool, postID); got != ownSecond {
+			t.Errorf("posts.cover_asset_id = %v, want %v", got, ownSecond)
+		}
+		if got := cgThumbOf(t, pool, postID); got != ownAsset {
+			t.Errorf("posts.cover_thumbnail_asset_id = %v, want %v", got, ownAsset)
+		}
+	})
+
+	// ── The no-op control. ────────────────────────────────────────
+	//
+	// #946's acceptance says no other PostUpdate field changes
+	// behaviour. The mirror of that: a PATCH that omits the thumbnail
+	// must still leave it alone, which is the COALESCE the fix must not
+	// disturb by writing a zero pgtype.UUID when the field is absent.
+	t.Run("omitting the field leaves it alone", func(t *testing.T) {
+		postID := seedTierPost(t, pool, cgAuthor, "public")
+		if _, is := patchThumb(t, postID, ownAsset).(openapi.UpdatePost200JSONResponse); !is {
+			t.Fatalf("setup PATCH: want 200")
+		}
+
+		title := "retitled"
+		resp, err := h.UpdatePost(ctxAs(cgAuthor), openapi.UpdatePostRequestObject{
+			Id:   openapi_types.UUID(postID),
+			Body: &openapi.PostUpdate{Title: &title},
+		})
+		if err != nil {
+			t.Fatalf("UpdatePost: %v", err)
+		}
+		if _, is := resp.(openapi.UpdatePost200JSONResponse); !is {
+			t.Fatalf("response is %T, want 200", resp)
+		}
+		if got := cgThumbOf(t, pool, postID); got != ownAsset {
+			t.Errorf("posts.cover_thumbnail_asset_id = %v, want %v — a PATCH that does not "+
+				"mention the thumbnail must not clear it", got, ownAsset)
 		}
 	})
 }

@@ -655,12 +655,51 @@ func (h *Handler) UpdatePost(
 		coverPtr = pgtype.UUID{Bytes: coverID, Valid: true}
 	}
 
+	// #946 — the OTHER cover column, which this handler never passed at
+	// all. `cover_thumbnail_asset_id` was declared on `PostUpdate` and
+	// accepted by `UpdatePostParams`, and nothing joined the two: it
+	// arrived as a NULL narg, the query's COALESCE kept the current
+	// value, and the caller got 200 for a write that never happened.
+	// CreatePost has always set it; only PATCH dropped it.
+	//
+	// It is gated rather than merely wired. This column is not a post
+	// member and carries its own FK, so it is a second door into the
+	// same room #941 just locked — connecting it ungated would re-open
+	// that hole on the one column nobody was watching. Same adapter,
+	// same rule, one home (visibility.CanAttachAsset, ADR 0064).
+	//
+	// The refusal is byte-identical to the cover's, and to the FK
+	// backstop below, so an unreadable thumbnail and a nonexistent one
+	// stay indistinguishable — otherwise PATCH becomes a UUID-existence
+	// probe on a second field.
+	//
+	// `state_id` has the identical plumbing defect on this handler and
+	// is deliberately left alone: wiring it would add a fifth site that
+	// writes a client-supplied workflow state with no transition
+	// validation, on a subsystem whose Transition() still has zero
+	// callers. That is #949, blocked on #895/#896/#897.
+	var thumbPtr pgtype.UUID
+	if in.CoverThumbnailAssetId != nil {
+		thumbID := uuid.UUID(*in.CoverThumbnailAssetId)
+		ok, gErr := h.mayAttachAsset(ctx, caller, thumbID)
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: cover thumbnail gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.UpdatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + thumbID.String()},
+			}, nil
+		}
+		thumbPtr = pgtype.UUID{Bytes: thumbID, Valid: true}
+	}
+
 	if _, err := q.UpdatePost(ctx, UpdatePostParams{
-		ID:           pgID,
-		Title:        in.Title,
-		Description:  in.Description,
-		Visibility:   visPtr,
-		CoverAssetID: coverPtr,
+		ID:                    pgID,
+		Title:                 in.Title,
+		Description:           in.Description,
+		Visibility:            visPtr,
+		CoverAssetID:          coverPtr,
+		CoverThumbnailAssetID: thumbPtr,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.UpdatePost404JSONResponse{
@@ -669,8 +708,11 @@ func (h *Handler) UpdatePost(
 		}
 		// Cover race backstop — see CreatePost. Same 404 body as the
 		// gate above, so "you may not read it" and "it is gone" stay
-		// indistinguishable on this path too (#941).
-		if id, is := fkCoverAsset(err, coverPtr, pgtype.UUID{}); is {
+		// indistinguishable on this path too (#941). Both columns are
+		// passed now: the thumbnail's FK is a distinct constraint, and
+		// handing fkCoverAsset a zero UUID for it would name
+		// 00000000-… in the body of a refusal about a real asset (#946).
+		if id, is := fkCoverAsset(err, coverPtr, thumbPtr); is {
 			return openapi.UpdatePost404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + id},
 			}, nil
