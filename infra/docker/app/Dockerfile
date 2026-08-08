@@ -90,8 +90,9 @@ ARG GID
 # chromium: the headless renderer for the three.js preview worker (#498).
 # The apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm,
 # …) so puppeteer can launch it on SwiftShader software WebGL — no GPU.
+# tini: PID 1, so orphaned grandchildren get reaped (#890) — see ENTRYPOINT.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata curl ffmpeg \
+        ca-certificates tzdata curl ffmpeg tini \
         librsvg2-bin libwebp7 poppler-utils ghostscript imagemagick unar \
         chromium \
  && rm -rf /var/lib/apt/lists/* \
@@ -124,4 +125,28 @@ COPY --from=build --chown=app:app /out/aa /app/aa
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/aa"]
+# tini as PID 1 rather than /app/aa directly (#890).
+#
+# The preview pipeline spawns process TREES, not single children:
+# node → headless chromium → chrome_crashpad_handler, plus ffmpeg,
+# ghostscript, pdftoppm, unar and ImageMagick. os/exec reaps the DIRECT
+# child of each exec.Command; the grandchildren those children leave
+# behind are orphaned and reparented to PID 1. With the Go binary as
+# PID 1 nothing ever called wait() for them, so one measured render
+# storm ended with 328 zombies climbing monotonically — and a container
+# that runs for weeks walks into PID exhaustion, which surfaces as a
+# fork failure somewhere unrelated rather than as "we leaked PIDs".
+#
+# Deliberately NOT a SIGCHLD reap loop inside the Go process. A
+# wait4(-1, WNOHANG) loop in `aa` races os/exec's own Cmd.Wait for the
+# same children: whichever call wakes first consumes the exit status
+# and the loser gets ECHILD, so a FAILED ffmpeg run stops reporting its
+# real exit code. That is a worse defect than the zombies. tini cannot
+# hit that race — a process only reaps its own children, and `aa`'s
+# subprocesses are tini's GRANDchildren. They reach tini only after
+# being orphaned, which is after os/exec has finished with them.
+#
+# In the image rather than `init: true` in compose, because reaping is
+# a property of this image: every deployment of it gets the fix, not
+# only the operators who run our compose file.
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/aa"]

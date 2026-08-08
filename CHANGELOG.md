@@ -127,6 +127,20 @@ where applicable, otherwise note "no-spec-impact."
   same time (158 s against 163 s), and every preview it writes is byte-for-byte the file
   it wrote before.
 
+- **A container that renders previews for weeks no longer runs out of process slots.**
+  Rendering shells out to ffmpeg, ghostscript, unar and a headless browser, and those
+  spawn children of their own. The app cleaned up the programs it started directly, but
+  the grandchildren they left behind had nobody to collect them: one rebuild ended with
+  328 dead-but-not-collected entries, climbing and never released (#890).
+
+  Nothing visible went wrong until the table filled, at which point the next thing that
+  needed to start a program simply couldn't — a failure that looks like a broken render
+  or a broken upload, not like a leak. A short-lived CI container never lived long enough
+  to notice; the demo box runs for weeks.
+
+  The image now starts a small init process that collects them. The same rebuild ends with
+  none, and a program that fails still reports the exit code it actually failed with.
+
 - **Renaming a file left the old name showing everywhere else.** Editing a file's title
   or description updated the file — and nothing else. Every post containing it, and every
   IIIF manifest describing it, went on serving the old text until the server happened to
