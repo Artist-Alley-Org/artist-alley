@@ -264,6 +264,17 @@ class AuthState {
     this.user = null;
     this.caps = [];
     this.capsStatus = 'resolved';
+    // The account's language leaves with the account (#967). adopt()
+    // applies it AND writes the device cookie so the next cold load
+    // paints it without a flash; without this, that cookie would outlive
+    // the session and the next visitor at a shared machine would get the
+    // previous account's language on their first paint.
+    //
+    // The pairing is the point: syncFromAccount() only earns the right
+    // to write device state because logout() takes it back. Deliberately
+    // NOT in clear() below — that is the 401 path, and a session that
+    // aged out is not somebody leaving the machine.
+    lang.reset();
   }
 
   /** Drop in-memory state without a network call. Used on 401.
