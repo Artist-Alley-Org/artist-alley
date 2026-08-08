@@ -1027,6 +1027,27 @@ func (h *Handler) ListPosts(
 		includeDeletedArg = &t
 	}
 
+	// ?dir=asc walks the feed oldest-first (#868). The browse page's
+	// Newest/Oldest control has sent this since #706 seeded it from the
+	// `browse_sort` preference; until now nothing declared it, so the
+	// server never saw it and "Oldest" rendered newest under a label
+	// that promised otherwise — the same defect #691 removed from the
+	// feed FILTER, left in place on the SORT.
+	//
+	// The flag reaches the keyset predicate as well as the ORDER BY
+	// (feedOrder), because a cursor only means anything relative to the
+	// order that produced it.
+	//
+	// Only `asc` is read; absent, empty and anything else are `desc`.
+	// That is a deliberate default rather than a missing validation:
+	// nothing in this stack enforces a query-parameter enum at bind
+	// time (the generated wrapper binds `dir` as a plain string and
+	// `ListPostsParamsDir.Valid()` has no caller), so the comparison
+	// has to be positive. `?feed=` is read exactly the same way one
+	// block above. A junk value therefore lands on the documented
+	// default instead of a 500 or an arbitrary order.
+	ascending := req.Params.Dir != nil && *req.Params.Dir == openapi.Asc
+
 	fetch := limit + 1
 	rows, err := h.ListPostsPageGated(ctx, caller, ListPostsPageParams{
 		IncludeDeleted:  includeDeletedArg,
@@ -1038,6 +1059,7 @@ func (h *Handler) ListPosts(
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
+		Ascending:       ascending,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)

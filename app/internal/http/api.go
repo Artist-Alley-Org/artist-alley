@@ -37,7 +37,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
-	"github.com/mscrnt/artist-alley/app/internal/i18n"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
@@ -144,7 +143,6 @@ type apiServer struct {
 	setup              *setup.Handler
 	workflow           *workflow.Handler
 	sysconfigH         *sysconfig.Handler
-	i18n               *i18n.Handler
 	jobs               *jobs.HTTPHandler
 	brushpacks         *brushpacks.Handler
 	audit              *audit.HTTPHandler
@@ -299,7 +297,6 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		setup:            setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:         workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode, storageSvc),
-		i18n:             i18n.NewHandler(logger),
 		jobs:             jobs.NewHTTPHandler(jobSvc, logger),
 		jobsSvc:          jobSvc,
 		brushpacks:       brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
@@ -3264,12 +3261,6 @@ func (s *apiServer) GetPublicMode(ctx context.Context, req openapi.GetPublicMode
 }
 func (s *apiServer) UpdatePublicMode(ctx context.Context, req openapi.UpdatePublicModeRequestObject) (openapi.UpdatePublicModeResponseObject, error) {
 	return s.sysconfigH.UpdatePublicMode(ctx, req)
-}
-
-// --- i18n ------------------------------------------------------------------
-
-func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
-	return s.i18n.ListLocales(ctx, req)
 }
 
 // --- audit viewer (Phase 1.17.K) ------------------------------------------

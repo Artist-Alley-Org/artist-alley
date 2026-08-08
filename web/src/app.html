@@ -47,6 +47,60 @@
       })();
     </script>
 
+    <!--
+      Language is resolved before paint for the same reason theme is,
+      and for one extra reason theme does not have (#967).
+
+      This is a static build: the page paints long before /auth/me
+      answers, so a signed-in French account's language cannot be known
+      at first paint. Without this script every cold load rendered
+      English first and swapped after hydration. `lang.syncFromAccount()`
+      writes the aa_lang cookie precisely so this script has something to
+      read, and `auth.logout()` clears it so a shared machine never
+      paints the previous account's language for the next visitor.
+
+      It also sets the ATTRIBUTE, which nothing did before: `<html
+      lang>` below is hardcoded `en`, and a fully French render used to
+      announce itself as English to screen readers and to `:lang()`.
+
+      Resolution order — identical to lang.init():
+        1. aa_lang cookie, when non-empty
+        2. navigator.language
+        3. 'en'
+      matched exactly ("fr"), then by language subtag ("fr-CA" -> "fr"),
+      then defaulted.
+
+      MUST stay in lockstep with locales.ts (SUPPORTED_LOCALES,
+      DEFAULT_LOCALE, resolveLocale) and with lang.svelte.ts. The locale
+      list is repeated here because this script runs before any module
+      loads and cannot import it; langScript.test.ts parses this file and
+      fails if the two lists diverge, so adding a catalogue without
+      adding it here is caught rather than silently un-painted.
+    -->
+    <script>
+      (function () {
+        try {
+          var supported = ['en', 'es', 'fr'];
+          var fallback = 'en';
+          var cookie = document.cookie.split('; ').find(function (c) {
+            return c.indexOf('aa_lang=') === 0;
+          });
+          var pref = cookie ? decodeURIComponent(cookie.slice('aa_lang='.length)) : '';
+          if (!pref) pref = navigator.language || fallback;
+          var resolved = fallback;
+          if (supported.indexOf(pref) !== -1) {
+            resolved = pref;
+          } else {
+            var base = pref.split('-')[0];
+            if (supported.indexOf(base) !== -1) resolved = base;
+          }
+          document.documentElement.setAttribute('lang', resolved);
+        } catch (e) {
+          document.documentElement.setAttribute('lang', 'en');
+        }
+      })();
+    </script>
+
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover" class="bg-surface text-fg antialiased">

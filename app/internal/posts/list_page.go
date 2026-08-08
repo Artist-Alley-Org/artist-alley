@@ -47,6 +47,64 @@ type ListPostsPageParams struct {
 	CursorPostedAt  pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
+	// Ascending flips the feed to oldest-first (?dir=asc). It moves the
+	// ORDER BY and the keyset predicate TOGETHER — see feedOrder.
+	Ascending bool
+}
+
+// feedOrder is the (posted_at, id) keyset in one direction, expressed
+// once (#868).
+//
+// The ORDER BY and the cursor comparison are the SAME fact stated
+// twice, and the whole bug class this closes is what happens when only
+// one of them moves. The feed's toggle used to send `?dir=asc` to a
+// server that declared no such parameter, so nothing moved at all and
+// "Oldest" quietly rendered newest. The obvious half-fix — flip the
+// ORDER BY, leave the predicate — is strictly worse than the bug it
+// replaces: `posted_at < cursor` walking an ascending scan asks for
+// rows BEHIND the ones just returned, so page 2 re-serves page 1's
+// window and everything past it is unreachable.
+//
+// So the direction is a single struct with a single constructor, and
+// both strings come out of it. There is no way to hold one without the
+// other.
+type feedOrder struct {
+	// cmp is the strict inequality that advances the scan: `<` walking
+	// down, `>` walking up.
+	cmp string
+	// dir is the SQL keyword for both ORDER BY terms.
+	dir string
+}
+
+func newFeedOrder(ascending bool) feedOrder {
+	if ascending {
+		return feedOrder{cmp: ">", dir: "ASC"}
+	}
+	return feedOrder{cmp: "<", dir: "DESC"}
+}
+
+// keysetSQL renders the "strictly past the cursor" predicate for the
+// (posted_at, id) key, with the timestamp at $tsN and the tiebreak id
+// at $idN. NULL cursor means "first page", which admits every row.
+//
+// The id tiebreak carries the same comparison as the timestamp on
+// purpose: it is the low-order digit of one composite key, not a
+// separate ordering. Pinning it to `<` while the timestamp flipped
+// would make posts that share a posted_at (the seeded case, and any
+// bulk import) the only ones that paginate wrongly — a defect that
+// hides completely behind timestamps that happen to be distinct.
+func (o feedOrder) keysetSQL(col, idCol string, tsN, idN int) string {
+	return fmt.Sprintf(
+		`($%d::TIMESTAMPTZ IS NULL
+       OR %s %s $%d::TIMESTAMPTZ
+       OR (%s = $%d::TIMESTAMPTZ AND %s %s $%d::UUID))`,
+		tsN, col, o.cmp, tsN, col, tsN, idCol, o.cmp, idN,
+	)
+}
+
+// orderBySQL renders the matching ORDER BY clause.
+func (o feedOrder) orderBySQL(col, idCol string) string {
+	return fmt.Sprintf("ORDER BY %s %s, %s %s", col, o.dir, idCol, o.dir)
 }
 
 // ListPostsPageRow mirrors the SELECT list below. Order matters: rows
@@ -79,7 +137,9 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
        deleted_at, deleted_reason`
 
 // ListPostsPageGated runs the feed query for one caller. Cursor
-// pagination on (posted_at DESC, id DESC). Filters:
+// pagination on the (posted_at, id) keyset, in whichever direction
+// `Ascending` selects — both halves of that key move together via
+// feedOrder, which is the point of it. Filters:
 //   - author_user_ref: limit to posts by a given user
 //   - visibility: narrow to one tier WITHIN what the caller may read
 //   - q: plain-text TSVECTOR search across post search_text
@@ -111,6 +171,8 @@ func (h *Handler) ListPostsPageGated(
 	}
 	args = append(args, ruleArgs...)
 
+	order := newFeedOrder(p.Ascending)
+
 	var b strings.Builder
 	b.WriteString(`SELECT ` + listPostsPageColumns + `
 FROM posts
@@ -125,12 +187,10 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
        OR EXISTS (SELECT 1 FROM user_follows ff
                     WHERE ff.follower_user_ref = $6::BIGINT
                       AND ff.followee_user_ref = posts.author_user_ref))
-  AND ($7::TIMESTAMPTZ IS NULL
-       OR posted_at < $7::TIMESTAMPTZ
-       OR (posted_at = $7::TIMESTAMPTZ AND id < $8::UUID))`)
+  AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(ruleFrag)
 	b.WriteString(`
-ORDER BY posted_at DESC, id DESC
+` + order.orderBySQL("posted_at", "id") + `
 LIMIT $9::INTEGER`)
 
 	rows, err := h.Pool.Query(ctx, b.String(), args...)

@@ -7,7 +7,25 @@
 // by setting `caps`, the same field refresh() populates from the
 // server.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The API client is stubbed for the whole file. Only the #967 block
+// needs it — logout() posts before it resets the locale, and the reset
+// is the thing under test — but the stub has to be a module mock rather
+// than a `globalThis.fetch` stub: openapi-fetch captures `fetch` when
+// createClient() runs at import time, so stubbing it afterwards is too
+// late and the request goes out for real.
+//
+// Nothing else in this file touches the network (hydrateFrom, clear and
+// canSeeTile are all local), so a file-wide stub costs no coverage.
+vi.mock('$api/client', () => ({
+  api: {
+    GET: async () => ({ data: undefined, error: undefined }),
+    POST: async () => ({ data: {}, error: undefined }),
+    PATCH: async () => ({ data: {}, error: undefined }),
+  },
+}));
+
 import { auth } from './auth.svelte';
 import { lang } from './lang.svelte';
 import { DEFAULT_LOCALE } from '$lib/i18n/locales';
@@ -252,5 +270,106 @@ describe('adopt applies the account language (#869)', () => {
       language: 'de',
     });
     expect(lang.resolved).toBe(DEFAULT_LOCALE);
+  });
+});
+
+// #967 — the device cookie's lifetime, which is the whole of the
+// shared-machine decision.
+//
+// syncFromAccount() now writes `aa_lang` so the pre-paint script in
+// app.html can render a signed-in account's language on the FIRST paint
+// of a cold load. That write is only defensible because logout() takes
+// it back; the two are one rule and are tested as one.
+//
+// The asymmetry that is easy to get backwards, and is asserted below:
+// the clear is tied to the LOGOUT ACTION, not to being anonymous. An
+// anonymous visitor who picks a language from the picker keeps it.
+describe('the aa_lang cookie lives and dies with the session (#967)', () => {
+  /** The stored language preference, or '' when there is none.
+   *
+   *  Absent and empty are ONE state on purpose: the pre-paint script
+   *  treats an empty `aa_lang` exactly as it treats a missing one — it
+   *  falls through to navigator.language — and an expired cookie can
+   *  linger as an empty value rather than vanishing. Asserting `null`
+   *  would be asserting a storage detail instead of the behaviour. */
+  const storedLang = () => {
+    const m = document.cookie.match(/(?:^|; )aa_lang=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  };
+
+  beforeEach(() => {
+    document.cookie = 'aa_lang=; Path=/; Max-Age=0';
+    document.documentElement.setAttribute('lang', DEFAULT_LOCALE);
+  });
+
+  afterEach(() => {
+    document.cookie = 'aa_lang=; Path=/; Max-Age=0';
+    lang.pref = '';
+    lang.resolved = DEFAULT_LOCALE;
+  });
+
+  it('writes the cookie when an account language is adopted', () => {
+    expect(storedLang()).toBe(''); // the negative state is real
+    auth.hydrateFrom({
+      ref: 20, username: 'amelie', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'fr',
+    });
+    expect(storedLang()).toBe('fr');
+  });
+
+  it('puts the active locale on <html lang>', () => {
+    // The accessibility half: a French render must not announce itself
+    // as English to a screen reader or to `:lang()`.
+    expect(document.documentElement.getAttribute('lang')).toBe(DEFAULT_LOCALE);
+    auth.hydrateFrom({
+      ref: 21, username: 'amelie', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'fr',
+    });
+    expect(document.documentElement.getAttribute('lang')).toBe('fr');
+  });
+
+  it('logout clears the cookie and returns to the default', async () => {
+    auth.hydrateFrom({
+      ref: 22, username: 'amelie', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'fr',
+    });
+    expect(storedLang()).toBe('fr');
+
+    await auth.logout();
+
+    expect(storedLang()).toBe('');
+    expect(lang.pref).toBe('');
+    expect(lang.resolved).toBe(DEFAULT_LOCALE);
+    expect(document.documentElement.getAttribute('lang')).toBe(DEFAULT_LOCALE);
+  });
+
+  it('a 401 does NOT clear the language', () => {
+    // clear() is the expired-session path. Wiping the language there
+    // would be a surprise mid-visit for somebody who is about to sign
+    // straight back in — and it is not the shared-machine case, which
+    // is somebody deliberately leaving.
+    auth.hydrateFrom({
+      ref: 23, username: 'amelie', auth_method: 'session',
+      capabilities: [], capabilities_status: 'resolved',
+      language: 'fr',
+    });
+    auth.clear();
+    expect(storedLang()).toBe('fr');
+    expect(lang.resolved).toBe('fr');
+  });
+
+  it('an anonymous manual pick survives, because nothing logs out', async () => {
+    // The pick path with no session: set() writes the cookie and sends
+    // no PATCH. Nothing else runs, so the choice is still there on the
+    // next load — which is the behaviour a visitor expects from a
+    // picker they used on purpose.
+    expect(auth.user).toBeNull();
+    await lang.set('fr');
+    expect(storedLang()).toBe('fr');
+    expect(lang.resolved).toBe('fr');
+    expect(document.documentElement.getAttribute('lang')).toBe('fr');
   });
 });

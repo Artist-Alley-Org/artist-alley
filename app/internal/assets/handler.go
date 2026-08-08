@@ -486,6 +486,25 @@ func (h *Handler) CreateAsset(
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
 			}, nil
 		}
+		// Every OTHER foreign key this INSERT carries a client value
+		// into (#966). Unlike team_id above, none of these hides
+		// anything: an asset type, a workflow state and an uploaded
+		// object are not private, so the honest answer is "you named
+		// one that does not exist" and the honest status is 400.
+		//
+		// Without this the row's constraint name reached the caller
+		// verbatim. NewStrictHandler's default response-error handler
+		// is `http.Error(w, err.Error(), 500)`, so `fmt.Errorf("assets:
+		// insert: %w", err)` below put pgx's full message — table,
+		// column, constraint, SQLSTATE — in the body of a 500 that
+		// ordinary bad input could trigger unauthenticated-adjacent.
+		// The message says the field the CALLER sent and nothing about
+		// the schema it landed in.
+		if msg, bad := createAssetFKMessage(err); bad {
+			return openapi.CreateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+			}, nil
+		}
 		// Race-loser: a concurrent upload won the unique
 		// constraint between our pre-check + this INSERT. Re-
 		// fetch + return the same dedup-response the pre-check
@@ -913,6 +932,59 @@ func isFKViolation(err error, constraint string) bool {
 		return pe.Code == "23503" && pe.ConstraintName == constraint
 	}
 	return false
+}
+
+// createAssetFKConstraints maps every foreign key on `assets` that the
+// create path carries a CLIENT-SUPPLIED value into, to the message the
+// caller gets when that value names nothing (#966).
+//
+// The table is enumerated, not derived, and that is the point. #941 and
+// #946 both cost weeks because a rule was applied to the one column
+// somebody happened to be looking at while its siblings kept the old
+// behaviour; `asset_type` was simply the column the stale seed script
+// hit first. Every FK on the row is listed here or excluded below with
+// a reason, so "did anyone check the others" has an answer in the file.
+//
+// EXCLUDED, deliberately:
+//
+//   - assets_team_id_fkey — handled above, and NOT as a 400. Team
+//     membership is exactly the thing a caller should not be able to
+//     probe for, so an unassignable team and a nonexistent one both
+//     answer 404 "team not found". Folding it in here would turn the
+//     asset-create endpoint into a team-existence oracle, which is the
+//     leak #953 closed. Its absence from this map is load-bearing.
+//
+// NOT A FOREIGN KEY, so nothing can violate:
+//
+//   - owner_user_ref — server-set from the identity, and the user
+//     tables carry no FK by federation design.
+//   - origin_server_id — server-set, always NULL on this path.
+//
+// The message names the REQUEST FIELD and describes the value in the
+// caller's own vocabulary. It must never name a table, a constraint, a
+// SQLSTATE or a relation; asset_fk_leak_test.go asserts that directly
+// rather than trusting the strings below to stay clean.
+var createAssetFKConstraints = map[string]string{
+	"assets_asset_type_fkey": "asset_type: no such asset type",
+	"assets_state_id_fkey":   "state_id: no such workflow state",
+	"assets_file_hash_fkey":  "file_hash: no uploaded object with that hash — upload the bytes first",
+}
+
+// createAssetFKMessage classifies an INSERT error as "the caller named
+// something that does not exist" and returns the 400 body for it.
+//
+// Matched on SQLSTATE + constraint name, never on message text — the
+// same discipline isFKViolation applies, for the same reason. An
+// unrecognised constraint returns false and falls through to the 500,
+// because a foreign key nobody enumerated here is a server-side
+// surprise and blaming the caller for it would be a second lie.
+func createAssetFKMessage(err error) (string, bool) {
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) || pe.Code != "23503" {
+		return "", false
+	}
+	msg, known := createAssetFKConstraints[pe.ConstraintName]
+	return msg, known
 }
 
 // mayAssignToTeam adapts an *auth.Identity to

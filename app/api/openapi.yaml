@@ -5459,6 +5459,30 @@ paths:
           schema:
             type: string
             enum: [latest, following]
+        - name: dir
+          in: query
+          required: false
+          description: |
+            Sort direction over the feed's `(posted_at, id)` key.
+
+            - `desc` (default) — newest first.
+            - `asc` — oldest first.
+
+            It moves the KEYSET COMPARISON as well as the `ORDER BY`,
+            because a cursor is only meaningful relative to the order
+            that produced it. A `desc` cursor replayed against an `asc`
+            page would ask for "older than X" while the page walks
+            forward, which skips rows and then repeats them.
+
+            A cursor therefore belongs to ONE direction. Flipping `dir`
+            mid-scroll means starting a new scan: send no `cursor` on
+            the first request after the flip. The browse page already
+            works this way — its result-set identity key includes the
+            direction, so changing it resets the accumulated pages.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: limit
           in: query
           required: false
@@ -8078,31 +8102,6 @@ paths:
                 items: { $ref: "#/components/schemas/WorkflowState" }
         "400":
           $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /i18n/locales:
-    get:
-      operationId: listLocales
-      summary: List supported UI locales
-      description: |
-        Returns the locales the frontend has a catalogue for. Used by
-        the language picker in the user menu and on the account
-        preferences page. Static per server build; the response is
-        derived from the bundled frontend catalogues plus a small
-        completion-pct hint.
-      tags: [i18n]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of supported locales
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Locale" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -11518,32 +11517,6 @@ components:
           description: Whether this entry is the currently applied logo.
           example: false
 
-    Locale:
-      type: object
-      description: |
-        One UI locale the frontend has a catalogue for. Used by the
-        language picker. `completion_pct` is the share of source-of-
-        truth (en) keys translated — useful for showing "(70%)"
-        beside a locale name so users know it's incomplete.
-      required: [code, name, native_name, completion_pct]
-      properties:
-        code:
-          type: string
-          description: IETF BCP47 tag (e.g. "en", "es-AR").
-        name:
-          type: string
-          description: English name (e.g. "Spanish (Argentina)").
-        native_name:
-          type: string
-          description: Endonym (e.g. "Español (Argentina)").
-        region:
-          type: string
-          description: Optional regional sub-tag (e.g. "AR").
-        completion_pct:
-          type: integer
-          minimum: 0
-          maximum: 100
-          description: 0..100 — share of en keys this catalogue translates.
     CurrentUser:
       type: object
       required: [ref, username, auth_method, capabilities_status]
