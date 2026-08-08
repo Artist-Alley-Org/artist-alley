@@ -9,6 +9,23 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **A read-only administrator role now exists.** Seven permissions for reading admin
+  screens — federation peers, the access-request queue, licence status, activity history and
+  others — had been defined for months and given to nobody. The only way to let someone read
+  those screens was to make them a full super-administrator, which is the opposite of what
+  those permissions are for (#958).
+
+  There is now an **Auditor** role that holds them. Someone with it can look at those screens
+  and change nothing; they still cannot reach anything a super-administrator does.
+
+  One of the seven was deliberately left out. Approving an access request writes a permission
+  chosen by whoever filed it, and nothing prevents a request asking for super-administrator —
+  so giving that power to a read-only role would have created a way out of it. It stays with
+  the roles that already had it.
+
+  ⚠️ **Three admin screens are still unreachable for this role** — audit, jobs and storage —
+  because their permissions have the same gap. Being fixed (#961).
+
 - **Changing a post's small cover picture did nothing, and said it worked.** The field was
   documented, accepted, and answered "saved" — while leaving the picture exactly as it was.
   Everything behind it was in place; the one step that actually writes the value had been
