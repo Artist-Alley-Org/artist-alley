@@ -18,7 +18,7 @@
 //     user, never fetched separately. See adopt() (#871).
 
 import { api } from '$api/client';
-import { t } from '$stores/lang.svelte';
+import { lang, t } from '$stores/lang.svelte';
 import { ADMIN_TILE_CAPS } from '$lib/admin/sections';
 
 /** The account's default-view selections, as `/auth/me` reports them
@@ -199,6 +199,23 @@ class AuthState {
     this.user = mapUser(u);
     this.caps = mapCaps(u);
     this.capsStatus = mapCapsStatus(u);
+    // The account's language arrives on this same body and has to be
+    // APPLIED, not merely stored (#869). It hangs here for the reason
+    // the caps do: this is the one place a user is published, so every
+    // path that can produce a signed-in identity — login(), refresh(),
+    // and hydrateFrom() on boot — applies it, and a fourth path cannot
+    // be added that quietly does not.
+    //
+    // Measured before the fix, because "which path was broken" was not
+    // what the issue assumed: a COLD NAVIGATE was already correct, since
+    // lang.init() reads auth.user in +layout.svelte's onMount and
+    // +layout.ts has awaited hydration by then. SIGNING IN was not — the
+    // root layout mounts once, so a visitor who lands on /login runs
+    // init() against a null user and keeps English until a full reload.
+    // Same mount-once gap theme.syncFromAccount() was written for. The
+    // apply sits on adopt() rather than on login() so the two paths
+    // cannot answer differently again.
+    lang.syncFromAccount();
   }
 
   /** Re-fetch the current session from the server. */
