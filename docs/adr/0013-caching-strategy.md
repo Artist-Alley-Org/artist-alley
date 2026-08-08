@@ -272,3 +272,31 @@ survived because attention went to the destructive operations. The helper is now
 helpers existed; two were genuinely unwired and one was correct-as-is, and *all three* had doc
 comments asserting callers that did not exist. When adding one, wire it in the same change or say
 in its doc why nothing calls it — see [[feedback_a_comment_is_not_a_call_site]].
+
+---
+
+### Amendment 2026-08-08 (#887, PR #971) — a declined cache: scratch buffers under a cgroup ceiling
+
+The preview resampler's scratch buffers (`x/image/draw` kernel scalers) presented a textbook cache
+opportunity: constructed scalers reuse their internal buffers, and the measured tuple hit rate on a
+real render storm was **94.6%**. **The process-wide cache was declined anyway**, and the reasoning
+is the decision worth recording:
+
+- A scratch buffer is sized destination-width × **source**-height — the largest observed single
+  buffer was **889 MB**. A process-wide cache pins its largest entries **resident forever**.
+- Under a cgroup ceiling, **bounded churn beats permanent residency**: churn is reclaimable the
+  moment pressure ends (measured: 3.49 GB released within one sample of storm end); a pinned cache
+  is a permanent bite out of the ceiling that no GC returns.
+- So reuse is **job-scoped only** — a scaler lives for one job (the 36-frame turntable loop) and
+  dies with it.
+
+**The companion decision: the scratch budget is tied to `GOMEMLIMIT`, not core count.** Concurrent
+resamples share a byte-weighted semaphore with budget `GOMEMLIMIT/10`, clamped [128 MiB, 1 GiB],
+logged at boot as `preview.scale_budget`. Bytes rather than worker-count because the cost
+distribution is extreme (7% of ops are 62% of the bytes) — a count bound either starves the cheap
+90% or fails to bound the expensive 7%. Tying to `GOMEMLIMIT` keeps one knob: resize the container
+and every derived ceiling moves with it (same principle as #781's GOMEMLIMIT derivation).
+
+**The general rule this adds to the ADR**: when deciding whether to cache under a memory ceiling,
+weigh *reclaimability*, not just hit rate. A 94.6% hit rate argued for the cache; the 889 MB
+pinned-forever tail argued against; the tail wins under a cgroup.
