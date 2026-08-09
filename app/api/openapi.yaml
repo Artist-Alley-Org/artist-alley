@@ -3730,6 +3730,24 @@ paths:
           required: false
           description: Single-tag filter (intersection with other filters).
           schema: { type: string }
+        - name: team_id
+          in: query
+          required: false
+          description: |
+            Scope the page to one team's assets — the assets tab on a
+            team page (#684).
+
+            NARROWING ONLY. It is a filter, never a grant: asking for a
+            team's page does not make you a member of it. The visibility
+            predicate still selects the rows and the field plane still
+            decides which arrive as placeholders, so a non-member sees
+            that team's public work plus a placeholder for each of its
+            restricted assets — the same rows unfiltered browse would
+            have shown them, minus every other team's.
+
+            Not a team-existence probe: an unknown team, a soft-deleted
+            team and a team with no assets all answer with an empty page.
+          schema: { type: string, format: uuid }
         - name: q
           in: query
           required: false
@@ -5445,6 +5463,23 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: team_id
+          in: query
+          required: false
+          description: |
+            Scope the feed to one team's posts — the team page (#684).
+
+            NARROWING ONLY, like every other filter on this operation.
+            The read rule is ANDed onto the result rather than ORed
+            into it, and it never consults `team_id`, so this parameter
+            can only remove posts from the page the caller would
+            otherwise have received. Membership of the team confers
+            nothing here.
+
+            Not a team-existence probe: an unknown team, a soft-deleted
+            team and a team with no readable posts are one answer, an
+            empty page.
+          schema: { type: string, format: uuid }
         - name: feed
           in: query
           required: false
@@ -7226,6 +7261,121 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/follow:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: followTeam
+      summary: Follow a team (subscribe to its channel)
+      description: |
+        Adds the caller to `team_follows` (#577). Requires `teams.read`
+        — the same capability that lets you see the team at all.
+
+        ## A follow is a BOOKMARK, not a relationship
+
+        It grants nothing. It does not touch `team_memberships`, it is
+        never read by any authorization rule, and following a studio
+        does not widen one row of what you can see of its work — the
+        visibility planes decide that and do not consult this table.
+        All it does is put the team in your channels rail.
+
+        There is deliberately no unread model and no notification
+        fanout behind it; channels are not notifications.
+
+        ## Idempotent
+
+        Following a team you already follow is a no-op `204`, not a
+        `409`. The insert is `ON CONFLICT DO NOTHING`, so a
+        double-tapped button and a retried request are the same
+        request.
+
+        ## Refusals are indistinguishable
+
+        A nonexistent team and a soft-deleted team both answer `404`
+        with the same body, because the FK cannot see `teams.deleted_at`
+        and an explicit liveness probe therefore runs first. The two
+        MUST stay indistinguishable: any difference between them turns
+        this endpoint into a team-existence oracle over every studio on
+        the instance, which is the discipline
+        `visibility.CanAssignToTeam` carries for the same reason.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Followed (or already following)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: unfollowTeam
+      summary: Unfollow a team
+      description: |
+        Removes the caller's `team_follows` row (#577). Idempotent:
+        unfollowing a team you do not follow is a `204`, not a `404`.
+
+        No liveness probe and no `404` branch at all, on purpose. The
+        `POST` needs one because it writes a row that must point at a
+        live team; a DELETE only ever removes the caller's own row, and
+        a row pointing at a since-deleted team is exactly the row a
+        user would most want to be able to drop. Refusing to let them
+        would strand it in their rail forever.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unfollowed (or was not following)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/me/followed-teams:
+    get:
+      operationId: getMyFollowedTeams
+      summary: Teams the caller follows (the channels rail)
+      description: |
+        The caller's `team_follows` rows, resolved to teams and ordered
+        by name (#577). Soft-deleted teams are filtered out, so a
+        studio that is deleted simply leaves the rail.
+
+        Distinct from `GET /auth/me/teams`, which returns MEMBERSHIPS.
+        The two lists overlap only by coincidence: you can follow a
+        team you are not in, and being in a team does not put it here.
+        Keeping them separate endpoints is what keeps a bookmark from
+        being mistaken for an authorization fact.
+      tags: [teams, auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Teams the caller follows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /users/{ref}:
     parameters:
@@ -13761,6 +13911,41 @@ components:
             `ancestor` filter; this field is just the edges out of
             the current node.
           items: { $ref: "#/components/schemas/TeamParentLink" }
+        member_count:
+          type: integer
+          format: int64
+          description: |
+            Direct memberships. Present on `listTeams` — the directory
+            card shows it (#684) — and ABSENT from `getTeam`.
+
+            The asymmetry is deliberate and is about staleness, not
+            taste. `getTeam` reads through an LRU that only the
+            team-row and parent-edge endpoints invalidate; adding a
+            membership does not, and never needed to, because nothing
+            membership-shaped was cached. A count served from that
+            entry would go stale the first time somebody joined. The
+            list path is uncached, so it can carry the number honestly.
+
+            A team page that wants the count reads
+            `GET /teams/{id}/members`, which it already fetches for the
+            member strip.
+        content_count:
+          type: integer
+          format: int64
+          description: |
+            Live (non-soft-deleted) assets carrying this team_id — the
+            directory card's "how much is in here" hint (#684). Present
+            on `listTeams` only, for the same caching reason as
+            `member_count`.
+
+            NOT visibility-filtered, deliberately. It counts assets
+            whose fields the caller may not read. That discloses
+            nothing new: this operation needs `teams.read`, so the
+            caller is signed in, and the authenticated asset predicate
+            already hands them restricted rows as placeholders — the
+            same number is reachable by paging
+            `/assets?team_id=X`. Filtering it would make the card
+            disagree with the page it links to.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -16834,6 +17019,18 @@ components:
           type: integer
           format: int64
           nullable: true
+        username:
+          type: string
+          description: |
+            The member's username. Added for the team page's member
+            strip (#684) — without it a client can only render the ref,
+            and resolving names would be one request per member.
+        display_name:
+          type: string
+          nullable: true
+          description: |
+            The member's profile display name, or null when they have
+            no profile row. A client should fall back to `username`.
 
     EpubSpineEntry:
       type: object

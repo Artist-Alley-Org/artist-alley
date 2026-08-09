@@ -940,6 +940,11 @@ func (*PanicShim) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRe
 	panic("PanicShim: GetMyCapabilities called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetMyFollowedTeams panics by default; test shims override.
+func (*PanicShim) GetMyFollowedTeams(context.Context, openapi.GetMyFollowedTeamsRequestObject) (openapi.GetMyFollowedTeamsResponseObject, error) {
+	panic("PanicShim: GetMyFollowedTeams called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetMyTeams panics by default; test shims override.
 func (*PanicShim) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	panic("PanicShim: GetMyTeams called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1363,6 +1368,16 @@ func (*PanicShim) GetTeam(context.Context, openapi.GetTeamRequestObject) (openap
 // UpdateTeam panics by default; test shims override.
 func (*PanicShim) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
 	panic("PanicShim: UpdateTeam called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UnfollowTeam panics by default; test shims override.
+func (*PanicShim) UnfollowTeam(context.Context, openapi.UnfollowTeamRequestObject) (openapi.UnfollowTeamResponseObject, error) {
+	panic("PanicShim: UnfollowTeam called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// FollowTeam panics by default; test shims override.
+func (*PanicShim) FollowTeam(context.Context, openapi.FollowTeamRequestObject) (openapi.FollowTeamResponseObject, error) {
+	panic("PanicShim: FollowTeam called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListTeamMembers panics by default; test shims override.

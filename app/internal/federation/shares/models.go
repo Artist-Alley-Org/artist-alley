@@ -998,6 +998,12 @@ type TeamClosure struct {
 	Depth        int32
 }
 
+type TeamFollow struct {
+	UserRef   int64
+	TeamID    pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type TeamMembership struct {
 	TeamID         pgtype.UUID
 	UserRef        int64

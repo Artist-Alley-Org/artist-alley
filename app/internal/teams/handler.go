@@ -120,6 +120,9 @@ func (h *Handler) ListTeams(
 		if err != nil {
 			return nil, err
 		}
+		if err := h.attachDirectoryStats(ctx, items); err != nil {
+			return nil, err
+		}
 		return openapi.ListTeams200JSONResponse(openapi.TeamList{Items: items}), nil
 	}
 
@@ -151,6 +154,9 @@ func (h *Handler) ListTeams(
 	}
 	items, err := h.teamsToAPI(ctx, rows)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.attachDirectoryStats(ctx, items); err != nil {
 		return nil, err
 	}
 	resp := openapi.TeamList{Items: items}
@@ -495,12 +501,19 @@ func (h *Handler) ListTeamMembers(
 	out := make([]openapi.TeamMember, 0, len(rows))
 	for _, r := range rows {
 		m := openapi.TeamMember{
-			TeamId:  openapi_types.UUID(r.TeamID.Bytes),
-			UserRef: r.UserRef,
-			AddedAt: r.AddedAt.Time,
+			TeamId:   openapi_types.UUID(r.TeamID.Bytes),
+			UserRef:  r.UserRef,
+			AddedAt:  r.AddedAt.Time,
+			Username: r.Username,
 		}
 		if r.AddedByUserRef != nil {
 			m.AddedByUserRef = r.AddedByUserRef
+		}
+		// display_name stays absent rather than empty when the member
+		// has no profile row, so a client can tell "no display name" from
+		// "display name is the empty string" and fall back to username.
+		if r.DisplayName != nil && *r.DisplayName != "" {
+			m.DisplayName = r.DisplayName
 		}
 		out = append(out, m)
 	}
@@ -647,6 +660,51 @@ func (h *Handler) invalidateTeam(ctx context.Context, id pgtype.UUID) {
 }
 
 func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
+
+// attachDirectoryStats fills member_count / content_count on one page
+// of the /teams directory (#684), in ONE round trip for the whole page
+// rather than two per card.
+//
+// Only the LIST paths call this. getTeam deliberately does not: it
+// reads through the byID LRU, and that cache is invalidated by the
+// team-row and parent-edge endpoints only — AddTeamMember and
+// RemoveTeamMember do not touch it, and never needed to, because
+// nothing membership-shaped was cached. Putting a member count behind
+// that entry would make it wrong the first time somebody joined a
+// team, and the fix ("invalidate on membership change too") buys a
+// number that surface does not need — the team page already fetches
+// /teams/{id}/members for its member strip.
+//
+// Best-effort is NOT good enough here: a card silently reading "0
+// members · 0 works" is worse than a failed page, because it is
+// indistinguishable from an empty studio. So the error propagates.
+func (h *Handler) attachDirectoryStats(ctx context.Context, items []openapi.Team) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(items))
+	for _, it := range items {
+		ids = append(ids, pgtype.UUID{Bytes: it.Id, Valid: true})
+	}
+	rows, err := New(h.Pool).TeamDirectoryStats(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("teams: directory stats: %w", err)
+	}
+	byID := make(map[uuid.UUID]TeamDirectoryStatsRow, len(rows))
+	for _, r := range rows {
+		byID[uuid.UUID(r.TeamID.Bytes)] = r
+	}
+	for i := range items {
+		r, ok := byID[uuid.UUID(items[i].Id)]
+		if !ok {
+			continue
+		}
+		m, c := r.MemberCount, r.AssetCount
+		items[i].MemberCount = &m
+		items[i].ContentCount = &c
+	}
+	return nil
+}
 
 func (h *Handler) teamsToAPI(_ context.Context, rows []Team) ([]openapi.Team, error) {
 	out := make([]openapi.Team, 0, len(rows))

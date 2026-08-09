@@ -3046,6 +3046,15 @@ func (s *apiServer) AddTeamMember(ctx context.Context, req openapi.AddTeamMember
 func (s *apiServer) RemoveTeamMember(ctx context.Context, req openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
 	return s.teams.RemoveTeamMember(ctx, req)
 }
+func (s *apiServer) FollowTeam(ctx context.Context, req openapi.FollowTeamRequestObject) (openapi.FollowTeamResponseObject, error) {
+	return s.teams.FollowTeam(ctx, req)
+}
+func (s *apiServer) UnfollowTeam(ctx context.Context, req openapi.UnfollowTeamRequestObject) (openapi.UnfollowTeamResponseObject, error) {
+	return s.teams.UnfollowTeam(ctx, req)
+}
+func (s *apiServer) GetMyFollowedTeams(ctx context.Context, req openapi.GetMyFollowedTeamsRequestObject) (openapi.GetMyFollowedTeamsResponseObject, error) {
+	return s.teams.GetMyFollowedTeams(ctx, req)
+}
 func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	return s.teams.GetMyTeams(ctx, req)
 }

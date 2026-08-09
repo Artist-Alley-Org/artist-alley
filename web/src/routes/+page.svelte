@@ -8,6 +8,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import FeaturedRail from '$components/FeaturedRail.svelte';
+  import ChannelsRail from '$components/ChannelsRail.svelte';
   import PostCard from '$components/PostCard.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
   import PostHost from '$components/PostHost.svelte';
@@ -331,8 +332,19 @@
        guest/member check: unfiltered browse keeps the rail for BOTH,
        including the signed-out visitor for whom it is the only thing on
        the page. -->
+  <!-- #577 — the channels rail, on the same `{#if !query}` condition as
+       the featured rail above and for the same reason (#908): `?q=`
+       turns this route into a result surface, and navigation chrome
+       unrelated to the query is then noise pinned above the answer.
+
+       It sits BELOW FeaturedRail deliberately. The featured strip is
+       the operator's curation and is the whole page for a guest; the
+       channels rail is the reader's own subscriptions and renders
+       nothing at all for a guest, so putting it second keeps the
+       signed-out layout identical to what it was. -->
   {#if !query}
     <FeaturedRail />
+    <ChannelsRail />
   {/if}
 
   {#if guestFeed}

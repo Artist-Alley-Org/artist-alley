@@ -78,6 +78,35 @@ func (q *Queries) CreateTeam(ctx context.Context, arg CreateTeamParams) (Team, e
 	return i, err
 }
 
+const followTeam = `-- name: FollowTeam :exec
+INSERT INTO team_follows (user_ref, team_id)
+VALUES ($1, $2)
+ON CONFLICT (user_ref, team_id) DO NOTHING
+`
+
+type FollowTeamParams struct {
+	UserRef int64
+	TeamID  pgtype.UUID
+}
+
+// Bookmark a team into the caller's channels rail (#577).
+//
+// ON CONFLICT DO NOTHING makes follow IDEMPOTENT: a double-tapped
+// button, a retried request and a genuine re-follow are one request
+// with one outcome. The alternative — letting the PK raise 23505 and
+// mapping it to a 409 — would make the client's correctness depend on
+// it knowing a state the server already knows.
+//
+// LIVENESS IS NOT CHECKED HERE. The team_id FK cannot see
+// teams.deleted_at, so this statement will happily bookmark a
+// tombstoned team. The handler probes for that BEFORE calling this,
+// the same discipline visibility.CanAssignToTeam carries (#955). Do
+// not call this without the probe.
+func (q *Queries) FollowTeam(ctx context.Context, arg FollowTeamParams) error {
+	_, err := q.db.Exec(ctx, followTeam, arg.UserRef, arg.TeamID)
+	return err
+}
+
 const getTeam = `-- name: GetTeam :one
 SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
 FROM teams
@@ -100,27 +129,123 @@ func (q *Queries) GetTeam(ctx context.Context, id pgtype.UUID) (Team, error) {
 	return i, err
 }
 
-const listTeamMembers = `-- name: ListTeamMembers :many
-SELECT team_id, user_ref, added_at, added_by_user_ref
-FROM team_memberships
-WHERE team_id = $1
-ORDER BY added_at DESC, user_ref ASC
+const isTeamLive = `-- name: IsTeamLive :one
+SELECT EXISTS (
+    SELECT 1 FROM teams WHERE id = $1 AND deleted_at IS NULL
+) AS live
 `
 
-func (q *Queries) ListTeamMembers(ctx context.Context, teamID pgtype.UUID) ([]TeamMembership, error) {
+// The liveness half of the follow gate. Separate from any existence
+// check ON PURPOSE: a nonexistent team and a soft-deleted team both
+// answer false, so the handler cannot accidentally tell them apart and
+// the endpoint cannot become a team-existence oracle. See
+// visibility.CanAssignToTeam for the full argument.
+func (q *Queries) IsTeamLive(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isTeamLive, id)
+	var live bool
+	err := row.Scan(&live)
+	return live, err
+}
+
+const listFollowedTeams = `-- name: ListFollowedTeams :many
+SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
+       t.created_at, t.updated_at, t.deleted_at
+FROM team_follows tf
+JOIN teams t ON t.id = tf.team_id
+WHERE tf.user_ref = $1 AND t.deleted_at IS NULL
+ORDER BY t.name ASC, t.id ASC
+`
+
+// The caller's channels rail (#577). Same projection and ordering as
+// ListUserTeams so the two lists render through one code path, but a
+// DIFFERENT table: this is what the user bookmarked, that is what the
+// user belongs to. They are not the same question and neither implies
+// the other.
+//
+// Soft-deleted teams are filtered out rather than deleted, so a studio
+// that is tombstoned simply leaves the rail and comes back if it is
+// ever restored.
+func (q *Queries) ListFollowedTeams(ctx context.Context, userRef int64) ([]Team, error) {
+	rows, err := q.db.Query(ctx, listFollowedTeams, userRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Team
+	for rows.Next() {
+		var i Team
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamMembers = `-- name: ListTeamMembers :many
+SELECT tm.team_id,
+       tm.user_ref,
+       tm.added_at,
+       tm.added_by_user_ref,
+       u.username,
+       up.display_name
+FROM team_memberships tm
+JOIN "user" u              ON u.ref = tm.user_ref
+LEFT JOIN user_profiles up ON up.user_ref = tm.user_ref
+WHERE tm.team_id = $1
+ORDER BY tm.added_at DESC, tm.user_ref ASC
+`
+
+type ListTeamMembersRow struct {
+	TeamID         pgtype.UUID
+	UserRef        int64
+	AddedAt        pgtype.Timestamptz
+	AddedByUserRef *int64
+	Username       *string
+	DisplayName    *string
+}
+
+// Joined against "user" + user_profiles so the response carries a NAME
+// (#684), the same shape social.ListFollowers uses.
+//
+// Before the team page this query returned bare refs, because its only
+// consumer was an admin table that renders them as ids. A member strip
+// built on that could say nothing but "#19", and resolving the names
+// client-side would be one /users/by-ref request per member on every
+// team page — a dozen round trips for a line of text a JOIN already
+// had in hand.
+//
+// LEFT JOIN on user_profiles: a profile row is optional, and a member
+// without one must still appear in the strip under their username
+// rather than vanish from their own team.
+func (q *Queries) ListTeamMembers(ctx context.Context, teamID pgtype.UUID) ([]ListTeamMembersRow, error) {
 	rows, err := q.db.Query(ctx, listTeamMembers, teamID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []TeamMembership
+	var items []ListTeamMembersRow
 	for rows.Next() {
-		var i TeamMembership
+		var i ListTeamMembersRow
 		if err := rows.Scan(
 			&i.TeamID,
 			&i.UserRef,
 			&i.AddedAt,
 			&i.AddedByUserRef,
+			&i.Username,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -349,6 +474,93 @@ UPDATE teams
 
 func (q *Queries) SoftDeleteTeam(ctx context.Context, id pgtype.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, softDeleteTeam, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const teamDirectoryStats = `-- name: TeamDirectoryStats :many
+SELECT t.id AS team_id,
+       (SELECT COUNT(*)::BIGINT FROM team_memberships tm WHERE tm.team_id = t.id) AS member_count,
+       (SELECT COUNT(*)::BIGINT FROM assets a
+         WHERE a.team_id = t.id AND a.deleted_at IS NULL) AS asset_count
+FROM teams t
+WHERE t.id = ANY($1::uuid[])
+`
+
+type TeamDirectoryStatsRow struct {
+	TeamID      pgtype.UUID
+	MemberCount int64
+	AssetCount  int64
+}
+
+// Member and content counts for one PAGE of the /teams directory
+// (#684) — the "10 members · 173 works" line on each card.
+//
+// Batched over the page's ids rather than issued per row: the
+// directory renders up to 100 teams and three round trips beat 200.
+//
+// ## Why these are computed, not stored
+//
+// Neither number has a column. A denormalised count is a second source
+// of truth needing maintenance on every membership change, upload,
+// delete, restore and team merge, and both of these run against an
+// index (team_memberships PK; assets_team_idx). Add the column when a
+// measurement says to.
+//
+// ## Why the asset count is not visibility-filtered
+//
+// It is a raw count and it deliberately includes assets whose fields
+// this caller may not read. That discloses nothing new: these
+// endpoints are teams.read-gated, so the caller is signed in, and the
+// authenticated asset predicate already returns restricted rows to
+// them as placeholders — they can reach the same number today by
+// paging /assets?team_id=X and counting. Filtering here would make the
+// card disagree with the page it links to, for no gain.
+//
+// Soft-deleted assets ARE excluded, because those are not reachable by
+// that route and the count would then be one nobody can verify.
+func (q *Queries) TeamDirectoryStats(ctx context.Context, teamIds []pgtype.UUID) ([]TeamDirectoryStatsRow, error) {
+	rows, err := q.db.Query(ctx, teamDirectoryStats, teamIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TeamDirectoryStatsRow
+	for rows.Next() {
+		var i TeamDirectoryStatsRow
+		if err := rows.Scan(&i.TeamID, &i.MemberCount, &i.AssetCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unfollowTeam = `-- name: UnfollowTeam :execrows
+DELETE FROM team_follows
+WHERE user_ref = $1 AND team_id = $2
+`
+
+type UnfollowTeamParams struct {
+	UserRef int64
+	TeamID  pgtype.UUID
+}
+
+// Drop the caller's bookmark. :execrows rather than :exec so the
+// handler can log the no-op case, but the response is 204 either way —
+// unfollowing something you do not follow has already achieved what
+// the caller asked for.
+//
+// Deliberately NOT joined against teams: a follow of a since-deleted
+// team is exactly the row a user most wants to be able to remove, and
+// a liveness filter here would strand it in their rail permanently.
+func (q *Queries) UnfollowTeam(ctx context.Context, arg UnfollowTeamParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unfollowTeam, arg.UserRef, arg.TeamID)
 	if err != nil {
 		return 0, err
 	}
