@@ -302,6 +302,22 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **You can delete things by clicking Delete.** The delete entries on files, posts and
+  collections were placeholders — two opened a "coming soon" box and the third was a greyed-out
+  button — so the whole delete-and-restore arc built over the last releases was reachable only
+  through the API (#981).
+
+  All three now work. A confirmation dialog asks first, and when you delete someone else's
+  work — something moderators can do — it also asks for a reason, which the owner will see.
+  Deleting your own work skips that question; nobody needs to explain a deletion to themselves.
+
+  After a delete, a small notice appears with an **Undo** button and a link to the bin, so a
+  slip is one click to take back. And the bin gained a second tab, **Deleted by me**: if you
+  removed a colleague's file, the undo right was yours, but the only bin it appeared in was the
+  owner's — where it showed as not-restorable. Now the person who can undo a deletion can also
+  find it. The new tab lists only your own past deletions and shows no more about each item
+  than the delete itself already did.
+
 - **When the server runs out of memory, it now leaves something to read.** The app was being
   killed by its own container ceiling roughly eleven times in sixteen hours, and from outside
   the process there was no way to tell an honest peak from a slow leak — both climb, both die
