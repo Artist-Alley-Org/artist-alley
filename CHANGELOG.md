@@ -108,6 +108,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Studios have a home page now, and you can follow them.** Eleven studios' worth of work
+  was reachable only through admin screens or tag search. There is now a studio directory,
+  and each studio has its own page — its posts, its files, its members (#684).
+
+  Following a studio adds it to a rail beside your feed, so the studios you care about are
+  one click away. Following is just a bookmark: it grants nothing, changes nothing about
+  what you can see, and unfollowing removes only itself (#577).
+
+  What a studio's page shows you is exactly what you could already see of that studio's
+  work elsewhere — restricted pieces stay as placeholders. A studio page never widens
+  anything.
+
 - **One keystroke, one action.** Pressing an arrow key on a video inside a feed both stepped
   a frame *and* moved to the next post — two things at once, whichever you wanted. The same
   double-firing hit the info toggle, page-turns in the book reader, and every key while the
