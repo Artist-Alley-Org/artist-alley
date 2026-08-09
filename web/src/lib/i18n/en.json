@@ -2587,6 +2587,7 @@
       "loop": "Loop range",
       "view": "Zoom & fullscreen",
       "ebook": "Ebook reader",
+      "document": "Document reader",
       "sprite": "Sprite sheets",
       "whiteboard_tools": "Whiteboard tools",
       "whiteboard_edit": "Whiteboard editing",
@@ -2594,8 +2595,10 @@
       "text": "Tags & message boxes"
     },
     "note": {
-      "viewer_nav": "Left and right move between posts only when you opened the asset from a feed or collection.",
-      "playback": "Only on video and audio. Arrow keys step frames here too, so on a video in a feed they both step a frame and move to the next post.",
+      "viewer_nav": "Left and right move between posts only when you opened the asset from a feed or collection, and only on assets that don't use them for something else — a video steps frames instead, an ebook turns pages. Up and down always move within the post.",
+      "playback": "Only on video and audio. Left and right step frames as well, and on a video they no longer also jump to the next post — the player has the arrows while it is open.",
+      "ebook": "The reader has the arrows while it is open, so they turn pages instead of moving to the next post.",
+      "document": "Available while the Document panel is open. With it closed, Ctrl/⌘ F is your browser's own find.",
       "whiteboard_edit": "While the whiteboard is open its keys win: F fits the drawing instead of going fullscreen."
     },
     "viewer": {
@@ -2627,6 +2630,9 @@
     },
     "ebook": {
       "chapter": "Previous / next chapter"
+    },
+    "doc": {
+      "find": "Jump to the Find box"
     },
     "sprite": {
       "play_pause": "Play / pause the animation",
@@ -2661,6 +2667,7 @@
       "fit": "Fit the drawing to the window",
       "reset_zoom": "Reset zoom",
       "zoom": "Zoom in / out",
+      "size": "Decrease / increase brush size (hold Shift for bigger steps)",
       "exit": "Leave the whiteboard"
     },
     "search": {

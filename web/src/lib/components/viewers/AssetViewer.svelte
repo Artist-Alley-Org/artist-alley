@@ -797,33 +797,79 @@
 
   // ---- hotkeys ----------------------------------------------------------
 
+  // Key ownership (#885). preventDefault() suppresses the BROWSER's
+  // default action; it does nothing about other listeners. This viewer
+  // and the surrounding AssetPlaylist both listen globally, so before
+  // this change every key they shared fired twice: ← stepped a video
+  // frame AND moved to the previous post, `i` marked a loop-in AND
+  // toggled the playlist's side panel.
+  //
+  // The rule shipped here: THE VIEWER OWNS A KEY ONLY WHEN IT ACTUALLY
+  // ACTED ON IT. `own()` records that, and the tail of the function
+  // stops propagation for exactly those keys. Every case below is
+  // already gated on the capability it needs (`controller.hasTimeline`
+  // for playback/loop/frame keys, `canTile` for T), so the gate doubles
+  // as the per-asset-kind discriminator for free:
+  //
+  //   video / audio (hasTimeline) → viewer owns ← →, keeps the frame
+  //                                 step, playlist does not navigate
+  //   image / doc / 3D / whiteboard / sprite (no timeline) → the case
+  //                                 body never runs, nothing is owned,
+  //                                 ← → reach the playlist unchanged
+  //
+  // A blanket stop would have eaten arrows for every asset kind and
+  // traded one bug for a worse one.
+  //
+  // Plain stopPropagation() is enough, and is not registration-order
+  // dependent: this listener is on `document`, AssetPlaylist's is on
+  // `window` via <svelte:window>, and document precedes window in the
+  // bubble path. (stopImmediatePropagation would additionally silence
+  // same-node listeners, which is not what we want — WhiteboardCanvas
+  // legitimately shares `window` with the playlist.)
   function handleKey(e: KeyboardEvent) {
     if (!active) return;
+    // While the whiteboard overlay is up, its keymap wins outright.
+    // This is what /account/shortcuts has always claimed ("While the
+    // whiteboard is open its keys win") and it was never true: our
+    // listener is on `document` and WhiteboardCanvas's is on `window`,
+    // so F ran fullscreen here BEFORE the whiteboard's fit-to-content,
+    // and R / T / G / O / I / L / Space all double-fired the same way.
+    // Bailing is required for correctness now that the tail of this
+    // function stops propagation — without it the stop would swallow
+    // the whiteboard's entire tool keymap.
+    if (whiteboardOpen) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
+    let owned = false;
+    /** Claim the key: take the browser default AND the key itself. */
+    const own = () => { owned = true; e.preventDefault(); };
     switch (k) {
-      case ' ': if (controller.hasTimeline) { e.preventDefault(); controller.togglePlay(); } break;
-      case 'k': if (controller.hasTimeline) { e.preventDefault(); controller.pause(); } break;
-      case 'l': if (controller.hasTimeline) { e.preventDefault(); controller.play(); } break;
-      case 'j': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(-1); } break;
+      case ' ': if (controller.hasTimeline) { own(); controller.togglePlay(); } break;
+      case 'k': if (controller.hasTimeline) { own(); controller.pause(); } break;
+      case 'l': if (controller.hasTimeline) { own(); controller.play(); } break;
+      case 'j': if (controller.hasTimeline) { own(); controller.stepFrames(-1); } break;
       case ',':
-      case 'arrowleft': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(e.shiftKey ? -10 : -1); } break;
+      case 'arrowleft': if (controller.hasTimeline) { own(); controller.stepFrames(e.shiftKey ? -10 : -1); } break;
       case '.':
-      case 'arrowright': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(e.shiftKey ? 10 : 1); } break;
-      case 'i': if (controller.hasTimeline) { e.preventDefault(); controller.loopIn = controller.currentFrame; } break;
-      case 'o': if (controller.hasTimeline) { e.preventDefault(); controller.loopOut = controller.currentFrame; } break;
-      case 'backspace': e.preventDefault(); controller.loopIn = null; controller.loopOut = null; break;
-      case '1': if (controller.hasTimeline) controller.setRate(0.25); break;
-      case '2': if (controller.hasTimeline) controller.setRate(0.5); break;
-      case '3': if (controller.hasTimeline) controller.setRate(1); break;
-      case '4': if (controller.hasTimeline) controller.setRate(2); break;
-      case '5': if (controller.hasTimeline) controller.setRate(4); break;
-      case 'f': e.preventDefault(); toggleFullscreen(); break;
-      case 'r': e.preventDefault(); resetView(); break;
-      case 'g': if (controller.hasTimeline) { e.preventDefault(); goToOpen = true; } break;
-      case 't': if (canTile) { e.preventDefault(); toggleTileMode(); } break;
+      case 'arrowright': if (controller.hasTimeline) { own(); controller.stepFrames(e.shiftKey ? 10 : 1); } break;
+      case 'i': if (controller.hasTimeline) { own(); controller.loopIn = controller.currentFrame; } break;
+      case 'o': if (controller.hasTimeline) { own(); controller.loopOut = controller.currentFrame; } break;
+      case 'backspace': own(); controller.loopIn = null; controller.loopOut = null; break;
+      // Rate keys deliberately do NOT preventDefault (they never did —
+      // a digit has no browser default worth suppressing), but they are
+      // still consumed, so mark ownership without touching the default.
+      case '1': if (controller.hasTimeline) { owned = true; controller.setRate(0.25); } break;
+      case '2': if (controller.hasTimeline) { owned = true; controller.setRate(0.5); } break;
+      case '3': if (controller.hasTimeline) { owned = true; controller.setRate(1); } break;
+      case '4': if (controller.hasTimeline) { owned = true; controller.setRate(2); } break;
+      case '5': if (controller.hasTimeline) { owned = true; controller.setRate(4); } break;
+      case 'f': own(); toggleFullscreen(); break;
+      case 'r': own(); resetView(); break;
+      case 'g': if (controller.hasTimeline) { own(); goToOpen = true; } break;
+      case 't': if (canTile) { own(); toggleTileMode(); } break;
     }
+    if (owned) e.stopPropagation();
   }
 
   onMount(() => {

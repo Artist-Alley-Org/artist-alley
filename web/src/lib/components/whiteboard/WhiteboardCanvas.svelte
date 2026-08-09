@@ -126,6 +126,25 @@
       const r = document.getElementById('aa-whiteboard-surface')?.getBoundingClientRect();
       if (r) session.resetView(r.width, r.height);
     }
+    // [ / ] = decrease / increase brush size (#885). Photoshop and
+    // Krita's binding, and the one WhiteboardTool's Tips has advertised
+    // since it was written — nothing bound it until now. Steps by 1 px
+    // over the same 1..48 domain as the panel's size slider, so the
+    // slider and the keys cannot disagree; hold Shift for a coarse
+    // 5 px step. Not gated on the tool: `session.width` is the stroke
+    // width for the shape tools too, and a key that silently does
+    // nothing on half the toolbar is the defect this issue is about.
+    // `{` / `}` are listed alongside `[` / `]` because Shift+[ and
+    // Shift+] ARE those characters on a US layout — matching on the
+    // bracket alone would make the coarse step unreachable for the
+    // people most likely to reach for it.
+    if (e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const up = e.key === ']' || e.key === '}';
+      const step = (e.shiftKey ? 5 : 1) * (up ? 1 : -1);
+      session.width = Math.max(1, Math.min(48, session.width + step));
+    }
     // + / - = zoom in / out around the viewport center.
     if (e.key === '+' || e.key === '=') {
       e.preventDefault();
