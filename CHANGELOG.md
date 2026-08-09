@@ -302,6 +302,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **If a moderator removed your work, you can now ask for it back.** Your bin already showed
+  items someone else removed, but they were a dead end — no way to ask about them, and the
+  reason the remover wrote (which the delete dialog promises you will see) was never actually
+  shown (#931).
+
+  Both are fixed. Each removed item in your bin now shows the reason it was removed, and items
+  you can't restore yourself carry a **Request restoration** button. The request goes to the
+  person who removed the item — only they, or a site administrator, can approve it; approving
+  puts the item straight back. You're notified either way.
+
+  The approval is deliberately narrow: the person asking can never approve their own request,
+  and approving one restores that one item — it grants no lasting permission of any kind.
+
 - **You can delete things by clicking Delete.** The delete entries on files, posts and
   collections were placeholders — two opened a "coming soon" box and the third was a greyed-out
   button — so the whole delete-and-restore arc built over the last releases was reachable only

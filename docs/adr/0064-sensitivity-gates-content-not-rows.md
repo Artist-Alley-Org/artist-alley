@@ -98,6 +98,35 @@ additive ACL model is already the right shape rather than a new dimension on cap
 `content.access.request` is the seam between the two halves. When #912 lands, it is the thing that
 should start meaning something — not the thing to delete.
 
+### Amendment 2026-08-09 (#931, PR #986) — a SECOND marker for restoration appeals, because the two deciders must not be interchangeable
+
+The request machinery gained its second use: an owner whose item was deleted by someone else may
+file a **restoration appeal** (`POST /account/trash/{kind}/{id}/request-restore` — one operation
+over all three soft-deletable kinds; `resource_request` grew `target_kind` and its uuid column was
+renamed `target_id` to stop being false for two of three values, migration 00042).
+
+The appeal deliberately does **not** reuse `content.access.request`, and the reason is the decider
+mapping, not tidiness:
+
+| marker | who may decide it |
+|---|---|
+| `content.access.request` | the target's **owner** (plus the real approvers) |
+| `content.restore.request` | whoever passes `auth.CanRestoreDeleted` — the **deleter**, or `system.admin`. Nobody else. |
+
+The owner of a moderated item is precisely the person the moderation was against; one shared
+marker would have let them approve their own appeal through the owner disjunct. And `share.grant`
+— sufficient for access requests — is **excluded** here: authority over sharing is not authority
+over moderation. The gate is an if/else on the marker, not an added disjunct, because the
+pre-existing disjuncts short-circuit before `ownerMayDecide` runs (an owner holding `share.grant`
+never reached it — immaterial for access requests, fatal for appeals; PR #986 caught this).
+
+**Granting an appeal performs the restore and writes NO `user_capability_grants` row.** The #881
+rule ("granting inserts the requested capability verbatim") now has a stated exception with a
+mutation-tested assertion behind it: `count(*) FROM user_capability_grants` is unchanged across an
+appeal grant. A granted appeal means *the item is back*, nothing more — same shape as the access
+marker meaning *the owner agreed*, nothing more. `expires_at` on an appeal grant is a 400: a
+performed restore cannot expire.
+
 ### Why the grant path is deferred (amended 2026-07-19)
 
 The obvious rule — "an approved `resource_request` unlocks the bytes" — is **unsafe as the
