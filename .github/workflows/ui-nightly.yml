@@ -263,14 +263,16 @@ jobs:
 
       - name: Seed diagnostic on failure
         if: failure()
-        run: |
-          for svc in postgres postgres-b; do
-            echo "=== $svc ==="
-            docker compose exec -T "$svc" psql -U artist_alley -d artist_alley -tAc \
-              "SELECT 'users', count(*) FROM \"user\"
-               UNION ALL SELECT 'assets', count(*) FROM assets
-               UNION ALL SELECT 'posts', count(*) FROM posts;" 2>&1 || echo "($svc unreachable)"
-          done
+        # Row counts alone left #886 unanswerable: postgres dies mid-seed
+        # (`unexpected EOF`, then WAL replay on the next connection) and a
+        # re-run on the same commit passes, so the evidence has to come off
+        # the failing run. The shared action adds container state, cgroup
+        # oom counters and the postmaster's own crash lines around the
+        # counts. --profile dogfood so postgres-b is visible at all.
+        uses: ./.github/actions/seed-forensics
+        with:
+          services: postgres postgres-b
+          profiles: --profile dogfood
 
       - name: Pair studio-a + studio-b
         # Pair waits for both health endpoints + sets site.base_url

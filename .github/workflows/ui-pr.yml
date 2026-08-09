@@ -258,12 +258,12 @@ jobs:
 
       - name: Seed diagnostic on failure
         if: failure()
-        run: |
-          docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
-            "SELECT 'users', count(*) FROM \"user\"
-             UNION ALL SELECT 'assets', count(*) FROM assets
-             UNION ALL SELECT 'posts', count(*) FROM posts
-             UNION ALL SELECT 'comments', count(*) FROM comments;" || true
+        # Same blind spot as ui-nightly's copy (#886): the row counts
+        # could not say whether postgres was killed, crashed or restarted.
+        # studio-a only here, so no dogfood profile.
+        uses: ./.github/actions/seed-forensics
+        with:
+          services: postgres
 
       - name: Install Playwright + browsers
         working-directory: scripts/dogfood/ui

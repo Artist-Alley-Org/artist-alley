@@ -1,0 +1,176 @@
+name: Seed forensics
+description: >-
+  On a failed seed step, record WHY postgres stopped answering: per
+  container state, cgroup memory accounting, the postmaster's own crash
+  and recovery lines, and the row counts the seed reached before it
+  died.
+
+  #886 has been open for weeks with no evidence. The seed intermittently
+  fails with `unexpected EOF` mid-phase, the next run on the identical
+  commit passes, and the only diagnostic on the step was a row count.
+  A row count cannot tell you whether postgres was OOM-killed,
+  segfaulted, was restarted by the daemon, or never crashed at all — so
+  every occurrence produced the same non-answer and the issue could only
+  ever be re-opened, never closed.
+
+  WHAT THIS ADDS OVER `.github/actions/container-logs`. That action
+  (#956/#957) already dumps every service's log on job failure, both
+  stacks included, and a crash-plus-recovery block is a few dozen lines
+  at the very end of a 200-300 line tail — so the log itself is not the
+  gap and this action does not re-dump it. The gap is container STATE.
+  Nothing recorded whether the container died, when, with what exit
+  code, or how many times it had restarted.
+
+  That distinction is the whole question. Postgres's postmaster restarts
+  a crashed BACKEND itself, without the container ever exiting:
+
+    OOMKilled=true                      → the cgroup took PID 1; the
+                                          container died and came back
+    OOMKilled=false, RestartCount=0,
+    "terminated by signal 9" in the log → the kernel killed a backend
+                                          INSIDE a live container
+    OOMKilled=false, no signal line,
+    "PANIC" / disk errors in the log    → not memory at all
+
+  Those three need completely different fixes, the row count separates
+  none of them, and the container log alone separates only the last.
+  Hence: state + cgroup counters here, log grepped for the deciding
+  lines, full log still in the `Container logs on failure` step.
+
+  This action does NOT attempt a fix. Its definition of done is that the
+  next occurrence is conclusive.
+
+inputs:
+  services:
+    description: >-
+      Space-separated compose service names to inspect. Nightly runs the
+      dual stack and needs both halves ("postgres postgres-b"); ui-pr
+      runs studio-a only.
+    required: false
+    default: postgres
+  profiles:
+    description: >-
+      Extra compose profile flags, e.g. "--profile dogfood". Without it
+      profile-gated services are invisible to compose and postgres-b
+      resolves to nothing — the same blind spot that made
+      container-logs dump half a stack on run 31160803362.
+    required: false
+    default: ""
+  db-user:
+    description: Postgres role to run the row counts as.
+    required: false
+    default: artist_alley
+  db-name:
+    description: Database to run the row counts against.
+    required: false
+    default: artist_alley
+
+runs:
+  using: composite
+  steps:
+    - name: Capture postgres state, cgroup counters and crash lines
+      shell: bash
+      env:
+        SERVICES: ${{ inputs.services }}
+        PROFILES: ${{ inputs.profiles }}
+        DB_USER: ${{ inputs.db-user }}
+        DB_NAME: ${{ inputs.db-name }}
+      run: |
+        set -uo pipefail
+
+        found=0
+        for svc in $SERVICES; do
+          echo "::group::seed forensics — $svc"
+
+          # `ps -aq`, not `ps -q`: a container that exited is exactly the
+          # case worth inspecting, and -q would hide it.
+          # shellcheck disable=SC2086
+          cid="$(docker compose $PROFILES ps -aq "$svc" 2>/dev/null | head -n1)"
+          if [ -z "$cid" ]; then
+            echo "::error::seed forensics: no container resolved for service '$svc'" \
+              "in project '${COMPOSE_PROJECT_NAME:-<unset>}'. Either the stack never came up, it was" \
+              "already torn down, the service is behind a compose profile this step was not given," \
+              "or COMPOSE_PROJECT_NAME/COMPOSE_FILE do not resolve to it from here (#886)."
+            echo "::endgroup::"
+            continue
+          fi
+          found=$((found + 1))
+
+          echo "--- container state ---"
+          docker inspect "$cid" --format '{{printf "Status=%s\nOOMKilled=%v\nExitCode=%d\nStartedAt=%s\nFinishedAt=%s\nRestartCount=%d\nMemLimitBytes=%d\nError=%q" .State.Status .State.OOMKilled .State.ExitCode .State.StartedAt .State.FinishedAt .RestartCount .HostConfig.Memory .State.Error}}' 2>&1 \
+            || echo "(docker inspect failed for $svc — the container id resolved but the daemon would not describe it)"
+
+          # cgroup accounting answers "was it memory" directly, which
+          # .State.OOMKilled does not when the postmaster outlived the
+          # kill. memory.events carries `oom` and `oom_kill` counters;
+          # a non-zero oom_kill with OOMKilled=false is precisely the
+          # "kernel killed a backend inside a live container" case.
+          #
+          # Caveat worth knowing while reading it: the cgroup is
+          # recreated when the container restarts, so memory.peak and
+          # the event counters are since the CURRENT start. Cross-check
+          # RestartCount above before concluding "it never went near the
+          # limit".
+          echo "--- cgroup memory (limit / peak / oom counters) ---"
+          docker exec "$cid" sh -c '
+            cd /sys/fs/cgroup 2>/dev/null || exit 1
+            for f in memory.max memory.peak memory.current memory.events memory.swap.peak; do
+              if [ -r "$f" ]; then printf "%s: " "$f"; tr "\n" " " < "$f"; echo; fi
+            done
+            for f in memory/memory.limit_in_bytes memory/memory.max_usage_in_bytes memory/memory.failcnt; do
+              if [ -r "$f" ]; then printf "%s: " "$f"; cat "$f"; fi
+            done
+          ' 2>&1 \
+            || echo "(cgroup accounting unavailable — the container is not running, so the state block above is the record)"
+
+          # Deciding lines only. The FULL log is dumped by the
+          # `Container logs on failure` step (.github/actions/container-logs);
+          # duplicating it here would bury the verdict in the evidence.
+          #
+          # Two passes, and the split is load-bearing. A crash makes
+          # postgres refuse every connection until recovery finishes, so
+          # the log fills with dozens of identical per-connection FATALs
+          # ("the database system is in recovery mode"). A single grep
+          # tailed to a fixed number is swamped by them: measured on a
+          # forced local crash, 30+ of those pushed the one line that
+          # names the cause — "server process (PID 68) was terminated by
+          # signal 9: Killed" — clean out of the window. So the decisive
+          # lines get their own pass, read from the TOP (the crash comes
+          # before its aftermath), and the repetitive client-side FATALs
+          # are reduced to a per-message count.
+          log="$(docker logs --tail 800 "$cid" 2>&1)"
+
+          echo "--- verdict lines (full log: 'Container logs on failure') ---"
+          printf '%s\n' "$log" \
+            | grep -niE 'terminated by signal|all server processes terminated|reinitializing|out of memory|PANIC|No space left|could not write|could not fsync|not properly shut down|automatic recovery|redo (starts|done)|received (fast|immediate|smart) shutdown|database system is shut down|startup process' \
+            | head -n 40 \
+            || echo "(no crash markers — on this run postgres probably did NOT crash, and the seed failed for another reason)"
+
+          echo "--- connection refusals during recovery (deduplicated) ---"
+          printf '%s\n' "$log" \
+            | grep -oiE 'the database system is (in recovery mode|not yet accepting connections|starting up)' \
+            | sort | uniq -c \
+            || echo "(none — postgres was answering connections throughout)"
+
+          echo "--- rows reached before the failure ---"
+          # shellcheck disable=SC2086
+          docker compose $PROFILES exec -T "$svc" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
+            "SELECT 'users', count(*) FROM \"user\"
+             UNION ALL SELECT 'assets', count(*) FROM assets
+             UNION ALL SELECT 'posts', count(*) FROM posts
+             UNION ALL SELECT 'comments', count(*) FROM comments;" 2>&1 \
+            || echo "($svc did not answer psql — read the state and recovery lines above for why)"
+
+          echo "::endgroup::"
+        done
+
+        # The #957 rule: a diagnostic that captured nothing must say so
+        # in red rather than pass and read as coverage. The enclosing job
+        # has already failed by the time this runs, so the extra red step
+        # costs no signal and converts a silent gap into a named one.
+        if [ "$found" -eq 0 ]; then
+          echo "::error::seed forensics captured NOTHING — not one of the requested services" \
+            "($SERVICES) resolved to a container. This run has no postgres-side evidence and the" \
+            "seed failure above cannot be triaged from it (#886)."
+          exit 1
+        fi
