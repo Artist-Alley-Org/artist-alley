@@ -7971,6 +7971,75 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /account/trash:
+    get:
+      operationId: listMyTrash
+      summary: My trash — the soft-deleted assets, posts and collections I own
+      description: |
+        One mixed, newest-deleted-first list of everything the caller
+        OWNS that is currently soft-deleted, across all three
+        soft-deletable entities. Each row carries the `kind` needed to
+        pick the matching restore endpoint.
+
+        WHY THIS EXISTS SEPARATELY FROM `include_deleted=true` (#937).
+        `GET /assets`, `GET /posts` and `GET /collections` all accept
+        `include_deleted=true` and all silently drop it for anyone
+        below `system.admin`. That is deliberate and stays: those
+        listings are not owner-scoped, so honouring the flag for an
+        ordinary caller would turn each of them into a probe for
+        deleted rows that caller has no other way to observe. Self-
+        service restore (#936) shipped nonetheless, which left the
+        owner able to restore items but with no way to learn their
+        ids. This endpoint closes that without touching the admin
+        flag: it answers a strictly narrower question — "what of MINE
+        is in the bin" — and so cannot disclose anything the caller
+        did not already know existed.
+
+        `restorable_by_caller` is the same decision the matching
+        `POST /admin/{assets,posts,collections}/{id}/restore` will
+        make, computed by the same predicate rather than by a second
+        copy of the rule, so the button this list renders can never
+        disagree with the endpoint it calls. It is FALSE when someone
+        else deleted the item — an administrator moderating it, or a
+        team-mate with mutation rights — and also false when the
+        deleter was never recorded (rows predating migration 00037,
+        and system-scheduled retention deletes), because both fail
+        closed to `system.admin`. The identity of the deleter is NOT
+        returned: the owner needs to know whether they may undo it,
+        not who did it, and `deleted_by_user_ref` stays server-side.
+
+        Ordering and pagination are the (`deleted_at`, `id`) keyset,
+        DESC, with the id tiebreak carrying the same comparison as the
+        timestamp — items deleted in one batch share a `deleted_at`
+        almost exactly, so the tiebreak is the common case here, not
+        the rare one.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque token from a previous response's `next_cursor`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of the caller's own soft-deleted items.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /account/notifications:
     get:
       operationId: listMyNotifications
@@ -17635,6 +17704,71 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/MetadataBackfillRun" }
+
+    TrashItem:
+      type: object
+      description: |
+        One soft-deleted thing the caller owns (#937). Deliberately a
+        thin projection rather than the entity itself: trash needs to
+        identify an item and offer to undo, and shipping the full
+        Asset/Post/Collection here would make three read contracts
+        reachable through a fourth door with a different gate.
+      required: [kind, id, title, deleted_at, restorable_by_caller]
+      properties:
+        kind:
+          type: string
+          enum: [asset, post, collection]
+          description: |
+            Which entity this is, and therefore which restore endpoint
+            applies: `/admin/assets/{id}/restore`,
+            `/admin/posts/{id}/restore` or
+            `/admin/collections/{id}/restore`. (Those routes live under
+            `/admin` for historical reasons; since #936 they admit the
+            deleter as well as `system.admin`.)
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: |
+            The item's title — `collections.name` for a collection.
+            May be empty: assets and posts both default `title` to ''.
+        deleted_at:
+          type: string
+          format: date-time
+        restorable_by_caller:
+          type: boolean
+          description: |
+            True when this caller may restore this item right now.
+            False means an administrator or another user with mutation
+            rights deleted it, or no deleter was recorded — either way
+            the owner must ask (#931). Renders the difference between a
+            Restore button and an explanation; never a button that 403s.
+        purge_after:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the retention GC becomes eligible to hard-delete this
+            item: `deleted_at` plus the configured retention window for
+            its kind (`soft_delete.{asset,post,collection}_retention_days`,
+            default 30). Advisory, not a guarantee — the GC wakes once a
+            day and works in batches, so the real purge lands at or
+            after this instant. Absent only if the window could not be
+            read.
+    TrashList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TrashItem" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque token for the next page; omitted on the final page.
+            Pass back unchanged as the `cursor` query parameter.
   responses:
     BadRequest:
       description: Malformed request

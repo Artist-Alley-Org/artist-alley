@@ -76,7 +76,11 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   { slug: 'saved-searches', group: 'workspace', status: 'live', href: '/account/saved-searches' },
   { slug: 'bookmarks',     group: 'workspace', status: 'stub', href: '/account/bookmarks' },
   { slug: 'drafts',        group: 'workspace', status: 'stub', href: '/account/drafts' },
-  { slug: 'trash',         group: 'workspace', status: 'stub', href: '/account/trash' },
+  // Live since #937. It stayed `stub` through #936 on purpose: the
+  // restore CAPABILITY shipped first, but nothing told an owner which
+  // items they could restore, so a page here would have been an empty
+  // promise. GET /account/trash is what made it answerable.
+  { slug: 'trash',         group: 'workspace', status: 'live', href: '/account/trash' },
 
   // Activity & insights
   { slug: 'activity',  group: 'activity', status: 'stub', href: '/account/activity' },

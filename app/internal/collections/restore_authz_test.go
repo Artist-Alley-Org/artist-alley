@@ -28,28 +28,28 @@ func TestCanRestoreCollection_DeleterOrSystemAdminOnly(t *testing.T) {
 	ownerRef := int64(7001)
 	otherRef := int64(7003)
 
-	if !canRestoreCollection(owner, &ownerRef) {
+	if !auth.CanRestoreDeleted(owner, &ownerRef) {
 		t.Error("you must be able to undo your own delete")
 	}
-	if canRestoreCollection(owner, &otherRef) {
+	if auth.CanRestoreDeleted(owner, &otherRef) {
 		t.Error("you must NOT be able to undo someone else's delete")
 	}
-	if canRestoreCollection(owner, nil) {
+	if auth.CanRestoreDeleted(owner, nil) {
 		t.Error("a NULL deleter must fail closed, not open")
 	}
-	if !canRestoreCollection(admin, nil) {
+	if !auth.CanRestoreDeleted(admin, nil) {
 		t.Error("system.admin must be able to restore a row with no recorded deleter")
 	}
-	if !canRestoreCollection(admin, &otherRef) {
+	if !auth.CanRestoreDeleted(admin, &otherRef) {
 		t.Error("system.admin must be able to restore anything")
 	}
 
 	anon := &auth.Identity{UserRef: 0, AuthMethod: "anonymous"}
 	var zero int64
-	if canRestoreCollection(anon, &zero) {
+	if auth.CanRestoreDeleted(anon, &zero) {
 		t.Error("an anonymous caller must not be matched against a ref-0 deleter")
 	}
-	if canRestoreCollection(nil, &ownerRef) {
+	if auth.CanRestoreDeleted(nil, &ownerRef) {
 		t.Error("a nil identity must never be authorised")
 	}
 }

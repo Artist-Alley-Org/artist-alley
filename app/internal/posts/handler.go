@@ -828,7 +828,7 @@ func (h *Handler) DeletePost(
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
 			// deleted_by_user_ref is what makes the delete undoable
-			// by the person who did it (#931) — see canRestorePost.
+			// by the person who did it (#931) — see auth.CanRestoreDeleted.
 			deleter := caller.UserRef
 			return New(tx).SoftDeletePost(ctx, SoftDeletePostParams{
 				ID:               pgID,
@@ -856,7 +856,7 @@ func (h *Handler) DeletePost(
 
 // RestorePost clears deleted_at + deleted_reason on a soft-deleted
 // post. See assets.Handler.RestoreAsset for the shape and
-// canRestorePost for the rule: you undo your own delete, system.admin
+// auth.CanRestoreDeleted for the rule: you undo your own delete, system.admin
 // undoes any. Previously system.admin only, while DeletePost was open
 // to the author — so an author could delete their post and then not
 // get it back (#931).
@@ -880,7 +880,7 @@ func (h *Handler) RestorePost(
 		}
 		return nil, fmt.Errorf("posts: load deleted_by: %w", err)
 	}
-	if !canRestorePost(id, deletedBy) {
+	if !auth.CanRestoreDeleted(id, deletedBy) {
 		return openapi.RestorePost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
 				Error: "this post was deleted by someone else; ask an administrator to restore it",
@@ -1930,19 +1930,6 @@ func canWidenPostAccess(id *auth.Identity, authorRef int64) bool {
 		return true
 	}
 	return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
-}
-
-// canRestorePost decides who may undo a soft delete. Mirrors
-// assets.canRestoreDeleted exactly — you undo your own delete,
-// system.admin undoes any — and the reasoning lives there.
-func canRestorePost(id *auth.Identity, deletedBy *int64) bool {
-	if id == nil || id.IsAnonymous() {
-		return false
-	}
-	if id.Can(CapSystemAdmin) {
-		return true
-	}
-	return deletedBy != nil && *deletedBy != 0 && id.UserRef != 0 && *deletedBy == id.UserRef
 }
 
 // canReadPost gates the single-item read path (GetPost). ListPostAcls

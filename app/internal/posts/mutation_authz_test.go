@@ -239,28 +239,28 @@ func TestCanRestorePost_DeleterOrSystemAdminOnly(t *testing.T) {
 	otherID := f.identity(other)
 	adminID := f.identity(admin)
 
-	if !canRestorePost(authorID, &author) {
+	if !auth.CanRestoreDeleted(authorID, &author) {
 		t.Error("you must be able to undo your own delete")
 	}
-	if canRestorePost(authorID, &other) {
+	if auth.CanRestoreDeleted(authorID, &other) {
 		t.Error("you must NOT be able to undo someone else's delete")
 	}
-	if canRestorePost(authorID, nil) {
+	if auth.CanRestoreDeleted(authorID, nil) {
 		t.Error("a NULL deleter must fail closed, not open")
 	}
-	if !canRestorePost(adminID, nil) {
+	if !auth.CanRestoreDeleted(adminID, nil) {
 		t.Error("system.admin must be able to restore a row with no recorded deleter")
 	}
-	if !canRestorePost(adminID, &other) {
+	if !auth.CanRestoreDeleted(adminID, &other) {
 		t.Error("system.admin must be able to restore anything")
 	}
-	if canRestorePost(otherID, nil) {
+	if auth.CanRestoreDeleted(otherID, nil) {
 		t.Error("an ordinary user must not restore a NULL-deleter row")
 	}
 
 	anon := &auth.Identity{UserRef: 0, AuthMethod: "anonymous"}
 	var zero int64
-	if canRestorePost(anon, &zero) {
+	if auth.CanRestoreDeleted(anon, &zero) {
 		t.Error("an anonymous caller must not be matched against a ref-0 deleter")
 	}
 }
