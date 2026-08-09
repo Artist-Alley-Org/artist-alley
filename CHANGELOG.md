@@ -108,6 +108,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Your deleted things have a place now.** Anything you delete goes to a trash page in
+  your account, where it shows what it was, when you deleted it, and how long until it is
+  gone for good — and a Restore button puts it back where it was (#937).
+
+  Something removed by an administrator or a team manager shows up there too, but without
+  the button: restoring those needs a request, which is coming next. The page says so
+  plainly instead of pretending the button was forgotten.
+
+  What it never does is show you anyone else's trash, or let the page be used to find out
+  what other people deleted.
+
 - **Studios have a home page now, and you can follow them.** Eleven studios' worth of work
   was reachable only through admin screens or tag search. There is now a studio directory,
   and each studio has its own page — its posts, its files, its members (#684).
