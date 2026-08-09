@@ -25,16 +25,37 @@ func (q *Queries) CountPendingRequests(ctx context.Context) (int64, error) {
 }
 
 const countPendingRequestsForOwner = `-- name: CountPendingRequestsForOwner :one
-SELECT COUNT(*)::BIGINT
-FROM resource_request rr
-JOIN assets a ON a.id = rr.target_asset_id
-WHERE rr.state = 'pending'
-  AND a.owner_user_ref = $1
-  AND a.deleted_at IS NULL
+SELECT COUNT(*)::BIGINT FROM (
+    SELECT rr.id
+    FROM resource_request rr
+    JOIN assets a ON a.id = rr.target_id
+    WHERE rr.state = 'pending'
+      AND rr.target_kind = 'asset'
+      AND rr.requested_capability <> 'content.restore.request'
+      AND a.owner_user_ref = $1
+      AND a.deleted_at IS NULL
+    UNION
+    SELECT rr.id
+    FROM resource_request rr
+    JOIN (
+        SELECT id, deleted_by_user_ref, 'asset'::TEXT AS kind
+          FROM assets WHERE deleted_at IS NOT NULL
+        UNION ALL
+        SELECT id, deleted_by_user_ref, 'post'::TEXT
+          FROM posts WHERE deleted_at IS NOT NULL
+        UNION ALL
+        SELECT id, deleted_by_user_ref, 'collection'::TEXT
+          FROM collections WHERE deleted_at IS NOT NULL
+    ) tgt ON tgt.id = rr.target_id AND tgt.kind = rr.target_kind
+    WHERE rr.state = 'pending'
+      AND rr.requested_capability = 'content.restore.request'
+      AND tgt.deleted_by_user_ref = $1
+) q
 `
 
-// Badge value for the owner queue. Same predicate as
-// ListPendingRequestsForOwner; kept adjacent so they change together.
+// Badge value for the queue above. Same two branches, kept adjacent so
+// they change together — a count that disagreed with its list would
+// show a badge for rows the page cannot render.
 func (q *Queries) CountPendingRequestsForOwner(ctx context.Context, ownerUserRef *int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countPendingRequestsForOwner, ownerUserRef)
 	var column_1 int64
@@ -43,35 +64,44 @@ func (q *Queries) CountPendingRequestsForOwner(ctx context.Context, ownerUserRef
 }
 
 const findPendingRequestForAsk = `-- name: FindPendingRequestForAsk :one
-SELECT id, requester_user_ref, target_asset_id, requested_capability,
+SELECT id, requester_user_ref, target_id, requested_capability,
        reason, state, decided_at, decided_by_user_ref, decision_reason,
-       expires_at, requested_at
+       expires_at, requested_at, target_kind
 FROM resource_request
 WHERE requester_user_ref = $1
-  AND target_asset_id = $2
-  AND requested_capability = $3
+  AND target_kind = $2
+  AND target_id = $3
+  AND requested_capability = $4
   AND state = 'pending'
 `
 
 type FindPendingRequestForAskParams struct {
 	RequesterUserRef    int64
-	TargetAssetID       pgtype.UUID
+	TargetKind          string
+	TargetID            pgtype.UUID
 	RequestedCapability string
 }
 
-// The coalesce read (#881). One ask is (requester, asset, capability);
-// a second one while the first is still pending is the same question
-// asked twice, not a new question, so Submit returns this row instead
-// of filing another. Matches the partial unique index
-// resource_request_one_pending_per_ask exactly — if these two ever
-// disagree, the INSERT's 23505 recovery path reads nothing back.
+// The coalesce read (#881, widened by #931). One ask is
+// (requester, kind, id, capability); a second one while the first is
+// still pending is the same question asked twice, not a new question,
+// so Submit returns this row instead of filing another. Matches the
+// partial unique index resource_request_one_pending_per_ask exactly —
+// if these two ever disagree, the INSERT's 23505 recovery path reads
+// nothing back, and the coalesce silently becomes a 500 under a
+// double-click.
 func (q *Queries) FindPendingRequestForAsk(ctx context.Context, arg FindPendingRequestForAskParams) (ResourceRequest, error) {
-	row := q.db.QueryRow(ctx, findPendingRequestForAsk, arg.RequesterUserRef, arg.TargetAssetID, arg.RequestedCapability)
+	row := q.db.QueryRow(ctx, findPendingRequestForAsk,
+		arg.RequesterUserRef,
+		arg.TargetKind,
+		arg.TargetID,
+		arg.RequestedCapability,
+	)
 	var i ResourceRequest
 	err := row.Scan(
 		&i.ID,
 		&i.RequesterUserRef,
-		&i.TargetAssetID,
+		&i.TargetID,
 		&i.RequestedCapability,
 		&i.Reason,
 		&i.State,
@@ -80,7 +110,65 @@ func (q *Queries) FindPendingRequestForAsk(ctx context.Context, arg FindPendingR
 		&i.DecisionReason,
 		&i.ExpiresAt,
 		&i.RequestedAt,
+		&i.TargetKind,
 	)
+	return i, err
+}
+
+const getAssetDeleteState = `-- name: GetAssetDeleteState :one
+
+SELECT deleted_at, deleted_by_user_ref FROM assets WHERE id = $1
+`
+
+type GetAssetDeleteStateRow struct {
+	DeletedAt        pgtype.Timestamptz
+	DeletedByUserRef *int64
+}
+
+// ---------------------------------------------------------------------
+// Delete state of an appeal's target (#931)
+//
+// Three queries rather than one because sqlc cannot parameterise a
+// table name, and a hand-built `SELECT ... FROM `+table would put a
+// string-concatenated identifier on an authorisation path. The Go side
+// (Handler.TargetDeleteState) switches on the closed `target_kind`
+// enum, so the set of reachable tables is fixed at compile time.
+//
+// Both columns matter and they answer different questions:
+//
+//	deleted_at IS NULL      → is there anything to appeal? (Submit)
+//	deleted_by_user_ref     → who may decide the appeal? (Decide)
+//
+// The second is read regardless of the first, because a restore does
+// NOT clear deleted_by_user_ref — only deleted_at and deleted_reason.
+// That is what lets the deleter still decide an appeal someone else
+// already satisfied, instead of the row becoming undecidable the
+// moment it is restored.
+//
+// Ownership is deliberately NOT selected here. It has one home,
+// shares.ObjectOwnerRef (#665/#893), and a second copy in this file
+// would be a copy that drifts.
+// ---------------------------------------------------------------------
+func (q *Queries) GetAssetDeleteState(ctx context.Context, id pgtype.UUID) (GetAssetDeleteStateRow, error) {
+	row := q.db.QueryRow(ctx, getAssetDeleteState, id)
+	var i GetAssetDeleteStateRow
+	err := row.Scan(&i.DeletedAt, &i.DeletedByUserRef)
+	return i, err
+}
+
+const getCollectionDeleteState = `-- name: GetCollectionDeleteState :one
+SELECT deleted_at, deleted_by_user_ref FROM collections WHERE id = $1
+`
+
+type GetCollectionDeleteStateRow struct {
+	DeletedAt        pgtype.Timestamptz
+	DeletedByUserRef *int64
+}
+
+func (q *Queries) GetCollectionDeleteState(ctx context.Context, id pgtype.UUID) (GetCollectionDeleteStateRow, error) {
+	row := q.db.QueryRow(ctx, getCollectionDeleteState, id)
+	var i GetCollectionDeleteStateRow
+	err := row.Scan(&i.DeletedAt, &i.DeletedByUserRef)
 	return i, err
 }
 
@@ -122,10 +210,26 @@ func (q *Queries) GetGrantsByRequestRef(ctx context.Context, requestRef pgtype.U
 	return items, nil
 }
 
+const getPostDeleteState = `-- name: GetPostDeleteState :one
+SELECT deleted_at, deleted_by_user_ref FROM posts WHERE id = $1
+`
+
+type GetPostDeleteStateRow struct {
+	DeletedAt        pgtype.Timestamptz
+	DeletedByUserRef *int64
+}
+
+func (q *Queries) GetPostDeleteState(ctx context.Context, id pgtype.UUID) (GetPostDeleteStateRow, error) {
+	row := q.db.QueryRow(ctx, getPostDeleteState, id)
+	var i GetPostDeleteStateRow
+	err := row.Scan(&i.DeletedAt, &i.DeletedByUserRef)
+	return i, err
+}
+
 const getResourceRequest = `-- name: GetResourceRequest :one
-SELECT id, requester_user_ref, target_asset_id, requested_capability,
+SELECT id, requester_user_ref, target_id, requested_capability,
        reason, state, decided_at, decided_by_user_ref, decision_reason,
-       expires_at, requested_at
+       expires_at, requested_at, target_kind
 FROM resource_request
 WHERE id = $1
 `
@@ -139,7 +243,7 @@ func (q *Queries) GetResourceRequest(ctx context.Context, id pgtype.UUID) (Resou
 	err := row.Scan(
 		&i.ID,
 		&i.RequesterUserRef,
-		&i.TargetAssetID,
+		&i.TargetID,
 		&i.RequestedCapability,
 		&i.Reason,
 		&i.State,
@@ -148,6 +252,7 @@ func (q *Queries) GetResourceRequest(ctx context.Context, id pgtype.UUID) (Resou
 		&i.DecisionReason,
 		&i.ExpiresAt,
 		&i.RequestedAt,
+		&i.TargetKind,
 	)
 	return i, err
 }
@@ -155,16 +260,17 @@ func (q *Queries) GetResourceRequest(ctx context.Context, id pgtype.UUID) (Resou
 const insertResourceRequest = `-- name: InsertResourceRequest :one
 
 INSERT INTO resource_request
-    (requester_user_ref, target_asset_id, requested_capability, reason)
-VALUES ($1, $2, $3, $4)
-RETURNING id, requester_user_ref, target_asset_id, requested_capability,
+    (requester_user_ref, target_kind, target_id, requested_capability, reason)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, requester_user_ref, target_id, requested_capability,
           reason, state, decided_at, decided_by_user_ref, decision_reason,
-          expires_at, requested_at
+          expires_at, requested_at, target_kind
 `
 
 type InsertResourceRequestParams struct {
 	RequesterUserRef    int64
-	TargetAssetID       pgtype.UUID
+	TargetKind          string
+	TargetID            pgtype.UUID
 	RequestedCapability string
 	Reason              string
 }
@@ -179,7 +285,8 @@ type InsertResourceRequestParams struct {
 func (q *Queries) InsertResourceRequest(ctx context.Context, arg InsertResourceRequestParams) (ResourceRequest, error) {
 	row := q.db.QueryRow(ctx, insertResourceRequest,
 		arg.RequesterUserRef,
-		arg.TargetAssetID,
+		arg.TargetKind,
+		arg.TargetID,
 		arg.RequestedCapability,
 		arg.Reason,
 	)
@@ -187,7 +294,7 @@ func (q *Queries) InsertResourceRequest(ctx context.Context, arg InsertResourceR
 	err := row.Scan(
 		&i.ID,
 		&i.RequesterUserRef,
-		&i.TargetAssetID,
+		&i.TargetID,
 		&i.RequestedCapability,
 		&i.Reason,
 		&i.State,
@@ -196,6 +303,7 @@ func (q *Queries) InsertResourceRequest(ctx context.Context, arg InsertResourceR
 		&i.DecisionReason,
 		&i.ExpiresAt,
 		&i.RequestedAt,
+		&i.TargetKind,
 	)
 	return i, err
 }
@@ -262,9 +370,9 @@ func (q *Queries) ListGlobalCapabilityHolders(ctx context.Context, dollar_1 []st
 }
 
 const listPendingRequests = `-- name: ListPendingRequests :many
-SELECT id, requester_user_ref, target_asset_id, requested_capability,
+SELECT id, requester_user_ref, target_id, requested_capability,
        reason, state, decided_at, decided_by_user_ref, decision_reason,
-       expires_at, requested_at
+       expires_at, requested_at, target_kind
 FROM resource_request
 WHERE state = 'pending'
 ORDER BY requested_at ASC
@@ -294,7 +402,7 @@ func (q *Queries) ListPendingRequests(ctx context.Context, arg ListPendingReques
 		if err := rows.Scan(
 			&i.ID,
 			&i.RequesterUserRef,
-			&i.TargetAssetID,
+			&i.TargetID,
 			&i.RequestedCapability,
 			&i.Reason,
 			&i.State,
@@ -303,6 +411,7 @@ func (q *Queries) ListPendingRequests(ctx context.Context, arg ListPendingReques
 			&i.DecisionReason,
 			&i.ExpiresAt,
 			&i.RequestedAt,
+			&i.TargetKind,
 		); err != nil {
 			return nil, err
 		}
@@ -315,16 +424,37 @@ func (q *Queries) ListPendingRequests(ctx context.Context, arg ListPendingReques
 }
 
 const listPendingRequestsForOwner = `-- name: ListPendingRequestsForOwner :many
-SELECT rr.id, rr.requester_user_ref, rr.target_asset_id,
+SELECT rr.id, rr.requester_user_ref, rr.target_id,
        rr.requested_capability, rr.reason, rr.state, rr.decided_at,
        rr.decided_by_user_ref, rr.decision_reason, rr.expires_at,
-       rr.requested_at
+       rr.requested_at, rr.target_kind
 FROM resource_request rr
-JOIN assets a ON a.id = rr.target_asset_id
+JOIN assets a ON a.id = rr.target_id
 WHERE rr.state = 'pending'
+  AND rr.target_kind = 'asset'
+  AND rr.requested_capability <> 'content.restore.request'
   AND a.owner_user_ref = $1
   AND a.deleted_at IS NULL
-ORDER BY rr.requested_at ASC
+UNION
+SELECT rr.id, rr.requester_user_ref, rr.target_id,
+       rr.requested_capability, rr.reason, rr.state, rr.decided_at,
+       rr.decided_by_user_ref, rr.decision_reason, rr.expires_at,
+       rr.requested_at, rr.target_kind
+FROM resource_request rr
+JOIN (
+    SELECT id, deleted_by_user_ref, 'asset'::TEXT AS kind
+      FROM assets WHERE deleted_at IS NOT NULL
+    UNION ALL
+    SELECT id, deleted_by_user_ref, 'post'::TEXT
+      FROM posts WHERE deleted_at IS NOT NULL
+    UNION ALL
+    SELECT id, deleted_by_user_ref, 'collection'::TEXT
+      FROM collections WHERE deleted_at IS NOT NULL
+) tgt ON tgt.id = rr.target_id AND tgt.kind = rr.target_kind
+WHERE rr.state = 'pending'
+  AND rr.requested_capability = 'content.restore.request'
+  AND tgt.deleted_by_user_ref = $1
+ORDER BY requested_at ASC
 LIMIT $2
 OFFSET $3
 `
@@ -335,17 +465,37 @@ type ListPendingRequestsForOwnerParams struct {
 	Offset       int32
 }
 
-// Owner-facing queue (/account/requests/incoming, #881): pending
-// requests against assets THIS user owns. Oldest first, same ordering
-// as the approver queue.
+// The non-operator queue (/account/requests/incoming). Pending
+// requests THIS caller is the one to decide, without holding any
+// capability. Oldest first, same ordering as the approver queue.
 //
-// Joins assets rather than trusting a denormalised owner column on the
-// request: ownership is the assets table's fact, and #665 exists
-// because a second copy of it drifts. The Go path resolves the same
-// fact through shares.ObjectOwnerRef; both read assets.owner_user_ref.
+// TWO disjoint branches, joined on two different facts, because the
+// two workflows put the decision in two different people's hands.
 //
-// Soft-deleted assets drop out. An owner has no decision to make about
-// access to something they deleted.
+//  1. #881 — access requests against assets the caller OWNS. Joins
+//     assets rather than trusting a denormalised owner column on the
+//     request: ownership is the assets table's fact, and #665 exists
+//     because a second copy of it drifts. The Go path resolves the
+//     same fact through shares.ObjectOwnerRef; both read
+//     assets.owner_user_ref. Soft-deleted assets drop out — an owner
+//     has no decision to make about access to something they deleted.
+//
+//  2. #931 — restoration appeals against items the caller DELETED,
+//     across all three soft-deletable kinds. Keyed to the DELETER,
+//     not the owner, because here the owner is the requester: an
+//     owner-keyed appeal queue would hand people their own appeals.
+//     The predicate is auth.CanRestoreDeleted's deleter half stated
+//     in SQL; the super-admin half is not, because a super-admin
+//     reads /admin/requests and this queue is specifically the one
+//     you can reach with no capability at all.
+//
+// The branches cannot overlap — the first requires a live asset, the
+// second a soft-deleted target — but this is a UNION rather than a
+// UNION ALL so that a future third branch cannot silently double-list
+// a row. Branch 1 also excludes the appeal capability outright: an
+// appeal must never surface to its own requester as decidable, and
+// relying on the liveness conjunct alone to achieve that would make a
+// security property depend on a JOIN two lines away.
 func (q *Queries) ListPendingRequestsForOwner(ctx context.Context, arg ListPendingRequestsForOwnerParams) ([]ResourceRequest, error) {
 	rows, err := q.db.Query(ctx, listPendingRequestsForOwner, arg.OwnerUserRef, arg.Limit, arg.Offset)
 	if err != nil {
@@ -358,7 +508,7 @@ func (q *Queries) ListPendingRequestsForOwner(ctx context.Context, arg ListPendi
 		if err := rows.Scan(
 			&i.ID,
 			&i.RequesterUserRef,
-			&i.TargetAssetID,
+			&i.TargetID,
 			&i.RequestedCapability,
 			&i.Reason,
 			&i.State,
@@ -367,6 +517,7 @@ func (q *Queries) ListPendingRequestsForOwner(ctx context.Context, arg ListPendi
 			&i.DecisionReason,
 			&i.ExpiresAt,
 			&i.RequestedAt,
+			&i.TargetKind,
 		); err != nil {
 			return nil, err
 		}
@@ -379,9 +530,9 @@ func (q *Queries) ListPendingRequestsForOwner(ctx context.Context, arg ListPendi
 }
 
 const listRequestsForRequester = `-- name: ListRequestsForRequester :many
-SELECT id, requester_user_ref, target_asset_id, requested_capability,
+SELECT id, requester_user_ref, target_id, requested_capability,
        reason, state, decided_at, decided_by_user_ref, decision_reason,
-       expires_at, requested_at
+       expires_at, requested_at, target_kind
 FROM resource_request
 WHERE requester_user_ref = $1
 ORDER BY requested_at DESC
@@ -407,7 +558,7 @@ func (q *Queries) ListRequestsForRequester(ctx context.Context, arg ListRequests
 		if err := rows.Scan(
 			&i.ID,
 			&i.RequesterUserRef,
-			&i.TargetAssetID,
+			&i.TargetID,
 			&i.RequestedCapability,
 			&i.Reason,
 			&i.State,
@@ -416,6 +567,7 @@ func (q *Queries) ListRequestsForRequester(ctx context.Context, arg ListRequests
 			&i.DecisionReason,
 			&i.ExpiresAt,
 			&i.RequestedAt,
+			&i.TargetKind,
 		); err != nil {
 			return nil, err
 		}
@@ -434,9 +586,9 @@ UPDATE resource_request
        decided_by_user_ref = $2,
        decision_reason = $3
  WHERE id = $1 AND state = 'pending'
- RETURNING id, requester_user_ref, target_asset_id, requested_capability,
+ RETURNING id, requester_user_ref, target_id, requested_capability,
            reason, state, decided_at, decided_by_user_ref, decision_reason,
-           expires_at, requested_at
+           expires_at, requested_at, target_kind
 `
 
 type MarkRequestDeniedParams struct {
@@ -452,7 +604,7 @@ func (q *Queries) MarkRequestDenied(ctx context.Context, arg MarkRequestDeniedPa
 	err := row.Scan(
 		&i.ID,
 		&i.RequesterUserRef,
-		&i.TargetAssetID,
+		&i.TargetID,
 		&i.RequestedCapability,
 		&i.Reason,
 		&i.State,
@@ -461,6 +613,7 @@ func (q *Queries) MarkRequestDenied(ctx context.Context, arg MarkRequestDeniedPa
 		&i.DecisionReason,
 		&i.ExpiresAt,
 		&i.RequestedAt,
+		&i.TargetKind,
 	)
 	return i, err
 }
@@ -492,9 +645,9 @@ UPDATE resource_request
        decision_reason = $3,
        expires_at = $4
  WHERE id = $1 AND state = 'pending'
- RETURNING id, requester_user_ref, target_asset_id, requested_capability,
+ RETURNING id, requester_user_ref, target_id, requested_capability,
            reason, state, decided_at, decided_by_user_ref, decision_reason,
-           expires_at, requested_at
+           expires_at, requested_at, target_kind
 `
 
 type MarkRequestGrantedParams struct {
@@ -520,7 +673,7 @@ func (q *Queries) MarkRequestGranted(ctx context.Context, arg MarkRequestGranted
 	err := row.Scan(
 		&i.ID,
 		&i.RequesterUserRef,
-		&i.TargetAssetID,
+		&i.TargetID,
 		&i.RequestedCapability,
 		&i.Reason,
 		&i.State,
@@ -529,6 +682,7 @@ func (q *Queries) MarkRequestGranted(ctx context.Context, arg MarkRequestGranted
 		&i.DecisionReason,
 		&i.ExpiresAt,
 		&i.RequestedAt,
+		&i.TargetKind,
 	)
 	return i, err
 }

@@ -1321,6 +1321,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.requests = requests.NewHandler(pool, logger, cacheReg)
 	s.requests.SetAuditRecorder(auditRec)
 	s.requests.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	// #931 — granting a restoration appeal performs the restore. The
+	// adapter lives here rather than in requests/ for the same reason
+	// OnAssetsHardDeleted does: the per-kind CACHE fan-out is a fact
+	// about which domains cache an asset, and the composition root is
+	// where this codebase keeps that.
+	//
+	// nil-safe: s.softdeleteSvc is only set when the GC block ran, and
+	// a Handler with no restorer denies-and-submits normally but
+	// refuses to GRANT an appeal (ErrRestoreUnwired) rather than
+	// reporting success over an item nothing put back.
+	if s.softdeleteSvc != nil {
+		s.requests.SetRestorer(restoreAdapter{
+			sd:          s.softdeleteSvc,
+			assets:      s.assets,
+			collections: s.collections,
+		})
+	}
 	s.requestsHTTP = requests.NewHTTPHandler(s.requests, logger)
 	s.capabilitySweeper.SetRequestCascade(s.requests.MarkExpired)
 
@@ -2117,6 +2134,88 @@ func (a socialNotifyAdapter) Notify(ctx context.Context, recipient int64, actor 
 		TargetID:         targetID,
 		Payload:          payload,
 	})
+}
+
+// restoreAdapter satisfies the requests package's restorer interface:
+// "put this thing back" for any of the three soft-deletable kinds
+// (#931).
+//
+// Two jobs, and the second is the one worth reading twice.
+//
+//  1. Dispatch to the matching softdelete primitive — the SAME call the
+//     per-kind restore endpoints make, so an appeal and a self-restore
+//     write identical state and emit identical audit.
+//
+//  2. Run the per-kind cache fan-out those endpoints run. This is the
+//     part a "just call softdelete" adapter would silently omit, and
+//     omitting it is #920: the caches were evicted on DELETE and
+//     re-populated WITHOUT the item, so an asset restored without this
+//     stays missing from its posts and from its IIIF manifest until the
+//     process restarts — while the decider sees a 200 and the DB looks
+//     right. The evictions are obtained from the domain handlers rather
+//     than restated here, so a domain that grows a new cache updates
+//     one place.
+//
+// Per kind, from the restore endpoints:
+//
+//	asset      → posts + IIIF manifest (assets.InvalidateAfterRestore)
+//	collection → the by-id cache (collections.InvalidateAfterRestore)
+//	post       → nothing. posts.Handler.RestorePost evicts nothing, so
+//	             neither does this.
+type restoreAdapter struct {
+	sd          *softdelete.Service
+	assets      *assets.Handler
+	collections *collections.Handler
+}
+
+func (a restoreAdapter) Restore(
+	ctx context.Context,
+	req *http.Request,
+	kind requests.TargetKind,
+	id uuid.UUID,
+	actorUserRef int64,
+) error {
+	var err error
+	switch kind {
+	case requests.TargetKindAsset:
+		err = a.sd.RestoreAsset(ctx, req, id, actorUserRef)
+	case requests.TargetKindPost:
+		err = a.sd.RestorePost(ctx, req, id, actorUserRef)
+	case requests.TargetKindCollection:
+		err = a.sd.RestoreCollection(ctx, req, id, actorUserRef)
+	default:
+		return fmt.Errorf("restoreAdapter: unknown kind %q", kind)
+	}
+
+	switch {
+	case err == nil:
+	case errors.Is(err, softdelete.ErrNotDeleted):
+		// Already live. Success for the appeal — the requester asked
+		// for the item back and it is back — but there is nothing to
+		// evict, because whoever restored it ran this fan-out already.
+		return requests.ErrTargetAlreadyLive
+	case errors.Is(err, softdelete.ErrNotFound):
+		// Hard-deleted out from under the pending appeal by the
+		// retention GC. Distinct from the case above: nothing comes
+		// back, so the decision must not report success.
+		return requests.ErrTargetGone
+	default:
+		return err
+	}
+
+	switch kind {
+	case requests.TargetKindAsset:
+		if a.assets != nil {
+			a.assets.InvalidateAfterRestore(ctx, id)
+		}
+	case requests.TargetKindCollection:
+		if a.collections != nil {
+			a.collections.InvalidateAfterRestore(ctx, id)
+		}
+	case requests.TargetKindPost:
+		// Nothing, deliberately — see the type comment.
+	}
+	return nil
 }
 
 // usersHandlerWithAudit constructs the users handler + attaches the
@@ -3108,6 +3207,9 @@ func (s *apiServer) UpdateAdminUserGates(ctx context.Context, req openapi.Update
 
 func (s *apiServer) RequestAssetAccess(ctx context.Context, req openapi.RequestAssetAccessRequestObject) (openapi.RequestAssetAccessResponseObject, error) {
 	return s.requestsHTTP.RequestAssetAccess(ctx, req)
+}
+func (s *apiServer) RequestRestore(ctx context.Context, req openapi.RequestRestoreRequestObject) (openapi.RequestRestoreResponseObject, error) {
+	return s.requestsHTTP.RequestRestore(ctx, req)
 }
 func (s *apiServer) ListOwnRequests(ctx context.Context, req openapi.ListOwnRequestsRequestObject) (openapi.ListOwnRequestsResponseObject, error) {
 	return s.requestsHTTP.ListOwnRequests(ctx, req)

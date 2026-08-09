@@ -160,6 +160,11 @@ func (*PanicShim) ListMyTrash(context.Context, openapi.ListMyTrashRequestObject)
 	panic("PanicShim: ListMyTrash called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// RequestRestore panics by default; test shims override.
+func (*PanicShim) RequestRestore(context.Context, openapi.RequestRestoreRequestObject) (openapi.RequestRestoreResponseObject, error) {
+	panic("PanicShim: RequestRestore called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAdminActivities panics by default; test shims override.
 func (*PanicShim) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
 	panic("PanicShim: ListAdminActivities called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

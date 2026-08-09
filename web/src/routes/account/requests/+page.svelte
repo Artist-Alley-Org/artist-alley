@@ -21,9 +21,16 @@
   import { t } from '$stores/lang.svelte';
   import RequestQueue, { type QueuedRequest } from '$components/RequestQueue.svelte';
 
+  const TARGET_HREF = {
+    asset: '/assets/',
+    post: '/posts/',
+    collection: '/collections/',
+  } as const;
+
   interface ResourceRequest {
     id: string;
-    target_asset_id: string;
+    target_kind: 'asset' | 'post' | 'collection';
+    target_id: string;
     requested_capability: string;
     reason?: string;
     state: 'pending' | 'granted' | 'denied' | 'expired';
@@ -155,7 +162,20 @@
                 <p class="mt-1 text-xs text-fg-muted">{t('account.requests.expires_at', { ts: formatDate(r.expires_at) })}</p>
               {/if}
             </div>
-            <a href={`/assets/${r.target_asset_id}`} class="text-xs text-accent hover:underline">{t('account.requests.view_asset')}</a>
+            <!-- Kind-aware since #931: a restoration appeal can name a
+                 post or a collection, and "View asset" pointing at
+                 /assets/<a-post-id> is a 404 dressed as a link.
+                 Literal keys per branch — the i18n coverage sweep reads
+                 raw source and cannot see an interpolated key. -->
+            <a href={`${TARGET_HREF[r.target_kind]}${r.target_id}`} class="text-xs text-accent hover:underline">
+              {#if r.target_kind === 'post'}
+                {t('account.requests.view_target_post')}
+              {:else if r.target_kind === 'collection'}
+                {t('account.requests.view_target_collection')}
+              {:else}
+                {t('account.requests.view_target_asset')}
+              {/if}
+            </a>
           </div>
         </li>
       {/each}

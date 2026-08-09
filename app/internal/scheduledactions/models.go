@@ -803,7 +803,7 @@ type PostTag struct {
 type ResourceRequest struct {
 	ID                  pgtype.UUID        `json:"id"`
 	RequesterUserRef    int64              `json:"requester_user_ref"`
-	TargetAssetID       pgtype.UUID        `json:"target_asset_id"`
+	TargetID            pgtype.UUID        `json:"target_id"`
 	RequestedCapability string             `json:"requested_capability"`
 	Reason              string             `json:"reason"`
 	State               string             `json:"state"`
@@ -812,6 +812,7 @@ type ResourceRequest struct {
 	DecisionReason      string             `json:"decision_reason"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	RequestedAt         pgtype.Timestamptz `json:"requested_at"`
+	TargetKind          string             `json:"target_kind"`
 }
 
 type Role struct {

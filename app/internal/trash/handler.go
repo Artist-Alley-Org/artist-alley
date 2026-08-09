@@ -83,11 +83,53 @@ func NewHandler(pool *pgxpool.Pool, sysCfg *sysconfig.Store, logger *slog.Logger
 // row is one raw union row. deletedBy never leaves this package — it
 // feeds the predicate and is then discarded (see ListMyTrash).
 type row struct {
-	kind      string
-	id        pgtype.UUID
-	title     string
-	deletedAt pgtype.Timestamptz
-	deletedBy *int64
+	kind          string
+	id            pgtype.UUID
+	title         string
+	deletedAt     pgtype.Timestamptz
+	deletedBy     *int64
+	deletedReason *string
+	// appealed is "this caller already has a pending restoration
+	// appeal on this row" (#931). Per-caller, never a count — see
+	// restoreRequestedExpr.
+	appealed bool
+}
+
+// capRestoreRequest is the marker capability a restoration appeal names
+// (migration 00042). Spelled as a literal rather than imported from
+// requests/ because this package deliberately imports no domain
+// package — see the package doc. The literal appears once, here.
+const capRestoreRequest = "content.restore.request"
+
+// restoreRequestedExpr renders the per-branch EXISTS that fills
+// row.appealed for one union arm.
+//
+// Scoped to `requester_user_ref = caller` — this answers "have I
+// asked?", never "has anyone asked?". A count, or a bare EXISTS over
+// all requesters, would tell the OWNER that a stranger had filed
+// against their item, and in the deleted_by_me scope it would tell the
+// DELETER how many people are unhappy with them. Neither is a fact
+// either act disclosed.
+//
+// The flag exists because Submit COALESCES: a second appeal returns the
+// first one unchanged, so a button that stayed live after the first
+// click would look broken rather than idempotent.
+//
+// `kind` is spliced rather than bound, and it is safe because it is
+// never a value — it is one of three string literals written at the
+// three call sites below, chosen by which UNION arm is being built. It
+// cannot originate in a request: the caller's only inputs to this
+// query are the session's user_ref and the cursor, both bound. The
+// caller ref IS bound ($1) for exactly that reason.
+func restoreRequestedExpr(kind string) string {
+	return `EXISTS (
+        SELECT 1 FROM resource_request rr
+         WHERE rr.requester_user_ref = $1::BIGINT
+           AND rr.target_kind = '` + kind + `'
+           AND rr.target_id = t.id
+           AND rr.requested_capability = '` + capRestoreRequest + `'
+           AND rr.state = 'pending'
+    )`
 }
 
 // keysetAndOrder renders the two halves of ONE (deleted_at, id)
@@ -199,19 +241,22 @@ func (h *Handler) listPage(
 	// own (deleted_at) rows, and the union then only merges candidates.
 	var b strings.Builder
 	b.WriteString(`WITH page AS (
-    SELECT 'asset'::TEXT AS kind, id, title, deleted_at, deleted_by_user_ref
-      FROM assets
-     WHERE ` + selectorFor(s, "owner_user_ref") + ` AND deleted_at IS NOT NULL AND ` + where + `
+    SELECT 'asset'::TEXT AS kind, t.id, t.title, t.deleted_at, t.deleted_by_user_ref,
+           t.deleted_reason, ` + restoreRequestedExpr("asset") + ` AS appealed
+      FROM assets t
+     WHERE ` + selectorFor(s, "t.owner_user_ref") + ` AND t.deleted_at IS NOT NULL AND ` + where + `
   UNION ALL
-    SELECT 'post'::TEXT, id, title, deleted_at, deleted_by_user_ref
-      FROM posts
-     WHERE ` + selectorFor(s, "author_user_ref") + ` AND deleted_at IS NOT NULL AND ` + where + `
+    SELECT 'post'::TEXT, t.id, t.title, t.deleted_at, t.deleted_by_user_ref,
+           t.deleted_reason, ` + restoreRequestedExpr("post") + `
+      FROM posts t
+     WHERE ` + selectorFor(s, "t.author_user_ref") + ` AND t.deleted_at IS NOT NULL AND ` + where + `
   UNION ALL
-    SELECT 'collection'::TEXT, id, name, deleted_at, deleted_by_user_ref
-      FROM collections
-     WHERE ` + selectorFor(s, "owner_user_ref") + ` AND deleted_at IS NOT NULL AND ` + where + `
+    SELECT 'collection'::TEXT, t.id, t.name, t.deleted_at, t.deleted_by_user_ref,
+           t.deleted_reason, ` + restoreRequestedExpr("collection") + `
+      FROM collections t
+     WHERE ` + selectorFor(s, "t.owner_user_ref") + ` AND t.deleted_at IS NOT NULL AND ` + where + `
 )
-SELECT kind, id, title, deleted_at, deleted_by_user_ref
+SELECT kind, id, title, deleted_at, deleted_by_user_ref, deleted_reason, appealed
 FROM page
 ` + order + `
 LIMIT $4::INTEGER`)
@@ -225,7 +270,8 @@ LIMIT $4::INTEGER`)
 	var out []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.kind, &r.id, &r.title, &r.deletedAt, &r.deletedBy); err != nil {
+		if err := rows.Scan(&r.kind, &r.id, &r.title, &r.deletedAt, &r.deletedBy,
+			&r.deletedReason, &r.appealed); err != nil {
 			return nil, fmt.Errorf("trash: list page scan: %w", err)
 		}
 		out = append(out, r)
@@ -238,11 +284,18 @@ LIMIT $4::INTEGER`)
 
 // ListMyTrash implements GET /account/trash, in either scope.
 //
-// The projection is the SAME in both — five columns, no deleter, no
-// owner. `deleted_by_me` was the tempting place to add "whose was it",
-// and it is refused: the delete the caller performed disclosed the
-// content, not the owner's identity, and a listing that volunteered
-// more than the act it reports would be widening by convenience.
+// The projection is the SAME in both — no deleter, no owner.
+// `deleted_by_me` was the tempting place to add "whose was it", and it
+// is refused: the delete the caller performed disclosed the content,
+// not the owner's identity, and a listing that volunteered more than
+// the act it reports would be widening by convenience.
+//
+// `deleted_reason` (#931) is the one thing added to BOTH scopes rather
+// than to one, and it is not an exception to that rule: in the owned
+// scope it is a disclosure the DELETER chose to make — #985's dialog
+// says so in as many words — and in deleted_by_me it is the caller's
+// own sentence read back. Neither is a fact about a third party. Note
+// what still is not returned: WHO wrote it.
 func (h *Handler) ListMyTrash(
 	ctx context.Context,
 	req openapi.ListMyTrashRequestObject,
@@ -321,6 +374,18 @@ func (h *Handler) ListMyTrash(
 			// second copy here would be a list that can offer a
 			// Restore button the restore endpoint then refuses.
 			RestorableByCaller: auth.CanRestoreDeleted(caller, r.deletedBy),
+			RestoreRequested:   r.appealed,
+		}
+		// #985's delete dialog promises whoever types a reason that
+		// "the owner will be shown what you write here". The reason has
+		// been stored since #937 and was never projected, so the
+		// promise was made and not kept — the owner saw one sentence
+		// about someone else having deleted it and nothing about why.
+		// Empty is treated as absent: '' is what the column holds when
+		// no reason was typed, and rendering an empty quote block would
+		// claim a statement nobody made.
+		if r.deletedReason != nil && *r.deletedReason != "" {
+			item.DeletedReason = r.deletedReason
 		}
 		if days, ok := retention[r.kind]; ok {
 			t := r.deletedAt.Time.AddDate(0, 0, days)

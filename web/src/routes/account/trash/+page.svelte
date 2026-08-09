@@ -32,9 +32,30 @@
   // page exists to avoid, and it is why the second state is a sentence
   // rather than a disabled control with a tooltip.
   //
-  // There is deliberately NO "request restoration" button yet. #931
-  // owns that flow; a button here that went nowhere would be the same
-  // dead end wearing a different label.
+  // ## The appeal (#931)
+  //
+  // `restorable_by_caller = false` used to be the end of the row: one
+  // sentence saying someone else removed it, and nowhere to go. That
+  // was the dead end #931 names. It now carries two more things:
+  //
+  //   the REASON the deleter typed, if any. #985's delete dialog
+  //     promises whoever writes one that "the owner will be shown what
+  //     you write here" — and until now the field was stored and never
+  //     projected, so the promise was made to every moderator and kept
+  //     for nobody.
+  //
+  //   an APPEAL, addressed to the person who deleted it (or to an
+  //     administrator when no deleter was recorded). Filing one is a
+  //     resource_request naming an inert marker capability; granting it
+  //     performs the restore. The button is offered here and nowhere
+  //     else because this is the only surface that can name a deleted
+  //     item the caller owns.
+  //
+  // The third row state, `restore_requested`, is server-computed like
+  // the first — the same discipline, for the same reason. Submit
+  // coalesces, so a client that tracked "I clicked it" locally would
+  // show a live button again after a reload and file nothing when
+  // pressed.
   //
   // Layout is a stacked card list rather than a table. Trash is a
   // read-and-act surface with four facts per row, and a four-column
@@ -77,6 +98,8 @@
     title: string;
     deleted_at: string;
     restorable_by_caller: boolean;
+    restore_requested: boolean;
+    deleted_reason?: string | null;
     purge_after?: string | null;
   }
 
@@ -178,6 +201,68 @@
       error = e instanceof Error ? e.message : t('account.trash.restore_error');
     } finally {
       restoring = null;
+    }
+  }
+
+  // ── Appealing a delete you cannot undo (#931) ────────────────────
+  //
+  // The other half of the row. `restorable_by_caller: false` used to be
+  // a full stop — one sentence saying someone else removed it, and
+  // nothing to do about it. Now it opens a short form addressed to
+  // whoever that was.
+  //
+  // Three states per row, and they come from the SERVER, not from what
+  // this page remembers doing:
+  //
+  //   restore_requested = false → the Appeal button
+  //   restore_requested = true  → "Restoration requested", no button
+  //   (after a successful send)  → the same, because we set the flag on
+  //                                the row rather than tracking a
+  //                                separate "I just sent one" set.
+  //
+  // That last point is why the optimistic update writes
+  // `restore_requested` instead of a local Set: a reload has to land on
+  // the same state a fresh page would, and Submit COALESCES server-side
+  // (a second appeal returns the first, unchanged), so a button that
+  // stayed live would look broken rather than idempotent.
+  let appealFor = $state<string | null>(null);
+  let appealReason = $state('');
+  let appealing = $state(false);
+
+  function rowKey(item: TrashItem): string {
+    return item.kind + ':' + item.id;
+  }
+
+  function openAppeal(item: TrashItem): void {
+    appealFor = rowKey(item);
+    appealReason = '';
+    error = null;
+  }
+
+  async function sendAppeal(item: TrashItem): Promise<void> {
+    if (appealing) return;
+    appealing = true;
+    error = null;
+    try {
+      const r = await api.POST('/account/trash/{kind}/{id}/request-restore', {
+        params: { path: { kind: item.kind, id: item.id } },
+        body: appealReason ? { reason: appealReason } : {},
+      });
+      if (r.error || !r.data) {
+        error = (r.error as { error?: string } | undefined)?.error ?? t('account.trash.appeal_error');
+        return;
+      }
+      // 200 and 201 both mean "there is a pending appeal on this row" —
+      // 200 is the coalesce. The row renders the same either way, which
+      // is the honest answer to a double-click.
+      items = items.map((i) =>
+        rowKey(i) === rowKey(item) ? { ...i, restore_requested: true } : i,
+      );
+      appealFor = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : t('account.trash.appeal_error');
+    } finally {
+      appealing = false;
     }
   }
 
@@ -304,6 +389,20 @@
                 {left === 1 ? t('account.trash.day') : t('account.trash.days')}
               {/if}
             </p>
+            <!-- The reason, kept next to the item rather than in the
+                 action column: it explains the ROW, and #985's dialog
+                 promised the owner would be shown it. Quoted rather
+                 than paraphrased — it is somebody's sentence, not our
+                 summary of one. Who wrote it is still not disclosed;
+                 the server does not return that. -->
+            {#if item.deleted_reason}
+              <p class="mt-2 border-l-2 border-border-strong pl-3 text-sm text-fg" data-testid="trash-deleted-reason">
+                <span class="mr-1 text-xs uppercase tracking-wide text-fg-muted"
+                  >{t('account.trash.deleted_reason_label')}</span
+                >
+                {item.deleted_reason}
+              </p>
+            {/if}
           </div>
 
           <div class="shrink-0 sm:max-w-[18rem] sm:text-right">
@@ -317,13 +416,73 @@
               >
                 {restoring === item.id ? t('account.trash.restoring') : t('account.trash.restore')}
               </button>
+            {:else if item.restore_requested}
+              <!-- Quiet, and deliberately not a button. The appeal is
+                   with someone else now; the only honest thing this
+                   column can offer is the fact that it was sent. -->
+              <p class="text-xs text-fg" data-testid="trash-appeal-sent">
+                {t('account.trash.appeal_sent')}
+              </p>
+              <p class="mt-1 text-xs text-fg-muted">{t('account.trash.appeal_sent_hint')}</p>
             {:else}
               <p class="text-xs text-fg-muted" data-testid="trash-not-restorable">
                 {t('account.trash.admin_deleted')}
               </p>
+              {#if appealFor !== rowKey(item)}
+                <!-- #931. The sentence above is still true and stays;
+                     what changes is that it is no longer the end of the
+                     row. -->
+                <button
+                  type="button"
+                  class="mt-2 w-full rounded-md border border-border bg-surface px-4 py-2 text-sm hover:bg-state-hover disabled:opacity-50 sm:w-auto"
+                  data-testid="trash-appeal"
+                  onclick={() => openAppeal(item)}
+                  disabled={appealing}
+                >
+                  {t('account.trash.appeal')}
+                </button>
+              {/if}
             {/if}
           </div>
         </div>
+
+        <!-- The form sits BELOW both columns, full width, rather than
+             inside the narrow action column: a reason someone will
+             read deserves more than an 18rem box, and at 390px the
+             action column is the whole width anyway. -->
+        {#if appealFor === rowKey(item)}
+          <div class="mt-3 space-y-2 border-t border-border pt-3" data-testid="trash-appeal-form">
+            <label class="block text-xs">
+              <span class="mb-1 block text-fg-muted">{t('account.trash.appeal_reason_label')}</span>
+              <input
+                type="text"
+                bind:value={appealReason}
+                maxlength="1000"
+                placeholder={t('account.trash.appeal_reason_placeholder')}
+                data-testid="trash-appeal-reason"
+                class="w-full rounded border border-border-strong bg-surface px-2 py-1 text-sm"
+              />
+            </label>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                class="rounded-md border border-accent bg-accent/10 px-4 py-2 text-sm font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
+                data-testid="trash-appeal-send"
+                disabled={appealing}
+                onclick={() => void sendAppeal(item)}
+              >
+                {appealing ? t('account.trash.appealing') : t('account.trash.appeal_send')}
+              </button>
+              <button
+                type="button"
+                class="rounded-md border border-border bg-surface px-4 py-2 text-sm hover:bg-state-hover"
+                onclick={() => (appealFor = null)}
+              >
+                {t('account.trash.appeal_cancel')}
+              </button>
+            </div>
+          </div>
+        {/if}
       </li>
     {/each}
   </ul>

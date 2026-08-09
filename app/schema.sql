@@ -1947,7 +1947,7 @@ COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for
 CREATE TABLE public.resource_request (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     requester_user_ref bigint NOT NULL,
-    target_asset_id uuid NOT NULL,
+    target_id uuid NOT NULL,
     requested_capability text NOT NULL,
     reason text DEFAULT ''::text NOT NULL,
     state text DEFAULT 'pending'::text NOT NULL,
@@ -1956,7 +1956,9 @@ CREATE TABLE public.resource_request (
     decision_reason text DEFAULT ''::text NOT NULL,
     expires_at timestamp with time zone,
     requested_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text])))
+    target_kind text DEFAULT 'asset'::text NOT NULL,
+    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text]))),
+    CONSTRAINT resource_request_target_kind_check CHECK ((target_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text])))
 );
 
 
@@ -4377,17 +4379,17 @@ CREATE INDEX idx_notifications_unread ON public.notifications USING btree (recip
 
 
 --
--- Name: idx_resource_request_by_asset; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_resource_request_by_asset ON public.resource_request USING btree (target_asset_id);
-
-
---
 -- Name: idx_resource_request_by_requester; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_resource_request_by_requester ON public.resource_request USING btree (requester_user_ref, requested_at DESC);
+
+
+--
+-- Name: idx_resource_request_by_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_resource_request_by_target ON public.resource_request USING btree (target_kind, target_id);
 
 
 --
@@ -4639,7 +4641,7 @@ CREATE INDEX resource_request_decided_by_idx ON public.resource_request USING bt
 -- Name: resource_request_one_pending_per_ask; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX resource_request_one_pending_per_ask ON public.resource_request USING btree (requester_user_ref, target_asset_id, requested_capability) WHERE (state = 'pending'::text);
+CREATE UNIQUE INDEX resource_request_one_pending_per_ask ON public.resource_request USING btree (requester_user_ref, target_kind, target_id, requested_capability) WHERE (state = 'pending'::text);
 
 
 --
