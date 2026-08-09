@@ -15,7 +15,7 @@
   // here so the shell is reusable for CollectionHost / ReviewHost /
   // SearchHost in follow-up commits.
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$api/client';
@@ -37,6 +37,15 @@
   import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
   import { formatFieldValue, type AssetFieldValue } from '$lib/fieldDisplay';
   import { t } from '$stores/lang.svelte';
+  import ConfirmDeleteDialog from './ConfirmDeleteDialog.svelte';
+  import { toasts } from '$stores/toasts.svelte';
+  import {
+    canDelete,
+    deleteEntity,
+    restoreEntity,
+    shouldAskReason,
+    type DeletableKind,
+  } from '$lib/deletable';
 
   interface Props {
     postId: string;
@@ -295,13 +304,37 @@
   const isOwner = $derived(
     !!auth.user && !!post && auth.user.ref === post.author_user_ref,
   );
+  // #981 — the two delete affordances ask about two DIFFERENT owners,
+  // and `isOwner` (post authorship) answers neither on its own.
+  //
+  //   canDeleteCurrentAsset — the asset's own owner_user_ref. A post
+  //     author does not automatically own every member (someone else's
+  //     asset can be posted), and an asset owner may not have authored
+  //     the post it appears in. Gating on authorship would get it
+  //     wrong in both directions.
+  //   canDeleteThisPost — the post's author_user_ref, which IS what
+  //     isOwner reads; it is spelled through canDelete() anyway so the
+  //     global posts.admin holder gets the item too.
+  //
+  // Both fall back to the caller's GLOBAL capability set, which is the
+  // documented ceiling: a TEAM-scoped grant is invisible to the client
+  // and its holder sees no button even though the API would accept
+  // them. See $lib/deletable for why that is not worked around.
+  const canDeleteCurrentAsset = $derived(
+    !!currentItem &&
+      !currentItem.restricted &&
+      canDelete('asset', currentItem.asset?.owner_user_ref),
+  );
+  const canDeleteThisPost = $derived(
+    !!post && canDelete('post', post.author_user_ref),
+  );
   // #918 — two separate questions the header menu used to conflate.
   // `hasVisibleMembers` gates the items that ACT on the members ("add
   // all", "download all", "tag all"). `hasMenuItems` exists only so the
   // trigger doesn't open an empty panel — the single case where neither
   // an owner action nor a member action qualifies.
   const hasVisibleMembers = $derived(pl.source.items.length > 0);
-  const hasMenuItems = $derived(hasVisibleMembers || isOwner);
+  const hasMenuItems = $derived(hasVisibleMembers || isOwner || canDeleteThisPost);
   const postedRelative = $derived(post ? relativeTime(post.posted_at) : '');
   const postedAbsolute = $derived(post ? new Date(post.posted_at).toLocaleString() : '');
 
@@ -495,9 +528,6 @@
   function shareAsset(_assetId: string) {
     stubAction('Share asset');
   }
-  function deleteAsset(_assetId: string) {
-    stubAction('Delete asset');
-  }
   function bulkDownloadZip() {
     stubAction('Download all as ZIP');
   }
@@ -521,8 +551,139 @@
   function editPost() {
     stubAction('Edit post');
   }
+
+  // ── Delete (#981) ─────────────────────────────────────────────────
+  // "Delete asset" and "Delete post" were both stubAction() until this
+  // issue: the whole soft-delete/restore arc (#930 ownership gates,
+  // #936 self-restore, #920/#935 cache fan-out, #937 the trash page)
+  // was reachable only through the API. Both now open the shared
+  // ConfirmDeleteDialog and call the real endpoint through
+  // $lib/deletable, which is also what the collection page uses.
+  //
+  // One dialog instance serves both kinds. The alternative — a dialog
+  // per menu item — is two mounted overlays for a surface that can only
+  // ever be confirming one thing at a time.
+
+  let deleteTarget = $state<{
+    kind: DeletableKind;
+    id: string;
+    title: string;
+    ownerRef: number | null | undefined;
+  } | null>(null);
+  let deleteBusy = $state(false);
+  let deleteError = $state<string | null>(null);
+
+  function deleteAsset(assetId: string) {
+    const it = pl.source.items.find((i) => i.id === assetId);
+    deleteError = null;
+    deleteTarget = {
+      kind: 'asset',
+      id: assetId,
+      title: it?.asset?.title ?? '',
+      ownerRef: it?.asset?.owner_user_ref ?? null,
+    };
+  }
+
   function deletePost() {
-    stubAction('Delete post');
+    if (!post) return;
+    deleteError = null;
+    deleteTarget = {
+      kind: 'post',
+      id: post.id,
+      title: post.title ?? '',
+      ownerRef: post.author_user_ref,
+    };
+  }
+
+  function closeDeleteDialog() {
+    if (deleteBusy) return;
+    deleteTarget = null;
+    deleteError = null;
+  }
+
+  async function confirmDelete(reason: string) {
+    const target = deleteTarget;
+    if (!target || deleteBusy) return;
+    deleteBusy = true;
+    deleteError = null;
+    const err = await deleteEntity(target.kind, target.id, reason);
+    deleteBusy = false;
+    if (err) {
+      // Keep the dialog open so the message lands beside the button
+      // that produced it.
+      deleteError = err;
+      return;
+    }
+    deleteTarget = null;
+
+    if (target.kind === 'asset') {
+      // Drop the member from the live playlist rather than re-fetching
+      // the post. `reload()` would work, but it resets the cursor to
+      // the cover member — deleting item 7 of 9 would silently jump the
+      // user back to item 1. The 204 is authority enough that the row
+      // is gone; #920/#935 already invalidated every other surface's
+      // cached copy of it.
+      const idx = pl.source.items.findIndex((i) => i.id === target.id);
+      if (idx >= 0) {
+        pl.source.items.splice(idx, 1);
+        // Clamp: deleting the last item would otherwise leave the
+        // cursor one past the end and render nothing at all.
+        if (pl.source.cursor > pl.source.items.length - 1) {
+          pl.source.cursor = Math.max(0, pl.source.items.length - 1);
+        }
+      }
+    }
+
+    if (target.kind === 'post') {
+      // The post is gone; the surface showing it cannot stay. The
+      // standalone route has nowhere to fall back to, so it navigates;
+      // the feed overlay closes back onto the feed underneath.
+      //
+      // BEFORE the toast, and awaited — order is load-bearing. A toast
+      // raised while the viewer dialog is still open is parented INTO
+      // that dialog (it has to be: the dialog owns the top layer). The
+      // dialog is then torn down, and a detached node renders nowhere.
+      // Removing an element does not fire `close`, so the portal's
+      // re-home cannot save it either. Closing first means there is no
+      // modal left to adopt the toast and it lands on the body, which
+      // is where a message about a page you just left belongs.
+      if (standalone) await goto('/');
+      else onClose();
+      await tick();
+    }
+
+    toasts.push({
+      message: t(`delete_confirm.deleted_${target.kind}`),
+      href: '/account/trash',
+      linkLabel: t('delete_confirm.view_trash'),
+      action: {
+        label: t('delete_confirm.undo'),
+        run: () => undoDelete(target.kind, target.id),
+      },
+    });
+  }
+
+  // The Undo in the delete toast. Safe to offer unconditionally: we
+  // just performed the delete, so we ARE the deleter, and
+  // auth.CanRestoreDeleted grants restore to the deleter. It can never
+  // be an affordance the server refuses.
+  async function undoDelete(kind: DeletableKind, id: string) {
+    const err = await restoreEntity(kind, id);
+    if (err) {
+      toasts.push({
+        message: t('delete_confirm.undo_error'),
+        tone: 'error',
+        href: '/account/trash',
+        linkLabel: t('delete_confirm.view_trash'),
+      });
+      return;
+    }
+    toasts.push({ message: t('delete_confirm.undone') });
+    // Bring the member back where it was. Here a full reload IS the
+    // right move — the restored asset's position comes from the
+    // server's member ordering, not from where it happened to sit in
+    // the array we spliced.
+    if (kind === 'asset') void pl.reload();
   }
 </script>
 
@@ -560,7 +721,7 @@
   onEditMetadata={isOwner ? editMetadata : undefined}
   onDownloadVariant={downloadVariant}
   onShareAsset={shareAsset}
-  onDeleteAsset={isOwner ? deleteAsset : undefined}
+  onDeleteAsset={canDeleteCurrentAsset ? deleteAsset : undefined}
 />
 
 <!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
@@ -770,6 +931,18 @@
             <button type="button" role="menuitem" onclick={editPost} data-testid="post-edit" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('post_menu.edit_post')}
             </button>
+          {/if}
+          <!-- Delete sits OUTSIDE the isOwner block (#981). Every other
+               item up there is author-only by design — manage access is
+               a disclosure lever (canWidenPostAccess), edit is
+               authorship. Delete is not: canMutatePost accepts a global
+               posts.admin holder, which is the instance moderator role,
+               and hiding the item from them would mean moderation had
+               to happen through the API. -->
+          {#if canDeleteThisPost}
+            {#if isOwner || hasVisibleMembers}
+              <div class="my-1 h-px bg-border"></div>
+            {/if}
             <button type="button" role="menuitem" onclick={deletePost} data-testid="post-delete" class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
               {t('post_menu.delete_post')}
             </button>
@@ -1036,6 +1209,20 @@
       kind="post"
       id={post.id}
       onclose={() => (shareOpen = false)}
+    />
+
+    <!-- Same placement rule, same reason (#981): the delete confirm is
+         raised from menus that live inside the viewer dialog, so it has
+         to be declared where Modal's portal can find that dialog. -->
+    <ConfirmDeleteDialog
+      open={deleteTarget !== null}
+      kind={deleteTarget?.kind ?? 'asset'}
+      title={deleteTarget?.title}
+      askReason={deleteTarget ? shouldAskReason(deleteTarget.ownerRef) : false}
+      busy={deleteBusy}
+      error={deleteError}
+      onconfirm={confirmDelete}
+      onclose={closeDeleteDialog}
     />
   {/if}
 {/snippet}

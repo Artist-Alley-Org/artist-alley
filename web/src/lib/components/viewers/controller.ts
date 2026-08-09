@@ -80,6 +80,19 @@ export interface ViewAsset {
    *  `restricted` so a placeholder can say whose work it is and #881
    *  can address the request. */
   owner_display_name?: string | null;
+  /** The owner's user ref, present on a READABLE asset only (a
+   *  withheld payload deliberately carries the name and not the ref —
+   *  see the Asset schema).
+   *
+   *  #981 needs it because "may I delete this?" is a question about
+   *  the ASSET's owner, and the hosts that surround a viewer answer a
+   *  different one: PostHost knows who authored the post, which is not
+   *  necessarily who owns each member. Gating the delete item on post
+   *  authorship would both hide it from an owner whose asset someone
+   *  else posted and show it to a post author over a member they do
+   *  not own. Nullable in the schema — an unowned asset matches
+   *  nobody. */
+  owner_user_ref?: number | null;
 }
 
 // Per-kind review tools the shell renders in its right pane. Each

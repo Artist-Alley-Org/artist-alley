@@ -49,6 +49,9 @@ export interface PostForPlaylist {
       asset_type?: number | null;
       metadata?: Record<string, unknown> | null;
       preview_available?: boolean;
+      /** #981 — the ASSET's owner, which is not the post's author.
+       *  Absent on a withheld member (the whole `asset` object is). */
+      owner_user_ref?: number | null;
     };
   }>;
   team_id?: string | null;
@@ -150,6 +153,10 @@ export function createPostPlaylistSource(postId: string) {
             asset_type: m.asset?.asset_type ?? null,
             metadata: m.asset?.metadata ?? null,
             preview_available: m.asset?.preview_available ?? false,
+            // #981 — the delete affordance asks about the ASSET's
+            // owner, not the post's author. Undefined on a withheld
+            // member, which is correct: no owner, no ownership claim.
+            owner_user_ref: m.asset?.owner_user_ref ?? null,
           },
         }),
       );

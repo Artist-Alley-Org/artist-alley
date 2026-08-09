@@ -40,6 +40,28 @@
   // read-and-act surface with four facts per row, and a four-column
   // table at 390px is a horizontal scrollbar over content the phone
   // build should be able to act on directly.
+  //
+  // ## The second tab (#981)
+  //
+  // "Deleted by me" is the same list under `scope=deleted_by_me`:
+  // things the caller removed that belong to SOMEONE ELSE. It exists
+  // because the restore rule and the listing rule disagreed. Restore
+  // is granted to the DELETER (auth.CanRestoreDeleted), so a team lead
+  // who removes a colleague's asset may put it back — but the owner-
+  // scoped listing showed it in the OWNER's trash, where it renders as
+  // non-restorable, and in nobody's as restorable. The right existed
+  // and had no surface.
+  //
+  // Every row in that tab comes back `restorable_by_caller: true`, by
+  // the same server-side predicate, so the tab needs no special-casing
+  // here: it is the same row renderer with a different query. The two
+  // scopes are disjoint server-side (`owner IS DISTINCT FROM caller`),
+  // so nothing double-lists.
+  //
+  // The tabs are LOCAL state, not a URL param. Trash is a transient
+  // housekeeping surface — nobody links to a tab of it — and a query
+  // string would make the browser Back button walk tab switches
+  // instead of leaving the page.
 
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
@@ -60,6 +82,9 @@
 
   const PAGE = 50;
 
+  type Scope = 'owned_by_me' | 'deleted_by_me';
+
+  let scope = $state<Scope>('owned_by_me');
   let items = $state<TrashItem[]>([]);
   let nextCursor = $state<string | null>(null);
   let loading = $state(true);
@@ -73,14 +98,31 @@
     void load(null);
   });
 
+  /** Switch tabs. Wipes the accumulated pages rather than keeping them
+   *  behind the other tab: a cursor is scoped to the query that
+   *  produced it, so a stale `nextCursor` would page the wrong list. */
+  function selectScope(next: Scope): void {
+    if (next === scope) return;
+    scope = next;
+    items = [];
+    nextCursor = null;
+    loaded = false;
+    restored = null;
+    void load(null);
+  }
+
   async function load(cursor: string | null): Promise<void> {
     if (cursor) loadingMore = true;
     else loading = true;
     error = null;
+    // Captured so a slow response for the tab the user just left
+    // cannot commit its rows into the tab they are now looking at.
+    const requested = scope;
     try {
-      const query: Record<string, string | number> = { limit: PAGE };
+      const query: Record<string, string | number> = { limit: PAGE, scope: requested };
       if (cursor) query.cursor = cursor;
       const r = await api.GET('/account/trash', { params: { query: query as never } });
+      if (requested !== scope) return;
       if (r.error || !r.data) {
         error = (r.error as { error?: string } | undefined)?.error ?? t('account.trash.load_error');
         return;
@@ -89,11 +131,19 @@
       items = cursor ? [...items, ...pageItems] : pageItems;
       nextCursor = (r.data.next_cursor as string | null) ?? null;
     } catch (e) {
-      error = e instanceof Error ? e.message : t('account.trash.load_error');
+      if (requested === scope) {
+        error = e instanceof Error ? e.message : t('account.trash.load_error');
+      }
     } finally {
-      loading = false;
-      loadingMore = false;
-      loaded = true;
+      // Guarded for the same reason as the commit above: a stale
+      // response must not flip the CURRENT tab out of its loading
+      // state, which would flash the empty placeholder over a fetch
+      // that is still in flight.
+      if (requested === scope) {
+        loading = false;
+        loadingMore = false;
+        loaded = true;
+      }
     }
   }
 
@@ -159,10 +209,36 @@
 
 <svelte:head><title>{t('account.trash.title')} — {site.name}</title></svelte:head>
 
-<header class="mb-6">
+<header class="mb-4">
   <h2 class="text-2xl font-semibold">{t('account.trash.title')}</h2>
-  <p class="mt-1 text-sm text-fg-muted">{t('account.trash.intro')}</p>
+  <p class="mt-1 text-sm text-fg-muted">
+    {scope === 'deleted_by_me'
+      ? t('account.trash.tab_deleted_by_me_hint')
+      : t('account.trash.intro')}
+  </p>
 </header>
+
+<!-- Two tabs, always both rendered. The second is not conditional on
+     having anything in it: a tab that appears only once you have
+     deleted someone else's work is a tab nobody discovers, and its
+     empty state is the sentence that explains what it is for. -->
+<div class="mb-6 flex gap-1 border-b border-border" role="tablist" data-testid="trash-tabs">
+  {#each [{ id: 'owned_by_me', label: t('account.trash.tab_mine') }, { id: 'deleted_by_me', label: t('account.trash.tab_deleted_by_me') }] as tab (tab.id)}
+    <button
+      type="button"
+      role="tab"
+      aria-selected={scope === tab.id}
+      data-testid="trash-tab-{tab.id}"
+      onclick={() => selectScope(tab.id as Scope)}
+      class="-mb-px border-b-2 px-3 py-2 text-sm
+             {scope === tab.id
+        ? 'border-accent font-medium text-fg'
+        : 'border-transparent text-fg-muted hover:text-fg'}"
+    >
+      {tab.label}
+    </button>
+  {/each}
+</div>
 
 {#if error}
   <p role="alert" class="mb-4 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -183,14 +259,19 @@
   <p class="text-sm text-fg-muted">{t('common.loading')}</p>
 {:else if showEmpty}
   <div class="rounded-xl border border-dashed border-border p-12 text-center" data-testid="trash-empty">
-    <p class="font-medium text-fg">{t('account.trash.empty')}</p>
-    <p class="mt-1 text-sm text-fg-muted">{t('account.trash.empty_hint')}</p>
-    <a
-      href={profileHref}
-      class="mt-4 inline-block rounded-md border border-border bg-surface px-4 py-2 text-sm hover:bg-state-hover"
-    >
-      {t('account.trash.empty_action')}
-    </a>
+    {#if scope === 'deleted_by_me'}
+      <p class="font-medium text-fg">{t('account.trash.empty_deleted_by_me')}</p>
+      <p class="mt-1 text-sm text-fg-muted">{t('account.trash.empty_hint_deleted_by_me')}</p>
+    {:else}
+      <p class="font-medium text-fg">{t('account.trash.empty')}</p>
+      <p class="mt-1 text-sm text-fg-muted">{t('account.trash.empty_hint')}</p>
+      <a
+        href={profileHref}
+        class="mt-4 inline-block rounded-md border border-border bg-surface px-4 py-2 text-sm hover:bg-state-hover"
+      >
+        {t('account.trash.empty_action')}
+      </a>
+    {/if}
   </div>
 {:else}
   <ul class="space-y-3" data-testid="trash-list">

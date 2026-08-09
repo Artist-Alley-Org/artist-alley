@@ -26,6 +26,7 @@
   import NotificationsButton from '$components/NotificationsButton.svelte';
   import ExploreMenu from '$components/ExploreMenu.svelte';
   import CardTooltip from '$components/CardTooltip.svelte';
+  import ToastHost from '$components/ToastHost.svelte';
 
   let { children } = $props();
 
@@ -397,6 +398,13 @@
        and re-running the show delay, which is what made a per-card
        tooltip strobe. -->
   <CardTooltip />
+
+  <!-- Transient action feedback (#981) — one instance for the whole
+       app, same reasoning as CardTooltip. Not gated on auth: it is
+       raised by whatever the user just did, and each toast portals
+       itself to the right host at push time (a viewer dialog occupies
+       the top layer, where a body-level node is invisible). -->
+  <ToastHost />
 
   {#if !!auth.user}
     <!-- Upload modal + drop overlay are gated on auth: only signed-in

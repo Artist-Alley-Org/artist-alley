@@ -36,6 +36,10 @@
   import Menu from '$components/Menu.svelte';
   import EditCollectionModal from '$components/EditCollectionModal.svelte';
   import ShareEntityModal from '$components/ShareEntityModal.svelte';
+  import ConfirmDeleteDialog from '$components/ConfirmDeleteDialog.svelte';
+  import { goto } from '$app/navigation';
+  import { toasts } from '$stores/toasts.svelte';
+  import { canDelete, deleteEntity, restoreEntity, shouldAskReason } from '$lib/deletable';
 
   interface Collection {
     id: string;
@@ -275,6 +279,67 @@
     invalidateCovers(updated.id);
   }
 
+  // ── Delete (#981) ─────────────────────────────────────────────────
+  // This menu item was hardcoded `disabled` behind a `delete_soon`
+  // tooltip. DELETE /collections/{id} has existed and been gated by
+  // canMutateCollection the whole time; nothing in the product could
+  // call it.
+  //
+  // The item renders for the owner or a GLOBAL collections.admin
+  // holder — canMutateCollection's exact disjunction, which for
+  // collections has no team-scoped branch at all, so unlike assets and
+  // posts the client mirrors the server rule completely here.
+  const canDeleteCollection = $derived(
+    !!collection && !collection.deleted_at && canDelete('collection', collection.owner_user_ref),
+  );
+
+  let deleteOpen = $state(false);
+  let deleteBusy = $state(false);
+  let deleteError = $state<string | null>(null);
+
+  async function confirmDelete(reason: string) {
+    if (!collection || deleteBusy) return;
+    deleteBusy = true;
+    deleteError = null;
+    const err = await deleteEntity('collection', collection.id, reason);
+    deleteBusy = false;
+    if (err) {
+      deleteError = err;
+      return;
+    }
+    const deletedId = collection.id;
+    deleteOpen = false;
+    // The cover cache keys on the collection id and is now stale — the
+    // same invalidation `handleSaved` does after an edit.
+    invalidateCovers(deletedId);
+    toasts.push({
+      message: t('delete_confirm.deleted_collection'),
+      href: '/account/trash',
+      linkLabel: t('delete_confirm.view_trash'),
+      action: { label: t('delete_confirm.undo'), run: () => undoDelete(deletedId) },
+    });
+    // This route renders the thing that no longer exists, so it cannot
+    // stay. The index is where the user came from.
+    await goto('/collections');
+  }
+
+  // Safe to offer: we performed the delete, so we are the deleter, and
+  // auth.CanRestoreDeleted grants restore to the deleter.
+  async function undoDelete(collectionId: string) {
+    const err = await restoreEntity('collection', collectionId);
+    if (err) {
+      toasts.push({
+        message: t('delete_confirm.undo_error'),
+        tone: 'error',
+        href: '/account/trash',
+        linkLabel: t('delete_confirm.view_trash'),
+      });
+      return;
+    }
+    invalidateCovers(collectionId);
+    toasts.push({ message: t('delete_confirm.undone'), href: `/collections/${collectionId}` });
+  }
+
   const visibilityLabel = $derived(
     collection?.visibility === 'public'
       ? t('collections.vis_public')
@@ -433,7 +498,12 @@
         {copyFeedback ? t('common.copied') : t('common.copy_link')}
       </button>
 
-      {#if isOwner}
+      <!-- The trigger opens for an owner OR for someone who may delete
+           this (#981) — a global collections.admin holder, the instance
+           moderator role. Every item inside is separately gated, so a
+           non-owner deleter gets a one-item menu rather than an empty
+           panel or a set of controls the server would refuse. -->
+      {#if isOwner || canDeleteCollection}
         <Menu align="right">
           {#snippet trigger({ open })}
             <button
@@ -451,43 +521,52 @@
               </svg>
             </button>
           {/snippet}
-          <button
-            type="button"
-            role="menuitem"
-            onclick={() => (editOpen = true)}
-            data-testid="collection-detail-edit-menuitem"
-            class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
-          >
-            {t('collections.edit')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled
-            class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-            title={t('collections.manage_members_soon')}
-          >
-            {t('collections.manage_members')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled
-            class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-            title={t('collections.set_cover_soon')}
-          >
-            {t('collections.set_cover')}
-          </button>
-          <hr class="my-1 border-border" />
-          <button
-            type="button"
-            role="menuitem"
-            disabled
-            class="block w-full px-3 py-1.5 text-left text-sm text-danger opacity-60"
-            title={t('collections.delete_soon')}
-          >
-            {t('collections.delete')}
-          </button>
+          {#if isOwner}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={() => (editOpen = true)}
+              data-testid="collection-detail-edit-menuitem"
+              class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
+            >
+              {t('collections.edit')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled
+              class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+              title={t('collections.manage_members_soon')}
+            >
+              {t('collections.manage_members')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled
+              class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+              title={t('collections.set_cover_soon')}
+            >
+              {t('collections.set_cover')}
+            </button>
+          {/if}
+          {#if canDeleteCollection}
+            {#if isOwner}
+              <hr class="my-1 border-border" />
+            {/if}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={() => {
+                deleteError = null;
+                deleteOpen = true;
+              }}
+              data-testid="collection-detail-delete-menuitem"
+              class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container"
+            >
+              {t('collections.delete')}
+            </button>
+          {/if}
         </Menu>
       {/if}
     </div>
@@ -547,5 +626,17 @@
     kind="collection"
     id={collection.id}
     onclose={() => (shareOpen = false)}
+  />
+  <ConfirmDeleteDialog
+    open={deleteOpen}
+    kind="collection"
+    title={collection.name}
+    askReason={shouldAskReason(collection.owner_user_ref)}
+    busy={deleteBusy}
+    error={deleteError}
+    onconfirm={confirmDelete}
+    onclose={() => {
+      if (!deleteBusy) deleteOpen = false;
+    }}
   />
 {/if}

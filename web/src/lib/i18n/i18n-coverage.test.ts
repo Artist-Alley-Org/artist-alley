@@ -140,6 +140,14 @@ const TRACKED_FILES = [
   'src/routes/account/requests/+page.svelte',
   'src/routes/admin/requests/+page.svelte',
   'src/routes/account/trash/+page.svelte',
+  // — #981 the delete affordances. Tracked from the start for the same
+  //   reason as the request-access dialog: the confirm dialog's copy is
+  //   the only place the app states what a delete DOES (it is
+  //   recoverable, it goes to your trash, the owner reads your reason),
+  //   and an operator override has to be able to reach it. The toast is
+  //   the acknowledgement of the same act. —
+  'src/lib/components/ConfirmDeleteDialog.svelte',
+  'src/lib/components/ToastHost.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)
