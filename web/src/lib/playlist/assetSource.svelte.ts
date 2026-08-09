@@ -33,6 +33,10 @@ export interface AssetForPlaylist {
    *  Every field above is then absent from the payload. */
   restricted?: boolean;
   owner_display_name?: string | null;
+  /** #981 — the owner's ref, present on a readable payload only. See
+   *  ViewAsset.owner_user_ref: it is what the delete affordance is
+   *  gated on, and it is deliberately absent from a withheld one. */
+  owner_user_ref?: number | null;
 }
 
 function toItem(a: AssetForPlaylist): PlaylistItem {
@@ -46,6 +50,10 @@ function toItem(a: AssetForPlaylist): PlaylistItem {
     preview_available: a.preview_available ?? false,
     restricted: !!a.restricted,
     owner_display_name: a.owner_display_name ?? null,
+    // #981 — carried so a viewer host can decide whether to offer the
+    // delete affordance. Null on a withheld payload by construction:
+    // the placeholder's allow-list is the owner's NAME, not their ref.
+    owner_user_ref: a.owner_user_ref ?? null,
   };
   // #899 — the standalone route reaches the SAME restricted plate the
   // post route has shown since #883. Threading these two through here is

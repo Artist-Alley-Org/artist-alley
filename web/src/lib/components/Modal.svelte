@@ -11,10 +11,11 @@
   // fourth place for the focus-restore and Escape handling to drift.
   //
   // Consumers: NewCollectionModal / EditCollectionModal /
-  // ShareCollectionModal / RequestAccessDialog.
+  // ShareCollectionModal / RequestAccessDialog / ConfirmDeleteDialog.
 
   import { onDestroy, onMount } from 'svelte';
   import { t } from '$stores/lang.svelte';
+  import { portal } from '$lib/portal';
 
   interface Props {
     title: string;
@@ -57,38 +58,17 @@
     }
   });
 
-  /** Move the overlay out of whatever box it was declared in.
-   *
-   *  `position: fixed` is relative to the VIEWPORT only while no
-   *  ancestor establishes a containing block — and `contain`,
-   *  `container-type`, `transform` and `filter` all do. Driven in a
-   *  browser from a restricted grid tile (#881), the overlay rendered
-   *  inside the tile and was clipped by it: CardRestricted's plate is
-   *  `container-type: size`, which is exactly one of those. Every
-   *  caller that ever mounts this from inside a card, a viewer pane or
-   *  a transformed surface would hit the same thing, so the fix belongs
-   *  here rather than at each call site.
-   *
-   *  The target is the nearest OPEN native `<dialog>` if there is one,
-   *  and `document.body` otherwise. A `<dialog>` opened modally lives
-   *  in the browser's top layer, and anything appended to the body
-   *  renders beneath it and swallows every click — which is the other
-   *  half of the same bug, seen from the asset viewer. Resolved before
-   *  the move, while the node is still where it was declared. */
-  function portal(node: HTMLElement) {
-    const host = node.closest('dialog[open]') ?? document.body;
-    host.appendChild(node);
-    return {
-      destroy() {
-        node.remove();
-      },
-    };
-  }
+  // The overlay is moved out of its declared box by `$lib/portal` —
+  // see that module for why (containing blocks, and the top layer a
+  // maximized viewer occupies). `rehome: false`: a modal belongs to the
+  // surface that raised it, so when a host dialog closes this should go
+  // with it rather than be re-parented to the body and left orphaned.
+  const modalPortal = (node: HTMLElement) => portal(node, { rehome: false });
 </script>
 
 {#if open}
   <div
-    use:portal
+    use:modalPortal
     role="dialog"
     aria-modal="true"
     aria-label={title}

@@ -549,7 +549,13 @@
       "admin_deleted": "Removed by someone else — restoring it needs an administrator.",
       "load_error": "Couldn't load your trash.",
       "restore_error": "Couldn't put that back.",
-      "load_more": "Load more"
+      "load_more": "Load more",
+      "tab_mine": "Mine",
+      "tab_deleted_by_me": "Deleted by me",
+      "tab_mine_hint": "Things you own that are in the trash.",
+      "tab_deleted_by_me_hint": "Things belonging to other people that you removed. You can put any of them back.",
+      "empty_deleted_by_me": "You haven't removed anyone else's work.",
+      "empty_hint_deleted_by_me": "If you remove something belonging to someone else, it shows up here so you can undo it."
     },
     "preferences": {
       "title": "Preferences",
@@ -2506,7 +2512,6 @@
     "set_cover": "Set cover",
     "set_cover_soon": "Custom cover picker coming soon.",
     "delete": "Delete collection",
-    "delete_soon": "Delete confirmation flow coming soon.",
     "error_load": "Couldn't load collections.",
     "error_create": "Couldn't create the collection.",
     "error_save": "Couldn't save the collection.",
@@ -3035,5 +3040,26 @@
   },
   "requests": {
     "grant_does_not_unlock": "Granting records that you agreed. It does not yet give the requester access to the item — per-item access is still being built."
+  },
+  "delete_confirm": {
+    "title_asset": "Delete asset?",
+    "title_post": "Delete post?",
+    "title_collection": "Delete collection?",
+    "body_asset": "“{title}” will be removed from this post and from browse.",
+    "body_post": "“{title}” will be removed, along with its likes and comments.",
+    "body_collection": "“{title}” will be removed. The assets inside it are not deleted — only the collection.",
+    "recoverable": "It goes to your trash — you can restore it from there. Your trash shows the exact date each item is removed for good.",
+    "reason_label": "Why you're removing it (optional)",
+    "reason_placeholder": "A line the owner will read",
+    "reason_hint": "You don't own this, so the owner will be shown what you write here.",
+    "confirm": "Delete",
+    "deleting": "Deleting…",
+    "deleted_asset": "Asset deleted.",
+    "deleted_post": "Post deleted.",
+    "deleted_collection": "Collection deleted.",
+    "undo": "Undo",
+    "view_trash": "View trash",
+    "undo_error": "Couldn't put that back. Open your trash to try again.",
+    "undone": "Put back."
   }
 }

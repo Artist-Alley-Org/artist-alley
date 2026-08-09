@@ -7974,12 +7974,38 @@ paths:
   /account/trash:
     get:
       operationId: listMyTrash
-      summary: My trash — the soft-deleted assets, posts and collections I own
+      summary: My trash — the soft-deleted items I own, or the ones I deleted
       description: |
         One mixed, newest-deleted-first list of everything the caller
         OWNS that is currently soft-deleted, across all three
         soft-deletable entities. Each row carries the `kind` needed to
         pick the matching restore endpoint.
+
+        `scope=deleted_by_me` answers the OTHER half of the same
+        question (#981). `CanRestoreDeleted` grants the undo to whoever
+        performed the delete, so a team lead who removes a colleague's
+        asset may restore it — but the default scope is owner-scoped,
+        so that item lists in the OWNER's trash (non-restorable for
+        them, since they did not delete it) and in nobody's as
+        restorable. The lead held a restore right they could not reach.
+        This scope lists exactly the rows where
+        `deleted_by_user_ref = caller AND owner IS DISTINCT FROM caller`
+        — the caller's own deletions of other people's things — and
+        every one of them comes back `restorable_by_caller: true` by
+        the same predicate, because the deleter is the caller.
+
+        IT IS NOT A PROBE. The two scopes disclose on different
+        grounds, and this one's ground is the caller's own prior act:
+        the delete already succeeded for this caller against this row,
+        which means they could both see it and mutate it at that
+        moment. The response therefore reveals nothing they did not
+        already have. It also cannot be steered — there is no
+        `user`/`owner` filter, only the caller's own ref taken from
+        the session — so it lists a caller's history, never a search
+        over someone else's content. The projection is byte-for-byte
+        the one the owned scope returns; in particular it does NOT add
+        the owner's identity, which would be a disclosure the delete
+        itself never made.
 
         WHY THIS EXISTS SEPARATELY FROM `include_deleted=true` (#937).
         `GET /assets`, `GET /posts` and `GET /collections` all accept
@@ -8018,6 +8044,19 @@ paths:
         - cookieAuth: []
         - bearerAuth: []
       parameters:
+        - name: scope
+          in: query
+          required: false
+          description: |
+            `owned_by_me` (default) — soft-deleted items the caller
+            owns, whoever deleted them. `deleted_by_me` — items the
+            caller deleted that they do NOT own; always restorable by
+            them. The two sets are disjoint by construction, so a
+            client showing both as tabs never double-lists a row.
+          schema:
+            type: string
+            enum: [owned_by_me, deleted_by_me]
+            default: owned_by_me
         - name: limit
           in: query
           required: false

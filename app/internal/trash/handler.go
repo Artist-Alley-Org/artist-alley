@@ -30,6 +30,13 @@
 // belongs to none of them and a read-only projection across all three
 // has no business importing any: it would make one domain package
 // depend on the other two purely to select five columns.
+//
+// #981 added the second scope, `deleted_by_me`. Restore is granted to
+// the DELETER (auth.CanRestoreDeleted), but the listing was scoped to
+// the OWNER — so a team lead who removed a colleague's asset held a
+// restore right with no way to name the item. Same projection, same
+// keyset, one different WHERE conjunct; see selectorFor for why that
+// conjunct is not a disclosure.
 package trash
 
 import (
@@ -112,30 +119,75 @@ func keysetAndOrder(tsN, idN int) (where, order string) {
 	return where, order
 }
 
-// listPage reads one page of the caller's own soft-deleted rows.
+// scope selects which of the two disjoint questions listPage answers.
+type scope string
+
+const (
+	// scopeOwned — soft-deleted rows the caller OWNS, whoever deleted
+	// them. The default, and what /account/trash meant before #981.
+	scopeOwned scope = "owned_by_me"
+	// scopeDeletedByMe — soft-deleted rows the caller DELETED and does
+	// not own. See selectorFor for why this is not a probe.
+	scopeDeletedByMe scope = "deleted_by_me"
+)
+
+// selectorFor renders the per-table WHERE conjunct that decides which
+// rows belong to the caller under a given scope. `owner` is the column
+// standing for ownership in that table (`author_user_ref` for posts).
 //
-// NO VISIBILITY GATE, DELIBERATELY — and this comment exists so the
-// absence does not read as an oversight to the next person auditing
-// read paths. Every other list surface in the codebase splices in
-// visibility.Predicate or a read rule; this one cannot become a probe
-// because the ownership conjunct IS the whole selection. `owner_user_ref
-// = caller` (author_user_ref for posts) admits nothing the caller did
-// not create, so there is no row here whose existence they could learn
-// from the response. Adding the read rule on top would be strictly
-// narrowing and would hide the caller's own private items from their
-// own bin — the exact failure the rule is meant to prevent elsewhere.
+// NO VISIBILITY GATE IN EITHER SCOPE, DELIBERATELY — and this comment
+// exists so the absence does not read as an oversight to the next
+// person auditing read paths. Every other list surface in the codebase
+// splices in visibility.Predicate or a read rule. Neither scope here
+// can become a probe, but they earn that on DIFFERENT grounds:
 //
-// `assets.owner_user_ref` is nullable; `= $1` never matches NULL, so
-// orphaned assets stay out on their own. The handler additionally
-// refuses a zero caller ref before getting here, so a ref-0 row (none
-// exist today; that is data, not a guarantee) cannot be claimed by an
-// anonymous caller.
+//   - owned_by_me: the ownership conjunct IS the whole selection.
+//     `owner_user_ref = caller` admits nothing the caller did not
+//     create, so no row's existence is news to them. Adding the read
+//     rule on top would be strictly narrowing and would hide the
+//     caller's own private items from their own bin — the exact
+//     failure the rule is meant to prevent elsewhere.
+//
+//   - deleted_by_me (#981): the ground is the caller's own prior act.
+//     `deleted_by_user_ref = caller` is only ever written by a delete
+//     handler that already ran its mutation gate for THIS caller
+//     against THIS row, so the caller demonstrably could both see and
+//     mutate every row this returns. The listing tells them nothing
+//     they did not already have; it only lets them find again what
+//     they themselves removed. It also cannot be steered — the ref
+//     comes from the session, never from a parameter — so it is a
+//     history of the caller's own actions, not a search over anyone
+//     else's content. Restore is still gated by the per-domain
+//     endpoints and auth.CanRestoreDeleted; this list only makes the
+//     right reachable.
+//
+// The `IS DISTINCT FROM` in the deleted_by_me branch is what keeps the
+// two scopes disjoint (no row lists in both tabs) and is NULL-correct:
+// `assets.owner_user_ref` is nullable, and a plain `<> $1` would drop
+// an orphaned asset the caller deleted rather than list it. In the
+// owned scope the same nullability cuts the other way — `= $1` never
+// matches NULL, so orphaned assets stay out on their own, which is
+// what we want there.
+//
+// The handler refuses a zero caller ref before getting here, so a ref-0
+// row (none exist today; that is data, not a guarantee) cannot be
+// claimed by an anonymous caller under either scope.
+func selectorFor(s scope, owner string) string {
+	if s == scopeDeletedByMe {
+		return "deleted_by_user_ref = $1::BIGINT AND " + owner + " IS DISTINCT FROM $1::BIGINT"
+	}
+	return owner + " = $1::BIGINT"
+}
+
+// listPage reads one page of the caller's soft-deleted rows under one
+// scope.
 //
 // One extra row is fetched beyond the limit — that is how the caller
 // distinguishes "last page" from "exactly full page".
 func (h *Handler) listPage(
 	ctx context.Context,
 	userRef int64,
+	s scope,
 	cursorTs pgtype.Timestamptz,
 	cursorID pgtype.UUID,
 	rowLimit int32,
@@ -149,15 +201,15 @@ func (h *Handler) listPage(
 	b.WriteString(`WITH page AS (
     SELECT 'asset'::TEXT AS kind, id, title, deleted_at, deleted_by_user_ref
       FROM assets
-     WHERE owner_user_ref = $1::BIGINT AND deleted_at IS NOT NULL AND ` + where + `
+     WHERE ` + selectorFor(s, "owner_user_ref") + ` AND deleted_at IS NOT NULL AND ` + where + `
   UNION ALL
     SELECT 'post'::TEXT, id, title, deleted_at, deleted_by_user_ref
       FROM posts
-     WHERE author_user_ref = $1::BIGINT AND deleted_at IS NOT NULL AND ` + where + `
+     WHERE ` + selectorFor(s, "author_user_ref") + ` AND deleted_at IS NOT NULL AND ` + where + `
   UNION ALL
     SELECT 'collection'::TEXT, id, name, deleted_at, deleted_by_user_ref
       FROM collections
-     WHERE owner_user_ref = $1::BIGINT AND deleted_at IS NOT NULL AND ` + where + `
+     WHERE ` + selectorFor(s, "owner_user_ref") + ` AND deleted_at IS NOT NULL AND ` + where + `
 )
 SELECT kind, id, title, deleted_at, deleted_by_user_ref
 FROM page
@@ -184,7 +236,13 @@ LIMIT $4::INTEGER`)
 	return out, nil
 }
 
-// ListMyTrash implements GET /account/trash.
+// ListMyTrash implements GET /account/trash, in either scope.
+//
+// The projection is the SAME in both — five columns, no deleter, no
+// owner. `deleted_by_me` was the tempting place to add "whose was it",
+// and it is refused: the delete the caller performed disclosed the
+// content, not the owner's identity, and a listing that volunteered
+// more than the act it reports would be widening by convenience.
 func (h *Handler) ListMyTrash(
 	ctx context.Context,
 	req openapi.ListMyTrashRequestObject,
@@ -194,6 +252,22 @@ func (h *Handler) ListMyTrash(
 		return openapi.ListMyTrash401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
+	}
+
+	// An unrecognised scope is refused rather than silently treated as
+	// the default: the two scopes answer different questions, and a
+	// typo that quietly returned the owned list would look like "I
+	// deleted nothing of anyone else's" — a wrong answer wearing a 200.
+	s := scopeOwned
+	if req.Params.Scope != nil {
+		switch scope(*req.Params.Scope) {
+		case scopeOwned, scopeDeletedByMe:
+			s = scope(*req.Params.Scope)
+		default:
+			return openapi.ListMyTrash400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid scope"},
+			}, nil
+		}
 	}
 
 	limit := int32(defaultPageLimit)
@@ -224,7 +298,7 @@ func (h *Handler) ListMyTrash(
 		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
 
-	rows, err := h.listPage(ctx, caller.UserRef, cursorTs, cursorID, limit+1)
+	rows, err := h.listPage(ctx, caller.UserRef, s, cursorTs, cursorID, limit+1)
 	if err != nil {
 		return nil, err
 	}
