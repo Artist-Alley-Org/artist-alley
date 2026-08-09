@@ -17,6 +17,7 @@
 //   viewers/AssetViewer.svelte        handleKey()       playback / loop / view
 //   viewers/EpubView.svelte           onKey()           ebook chapters
 //   viewers/SpriteCanvas.svelte       onSpriteKey()     sprite animation
+//   viewers/tools/DocTool/Body.svelte handleFindKeys()  document find
 //   whiteboard/WhiteboardCanvas.svelte handleKey()      whiteboard tools + zoom
 //   whiteboard/BrushCanvas.svelte     onDocKey()        whiteboard clipboard
 //   SearchBar.svelte                  onKey()           search suggestions
@@ -24,6 +25,12 @@
 // There is no app-global keymap module and no command palette — every
 // binding is scoped to a surface, which is why the groups below are
 // named after surfaces rather than after actions.
+//
+// Surfaces overlap, so the rows also have to be honest about WHO WINS
+// (#885). The rule the handlers implement: the innermost surface that
+// actually acts on a key claims it and stops the event, so ← / → step
+// video frames or turn ebook pages instead of ALSO flipping to the next
+// post. Where that changes what a row means, the group carries a note.
 
 export interface ShortcutRow {
   /** Rendered as <kbd> chips, in order. */
@@ -93,7 +100,16 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     id: 'ebook',
     titleKey: 'shortcuts.group.ebook',
+    noteKey: 'shortcuts.note.ebook',
     rows: [{ keys: ['←', '→'], descKey: 'shortcuts.ebook.chapter' }],
+  },
+  {
+    id: 'document',
+    titleKey: 'shortcuts.group.document',
+    noteKey: 'shortcuts.note.document',
+    // One row on purpose. Next / previous match has no key because it
+    // has no working action to bind to — see DocTool/Body.svelte.
+    rows: [{ keys: [`${MOD}+F`], descKey: 'shortcuts.doc.find' }],
   },
   {
     id: 'sprite',
@@ -142,6 +158,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ['F'], descKey: 'shortcuts.wb.fit' },
       { keys: ['0'], descKey: 'shortcuts.wb.reset_zoom' },
       { keys: ['+', '−'], descKey: 'shortcuts.wb.zoom' },
+      { keys: ['[', ']'], descKey: 'shortcuts.wb.size' },
       { keys: ['Esc'], descKey: 'shortcuts.wb.exit' },
     ],
   },

@@ -837,20 +837,34 @@
     <dt class="font-mono text-fg">↑ · ↓</dt>
     <dd class="text-fg-muted">{t('viewer_hotkeys.prev_asset')} · {t('viewer_hotkeys.next_asset')}</dd>
   {/if}
-  {#if onNavigateSibling}
+  <!-- Rows below are filtered by who actually owns the key right now
+       (#885). AssetViewer stops propagation for keys it acts on, so a
+       row that is true for an image is a lie for a video: ← / → step
+       frames there and never reach this component. Same for I, which
+       marks a loop-in on a timeline asset instead of toggling the
+       pane. And while the whiteboard overlay is up AssetViewer bails
+       out entirely — arrows and I come back to the playlist, while F
+       and R belong to the whiteboard (fit / rectangle). -->
+  {#if onNavigateSibling && (whiteboardSession || !isTimelineKind)}
     <dt class="font-mono text-fg">← · →</dt>
     <dd class="text-fg-muted">{t('viewer_hotkeys.prev_post')} · {t('viewer_hotkeys.next_post')}</dd>
   {/if}
-  <dt class="font-mono text-fg">I</dt><dd class="text-fg-muted">{t('viewer_hotkeys.toggle_panel')}</dd>
-  <dt class="font-mono text-fg">F</dt><dd class="text-fg-muted">{t('viewer_hotkeys.fullscreen')}</dd>
-  <dt class="font-mono text-fg">R</dt><dd class="text-fg-muted">{t('viewer_hotkeys.reset_view')}</dd>
+  {#if whiteboardSession || !isTimelineKind}
+    <dt class="font-mono text-fg">I</dt><dd class="text-fg-muted">{t('viewer_hotkeys.toggle_panel')}</dd>
+  {/if}
+  {#if !whiteboardSession}
+    <dt class="font-mono text-fg">F</dt><dd class="text-fg-muted">{t('viewer_hotkeys.fullscreen')}</dd>
+    <dt class="font-mono text-fg">R</dt><dd class="text-fg-muted">{t('viewer_hotkeys.reset_view')}</dd>
+  {/if}
   <dt class="font-mono text-fg">Esc</dt><dd class="text-fg-muted">{t('viewer_hotkeys.close')}</dd>
   {#if isTimelineKind}
     <dt class="col-span-2 mt-1 text-fg-muted/70">{t('viewer_hotkeys.section_playback')}</dt>
     <dt class="font-mono text-fg">Space · K</dt><dd class="text-fg-muted">{t('viewer_hotkeys.play_pause')}</dd>
     <dt class="font-mono text-fg">J · L</dt><dd class="text-fg-muted">{t('viewer_hotkeys.rewind_forward')}</dd>
-    <dt class="font-mono text-fg">, · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward')}</dd>
-    <dt class="font-mono text-fg">⇧ + , · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward_10')}</dd>
+    <!-- ← / → are listed here, not under navigation: on a timeline
+         asset the player claims them for frame stepping (#885). -->
+    <dt class="font-mono text-fg">← · → · , · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward')}</dd>
+    <dt class="font-mono text-fg">⇧ + ← · →</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward_10')}</dd>
     <dt class="font-mono text-fg">1 – 5</dt><dd class="text-fg-muted">{t('viewer_hotkeys.speed_range')}</dd>
     <dt class="font-mono text-fg">G</dt><dd class="text-fg-muted">{t('viewer_hotkeys.goto_frame')}</dd>
     <dt class="font-mono text-fg">I · O</dt><dd class="text-fg-muted">{t('viewer_hotkeys.loop_in_out')}</dd>

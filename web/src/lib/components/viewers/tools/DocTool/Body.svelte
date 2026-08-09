@@ -100,7 +100,42 @@
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
     return String(n);
   }
+
+  // ── Find shortcut (#885) ──────────────────────────────────────
+  //
+  // Tips.svelte advertised Ctrl/⌘ F, Ctrl/⌘ G and ⇧ Ctrl/⌘ G; nothing
+  // bound any of them. Ctrl/⌘ F is now real — it puts the caret in the
+  // Find box below, which is the whole of what the tip promised.
+  //
+  // Ctrl/⌘ G and ⇧ Ctrl/⌘ G are NOT bound, and their rows are gone from
+  // the tips instead. Not an oversight: next / previous match does not
+  // currently work through ANY route. Changing the query trips
+  // `effect_update_depth_exceeded` in DocView's find effects, Svelte
+  // then stops running that component's effects, and both the ‹ › panel
+  // buttons and any key wired to session.findNext()/findPrev() go dead
+  // with them. Binding a key to a dead action would recreate exactly
+  // the defect this issue is about — a key the user presses, nothing
+  // happens, and they conclude the app is broken. The rows come back
+  // with the fix for the effect loop, not before.
+  //
+  // Scoped to this component's lifetime on purpose: the panel Body and
+  // the Tips footer mount and unmount together, so the key works in
+  // exactly the situation where the tip claiming it is on screen. With
+  // no Document panel open, Ctrl+F falls through to the browser's own
+  // find, which is the right fallback.
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+
+  function handleFindKeys(e: KeyboardEvent) {
+    if (!session) return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (e.key.toLowerCase() !== 'f') return;
+    e.preventDefault();
+    searchInputEl?.focus();
+    searchInputEl?.select();
+  }
 </script>
+
+<svelte:window onkeydown={handleFindKeys} />
 
 {#if !session}
   <div class="p-4 text-sm text-fg-muted"><p>Document viewer is loading…</p></div>
@@ -231,6 +266,7 @@
     <section class="border-b border-border p-3 text-xs">
       <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Find</h3>
       <input
+        bind:this={searchInputEl}
         type="search"
         value={session.searchQuery}
         oninput={(e) => session.setSearchQuery((e.currentTarget as HTMLInputElement).value)}
@@ -262,7 +298,7 @@
             onclick={() => session.findPrev()}
             disabled={!session.searchQuery}
             class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent disabled:opacity-40"
-            title="Previous match (⇧ Ctrl/⌘ G)"
+            title="Previous match"
             aria-label="Previous match"
           >‹</button>
           <button
@@ -270,7 +306,7 @@
             onclick={() => session.findNext()}
             disabled={!session.searchQuery}
             class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent disabled:opacity-40"
-            title="Next match (Ctrl/⌘ G)"
+            title="Next match"
             aria-label="Next match"
           >›</button>
         </span>
