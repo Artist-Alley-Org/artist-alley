@@ -837,3 +837,17 @@ discipline as #922 / #941 / #952.
 **Not decided here: reassignment.** Neither `PostUpdate` nor `AssetUpdate` carries `team_id`. Moving
 a row between teams changes who may mutate it *and* who may read it at the team tier, and wants its
 own gate rather than a shared one.
+
+---
+
+### Amendment 2026-08-09 (#937, PR #980) — the restore rule has one home
+
+*Who may undo a soft delete* had grown three hand-copied implementations — `assets.canRestoreDeleted`,
+`posts.canRestorePost`, `collections.canRestoreCollection` — each commented *"mirrors
+assets.canRestoreDeleted exactly"*, which is a promise no comment can keep. All three are deleted;
+the rule lives once as **`auth.CanRestoreDeleted`** (`app/internal/auth/restore_gate.go`): the
+deleter may restore (`deleted_by_user_ref == caller`), `system.admin` may always, a NULL deleter
+(pre-#936 rows) is admin-only. Four consumers — the three restore endpoints and the trash listing's
+`restorable_by_caller` flag — obtain the rule rather than restating it, so the listing structurally
+cannot disagree with the endpoint it fronts. Same consolidation discipline as the attach rule
+(#940, ADR 0064) and epic #665's premise: one expression of a security rule per system.
