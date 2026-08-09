@@ -2887,6 +2887,12 @@ paths:
                     `system.admin` — is decidable only by a holder of
                     `share.grant` or `system.admin`, never by the
                     asset's owner.
+
+                    `content.restore.request` is **refused** here with
+                    400. That marker's gate is about a soft-deleted
+                    row's owner and its deleter, and none of those
+                    checks run on this path — see
+                    `POST /account/trash/{kind}/{id}/request-restore`.
                 reason:
                   type: string
                   maxLength: 1000
@@ -2944,21 +2950,36 @@ paths:
   /account/requests/incoming:
     get:
       operationId: listIncomingRequests
-      summary: List pending requests against assets the caller owns
+      summary: List pending requests the caller is the one to decide
       description: |
-        The owner-facing decision queue. Returns pending
-        resource_request rows whose target asset the caller owns,
-        oldest first.
+        The non-operator decision queue: pending requests this caller
+        can act on without holding any capability, oldest first.
 
-        No capability is required and none would help: the gate is the
-        ownership join itself, so a caller sees requests on their own
-        work and nothing else. This exists because /admin/requests is
-        gated on `requests.read` / `share.grant` — capabilities an
-        artist has no reason to hold — which left the person with the
-        strongest claim to decide unable to reach the queue.
+        No capability is required and none would help — the gate is a
+        join, not a check. This exists because /admin/requests is gated
+        on `requests.read` / `share.grant`, capabilities an artist has
+        no reason to hold, which left the people with the strongest
+        claim to decide unable to reach the queue.
 
-        Decisions go to POST /admin/requests/{id}/decide, which accepts
-        the asset's owner for requests naming `content.access.request`.
+        Two disjoint sets, joined on two different facts:
+
+        * **Access requests** against assets the caller OWNS (#881),
+          joined on `assets.owner_user_ref`. Live assets only — an
+          owner has no decision to make about access to something they
+          deleted.
+        * **Restoration appeals** against items the caller DELETED
+          (#931), joined on the target's `deleted_by_user_ref` across
+          all three soft-deletable kinds. Keyed to the deleter rather
+          than the owner because the owner IS the requester here, and
+          `auth.CanRestoreDeleted` gives the undo to whoever performed
+          the delete.
+
+        They cannot overlap: the first requires a live asset, the
+        second a soft-deleted target.
+
+        Decisions go to POST /admin/requests/{id}/decide, whose gate is
+        the authority here — `decidable_by_caller` on each row is that
+        same gate, computed rather than restated.
       tags: [requests]
       security:
         - cookieAuth: []
@@ -3042,10 +3063,11 @@ paths:
         Atomic CAS — only pending requests transition. Re-deciding
         an already-decided request returns 409.
 
-        On grant, a user_capability_grants row is inserted in the
-        same tx as the resource_request CAS. expires_at on the
-        grant is the same value the operator supplied here; the
-        CapabilitySweeper reaps both together when it fires.
+        There are two kinds of request behind this one endpoint, and
+        `requested_capability` — not the caller's rank — decides which
+        gate and which consequence apply.
+
+        ## Access requests (anything except `content.restore.request`)
 
         Requires `share.grant` OR `system.admin` — **or** ownership of
         the requested asset, for requests naming
@@ -3054,9 +3076,41 @@ paths:
         owner who could decide any request could be induced to grant
         `system.admin` from a panel about their own artwork.
 
+        On grant, a user_capability_grants row is inserted in the
+        same tx as the resource_request CAS. expires_at on the
+        grant is the same value the operator supplied here; the
+        CapabilitySweeper reaps both together when it fires.
+
         A grant does **not** unlock the asset's bytes. There is no
         per-object capability scope, so approval records agreement, not
         access — see #912 and ADR 0064.
+
+        ## Restoration appeals (`content.restore.request`, #931)
+
+        Decidable ONLY by a caller who passes `auth.CanRestoreDeleted`
+        against the TARGET's deleter: the person who deleted it, or
+        `system.admin`. `share.grant` alone does **not** qualify —
+        authority over sharing is not authority over moderation — and
+        neither does ownership, so a requester can never decide their
+        own appeal.
+
+        On grant the server performs the restore and writes **no**
+        `user_capability_grants` row. The marker confers nothing and
+        there is nothing to confer: what was asked for is a state change
+        on the item, not a standing right. This is also what keeps the
+        #881 escalation surface closed — the grant path that copies
+        `requested_capability` verbatim into a capability grant is not
+        reached on this branch at all.
+
+        `expires_at` on a restore grant is **400**. A performed restore
+        cannot expire, and silently ignoring the field would let an
+        operator believe they had set a deadline.
+
+        If someone else already restored the target, the grant still
+        succeeds: the requested end-state holds, and the decision reason
+        records that it was already live.
+
+        ## Failure shape
 
         A caller who is neither an approver nor the owner gets 403 for
         every failure, including a request id that does not exist: a 404
@@ -8078,6 +8132,119 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /account/trash/{kind}/{id}/request-restore:
+    post:
+      operationId: requestRestore
+      summary: Appeal a delete you cannot undo yourself
+      description: |
+        Files a `pending` resource_request asking whoever deleted this
+        item to put it back (#931).
+
+        This is the OTHER half of `auth.CanRestoreDeleted`. That rule
+        gives the undo to the deleter, and to `system.admin` — so an
+        owner whose work an administrator removed sees a trash row that
+        says someone else deleted it and, before this endpoint, was
+        offered nothing further. The row was a dead end.
+
+        ## The capability is not an input
+
+        The server writes `content.restore.request` and there is no
+        field on this body to say otherwise. `requested_capability`
+        feeds an authorisation decision, and ADR 0064 already names the
+        hazard of taking it from the requester: "nothing stops a request
+        naming system.admin". `/assets/{id}/request-access` still
+        ACCEPTS an explicit code for admin tooling that predates the
+        button; this endpoint accepts none at all, because there is no
+        second thing an appeal could ask for.
+
+        ## Who may file one
+
+        The item's owner, and only while the item is soft-deleted.
+        Someone who could restore it directly gets **409** rather than a
+        request nobody needs to answer — the honest reply to "please ask
+        them to undo it" when you may undo it yourself is "you can do
+        that". Any other caller gets **404**: an appeal endpoint that
+        distinguished "not yours" from "no such row" would be a probe
+        for other people's deleted items.
+
+        Repeating an appeal you already have pending returns **200**
+        with the existing row, unchanged, matching
+        `/assets/{id}/request-access`. One ask is
+        (requester, kind, id, capability); asking twice is the same
+        question, and a second row would make the decider deny one of
+        them.
+
+        ## What granting it does
+
+        Performs the restore. The grant branch calls the same
+        `softdelete` primitive the per-kind restore endpoints call and
+        writes NO `user_capability_grants` row — the marker confers
+        nothing and there is nothing to confer, because the outcome the
+        requester asked for is a state change on the item, not a
+        standing right. See `POST /admin/requests/{id}/decide`.
+      tags: [account, requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          description: Which soft-deletable entity `id` names.
+          schema:
+            type: string
+            enum: [asset, post, collection]
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1000
+                  description: |
+                    Optional free text for the decider — why this
+                    should come back.
+      responses:
+        "200":
+          description: |
+            An identical appeal was already pending. The existing
+            request is returned unchanged; nothing was created and
+            nobody was notified again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
+        "201":
+          description: Appeal filed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            No such soft-deleted row of that kind, or it is not the
+            caller's. One response for both, deliberately.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            The caller may already restore this item directly (they
+            deleted it, or they hold `system.admin`). Nothing to
+            appeal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /account/notifications:
     get:
@@ -13294,7 +13461,7 @@ components:
         is pending → granted / denied (admin decision); granted
         → expired (CapabilitySweeper cascade). Terminal states
         admit no further transitions.
-      required: [id, requester_user_ref, target_asset_id, requested_capability, state, requested_at]
+      required: [id, requester_user_ref, target_kind, target_id, requested_capability, state, requested_at]
       properties:
         id:
           type: string
@@ -13302,11 +13469,49 @@ components:
         requester_user_ref:
           type: integer
           format: int64
-        target_asset_id:
+        target_kind:
+          type: string
+          enum: [asset, post, collection]
+          description: |
+            Which table `target_id` refers to. Access requests (#881)
+            are always `asset`; restoration appeals (#931) may name any
+            of the three soft-deletable kinds.
+        target_id:
           type: string
           format: uuid
+          description: |
+            The requested object, in the table named by `target_kind`.
+            Called `target_asset_id` before #931, when the workflow
+            could only ever name an asset.
         requested_capability:
           type: string
+          description: |
+            The capability code this request names. Two of them are
+            inert markers that confer nothing and exist only to TYPE
+            the row for its decide gate:
+
+            * `content.access.request` — "may I see this asset" (#881).
+              Decidable by the asset's owner, `share.grant`, or
+              `system.admin`.
+            * `content.restore.request` — "please undo this delete"
+              (#931). Decidable ONLY by whoever deleted the target, or
+              by `system.admin`. `share.grant` does not qualify:
+              authority over sharing is not authority over moderation.
+              Granting one performs the restore; it writes no
+              capability grant.
+        decidable_by_caller:
+          type: boolean
+          description: |
+            True when THIS caller may decide THIS row right now,
+            computed by the same gate the decide endpoint applies.
+            Populated on the queue listings (`/admin/requests`,
+            `/account/requests/incoming`) and absent elsewhere.
+
+            It exists because the two queues have different gates and
+            the admin queue is readable by people who cannot act on
+            every row it contains: `share.grant` sees restoration
+            appeals but may not decide them. Rendering a decide control
+            from row presence alone would offer a button that 403s.
         reason:
           type: string
         state:
@@ -17752,7 +17957,7 @@ components:
         identify an item and offer to undo, and shipping the full
         Asset/Post/Collection here would make three read contracts
         reachable through a fourth door with a different gate.
-      required: [kind, id, title, deleted_at, restorable_by_caller]
+      required: [kind, id, title, deleted_at, restorable_by_caller, restore_requested]
       properties:
         kind:
           type: string
@@ -17783,6 +17988,31 @@ components:
             rights deleted it, or no deleter was recorded — either way
             the owner must ask (#931). Renders the difference between a
             Restore button and an explanation; never a button that 403s.
+        deleted_reason:
+          type: string
+          nullable: true
+          description: |
+            The reason the deleter typed, if any (#985). Null when none
+            was given.
+
+            Disclosed in BOTH scopes, for different reasons. In
+            `owned_by_me` it is the promise the delete dialog already
+            makes to whoever writes it — "you don't own this, so the
+            owner will be shown what you write here" — and until #931
+            the field was not projected, so that promise was never
+            kept. In `deleted_by_me` it is simply the caller's own
+            words read back.
+        restore_requested:
+          type: boolean
+          description: |
+            True when this caller already has a `pending` restoration
+            appeal filed against this row (#931), so the UI shows a
+            quiet "requested" state instead of an Appeal button that
+            would coalesce onto the existing row and look like nothing
+            happened.
+
+            Only ever about the CALLER's own request. It is not a count
+            and does not disclose that anyone else has appealed.
         purge_after:
           type: string
           format: date-time

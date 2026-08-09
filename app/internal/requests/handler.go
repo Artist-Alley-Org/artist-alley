@@ -89,17 +89,86 @@ const CapSystemAdmin = "system.admin"
 // from a panel on their own work. See the migration for the full note.
 const CapAccessRequest = "content.access.request"
 
+// CapRestoreRequest is the capability a restoration APPEAL names
+// (migration 00042, #931): "please undo this delete".
+//
+// Like CapAccessRequest it confers nothing and nobody holds it — it
+// exists to TYPE the row so the decide gate can recognise it. Unlike
+// CapAccessRequest, granting one writes no user_capability_grants row
+// at all: the appeal asks for a state change on an item, not a standing
+// right, so Grant performs the restore and skips the grant insert
+// entirely. That is what keeps #881's escalation surface — the INSERT
+// that copies requested_capability verbatim — off this path.
+//
+// It is a SECOND marker rather than a reuse of the first because the
+// two name different deciders. An access request is decidable by the
+// asset's owner; an appeal must not be, because the owner is the
+// requester. See migration 00042 for the full note.
+const CapRestoreRequest = "content.restore.request"
+
 // approverCapabilities are the codes whose global holders act on the
 // request queue. Used for the create-time notification fan-out — NOT as
 // an authorisation answer; the gates below ask auth directly.
 var approverCapabilities = []string{CapShareGrant, CapSystemAdmin}
+
+// restoreNotifyCapabilities is the appeal's fan-out set, and it is
+// deliberately NOT approverCapabilities (#931).
+//
+// share.grant is absent. A share approver cannot decide an appeal —
+// auth.CanRestoreDeleted asks who DELETED the row, not what rank the
+// caller holds — so notifying them would fill an inbox with items they
+// can only look at. Authority over sharing is not authority over
+// moderation, and the notification list should say the same thing the
+// gate does.
+var restoreNotifyCapabilities = []string{CapSystemAdmin}
+
+// TargetKind is the closed set `resource_request.target_kind` admits
+// (migration 00042). Mirrors federation.ShareObjectKind for the three
+// soft-deletable entities without adopting the wider catalogue —
+// workspaces, brand kits and users are not soft-deletable and must not
+// become reachable through this column by accident.
+type TargetKind string
+
+const (
+	TargetKindAsset      TargetKind = "asset"
+	TargetKindPost       TargetKind = "post"
+	TargetKindCollection TargetKind = "collection"
+)
+
+// Valid reports whether k is one of the three kinds the CHECK
+// constraint admits. Every entry point validates before touching the
+// database so a bad kind is a 400, not a 23514.
+func (k TargetKind) Valid() bool {
+	switch k {
+	case TargetKindAsset, TargetKindPost, TargetKindCollection:
+		return true
+	}
+	return false
+}
+
+// shareKind maps to the federation kind shares.ObjectOwnerRef speaks.
+// The two vocabularies agree on the wire for all three values; the
+// conversion is explicit anyway so that a future divergence is a
+// compile error here rather than a silently unowned object.
+func (k TargetKind) shareKind() federation.ShareObjectKind {
+	switch k {
+	case TargetKindAsset:
+		return federation.ShareObjectKindAsset
+	case TargetKindPost:
+		return federation.ShareObjectKindPost
+	case TargetKindCollection:
+		return federation.ShareObjectKindCollection
+	}
+	return ""
+}
 
 // SubmitInput is the parameter list for Submit. Kept as a struct
 // so future fields (priority, team_scope_request, etc.) don't
 // require a positional-arg signature churn across every caller.
 type SubmitInput struct {
 	RequesterUserRef    int64
-	TargetAssetID       uuid.UUID
+	TargetKind          TargetKind
+	TargetID            uuid.UUID
 	RequestedCapability string
 	Reason              string // free-text justification; may be empty
 }
@@ -133,6 +202,55 @@ type notifier interface {
 	Notify(ctx context.Context, recipientRef int64, actorRef *int64, verb, targetKind, targetID string, payload map[string]any) error
 }
 
+// restorer performs the undelete a granted restoration appeal promises
+// (#931).
+//
+// A thin interface for the same reason auditRecorder and notifier are
+// thin: this package needs ONE verb, and importing softdelete outright
+// would drag storage, jobs, email and sysconfig into the request
+// lifecycle for it. (There is no import cycle either way — softdelete
+// imports nothing from here — so this is about weight, not legality.)
+//
+// The adapter at the composition root is also the right home for the
+// per-kind CACHE fan-out. Restoring an asset has to evict the cached
+// posts that omit it and the IIIF manifest that lost its canvas (#920,
+// #935); restoring a collection has its own eviction; restoring a post
+// has none. Those edges are already spelled out once each, next to the
+// per-kind restore endpoints, and the composition root is where this
+// codebase already keeps that kind of fan-out (see
+// softdelete.Service.OnAssetsHardDeleted). Re-deriving them here would
+// be a second copy that goes stale the first time a new cache keys on
+// an asset.
+type restorer interface {
+	Restore(ctx context.Context, req *http.Request, kind TargetKind, id uuid.UUID, actorUserRef int64) error
+}
+
+// ErrTargetAlreadyLive is what a restorer returns when the target is
+// not soft-deleted any more. NOT a failure: the requester asked for the
+// item to come back and it is back, so Grant treats it as success and
+// says so in the decision reason.
+var ErrTargetAlreadyLive = errors.New("requests: restore target was already live")
+
+// ErrTargetGone is what a restorer returns when the row is not there at
+// all — the retention GC hard-deleted it while the appeal sat pending.
+// Unlike ErrTargetAlreadyLive this is a real failure: the end-state the
+// requester asked for is unreachable, and reporting success would tell
+// them to go and look at something that does not exist.
+var ErrTargetGone = errors.New("requests: restore target no longer exists")
+
+// ErrRestoreUnwired is returned when a restore appeal is granted on a
+// Handler with no restorer. Fails the decision rather than granting a
+// request nothing will act on — a "granted" row whose item stayed
+// deleted is exactly the silent broken promise this feature exists to
+// remove.
+var ErrRestoreUnwired = errors.New("requests: restorer not wired")
+
+// ErrExpiryOnRestore is returned when a decider supplies expires_at on
+// a restore grant. A performed restore cannot expire — nothing is
+// scheduled to re-delete the item — so accepting the field and ignoring
+// it would let an operator believe they had set a deadline.
+var ErrExpiryOnRestore = errors.New("requests: a restore grant cannot expire")
+
 // Handler is the public surface. Construct via NewHandler at boot;
 // SetAuditRecorder + SetNotifier are post-construction setters
 // matching users.Handler / sysconfig.Handler convention.
@@ -145,6 +263,7 @@ type Handler struct {
 
 	audit    auditRecorder
 	notifier notifier
+	restorer restorer
 }
 
 // NewHandler builds the Handler. registry may be nil (tests
@@ -166,6 +285,14 @@ func (h *Handler) SetAuditRecorder(rec auditRecorder) { h.audit = rec }
 
 // SetNotifier wires the notification adapter post-construction.
 func (h *Handler) SetNotifier(n notifier) { h.notifier = n }
+
+// SetRestorer wires the undelete adapter post-construction (#931).
+//
+// Unwired, a restoration appeal can still be SUBMITTED and DENIED —
+// both are pure resource_request writes — but granting one returns
+// ErrRestoreUnwired rather than a "granted" row over an item nothing
+// put back.
+func (h *Handler) SetRestorer(r restorer) { h.restorer = r }
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -189,6 +316,10 @@ var ErrRequestNotFound = errors.New("requests: not found")
 // DB enforces this too (FK, migration 00009); checking here turns a
 // constraint violation into a clean 400 that names the problem.
 var ErrUnknownCapability = errors.New("requests: unknown capability")
+
+// ErrUnknownTargetKind is returned by Submit when target_kind is not
+// one of the three the CHECK constraint admits. Mapped to 400.
+var ErrUnknownTargetKind = errors.New("requests: unknown target kind")
 
 // Submit files a pending request, or returns the caller's existing one.
 //
@@ -227,6 +358,14 @@ var ErrUnknownCapability = errors.New("requests: unknown capability")
 func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput) (row ResourceRequest, created bool, err error) {
 	q := New(h.Pool)
 
+	// The kind is checked here, not only at the CHECK constraint, so a
+	// caller that somehow reaches this with an empty or unknown kind
+	// gets a named error rather than a 23514 wearing a 500. Every HTTP
+	// entry point already validates; this is the floor under them.
+	if !in.TargetKind.Valid() {
+		return ResourceRequest{}, false, fmt.Errorf("%w: %q", ErrUnknownTargetKind, in.TargetKind)
+	}
+
 	var known bool
 	if err := h.Pool.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM capabilities WHERE code = $1)`,
@@ -240,7 +379,8 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 
 	ask := FindPendingRequestForAskParams{
 		RequesterUserRef:    in.RequesterUserRef,
-		TargetAssetID:       pgtype.UUID{Bytes: in.TargetAssetID, Valid: true},
+		TargetKind:          string(in.TargetKind),
+		TargetID:            pgtype.UUID{Bytes: in.TargetID, Valid: true},
 		RequestedCapability: in.RequestedCapability,
 	}
 	existing, err := q.FindPendingRequestForAsk(ctx, ask)
@@ -253,7 +393,8 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 
 	row, err = q.InsertResourceRequest(ctx, InsertResourceRequestParams{
 		RequesterUserRef:    in.RequesterUserRef,
-		TargetAssetID:       pgtype.UUID{Bytes: in.TargetAssetID, Valid: true},
+		TargetKind:          string(in.TargetKind),
+		TargetID:            pgtype.UUID{Bytes: in.TargetID, Valid: true},
 		RequestedCapability: in.RequestedCapability,
 		Reason:              in.Reason,
 	})
@@ -278,7 +419,7 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 		h.audit.RequestCreated(ctx, req,
 			in.RequesterUserRef,
 			uuid.UUID(row.ID.Bytes).String(),
-			in.TargetAssetID.String(),
+			in.TargetID.String(),
 			in.RequestedCapability,
 			in.Reason)
 	}
@@ -294,15 +435,88 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 	return row, true, nil
 }
 
-// AssetOwnerRef resolves who owns the asset a request targets.
+// TargetOwnerRef resolves who owns the object a request targets, for
+// any of the three kinds.
 //
 // Delegates to shares.ObjectOwnerRef — the single expression of "who
 // owns this shareable object" (#893). A second ownership notion here is
 // exactly what epic #665 exists to prevent, and #892 and #904 each spent
 // a sprint undoing one. ok=false is "no resolvable owner" and every
-// caller reads it as a denial, per that function's fail-closed contract.
-func (h *Handler) AssetOwnerRef(ctx context.Context, assetID uuid.UUID) (int64, bool, error) {
-	return shares.ObjectOwnerRef(ctx, h.Pool, federation.ShareObjectKindAsset, assetID)
+// caller reads it as a denial, per that function's fail-closed contract
+// — which is also how a NULL owner (an orphaned asset) and a missing
+// row both come back.
+//
+// Note for posts: ObjectOwnerRef reads `author_user_ref`, the post's
+// own ownership column. That mapping lives there, once.
+func (h *Handler) TargetOwnerRef(ctx context.Context, kind TargetKind, id uuid.UUID) (int64, bool, error) {
+	if !kind.Valid() {
+		return 0, false, nil
+	}
+	return shares.ObjectOwnerRef(ctx, h.Pool, kind.shareKind(), id)
+}
+
+// DeleteState is what the appeal workflow needs to know about a target
+// row. Both facts, always, because Submit and Decide ask different
+// questions of the same read.
+type DeleteState struct {
+	// Exists is false when there is no such row at all.
+	Exists bool
+	// SoftDeleted is true while deleted_at is set. Submit requires it
+	// (there is nothing to appeal about a live item); Decide does not.
+	SoftDeleted bool
+	// DeletedBy is deleted_by_user_ref, and it SURVIVES a restore —
+	// RestoreAsset clears deleted_at and deleted_reason only. That is
+	// deliberate here: it means an appeal someone else already
+	// satisfied is still decidable by the person it was addressed to,
+	// rather than becoming un-closable the moment the item comes back.
+	//
+	// nil is "we do not know who did this" — a pre-00037 row, or a
+	// system-scheduled retention delete — and auth.CanRestoreDeleted
+	// fails it closed to system.admin.
+	DeletedBy *int64
+}
+
+// TargetDeleteState reads the delete state of an appeal's target.
+//
+// Switches on the closed kind enum rather than interpolating a table
+// name, so the set of tables this authorisation input can be read from
+// is fixed at compile time. A missing row is Exists=false, never an
+// error: "no such row" and "not yours" must be indistinguishable to the
+// caller, and returning a DB error class here would separate them.
+func (h *Handler) TargetDeleteState(ctx context.Context, kind TargetKind, id uuid.UUID) (DeleteState, error) {
+	q := New(h.Pool)
+	pgID := pgtype.UUID{Bytes: id, Valid: true}
+
+	var deletedAt pgtype.Timestamptz
+	var deletedBy *int64
+	var err error
+	switch kind {
+	case TargetKindAsset:
+		var r GetAssetDeleteStateRow
+		r, err = q.GetAssetDeleteState(ctx, pgID)
+		deletedAt, deletedBy = r.DeletedAt, r.DeletedByUserRef
+	case TargetKindPost:
+		var r GetPostDeleteStateRow
+		r, err = q.GetPostDeleteState(ctx, pgID)
+		deletedAt, deletedBy = r.DeletedAt, r.DeletedByUserRef
+	case TargetKindCollection:
+		var r GetCollectionDeleteStateRow
+		r, err = q.GetCollectionDeleteState(ctx, pgID)
+		deletedAt, deletedBy = r.DeletedAt, r.DeletedByUserRef
+	default:
+		return DeleteState{}, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeleteState{}, nil
+	}
+	if err != nil {
+		return DeleteState{}, fmt.Errorf("requests: target delete state: %w", err)
+	}
+	return DeleteState{
+		Exists:      true,
+		SoftDeleted: deletedAt.Valid,
+		DeletedBy:   deletedBy,
+	}, nil
 }
 
 // Get reads one request by id. ErrRequestNotFound when there is none.
@@ -347,6 +561,10 @@ func (h *Handler) Grant(ctx context.Context, req *http.Request, in DecideInput) 
 	}
 	if err := ValidateTransition(RequestState(pre.State), RequestStateGranted); err != nil {
 		return ResourceRequest{}, err
+	}
+
+	if pre.RequestedCapability == CapRestoreRequest {
+		return h.grantRestore(ctx, req, pre, in)
 	}
 
 	var row ResourceRequest
@@ -411,7 +629,7 @@ func (h *Handler) Grant(ctx context.Context, req *http.Request, in DecideInput) 
 			in.ApproverRef,
 			pre.RequesterUserRef,
 			in.RequestID.String(),
-			uuid.UUID(pre.TargetAssetID.Bytes).String(),
+			uuid.UUID(pre.TargetID.Bytes).String(),
 			pre.RequestedCapability,
 			in.DecisionReason,
 			in.ExpiresAt)
@@ -420,6 +638,116 @@ func (h *Handler) Grant(ctx context.Context, req *http.Request, in DecideInput) 
 	h.invalidateCount(ctx)
 
 	return row, nil
+}
+
+// grantRestore is Grant's other half: approving a restoration appeal
+// (#931).
+//
+// # It writes no capability grant, and that is the whole point
+//
+// The access branch above inserts `pre.RequestedCapability` verbatim
+// into user_capability_grants. ADR 0064 and migration 00035 both name
+// that as the escalation surface, contained today only by keeping the
+// decide gate narrow. This branch does not reach that INSERT at all —
+// not by filtering what goes into it, but by not being the same code
+// path. `SELECT count(*) FROM user_capability_grants` is unchanged
+// across a restore grant, and there is a test that asserts exactly
+// that, because "the marker confers nothing" is a claim about the
+// capability while "no row was written" is a claim about the code.
+//
+// # Why the restore happens BEFORE the CAS
+//
+// The two writes cannot share a transaction: softdelete.Service owns
+// its own pool handle and its own audit emit, and reaching around it to
+// re-issue its UPDATE here would be the duplicate this package went out
+// of its way to avoid. So one of them commits first, and the choice is
+// between two failure shapes:
+//
+//	CAS first  → a crash between them leaves the request reading
+//	             "granted" over an item that is still deleted. The
+//	             requester is told yes and finds nothing. Nothing on any
+//	             surface reveals the discrepancy.
+//	restore    → a crash between them leaves the item live over a
+//	 first      request still reading "pending". The requester got what
+//	             they asked for; the decider sees the row still in their
+//	             queue and closes it. Visible, and self-correcting.
+//
+// The second is strictly better, so the restore goes first. The state
+// pre-check in Grant keeps the window small, and the restore is
+// idempotent (ErrTargetAlreadyLive is success), so a re-decide after a
+// crash costs nothing.
+func (h *Handler) grantRestore(ctx context.Context, req *http.Request, pre ResourceRequest, in DecideInput) (ResourceRequest, error) {
+	if !in.ExpiresAt.IsZero() {
+		return ResourceRequest{}, ErrExpiryOnRestore
+	}
+	if h.restorer == nil {
+		return ResourceRequest{}, ErrRestoreUnwired
+	}
+
+	kind := TargetKind(pre.TargetKind)
+	if !kind.Valid() {
+		return ResourceRequest{}, fmt.Errorf("%w: %q", ErrUnknownTargetKind, pre.TargetKind)
+	}
+	targetID := uuid.UUID(pre.TargetID.Bytes)
+
+	decisionReason := in.DecisionReason
+	switch err := h.restorer.Restore(ctx, req, kind, targetID, in.ApproverRef); {
+	case err == nil:
+	case errors.Is(err, ErrTargetAlreadyLive):
+		// Someone else — the other admin in the thread, or a
+		// super-admin acting directly — already put it back. The
+		// requested end-state holds, so denying now would be a "no" to
+		// something that has already happened. Recorded in the reason
+		// so the decision reads honestly later: this decider did not
+		// perform the restore.
+		decisionReason = appendNote(decisionReason, "target was already restored")
+	default:
+		// ErrTargetGone included: the retention GC hard-deleted the
+		// item while the appeal sat pending. Granting would tell the
+		// requester to go and look at something that no longer exists.
+		return ResourceRequest{}, err
+	}
+
+	row, err := New(h.Pool).MarkRequestGranted(ctx, MarkRequestGrantedParams{
+		ID:               pre.ID,
+		DecidedByUserRef: &in.ApproverRef,
+		DecisionReason:   decisionReason,
+		// No expiry, ever. Guarded above; stated again here so the
+		// write cannot acquire one by a future edit to DecideInput.
+		ExpiresAt: pgtype.Timestamptz{},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ResourceRequest{}, ErrRequestAlreadyDecided
+		}
+		return ResourceRequest{}, fmt.Errorf("requests: mark restore granted: %w", err)
+	}
+
+	if h.audit != nil {
+		h.audit.RequestGranted(ctx, req,
+			in.ApproverRef,
+			pre.RequesterUserRef,
+			uuid.UUID(pre.ID.Bytes).String(),
+			targetID.String(),
+			pre.RequestedCapability,
+			decisionReason,
+			time.Time{})
+	}
+	notified := in
+	notified.DecisionReason = decisionReason
+	h.notifyDecision(ctx, pre, notified, true /* granted */)
+	h.invalidateCount(ctx)
+
+	return row, nil
+}
+
+// appendNote adds a server-side observation to an operator's decision
+// reason without discarding what they wrote.
+func appendNote(reason, note string) string {
+	if reason == "" {
+		return note
+	}
+	return reason + " (" + note + ")"
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +789,7 @@ func (h *Handler) Deny(ctx context.Context, req *http.Request, in DecideInput) (
 			in.ApproverRef,
 			pre.RequesterUserRef,
 			in.RequestID.String(),
-			uuid.UUID(pre.TargetAssetID.Bytes).String(),
+			uuid.UUID(pre.TargetID.Bytes).String(),
 			pre.RequestedCapability,
 			in.DecisionReason)
 	}
@@ -650,12 +978,25 @@ func (h *Handler) CountPending(ctx context.Context, approverRef int64) (int64, e
 // Best-effort throughout: a failed lookup or a failed send logs at WARN
 // and the request stands. The row is the source of truth; the queue is
 // still correct even if nobody was pinged.
+// # Who an APPEAL goes to instead (#931)
+//
+// The target's DELETER, plus system.admin — the two parties
+// auth.CanRestoreDeleted admits, so the notification list and the
+// decide gate name the same people. NOT the owner: the owner filed it.
+// NOT share.grant: a share approver cannot decide an appeal, and
+// telling them about one would be an inbox item with no button.
+//
+// A NULL deleter (pre-00037 rows, system retention deletes) simply
+// contributes no recipient. The rule fails closed to system.admin, who
+// are on the list anyway.
 func (h *Handler) notifySubmitted(ctx context.Context, row ResourceRequest) {
 	if h.notifier == nil {
 		return
 	}
 	requestID := uuid.UUID(row.ID.Bytes)
-	assetID := uuid.UUID(row.TargetAssetID.Bytes)
+	targetKind := TargetKind(row.TargetKind)
+	targetID := uuid.UUID(row.TargetID.Bytes)
+	isAppeal := row.RequestedCapability == CapRestoreRequest
 
 	recipients := make([]int64, 0, 4)
 	seen := map[int64]bool{row.RequesterUserRef: true}
@@ -667,13 +1008,23 @@ func (h *Handler) notifySubmitted(ctx context.Context, row ResourceRequest) {
 		recipients = append(recipients, ref)
 	}
 
-	if ownerRef, ok, err := h.AssetOwnerRef(ctx, assetID); err != nil {
+	if isAppeal {
+		if st, err := h.TargetDeleteState(ctx, targetKind, targetID); err != nil {
+			h.warn(ctx, "requests.notify.deleter_lookup_failed", requestID, err)
+		} else if st.DeletedBy != nil && *st.DeletedBy != 0 {
+			add(*st.DeletedBy)
+		}
+	} else if ownerRef, ok, err := h.TargetOwnerRef(ctx, targetKind, targetID); err != nil {
 		h.warn(ctx, "requests.notify.owner_lookup_failed", requestID, err)
 	} else if ok {
 		add(ownerRef)
 	}
 
-	holders, err := New(h.Pool).ListGlobalCapabilityHolders(ctx, approverCapabilities)
+	fanout := approverCapabilities
+	if isAppeal {
+		fanout = restoreNotifyCapabilities
+	}
+	holders, err := New(h.Pool).ListGlobalCapabilityHolders(ctx, fanout)
 	if err != nil {
 		h.warn(ctx, "requests.notify.approver_lookup_failed", requestID, err)
 	}
@@ -681,10 +1032,18 @@ func (h *Handler) notifySubmitted(ctx context.Context, row ResourceRequest) {
 		add(ref)
 	}
 
+	// `object_*` rather than `target_*`: the notification ROW already
+	// has target_kind/target_id columns, and they mean the REQUEST.
+	// Reusing those names inside the payload for the thing the request
+	// is about would give one notification two different answers to
+	// "what is target_kind". `object` is the vocabulary the federation
+	// side already uses for the requested thing (ShareObjectKind,
+	// ObjectOwnerRef).
 	payload := map[string]any{
-		"request_id": requestID.String(),
-		"capability": row.RequestedCapability,
-		"asset_id":   assetID.String(),
+		"request_id":  requestID.String(),
+		"capability":  row.RequestedCapability,
+		"object_kind": string(targetKind),
+		"object_id":   targetID.String(),
 	}
 	actor := row.RequesterUserRef
 	for _, ref := range recipients {
@@ -727,7 +1086,8 @@ func (h *Handler) notifyDecision(ctx context.Context, pre ResourceRequest, in De
 	payload := map[string]any{
 		"request_id":      in.RequestID.String(),
 		"capability":      pre.RequestedCapability,
-		"asset_id":        uuid.UUID(pre.TargetAssetID.Bytes).String(),
+		"object_kind":     pre.TargetKind,
+		"object_id":       uuid.UUID(pre.TargetID.Bytes).String(),
 		"decision_reason": in.DecisionReason,
 	}
 	if granted && !in.ExpiresAt.IsZero() {

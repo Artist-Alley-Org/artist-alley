@@ -221,6 +221,42 @@ var polymorphicRefs = []polymorphicRef{
 		Reason: "pending operation against one content id; unrunnable once the target is wiped",
 	},
 	{
+		// A resource_request names its target with no foreign key —
+		// the baseline never had one, and #931 turned the column
+		// polymorphic (target_asset_id → target_kind + target_id) so
+		// an appeal can name a post or a collection.
+		//
+		// THE ORPHANING PREDATES #931. `assets` has been in the
+		// TRUNCATE list all along and this column has never had an FK,
+		// so every reset since 1.17.E has left request rows pointing
+		// at wiped asset ids. It was invisible to the completeness
+		// test only because that test finds polymorphic columns by
+		// their `…kind` / `…type` NAME, and until now there was no
+		// kind column here to find — the exact blind spot the registry
+		// comment warns about when it says a naming convention alone
+		// is not enough. Adding the discriminator is what made the
+		// pre-existing bug detectable.
+		//
+		// SWEEP, for the scheduled_actions reason: a request is a
+		// pending or decided decision ABOUT one content id. Against a
+		// target the reset just wiped it can never be actioned, cannot
+		// render in either queue (both JOIN their target), and for an
+		// appeal it is worse than inert — the row would keep the
+		// owner's trash claiming an appeal is pending on something
+		// that no longer exists.
+		//
+		// Deleting these is safe for the grants that reference them:
+		// user_capability_grants.request_ref is ON DELETE SET NULL.
+		Table: "resource_request", KindColumn: "target_kind", IDColumn: "target_id",
+		Targets: map[string]polyTarget{
+			"asset":      {"assets", "id"},
+			"post":       {"posts", "id"},
+			"collection": {"collections", "id"},
+		},
+		Sweep:  true,
+		Reason: "a decision about one content id; unactionable and unrenderable once the target is wiped",
+	},
+	{
 		// Per-resource workflow history, rendered on the asset /
 		// collection page. Not seeded, but the app writes it, and with
 		// the resource truncated the rows are unreachable — there is

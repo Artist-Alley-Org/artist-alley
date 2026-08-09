@@ -47,7 +47,8 @@ func TestSubmit_CreatesPendingRow_AuditFires(t *testing.T) {
 
 	out, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 		Reason:              "research project",
 	})
@@ -74,7 +75,8 @@ func TestGrant_PendingToGranted_InsertsGrantWithRequestRef(t *testing.T) {
 
 	row, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 		Reason:              "r",
 	})
@@ -141,7 +143,8 @@ func TestGrant_AlreadyDecided_Rejects(t *testing.T) {
 
 	row, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 	})
 	if err != nil {
@@ -176,7 +179,8 @@ func TestDeny_PendingToDenied_NoGrantInserted(t *testing.T) {
 
 	row, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 	})
 	if err != nil {
@@ -223,7 +227,8 @@ func TestMarkExpired_GrantedToExpired(t *testing.T) {
 
 	row, _, _ := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 	})
 	rid := uuid.UUID(row.ID.Bytes)
@@ -266,7 +271,8 @@ func TestMarkExpired_NonGranted_Noop(t *testing.T) {
 
 	row, _, _ := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 	})
 	rid := uuid.UUID(row.ID.Bytes)
@@ -313,12 +319,12 @@ func TestListForRequester_FiltersByRequester(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
-			RequesterUserRef: a, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
+			RequesterUserRef: a, TargetKind: requests.TargetKindAsset, TargetID: uuid.New(), RequestedCapability: "posts.publish",
 		})
 	}
 	for i := 0; i < 2; i++ {
 		_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
-			RequesterUserRef: b, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
+			RequesterUserRef: b, TargetKind: requests.TargetKindAsset, TargetID: uuid.New(), RequestedCapability: "posts.publish",
 		})
 	}
 	gotA, err := h.ListForRequester(context.Background(), a, 50)
@@ -343,7 +349,7 @@ func TestCountPending_UsesCache(t *testing.T) {
 
 	requester := seedUserForRequests(t, pool)
 	_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
-		RequesterUserRef: requester, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
+		RequesterUserRef: requester, TargetKind: requests.TargetKindAsset, TargetID: uuid.New(), RequestedCapability: "posts.publish",
 	})
 
 	// First call populates cache + reads DB.
@@ -358,7 +364,7 @@ func TestCountPending_UsesCache(t *testing.T) {
 	// another pending row + asserting the second call still
 	// returns the old count.
 	_, _, _ = h.Submit(context.Background(), nil, requests.SubmitInput{
-		RequesterUserRef: requester, TargetAssetID: uuid.New(), RequestedCapability: "posts.publish",
+		RequesterUserRef: requester, TargetKind: requests.TargetKindAsset, TargetID: uuid.New(), RequestedCapability: "posts.publish",
 	})
 	// Submit wildcards the cache, so the next CountPending re-reads.
 	n2, _ := h.CountPending(context.Background(), 1)
@@ -534,7 +540,8 @@ func TestSubmit_UnknownCapabilityRejected(t *testing.T) {
 
 	_, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "totally.made.up",
 		Reason:              "should not be storable",
 	})
@@ -549,7 +556,8 @@ func TestSubmit_UnknownCapabilityRejected(t *testing.T) {
 	// validation would pass by rejecting everything.
 	if _, _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
 		RequesterUserRef:    requester,
-		TargetAssetID:       uuid.New(),
+		TargetKind:          requests.TargetKindAsset,
+		TargetID:            uuid.New(),
 		RequestedCapability: "posts.publish",
 		Reason:              "legitimate",
 	}); err != nil {

@@ -407,9 +407,10 @@ func TestAccessLoop_NotificationPayloadIsAllowListed(t *testing.T) {
 	}
 
 	permitted := map[string]bool{
-		"request_id": true, // the thing to act on
-		"capability": true, // what was asked for
-		"asset_id":   true, // already in the placeholder's allow-list (#899)
+		"request_id":  true, // the thing to act on
+		"capability":  true, // what was asked for
+		"object_kind": true, // which table object_id names (#931)
+		"object_id":   true, // was asset_id; already allow-listed (#899)
 	}
 	sent := noter.withVerb("resource_request_received_to_approve")
 	if len(sent) == 0 {
@@ -427,7 +428,7 @@ func TestAccessLoop_NotificationPayloadIsAllowListed(t *testing.T) {
 		for k := range m {
 			if !permitted[k] {
 				t.Errorf("notification payload carries %q, which is not permitted "+
-					"(allowed: request_id, capability, asset_id). Payload: %s", k, raw)
+					"(allowed: request_id, capability, object_kind, object_id). Payload: %s", k, raw)
 			}
 		}
 		// The reason is free text the REQUESTER wrote. It is fine in the

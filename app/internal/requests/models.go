@@ -803,7 +803,7 @@ type PostTag struct {
 type ResourceRequest struct {
 	ID                  pgtype.UUID
 	RequesterUserRef    int64
-	TargetAssetID       pgtype.UUID
+	TargetID            pgtype.UUID
 	RequestedCapability string
 	Reason              string
 	State               string
@@ -812,6 +812,7 @@ type ResourceRequest struct {
 	DecisionReason      string
 	ExpiresAt           pgtype.Timestamptz
 	RequestedAt         pgtype.Timestamptz
+	TargetKind          string
 }
 
 type Role struct {

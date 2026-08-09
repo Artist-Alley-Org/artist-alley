@@ -74,6 +74,11 @@ var grantOnlyCapabilities = map[string]string{
 	// --- Markers a workflow writes; nobody exercises them as a permission.
 	"content.access.request": "00035: 'Not seeded onto any role. Nobody needs to HOLD it — it is a " +
 		"marker the request workflow writes, not a permission anyone exercises.'",
+	"content.restore.request": "00042: 'Not seeded onto any role. It exists to TYPE the request row " +
+		"so the gate can recognise it; nobody ever holds it.' Stronger than its access sibling: " +
+		"granting a restoration appeal writes NO user_capability_grants row at all — requests.Grant " +
+		"branches to the softdelete call and never reaches the grant INSERT — so a holder of this " +
+		"code could not arise even from the workflow that names it (#931).",
 
 	// --- Per-tool operator grants on the MCP client; no tier holds them.
 	"mcp.client.images.read": "docs/operator/mcp-client-setup.md lists it as a 'Suggested extra cap' " +

@@ -1751,6 +1751,23 @@ func (h *Handler) DeleteAsset(
 	return openapi.DeleteAsset204Response{}, nil
 }
 
+// InvalidateAfterRestore is invalidateDerivedCaches' "restore" case,
+// exported for callers OUTSIDE this package that put an asset back.
+//
+// There is exactly one: the composition root's restorer adapter, which
+// a granted restoration appeal (#931) goes through instead of
+// RestoreAsset. Without this, an appeal would flip deleted_at and leave
+// the asset missing from its posts and from the IIIF manifest until the
+// process restarted — #920's bug, re-armed on a third path, and
+// invisible from the 200 the decider sees.
+//
+// A hook rather than an export of the whole helper: the caller says
+// "this asset is live again", not "run these two evictions", so the SET
+// of evictions can grow here without every caller learning about it.
+func (h *Handler) InvalidateAfterRestore(ctx context.Context, assetID uuid.UUID) {
+	h.invalidateDerivedCaches(ctx, assetID, "restore")
+}
+
 // invalidateDerivedCaches evicts every OTHER domain's cached answer
 // that this asset write just changed. An asset write touches only the
 // asset row, but three caches key on something else entirely and none

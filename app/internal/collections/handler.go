@@ -1344,6 +1344,18 @@ func (h *Handler) cacheAdd(row Collection) {
 	h.byID.Add(uuidString(row.ID), row)
 }
 
+// InvalidateAfterRestore evicts the by-id cache for a collection that
+// has just come back, for callers outside this package.
+//
+// The one caller is the composition root's restorer adapter, which a
+// granted restoration appeal (#931) goes through instead of
+// RestoreCollection. Mirrors assets.Handler.InvalidateAfterRestore; the
+// posts handler needs no equivalent, because its restore path evicts
+// nothing.
+func (h *Handler) InvalidateAfterRestore(ctx context.Context, id uuid.UUID) {
+	h.cacheInvalidate(ctx, pgtype.UUID{Bytes: id, Valid: true})
+}
+
 func (h *Handler) cacheInvalidate(ctx context.Context, id pgtype.UUID) {
 	if h.byID == nil {
 		return

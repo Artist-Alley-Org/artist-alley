@@ -260,6 +260,20 @@ func plantOrphans(t *testing.T, pool *pgxpool.Pool, f resetFixture) {
 				f.assetID.String(), f.adminRef)
 			return err
 		},
+		"resource_request": func() error {
+			// A restoration appeal (#931) against the asset the reset
+			// is about to wipe. The capability is FK'd to
+			// `capabilities`, so this names the real marker migration
+			// 00042 seeds rather than an invented code — a row with a
+			// fictional capability could not be inserted at all, and a
+			// fixture that cannot land is a sweep nothing exercises.
+			_, err := pool.Exec(ctx,
+				`INSERT INTO resource_request
+				     (requester_user_ref, target_kind, target_id, requested_capability)
+				 VALUES ($1, 'asset', $2, 'content.restore.request')`,
+				f.userRef, f.assetID)
+			return err
+		},
 		"workflow_audit": func() error {
 			_, err := pool.Exec(ctx,
 				`INSERT INTO workflow_audit (resource_kind, resource_id, to_state_id, actor_user_ref)
