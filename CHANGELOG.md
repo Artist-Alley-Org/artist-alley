@@ -108,6 +108,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **One keystroke, one action.** Pressing an arrow key on a video inside a feed both stepped
+  a frame *and* moved to the next post — two things at once, whichever you wanted. The same
+  double-firing hit the info toggle, page-turns in the book reader, and every key while the
+  whiteboard was open, where a shortcut ran the whiteboard's action and the video player's
+  underneath it (#885).
+
+  A key now belongs to the surface that actually uses it: arrows step frames on video and
+  audio, and move between posts on everything else. The whiteboard, while open, owns its
+  keys outright.
+
+  Two advertised shortcuts that never existed now do: `[` and `]` change the brush size on
+  the whiteboard, and Ctrl+F opens Find in the document reader. The shortcuts cheatsheet was
+  corrected to match reality — one entry had been describing the double-firing as intended.
+
+- **When the sample-data step dies in testing, it now leaves a verdict.** An intermittent
+  database crash during our own nightly test runs had gone undiagnosed for weeks because
+  nothing recorded what happened — by the time anyone looked, the evidence was gone. The
+  failure now captures the container's state, the kernel's memory counters and the decisive
+  log lines at the moment it happens, so the next occurrence names its cause instead of
+  starting an investigation (#886).
+
 - **"Oldest first" now actually shows oldest first.** The feed's sort toggle sent its choice
   to a server that never read it, so both directions returned newest-first. Now the order —
   and the paging underneath it — genuinely follow the toggle, and scrolling deep in either
