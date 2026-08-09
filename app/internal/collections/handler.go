@@ -576,7 +576,7 @@ func (h *Handler) DeleteCollection(
 		Activity: em.Activity,
 	}, func(tx pgx.Tx) error {
 		// deleted_by_user_ref is what makes the delete undoable by the
-		// person who did it (#931) — see canRestoreCollection.
+		// person who did it (#931) — see auth.CanRestoreDeleted.
 		deleter := caller.UserRef
 		return New(tx).DeleteCollection(ctx, DeleteCollectionParams{
 			ID:               pgID,
@@ -599,7 +599,7 @@ func (h *Handler) DeleteCollection(
 // ---------------------------------------------------------------------------
 
 // RestoreCollection clears deleted_at + deleted_reason on a soft-
-// deleted collection. See canRestoreCollection for the rule: you undo
+// deleted collection. See auth.CanRestoreDeleted for the rule: you undo
 // your own delete, system.admin undoes any. Previously system.admin
 // only, while DeleteCollection was open to the owner — so an owner
 // could delete their collection and then not get it back (#931).
@@ -623,7 +623,7 @@ func (h *Handler) RestoreCollection(
 		}
 		return nil, fmt.Errorf("collections: load deleted_by: %w", err)
 	}
-	if !canRestoreCollection(id, deletedBy) {
+	if !auth.CanRestoreDeleted(id, deletedBy) {
 		return openapi.RestoreCollection403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
 				Error: "this collection was deleted by someone else; ask an administrator to restore it",
@@ -1394,22 +1394,6 @@ func canMutateCollection(id *auth.Identity, row Collection) bool {
 		return true
 	}
 	return id.Can(CapCollectionsAdmin) || id.Can(CapSystemAdmin)
-}
-
-// canRestoreCollection decides who may undo a soft delete. Mirrors
-// assets.canRestoreDeleted exactly — you undo your own delete,
-// system.admin undoes any — and the reasoning lives there.
-//
-// deletedBy is nil for a row deleted before migration 00037; that
-// fails closed to system.admin.
-func canRestoreCollection(id *auth.Identity, deletedBy *int64) bool {
-	if id == nil || id.IsAnonymous() {
-		return false
-	}
-	if id.Can(CapSystemAdmin) {
-		return true
-	}
-	return deletedBy != nil && *deletedBy != 0 && id.UserRef != 0 && *deletedBy == id.UserRef
 }
 
 // ---------------------------------------------------------------------------

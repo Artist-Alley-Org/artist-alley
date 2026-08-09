@@ -529,6 +529,28 @@
       "empty_hint": "When someone gives you access to one of their posts, it shows up here and you'll get a notification.",
       "load_more": "Load more"
     },
+    "trash": {
+      "title": "Trash",
+      "intro": "Assets, posts and collections of yours that have been deleted. They stay here for a while before being removed for good, and you can put back anything you deleted yourself.",
+      "empty": "Your trash is empty.",
+      "empty_hint": "Anything you delete lands here first, so you can change your mind.",
+      "empty_action": "Go to your profile",
+      "kind_asset": "Asset",
+      "kind_post": "Post",
+      "kind_collection": "Collection",
+      "untitled": "Untitled",
+      "deleted_on": "Deleted",
+      "purges_in": "removed for good in",
+      "day": "day",
+      "days": "days",
+      "restore": "Restore",
+      "restoring": "Restoring…",
+      "restored": "Put back. It's out of the trash and back where it was.",
+      "admin_deleted": "Removed by someone else — restoring it needs an administrator.",
+      "load_error": "Couldn't load your trash.",
+      "restore_error": "Couldn't put that back.",
+      "load_more": "Load more"
+    },
     "preferences": {
       "title": "Preferences",
       "intro": "These follow you across browsers when you sign in.",

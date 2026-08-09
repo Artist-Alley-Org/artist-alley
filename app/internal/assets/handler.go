@@ -1446,45 +1446,6 @@ func hasAssetCapability(id *auth.Identity, code string, teamID pgtype.UUID) bool
 	return id.Can(code)
 }
 
-// canRestoreDeleted decides who may undo a soft delete, for any of the
-// three soft-deletable entities. The rule is deliberately about the
-// DELETER, not about the caller's standing authority (#931):
-//
-//	"users should be able to recover their own deleted files, unless
-//	 deleted by an admin. Then they would need to request for
-//	 restoration."
-//
-// So: you may undo your own delete, and system.admin may undo any.
-// Nothing else. That single rule satisfies both halves at once —
-//
-//   - Restore authority matches delete authority. Whoever could delete
-//     it can undo it, because the deleter is by construction someone
-//     who passed the delete gate. Before this, delete was open to every
-//     authenticated user and restore was system.admin only, which is
-//     the asymmetry #931 objects to; conditioning restore on the
-//     caller's authority INSTEAD of on the deleter would just move that
-//     asymmetry one level up.
-//
-//   - An admin's delete is not silently reversible by the owner. If it
-//     were "owner OR deleter", an owner could undo a moderation action
-//     the instant it landed. Asking for restoration is the intended
-//     path there; the request flow itself is #931's other half and is
-//     not built yet.
-//
-// deletedBy is nil for a row deleted before migration 00037 and for a
-// system-scheduled retention delete (scheduled_actions.created_by is
-// nullable). Both mean "we do not know who did this", and both fail
-// closed to system.admin.
-func canRestoreDeleted(id *auth.Identity, deletedBy *int64) bool {
-	if id == nil || id.IsAnonymous() {
-		return false
-	}
-	if id.Can(auth.SuperAdminCapability) {
-		return true
-	}
-	return deletedBy != nil && *deletedBy != 0 && id.UserRef != 0 && *deletedBy == id.UserRef
-}
-
 // ---------------------------------------------------------------------------
 // UpdateAsset
 // ---------------------------------------------------------------------------
@@ -1762,7 +1723,7 @@ func (h *Handler) DeleteAsset(
 		}, nil
 	}
 	// deleted_by_user_ref is what makes the delete undoable by the
-	// person who did it (#931) — see canRestoreDeleted.
+	// person who did it (#931) — see auth.CanRestoreDeleted.
 	deleter := caller.UserRef
 	if err := q.SoftDeleteAsset(ctx, SoftDeleteAssetParams{
 		ID:               pgID,
@@ -1844,7 +1805,8 @@ func (h *Handler) invalidateDerivedCaches(ctx context.Context, assetID uuid.UUID
 // Until #931 this was system.admin ONLY, while DeleteAsset was open to
 // every authenticated user — anyone could remove a studio's library and
 // nobody below super-admin could undo it. The gate is now
-// canRestoreDeleted: you undo your own delete, system.admin undoes any.
+// auth.CanRestoreDeleted: you undo your own delete, system.admin
+// undoes any.
 // See that helper for why the rule turns on the DELETER rather than on
 // the caller's standing authority.
 //
@@ -1872,7 +1834,7 @@ func (h *Handler) RestoreAsset(
 		}
 		return nil, fmt.Errorf("assets: load deleted_by: %w", err)
 	}
-	if !canRestoreDeleted(id, deletedBy) {
+	if !auth.CanRestoreDeleted(id, deletedBy) {
 		return openapi.RestoreAsset403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
 				Error: "this asset was deleted by someone else; ask an administrator to restore it",

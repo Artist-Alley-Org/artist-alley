@@ -49,6 +49,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/trash"
 
 	"github.com/mscrnt/artist-alley/app/internal/ai"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
@@ -130,16 +131,20 @@ type apiServer struct {
 	// GetBuildInfo for the admin About page (#406).
 	version string
 
-	auth               *auth.Handler
-	resourceType       *assettype.Handler
-	storage            *storage.Handler
-	assets             *assets.Handler
-	metadata           *metadata.Handler
-	collections        *collections.Handler
-	posts              *posts.Handler
-	teams              *teams.Handler
-	users              *users.Handler
-	social             *social.Handler
+	auth         *auth.Handler
+	resourceType *assettype.Handler
+	storage      *storage.Handler
+	assets       *assets.Handler
+	metadata     *metadata.Handler
+	collections  *collections.Handler
+	posts        *posts.Handler
+	teams        *teams.Handler
+	users        *users.Handler
+	social       *social.Handler
+	// #937 — GET /account/trash. Reads across assets/posts/collections
+	// but owns none of them; see the package doc for why it is one
+	// endpoint and not three.
+	trash              *trash.Handler
 	setup              *setup.Handler
 	workflow           *workflow.Handler
 	sysconfigH         *sysconfig.Handler
@@ -294,6 +299,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		teams:            teams.NewHandler(pool, logger, cacheReg),
 		users:            usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
 		social:           social.NewHandler(pool, logger, cacheReg),
+		trash:            trash.NewHandler(pool, sysCfg, logger),
 		setup:            setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:         workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode, storageSvc),
@@ -2957,6 +2963,12 @@ func (s *apiServer) CreateAssetTextAnnotation(ctx context.Context, req openapi.C
 }
 func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
 	return s.social.UpdateTextAnnotation(ctx, req)
+}
+
+// --- account trash ---------------------------------------------------------
+
+func (s *apiServer) ListMyTrash(ctx context.Context, req openapi.ListMyTrashRequestObject) (openapi.ListMyTrashResponseObject, error) {
+	return s.trash.ListMyTrash(ctx, req)
 }
 
 // --- posts -----------------------------------------------------------------

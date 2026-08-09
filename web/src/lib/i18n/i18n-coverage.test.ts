@@ -139,6 +139,7 @@ const TRACKED_FILES = [
   'src/lib/components/RequestQueue.svelte',
   'src/routes/account/requests/+page.svelte',
   'src/routes/admin/requests/+page.svelte',
+  'src/routes/account/trash/+page.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)
