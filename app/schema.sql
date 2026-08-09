@@ -2255,6 +2255,17 @@ CREATE TABLE public.team_memberships (
 
 
 --
+-- Name: team_follows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.team_follows (
+    user_ref bigint NOT NULL,
+    team_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: team_parents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3242,6 +3253,14 @@ ALTER TABLE ONLY public.system_config
 
 ALTER TABLE ONLY public.team_closure
     ADD CONSTRAINT team_closure_pkey PRIMARY KEY (ancestor_id, descendant_id);
+
+
+--
+-- Name: team_follows team_follows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_follows
+    ADD CONSTRAINT team_follows_pkey PRIMARY KEY (user_ref, team_id);
 
 
 --
@@ -4792,6 +4811,13 @@ CREATE INDEX team_closure_descendant_idx ON public.team_closure USING btree (des
 
 
 --
+-- Name: team_follows_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX team_follows_team_idx ON public.team_follows USING btree (team_id, created_at DESC);
+
+
+--
 -- Name: team_memberships_user_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5824,6 +5850,22 @@ ALTER TABLE ONLY public.team_closure
 
 ALTER TABLE ONLY public.team_closure
     ADD CONSTRAINT team_closure_descendant_id_fkey FOREIGN KEY (descendant_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: team_follows team_follows_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_follows
+    ADD CONSTRAINT team_follows_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: team_follows team_follows_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_follows
+    ADD CONSTRAINT team_follows_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
 
 
 --

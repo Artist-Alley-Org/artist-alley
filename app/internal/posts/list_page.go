@@ -44,9 +44,17 @@ type ListPostsPageParams struct {
 	Q               *string
 	Tag             *string
 	FeedFollowerRef *int64
-	CursorPostedAt  pgtype.Timestamptz
-	CursorID        pgtype.UUID
-	RowLimit        int32
+	// TeamID scopes the page to one team's posts (#684). NARROWING ONLY:
+	// it is a plain conjunct beside the read rule, never a disjunct with
+	// it, so a team page shows the caller exactly the subset of that
+	// team's posts browse would already have shown them. Membership of
+	// the team grants nothing here — the read rule never consults
+	// team_id (see visibility/post_rule.go), and this filter must not
+	// become the place that starts.
+	TeamID         pgtype.UUID
+	CursorPostedAt pgtype.Timestamptz
+	CursorID       pgtype.UUID
+	RowLimit       int32
 	// Ascending flips the feed to oldest-first (?dir=asc). It moves the
 	// ORDER BY and the keyset predicate TOGETHER — see feedOrder.
 	Ascending bool
@@ -146,8 +154,15 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //   - tag: single-tag filter (intersects with q if both given)
 //   - feed_follower_ref: restrict to authors the given ref follows
 //     (?feed=following). EXISTS hits the user_follows PK.
+//   - team_id: restrict to one team's posts (#684)
 //
-// Placeholder discipline (ADR 0063): the builder binds $1–$9, the rule's
+// Every one of those NARROWS. The read rule is ANDed onto the result,
+// never ORed into it, so no filter here can surface a row the caller
+// could not already read — least obviously `team_id`, which looks like
+// it ought to mean "the team's space" and does not. It means "the part
+// of the team's space this caller can already see".
+//
+// Placeholder discipline (ADR 0063): the builder binds $1–$10, the rule's
 // fragment owns everything above, and its args are appended LAST.
 func (h *Handler) ListPostsPageGated(
 	ctx context.Context,
@@ -164,6 +179,7 @@ func (h *Handler) ListPostsPageGated(
 		p.CursorPostedAt,  // $7
 		p.CursorID,        // $8
 		p.RowLimit,        // $9
+		p.TeamID,          // $10
 	}
 	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
 	if err != nil {
@@ -187,6 +203,7 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
        OR EXISTS (SELECT 1 FROM user_follows ff
                     WHERE ff.follower_user_ref = $6::BIGINT
                       AND ff.followee_user_ref = posts.author_user_ref))
+  AND ($10::UUID IS NULL OR team_id = $10::UUID)
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(ruleFrag)
 	b.WriteString(`

@@ -1975,6 +1975,27 @@ func (h *Handler) ListAssets(
 		tagFilter = req.Params.Tag
 	}
 
+	// ?team_id= scopes the page to one team's assets — the assets tab on
+	// the team page (#684).
+	//
+	// No authorization decision is taken here, deliberately. There is no
+	// membership check and no liveness probe: the visibility predicate
+	// still selects the rows and the field plane still decides which of
+	// them arrive as placeholders, and neither reads team_id. So the
+	// filter can only ever REMOVE assets from the page this caller would
+	// already have been served. A non-member browsing a studio sees its
+	// public work and a wall of placeholders where its restricted work
+	// is — exactly what unfiltered browse shows them, minus everyone
+	// else's rows.
+	//
+	// It follows that this is not a team-existence probe either: an
+	// unknown team, a soft-deleted team and an empty team are one
+	// answer, an empty page.
+	var teamFilter pgtype.UUID
+	if req.Params.TeamId != nil {
+		teamFilter = pgtype.UUID{Bytes: *req.Params.TeamId, Valid: true}
+	}
+
 	q := New(h.Pool)
 
 	// One-shot paging: fetch limit+1 to know whether there's a next page.
@@ -2000,6 +2021,7 @@ func (h *Handler) ListAssets(
 		Status:          statusPtr,
 		Q:               qText,
 		Tag:             tagFilter,
+		TeamID:          teamFilter,
 		CursorCreatedAt: cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,

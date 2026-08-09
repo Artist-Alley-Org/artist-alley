@@ -998,6 +998,12 @@ type TeamClosure struct {
 	Depth        int32       `json:"depth"`
 }
 
+type TeamFollow struct {
+	UserRef   int64              `json:"user_ref"`
+	TeamID    pgtype.UUID        `json:"team_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type TeamMembership struct {
 	TeamID         pgtype.UUID        `json:"team_id"`
 	UserRef        int64              `json:"user_ref"`

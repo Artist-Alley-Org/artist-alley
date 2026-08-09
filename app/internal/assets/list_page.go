@@ -53,7 +53,17 @@ type ListAssetsPageGatedParams struct {
 	// be its own static sqlc statement, and being separate is precisely
 	// how it ended up without the visibility predicate, without the
 	// ladder and without the preview flags. One query, one set of rules.
-	Tag             *string
+	Tag *string
+	// TeamID scopes the page to one team's assets (#684). NARROWING
+	// ONLY, and it is worth being blunt about why, because this is the
+	// filter most likely to be mistaken for an access grant: it is a
+	// plain conjunct ANDed beside the visibility predicate, never a
+	// disjunct ORed into it. Asking for a team's page does not make the
+	// caller a member of it. A `restricted` asset owned by this team is
+	// still a placeholder for a non-member here — the same placeholder
+	// browse already renders — because the predicate and the field
+	// plane decide that, and neither one reads this field.
+	TeamID          pgtype.UUID
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
@@ -147,6 +157,7 @@ func ListAssetsPageGated(
 		caller.UserRef,    // $8 — anonymous carries ref 0, matching no membership
 		p.Ladder,          // $9 — configured preview ladder (#591)
 		p.Tag,             // $10 — optional single-tag filter (#657)
+		p.TeamID,          // $11 — optional single-team filter (#684)
 	}
 
 	var opts []visibility.Option
@@ -197,6 +208,7 @@ WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($10::TEXT IS NULL
        OR EXISTS (SELECT 1 FROM asset_tag t
                    WHERE t.asset_id = assets.id AND t.tag = $10::TEXT))
+  AND ($11::UUID IS NULL OR team_id = $11::UUID)
   AND ($5::TIMESTAMPTZ IS NULL
        OR created_at < $5::TIMESTAMPTZ
        OR (created_at = $5::TIMESTAMPTZ AND id < $6::UUID))`)

@@ -36,5 +36,12 @@
     <a href="/blogs" role="menuitem" class="block px-3 py-1.5 text-sm text-fg hover:bg-surface">
       {t('nav.blogs')}
     </a>
+    <!-- Members-only for the same reason Blogs is: /teams needs
+         `teams.read`, which Base grants and anonymous does not hold, so
+         a guest picking this would land on a sign-in prompt. Honest
+         about the cap by simply not offering it (#684). -->
+    <a href="/teams" role="menuitem" class="block px-3 py-1.5 text-sm text-fg hover:bg-surface">
+      {t('nav.teams')}
+    </a>
   {/if}
 </Menu>

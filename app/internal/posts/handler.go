@@ -1008,6 +1008,29 @@ func (h *Handler) ListPosts(
 		tagPtr = req.Params.Tag
 	}
 
+	// ?team_id= scopes the feed to one team's posts — the team page's
+	// content (#684).
+	//
+	// It NARROWS and cannot widen. There is no authorization decision
+	// here on purpose: no membership check, no liveness probe, no 404
+	// for a team the caller isn't in. The read rule (readRuleSQL, spliced
+	// below) still decides every row, and it never consults team_id, so
+	// this conjunct can only ever remove posts from the page the caller
+	// would have got anyway. A non-member asking for a team they have
+	// nothing to do with gets that team's posts THEY could already read
+	// — typically just the org-only tier — which is the same answer
+	// browse gives them, filtered.
+	//
+	// Which also means the endpoint is not a team-existence probe: an
+	// unknown, a soft-deleted and a real-but-empty team all answer with
+	// an empty page. Adding a "team not found" 404 here would create the
+	// probe that visibility.CanAssignToTeam goes to some trouble to
+	// avoid on the write side.
+	var teamID pgtype.UUID
+	if req.Params.TeamId != nil {
+		teamID = pgtype.UUID{Bytes: *req.Params.TeamId, Valid: true}
+	}
+
 	// feed=following (Phase 1.17.G2) restricts the page to authors
 	// the caller follows. Anonymous callers can never satisfy this
 	// (the 401 path above returns first); for authenticated callers
@@ -1056,6 +1079,7 @@ func (h *Handler) ListPosts(
 		Q:               qText,
 		Tag:             tagPtr,
 		FeedFollowerRef: followerPtr,
+		TeamID:          teamID,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
