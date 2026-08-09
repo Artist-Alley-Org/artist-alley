@@ -100,16 +100,31 @@
 
   const showEmpty = $derived(initialLoaded && items.length === 0 && !error && !guest);
 
-  /** Pick the singular key at n === 1, the plural otherwise.
-   *
-   *  `t()` has no plural machinery, and "1 works" on a card that is
-   *  otherwise carefully worded is the sort of thing a reader notices
-   *  and nobody files. Two keys and a ternary is the whole fix; a real
-   *  CLDR plural layer is a catalogue-wide decision, not something to
-   *  invent here for two strings. */
-  function count(key: string, n: number): string {
-    return n === 1 ? t(`${key}_one`) : t(key, { count: n });
-  }
+  // Pluralisation is a ternary per stat, with all four keys written out
+  // as LITERALS at the call site — see the markup below.
+  //
+  // The obvious tidier version is a count(key, n) helper that appends a
+  // singular suffix to an interpolated key, and it is wrong here. The
+  // i18n coverage sweep (i18n-coverage.test.ts) resolves every key
+  // against en.json by reading the literal first argument out of the
+  // SOURCE TEXT. An interpolated key reaches it uninterpolated and
+  // matches nothing; the helper's other branch passes a bare variable,
+  // which is not a quoted literal at all and so becomes INVISIBLE to
+  // the sweep.
+  //
+  // That second half is the worse one: such a helper does not merely
+  // fail the check, it silently exempts its keys from ever being
+  // checked. Keeping the keys literal is what keeps them covered.
+  //
+  // The sweep reads raw text, so this note deliberately DESCRIBES the
+  // broken shape instead of quoting it — the first draft of this
+  // comment spelled the interpolation out and failed the test on its
+  // own explanation.
+  //
+  // `t()` has no plural machinery and this does not invent one — a CLDR
+  // plural layer is a catalogue-wide decision, not something to bolt on
+  // for two strings. But "1 works" on an otherwise carefully worded card
+  // is the sort of thing every reader notices and nobody files.
 </script>
 
 <svelte:head>
@@ -172,10 +187,18 @@
                them rather than zero, so they are branched on separately. -->
           <p class="mt-auto flex flex-wrap gap-x-3 text-xs text-fg-muted">
             {#if team.member_count != null}
-              <span>{count('channels.member_count', team.member_count)}</span>
+              <span>
+                {team.member_count === 1
+                  ? t('channels.member_count_one')
+                  : t('channels.member_count', { count: team.member_count })}
+              </span>
             {/if}
             {#if team.content_count != null}
-              <span>{count('channels.content_count', team.content_count)}</span>
+              <span>
+                {team.content_count === 1
+                  ? t('channels.content_count_one')
+                  : t('channels.content_count', { count: team.content_count })}
+              </span>
             {/if}
           </p>
         </li>
