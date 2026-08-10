@@ -1,0 +1,27 @@
+# TEMPORARY — verification probe for #1010. Deleted before this PR
+# is reviewed. Mirrors edge.yml's push trigger exactly (same
+# paths-ignore list) but on this feature branch and with a no-op job,
+# so the filter can be verified by `gh run list` without publishing
+# an image or occupying the self-hosted runner.
+name: zz probe
+
+on:
+  push:
+    branches: [fix/edge-docs-paths-ignore]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe fired
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "probe fired for ${GITHUB_SHA}"
