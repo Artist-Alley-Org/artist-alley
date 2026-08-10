@@ -1,7 +1,9 @@
-# Edge image build — runs on every push to `dev` after CI passes.
-# Publishes a multi-arch image (linux/amd64,linux/arm64) tagged
-# `:edge` (rolling) and `:edge-{short-sha}` (pinnable). The :edge tag
-# is the "what's currently on dev" channel — never a stable release.
+# Edge image build — runs on every push to `dev` that changes the
+# application (docs-only pushes are skipped; see the paths-ignore
+# block below). Publishes a multi-arch image (linux/amd64,linux/arm64)
+# tagged `:edge` (rolling) and `:edge-{short-sha}` (pinnable). The
+# :edge tag is the "what's currently on dev" channel — never a stable
+# release.
 # `:latest` and `:vX.Y.Z` only come from version tags (see
 # release.yml).
 #
@@ -18,6 +20,37 @@ name: Edge image
 on:
   push:
     branches: [dev]
+    # Docs-only pushes must not build an image. Two reasons, and the
+    # second is the one that bit us (#1010):
+    #
+    #   1. A docs commit produces a byte-identical application image.
+    #      The build is pure runner time for no new artefact.
+    #   2. `concurrency: cancel-in-progress` groups every dev push
+    #      together, so a close-out docs commit pushed minutes after a
+    #      merge CANCELLED the edge build still running for the code
+    #      commit ahead of it. Measured on dev 2026-08-10: 11 of 38
+    #      runs cancelled, and the one genuine failure was a GHCR
+    #      secondary-rate-limit 403 on push — the doubled push rate
+    #      was itself the cause.
+    #
+    # ⚠️ CONSEQUENCE — do NOT "restore" this filter without reading
+    # this: `:edge-{short-sha}` is now published only for commits that
+    # change the application. A docs sha has no image, so
+    # `git rev-parse dev` is not always a pullable tag. That is
+    # deliberate and documented (docs/install/README.md tag fan-out,
+    # RELEASING.md). `:edge` still always points at the newest built
+    # application state. Need an image for a specific docs sha anyway?
+    # Use workflow_dispatch from that ref rather than deleting this.
+    #
+    # Kept identical to ui-pr.yml / ci.yml so all three skip the same
+    # set. Note **.md excludes in-tree READMEs too (see ci.yml's
+    # comment block for that caveat).
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
