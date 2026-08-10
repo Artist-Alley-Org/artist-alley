@@ -986,6 +986,47 @@ The "never instantiated, therefore never exercised" condition still applies to `
 reading, not by driving them. The seeder's RFC3339-only `parseTime` (noted in the tree
 amendment) remains the one known concrete instance and remains open.
 
+## Amendment 2026-08-10 (second) — a field definition may declare itself a VIEW onto a column (#822, PR #1007)
+
+`assets.title` and `assets.description` were real columns **and** shipped field definitions, with
+nothing expressing that they are the same thing. Two independent stores for one concept, free to
+drift the moment anything wrote a field value.
+
+**Decision: the column stays the storage; the field declares itself a view onto it.**
+`field_definition.mirrors_column` (migration 00044, CHECK-constrained) names the column. Rejected:
+deleting the duplicate definitions (extraction must be able to target `title` through the field
+system — IPTC `ObjectName` maps to it — and it would drop them from search config and display
+groups), and promoting the columns into fields (93 Go references to `.Title`; far too hot).
+
+**Enforcement is in the DATABASE, not in Go.** Three plpgsql accessors resolve the declared
+identifier with `format('%I')`, so no Go or query-layer code names `title` or `description` — the
+CHECK constraint is the only enumeration, and widening it is a migration rather than a sweep. Two
+triggers reject any `asset_field_value` / `asset_field_value_history` row whose field declares a
+mirror, and a third refuses to *declare* a mirror over a field that already holds values. **A path
+that has not learned to route fails loudly rather than quietly writing a second copy** — that
+covers the seed loader, `psql`, imports and untaught Go alike, which a Go-side branch would not.
+
+### ⛔ The authorisation half, which the issue did not anticipate
+
+Making a field a view onto a column **merges two different permission planes**, and they were not
+equivalent. The field plane admitted any authenticated caller; the column plane requires owner,
+team-scoped `assets.admin`, or global. Left alone, `PUT /assets/{id}/fields/{title_id}` would have
+let **every signed-in account retitle every asset on the instance** — an authorisation regression
+arriving as a side effect of a data-model tidy-up.
+
+**The rule: a mirrored write must satisfy the underlying column's gate, and the field's own
+`write_capability` composes on top.** It now has one home in
+`visibility.AssetMutationCaps.MayMutateOwned`; `assets.canMutateAsset` is a thin adapter holding no
+logic of its own, because `metadata` cannot import `assets` (a real cycle) and two statements of an
+authorisation rule is the same defect this ADR is about, one plane over.
+
+Corollaries: a `required` mirrored field cannot be blanked, so the field plane cannot reach a state
+`PATCH /assets/{id}` forbids; and no history rows are written for mirrored fields, because a
+per-field trail covering only edits made through *this* endpoint would lie by omission.
+
+**Generalisable** — when one concept gains a second write path, the gates on both paths must be
+reconciled explicitly. The permissive one wins by default, and that default is a security bug.
+
 ## Amendment 2026-08-10 — a card-display flag is a display hint, and display hints FEDERATE
 
 #552 adds a per-field flag for "show this at-a-glance on the card". Two questions came with it,

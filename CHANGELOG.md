@@ -333,6 +333,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A file's title and description can no longer disagree with themselves.** Title and
+  description existed twice over: once as the file's own fields, and once as entries in the
+  configurable metadata list. Nothing connected them, so the moment anything wrote to the
+  second one you would have had two answers to the same question and no way to tell which was
+  right (#822).
+
+  They are now one thing. The metadata entry is a window onto the file's real title, not a copy
+  of it — edit either and you are editing the same value. The database itself refuses to store a
+  second copy, so this cannot quietly come back through an import, a script, or a future feature
+  that has not been taught the rule.
+
+  Nobody had hit this yet, which is why it was worth fixing now: there was no divergence to
+  untangle, only one to prevent. Editing a title through the metadata screen also now requires
+  the same permission as editing the file, which was not previously true.
+
 - **Your account has an activity log.** The site has recorded who did what since the first
   release, and the only way to read any of it was to be a site administrator looking at the
   whole log. There was no way to answer "when was my account disabled", or "did I really delete
