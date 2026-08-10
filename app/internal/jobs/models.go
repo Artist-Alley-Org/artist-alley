@@ -659,6 +659,8 @@ type FieldDefinition struct {
 	OpenVocabulary bool
 	// When set, this field is a VIEW onto that column of `assets` rather than storage of its own: reads project the column and writes update it, gated by the column's own mutation rule. A mirrored field can hold no asset_field_value / _history row — the triggers below refuse one — so the field and the column cannot disagree. NULL (the default) = ordinary field-owned storage. Local declaration: it names a column of THIS server's schema, so per ADR 0083's exclusion criterion it does NOT travel in a federated field-schema envelope (#822).
 	MirrorsColumn *string
+	// Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083's exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.
+	ShowOnCard bool
 }
 
 type GooseDbVersion struct {
