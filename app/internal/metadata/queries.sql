@@ -20,7 +20,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -40,7 +40,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -54,7 +54,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -64,7 +64,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -81,7 +81,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column;
+          open_vocabulary, mirrors_column, show_on_card;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -100,6 +100,7 @@ UPDATE field_definition SET
     display_order             = COALESCE(sqlc.narg('display_order'),             display_order),
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
     open_vocabulary           = COALESCE(sqlc.narg('open_vocabulary'),           open_vocabulary),
+    show_on_card              = COALESCE(sqlc.narg('show_on_card'),              show_on_card),
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
@@ -118,7 +119,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column;
+          open_vocabulary, mirrors_column, show_on_card;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -144,7 +145,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column;
+          open_vocabulary, mirrors_column, show_on_card;
 
 -- name: LockFieldDefinitionVocabulary :one
 -- Reads the live options document under a ROW LOCK, for the

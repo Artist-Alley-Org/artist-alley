@@ -12373,6 +12373,29 @@ components:
           description: |
             Write behaviour when extraction has a value. Empty =
             default (skip_if_set).
+        show_on_card:
+          type: boolean
+          description: |
+            Render this field at a glance on an asset card (#552).
+
+            A DISPLAY HINT, in the same class as `display_order` and
+            `display_group`: nothing may gate access, filtering or
+            correctness on it, and a client that ignores it entirely
+            must still be correct, merely plainer. With no field
+            marked, a card falls back to its own default.
+
+            It FEDERATES with the definition. ADR 0083 leaves a
+            property out of a schema envelope when it "names something
+            that exists only on the sender"; this names the field, not
+            the server, so a peer's fields render the way that peer
+            meant them to.
+
+            Refused on a field carrying a `read_capability`. A card is
+            rendered on browse, for a page of assets, where the server
+            has evaluated no per-field capability — so the combination
+            is a 400 rather than a setting that silently does nothing.
+            The refusal holds in both directions: a field already on
+            the card cannot acquire a read capability either.
         mirrors_column:
           type: string
           nullable: true
@@ -12575,6 +12598,13 @@ components:
             Let values create terms this field does not have yet. See
             FieldDefinition.open_vocabulary — honoured for
             `multi_select` only, inert elsewhere.
+        show_on_card:
+          type: boolean
+          description: |
+            Show this field at a glance on an asset card. See
+            FieldDefinition.show_on_card. Refused with 400 on a field
+            carrying a `read_capability`, and refused in the same way
+            when this request would give a carded field one.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:
@@ -13484,6 +13514,65 @@ components:
             (image, 3D, document, etc.). Tracks ride along with the
             asset; they do NOT appear in asset-count queries and do
             NOT federate as standalone activities.
+        card_fields:
+          type: array
+          items: { $ref: '#/components/schemas/CardField' }
+          description: |
+            The values of the fields an operator marked
+            `show_on_card`, already resolved to display strings and in
+            the order the field definitions declare (#552).
+
+            Absent or empty when nothing is marked, when this asset
+            carries no value for any of them, or on a `restricted`
+            placeholder — a card MUST fall back to its own default
+            rather than render an empty strip. That fallback is what
+            makes the flag a hint: a client that never reads this key
+            is plainer, not wrong.
+
+            Only ungated fields can appear, structurally: the schema
+            refuses `show_on_card` on a field carrying a
+            `read_capability`, so this array cannot become a side door
+            around a per-field gate.
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/ContentOrigin'
+          nullable: true
+          description: |
+            The peer this asset came from, or absent/null when it is
+            ours. Present so a surface can answer "whose is this?"
+            without making remote work look lesser — federated content
+            uses the same card, the same viewer and the same display
+            hints; what it must not do is arrive unattributed.
+    CardField:
+      type: object
+      description: |
+        One at-a-glance field value on a card (#552). Deliberately a
+        DISPLAY shape and not a second AssetFieldValue: the card shows
+        one line per field, so the server resolves the vocabulary slug
+        to its label here rather than shipping the slug plus a
+        resolution map to every tile on a browse page.
+      required: [code, label, value]
+      properties:
+        code: { type: string, description: "The field definition's federation-stable slug." }
+        label: { type: string, description: "The operator-facing name, for the caption." }
+        value:
+          type: string
+          description: |
+            The value as one line. Never empty — a field with nothing
+            on this asset is omitted from the array rather than sent
+            blank.
+    ContentOrigin:
+      type: object
+      description: |
+        Attribution for content that came from a federated peer.
+        `display_name` is the name the operator gave that peer at
+        handshake; `instance_url` is where it lives. Never a bare UUID:
+        answering "whose is this?" with an identifier answers nothing.
+      required: [peer_id, display_name]
+      properties:
+        peer_id: { type: string, format: uuid }
+        display_name: { type: string }
+        instance_url: { type: string }
     FeaturedItem:
       type: object
       description: |

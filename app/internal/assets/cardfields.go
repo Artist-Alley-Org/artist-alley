@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
+package assets
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
+)
+
+// ---------------------------------------------------------------------------
+// At-a-glance card decoration (#552)
+// ---------------------------------------------------------------------------
+//
+// Two things a card needs that the asset row does not carry: the values of the
+// fields an operator marked `show_on_card`, and — for content that came from a
+// peer — who it belongs to.
+//
+// # One pass for a whole page
+//
+// Both are BATCHED across the page. A card is a browse surface: a per-row
+// query is 50 round trips per scroll, and the per-row ListAssetTags call this
+// handler already makes is the precedent not to follow. Two queries decorate
+// the whole page regardless of its size.
+//
+// # The flag decides PRESENTATION and nothing else
+//
+// ADR 0012 puts `show_on_card` in `display_order`'s class: nothing may gate
+// access, filtering or correctness on it. Nothing here does. This pass runs
+// AFTER visibility has already chosen the rows and after #899 has replaced
+// every unreadable one with a placeholder; it is handed only readable assets
+// and it never adds one, removes one, or reorders the page. A client that
+// throws the whole `card_fields` array away renders a plainer card and a
+// correct one.
+//
+// # And it cannot become a side door
+//
+// Gated fields are unreachable from here by construction rather than by a
+// filter someone has to remember: migration 00045's CHECK constraint refuses
+// `show_on_card` on a field carrying a `read_capability`, so the query has no
+// capability argument to get wrong.
+
+// decorateCards attaches card_fields and origin to a page of assets.
+//
+// Callers pass every asset they are about to return; withheld placeholders are
+// skipped by id, because a placeholder's whole contract is that the only keys
+// present are `id`, `restricted` and `owner_display_name` (#899). Adding a
+// field strip to one would widen that allow-list through the back door.
+func (h *Handler) decorateCards(ctx context.Context, out []openapi.Asset) error {
+	ids := make([]pgtype.UUID, 0, len(out))
+	index := make(map[uuid.UUID]int, len(out))
+	for i := range out {
+		if out[i].Restricted {
+			continue
+		}
+		id := uuid.UUID(out[i].Id)
+		if id == uuid.Nil {
+			continue
+		}
+		ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
+		index[id] = i
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	q := New(h.Pool)
+
+	rows, err := q.ListCardFieldValues(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		i, ok := index[uuid.UUID(r.AssetID.Bytes)]
+		if !ok {
+			continue
+		}
+		// metadata.DisplayValue, not a local formatter: resolving a stored
+		// slug to its label is ADR 0012's rule and it has one home. An
+		// empty answer means this asset carries nothing for the field, and
+		// the entry is dropped rather than rendered blank — the same
+		// contract "no value, no row" that the field read path honours.
+		text := r.ValueText
+		var textPtr *string
+		if text != "" {
+			textPtr = &text
+		}
+		value := metadata.DisplayValue(r.Type, r.Options, textPtr, r.ValueNum, r.ValueDate, r.ValueOptions)
+		if value == "" {
+			continue
+		}
+		if out[i].CardFields == nil {
+			out[i].CardFields = &[]openapi.CardField{}
+		}
+		*out[i].CardFields = append(*out[i].CardFields, openapi.CardField{
+			Code:  r.Code,
+			Label: r.Label,
+			Value: value,
+		})
+	}
+
+	origins, err := q.ListAssetOrigins(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, o := range origins {
+		i, ok := index[uuid.UUID(o.AssetID.Bytes)]
+		if !ok {
+			continue
+		}
+		out[i].Origin = &openapi.ContentOrigin{
+			PeerId:      o.PeerID.Bytes,
+			DisplayName: o.DisplayName,
+			InstanceUrl: &o.InstanceUrl,
+		}
+	}
+	return nil
+}

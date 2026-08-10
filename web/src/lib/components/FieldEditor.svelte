@@ -60,6 +60,8 @@
     initialRequired,
     initialOptions,
     initialOpenVocabulary = false,
+    initialShowOnCard = false,
+    initialReadCapability = null,
     initialUpdatedAt,
     onSaved = () => {},
   }: {
@@ -69,6 +71,10 @@
     initialRequired: boolean;
     initialOptions: Record<string, unknown> | undefined;
     initialOpenVocabulary?: boolean;
+    initialShowOnCard?: boolean;
+    /** Present only so the editor can explain WHY the card toggle is
+     *  unavailable. The server refuses the combination either way. */
+    initialReadCapability?: string | null;
     initialUpdatedAt: string;
     onSaved?: () => void;
   } = $props();
@@ -101,6 +107,15 @@
   let label = $state(initialLabel);
   let required = $state(initialRequired);
   let openVocab = $state(initialOpenVocabulary);
+  let showOnCard = $state(initialShowOnCard);
+
+  // A gated field cannot be an at-a-glance field (#552): a card renders on
+  // browse, for a page of assets, where the server has evaluated no
+  // per-field capability. The server refuses the combination with a 400, so
+  // the control is REPLACED by the reason rather than shown disabled — a
+  // disabled checkbox advertises a setting the operator can never reach
+  // here, which is the same complaint the open_vocabulary note above makes.
+  const cardGated = $derived(!!(initialReadCapability ?? '').trim());
   let opts = $state<FieldOption[]>(normalizeOptions(initialOptions));
   // Baseline for the optimistic-concurrency guard. Re-based (not
   // reset) after a save so consecutive edits keep working.
@@ -125,11 +140,13 @@
   let labelSnapshot = $state(initialLabel);
   let requiredSnapshot = $state(initialRequired);
   let openVocabSnapshot = $state(initialOpenVocabulary);
+  let showOnCardSnapshot = $state(initialShowOnCard);
   const dirty = $derived(
     JSON.stringify(serializeOptions(opts)) !== snapshot ||
       label !== labelSnapshot ||
       required !== requiredSnapshot ||
-      openVocab !== openVocabSnapshot,
+      openVocab !== openVocabSnapshot ||
+      showOnCard !== showOnCardSnapshot,
   );
 
   // Only active terms make sense as a successor — pointing a
@@ -282,17 +299,20 @@
       label: string;
       required: boolean;
       open_vocabulary?: boolean;
+      show_on_card?: boolean;
       options?: Record<string, unknown>;
     };
     opts = normalizeOptions(cur.options);
     label = cur.label;
     required = cur.required;
     openVocab = cur.open_vocabulary === true;
+    showOnCard = cur.show_on_card === true;
     baseline = cur.updated_at;
     snapshot = JSON.stringify(serializeOptions(opts));
     labelSnapshot = cur.label;
     requiredSnapshot = cur.required;
     openVocabSnapshot = openVocab;
+    showOnCardSnapshot = showOnCard;
     conflict = false;
     error = '';
     savedMsg = '';
@@ -320,6 +340,11 @@
       // omitting the key on a `text` field leaves the column alone
       // rather than writing a false the operator never chose.
       if (canOpenVocabulary) body.open_vocabulary = openVocab;
+      // Sent only where the operator could have changed it. On a gated
+      // field the control is not rendered, so sending a value would be
+      // this editor asserting a setting nobody chose — and the server
+      // would answer 400 for a change the operator never made.
+      if (!cardGated) body.show_on_card = showOnCard;
       const { data, error: apiErr, response } = await api.PATCH('/fields/{id}', {
         params: { path: { id: fieldId } },
         body: body as never,
@@ -347,6 +372,7 @@
         label: string;
         required: boolean;
         open_vocabulary?: boolean;
+        show_on_card?: boolean;
         options?: Record<string, unknown>;
       };
       baseline = saved.updated_at;
@@ -354,10 +380,12 @@
       label = saved.label;
       required = saved.required;
       openVocab = saved.open_vocabulary === true;
+      showOnCard = saved.show_on_card === true;
       snapshot = JSON.stringify(serializeOptions(opts));
       labelSnapshot = saved.label;
       requiredSnapshot = saved.required;
       openVocabSnapshot = openVocab;
+      showOnCardSnapshot = showOnCard;
       savedMsg = t('admin.fields.options_saved');
       cancelAdd();
       moving = null;
@@ -629,6 +657,25 @@
       <span>{t('admin.fields.edit_required')}</span>
     </label>
   </div>
+
+  {#if cardGated}
+    <p class="text-xs text-fg-muted" data-testid="field-edit-show-on-card-gated">
+      {t('admin.fields.show_on_card_gated')}
+    </p>
+  {:else}
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={showOnCard}
+        data-testid="field-edit-show-on-card"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.show_on_card')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.show_on_card_help')}</span>
+      </span>
+    </label>
+  {/if}
 
   {#if canOpenVocabulary}
     <label class="flex min-h-11 items-start gap-2 text-sm">

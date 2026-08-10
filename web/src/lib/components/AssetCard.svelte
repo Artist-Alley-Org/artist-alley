@@ -15,6 +15,7 @@
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
+  import { t } from '$stores/lang.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
   // The card feed contract lives in cardAsset.ts, not here, because it
@@ -101,6 +102,36 @@
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   );
 
+  // The operator's at-a-glance field set (#552). Capped rather than
+  // rendered in full: the footer is two lines of a tile, and a card that
+  // grows with the catalogue's field count stops being a card. The cap is
+  // presentation, not policy — the server sends everything marked, and a
+  // surface with more room may show more.
+  const CARD_FIELD_LIMIT = 3;
+  const cardFields = $derived((asset.card_fields ?? []).slice(0, CARD_FIELD_LIMIT));
+
+  // The fallback is what makes the flag a HINT rather than a gate: with
+  // nothing configured, the footer renders exactly what it rendered before
+  // #552, and a client that ignores card_fields entirely is plainer and
+  // still correct (ADR 0012, amendment 2026-08-10).
+  const showConfiguredFields = $derived(cardFields.length > 0);
+
+  // Provenance (#552). Federated content uses the same card, the same
+  // viewer and the same hints — seamless — and carries an attribution line
+  // so a viewer never mistakes another server's work for something this
+  // instance vouches for. Both halves of the operator's constraint bind:
+  // "federation should work seamlessly, but be distinct enough to know
+  // it's from another server."
+  const origin = $derived(asset.origin ?? null);
+  const originHost = $derived.by(() => {
+    if (!origin?.instance_url) return '';
+    try {
+      return new URL(origin.instance_url).host;
+    } catch {
+      return '';
+    }
+  });
+
   // Tooltip payload (#652). Scan-level facts only — type, size, date.
   // Deliberately NOT the details card: masonry's job is looking at a lot
   // of things quickly, and a tooltip you have to read is a tooltip that
@@ -111,6 +142,9 @@
       asset.file_extension ? asset.file_extension.replace(/^\./, '').toUpperCase() : null,
       asset.pixel_width && asset.pixel_height ? `${asset.pixel_width} × ${asset.pixel_height}` : null,
       createdShort,
+      // Masonry paints nothing across the artwork, so the tooltip is
+      // where its facts live — including whose the work is.
+      origin ? t('card.origin_from', { peer: origin.display_name }) : null,
     ].filter((v): v is string => !!v),
   );
 
@@ -237,6 +271,17 @@
       >
         <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
         <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
+        {#if origin}
+          <!-- Provenance rides EVERY density, not just the details tile
+               (#552). Grid is the default view: attributing remote work
+               only in a mode most people never switch to would leave it
+               unattributed in practice, which is the half of the
+               operator's constraint that is easy to drop. -->
+          <p class="mt-0.5 text-[11px] text-white/60" data-testid="card-origin">
+            <span aria-hidden="true">↗</span>
+            {t('card.origin_from', { peer: origin.display_name })}
+          </p>
+        {/if}
       </div>
     {/if}
 
@@ -257,7 +302,29 @@
          moved to the header (#556); this keeps the supporting fields
          below the image where they don't compete with it. -->
     <a href="/assets/{asset.id}" class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      <p class="text-xs text-fg-muted">{createdShort}</p>
+      {#if showConfiguredFields}
+        <dl class="space-y-0.5" data-testid="card-fields">
+          {#each cardFields as f (f.code)}
+            <div class="flex gap-1.5 text-xs">
+              <dt class="shrink-0 text-fg-subtle">{f.label}</dt>
+              <dd class="truncate text-fg-muted" data-testid="card-field-{f.code}">{f.value}</dd>
+            </div>
+          {/each}
+        </dl>
+      {:else}
+        <p class="text-xs text-fg-muted">{createdShort}</p>
+      {/if}
+      {#if origin}
+        <p
+          class="mt-1 flex items-center gap-1 text-[11px] text-fg-subtle"
+          data-testid="card-origin"
+          title={originHost ? `${origin.display_name} — ${originHost}` : origin.display_name}
+          aria-label={t('card.origin_label')}
+        >
+          <span aria-hidden="true">↗</span>
+          <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
+        </p>
+      {/if}
     </a>
   {/if}
 </div>

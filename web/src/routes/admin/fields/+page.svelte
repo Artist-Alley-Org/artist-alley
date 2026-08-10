@@ -24,6 +24,8 @@
     extraction_mode?: string;
     options?: Record<string, unknown>;
     open_vocabulary?: boolean;
+    show_on_card?: boolean;
+    read_capability?: string | null;
     default_value?: FieldDefault | null;
     updated_at: string;
   }
@@ -373,6 +375,8 @@
                   initialRequired={f.required}
                   initialOptions={f.options}
                   initialOpenVocabulary={f.open_vocabulary === true}
+                  initialShowOnCard={f.show_on_card === true}
+                  initialReadCapability={f.read_capability ?? null}
                   initialUpdatedAt={f.updated_at}
                   onSaved={() => load(true)}
                 />
