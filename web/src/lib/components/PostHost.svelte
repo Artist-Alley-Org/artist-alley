@@ -39,13 +39,7 @@
   import { t } from '$stores/lang.svelte';
   import ConfirmDeleteDialog from './ConfirmDeleteDialog.svelte';
   import { toasts } from '$stores/toasts.svelte';
-  import {
-    canDelete,
-    deleteEntity,
-    restoreEntity,
-    shouldAskReason,
-    type DeletableKind,
-  } from '$lib/deletable';
+  import { canDelete, deleteEntity, restoreEntity, shouldAskReason } from '$lib/deletable';
 
   interface Props {
     postId: string;
@@ -304,27 +298,24 @@
   const isOwner = $derived(
     !!auth.user && !!post && auth.user.ref === post.author_user_ref,
   );
-  // #981 — the two delete affordances ask about two DIFFERENT owners,
-  // and `isOwner` (post authorship) answers neither on its own.
+  // #981 — "delete this post" asks about the POST's author, not about
+  // `isOwner`-as-a-proxy for anything else. It is spelled through
+  // canDelete() rather than reusing isOwner directly so the global
+  // posts.admin holder gets the item too.
   //
-  //   canDeleteCurrentAsset — the asset's own owner_user_ref. A post
-  //     author does not automatically own every member (someone else's
-  //     asset can be posted), and an asset owner may not have authored
-  //     the post it appears in. Gating on authorship would get it
-  //     wrong in both directions.
-  //   canDeleteThisPost — the post's author_user_ref, which IS what
-  //     isOwner reads; it is spelled through canDelete() anyway so the
-  //     global posts.admin holder gets the item too.
-  //
-  // Both fall back to the caller's GLOBAL capability set, which is the
+  // It falls back to the caller's GLOBAL capability set, which is the
   // documented ceiling: a TEAM-scoped grant is invisible to the client
   // and its holder sees no button even though the API would accept
   // them. See $lib/deletable for why that is not worked around.
-  const canDeleteCurrentAsset = $derived(
-    !!currentItem &&
-      !currentItem.restricted &&
-      canDelete('asset', currentItem.asset?.owner_user_ref),
-  );
+  //
+  // "Delete asset" is NOT here, and its absence is the #987 fix rather
+  // than an omission. It asks about the asset's own owner_user_ref — a
+  // post author does not automatically own every member, and an asset
+  // owner may not have authored the post it appears in — so it was
+  // never a post-shaped question. It now lives in AssetPlaylist, which
+  // is the shell that always has an asset under the cursor, so the
+  // asset-shaped /assets/{id} route gets the same affordance instead of
+  // none at all.
   const canDeleteThisPost = $derived(
     !!post && canDelete('post', post.author_user_ref),
   );
@@ -552,20 +543,18 @@
     stubAction('Edit post');
   }
 
-  // ── Delete (#981) ─────────────────────────────────────────────────
-  // "Delete asset" and "Delete post" were both stubAction() until this
-  // issue: the whole soft-delete/restore arc (#930 ownership gates,
-  // #936 self-restore, #920/#935 cache fan-out, #937 the trash page)
-  // was reachable only through the API. Both now open the shared
-  // ConfirmDeleteDialog and call the real endpoint through
-  // $lib/deletable, which is also what the collection page uses.
+  // ── Delete this post (#981) ───────────────────────────────────────
+  // "Delete post" was stubAction() until that issue: the whole soft-
+  // delete/restore arc (#930 ownership gates, #936 self-restore,
+  // #920/#935 cache fan-out, #937 the trash page) was reachable only
+  // through the API. It now opens the shared ConfirmDeleteDialog and
+  // calls the real endpoint through $lib/deletable, which is also what
+  // the collection page uses.
   //
-  // One dialog instance serves both kinds. The alternative — a dialog
-  // per menu item — is two mounted overlays for a surface that can only
-  // ever be confirming one thing at a time.
+  // The asset half of this moved to AssetPlaylist in #987 — see the
+  // canDeleteThisPost comment above for why it was never post-shaped.
 
   let deleteTarget = $state<{
-    kind: DeletableKind;
     id: string;
     title: string;
     ownerRef: number | null | undefined;
@@ -573,22 +562,10 @@
   let deleteBusy = $state(false);
   let deleteError = $state<string | null>(null);
 
-  function deleteAsset(assetId: string) {
-    const it = pl.source.items.find((i) => i.id === assetId);
-    deleteError = null;
-    deleteTarget = {
-      kind: 'asset',
-      id: assetId,
-      title: it?.asset?.title ?? '',
-      ownerRef: it?.asset?.owner_user_ref ?? null,
-    };
-  }
-
   function deletePost() {
     if (!post) return;
     deleteError = null;
     deleteTarget = {
-      kind: 'post',
       id: post.id,
       title: post.title ?? '',
       ownerRef: post.author_user_ref,
@@ -606,7 +583,7 @@
     if (!target || deleteBusy) return;
     deleteBusy = true;
     deleteError = null;
-    const err = await deleteEntity(target.kind, target.id, reason);
+    const err = await deleteEntity('post', target.id, reason);
     deleteBusy = false;
     if (err) {
       // Keep the dialog open so the message lands beside the button
@@ -616,49 +593,29 @@
     }
     deleteTarget = null;
 
-    if (target.kind === 'asset') {
-      // Drop the member from the live playlist rather than re-fetching
-      // the post. `reload()` would work, but it resets the cursor to
-      // the cover member — deleting item 7 of 9 would silently jump the
-      // user back to item 1. The 204 is authority enough that the row
-      // is gone; #920/#935 already invalidated every other surface's
-      // cached copy of it.
-      const idx = pl.source.items.findIndex((i) => i.id === target.id);
-      if (idx >= 0) {
-        pl.source.items.splice(idx, 1);
-        // Clamp: deleting the last item would otherwise leave the
-        // cursor one past the end and render nothing at all.
-        if (pl.source.cursor > pl.source.items.length - 1) {
-          pl.source.cursor = Math.max(0, pl.source.items.length - 1);
-        }
-      }
-    }
-
-    if (target.kind === 'post') {
-      // The post is gone; the surface showing it cannot stay. The
-      // standalone route has nowhere to fall back to, so it navigates;
-      // the feed overlay closes back onto the feed underneath.
-      //
-      // BEFORE the toast, and awaited — order is load-bearing. A toast
-      // raised while the viewer dialog is still open is parented INTO
-      // that dialog (it has to be: the dialog owns the top layer). The
-      // dialog is then torn down, and a detached node renders nowhere.
-      // Removing an element does not fire `close`, so the portal's
-      // re-home cannot save it either. Closing first means there is no
-      // modal left to adopt the toast and it lands on the body, which
-      // is where a message about a page you just left belongs.
-      if (standalone) await goto('/');
-      else onClose();
-      await tick();
-    }
+    // The post is gone; the surface showing it cannot stay. The
+    // standalone route has nowhere to fall back to, so it navigates;
+    // the feed overlay closes back onto the feed underneath.
+    //
+    // BEFORE the toast, and awaited — order is load-bearing. A toast
+    // raised while the viewer dialog is still open is parented INTO
+    // that dialog (it has to be: the dialog owns the top layer). The
+    // dialog is then torn down, and a detached node renders nowhere.
+    // Removing an element does not fire `close`, so the portal's
+    // re-home cannot save it either. Closing first means there is no
+    // modal left to adopt the toast and it lands on the body, which
+    // is where a message about a page you just left belongs.
+    if (standalone) await goto('/');
+    else onClose();
+    await tick();
 
     toasts.push({
-      message: t(`delete_confirm.deleted_${target.kind}`),
+      message: t('delete_confirm.deleted_post'),
       href: '/account/trash',
       linkLabel: t('delete_confirm.view_trash'),
       action: {
         label: t('delete_confirm.undo'),
-        run: () => undoDelete(target.kind, target.id),
+        run: () => undoDelete(target.id),
       },
     });
   }
@@ -667,8 +624,8 @@
   // just performed the delete, so we ARE the deleter, and
   // auth.CanRestoreDeleted grants restore to the deleter. It can never
   // be an affordance the server refuses.
-  async function undoDelete(kind: DeletableKind, id: string) {
-    const err = await restoreEntity(kind, id);
+  async function undoDelete(id: string) {
+    const err = await restoreEntity('post', id);
     if (err) {
       toasts.push({
         message: t('delete_confirm.undo_error'),
@@ -679,11 +636,6 @@
       return;
     }
     toasts.push({ message: t('delete_confirm.undone') });
-    // Bring the member back where it was. Here a full reload IS the
-    // right move — the restored asset's position comes from the
-    // server's member ordering, not from where it happened to sit in
-    // the array we spliced.
-    if (kind === 'asset') void pl.reload();
   }
 </script>
 
@@ -721,7 +673,6 @@
   onEditMetadata={isOwner ? editMetadata : undefined}
   onDownloadVariant={downloadVariant}
   onShareAsset={shareAsset}
-  onDeleteAsset={canDeleteCurrentAsset ? deleteAsset : undefined}
 />
 
 <!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
@@ -1216,7 +1167,7 @@
          to be declared where Modal's portal can find that dialog. -->
     <ConfirmDeleteDialog
       open={deleteTarget !== null}
-      kind={deleteTarget?.kind ?? 'asset'}
+      kind="post"
       title={deleteTarget?.title}
       askReason={deleteTarget ? shouldAskReason(deleteTarget.ownerRef) : false}
       busy={deleteBusy}

@@ -11,6 +11,15 @@
   //
   // The +page.ts load has already fetched + 404-gated the asset; we
   // seed the source from it so first paint pays no extra round-trip.
+  //
+  // Nothing here wires "Delete asset" (#987) and that is deliberate:
+  // the shell owns it. AssetPlaylist decides whether to draw the entry
+  // from the asset under the cursor, raises the confirm dialog inside
+  // its own <dialog>, and — because this is a playlist of 1, so the
+  // list is empty the moment the delete lands — calls `onClose`, which
+  // here is the close-to-origin policy below. So the page navigates
+  // away and the toast is pushed after, which is the only order that
+  // renders (see AssetPlaylist's confirmDelete).
 
   import { page } from '$app/state';
   import { site } from '$stores/site.svelte';

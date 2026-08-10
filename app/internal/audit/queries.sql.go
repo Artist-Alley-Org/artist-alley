@@ -300,6 +300,129 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 	return items, nil
 }
 
+const listMyActivity = `-- name: ListMyActivity :many
+WITH page AS (
+    SELECT id,
+           event_type,
+           occurred_at,
+           true::boolean AS by_me,
+           metadata
+      FROM audit_events
+     WHERE actor_user_ref = $2::bigint
+       AND ( $3::timestamptz IS NULL
+             OR occurred_at < $3::timestamptz
+             OR (occurred_at = $3::timestamptz
+                 AND id < $4::uuid) )
+  UNION ALL
+    SELECT id,
+           event_type,
+           occurred_at,
+           false::boolean AS by_me,
+           NULL::jsonb AS metadata
+      FROM audit_events
+     WHERE subject_user_ref = $2::bigint
+       AND actor_user_ref IS DISTINCT FROM $2::bigint
+       AND ( $3::timestamptz IS NULL
+             OR occurred_at < $3::timestamptz
+             OR (occurred_at = $3::timestamptz
+                 AND id < $4::uuid) )
+)
+SELECT id, event_type, occurred_at, by_me, metadata
+FROM page
+ORDER BY occurred_at DESC, id DESC
+LIMIT $1::int
+`
+
+type ListMyActivityParams struct {
+	Lim      int32
+	Caller   int64
+	CursorAt pgtype.Timestamptz
+	CursorID pgtype.UUID
+}
+
+type ListMyActivityRow struct {
+	ID         pgtype.UUID
+	EventType  string
+	OccurredAt pgtype.Timestamptz
+	ByMe       bool
+	Metadata   []byte
+}
+
+// GET /account/activity (#600) — one page of the audit rows that name
+// @caller on either side, newest first.
+//
+// This REPLACES RecentAuditEventsForUser, which claimed to power "your
+// recent activity surfaces", had zero callers in the tree, and could
+// not have served this one: it was subject-only (so it saw none of the
+// caller's own actions), had no keyset, and selected subject_user_ref /
+// actor_user_ref / user_agent — three columns this projection must not
+// return. Keeping it alongside would leave two queries for one question
+// and only one of them safe to render.
+//
+// THE TWO ARMS ARE DISJOINT BY CONSTRUCTION, and that is what makes
+// UNION ALL correct here: the subject arm excludes rows the actor arm
+// already claimed (`actor_user_ref IS DISTINCT FROM @caller`), so a row
+// where the caller is BOTH actor and subject is emitted exactly once,
+// by the actor arm, as by_me. `IS DISTINCT FROM` rather than `<>`
+// because actor_user_ref is nullable and a plain `<>` is NULL — which
+// would silently drop every system-initiated event that happened to the
+// caller, the rows this surface most needs to show. Same trick, same
+// reason, as trash's selectorFor.
+//
+// Splitting the OR into two arms is also what lets each half use an
+// index: `audit_events__actor_time_idx` (migration 00043) and the
+// baseline's `audit_events__subject_time_idx`. A single
+// `actor = $1 OR subject = $1` cannot use either, and audit_events is
+// the highest-volume table in the schema.
+//
+// METADATA IS NULLED IN SQL, NOT IN GO. The on_my_account arm selects a
+// literal NULL rather than the column, so the payload of somebody
+// else's action never leaves the database on this path at all. The
+// mapper still has to decide (see toActivityEvent) — this is the second
+// lock on the same door, not a replacement for the first.
+//
+// Nothing selects ip or user_agent in either arm. That is not a gate
+// being applied, it is the columns being absent from the question:
+// /account/sessions owns "where has my account been used from".
+//
+// The id tiebreak carries the SAME comparison as the timestamp, and
+// that is load-bearing here rather than pedantic: Recorder.WriteInTx
+// commits a domain write and its audit rows in one transaction, and
+// occurred_at defaults to now() — transaction start time — so those
+// rows share a timestamp exactly. Flipped, this predicate drops all but
+// the first of them (proven: the keyset test fails "paged 1 rows, want
+// 7" against `id >`).
+func (q *Queries) ListMyActivity(ctx context.Context, arg ListMyActivityParams) ([]ListMyActivityRow, error) {
+	rows, err := q.db.Query(ctx, listMyActivity,
+		arg.Lim,
+		arg.Caller,
+		arg.CursorAt,
+		arg.CursorID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMyActivityRow
+	for rows.Next() {
+		var i ListMyActivityRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventType,
+			&i.OccurredAt,
+			&i.ByMe,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRetentionPolicies = `-- name: ListRetentionPolicies :many
 
 SELECT category, retention, updated_by, updated_at
@@ -363,72 +486,6 @@ func (q *Queries) PurgeAuditCategoryBatch(ctx context.Context, arg PurgeAuditCat
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const recentAuditEventsForUser = `-- name: RecentAuditEventsForUser :many
-SELECT id,
-       event_type,
-       occurred_at,
-       subject_user_ref,
-       actor_user_ref,
-       user_agent,
-       metadata
-FROM audit_events
-WHERE subject_user_ref = $1
-ORDER BY occurred_at DESC
-LIMIT $2
-`
-
-type RecentAuditEventsForUserParams struct {
-	SubjectUserRef *int64
-	Limit          int32
-}
-
-type RecentAuditEventsForUserRow struct {
-	ID             pgtype.UUID
-	EventType      string
-	OccurredAt     pgtype.Timestamptz
-	SubjectUserRef *int64
-	ActorUserRef   *int64
-	UserAgent      *string
-	Metadata       []byte
-}
-
-// Powers "your recent activity" surfaces. The partial index on
-// (subject_user_ref, occurred_at DESC) keeps this fast.
-//
-// `ip` is deliberately NOT selected (#458). Actor IP is personal data
-// gated behind system.audit.pii.read (#425), and this query has no
-// caller today — so leaving ip in the SELECT was a latent trap: a
-// future caller would render it un-gated. When per-user activity does
-// need IP, it wires through the same includeIP gate as the export path
-// (audit/export.go) rather than pulling the raw column here.
-func (q *Queries) RecentAuditEventsForUser(ctx context.Context, arg RecentAuditEventsForUserParams) ([]RecentAuditEventsForUserRow, error) {
-	rows, err := q.db.Query(ctx, recentAuditEventsForUser, arg.SubjectUserRef, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RecentAuditEventsForUserRow
-	for rows.Next() {
-		var i RecentAuditEventsForUserRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.EventType,
-			&i.OccurredAt,
-			&i.SubjectUserRef,
-			&i.ActorUserRef,
-			&i.UserAgent,
-			&i.Metadata,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const tombstoneActor = `-- name: TombstoneActor :execrows

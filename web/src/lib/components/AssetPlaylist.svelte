@@ -29,7 +29,7 @@
   // a contextSlot for the post-specific sidebar (author / likes /
   // comments / tags / edit / delete / etc).
 
-  import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { onDestroy, onMount, tick, type Snippet } from 'svelte';
   import AssetViewer from './viewers/AssetViewer.svelte';
   import { kindForAsset } from './viewers/controller';
   import { snippetToolHookKey, type ToolDef } from './viewers/tools/contract';
@@ -39,6 +39,9 @@
   import { auth } from '$stores/auth.svelte';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
   import RequestAccessDialog from './RequestAccessDialog.svelte';
+  import ConfirmDeleteDialog from './ConfirmDeleteDialog.svelte';
+  import { toasts } from '$stores/toasts.svelte';
+  import { canDelete, deleteEntity, restoreEntity, shouldAskReason } from '$lib/deletable';
 
   interface Props {
     source: PlaylistSource;
@@ -52,8 +55,15 @@
         renders a brush/annotation surface over the asset canvas
         without losing the sidebar or top toolbar. */
     canvasOverlay?: Snippet;
-    /** Called when the user closes the playlist (× / ESC / backdrop). */
-    onClose: () => void;
+    /** Called when the user closes the playlist (× / ESC / backdrop).
+     *
+     *  May be async, and the standalone routes' is: /assets/{id} and
+     *  /posts/{id} both pass the close-to-origin policy, which `goto`s.
+     *  Anything that must happen AFTER the surface is really gone has
+     *  to await it — see confirmDelete, where not awaiting left the
+     *  delete toast parented into a dialog that was already unmounting
+     *  and rendered nowhere. */
+    onClose: () => void | Promise<void>;
     /** True when the playlist is a full-page route (e.g. /posts/[id])
         rather than an overlay over the browse feed. Drives the close
         button affordance — back-arrow vs ×. */
@@ -79,7 +89,6 @@
     onEditMetadata?: (assetId: string) => void;
     onDownloadVariant?: (assetId: string) => void;
     onShareAsset?: (assetId: string) => void;
-    onDeleteAsset?: (assetId: string) => void;
     /** Extra rows to append to the global TipsSection footer at the
         bottom of the side panel. Hosts that own mode-specific tool
         surfaces (whiteboard, annotation, future review modes) pass
@@ -115,7 +124,6 @@
     onEditMetadata,
     onDownloadVariant,
     onShareAsset,
-    onDeleteAsset,
     extraTips,
     customTools = [],
     whiteboardSession,
@@ -499,6 +507,174 @@
   // the truth from /account/requests.
   let askOpenFor: string | null = $state(null);
   let askedFor: string[] = $state([]);
+
+  // ── Delete the asset under the cursor (#981, #987) ─────────────────
+  //
+  // WHY THE SHELL AND NOT THE HOST. #981 wired "Delete asset" into
+  // PostHost, which is a POST-shaped host — so the affordance existed
+  // only where an asset happened to be inside a post, and /assets/{id}
+  // (the asset-shaped route, ADR 0067) had no delete at all (#987).
+  // The menu seam was never the problem: both routes render this shell,
+  // which threads one `onDeleteAsset` into AssetViewer → ViewerMenuBar.
+  // What PostHost owned that the standalone route could not reach was
+  // the FLOW — the confirm dialog, the request, the toast.
+  //
+  // None of that flow is post-shaped. It asks about the asset under the
+  // cursor, which is the one thing every host of this shell has by
+  // definition, so it belongs here and the hosts get it for free. The
+  // host prop is gone rather than kept as an override: PostHost was its
+  // only caller, and a second way to spell the same action is the drift
+  // that becomes the bug.
+  //
+  // The confirm dialog is declared INSIDE this component's <dialog>
+  // (down with RequestAccessDialog) and that placement is load-bearing
+  // for the same reason PostHost's comment gives: Modal portals to the
+  // nearest OPEN <dialog> resolved from where it was DECLARED, and this
+  // shell calls showModal() when maximized. Declared on the page
+  // instead, the confirm would land on <body> and render UNDERNEATH the
+  // viewer's top layer — present, correct, and invisible.
+
+  // itemId and assetId are two DIFFERENT things and both are needed.
+  // PlaylistItem.id is the position key — for most sources it IS the
+  // asset id, but the contract allows an envelope id so a source can
+  // carry the same asset twice (a favourites playlist with dupes). The
+  // endpoint takes the asset id; the splice below matches on the
+  // position key. Carrying one value for both is correct today and
+  // silently wrong for the first source that uses envelopes.
+  let deleteTarget = $state<{
+    itemId: string;
+    assetId: string;
+    title: string;
+    ownerRef: number | null | undefined;
+  } | null>(null);
+  let deleteBusy = $state(false);
+  let deleteError = $state<string | null>(null);
+
+  // Owner, or a holder of the global assets.admin — canDelete's ceiling
+  // and its reasoning are documented in $lib/deletable. A restricted
+  // member is excluded because the shell was handed a placeholder: it
+  // has no owner_user_ref to judge, so the honest answer is no button.
+  // The server gates the request regardless of what we draw here.
+  const canDeleteCurrent = $derived(
+    !!currentItem &&
+      !currentItem.restricted &&
+      canDelete('asset', currentItem.asset?.owner_user_ref),
+  );
+
+  // Reads the item under the cursor rather than taking an id and
+  // looking it back up: the menu item can only ever mean "this one",
+  // and a lookup by id is where the itemId/assetId confusion above
+  // would enter.
+  function openDeleteDialog() {
+    const it = currentItem;
+    if (!it) return;
+    deleteError = null;
+    deleteTarget = {
+      itemId: it.id,
+      assetId: it.asset.id,
+      title: it.asset.title ?? '',
+      ownerRef: it.asset.owner_user_ref ?? null,
+    };
+  }
+
+  function closeDeleteDialog() {
+    if (deleteBusy) return;
+    deleteTarget = null;
+    deleteError = null;
+  }
+
+  async function confirmDelete(reason: string) {
+    const target = deleteTarget;
+    if (!target || deleteBusy) return;
+    deleteBusy = true;
+    deleteError = null;
+    const err = await deleteEntity('asset', target.assetId, reason);
+    deleteBusy = false;
+    if (err) {
+      // Keep the dialog open so the message lands beside the button
+      // that produced it.
+      deleteError = err;
+      return;
+    }
+    deleteTarget = null;
+
+    // Drop the member from the live playlist rather than re-fetching the
+    // source. A reload would work, but it resets the cursor to the first
+    // item — deleting item 7 of 9 would silently jump the user back to
+    // item 1. The 204 is authority enough that the row is gone; #920 /
+    // #935 already invalidated every other surface's cached copy of it.
+    const idx = source.items.findIndex((i) => i.id === target.itemId);
+    if (idx >= 0) {
+      source.items.splice(idx, 1);
+      // Clamp: deleting the last item would otherwise leave the cursor
+      // one past the end and render nothing at all.
+      if (source.cursor > source.items.length - 1) {
+        source.cursor = Math.max(0, source.items.length - 1);
+      }
+    }
+
+    // Nothing left to look at — the surface showing it cannot stay. For
+    // a playlist of 1 (the /assets/{id} route) that is EVERY delete, and
+    // onClose there is the close-to-origin policy, so the page navigates
+    // away; for an overlay it closes back onto whatever was underneath.
+    //
+    // BEFORE the toast, and AWAITED — the order is load-bearing and is
+    // the #985 lesson. A toast raised while this dialog is still open is
+    // parented INTO it (it has to be: the dialog owns the top layer).
+    // The dialog is then torn down and a detached node renders nowhere;
+    // removing an element fires no `close`, so the portal's re-home
+    // cannot save it either. Closing first leaves no modal to adopt the
+    // toast, and it lands on the body — where a message about a page you
+    // have just left belongs.
+    //
+    // The `await` is the whole fix and it is easy to lose: `onClose` is
+    // typed `() => void | Promise<void>` and the standalone route's is
+    // the async close-to-origin policy. Called without awaiting, the
+    // navigation is merely STARTED, `tick()` resolves long before it
+    // finishes, and the toast is pushed while the dialog is still up —
+    // which is the exact bug this comment describes, reintroduced.
+    // Driven in a browser it looks like the delete silently doing
+    // nothing to acknowledge itself.
+    if (source.items.length === 0) {
+      await onClose();
+      await tick();
+    }
+
+    toasts.push({
+      message: t('delete_confirm.deleted_asset'),
+      href: '/account/trash',
+      linkLabel: t('delete_confirm.view_trash'),
+      action: {
+        label: t('delete_confirm.undo'),
+        run: () => undoDelete(target.assetId),
+      },
+    });
+  }
+
+  // The Undo in the delete toast. Safe to offer unconditionally: we just
+  // performed the delete, so we ARE the deleter, and CanRestoreDeleted
+  // grants restore to the deleter. It can never be an affordance the
+  // server refuses.
+  //
+  // No re-insert into `source.items` on success. The restored asset's
+  // position comes from the server's ordering, not from where it sat in
+  // the array we spliced — and on the standalone route the shell has
+  // already navigated away, so there is no list left to put it back
+  // into. The toast links to /account/trash, which is the surface that
+  // can show the result either way.
+  async function undoDelete(id: string) {
+    const err = await restoreEntity('asset', id);
+    if (err) {
+      toasts.push({
+        message: t('delete_confirm.undo_error'),
+        tone: 'error',
+        href: '/account/trash',
+        linkLabel: t('delete_confirm.view_trash'),
+      });
+      return;
+    }
+    toasts.push({ message: t('delete_confirm.undone') });
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -615,9 +791,7 @@
               onShareAsset={onShareAsset
                 ? () => onShareAsset(currentItem.asset.id)
                 : undefined}
-              onDeleteAsset={onDeleteAsset
-                ? () => onDeleteAsset(currentItem.asset.id)
-                : undefined}
+              onDeleteAsset={canDeleteCurrent ? openDeleteDialog : undefined}
             />
           </div>
         {:else}
@@ -818,6 +992,20 @@
       }}
     />
   {/if}
+
+  <!-- Same placement rule, same reason (#981, #987): the delete confirm
+       is raised from a menu that lives inside this dialog, so it has to
+       be declared where Modal's portal can find that dialog. -->
+  <ConfirmDeleteDialog
+    open={deleteTarget !== null}
+    kind="asset"
+    title={deleteTarget?.title}
+    askReason={deleteTarget ? shouldAskReason(deleteTarget.ownerRef) : false}
+    busy={deleteBusy}
+    error={deleteError}
+    onconfirm={confirmDelete}
+    onclose={closeDeleteDialog}
+  />
 </dialog>
 
 <!-- Hotkey legend — passed through AssetViewer and rendered as the

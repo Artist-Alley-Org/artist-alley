@@ -144,13 +144,17 @@ type apiServer struct {
 	// #937 — GET /account/trash. Reads across assets/posts/collections
 	// but owns none of them; see the package doc for why it is one
 	// endpoint and not three.
-	trash              *trash.Handler
-	setup              *setup.Handler
-	workflow           *workflow.Handler
-	sysconfigH         *sysconfig.Handler
-	jobs               *jobs.HTTPHandler
-	brushpacks         *brushpacks.Handler
-	audit              *audit.HTTPHandler
+	trash      *trash.Handler
+	setup      *setup.Handler
+	workflow   *workflow.Handler
+	sysconfigH *sysconfig.Handler
+	jobs       *jobs.HTTPHandler
+	brushpacks *brushpacks.Handler
+	audit      *audit.HTTPHandler
+	// #600 — GET /account/activity. Reads audit_events scoped to the
+	// caller. Separate from `audit` because that one is admin-gated;
+	// see audit/activity.go for why they are two structs.
+	activity           *audit.AccountHandler
 	scheduledActions   *scheduledactions.HTTPHandler
 	licensing          *licensing.Handler
 	userprefs          *userprefs.Handler
@@ -307,6 +311,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		jobsSvc:          jobSvc,
 		brushpacks:       brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:            audit.NewHTTPHandler(pool, logger),
+		activity:         audit.NewAccountHandler(pool, logger),
 		scheduledActions: scheduledactions.NewHTTPHandler(scheduledactions.NewStore(pool), logger),
 		licensing:        licensing.NewHandler(licState, logger),
 		userprefs:        userprefs.NewHandler(pool, logger, cacheReg),
@@ -3068,6 +3073,12 @@ func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.Update
 
 func (s *apiServer) ListMyTrash(ctx context.Context, req openapi.ListMyTrashRequestObject) (openapi.ListMyTrashResponseObject, error) {
 	return s.trash.ListMyTrash(ctx, req)
+}
+
+// --- account activity ------------------------------------------------------
+
+func (s *apiServer) ListMyActivity(ctx context.Context, req openapi.ListMyActivityRequestObject) (openapi.ListMyActivityResponseObject, error) {
+	return s.activity.ListMyActivity(ctx, req)
 }
 
 // --- posts -----------------------------------------------------------------

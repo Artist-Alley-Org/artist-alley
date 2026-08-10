@@ -302,6 +302,35 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Your account has an activity log.** The site has recorded who did what since the first
+  release, and the only way to read any of it was to be a site administrator looking at the
+  whole log. There was no way to answer "when was my account disabled", or "did I really delete
+  that", without asking someone (#600).
+
+  **Account → Activity log** now lists what you have done and what has been done to your
+  account, newest first, as plain sentences — "You deleted an asset", "Your account was
+  disabled" — rather than the raw log an administrator reads.
+
+  It shows the act, not the other person. For something you did, you see the details, because
+  they are yours. For something done to your account you see what happened and when, and
+  nothing else: not who did it, and not the note they wrote about it. That is the same line the
+  bin already draws when it tells you an item was removed without naming the remover — being
+  told about a decision is not the same as being handed the file on it. Sign-in locations stay
+  where they were, on the sessions page, which is the screen that can also end them.
+
+- **Files opened on their own page can be deleted.** The delete entry added in the last release
+  only appeared when a file was being viewed inside a post. Open the same file by its own link —
+  a shared URL, a search result, a collection tile — and the entry was missing, for its owner
+  and for moderators alike (#987).
+
+  It is there now, and it behaves the same everywhere: the same confirmation, the same reason
+  box when you are removing someone else's work, the same **Undo**. Deleting a file this way
+  takes you back where you came from, since the page you were on no longer has anything to show.
+
+  The reason it was missing is that the entry had been attached to posts rather than to files.
+  It now belongs to the file viewer itself, so every screen that can show you a file offers the
+  same thing.
+
 - **If a moderator removed your work, you can now ask for it back.** Your bin already showed
   items someone else removed, but they were a dead end — no way to ask about them, and the
   reason the remover wrote (which the delete dialog promises you will see) was never actually

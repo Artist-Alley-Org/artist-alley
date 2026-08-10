@@ -677,6 +677,179 @@
       "revoke": "Sign out",
       "revoking": "Signing out…",
       "revoked": "Session revoked."
+    },
+    "activity": {
+      "title": "Activity log",
+      "intro": "Recent things you've done, and things that happened to your account. Older entries are removed over time.",
+      "empty": "Nothing here yet.",
+      "empty_hint": "Sign-ins, permission changes and anything you delete or restore will show up here.",
+      "load_error": "We couldn't load your activity. Try again in a moment.",
+      "load_more": "Show older",
+      "unknown_event": "An account event was recorded ({type}).",
+      "detail_asset": "Asset {id}",
+      "detail_post": "Post {id}",
+      "detail_collection": "Collection {id}",
+      "detail_capability": "Permission: {capability}",
+      "detail_reason": "Reason: {reason}",
+      "detail_sessions_revoked": "Other sessions signed out: {count}",
+      "event": {
+        "login.succeeded": {
+          "by_me": "You signed in.",
+          "on_my_account": "You signed in."
+        },
+        "login.failed": {
+          "by_me": "A sign-in attempt was refused.",
+          "on_my_account": "A sign-in to your account was attempted and refused."
+        },
+        "logout": {
+          "by_me": "You signed out.",
+          "on_my_account": "You signed out."
+        },
+        "session.revoked": {
+          "by_me": "You signed a session out.",
+          "on_my_account": "One of your sessions was signed out."
+        },
+        "auth.lockout.triggered": {
+          "by_me": "Sign-in was locked after repeated failures.",
+          "on_my_account": "Your account was temporarily locked after repeated failed sign-ins."
+        },
+        "auth.lockout.cleared": {
+          "by_me": "You lifted a sign-in lock.",
+          "on_my_account": "The sign-in lock on your account was lifted."
+        },
+        "user.registered": {
+          "by_me": "You created your account.",
+          "on_my_account": "Your account was created."
+        },
+        "user.email_verified": {
+          "by_me": "You confirmed your email address.",
+          "on_my_account": "Your email address was confirmed."
+        },
+        "user.password_changed": {
+          "by_me": "You changed your password.",
+          "on_my_account": "Your password was changed."
+        },
+        "user.password_reset": {
+          "by_me": "You reset someone's password.",
+          "on_my_account": "Your password was reset by an administrator."
+        },
+        "user.profile_updated": {
+          "by_me": "You edited a profile.",
+          "on_my_account": "Your profile was edited."
+        },
+        "user.status_changed": {
+          "by_me": "You changed an account's status.",
+          "on_my_account": "Your account status was changed."
+        },
+        "admin.users.approved": {
+          "by_me": "You approved an account.",
+          "on_my_account": "Your account was approved."
+        },
+        "admin.users.disabled": {
+          "by_me": "You disabled an account.",
+          "on_my_account": "Your account was disabled."
+        },
+        "admin.users.archived": {
+          "by_me": "You archived an account.",
+          "on_my_account": "Your account was archived."
+        },
+        "admin.users.restored": {
+          "by_me": "You restored an account.",
+          "on_my_account": "Your account was restored."
+        },
+        "admin.users.refused_last_admin": {
+          "by_me": "A change was refused because it would have left no administrators.",
+          "on_my_account": "A change to your account was refused because it would have left no administrators."
+        },
+        "admin.user.hard_deleted_by_gc": {
+          "by_me": "An account was removed for good.",
+          "on_my_account": "Your account was removed for good."
+        },
+        "admin.impersonation.started": {
+          "by_me": "You started viewing the site as another user.",
+          "on_my_account": "An administrator started viewing the site as you."
+        },
+        "admin.impersonation.ended": {
+          "by_me": "You stopped viewing the site as another user.",
+          "on_my_account": "An administrator stopped viewing the site as you."
+        },
+        "admin.search.feedback.audit_viewed": {
+          "by_me": "You opened a user's search feedback log.",
+          "on_my_account": "An administrator opened your search feedback log."
+        },
+        "user.capability_granted": {
+          "by_me": "You granted a permission.",
+          "on_my_account": "You were granted a permission."
+        },
+        "user.capability_revoked": {
+          "by_me": "You revoked a permission.",
+          "on_my_account": "A permission of yours was revoked."
+        },
+        "user.capability_grant_removed": {
+          "by_me": "You withdrew a permission you had granted.",
+          "on_my_account": "A permission you had been granted was withdrawn."
+        },
+        "user.capability_revoke_removed": {
+          "by_me": "You lifted a permission block.",
+          "on_my_account": "A block on one of your permissions was lifted."
+        },
+        "user.capability_grant_expired_swept": {
+          "by_me": "A temporary permission expired.",
+          "on_my_account": "A temporary permission of yours expired."
+        },
+        "user.capability_revoke_expired_swept": {
+          "by_me": "A temporary permission block expired.",
+          "on_my_account": "A temporary block on one of your permissions expired."
+        },
+        "request.created": {
+          "by_me": "You asked for access to an asset.",
+          "on_my_account": "Access to an asset was requested for you."
+        },
+        "request.granted": {
+          "by_me": "You approved an access request.",
+          "on_my_account": "Your access request was approved."
+        },
+        "request.denied": {
+          "by_me": "You declined an access request.",
+          "on_my_account": "Your access request was declined."
+        },
+        "request.expired": {
+          "by_me": "An access grant expired.",
+          "on_my_account": "Access you were given has expired."
+        },
+        "admin.asset.soft_deleted": {
+          "by_me": "You deleted an asset.",
+          "on_my_account": "An asset of yours was deleted."
+        },
+        "admin.asset.restored": {
+          "by_me": "You restored an asset.",
+          "on_my_account": "An asset of yours was restored."
+        },
+        "admin.post.soft_deleted": {
+          "by_me": "You deleted a post.",
+          "on_my_account": "A post of yours was deleted."
+        },
+        "admin.post.restored": {
+          "by_me": "You restored a post.",
+          "on_my_account": "A post of yours was restored."
+        },
+        "admin.collection.soft_deleted": {
+          "by_me": "You deleted a collection.",
+          "on_my_account": "A collection of yours was deleted."
+        },
+        "admin.collection.restored": {
+          "by_me": "You restored a collection.",
+          "on_my_account": "A collection of yours was restored."
+        },
+        "federation.user.key_generated": {
+          "by_me": "A signing key was created for your account.",
+          "on_my_account": "A signing key was created for your account."
+        },
+        "federation.user.key_rotated": {
+          "by_me": "You rotated a signing key.",
+          "on_my_account": "The signing key for your account was rotated."
+        }
+      }
     }
   },
   "admin": {
@@ -3065,7 +3238,7 @@
     "title_asset": "Delete asset?",
     "title_post": "Delete post?",
     "title_collection": "Delete collection?",
-    "body_asset": "“{title}” will be removed from this post and from browse.",
+    "body_asset": "“{title}” will be removed from browse, and from any post or collection it appears in.",
     "body_post": "“{title}” will be removed, along with its likes and comments.",
     "body_collection": "“{title}” will be removed. The assets inside it are not deleted — only the collection.",
     "recoverable": "It goes to your trash — you can restore it from there. Your trash shows the exact date each item is removed for good.",

@@ -8025,6 +8025,92 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /account/activity:
+    get:
+      operationId: listMyActivity
+      summary: My activity — what I did, and what was done to my account
+      description: |
+        One newest-first list of the audit rows that name the caller,
+        on either side: `actor_user_ref = caller` (things the caller
+        did) or `subject_user_ref = caller` (things done to the
+        caller's account). The `role` discriminator says which.
+
+        WHY THIS IS NOT THE ADMIN AUDIT VIEWER WITH A FILTER. The
+        admin surface (`GET /admin/audit`) is a log reader: every
+        column, arbitrary actor/subject filters, and `ip` behind
+        `system.audit.pii.read` (#425). Handing an ordinary caller a
+        pre-filtered version of it would ship them a projection built
+        for an auditor. This one answers a narrower question — "what
+        happened involving me" — and its projection is cut to that
+        question rather than trimmed down from the other one.
+
+        THE PROJECTION, AND WHY IT REFUSES WHAT IT REFUSES. It follows
+        the `/account/trash` precedent: disclose the ACT, never the
+        other party's details.
+
+        `metadata` ships only on `by_me` rows. A `by_me` row is the
+        caller's own action read back, so its payload is a record of
+        something they did and already knew. An `on_my_account` row is
+        somebody ELSE's action, and there the event type plus the time
+        IS the disclosure: you are told that your account was disabled
+        and when, which is the fact you need in order to ask about it.
+        The metadata of an administrative action is that
+        administrator's working note — the free-text `reason` on a
+        status change, the `capability` and `team_id` on a grant — and
+        volunteering it here would be widening by convenience, the
+        same move the trash listing refuses when it declines to name
+        the deleter.
+
+        For the same reason `on_my_account` rows carry NO actor
+        identity. The trash projection returns whether the caller may
+        undo a delete and never who performed it; this returns that an
+        event happened to the caller and never who caused it. Neither
+        act disclosed the identity of the person who took it, and an
+        account page is not the place to start.
+
+        NO `ip` AND NO `user_agent`, IN EITHER ROLE. Not gated —
+        absent. `/account/sessions` already owns "where has my account
+        been signed in from", with its own shape and its own
+        revocation controls, and #425's capability rule is an
+        admin-side rule about reading OTHER people's personal data.
+        Answering the same question a second way here would be a
+        second surface to keep correct for no new answer.
+
+        Ordering and pagination are the (`occurred_at`, `id`) keyset,
+        DESC, with the id tiebreak carrying the same comparison as the
+        timestamp — audit rows written by one request share a
+        timestamp to the microsecond, so the tiebreak is the common
+        case rather than the rare one.
+
+        Rows are subject to the audit retention purge (ADR 0032), so
+        this is a window on the log, not a permanent history.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque token from a previous response's `next_cursor`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of the caller's own activity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivityList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /account/trash:
     get:
       operationId: listMyTrash
@@ -17949,6 +18035,80 @@ components:
           type: array
           items: { $ref: "#/components/schemas/MetadataBackfillRun" }
 
+    ActivityEvent:
+      type: object
+      description: |
+        One audit row that names the caller, projected for the caller
+        rather than for an auditor (#600). See `GET /account/activity`
+        for why each omission is an omission.
+      required: [id, event_type, occurred_at, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            The audit row id. Carried so the page can key rows and so a
+            support conversation can name one exactly; it is not a
+            handle to anything the caller can fetch.
+        event_type:
+          type: string
+          description: |
+            The raw dotted event type (`user.password_changed`,
+            `admin.asset.soft_deleted`, ...). Sent raw, not as a
+            pre-rendered sentence, because the client already owns the
+            translations and a server-side sentence would be one
+            language baked into an API. Clients MUST render an unknown
+            type as a readable fallback rather than a raw payload —
+            new types land continuously and a page that only knows
+            today's list must not degrade to a JSON dump.
+        occurred_at:
+          type: string
+          format: date-time
+        role:
+          type: string
+          enum: [by_me, on_my_account]
+          description: |
+            `by_me` — the caller is the actor. `on_my_account` — the
+            caller is the subject and somebody (or something) else
+            acted.
+
+            A row where the caller is BOTH actor and subject is
+            `by_me`: changing your own password is an act, not
+            something that happened to you, and reporting it as the
+            latter would make a self-service change read like an
+            intrusion.
+
+            Rows with no actor at all (a system sweep, an expiry)
+            reach the caller only as subject, so they are
+            `on_my_account` — which is the honest reading: nobody the
+            caller can ask did it.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: |
+            The event's payload — PRESENT ONLY ON `by_me` ROWS, where
+            it is a record of the caller's own action. Absent, not
+            empty, on `on_my_account` rows: an empty object would
+            claim the event had no detail, when the truth is that its
+            detail belongs to whoever acted. See the endpoint
+            description.
+
+            Shapes are per-event-type and are not part of this
+            contract; clients read the keys they recognise and ignore
+            the rest.
+    ActivityList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ActivityEvent" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque token for the next page; omitted on the final page.
+            Pass back unchanged as the `cursor` query parameter.
     TrashItem:
       type: object
       description: |

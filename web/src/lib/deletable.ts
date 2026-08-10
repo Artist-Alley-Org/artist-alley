@@ -11,13 +11,22 @@
 // This module is that shape — the same argument `app/internal/trash`
 // makes for serving one listing across all three.
 //
-// Three surfaces call it: the viewer's "Delete asset", the post
-// kebab's "Delete post", and the collection page's "Delete
-// collection". Before this issue all three were stubs — the viewer and
-// the kebab called `stubAction()`, and the collection item was
-// hardcoded `disabled` behind a `delete_soon` tooltip — so the whole
-// delete/restore arc (#930, #936, #920/#935, #937) was reachable only
-// through the API.
+// Three surfaces call it, one per kind:
+//
+//   asset      — AssetPlaylist's "Delete asset". The viewer SHELL, not
+//                a host: every surface that shows an asset renders this
+//                shell, so the item follows the asset rather than the
+//                thing it happens to be inside. #981 wired it into
+//                PostHost instead, which meant /assets/{id} — the
+//                asset-shaped route — had no delete at all; #987 moved
+//                it down to the shell and both routes got it.
+//   post       — PostHost's "Delete post".
+//   collection — the collection page's "Delete collection".
+//
+// Before #981 all three were stubs — the first two called
+// `stubAction()`, and the collection item was hardcoded `disabled`
+// behind a `delete_soon` tooltip — so the whole delete/restore arc
+// (#930, #936, #920/#935, #937) was reachable only through the API.
 
 import { api } from '$api/client';
 import { auth } from '$stores/auth.svelte';
