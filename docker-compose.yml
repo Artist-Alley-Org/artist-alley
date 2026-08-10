@@ -166,7 +166,16 @@ services:
           # port and ignores this.
           - vite.aa
     volumes:
-      # Bind-mount the whole web/ tree so file edits trigger Vite HMR.
+      # Bind-mount the whole web/ tree so host edits reach the dev
+      # server without a rebuild. The change *events* do not come for
+      # free though: Vite documents that filesystem watching is broken
+      # under WSL2 (and under Docker with a WSL2 backend) when the
+      # project sits on a Windows filesystem, which is where this
+      # checkout lives. inotify never crosses the mount, so
+      # web/vite.config.ts turns on watcher polling — see
+      # `server.watch` there for the measured cost. Without it Vite
+      # never learns a file changed and even a full page reload
+      # serves the stale module it cached on first request (#993).
       # node_modules is masked by an anonymous volume so the image's
       # baked-in modules are used (avoids host-Linux symlink + perms
       # quirks on Windows / macOS).
