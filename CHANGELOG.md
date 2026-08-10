@@ -108,6 +108,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The Undo notice no longer disappears when you delete a file from its own page.** Deleting
+  a file worked, and it went to your bin as it should — but if you had arrived at the file
+  from somewhere else in the app, the confirmation that appears with the **Undo** button was
+  swept away in the same instant the page closed. You were left with no acknowledgement and
+  no one-click way back; the only recovery was to go and find the bin yourself (#991).
+
+  The notice now outlives the page that raised it, on every delete.
+
 - **Your deleted things have a place now.** Anything you delete goes to a trash page in
   your account, where it shows what it was, when you deleted it, and how long until it is
   gone for good — and a Restore button puts it back where it was (#937).
