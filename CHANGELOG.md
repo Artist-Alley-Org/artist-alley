@@ -333,6 +333,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **You choose which details show on a file's card.** Cards showed one fixed line — the date —
+  and nothing else, however much metadata a file carried. An operator can now mark any metadata
+  field as "show at a glance", and it appears on the card across every view density (#552).
+
+  Values read as words rather than as internal codes: a field set to `pass-1` shows as
+  "Pass 1". Cards with nothing configured look exactly as they did before.
+
+  Files shared from another server now say so, on the card itself — in the grid, the details
+  view and the tooltip. They use the same card and the same layout as local work, because
+  federated content is not second-class; but you can always tell whose it is.
+
 - **A file's title and description can no longer disagree with themselves.** Title and
   description existed twice over: once as the file's own fields, and once as entries in the
   configurable metadata list. Nothing connected them, so the moment anything wrote to the
