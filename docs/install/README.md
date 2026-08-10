@@ -87,7 +87,7 @@ persists it under `AA_BOOTSTRAP_ADMIN_PATH` (default
 | `:vX.Y.Z`            | exact version (immutable, recommended for prod) |
 | `:vX.Y`, `:vX`       | latest patch on that line                    |
 | `:latest`            | most recent stable release                   |
-| `:edge`              | latest commit on `dev` (continuous; not stable) |
+| `:edge`              | newest built state of `dev` (continuous; not stable) |
 | `:edge-{sha}`        | exact dev commit that changed the application (immutable, pinnable) |
 
 `:edge-{sha}` is published only for `dev` commits that touch the
