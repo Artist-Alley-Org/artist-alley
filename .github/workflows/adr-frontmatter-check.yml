@@ -7,8 +7,10 @@
 #
 #   - ADR 0071 landed with no frontmatter block at all
 #   - ADR 0073 landed with `area: content`, not in the site's enum
+#   - ADR 0086 landed with `area: frontend`, the same mistake again,
+#     and broke the site build for ~4 hours (#1012)
 #
-# and ADR 0074 had to be hand-validated to avoid a third. This gate
+# and ADR 0074 had to be hand-validated to avoid a fourth. This gate
 # moves that validation into the repo that owns the files.
 #
 # See scripts/check-adr-frontmatter.sh for what is checked, and ADR
@@ -16,7 +18,22 @@
 
 name: ADR frontmatter check
 
+# `push` as well as `pull_request` (#1012). ADRs are written from the
+# planning worktree and pushed *straight to dev* — they do not go
+# through a PR — so a `pull_request`-only trigger meant this gate had
+# never once fired on an ADR in the three times one broke the site.
+# A push run cannot block the commit (it is already on the branch),
+# but it turns a silent multi-hour break in a downstream repo nobody
+# watches into a red X on the branch the author just pushed to.
+# Requiring ADRs to go through PRs instead is deliberately NOT the
+# fix: direct doc pushes to dev are the established workflow.
 on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "docs/adr/**"
+      - "scripts/check-adr-frontmatter.sh"
+      - ".github/workflows/adr-frontmatter-check.yml"
   pull_request:
     paths:
       - "docs/adr/**"
