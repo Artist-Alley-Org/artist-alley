@@ -99,6 +99,23 @@ export interface PlaylistSource {
       navigation can spill into the next page without the user
       hitting an artificial wall. */
   loadMore?: () => Promise<void>;
+  /** Drop one item, in place, and leave `cursor` pointing at something
+      real. Returns how many items are left, because the shell's very
+      next decision is whether there is anything to keep showing.
+
+      A METHOD RATHER THAN THE SHELL SPLICING (#991). The shell used to
+      reach in and `source.items.splice(...)` after a delete. It worked,
+      and it made Svelte log `ownership_invalid_mutation` on every
+      delete: `source` is a prop, the state behind it belongs to the
+      host that built it, and a child writing a parent's arrays is
+      exactly what that warning is for. Handing the operation to the
+      source puts the write back where the state lives, and the two
+      implementations stay identical because the shell can only ask.
+
+      Optional: a source whose items cannot be deleted (a fixed review
+      set, a search page) simply omits it, and the shell reloads
+      instead. */
+  removeItem?: (itemId: string) => number;
 }
 
 /** Props the host wraps around the AssetPlaylist shell.
