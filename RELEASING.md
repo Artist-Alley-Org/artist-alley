@@ -25,6 +25,14 @@ feat/baz  ─┘    (continuous edge images)
 CI runs first on every change. Branch-image builds + release
 publication are gated on CI green.
 
+The edge build skips docs-only pushes to `dev` (`paths-ignore` in
+`.github/workflows/edge.yml`), so `:edge-{sha}` exists only for
+commits that change the application — a docs commit would produce a
+byte-identical image, and building it used to cancel the edge run
+still going for the code merge ahead of it. `dev`'s tip is frequently
+a close-out docs commit, so do not assume `git rev-parse dev` names a
+pullable tag.
+
 ## Cutting a release
 
 1. Make sure `dev` is healthy: CI green, edge image deployed to your
