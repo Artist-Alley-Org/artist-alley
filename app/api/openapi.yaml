@@ -5321,6 +5321,8 @@ paths:
       responses:
         "204":
           description: Cleared
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -12371,6 +12373,35 @@ components:
           description: |
             Write behaviour when extraction has a value. Empty =
             default (skip_if_set).
+        mirrors_column:
+          type: string
+          nullable: true
+          readOnly: true
+          description: |
+            When set, this field is a VIEW onto that column of the
+            `assets` row rather than storage of its own (#822): reading
+            it projects the column, writing it updates the column, and
+            it can hold no value of its own — so the field and the
+            column cannot disagree. `title` and `description` ship this
+            way; `null` (the default) is an ordinary field.
+
+            Two consequences for a client:
+
+            * A write to a mirrored field is a write to the ASSET and
+              is gated as one — the caller needs the same authority a
+              `PATCH /assets/{id}` would demand, not merely a session.
+            * A surface that already renders the column with a
+              first-class control (the upload form's title box, an
+              asset header) should skip the mirrored field rather than
+              offer a second editor for the same value.
+
+            Read-only over the API, deliberately: which columns are
+            mirrorable is a schema decision enforced by a CHECK
+            constraint, not something an operator can retarget at a
+            column that may not exist. It is also LOCAL — it names a
+            column of this server's schema — so per ADR 0083's
+            exclusion criterion it does not travel in a federated
+            field-schema envelope.
         status:
           type: string
           enum: [active, deprecated, archived]
@@ -12590,7 +12621,7 @@ components:
         value_ref: { type: string, format: uuid, nullable: true }
         set_by:
           type: string
-          enum: [manual, exif, iptc, xmp, api, import, computed, default]
+          enum: [manual, exif, iptc, xmp, api, import, computed, default, mirror]
           description: |
             Where this value came from. `default` means an upload
             default put it here and nothing has improved on it since —
@@ -12599,6 +12630,13 @@ components:
             client cannot claim: `AssetFieldValueWrite.set_by` has no
             `default` member, because a value a caller chose to send is
             by definition not one nobody chose.
+
+            `mirror` means the field declares `mirrors_column` and this
+            value IS the asset column — nothing was stored under the
+            field. It is not a claim about who last edited it, because
+            the column carries no such record; `set_at` is the asset's
+            `updated_at` and `set_by_user_ref` is always null. Like
+            `default` it is server-only: a caller cannot send it.
         set_at: { type: string, format: date-time }
         set_by_user_ref: { type: integer, format: int64, nullable: true }
         resolved_options:

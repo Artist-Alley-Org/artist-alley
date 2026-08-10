@@ -5071,6 +5071,28 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 	// row read back empty, so skip_if_set never fired and the
 	// equal-value short-circuit never hit — every extraction pass over
 	// the same file would have rewritten the same keywords.
+	// A MIRRORED field (#822) has no row here and never will, so the probe
+	// reads the COLUMN instead. Without this branch skip_if_set would see
+	// "nothing there" for an asset that plainly has a title, and every
+	// extraction pass would overwrite it — the exact defect skip_if_set
+	// exists to prevent, reintroduced by the field having moved house.
+	if col, ok, err := metadata.MirrorColumnForField(ctx, a.pool, fieldID); err != nil {
+		return assetmetadata.FieldValueSnapshot{}, false, err
+	} else if ok {
+		v, rErr := metadata.ReadMirroredValue(ctx, a.pool, assetID, col)
+		if rErr != nil {
+			return assetmetadata.FieldValueSnapshot{}, false, rErr
+		}
+		if v == "" {
+			return assetmetadata.FieldValueSnapshot{}, false, nil
+		}
+		// set_by is `manual`, and that is the honest reading rather than a
+		// convenience: a column an operator can edit through the asset form
+		// carries no provenance, so extraction must treat what it finds as
+		// somebody's decision and leave it alone under skip_if_set.
+		return assetmetadata.FieldValueSnapshot{ValueText: &v, SetBy: "manual"}, true, nil
+	}
+
 	err := a.pool.QueryRow(ctx, `
 		SELECT value_text, value_num, value_date, value_options, set_by
 		  FROM asset_field_value
@@ -5121,6 +5143,29 @@ type metaValueWriterAdapter struct {
 func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p assetmetadata.WriteAssetFieldValueParams) error {
 	pgAsset := pgtype.UUID{Bytes: p.AssetID, Valid: true}
 	pgField := pgtype.UUID{Bytes: p.FieldID, Valid: true}
+
+	// A MIRRORED field (#822) is written by writing the column it declares.
+	// One UPDATE, so no transaction and no history append — the same two
+	// decisions the API path makes, obtained from the same helper rather
+	// than restated. This is what lets #800 wire `title ← iptc_ObjectName`
+	// at all: without it the write would hit the guard trigger.
+	//
+	// No caller gate here, deliberately. Extraction is system-owned and has
+	// no identity to check — the same reason this adapter bypasses the HTTP
+	// handler's capability checks for every other field. The gate belongs to
+	// the caller-facing path, and that is where mirroredWriteRefusal lives.
+	if col, ok, mErr := metadata.MirrorColumnForField(ctx, a.pool, p.FieldID); mErr != nil {
+		return fmt.Errorf("metadata extraction: mirror lookup: %w", mErr)
+	} else if ok {
+		if p.Value.Kind != assetmetadata.ValueKindText {
+			return fmt.Errorf("metadata extraction: field %s mirrors assets.%s and takes a text value", p.FieldID, col)
+		}
+		s := p.Value.Text
+		if sanitised := richtext.SanitizeValueText(p.FieldType, &s); sanitised != nil {
+			s = *sanitised
+		}
+		return metadata.WriteMirroredValue(ctx, a.pool, p.AssetID, col, s)
+	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

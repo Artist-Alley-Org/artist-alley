@@ -1251,29 +1251,31 @@ const CapAssetsAdmin = visibility.AssetsAdmin
 // 0 would make a bare `*ownerRef == id.UserRef` hand ownership to
 // every anonymous visitor. So non-anonymity is established BEFORE any
 // ownership comparison, and ref 0 is refused as an owner outright.
+//
+// # Where the rule actually lives now (#822)
+//
+// The logic moved to visibility.AssetMutationCaps.MayMutateOwned and
+// this is the adapter that hands it an *auth.Identity. It moved because
+// `PATCH /assets/{id}` is no longer the only way to change
+// `assets.title`: a field definition can declare itself a view onto that
+// column, so `PUT /assets/{id}/fields/{field_id}` writes it too — and
+// the metadata package cannot import this one (this one imports it).
+// The alternative was a second copy of an authorisation rule, which is
+// what the paragraph above already says is the bug.
 func canMutateAsset(id *auth.Identity, ownerRef *int64, teamID pgtype.UUID) bool {
 	if id == nil || id.IsAnonymous() {
 		return false
 	}
-	// system.admin is the global override everywhere. Checked first so
-	// it reaches NULL-owner and team-less assets too.
-	if id.Can(auth.SuperAdminCapability) {
-		return true
-	}
-	// Ownership. Both sides must be a real user: ref 0 is the anonymous
-	// sentinel, never a principal, on either side of the comparison.
-	if ownerRef != nil && *ownerRef != 0 && id.UserRef != 0 && *ownerRef == id.UserRef {
-		return true
-	}
-	// Team-scoped grant — only when the asset actually HAS a team.
+	var team *uuid.UUID
 	if teamID.Valid {
-		if id.Can(CapAssetsAdmin, auth.InTeam(uuid.UUID(teamID.Bytes))) {
-			return true
-		}
+		t := uuid.UUID(teamID.Bytes)
+		team = &t
 	}
-	// Global grant. Reached for a team-less asset, and for an asset in
-	// a team the caller holds no scoped grant over.
-	return id.Can(CapAssetsAdmin)
+	caps := visibility.ResolveAssetMutationCaps(
+		func(code string) bool { return id.Can(code) },
+		id.ScopedTeams(CapAssetsAdmin),
+	)
+	return caps.MayMutateOwned(id.UserRef, ownerRef, team)
 }
 
 // The publication verbs (#938). Seeded in migration 00001 and granted
