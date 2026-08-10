@@ -66,6 +66,30 @@ modal" convention: the modal stays for browsing; the route is for direct links.
 - Ships in **v0.5.1** as a patch, with its regression + link-integrity tests in the same PR
   (ADR 0068).
 
+### Amendment 2026-08-09 (#987, PR #989) — an affordance lives in the SHELL, not in the route
+
+The route being "a thin wrapper around the same shell posts use" is the decision this ADR made, and
+#981 quietly broke it: the Delete affordance was wired into `PostHost` (the post-shaped host) rather
+than into `AssetPlaylist` (the shell both routes render), so `/assets/{id}` — the URL every asset
+link in the product resolves to — could not delete the thing it was showing.
+
+The fix moved the whole flow **down into `AssetPlaylist`** and removed its external `onDeleteAsset`
+prop (`PostHost` was the only caller; the internal `AssetViewer` → `ViewerMenuBar` chain stays,
+driven by the shell's own dialog). Both routes now inherit one implementation.
+
+**The non-obvious constraint that makes this the only correct placement, recorded so nobody undoes
+it:** `Modal` portals to the nearest open `dialog`, *resolved from where the modal is declared*. The
+asset route is 43 lines with no dialog ancestor, so a confirm dialog declared **there** renders
+underneath the viewer's top layer — present in the DOM, invisible on screen, and passing every test
+that asserts on the DOM. Duplicating the flow into the route would not merely have been repetition;
+it would have shipped broken in a way a type-check cannot see.
+
+**The general rule for this route:** anything the viewer's top layer must contain belongs to the
+shell. The route's job stays what this ADR set out — resolve the id, 404-gate it, seed the source,
+own the close policy — and nothing more. (Related: the standalone close policy is `async`, so a
+post-delete toast must be pushed **after** the navigation is awaited, or it is parented into a
+dialog that is then torn down.)
+
 ## References
 
 - ADR 0053 — IIIF interoperability (the other asset-viewing surface).

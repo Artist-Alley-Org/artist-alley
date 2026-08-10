@@ -318,8 +318,8 @@ where applicable, otherwise note "no-spec-impact."
   told about a decision is not the same as being handed the file on it. Sign-in locations stay
   where they were, on the sessions page, which is the screen that can also end them.
 
-- **Files opened on their own page can be deleted.** The delete entry added in the last release
-  only appeared when a file was being viewed inside a post. Open the same file by its own link —
+- **Files opened on their own page can be deleted.** The delete entry added earlier in this
+  release only appeared when a file was being viewed inside a post. Open the same file by its own link —
   a shared URL, a search result, a collection tile — and the entry was missing, for its owner
   and for moderators alike (#987).
 
