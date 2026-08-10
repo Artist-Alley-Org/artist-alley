@@ -124,6 +124,34 @@ func (m AssetMutationCaps) MayMutate(teamID *uuid.UUID) bool {
 	return false
 }
 
+// MayMutateOwned is [AssetMutationCaps.MayMutate] plus the OWNERSHIP
+// branch — the complete write-side rule, and the one an endpoint that
+// is about to change an `assets` row must ask.
+//
+// # Why it lives here and not in the assets package
+//
+// It used to live only there, as `assets.canMutateAsset`. That was fine
+// while `PATCH /assets/{id}` was the only way to change `assets.title`.
+// #822 made a field definition able to declare itself a VIEW onto that
+// column, so `PUT /assets/{id}/fields/{field_id}` can now write it too
+// — and the metadata package cannot import the assets package (assets
+// imports metadata; the cycle is real). The choice was to state the
+// rule twice or to move it somewhere both can obtain it. Two statements
+// of an authorisation rule is precisely the defect #822 is about, one
+// plane over, so the rule moved. `assets.canMutateAsset` is now a thin
+// adapter over this function and holds no logic of its own.
+//
+// `callerRef` is the caller's user ref; 0 is the anonymous sentinel and
+// is never a principal, on either side of the ownership comparison. A
+// zero-value AssetMutationCaps with an anonymous caller permits
+// nothing, so the rule fails CLOSED.
+func (m AssetMutationCaps) MayMutateOwned(callerRef int64, ownerRef *int64, teamID *uuid.UUID) bool {
+	if callerRef != 0 && ownerRef != nil && *ownerRef != 0 && *ownerRef == callerRef {
+		return true
+	}
+	return m.MayMutate(teamID)
+}
+
 // CacheKey is the stable string a per-caller cache must fold in
 // alongside the user ref and [ContentCaps.CacheKey].
 //

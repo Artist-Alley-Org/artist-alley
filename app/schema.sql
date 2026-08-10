@@ -198,6 +198,90 @@ $$;
 
 
 --
+-- Name: asset_mirror_fill(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_mirror_fill(p_asset uuid, p_column text, p_value text) RETURNS TABLE(mirrored_value text, mirrored_at timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+    IF p_asset IS NULL OR p_column IS NULL THEN
+        RETURN;
+    END IF;
+    RETURN QUERY EXECUTE format(
+        'UPDATE public.assets SET %I = $1, updated_at = now() '
+        || 'WHERE id = $2 AND deleted_at IS NULL AND %I = '''' RETURNING %I, updated_at',
+        p_column, p_column, p_column)
+        USING coalesce(p_value, ''), p_asset;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION asset_mirror_fill(p_asset uuid, p_column text, p_value text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_mirror_fill(p_asset uuid, p_column text, p_value text) IS 'The if-absent counterpart of asset_mirror_write, for the upload-defaults pass: writes only when the column is still empty. Returns no row when something was already there, which is InsertAssetFieldValueIfAbsent''s zero-rows answer in the mirrored plane.';
+
+
+--
+-- Name: asset_mirror_read(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_mirror_read(p_asset uuid, p_column text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE
+    v text;
+BEGIN
+    IF p_asset IS NULL OR p_column IS NULL THEN
+        RETURN NULL;
+    END IF;
+    EXECUTE format('SELECT %I FROM public.assets WHERE id = $1 AND deleted_at IS NULL', p_column)
+        INTO v
+        USING p_asset;
+    RETURN v;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION asset_mirror_read(p_asset uuid, p_column text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_mirror_read(p_asset uuid, p_column text) IS 'Projects the column a mirrored field declares. Soft-deleted assets read NULL, which is exactly ListAssetFieldValues'' existing visibility rule for the row plane (ADR 0063/0064).';
+
+
+--
+-- Name: asset_mirror_write(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_mirror_write(p_asset uuid, p_column text, p_value text) RETURNS TABLE(mirrored_value text, mirrored_at timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+    IF p_asset IS NULL OR p_column IS NULL THEN
+        RETURN;
+    END IF;
+    -- The columns are NOT NULL DEFAULT '' — clearing a mirrored field is
+    -- the empty string, never a NULL the column would reject.
+    RETURN QUERY EXECUTE format(
+        'UPDATE public.assets SET %I = $1, updated_at = now() '
+        || 'WHERE id = $2 AND deleted_at IS NULL RETURNING %I, updated_at',
+        p_column, p_column)
+        USING coalesce(p_value, ''), p_asset;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION asset_mirror_write(p_asset uuid, p_column text, p_value text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_mirror_write(p_asset uuid, p_column text, p_value text) IS 'Writes the column a mirrored field declares, returning the persisted value and the row''s new updated_at. Returns no row when the asset is absent or soft-deleted, which the caller reports as 404.';
+
+
+--
 -- Name: asset_type_acl_sweep_on_role_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -483,6 +567,65 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
      WHERE id = p_post_id;
 END; $$;
+
+
+--
+-- Name: refuse_mirror_over_existing_values(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_mirror_over_existing_values() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    n bigint;
+BEGIN
+    IF NEW.mirrors_column IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.mirrors_column IS NOT DISTINCT FROM NEW.mirrors_column THEN
+        RETURN NEW;
+    END IF;
+    SELECT count(*) INTO n FROM public.asset_field_value WHERE field_id = NEW.id;
+    IF n > 0 THEN
+        RAISE EXCEPTION
+            'field % already holds % stored value(s); clear them before declaring it a view onto assets.%',
+            NEW.id, n, NEW.mirrors_column
+            USING ERRCODE = '23514';
+    END IF;
+    SELECT count(*) INTO n FROM public.asset_field_value_history WHERE field_id = NEW.id;
+    IF n > 0 THEN
+        RAISE EXCEPTION
+            'field % already holds % history row(s); clear them before declaring it a view onto assets.%',
+            NEW.id, n, NEW.mirrors_column
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: refuse_mirrored_field_value(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_mirrored_field_value() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    col text;
+BEGIN
+    SELECT mirrors_column INTO col
+      FROM public.field_definition
+     WHERE id = NEW.field_id;
+    IF col IS NOT NULL THEN
+        RAISE EXCEPTION
+            'field % is a view onto assets.% and stores no value of its own; write the column',
+            NEW.field_id, col
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 
 --
@@ -1689,7 +1832,10 @@ CREATE TABLE public.field_definition (
     extraction_mode text DEFAULT 'skip_if_set'::text NOT NULL,
     default_value jsonb,
     open_vocabulary boolean DEFAULT false NOT NULL,
+    mirrors_column text,
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
+    CONSTRAINT field_definition_mirrors_column_check CHECK (((mirrors_column IS NULL) OR (mirrors_column = ANY (ARRAY['title'::text, 'description'::text])))),
+    CONSTRAINT field_definition_mirrors_column_subject_check CHECK (((mirrors_column IS NULL) OR (subject_kind = 'asset'::text))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
@@ -1711,6 +1857,13 @@ COMMENT ON COLUMN public.field_definition.open_vocabulary IS 'When true, a write
 
 
 --
+-- Name: COLUMN field_definition.mirrors_column; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.mirrors_column IS 'When set, this field is a VIEW onto that column of `assets` rather than storage of its own: reads project the column and writes update it, gated by the column''s own mutation rule. A mirrored field can hold no asset_field_value / _history row — the triggers below refuse one — so the field and the column cannot disagree. NULL (the default) = ordinary field-owned storage. Local declaration: it names a column of THIS server''s schema, so per ADR 0083''s exclusion criterion it does NOT travel in a federated field-schema envelope (#822).';
+
+
+--
 -- Name: goose_db_version; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1718,7 +1871,7 @@ CREATE TABLE public.goose_db_version (
     id integer NOT NULL,
     version_id bigint NOT NULL,
     is_applied boolean NOT NULL,
-    tstamp timestamp without time zone DEFAULT now() NOT NULL
+    tstamp timestamp without time zone DEFAULT now()
 );
 
 
@@ -1726,14 +1879,20 @@ CREATE TABLE public.goose_db_version (
 -- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-ALTER TABLE public.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
-    SEQUENCE NAME public.goose_db_version_id_seq
+CREATE SEQUENCE public.goose_db_version_id_seq
+    AS integer
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
-    CACHE 1
-);
+    CACHE 1;
+
+
+--
+-- Name: goose_db_version_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.goose_db_version_id_seq OWNED BY public.goose_db_version.id;
 
 
 --
@@ -2245,6 +2404,17 @@ CREATE TABLE public.team_closure (
 
 
 --
+-- Name: team_follows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.team_follows (
+    user_ref bigint NOT NULL,
+    team_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: team_memberships; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2253,17 +2423,6 @@ CREATE TABLE public.team_memberships (
     user_ref bigint NOT NULL,
     added_at timestamp with time zone DEFAULT now() NOT NULL,
     added_by_user_ref bigint
-);
-
-
---
--- Name: team_follows; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.team_follows (
-    user_ref bigint NOT NULL,
-    team_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -2535,6 +2694,13 @@ CREATE TABLE public.workflow_transitions (
     required_capability text,
     requires_team_scope boolean DEFAULT false NOT NULL
 );
+
+
+--
+-- Name: goose_db_version id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goose_db_version ALTER COLUMN id SET DEFAULT nextval('public.goose_db_version_id_seq'::regclass);
 
 
 --
@@ -4183,6 +4349,13 @@ CREATE INDEX field_definition_group_idx ON public.field_definition USING btree (
 
 
 --
+-- Name: field_definition_mirrors_column_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_definition_mirrors_column_idx ON public.field_definition USING btree (mirrors_column) WHERE (mirrors_column IS NOT NULL);
+
+
+--
 -- Name: field_definition_options_gin; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5044,6 +5217,20 @@ CREATE TRIGGER acl_sweep_after_team_delete AFTER DELETE ON public.teams FOR EACH
 
 
 --
+-- Name: asset_field_value_history asset_field_value_history_refuse_mirrored; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER asset_field_value_history_refuse_mirrored BEFORE INSERT OR UPDATE ON public.asset_field_value_history FOR EACH ROW EXECUTE FUNCTION public.refuse_mirrored_field_value();
+
+
+--
+-- Name: asset_field_value asset_field_value_refuse_mirrored; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER asset_field_value_refuse_mirrored BEFORE INSERT OR UPDATE ON public.asset_field_value FOR EACH ROW EXECUTE FUNCTION public.refuse_mirrored_field_value();
+
+
+--
 -- Name: asset_field_value asset_field_value_search_text; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5125,6 +5312,13 @@ CREATE TRIGGER federation_inbox_dispatch_notify_trg AFTER INSERT ON public.feder
 --
 
 CREATE TRIGGER federation_outbox_dispatch_notify_trg AFTER INSERT ON public.federation_outbox FOR EACH ROW EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
+
+
+--
+-- Name: field_definition field_definition_refuse_mirror_over_values; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER field_definition_refuse_mirror_over_values BEFORE INSERT OR UPDATE ON public.field_definition FOR EACH ROW EXECUTE FUNCTION public.refuse_mirror_over_existing_values();
 
 
 --

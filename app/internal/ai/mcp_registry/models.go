@@ -657,6 +657,8 @@ type FieldDefinition struct {
 	DefaultValue []byte
 	// When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).
 	OpenVocabulary bool
+	// When set, this field is a VIEW onto that column of `assets` rather than storage of its own: reads project the column and writes update it, gated by the column's own mutation rule. A mirrored field can hold no asset_field_value / _history row — the triggers below refuse one — so the field and the column cannot disagree. NULL (the default) = ordinary field-owned storage. Local declaration: it names a column of THIS server's schema, so per ADR 0083's exclusion criterion it does NOT travel in a federated field-schema envelope (#822).
+	MirrorsColumn *string
 }
 
 type GooseDbVersion struct {
