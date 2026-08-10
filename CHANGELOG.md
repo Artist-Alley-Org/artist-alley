@@ -108,6 +108,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Editing the site's code shows your change again (contributors only).** On Windows machines
+  running the development stack, saving a file did nothing: the page kept showing the old code
+  no matter how many times you reloaded, and the only way through was restarting a container.
+  Everyone working on this had absorbed it as "hot reloading doesn't work here" and worked
+  around it for months (#993).
+
+  Hot reloading was never broken. The file watcher simply could not hear about changes, because
+  change notifications do not cross from Windows into the Linux container. It now checks for
+  changes itself instead of waiting to be told, and edits appear as you save them.
+
+  This affects contributors' machines only. It changes nothing about the released application.
+
 - **The Undo notice no longer disappears when you delete a file from its own page.** Deleting
   a file worked, and it went to your bin as it should — but if you had arrived at the file
   from somewhere else in the app, the confirmation that appears with the **Undo** button was
