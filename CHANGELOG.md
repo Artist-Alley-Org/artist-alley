@@ -9,6 +9,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **A vulnerable copy of a small library no longer ships.** One of the packages bundled into
+  the site pulled in an outdated version of `nanoid` with a known flaw. Five other copies in
+  the same build were already on the fixed version — this one had simply never been refreshed
+  (#1001).
+
+  Nothing about it was reachable through a feature you use; it is the kind of thing found by
+  scanning what ships rather than by anything going wrong. It is now on the fixed version, and
+  the shipped bundle reports no remaining high-severity findings.
+
 - **You can edit a file's details.** Title, description and tags were changeable through the
   API and through nothing you could click — there was no edit screen, and the card's edit
   entry was a placeholder that opened a "coming soon" box (#549).
