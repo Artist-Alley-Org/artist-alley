@@ -986,6 +986,47 @@ The "never instantiated, therefore never exercised" condition still applies to `
 reading, not by driving them. The seeder's RFC3339-only `parseTime` (noted in the tree
 amendment) remains the one known concrete instance and remains open.
 
+## Amendment 2026-08-10 — a card-display flag is a display hint, and display hints FEDERATE
+
+#552 adds a per-field flag for "show this at-a-glance on the card". Two questions came with it,
+and both are now settled rather than left for the sprint to invent.
+
+**1. It is a display HINT, under this ADR's existing rule.** The schema block above annotates
+`display_order` / `display_group` as *"Display hints — UI may use; do not gate logic on these."*
+The card flag joins them. Nothing may branch on it for access, filtering, or correctness — a
+client that ignores it entirely must still be correct, merely plainer.
+
+**2. It TRAVELS in the federated envelope.** Not a preference — ADR 0083 already decides the
+criterion. `display_group` and `display_order` are **in** the envelope (settled during #738), and
+the exclusion rule there is that a property is left out "because it names something that exists
+only on the sender". A card-display flag names nothing sender-specific: it describes the field,
+not the server. So it goes **in**, and the envelope list in both this ADR and 0083 gains it when
+#552 lands.
+
+The consequence worth stating plainly: **a peer's fields render the way that peer meant them to.**
+A field its owner marked as at-a-glance shows at-a-glance here too. That is the point of shipping
+the hint rather than re-deriving presentation locally.
+
+### The counterweight the operator set (2026-08-10): seamless, but never anonymous
+
+> *"if they are sharing, federation should work seamlessly, but be distinct enough to know it's
+> from another server"*
+
+Both halves bind, and they pull against each other by design:
+
+- **Seamless** — federated content is not second-class. It uses the same card, the same viewer,
+  the same hints. No degraded rendering, no "remote" fallback layout.
+- **Distinct** — the *origin* must remain legible. A user must never mistake another server's
+  content for something this instance vouches for. `origin_server_id` already exists on the
+  relevant tables (baseline schema), and `federation/RestrictedShareBanner.svelte` is the closest
+  existing treatment; the card surface has no provenance affordance yet.
+
+**This constrains #552 and #557 both**, and the constraint is easy to get backwards: seamlessness
+is about *layout and capability*, provenance is about *attribution*. Making remote content look
+different is the wrong reading; making it look identical **and unattributed** is the other wrong
+reading. Whatever the card does, it must answer "whose is this?" without answering it in a way
+that makes remote work feel lesser.
+
 ## Amendment 2026-08-02 — a vocabulary can be open, and open means the WRITE POLICY differs
 
 **PR #846 / issue #830 (part A of #789).** The 2026-07-30 amendment gave options a lifecycle
