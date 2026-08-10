@@ -3,7 +3,7 @@ id: "0086"
 title: UI in the browser top layer must outlive its host, by construction
 status: accepted
 date: 2026-08-10
-area: frontend
+area: architecture
 phases: []
 supersedes: []
 related:
