@@ -83,7 +83,11 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   { slug: 'trash',         group: 'workspace', status: 'live', href: '/account/trash' },
 
   // Activity & insights
-  { slug: 'activity',  group: 'activity', status: 'stub', href: '/account/activity' },
+  // Live since #600. It could not ship earlier for the same reason
+  // `trash` could not: the audit rows existed, but no endpoint would
+  // hand a caller their own, so a page here would have had nothing to
+  // render. GET /account/activity is what made it answerable.
+  { slug: 'activity',  group: 'activity', status: 'live', href: '/account/activity' },
   { slug: 'stats',     group: 'activity', status: 'stub', href: '/account/stats' },
   { slug: 'following', group: 'activity', status: 'live', href: '/account/following' },
 

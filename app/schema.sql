@@ -3679,6 +3679,13 @@ CREATE INDEX assets_type_idx ON public.assets USING btree (asset_type) WHERE (de
 
 
 --
+-- Name: audit_events__actor_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_events__actor_time_idx ON public.audit_events USING btree (actor_user_ref, occurred_at DESC) WHERE (actor_user_ref IS NOT NULL);
+
+
+--
 -- Name: audit_events__subject_time_idx; Type: INDEX; Schema: public; Owner: -
 --
 

@@ -30,6 +30,11 @@ type PanicShim struct{}
 // ./scripts/generate.sh to regen.
 var _ openapi.StrictServerInterface = (*PanicShim)(nil)
 
+// ListMyActivity panics by default; test shims override.
+func (*PanicShim) ListMyActivity(context.Context, openapi.ListMyActivityRequestObject) (openapi.ListMyActivityResponseObject, error) {
+	panic("PanicShim: ListMyActivity called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListMyBlocked panics by default; test shims override.
 func (*PanicShim) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
 	panic("PanicShim: ListMyBlocked called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
