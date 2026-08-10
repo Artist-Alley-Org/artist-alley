@@ -1,6 +1,13 @@
+import { fileURLToPath } from 'node:url';
+
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
+
+// `web/build/` — adapter-static's output, which the Go binary embeds. Absolute
+// so the pattern holds wherever the dev server is launched from; see
+// `server.watch.ignored` below for why it is excluded.
+const adapterOutput = `${fileURLToPath(new URL('./build', import.meta.url))}/**`;
 
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
@@ -31,24 +38,74 @@ export default defineConfig({
     // filesystem. Until someone decides to do that, polling is the
     // only lever, and it does catch both edit paths.
     //
-    // Cost. Vite calls out "high CPU utilization" and it is real, so
-    // the interval is measured rather than guessed. Idle `web`
-    // container, `docker stats --no-stream` sampled over ~40s, same
-    // stack each time:
+    // Cost, and what it scales with. Vite calls out "high CPU
+    // utilization" and it is real. Polling stats every watched path
+    // every `interval`, so the bill is a function of the SIZE OF THE
+    // WATCHED SET, not of the interval alone — quote a percentage
+    // without saying which tree it was measured on and the number
+    // rots as soon as a tree accumulates artifacts (#997). Measure
+    // the set, don't infer it from `find`:
+    //
+    //   server.watcher.getWatched()   // { dir: [names] } once ready
+    //
+    // Watched entries by tree state, this project, 500ms interval:
+    //
+    //   fresh checkout, never built      645
+    //   after one `npm run build`       1184   (+426 = web/build/)
+    //   ...with `ignored` below          757   back to fresh-tree cost
+    //
+    // Idle `web` container, six `docker stats --no-stream` samples at
+    // steady state, one host, one session — percentages of ONE core:
+    //
+    //    645 watched   27.8–33.0%
+    //   1184 watched   37.3–39.7%
+    //    757 watched   27.9–31.3%
+    //
+    // Two warnings about that second column. It is HOST-SPECIFIC: the
+    // fresh-tree row measured ~18% on the box where #993 landed and
+    // ~30% here, so the portable number is the watched COUNT, and a
+    // percentage is only comparable against another sample from the
+    // same box in the same session. And roughly 13 points of it is
+    // fixed cost — fit the two rows above and the intercept, not the
+    // per-path term, is most of the bill. Trimming the watched set
+    // further has little headroom left; the remaining lever is moving
+    // the checkout off the Windows filesystem so polling can be
+    // turned off entirely.
+    //
+    // The interval sweep below was measured by #993 on a fresh
+    // worktree (the 645-entry row), so read those percentages
+    // relative to each other, not as absolutes:
     //
     //   no polling   0.0%    save→served: never (the bug)
     //   500ms       ~18%     save→served: 205–349 ms
     //   1000ms      ~8.5%    save→served: 217 ms OR ~2200 ms
     //   2000ms      ~3.4%    (not latency-tested)
     //
-    // Those are percentages of ONE core — 18% is 0.75% of a 24-core
-    // box. The watched set is ~590 files, not the whole tree: Vite's
-    // resolveChokidarOptions() already ignores `.git`, `node_modules`,
-    // `test-results`, the cache dir and (with emptyOutDir on) the
-    // build outDir, so no custom `ignored` list is needed here.
+    // What is already excluded, and what is not. Vite's
+    // resolveChokidarOptions() ignores `.git`, `node_modules`,
+    // `test-results` and the cache dir; SvelteKit adds
+    // `<root>/.svelte-kit/!(generated)` itself, which is why
+    // `.svelte-kit/output` (~700 files) and `.svelte-kit/types` never
+    // appear in the watched set while `.svelte-kit/generated` — the
+    // route manifest, which MUST stay watched — does. `emptyOutDir`
+    // is not a lever here: in `serve` mode SvelteKit leaves
+    // `build.outDir` at Vite's default `dist`, a directory this
+    // project never creates, so the outDir exclusion Vite derives
+    // from it is already a no-op.
+    //
+    // That leaves `web/build/`, adapter-static's output — ~425
+    // entries of compiled assets the Go binary embeds and the dev
+    // server never reads. It is not any Vite outDir, so nothing
+    // excludes it automatically, and it does not exist until someone
+    // runs a production build — which is exactly why the first
+    // measurement above missed it. Ignore it explicitly. Everything
+    // else stays watched: over-broad ignores here would break
+    // `$types` regeneration and route discovery.
+    //
     // node_modules alone is ~47k files; if this ever measures
-    // dramatically higher, suspect something defeating those defaults
-    // before reaching for a bigger interval.
+    // dramatically higher than the table, re-run getWatched() and
+    // find what is defeating those exclusions before reaching for a
+    // bigger interval.
     //
     // 1000ms is the trap, and the reason this is not the obvious
     // round number. Its latency is bimodal and alternates almost
@@ -71,6 +128,10 @@ export default defineConfig({
     watch: {
       usePolling: true,
       interval: 500,
+      // Additive, not a replacement: Vite concatenates this array
+      // with its own default ignores and with the one SvelteKit's
+      // plugin contributes. Verified with getWatched().
+      ignored: [adapterOutput],
     },
     // Dev API routing: the SPA always talks to a same-origin /api/v1,
     // so there is no CORS preflight and no cookie-domain special case
