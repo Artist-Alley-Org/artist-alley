@@ -116,7 +116,9 @@ where applicable, otherwise note "no-spec-impact."
 
   Hot reloading was never broken. The file watcher simply could not hear about changes, because
   change notifications do not cross from Windows into the Linux container. It now checks for
-  changes itself instead of waiting to be told, and edits appear as you save them.
+  changes itself instead of waiting to be told, and edits appear as you save them. It also skips
+  the production-build folder while doing so, which on a machine that has built the site once was
+  most of what it was checking (#997).
 
   This affects contributors' machines only. It changes nothing about the released application.
 
