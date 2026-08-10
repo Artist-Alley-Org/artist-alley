@@ -79,11 +79,32 @@ export function createAssetPlaylistSource(assetId: string, seed?: AssetForPlayli
     cursor: 0,
     loading: !seed,
     error: null,
+    removeItem,
   });
 
   const aux = $state<{ asset: AssetForPlaylist | null }>({
     asset: seed ?? null,
   });
+
+  /** PlaylistSource.removeItem — see types.ts for why the source owns
+   *  this instead of the shell splicing the array itself.
+   *
+   *  For a playlist of 1 this always empties the list, and the shell
+   *  reads the 0 and closes. Written generically anyway: the value of
+   *  the contract is that both sources answer the same question the
+   *  same way, and a special case here is a place for them to diverge. */
+  function removeItem(itemId: string): number {
+    const idx = state.items.findIndex((i) => i.id === itemId);
+    if (idx >= 0) {
+      state.items.splice(idx, 1);
+      // Clamp: dropping the item under the cursor would otherwise leave
+      // it one past the end, and the shell would render nothing at all.
+      if (state.cursor > state.items.length - 1) {
+        state.cursor = Math.max(0, state.items.length - 1);
+      }
+    }
+    return state.items.length;
+  }
 
   let generation = 0;
   let currentAssetId = assetId;

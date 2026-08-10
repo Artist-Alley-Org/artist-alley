@@ -57,12 +57,15 @@
     canvasOverlay?: Snippet;
     /** Called when the user closes the playlist (× / ESC / backdrop).
      *
-     *  May be async, and the standalone routes' is: /assets/{id} and
-     *  /posts/{id} both pass the close-to-origin policy, which `goto`s.
-     *  Anything that must happen AFTER the surface is really gone has
-     *  to await it — see confirmDelete, where not awaiting left the
-     *  delete toast parented into a dialog that was already unmounting
-     *  and rendered nowhere. */
+     *  May be async — /assets/{id} and /posts/{id} both pass the
+     *  close-to-origin policy. AWAITING IT IS NOT THE SAME AS THE
+     *  SURFACE BEING GONE, and #991 was the bill for assuming it was:
+     *  that policy `goto`s only on a cold entry, and `history.back()`s
+     *  on an in-app one — a history entry cannot be awaited, so the
+     *  promise resolves with this dialog still open and the popstate
+     *  still a frame away. Anything that must outlive the surface has
+     *  to survive being adopted by it; see confirmDelete and
+     *  $lib/portal. */
     onClose: () => void | Promise<void>;
     /** True when the playlist is a full-page route (e.g. /posts/[id])
         rather than an overlay over the browse feed. Drives the close
@@ -599,43 +602,29 @@
     deleteTarget = null;
 
     // Drop the member from the live playlist rather than re-fetching the
-    // source. A reload would work, but it resets the cursor to the first
-    // item — deleting item 7 of 9 would silently jump the user back to
-    // item 1. The 204 is authority enough that the row is gone; #920 /
-    // #935 already invalidated every other surface's cached copy of it.
-    const idx = source.items.findIndex((i) => i.id === target.itemId);
-    if (idx >= 0) {
-      source.items.splice(idx, 1);
-      // Clamp: deleting the last item would otherwise leave the cursor
-      // one past the end and render nothing at all.
-      if (source.cursor > source.items.length - 1) {
-        source.cursor = Math.max(0, source.items.length - 1);
-      }
-    }
+    // source; #920 / #935 already invalidated every other surface's
+    // cached copy of it. The SOURCE does the dropping — the shell used
+    // to splice `source.items` itself, which worked and logged
+    // `ownership_invalid_mutation` on every delete (see
+    // PlaylistSource.removeItem). A source that cannot lose items omits
+    // the method, and the count it would have returned is the count we
+    // already have.
+    const remaining = source.removeItem?.(target.itemId) ?? source.items.length;
 
     // Nothing left to look at — the surface showing it cannot stay. For
     // a playlist of 1 (the /assets/{id} route) that is EVERY delete, and
-    // onClose there is the close-to-origin policy, so the page navigates
+    // onClose there is the close-to-origin policy, so the page goes
     // away; for an overlay it closes back onto whatever was underneath.
     //
-    // BEFORE the toast, and AWAITED — the order is load-bearing and is
-    // the #985 lesson. A toast raised while this dialog is still open is
-    // parented INTO it (it has to be: the dialog owns the top layer).
-    // The dialog is then torn down and a detached node renders nowhere;
-    // removing an element fires no `close`, so the portal's re-home
-    // cannot save it either. Closing first leaves no modal to adopt the
-    // toast, and it lands on the body — where a message about a page you
-    // have just left belongs.
-    //
-    // The `await` is the whole fix and it is easy to lose: `onClose` is
-    // typed `() => void | Promise<void>` and the standalone route's is
-    // the async close-to-origin policy. Called without awaiting, the
-    // navigation is merely STARTED, `tick()` resolves long before it
-    // finishes, and the toast is pushed while the dialog is still up —
-    // which is the exact bug this comment describes, reintroduced.
-    // Driven in a browser it looks like the delete silently doing
-    // nothing to acknowledge itself.
-    if (source.items.length === 0) {
+    // Before the toast, and awaited. Not because the toast depends on it
+    // — #991 established that it cannot, since the close-to-origin
+    // policy `history.back()`s on an in-app entry and a history entry is
+    // not awaitable, so this await returns with the dialog still open
+    // and still owning the top layer. $lib/portal is what keeps the
+    // toast alive across that; see its header. The order stands because
+    // acknowledging a delete after the surface has gone is the right
+    // sequence for the user, not because it is load-bearing.
+    if (remaining === 0) {
       await onClose();
       await tick();
     }

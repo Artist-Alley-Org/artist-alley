@@ -84,6 +84,7 @@ export function createPostPlaylistSource(postId: string) {
     cursor: 0,
     loading: true,
     error: null,
+    removeItem,
   });
 
   // Side-state the host (PostHost.svelte) needs for its sidebar but
@@ -94,6 +95,26 @@ export function createPostPlaylistSource(postId: string) {
   }>({
     post: null,
   });
+
+  /** PlaylistSource.removeItem — see types.ts for why the source owns
+   *  this instead of the shell splicing the array itself.
+   *
+   *  Drops the member locally rather than re-fetching the post. A
+   *  reload would work and would reset the cursor to the first item,
+   *  so deleting member 7 of 9 would silently jump the user back to
+   *  member 1. The 204 is authority enough that the row is gone. */
+  function removeItem(itemId: string): number {
+    const idx = state.items.findIndex((i) => i.id === itemId);
+    if (idx >= 0) {
+      state.items.splice(idx, 1);
+      // Clamp: dropping the item under the cursor would otherwise leave
+      // it one past the end, and the shell would render nothing at all.
+      if (state.cursor > state.items.length - 1) {
+        state.cursor = Math.max(0, state.items.length - 1);
+      }
+    }
+    return state.items.length;
+  }
 
   // Generation counter for stale-fetch protection. When the user
   // navigates between posts faster than the network resolves (←/→

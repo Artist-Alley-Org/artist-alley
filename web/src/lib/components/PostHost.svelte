@@ -597,14 +597,14 @@
     // standalone route has nowhere to fall back to, so it navigates;
     // the feed overlay closes back onto the feed underneath.
     //
-    // BEFORE the toast, and awaited — order is load-bearing. A toast
-    // raised while the viewer dialog is still open is parented INTO
-    // that dialog (it has to be: the dialog owns the top layer). The
-    // dialog is then torn down, and a detached node renders nowhere.
-    // Removing an element does not fire `close`, so the portal's
-    // re-home cannot save it either. Closing first means there is no
-    // modal left to adopt the toast and it lands on the body, which
-    // is where a message about a page you just left belongs.
+    // Before the toast, so the acknowledgement arrives on the surface
+    // the user lands on rather than over the one they just left. It is
+    // not what keeps the toast alive: a toast raised while the viewer
+    // dialog is still open is parented INTO it (it has to be — the
+    // dialog owns the top layer), and no ordering here can guarantee
+    // the dialog is gone, because `onClose` below may be the
+    // close-to-origin policy and that `history.back()`s. Surviving a
+    // host that ends is $lib/portal's job (#991).
     if (standalone) await goto('/');
     else onClose();
     await tick();

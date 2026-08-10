@@ -52,16 +52,42 @@
  *  node the top layer hides, and a second copy of this reasoning is a
  *  second place for it to rot.
  *
- *  ## Re-homing when the host dialog closes
+ *  ## Re-homing when the host dialog goes away
  *
  *  A node parented to a `<dialog>` is removed from the page when that
  *  dialog closes. For a modal that is correct — the modal belongs to
  *  the surface that raised it. For a toast it is not: deleting the last
  *  asset in a playlist closes the viewer, and the confirmation of that
  *  very delete would vanish with it. So when the host is a dialog we
- *  watch for `close` and fall back to the body, keeping the node alive
- *  exactly as long as its owner intends. Callers that want the modal
- *  behaviour pass `rehome: false`.
+ *  fall back to the body, keeping the node alive exactly as long as its
+ *  owner intends. Callers that want the modal behaviour pass
+ *  `rehome: false`.
+ *
+ *  A dialog goes away in TWO ways and only one of them is an event.
+ *  `close()` fires `close`. Being REMOVED from the document — which is
+ *  what happens when the component that declared the dialog is
+ *  destroyed by a navigation — fires nothing at all, and the portalled
+ *  node is carried out of the page inside the detached subtree. It is
+ *  still parented, still styled, still in the store that raised it, and
+ *  on no screen.
+ *
+ *  #991 is that second way. The delete toast on /assets/{id} was raised
+ *  after `await onClose()` precisely so no dialog would be left to adopt
+ *  it — but the standalone close policy is `history.back()` (see
+ *  $lib/util/closeToOrigin), and a history entry cannot be awaited. The
+ *  await resolved on the spot, the viewer's dialog was still open and
+ *  still owned the top layer, the toast was parented into it, and the
+ *  popstate that landed a frame later took the dialog and the
+ *  acknowledgement with it. Every delete worked; not one said so.
+ *
+ *  Ordering cannot fix that, which is why it belongs here rather than at
+ *  the call site: a caller cannot promise the dialog is gone when it has
+ *  no way to wait for the navigation that removes it. So the node's
+ *  survival is made independent of how its host ends. Detachment is
+ *  watched for with a MutationObserver because there is no event for it;
+ *  it runs only while a rehoming node actually lives inside a dialog
+ *  (toasts — a handful per session, seconds each), and its callback is
+ *  one `isConnected` read.
  */
 /** The topmost dialog in the browser's top layer, or null.
  *
@@ -96,17 +122,37 @@ export function portal(
   host.appendChild(node);
 
   let onClose: (() => void) | null = null;
+  let detachWatch: MutationObserver | null = null;
+
   if (rehome && host instanceof HTMLDialogElement) {
-    onClose = () => {
+    const toBody = () => {
       // Only if we are still where we were put — a caller may have
       // moved on, and stealing the node back would be worse.
       if (node.parentNode === host) document.body.appendChild(node);
     };
+
+    onClose = toBody;
     host.addEventListener('close', onClose);
+
+    // The other way a dialog ends: someone removes it. No event, so the
+    // document is watched instead. `isConnected` is the question that
+    // matters — not "was this particular removal ours", because the
+    // dialog can leave inside any ancestor's removal.
+    if (typeof MutationObserver !== 'undefined') {
+      detachWatch = new MutationObserver(() => {
+        if (host.isConnected) return;
+        toBody();
+        detachWatch?.disconnect();
+        detachWatch = null;
+      });
+      detachWatch.observe(document.documentElement, { childList: true, subtree: true });
+    }
   }
 
   return {
     destroy() {
+      detachWatch?.disconnect();
+      detachWatch = null;
       if (onClose && host instanceof HTMLDialogElement) {
         host.removeEventListener('close', onClose);
       }
