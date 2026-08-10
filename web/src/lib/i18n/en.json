@@ -229,6 +229,9 @@
       "label": "Select",
       "deselect": "Deselect"
     },
+    "origin_from": "from {peer}",
+    "origin_label": "This item is hosted by another server",
+
     "multi": {
       "badge_label": "{count} assets in this post"
     },
@@ -1950,6 +1953,9 @@
       "default_override_add": "Add override",
       "default_override_add_help": "The override uses whatever value is selected above.",
       "default_override_needs_value": "Pick a value above before adding an override.",
+      "show_on_card": "Show on cards",
+      "show_on_card_help": "Render this field at a glance on asset cards in browse and grids. A card falls back to the upload date when nothing is chosen.",
+      "show_on_card_gated": "This field has a read capability, so it cannot be shown on cards — a card renders on browse, where per-field capabilities have not been checked.",
       "open_vocabulary": "Let values add new terms",
       "open_vocabulary_help": "A value naming a term this field doesn't have creates it instead of being refused. Matching is case-insensitive on the slug or the label, so “Sunset” and “sunset” stay one term."
     },

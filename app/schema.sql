@@ -1833,9 +1833,11 @@ CREATE TABLE public.field_definition (
     default_value jsonb,
     open_vocabulary boolean DEFAULT false NOT NULL,
     mirrors_column text,
+    show_on_card boolean DEFAULT false NOT NULL,
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
     CONSTRAINT field_definition_mirrors_column_check CHECK (((mirrors_column IS NULL) OR (mirrors_column = ANY (ARRAY['title'::text, 'description'::text])))),
     CONSTRAINT field_definition_mirrors_column_subject_check CHECK (((mirrors_column IS NULL) OR (subject_kind = 'asset'::text))),
+    CONSTRAINT field_definition_show_on_card_ungated_check CHECK ((NOT (show_on_card AND (COALESCE(read_capability, ''::text) <> ''::text)))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
@@ -1861,6 +1863,13 @@ COMMENT ON COLUMN public.field_definition.open_vocabulary IS 'When true, a write
 --
 
 COMMENT ON COLUMN public.field_definition.mirrors_column IS 'When set, this field is a VIEW onto that column of `assets` rather than storage of its own: reads project the column and writes update it, gated by the column''s own mutation rule. A mirrored field can hold no asset_field_value / _history row — the triggers below refuse one — so the field and the column cannot disagree. NULL (the default) = ordinary field-owned storage. Local declaration: it names a column of THIS server''s schema, so per ADR 0083''s exclusion criterion it does NOT travel in a federated field-schema envelope (#822).';
+
+
+--
+-- Name: COLUMN field_definition.show_on_card; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.show_on_card IS 'Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083''s exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.';
 
 
 --
@@ -4360,6 +4369,13 @@ CREATE INDEX field_definition_mirrors_column_idx ON public.field_definition USIN
 --
 
 CREATE INDEX field_definition_options_gin ON public.field_definition USING gin (options);
+
+
+--
+-- Name: field_definition_show_on_card_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_definition_show_on_card_idx ON public.field_definition USING btree (display_group, display_order, code) WHERE show_on_card;
 
 
 --

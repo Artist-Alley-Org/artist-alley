@@ -447,3 +447,75 @@ SELECT EXISTS (
 -- app/internal/ai/embeddings/queries.sql so the writer + reader code
 -- can package alongside them. assets package keeps focus on asset
 -- CRUD + the bridge read/write surface for AI tags.
+
+-- name: ListCardFieldValues :many
+-- The at-a-glance field values for a PAGE of assets (#552).
+--
+-- One query for the whole page, not one per asset. The card is a browse
+-- surface: an N+1 here is 50 round trips per scroll, and the existing
+-- per-row ListAssetTags call is the precedent NOT to follow.
+--
+-- Both halves of a field's storage are covered, and the caller cannot tell
+-- them apart — which is the point of #822's mirror. An ordinary field's
+-- value comes from asset_field_value; a MIRRORED field's comes from the
+-- column it declares, because it has no row here and the guard trigger
+-- guarantees it never will.
+--
+-- The flag is a DISPLAY HINT and nothing here treats it otherwise: it
+-- SELECTS which fields are candidates and takes no part in deciding which
+-- assets or which values a caller may see. Row visibility was already
+-- decided by ListAssetsPageGated before this runs, and only readable rows
+-- are passed in. Gated fields cannot reach the card at all — the CHECK
+-- constraint in migration 00045 refuses `show_on_card` on a field carrying
+-- a read_capability, so this query needs no capability argument and cannot
+-- acquire one by accident.
+--
+-- Typed columns come back raw rather than formatted: metadata.DisplayValue
+-- resolves a vocabulary slug to its label, and doing that in SQL would be a
+-- second implementation of a rule ADR 0012 keeps in one place.
+SELECT a.id AS asset_id,
+       f.id AS field_id,
+       f.code,
+       f.label,
+       f.type,
+       f.options,
+       f.display_group,
+       f.display_order,
+       -- coalesced to '' rather than left nullable: the two states this
+       -- query can produce for "nothing here" — no asset_field_value row and
+       -- an empty mirrored column — are one answer to the card, which drops
+       -- the entry either way. (It also keeps sqlc from typing a CASE with
+       -- NULL branches as interface{}.)
+       coalesce(
+           CASE WHEN f.mirrors_column IS NOT NULL
+                THEN public.asset_mirror_read(a.id, f.mirrors_column)
+                ELSE v.value_text
+           END, '')::TEXT AS value_text,
+       v.value_num,
+       v.value_date,
+       v.value_options
+  FROM assets a
+  CROSS JOIN field_definition f
+  LEFT JOIN asset_field_value v ON v.asset_id = a.id AND v.field_id = f.id
+ WHERE a.id = ANY(sqlc.arg('asset_ids')::UUID[])
+   AND a.deleted_at IS NULL
+   AND f.show_on_card
+   AND f.subject_kind = 'asset'
+   AND f.status <> 'archived'
+   AND (cardinality(f.applies_to) = 0 OR a.asset_type = ANY(f.applies_to))
+ ORDER BY a.id, f.display_group, f.display_order, f.code;
+
+-- name: ListAssetOrigins :many
+-- Which peer an asset came from, for the card's provenance affordance
+-- (#552). Local rows (origin_server_id IS NULL) are simply absent from the
+-- result, so "no row" reads as "ours" without a sentinel.
+--
+-- Batched with the page for the same reason ListCardFieldValues is. The
+-- join is to federation_peers.display_name, the name an operator gave the
+-- peer at handshake — never the raw UUID, which answers "whose is this?"
+-- with a number.
+SELECT a.id AS asset_id, p.id AS peer_id, p.display_name, p.instance_url
+  FROM assets a
+  JOIN federation_peers p ON p.id = a.origin_server_id
+ WHERE a.id = ANY(sqlc.arg('asset_ids')::UUID[])
+   AND a.deleted_at IS NULL;

@@ -108,7 +108,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column
+          open_vocabulary, mirrors_column, show_on_card
 `
 
 type CreateFieldDefinitionParams struct {
@@ -179,6 +179,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.DefaultValue,
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -388,7 +389,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE code = $1
 `
 
@@ -422,6 +423,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.DefaultValue,
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -433,7 +435,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE id = $1
 `
 
@@ -467,6 +469,7 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.DefaultValue,
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -1165,7 +1168,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1232,6 +1235,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.DefaultValue,
 			&i.OpenVocabulary,
 			&i.MirrorsColumn,
+			&i.ShowOnCard,
 		); err != nil {
 			return nil, err
 		}
@@ -1250,7 +1254,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary, mirrors_column
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -1296,6 +1300,7 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.DefaultValue,
 			&i.OpenVocabulary,
 			&i.MirrorsColumn,
+			&i.ShowOnCard,
 		); err != nil {
 			return nil, err
 		}
@@ -1441,7 +1446,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column
+          open_vocabulary, mirrors_column, show_on_card
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -1489,6 +1494,7 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.DefaultValue,
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -1506,25 +1512,26 @@ UPDATE field_definition SET
     display_order             = COALESCE($9,             display_order),
     display_group             = COALESCE($10,             display_group),
     open_vocabulary           = COALESCE($11,           open_vocabulary),
-    status                    = COALESCE($12,                    status),
-    deprecated_replacement_id = COALESCE($13, deprecated_replacement_id),
+    show_on_card              = COALESCE($12,              show_on_card),
+    status                    = COALESCE($13,                    status),
+    deprecated_replacement_id = COALESCE($14, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $14::BOOLEAN THEN NULL
-                                     ELSE COALESCE($15, default_value) END,
+    default_value             = CASE WHEN $15::BOOLEAN THEN NULL
+                                     ELSE COALESCE($16, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $16
-WHERE id = $17
+    updated_by_user_ref       = $17
+WHERE id = $18
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary, mirrors_column
+          open_vocabulary, mirrors_column, show_on_card
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -1539,6 +1546,7 @@ type UpdateFieldDefinitionParams struct {
 	DisplayOrder            *int32
 	DisplayGroup            *string
 	OpenVocabulary          *bool
+	ShowOnCard              *bool
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1564,6 +1572,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.DisplayOrder,
 		arg.DisplayGroup,
 		arg.OpenVocabulary,
+		arg.ShowOnCard,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1599,6 +1608,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.DefaultValue,
 		&i.OpenVocabulary,
 		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }

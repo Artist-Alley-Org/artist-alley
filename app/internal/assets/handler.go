@@ -1187,6 +1187,15 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		out.LadderAvailable = &hasLadder
 		out.ScrubAvailable = &hasScrub
 	}
+	// One asset shape, one meaning per field: the detail response carries
+	// the at-a-glance strip and the provenance for the same reason it
+	// carries pixel dimensions. Reached only when `readable`, below the
+	// withholding return above.
+	page := []openapi.Asset{*out}
+	if err := h.decorateCards(ctx, page); err != nil {
+		return fmt.Errorf("assets: card decoration: %w", err)
+	}
+	*out = page[0]
 	return nil
 }
 
@@ -2057,6 +2066,14 @@ func (h *Handler) ListAssets(
 		lastID = uuid.UUID(r.ID.Bytes)
 	}
 	rowCount = len(rows)
+
+	// The at-a-glance strip + provenance for the whole page (#552), in two
+	// queries rather than two per row. Runs last, on the rows already
+	// chosen, because it is presentation: it cannot add, remove or reorder
+	// an asset, and a failure here must not cost the caller their page.
+	if err := h.decorateCards(ctx, assetsList); err != nil {
+		return nil, fmt.Errorf("assets: card decoration: %w", err)
+	}
 
 	resp := openapi.AssetList{Items: assetsList}
 	if rowCount > int(limit) {

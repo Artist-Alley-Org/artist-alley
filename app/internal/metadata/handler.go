@@ -454,7 +454,39 @@ func (h *Handler) UpdateField(
 		DisplayGroup:            in.DisplayGroup,
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
 		OpenVocabulary:          in.OpenVocabulary,
+		ShowOnCard:              in.ShowOnCard,
 		UpdatedByUserRef:        &id.UserRef,
+	}
+	// A carded field may not be a GATED field (#552). The card renders on
+	// browse, for a page of assets, where no per-field capability has been
+	// evaluated — so the combination is refused rather than silently
+	// stripped at render time, which would be a setting that does nothing
+	// with no error anywhere.
+	//
+	// Checked against the state this request LANDS ON, not the state it
+	// starts from, which is the same reading the default-vs-options check
+	// below makes: an operator who removes the capability and cards the
+	// field in one PATCH must succeed, and one who cards a field while
+	// giving it a capability must fail. The CHECK constraint enforces the
+	// invariant either way; this is what turns it into a 400 with a
+	// sentence instead of a 500.
+	carded := cur.ShowOnCard
+	if in.ShowOnCard != nil {
+		carded = *in.ShowOnCard
+	}
+	gate := ""
+	if cur.ReadCapability != nil {
+		gate = *cur.ReadCapability
+	}
+	if in.ReadCapability != nil {
+		gate = *in.ReadCapability
+	}
+	if carded && gate != "" {
+		return openapi.UpdateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "a field with a read capability cannot be shown on cards: the card renders on browse, where no per-field capability has been checked",
+			},
+		}, nil
 	}
 	if in.Status != nil {
 		s := string(*in.Status)
@@ -1356,6 +1388,7 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		ExtractionSource: &r.ExtractionSource,
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
 		OpenVocabulary:   &r.OpenVocabulary,
+		ShowOnCard:       &r.ShowOnCard,
 		// Read-only on the wire (#822). A client needs it to know that
 		// writing this field writes the ASSET — different gate, and a
 		// surface that already renders the column natively should skip the
