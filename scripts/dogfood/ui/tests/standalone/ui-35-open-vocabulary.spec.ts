@@ -270,10 +270,13 @@ test.describe('UI-35 open-vocabulary entry', () => {
       options: { values: [{ value: 'alpha', label: 'Alpha' }] },
     });
 
+    // The index links to the field's own page (#854); the editor is no
+    // longer an expanding row.
     await page.goto('/admin/fields');
     const row = page.getByTestId(`admin-fields-row-${code}`);
     await expect(row).toBeVisible();
-    await row.getByTestId(`admin-fields-edit-toggle-${code}`).click();
+    await row.getByTestId(`admin-fields-open-${code}`).click();
+    await expect(page).toHaveURL(new RegExp(`/admin/fields/${code}$`));
 
     const toggle = page.getByTestId('field-edit-open-vocabulary');
     await expect(toggle).toBeVisible();
@@ -284,7 +287,6 @@ test.describe('UI-35 open-vocabulary entry', () => {
 
     // Reload from the server, not from component state.
     await page.reload();
-    await page.getByTestId(`admin-fields-row-${code}`).getByTestId(`admin-fields-edit-toggle-${code}`).click();
     await expect(page.getByTestId('field-edit-open-vocabulary')).toBeChecked();
   });
 });

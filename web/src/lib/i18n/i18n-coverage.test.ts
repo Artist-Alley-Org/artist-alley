@@ -87,6 +87,11 @@ const TRACKED_FILES = [
   'src/routes/admin/system/users/+page.svelte',
   'src/routes/account/profile/+page.svelte',
   'src/routes/admin/fields/+page.svelte',
+  // — #854 the per-field page. Tracked from the day it lands: it is
+  //   where the app explains what a mirrored field is and why its
+  //   column cannot be retargeted, and an operator running in another
+  //   language has to be able to read that. —
+  'src/routes/admin/fields/[code]/+page.svelte',
   'src/lib/components/CollectionFieldsSection.svelte',
   'src/routes/admin/federation/peers/+page.svelte',
   'src/routes/admin/federation/directories/+page.svelte',

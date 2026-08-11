@@ -146,11 +146,18 @@ async function readValues(page: Page, id: string): Promise<unknown[]> {
   return def.options?.values ?? [];
 }
 
-/** Open /admin/fields and expand one field's editor. */
+/**
+ * Open the field's own page (#854).
+ *
+ * Deliberately routed THROUGH the index rather than deep-linked: the
+ * link is what replaced the expanding row, so the path an operator
+ * actually takes is the one these tests take. Deep-linking is covered
+ * separately in ui-38.
+ */
 async function openEditor(page: Page, code: string): Promise<void> {
   await page.goto('/admin/fields');
   await expect(page.getByTestId(`admin-fields-row-${code}`)).toBeVisible();
-  await page.getByTestId(`admin-fields-edit-toggle-${code}`).click();
+  await page.getByTestId(`admin-fields-open-${code}`).click();
   await expect(page.getByTestId('field-editor')).toBeVisible();
 }
 
@@ -452,7 +459,7 @@ test.describe('UI-36 tree field editor at 390px', () => {
     const f = await createTreeField(page, fieldCode('mobile', testInfo), 'asset');
     await page.goto('/admin/fields');
     await expect(page.getByTestId(`admin-fields-row-${f.code}`)).toBeVisible();
-    await page.getByTestId(`admin-fields-edit-toggle-${f.code}`).tap();
+    await page.getByTestId(`admin-fields-open-${f.code}`).tap();
     await expect(page.getByTestId('field-editor')).toBeVisible();
 
     // Add a child under Europe. The term is typed as a NAME; the slug
