@@ -63,7 +63,11 @@ import (
 
 // Cache domain name. Stable string used as NOTIFY target — peer
 // instances key off this when dispatching invalidations.
-const cacheDomainPostByID = "post.id"
+// cacheDomainPostByID is cache.DomainPostByID. Aliased rather than
+// re-spelled: the constant moved to the cache package because `social`
+// has to invalidate this domain too and cannot import this one (see
+// cache.DomainPostByID for the whole argument).
+const cacheDomainPostByID = cache.DomainPostByID
 
 // Capability gates. `posts.admin` lets a moderator edit/delete any
 // post; `system.admin` is the global override.
@@ -488,7 +492,7 @@ func (h *Handler) CreatePost(
 	// the cached ListPostAssets row (pixel dimensions, the async
 	// thumbhash). Four fields accumulated in that hole because the write
 	// paths never made the call — see enrichPreview's own doc comment.
-	if err := h.enrichPreview(ctx, full); err != nil {
+	if err := h.enrichForCaller(ctx, full); err != nil {
 		return nil, err
 	}
 	return openapi.CreatePost201JSONResponse(*full), nil
@@ -527,7 +531,7 @@ func (h *Handler) GetPost(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
 	}
-	if err := h.enrichPreview(ctx, full); err != nil {
+	if err := h.enrichForCaller(ctx, full); err != nil {
 		return nil, err
 	}
 	// #891 stops at the feed, and this is the line. The preference hides
@@ -770,7 +774,7 @@ func (h *Handler) UpdatePost(
 		return nil, err
 	}
 	// Same shape a GET returns (#655). See CreatePost.
-	if err := h.enrichPreview(ctx, full); err != nil {
+	if err := h.enrichForCaller(ctx, full); err != nil {
 		return nil, err
 	}
 	return openapi.UpdatePost200JSONResponse(*full), nil
@@ -1117,15 +1121,16 @@ func (h *Handler) ListPosts(
 		lastID = uuid.UUID(r.ID.Bytes)
 	}
 
-	// preview_available (#471) is per-caller, so it's derived here from
-	// the per-request identity — never baked into the cross-caller Post
-	// cache. Pointers into `items` so enrichPreview can replace each
-	// post's Members slice in place.
+	// The per-caller derivations — preview_available (#471), member
+	// readability (#883), and the author identity (#557) — all happen
+	// here, from the per-request identity, and are never baked into the
+	// cross-caller Post cache. Pointers into `items` so enrichPreview can
+	// replace each post's Members slice in place.
 	ptrs := make([]*openapi.Post, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
 		return nil, err
 	}
 
@@ -1260,7 +1265,7 @@ func (h *Handler) ListPostsSharedWithMe(
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
 		return nil, err
 	}
 
@@ -1307,13 +1312,13 @@ func (h *Handler) GetPostsByAsset(
 		items = append(items, *full)
 	}
 
-	// preview_available (#471) is per-caller — derive it from the
-	// request identity, same as ListPosts.
+	// preview_available (#471) and the author (#557) are per-caller —
+	// derive them from the request identity, same as ListPosts.
 	ptrs := make([]*openapi.Post, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
 		return nil, err
 	}
 

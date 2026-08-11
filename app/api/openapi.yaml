@@ -14360,6 +14360,41 @@ components:
       properties:
         id: { type: string, format: uuid }
         author_user_ref: { type: integer, format: int64 }
+        author:
+          allOf: [{ $ref: "#/components/schemas/PostAuthor" }]
+          nullable: true
+          description: |
+            The renderable identity behind `author_user_ref` (#557).
+
+            WHY IT IS ON THE POST. A feed card carries an author
+            header, and a page is ~20 cards. Resolving each one
+            through `GET /users/{ref}` is twenty profile round trips
+            per page — a permanent tax on the hottest surface in the
+            app, and there is no batch user endpoint outside admin.
+            So the identity travels WITH the post, resolved once per
+            page for the distinct set of authors on it.
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO AUTHOR". Every post
+            has an author — `author_user_ref` is required and always
+            present. This object is omitted when the caller is not
+            entitled to the identity behind that ref:
+
+              * the author set `hide_from_anonymous` and the caller is
+                anonymous (ADR 0070 §3 / ADR 0024's opt-out). The
+                author's own profile 404s for this caller, so putting
+                their name and face on a card would be that opt-out
+                defeated by a JOIN.
+              * the `user` row is gone (a hard-deleted account).
+
+            There is deliberately NO placeholder identity. "Someone
+            who opted out posted this" still discloses that they
+            posted; the card renders with no author header instead.
+
+            PER-CALLER, THEREFORE NOT CACHED. Like
+            `members[].preview_available` (#471) and `restricted`
+            (#883), this is derived per request from the caller's
+            identity and never written into the cross-caller post
+            cache. See posts.enrichAuthors.
         title: { type: string }
         description: { type: string }
         visibility:
@@ -14393,6 +14428,23 @@ components:
             workflow tracking on this post.
         posted_at: { type: string, format: date-time }
         like_count: { type: integer, format: int64 }
+        liked:
+          type: boolean
+          description: |
+            Whether THIS caller has liked this post. Always false for
+            an anonymous caller, who has no identity to have liked
+            with.
+
+            Shipped with the feed card (#557) for the same reason
+            `author` is, and it is the same round-trip arithmetic:
+            `GET /posts/{id}/like` answers this for one post, and a
+            feed card needs it for twenty. Without it the heart on
+            every card is drawn unfilled until clicked — a control
+            that lies about the reader's own state — or the page
+            issues one request per card to find out.
+
+            PER-CALLER, therefore derived after the post cache and
+            never written into it. See posts.enrichLiked.
         comment_count: { type: integer, format: int64 }
         tags:
           type: array
@@ -14404,6 +14456,21 @@ components:
           type: string
           format: uuid
           nullable: true
+        origin:
+          allOf: [{ $ref: "#/components/schemas/ContentOrigin" }]
+          nullable: true
+          description: |
+            The peer this post came from, or absent when it is ours —
+            the post-level twin of `Asset.origin` (#552), added with
+            the feed card (#557).
+
+            `origin_server_id` has always been on this schema and is
+            not enough on its own: it is a bare UUID, and answering
+            "whose is this?" with an identifier answers nothing. A
+            feed card attributes remote work by the name the operator
+            gave the peer at handshake, in the same card and the same
+            layout local work uses. Federated content is not lesser;
+            what it must not be is unattributed.
         team_id:
           type: string
           format: uuid
@@ -14428,6 +14495,57 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+    PostAuthor:
+      type: object
+      description: |
+        The renderable identity of a post's author (#557) — exactly
+        what a feed card's author header draws and nothing else.
+
+        ALLOW-LIST, NOT DENY-LIST. This is a purpose-built shape, not
+        a trimmed `UserPublic`, and that is the point: the server
+        BUILDS the permitted object rather than building the full one
+        and deleting fields from it. A field added to the user or
+        profile row later is therefore withheld by construction
+        instead of by someone remembering to strip it — the same
+        discipline `PostMember`'s restricted placeholder and
+        `ActivityEvent` apply.
+
+        Notably ABSENT, and deliberately: `fullname`, `bio`,
+        `location`, `website_url`, `social_links`, `language`,
+        `theme`, `member_since`, `post_count`. A card header needs a
+        face, a name and somewhere to click. Everything else is what
+        the profile page is for, and that page answers with its own
+        gate.
+      required: [ref, username, display_name]
+      properties:
+        ref: { type: integer, format: int64 }
+        username:
+          type: string
+          description: |
+            The handle. Also the profile link target
+            (`/users/by-username/{username}`).
+        display_name:
+          type: string
+          description: |
+            Resolved display string ready to render — never empty.
+
+            RESOLUTION IS CALLER-DEPENDENT and matches `UserPublic`'s
+            exactly, because it is literally the same expression
+            (`users.ResolveDisplayName`):
+
+              authenticated: profile.display_name → user.fullname → username
+              anonymous:     profile.display_name → username
+
+            The anonymous rung skips `fullname` on purpose. Real name
+            is authenticated-only (ADR 0070 §3), and a display-name
+            fallback that reaches it would be that rule defeated by a
+            COALESCE.
+        avatar_url:
+          type: string
+          nullable: true
+          description: |
+            Null for users with no uploaded avatar; the card renders
+            a generated initials disc in that case.
     PostMember:
       type: object
       description: |
@@ -15943,10 +16061,21 @@ components:
       type: object
       description: |
         Merged user + profile view. `display_name` is the resolved
-        display string (profile.display_name → user.fullname →
-        user.username, first non-empty). `avatar_url` is null for
-        users without an uploaded avatar; the frontend renders a
-        generated initials disc in that case.
+        display string, first non-empty of:
+
+          authenticated: profile.display_name → user.fullname → username
+          anonymous:     profile.display_name → username
+
+        The anonymous ladder skips `fullname`, and has since #478 —
+        real name is authenticated-only (ADR 0070 §3), so a fallback
+        that reached it would defeat that rule silently, for exactly
+        the users who never set a display name. This sentence used to
+        describe only the authenticated ladder, which made the schema
+        the stale source; the rule itself is one Go expression
+        (`users.ResolveDisplayName`), shared with `PostAuthor`.
+
+        `avatar_url` is null for users without an uploaded avatar; the
+        frontend renders a generated initials disc in that case.
       required:
         [ref, username, display_name, member_since, post_count]
       properties:

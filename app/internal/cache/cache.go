@@ -49,6 +49,28 @@ const ChannelName = "cache_invalidate"
 // safely no-ops, which is acceptable pre-release.
 const WildcardDomain = "*"
 
+// DomainPostByID names the post-by-id cache: the LRU `posts` fills
+// from fetchFullPost, keyed by the post's UUID string.
+//
+// It lives HERE, in the registry that owns domain names, rather than in
+// `posts` beside the cache it names — because the writers that
+// invalidate it are not all in `posts`. `social` owns like and comment
+// mutations, both of which move a counter ON the posts row
+// (`like_count`, `comment_count`) via database trigger, and both of
+// which therefore stale this cache. It cannot import `posts` to learn
+// the string: `posts` imports `social`, so that is a cycle.
+//
+// The alternative — `social` hardcoding "post.id" — is the same string
+// written twice with nothing keeping them equal, and the failure mode
+// is silent: an invalidation published to a domain nobody registered is
+// dropped without error, so the counter simply never updates and looks
+// like a UI bug (#557 found exactly this, as a like whose count did not
+// move on reload).
+//
+// Add other cross-package domains here as they acquire a second writer.
+// A domain with exactly one writer is better off unexported next to it.
+const DomainPostByID = "post.id"
+
 // Payload is the NOTIFY message format. Producers must marshal
 // this exact shape; the metadata handler does so already.
 type Payload struct {

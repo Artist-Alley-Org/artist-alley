@@ -263,6 +263,16 @@
       "sr": "This item is restricted. You do not have access to it.",
       "ask": "Request access",
       "asked": "Requested"
+    },
+    "feed": {
+      "author_profile": "View {name}'s profile",
+      "like": "Like",
+      "unlike": "Unlike",
+      "likes": "{count} likes",
+      "comment": "Comment",
+      "comments": "{count} comments",
+      "share": "Share",
+      "shared": "Link copied"
     }
   },
   "selection": {

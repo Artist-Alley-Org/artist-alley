@@ -679,26 +679,17 @@ type profileSnapshot struct {
 // rowToAPI maps the merged user+profile row into the public API shape,
 // resolving display_name precedence and computing post_count.
 //
-// Precedence for display_name (the always-non-empty resolved string):
-//  1. profile.display_name (if non-empty)
-//  2. user.fullname (if non-empty)
-//  3. user.username
+// The precedence itself lives in ResolveDisplayName (author.go) rather
+// than here, because #557 gave it a second caller: the author object on
+// every post payload. Both the profile page and a feed card have to
+// answer "what is this person called, to THIS viewer" — including the
+// anonymous skip of the `fullname` rung (ADR 0070 §3) — and two copies
+// of that ladder is exactly the shape that lets one of them keep the
+// leak after the other is fixed.
 //
 // The frontend never has to do this resolution itself.
 func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow, anonymous bool) (*openapi.UserPublic, error) {
-	display := r.DisplayName
-	// An anonymous viewer must never see the real name (ADR 0070 §3) —
-	// not directly, and not smuggled through the display_name fallback.
-	// So skip the fullname rung for anonymous: display_name → username.
-	if display == "" && !anonymous && r.Fullname != nil && *r.Fullname != "" {
-		display = *r.Fullname
-	}
-	if display == "" && r.Username != nil {
-		display = *r.Username
-	}
-	if display == "" {
-		display = fmt.Sprintf("user %d", r.UserRef)
-	}
+	display := ResolveDisplayName(r.DisplayName, r.Fullname, r.Username, r.UserRef, anonymous)
 
 	postCount, err := q.CountPostsByAuthor(ctx, r.UserRef)
 	if err != nil {
