@@ -4,7 +4,7 @@
 # output into the Go binary via //go:embed — there is no prod image
 # for this service.
 
-FROM node:22-alpine
+FROM node:26-alpine
 
 ARG UID=1000
 ARG GID=1000
