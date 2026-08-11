@@ -7,6 +7,7 @@
   import { lang, t } from '$stores/lang.svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
+  import { browseView, type ViewMode } from '$stores/browseView.svelte';
   import type { components } from '$api/schema';
 
   // Local types mirror the openapi UserPreferencesResponse shape.
@@ -66,6 +67,18 @@
     ['', 'latest', 'following'];
   const BROWSE_LAYOUT_OPTIONS: NonNullable<ViewSelections['browse_layout']>[] =
     ['', 'grid', 'masonry', 'thumbnail', 'list', 'feed'];
+
+  // ...and then narrowed to what THIS install offers (#709). An
+  // operator can disable a layout instance-wide, and offering it here
+  // would be the same "picking it changes nothing" bug the comment
+  // above describes, arriving from the operator's side instead of from
+  // a missing endpoint: the preference would save, and every resolve
+  // would filter it straight back out.
+  //
+  // `''` (use default) always survives — it names no layout, so there
+  // is nothing for the operator to have disabled.
+  const offeredLayoutOptions = $derived(
+    BROWSE_LAYOUT_OPTIONS.filter((o) => o === '' || browseView.isEnabled(o as ViewMode)));
   const BROWSE_SORT_OPTIONS: NonNullable<ViewSelections['browse_sort']>[] =
     ['', 'newest', 'oldest'];
 
@@ -382,7 +395,7 @@
             onchange={(e) => setView('browse_layout', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
           >
-            {#each BROWSE_LAYOUT_OPTIONS as opt (opt)}
+            {#each offeredLayoutOptions as opt (opt)}
               <option value={opt}>{opt === '' ? t('account.preferences.views_use_default') : t(`account.preferences.views_browse_layout_${opt}`)}</option>
             {/each}
           </select>

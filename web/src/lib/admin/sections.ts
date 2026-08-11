@@ -228,6 +228,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // section landing pages would each show partial overlapping
       // sets).
       { key: 'themes',       status: 'live',   href: '/admin/system/themes', cap: 'system.config.read' },
+      // #709 — which browse layouts the install offers. Gated on the
+      // READ cap like its neighbours in this section, not on the write
+      // cap the way site_text is: this page loads through the ADMIN
+      // GET, so `system.config.read` is what it actually needs to
+      // render. The save button is disabled without the write cap.
+      { key: 'browse_views', status: 'live',   href: '/admin/system/browse-views', cap: 'system.config.read' },
       { key: 'maintenance',  status: 'future' },
       { key: 'feature_flags', status: 'future' },
       { key: 'backup',       status: 'future' },

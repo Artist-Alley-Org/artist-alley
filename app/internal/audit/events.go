@@ -115,6 +115,13 @@ const (
 	// without diffing changesets on an unrelated event.
 	EventAdminPublicModeUpdated = "admin.system.public_mode_updated"
 
+	// #709 — the browse-layout allowlist. Its own event because
+	// disabling a layout is the kind of change users notice and report
+	// as a bug ("the masonry button disappeared"); answering that with
+	// "an operator turned it off on this date" should not require
+	// diffing the changeset of an unrelated system-config save.
+	EventAdminBrowseViewsUpdated = "admin.system.browse_views_updated"
+
 	// #40 — the scheduled-action engine (ADR 0020). Each execution
 	// writes one of these, tx-bound with the domain change, so the
 	// audit log IS the "trail" ADR 0020's action shape refers to and

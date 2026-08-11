@@ -28,8 +28,14 @@ function rehydrate(defaults?: Parameters<typeof browseView.init>[0]) {
   browseView.init(defaults);
 }
 
+const ALL_MODES = ['grid', 'masonry', 'thumbnail', 'list', 'feed'] as const;
+
 beforeEach(() => {
   localStorage.clear();
+  // The store is a singleton, so the operator's enabled set leaks
+  // between tests unless it is put back. Every test above this line
+  // assumes all five are offered.
+  browseView.setEnabledModes([...ALL_MODES]);
 });
 
 describe('account defaults seed a device with no local choice', () => {
@@ -160,6 +166,113 @@ describe('an account arriving after hydration (sign-in)', () => {
 
     browseView.applyAccountDefaults({ browse_layout: 'masonry' });
     expect(browseView.mode).toBe('thumbnail');
+  });
+});
+
+// #709 — the operator's enabled set is the OUTERMOST rung, and being
+// outermost is the whole difficulty: each of the three rungs below it
+// can hold a mode the operator has since disabled, and each one has to
+// fall through rather than be honoured.
+//
+// One test per rung, because they fail independently. An implementation
+// that filters localStorage but not the account default passes a single
+// combined test whenever the device happens to have an opinion.
+describe('the operator can disable a layout (#709)', () => {
+  it('falls through a DEVICE choice naming a disabled layout', () => {
+    // The case that motivated the feature: the operator turns masonry
+    // off, and a user whose browser still remembers it must not land on
+    // an empty page.
+    localStorage.setItem('aa_browse_mode', 'masonry');
+    browseView.setEnabledModes(['grid', 'list']);
+    rehydrate(null);
+
+    expect(browseView.mode).toBe('grid');
+  });
+
+  it('falls through an ACCOUNT default naming a disabled layout', () => {
+    browseView.setEnabledModes(['grid', 'list']);
+    rehydrate({ browse_layout: 'masonry' });
+
+    expect(browseView.mode).toBe('grid');
+  });
+
+  it('falls through the COARSE-POINTER default when feed is disabled', () => {
+    // Phones default to `feed`. An operator who disables it has to get
+    // a real layout on a phone, not the built-in that no longer exists
+    // on this install.
+    const original = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      matches: q === '(pointer: coarse)',
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      browseView.setEnabledModes(['grid', 'list']);
+      rehydrate(null);
+      expect(browseView.mode).toBe('grid');
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it('falls back to the first ENABLED layout, not to `grid`', () => {
+    // An operator can disable the built-in default too. Falling back to
+    // `grid` regardless would put every user with no stored choice on
+    // the one layout the install refuses to render.
+    browseView.setEnabledModes(['list', 'feed']);
+    rehydrate(null);
+
+    expect(browseView.mode).toBe('list');
+  });
+
+  it('keeps a device choice the operator still offers', () => {
+    // The filter must not become "reset everyone on every boot".
+    localStorage.setItem('aa_browse_mode', 'list');
+    browseView.setEnabledModes(['grid', 'list']);
+    rehydrate({ browse_layout: 'grid' });
+
+    expect(browseView.mode).toBe('list');
+  });
+
+  it('re-resolves when the enabled set arrives AFTER hydration', () => {
+    // The real sequence: the store hydrates from localStorage, then the
+    // public boot fetch lands. Without a re-resolve the user sits on a
+    // layout the switcher no longer draws.
+    localStorage.setItem('aa_browse_mode', 'masonry');
+    rehydrate(null);
+    expect(browseView.mode).toBe('masonry');
+
+    browseView.setEnabledModes(['grid', 'list']);
+    expect(browseView.mode).toBe('grid');
+  });
+
+  it('refuses setMode for a disabled layout, and does not persist it', () => {
+    browseView.setEnabledModes(['grid', 'list']);
+    rehydrate(null);
+
+    browseView.setMode('masonry');
+
+    expect(browseView.mode).toBe('grid');
+    expect(localStorage.getItem('aa_browse_mode')).toBeNull();
+  });
+
+  it('ignores an empty enabled set rather than blacking out browse', () => {
+    // The server refuses to store one, so an empty set here means a
+    // stale cache or a mangled response. Honouring it would leave the
+    // switcher with no buttons.
+    browseView.setEnabledModes(['grid', 'list']);
+    browseView.setEnabledModes([]);
+
+    expect(browseView.enabledModes).toEqual(['grid', 'list']);
+    expect(browseView.isEnabled('grid')).toBe(true);
+  });
+
+  it('normalises the enabled set to render order', () => {
+    // What the switcher draws is this build's order, not whatever order
+    // the operator's checkboxes serialised in.
+    browseView.setEnabledModes(['feed', 'grid']);
+    expect(browseView.enabledModes).toEqual(['grid', 'feed']);
   });
 });
 

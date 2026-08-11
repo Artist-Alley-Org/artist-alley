@@ -36,6 +36,7 @@ func TestIsPublicSurface(t *testing.T) {
 		{"/api/v1/iiif/3/abc/info.json", true, "IIIF under /api/v1"},
 		{"/iiif/3/abc/full/max/0/default.jpg", true, "IIIF at the root mount"},
 		{"/iiif/2/abc/manifest", true, "IIIF 2.x redirect"},
+		{"/api/v1/browse-views", true, "operator-enabled browse layouts (#709), governed like /previews"},
 
 		// NOT governed — must serve anonymous callers in both states.
 		// A regression here does not degrade a feature; it locks the

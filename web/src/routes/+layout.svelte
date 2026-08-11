@@ -46,6 +46,15 @@
     // empty capability set and rendered "you don't have permission"
     // at real administrators until the second response arrived.
     lang.init();
+    // Which browse layouts this install offers (#709). Public boot
+    // payload like appearance: applies the cached set synchronously so
+    // the switcher's first paint is right, then refreshes. Resolved
+    // here rather than per browse page because it also filters the
+    // mode every page hydrates with, and a page that resolved its own
+    // mode before this landed would show a layout the operator
+    // disabled. `void` — nothing downstream waits on it, and a failure
+    // leaves every layout offered, which is what shipped before.
+    void browseView.loadEnabledModes();
     // Drop-anywhere-to-upload — install once globally. The store
     // returns a cleanup but layouts don't unmount in normal use, so
     // we ignore it.

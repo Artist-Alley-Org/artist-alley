@@ -35,6 +35,7 @@
 // mapping produced at those widths — without either being written down.
 
 import { browser } from '$app/environment';
+import { api } from '$api/client';
 import { auth, type AccountViewDefaults } from '$stores/auth.svelte';
 
 export type ViewMode = 'grid' | 'masonry' | 'thumbnail' | 'list' | 'feed';
@@ -167,7 +168,39 @@ const DEFAULT_MODE: ViewMode = 'grid';
  *  once at hydration. See `init()`. */
 const COARSE_DEFAULT_MODE: ViewMode = 'feed';
 
+/** Every mode this build can render. NOT the same question as "which
+ *  modes may be offered" — that is the operator's, and it lives in
+ *  `BrowseViewState.enabledModes` (#709). This list is what the code
+ *  knows how to draw; that list is a subset the operator has chosen. */
 const VALID_MODES: ReadonlyArray<ViewMode> = ['grid', 'masonry', 'thumbnail', 'list', 'feed'];
+
+/** localStorage mirror of the operator's enabled set (#709).
+ *
+ *  Cached for first paint, exactly as `appearance` and `lang` cache
+ *  their public boot payloads: the switcher renders before the network
+ *  answers, and without a cache it would paint all five buttons and
+ *  then drop the disabled ones a moment later. */
+const STORAGE_ENABLED = 'aa_browse_enabled_modes';
+
+function readEnabledCache(): ViewMode[] | null {
+  if (!browser) return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_ENABLED);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const modes = parsed.filter((m): m is ViewMode =>
+      (VALID_MODES as ReadonlyArray<unknown>).includes(m));
+    return modes.length > 0 ? modes : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeEnabledCache(modes: ViewMode[]): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_ENABLED, JSON.stringify(modes)); } catch { /* quota / disabled */ }
+}
 
 /** Modes whose column count is fixed at 1, so the size stepper is inert. */
 const SINGLE_COLUMN_MODES: ReadonlyArray<ViewMode> = ['list', 'feed'];
@@ -377,6 +410,14 @@ function accountDir(v: AccountViewDefaults | null | undefined): SortDir | null {
 
 class BrowseViewState {
   mode = $state<ViewMode>(DEFAULT_MODE);
+  /** The layouts the operator offers on this install (#709).
+   *
+   *  Defaults to everything this build renders, so an install that has
+   *  never configured it — and a boot where the fetch has not landed or
+   *  was refused — behaves exactly as it did before the setting
+   *  existed. Never empty: `setEnabledModes` refuses that, because a
+   *  switcher with no buttons is a browse page nobody can use. */
+  enabledModes = $state<ViewMode[]>([...VALID_MODES]);
   /** Rung on TILE_STEPS_REM, not a column count. */
   tileIdx = $state<number>(DEFAULT_TILE_IDX);
   /** Visible list-view columns, in the order they appear. */
@@ -554,7 +595,12 @@ class BrowseViewState {
       ? defaults
       : (auth.user?.defaultViews ?? null);
 
-    this.mode = readMode() ?? accountMode(acct) ?? this.defaultModeForDevice();
+    // ONE resolver for all three rungs (#709). Written as a list rather
+    // than a `??` chain because every rung has to be filtered through
+    // the operator's enabled set, and a chain filtered rung-by-rung is
+    // how the rungs drift apart: the next person to add a rung adds it
+    // to the chain and not to the filter.
+    this.mode = this.resolveMode([readMode(), accountMode(acct), this.defaultModeForDevice()]);
     this.filter = readFilter() ?? accountFilter(acct) ?? 'latest';
 
     // One account value, two store fields, because the app has two
@@ -570,6 +616,79 @@ class BrowseViewState {
   private defaultModeForDevice(): ViewMode {
     if (!browser) return DEFAULT_MODE;
     return window.matchMedia?.('(pointer: coarse)').matches ? COARSE_DEFAULT_MODE : DEFAULT_MODE;
+  }
+
+  /** Is this layout offered on this install? */
+  isEnabled(m: ViewMode): boolean {
+    return this.enabledModes.includes(m);
+  }
+
+  /** The one place a mode value becomes THE mode (#709).
+   *
+   *  Takes the rungs in precedence order and returns the first one the
+   *  operator still offers, falling through the rest rather than
+   *  accepting a disabled layout. Every rung goes through here — this
+   *  device's stored choice, the signed-in account's default, the
+   *  coarse-pointer guess — so none of them can quietly start accepting
+   *  a mode the switcher no longer draws.
+   *
+   *  The final fallback is the first ENABLED mode, not `DEFAULT_MODE`:
+   *  an operator who disabled `grid` would otherwise land every user
+   *  who has no stored choice on the one layout the install refuses to
+   *  render. `enabledModes` is never empty, so this always returns
+   *  something real. */
+  private resolveMode(rungs: Array<ViewMode | null | undefined>): ViewMode {
+    for (const rung of rungs) {
+      if (rung && this.isEnabled(rung)) return rung;
+    }
+    return this.enabledModes[0] ?? DEFAULT_MODE;
+  }
+
+  /** Apply the operator's enabled set, then re-resolve the active mode.
+   *
+   *  Re-resolving is the point. The set usually arrives AFTER the store
+   *  hydrated — it comes off the network, the pages call `init()` on
+   *  mount — so a user whose localStorage names a since-disabled layout
+   *  has already had it applied by the time this runs. Without the
+   *  re-resolve they would sit on a mode the switcher does not offer,
+   *  which is the empty-page symptom this whole feature is about.
+   *
+   *  An empty or all-unknown set is IGNORED rather than applied. The
+   *  server refuses to store one, so seeing one here means a stale
+   *  cache or a mangled response, and honouring it would black out
+   *  browse over what is at worst a display setting. */
+  setEnabledModes(modes: ViewMode[]): void {
+    const next = VALID_MODES.filter((m) => modes.includes(m));
+    if (next.length === 0) return;
+    this.enabledModes = [...next];
+    this.applyAccountDefaults();
+  }
+
+  /** Read the operator's enabled set from the public boot endpoint.
+   *
+   *  Called once from the root layout, alongside `appearance.init()`
+   *  and `lang.init()`. The cached set is applied synchronously first
+   *  so the switcher's first paint is already correct.
+   *
+   *  A failure leaves whatever is in place — the cache, or all five.
+   *  That includes the 401 a PRIVATE install returns to an anonymous
+   *  caller: the endpoint is public-mode governed, and a logged-out
+   *  visitor there has no browse page to configure anyway. Every mode
+   *  is a valid render, so there is nothing to report to the user. */
+  async loadEnabledModes(): Promise<void> {
+    const cached = readEnabledCache();
+    if (cached) this.setEnabledModes(cached);
+    try {
+      const { data } = await api.GET('/browse-views');
+      if (!data?.enabled?.length) return;
+      const modes = data.enabled.filter((m): m is ViewMode =>
+        (VALID_MODES as ReadonlyArray<string>).includes(m));
+      if (modes.length === 0) return;
+      this.setEnabledModes(modes);
+      writeEnabledCache(modes);
+    } catch {
+      // Network / parse failure — keep the cached set.
+    }
   }
 
   setFilter(v: FeedFilter): void {
@@ -619,7 +738,16 @@ class BrowseViewState {
     writeSort(this.sort);
   }
 
+  /** Switch layout. Refuses a mode the operator does not offer (#709).
+   *
+   *  The switcher already hides those buttons, so this guard is for the
+   *  paths that are not the switcher: a stale component holding an old
+   *  list, a keyboard shortcut, a future deep link carrying a mode. It
+   *  also stops a disabled mode reaching localStorage, which would
+   *  otherwise outlive the session and have to be filtered out on every
+   *  subsequent boot. */
   setMode(m: ViewMode): void {
+    if (!this.isEnabled(m)) return;
     this.mode = m;
     writeMode(m);
   }

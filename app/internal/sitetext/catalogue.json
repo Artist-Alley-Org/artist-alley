@@ -1566,6 +1566,10 @@
             "title": "Themes & branding",
             "blurb": "Brand colors and custom CSS hooks."
           },
+          "browse_views": {
+            "title": "Browse layouts",
+            "blurb": "Choose which browse layouts your users can pick from."
+          },
           "maintenance": {
             "title": "Maintenance mode",
             "blurb": "Read-only mode and the banner shown to users."
@@ -2450,6 +2454,19 @@
         "org_status_unbound": "unbound — license rejected",
         "org_binding_error_label": "Cross-binding failed",
         "org_binding_recovery_hint": "Recovery: copy the original org.key into place (file permissions 0600), or run scripts/customer-activation in the license-server repo to generate a new one and request a license re-issuance against the new public key."
+      },
+      "browse_views": {
+        "title": "Browse layouts",
+        "description": "Pick the layouts the view switcher offers on this install. This applies to everyone — anyone already using a layout you turn off is moved to one that is still on, so nobody lands on an empty page.",
+        "legend": "Layouts users can pick",
+        "min_one": "At least one layout has to stay on. Turning them all off would leave nobody able to browse.",
+        "saved": "Saved. The switcher updates on the next page load.",
+        "read_only": "You can view this setting but not change it.",
+        "mode_grid": "Cards in an even grid. The default on desktop.",
+        "mode_masonry": "Cards flow in columns at their natural heights.",
+        "mode_thumbnail": "A denser grid — a preview wall.",
+        "mode_list": "A sortable table with columns you choose.",
+        "mode_feed": "One column, image at full width. The default on phones."
       },
       "themes": {
         "title": "Themes & branding",

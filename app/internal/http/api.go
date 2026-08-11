@@ -2255,6 +2255,10 @@ func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logge
 	// cached read of the flag. Without this the toggle appears inert
 	// until the cache entry ages out.
 	h.CacheReg = cacheReg
+	// #709 — the public /browse-views read sits on the frontend's boot
+	// path, so it reads through the same NOTIFY-fed cache registry the
+	// admin write above invalidates.
+	h.SetBrowseViewsReader(sysconfig.NewBrowseViewsReader(store, cacheReg, logger))
 	h.DemoMode = demoMode
 	return h
 }
@@ -3410,6 +3414,16 @@ func (s *apiServer) GetPublicMode(ctx context.Context, req openapi.GetPublicMode
 }
 func (s *apiServer) UpdatePublicMode(ctx context.Context, req openapi.UpdatePublicModeRequestObject) (openapi.UpdatePublicModeResponseObject, error) {
 	return s.sysconfigH.UpdatePublicMode(ctx, req)
+}
+
+func (s *apiServer) GetBrowseViews(ctx context.Context, req openapi.GetBrowseViewsRequestObject) (openapi.GetBrowseViewsResponseObject, error) {
+	return s.sysconfigH.GetBrowseViews(ctx, req)
+}
+func (s *apiServer) UpdateBrowseViews(ctx context.Context, req openapi.UpdateBrowseViewsRequestObject) (openapi.UpdateBrowseViewsResponseObject, error) {
+	return s.sysconfigH.UpdateBrowseViews(ctx, req)
+}
+func (s *apiServer) GetPublicBrowseViews(ctx context.Context, req openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
+	return s.sysconfigH.GetPublicBrowseViews(ctx, req)
 }
 
 // --- audit viewer (Phase 1.17.K) ------------------------------------------
