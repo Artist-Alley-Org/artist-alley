@@ -7,6 +7,8 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.9.0] — 2026-08-11 — Permissions made one rule, deletion made reversible, and the surfaces that were only half there
+
 ### Added
 
 - **The feed tells you who made this.** Feed view was a wider grid tile — the same picture, no
