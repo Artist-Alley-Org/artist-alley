@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The view bar comes back when you reach for it.** The layout, sort and filter controls at the
+  bottom of browse slide away when you scroll down, and used to return only when you scrolled
+  back up — so reaching for a control meant scrolling in a direction you didn't want to go.
+  Moving the pointer toward the bottom of the window now brings them back, and they slide away
+  again when you move off (#1020).
+
+  The bar at the top stays where it is. Tabbing to a control brings the bar back too, and
+  pressing Escape dismisses it. On a touchscreen nothing changes — there is no pointer to
+  approach with, and a hidden strip along the bottom edge of a phone would sit exactly where
+  your thumbs do.
+
 - **You choose which browse layouts your install offers.** All five — grid, masonry, thumbnail,
   list and feed — were shown to everyone, always. Admin → System → Browse layouts now lets you
   pick, and the view switcher offers only what you left on (#709).
