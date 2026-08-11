@@ -325,7 +325,12 @@
   // trigger doesn't open an empty panel — the single case where neither
   // an owner action nor a member action qualifies.
   const hasVisibleMembers = $derived(pl.source.items.length > 0);
-  const hasMenuItems = $derived(hasVisibleMembers || isOwner || canDeleteThisPost);
+  // Any signed-in reader now has at least one item — "save this post"
+  // (#882) — so the empty-panel case narrowed to anonymous readers of
+  // a memberless post they did not write.
+  const hasMenuItems = $derived(
+    hasVisibleMembers || isOwner || canDeleteThisPost || !!auth.user,
+  );
   const postedRelative = $derived(post ? relativeTime(post.posted_at) : '');
   const postedAbsolute = $derived(post ? new Date(post.posted_at).toLocaleString() : '');
 
@@ -442,19 +447,35 @@
   onDestroy(() => {});
 
   // ── Collection-picker state ───────────────────────────────────────
-  // pickerAssetIds is the working set the picker operates on. For
-  // single-asset (Edit menu) we set it to [currentAssetId]; for the
-  // bulk action we set it to every item id. Driving both flows from
-  // one state field keeps the modal rendered at most once.
+  // pickerAssetIds / pickerPostIds are the working set the picker
+  // operates on. For single-asset (Edit menu) we set the assets to
+  // [currentAssetId]; for the bulk action to every item id; for "save
+  // this post" (#882) we set the POST instead and leave the assets
+  // empty. Driving every flow from one pair of state fields keeps the
+  // modal rendered at most once.
+  //
+  // Saving the POST and saving ALL ITS ASSETS are different actions and
+  // both are on the menu: one keeps the author's framing (title,
+  // description, the carousel's order) as a reference that dies with
+  // their post; the other lifts the images out into your own shelf.
   let pickerAssetIds = $state<string[]>([]);
+  let pickerPostIds = $state<string[]>([]);
   let pickerOpen = $state(false);
 
   function openPickerForCurrent(assetId: string) {
     pickerAssetIds = [assetId];
+    pickerPostIds = [];
     pickerOpen = true;
   }
   function openPickerForAll() {
     pickerAssetIds = pl.source.items.map((it) => it.id);
+    pickerPostIds = [];
+    pickerOpen = true;
+  }
+  function openPickerForPost() {
+    if (!post) return;
+    pickerAssetIds = [];
+    pickerPostIds = [post.id];
     pickerOpen = true;
   }
   function closePicker() {
@@ -738,6 +759,7 @@
 {#if pickerOpen}
   <CollectionPicker
     assetIds={pickerAssetIds}
+    postIds={pickerPostIds}
     onClose={closePicker}
   />
 {/if}
@@ -856,6 +878,17 @@
               </svg>
             </span>
           {/snippet}
+          <!-- #882 — save the POST itself, as a reference. Above the
+               member actions because it is the one people reach for:
+               the whole post is what they saw. It is offered to every
+               signed-in reader, not just the author — the server
+               decides what may be collected by whether the caller can
+               READ it, and this surface has already read it. -->
+          {#if auth.user}
+            <button type="button" role="menuitem" onclick={openPickerForPost} data-testid="post-add-to-collection" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('post_menu.add_to_collection')}
+            </button>
+          {/if}
           {#if hasVisibleMembers}
             <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('playlist_actions.add_all_to_collection')}

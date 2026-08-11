@@ -1100,6 +1100,21 @@ func (*PanicShim) GetCollectionFieldValueHistory(context.Context, openapi.GetCol
 	panic("PanicShim: GetCollectionFieldValueHistory called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListCollectionPosts panics by default; test shims override.
+func (*PanicShim) ListCollectionPosts(context.Context, openapi.ListCollectionPostsRequestObject) (openapi.ListCollectionPostsResponseObject, error) {
+	panic("PanicShim: ListCollectionPosts called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// AddCollectionPost panics by default; test shims override.
+func (*PanicShim) AddCollectionPost(context.Context, openapi.AddCollectionPostRequestObject) (openapi.AddCollectionPostResponseObject, error) {
+	panic("PanicShim: AddCollectionPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RemoveCollectionPost panics by default; test shims override.
+func (*PanicShim) RemoveCollectionPost(context.Context, openapi.RemoveCollectionPostRequestObject) (openapi.RemoveCollectionPostResponseObject, error) {
+	panic("PanicShim: RemoveCollectionPost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListCollectionResources panics by default; test shims override.
 func (*PanicShim) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	panic("PanicShim: ListCollectionResources called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

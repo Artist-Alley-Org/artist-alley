@@ -6735,6 +6735,134 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /collections/{id}/posts:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listCollectionPosts
+      summary: List the posts pinned in a collection
+      description: |
+        Returns posts currently pinned in this collection (excludes
+        rows where the per-membership `expires_at` has passed), in
+        `sort_order ASC, added_at ASC` order so the list matches the
+        curator's arranged sequence.
+
+        TWO gates apply and both are required. The PARENT collection
+        must be visible to the caller, and each POST is filtered by the
+        one post read rule — the same expression `GET /posts` and
+        `GET /posts/{id}` use. A collection may contain posts its
+        curator can read and you cannot (that is what #882 makes
+        possible), so membership never widens a post: a post you may
+        not read is simply not in this list.
+
+        That is deliberately NOT the placeholder shape
+        `GET /collections/{id}/resources` uses for assets. An asset
+        placeholder exists so the reader can see that a restriction is
+        there and ask for access (#881/#883); a post carries its
+        author's title and description in the row itself, and the post
+        surface has no request-access flow to attach to. Absence is the
+        honest answer here.
+      tags: [collections]
+      # Anonymous-readable, same as the resources listing (#438).
+      # Documentary only — the handler guard enforces access.
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of posts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addCollectionPost
+      summary: Add (or re-pin) an existing post in a collection
+      description: |
+        Adds a REFERENCE, never a copy (#882). The post keeps its
+        author, its visibility and its lifecycle; the collection holds
+        a pointer. If the author deletes the post it disappears from
+        every collection that referenced it
+        (`collection_posts_post_id_fkey … ON DELETE CASCADE`), which is
+        the point: "the owner can still delete it from everywhere".
+
+        Idempotent on `(collection_id, post_id)`. Re-adding an existing
+        membership updates `sort_order`, `pinned` and `expires_at` but
+        keeps `added_at` fixed.
+
+        You may only collect what you can actually read. The post must
+        pass the same read rule `GET /posts/{id}` applies — so anyone
+        can pin an org-only post, only a follower can pin a
+        followers-tier one, and a stranger's private post cannot be
+        pinned at all. A post the caller may not read is reported
+        exactly as one that does not exist: `404` with `post not
+        found`, so this endpoint cannot be used to probe whether a UUID
+        exists.
+
+        The collection must be one the caller may mutate. An absent
+        collection, a soft-deleted one and someone else's are all
+        `404` here — unlike the asset route, which grandfathers a
+        distinguishable `403`.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionPostWrite" }
+      responses:
+        "204":
+          description: Post added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/posts/{post_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: removeCollectionPost
+      summary: Remove a post from a collection
+      description: |
+        Un-pins the reference. It does NOT delete the post, and it does
+        not touch any other collection that references the same post —
+        removing from your collection is yours alone (#882).
+
+        Not gated on readability, deliberately, for the same reason the
+        asset route is not: a post whose visibility was narrowed after
+        it was pinned would otherwise be permanently stranded in a
+        collection its curator can no longer remove it from.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed (or was already absent)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /collections/{id}/acls:
     parameters:
       - name: id
@@ -13240,6 +13368,27 @@ components:
           items: { $ref: "#/components/schemas/CollectionResource" }
         next_cursor:
           type: string
+          nullable: true
+    CollectionPostWrite:
+      type: object
+      description: |
+        The body of `POST /collections/{id}/posts` (#882). Mirrors
+        CollectionResourceWrite field for field, because
+        `collection_posts` and `collection_resources` carry the same
+        membership columns — a reference plus the curator's ordering.
+
+        There is no post-side counterpart of `CollectionResource`: the
+        listing returns whole `Post` objects, so the collection page
+        renders the same PostCard as browse rather than a second,
+        narrower post shape that would drift from it.
+      required: [post_id]
+      properties:
+        post_id: { type: string, format: uuid }
+        sort_order: { type: integer, default: 0 }
+        pinned: { type: boolean, default: true }
+        expires_at:
+          type: string
+          format: date-time
           nullable: true
     Asset:
       type: object

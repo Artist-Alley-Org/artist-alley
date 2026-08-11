@@ -2733,11 +2733,9 @@
     "empty_public": "No public collections yet.",
     "empty_shared": "No collections have been shared with you yet.",
     "empty_all": "No collections match your filter.",
-    "detail_empty": "No assets in this collection yet.",
+    "detail_empty": "Nothing in this collection yet.",
     "upload_here": "Upload here",
     "upload_first": "Upload first asset",
-    "add_posts": "Add posts",
-    "add_posts_soon": "Post-level membership lands in a follow-up commit.",
     "share": "Share",
     "more": "More actions",
     "edit": "Edit details",
@@ -2761,7 +2759,11 @@
     "deleted_at_banner": "Deleted {date}",
     "deleted_reason": "— {reason}",
     "restoring": "Restoring…",
-    "restore": "Restore"
+    "restore": "Restore",
+    "detail_empty_hint": "Open a post or an asset and choose \"Save to collection\" to add it here.",
+    "posts_heading": "Posts",
+    "assets_heading": "Assets",
+    "posts_loading": "Loading posts…"
   },
   "errors": {
     "save_failed": "Couldn't save changes."
@@ -2844,7 +2846,7 @@
   },
   "collection_picker": {
     "title_single": "Add to collection",
-    "title_bulk": "Add {n} assets to collection",
+    "title_bulk": "Add {n} items to collection",
     "search_placeholder": "Search your collections…",
     "loading": "Loading collections…",
     "empty": "You don't have any collections yet. Create one below.",
@@ -2865,7 +2867,8 @@
     "manage_access": "Manage access…",
     "edit_post": "Edit post…",
     "delete_post": "Delete post…",
-    "actions_button": "Post actions"
+    "actions_button": "Post actions",
+    "add_to_collection": "Save to collection…"
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",

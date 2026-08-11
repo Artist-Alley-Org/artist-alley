@@ -3,7 +3,14 @@
 
 package visibility
 
-import "fmt"
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
 
 // ---------------------------------------------------------------------------
 // The post read rule — ONE expression, for every surface that reads posts
@@ -202,4 +209,66 @@ func PostLiveGrantSQL(qualifier string, argIdx int) string {
 			" AND (acl.expires_at IS NULL OR acl.expires_at > NOW()))",
 		qualifier, argIdx,
 	)
+}
+
+// PostReadable answers "may this caller read THIS post", by id — the
+// single-item form of the rule above.
+//
+// # Why it is here and not in `posts`
+//
+// It WAS in `posts`, as the unexported postReadable, and it was the only
+// Go-callable form of the rule. #882's second half needs the same
+// question asked from `collections` — may this caller put someone else's
+// post into their own collection — and a package-private helper cannot
+// be asked. The two ways out were to export it from `posts` (which makes
+// a container package import the entity package for one boolean) or to
+// restate it, and restating a security rule is the defect epic #665
+// exists to remove: the ADD path would have started agreeing with
+// GET /posts/{id} and drifted the first time a tier moved.
+//
+// So it sits beside the expression it probes, exactly like
+// [CanAttachAsset] sits beside the two planes it composes (#922). There
+// is still only ONE expression of the post read rule —
+// [postReadableExpr] — and this runs it as an EXISTS against one id, so
+// the single-item answer cannot diverge from what the feed lists. That
+// agreement is the #660 property, and it is structural rather than
+// maintained by hand.
+//
+// # What it answers, and what a caller must do with the answer
+//
+// Returns (false, nil) BOTH for "the post is hidden from you" and for
+// "there is no such post". Collapsing the two is what keeps callers
+// enumeration-safe by default: whatever response you give, give the same
+// one to both, or the endpoint becomes a UUID-existence probe. Soft-
+// deleted posts are excluded — a deleted post is not readable content
+// on any path — because the option that would waive that conjunct
+// ([IncludeSoftDeleted]) is deliberately not passed.
+//
+// A DB error is propagated rather than folded into "no". A read gate
+// that answers "denied" on a transport blip is indistinguishable from a
+// permissions bug to whoever hits it.
+func PostReadable(
+	ctx context.Context,
+	pool Pool,
+	caller Caller,
+	caps PostCaps,
+	postID uuid.UUID,
+) (bool, error) {
+	pred, err := Filter(ctx, EntityPost, caller, WithPostCaps(caps))
+	if err != nil {
+		return false, fmt.Errorf("visibility: post read gate: %w", err)
+	}
+	// ToSQL's EntityPost branch renders `deleted_at IS NULL AND (rule)`
+	// and binds its own placeholders from argOffset+1; $1 is the id.
+	frag, args := pred.ToSQL("", 1)
+	sql := "SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1" + frag + ")"
+
+	var ok bool
+	if err := pool.QueryRow(ctx, sql, append([]any{postID}, args...)...).Scan(&ok); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("visibility: post read gate: %w", err)
+	}
+	return ok, nil
 }

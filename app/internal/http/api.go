@@ -3020,6 +3020,21 @@ func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCo
 func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.collections.RemoveCollectionResource(ctx, req)
 }
+
+// The /collections/{id}/posts trio delegates to POSTS, not collections
+// (#882). The payload is a hydrated Post and the gate is the post read
+// rule; both live there, and the collection half is obtained from
+// collections.ResolveMemberWrite rather than restated. See the file
+// header on posts/collection_posts.go for the full argument.
+func (s *apiServer) ListCollectionPosts(ctx context.Context, req openapi.ListCollectionPostsRequestObject) (openapi.ListCollectionPostsResponseObject, error) {
+	return s.posts.ListCollectionPosts(ctx, req)
+}
+func (s *apiServer) AddCollectionPost(ctx context.Context, req openapi.AddCollectionPostRequestObject) (openapi.AddCollectionPostResponseObject, error) {
+	return s.posts.AddCollectionPost(ctx, req)
+}
+func (s *apiServer) RemoveCollectionPost(ctx context.Context, req openapi.RemoveCollectionPostRequestObject) (openapi.RemoveCollectionPostResponseObject, error) {
+	return s.posts.RemoveCollectionPost(ctx, req)
+}
 func (s *apiServer) ListCollectionAcls(ctx context.Context, req openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
 	return s.collections.ListCollectionAcls(ctx, req)
 }
