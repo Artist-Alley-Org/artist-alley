@@ -275,6 +275,49 @@ in its doc why nothing calls it — see [[feedback_a_comment_is_not_a_call_site]
 
 ---
 
+### Amendment 2026-08-11 (#557, PR #1022) — a cross-caller cache must never hold caller-dependent data, and the mutation that moves a counter must invalidate the domain that serves it
+
+Two rules, both learned the hard way on the same sprint.
+
+**1. Caller-dependent redaction does not belong in a shared cache entry.** The post payload is
+served from a cache shared by every caller. #557 needed an *author identity* on it — and identity
+is exactly the kind of value that differs by who is asking: an anonymous reader must not see a
+`hide_from_anonymous` user's name, and must not see the `fullname` rung at all (ADR 0070 §3).
+
+Putting the resolved identity **into** the cached entry would mean **the first reader to warm it
+decides what every later reader sees.** An authenticated reader warms the entry with full
+identity; the next anonymous request is served that entry. The leak would be intermittent,
+ordering-dependent, and invisible in any test that populates the cache from the same caller it
+asserts with.
+
+So the cache stores the caller-independent post, and identity is applied in an **enrichment pass
+after the cache read**, per request, against that caller's own visibility. The rule generalises:
+
+> **If a value depends on who is asking, it is computed after the cache, not stored in it.**
+> A shared entry may hold only what every caller may see.
+
+This is the caching-shaped statement of the same principle ADR 0064 applies to fields and ADR
+0070 to profiles. Note that the brief for #557 said *"do it in the list query as a JOIN"* — which
+is both impossible here (the list query only picks rows; payloads come from the cache, so a joined
+column is discarded) and, had it worked, would have written caller-dependent data straight into
+the shared entry.
+
+**2. A mutation must invalidate the domain that SERVES the value it changed — not the domain it
+belongs to.** `social`'s like and comment paths move `posts.like_count` via triggers, and
+invalidated only their own follow/block domains. Nothing invalidated the post-by-id domain, so a
+like updated the row and the API kept serving the stale count — measured at DB `like_count = 4`
+against an API-served `3`. It survived because `like_count` was hover-overlay decoration nobody
+watched; a like *button* turns it into a heart that fills over a number that never moves, even
+after a reload.
+
+The package boundary is what hid it: `social` cannot import `posts`, so the domain constant now
+lives in the shared `cache` package and both sides name the same one. **When a write in package A
+changes a value package B serves, the invalidation belongs on A's write path, and the domain
+constant belongs somewhere neither owns.** A test asserting the constants match is cheap and was
+mutation-tested here.
+
+---
+
 ### Amendment 2026-08-08 (#887, PR #971) — a declined cache: scratch buffers under a cgroup ceiling
 
 The preview resampler's scratch buffers (`x/image/draw` kernel scalers) presented a textbook cache

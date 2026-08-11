@@ -9,6 +9,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The feed tells you who made this.** Feed view was a wider grid tile — the same picture, no
+  author, no way to react. It is now a proper post card: whoever made it at the top with their
+  picture and handle, the image at its own shape rather than cropped square, and like, comment
+  and share along the bottom. The ⋯ menu is where it should be (#557).
+
+  Reacting works from the feed now — the heart reflects whether *you* have liked it, and the
+  count moves when you press it. Previously that count could sit stale until the server
+  restarted; it no longer can.
+
+  Someone who has asked not to appear to logged-out visitors still doesn't: their card shows the
+  picture without naming them, rather than quietly making an exception for the feed.
+
 - **The view bar comes back when you reach for it.** The layout, sort and filter controls at the
   bottom of browse slide away when you scroll down, and used to return only when you scrolled
   back up — so reaching for a control meant scrolling in a direction you didn't want to go.

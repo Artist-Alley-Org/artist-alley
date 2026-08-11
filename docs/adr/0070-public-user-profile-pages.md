@@ -29,6 +29,41 @@ excerpt: >-
   per the privacy model. A post-by-asset route resolves to the posts
   that feature an asset.
 ---
+## Amendment (2026-08-11, #557) — §3's anonymous rule has ONE home now, and its published description was stale enough to leak
+
+§3 decided that an anonymous viewer never sees a user's real name — *"not directly, and not
+smuggled through the display_name fallback."* #478 implemented it by skipping the `fullname` rung
+of the display-name ladder for anonymous callers. **That exception was never written into the
+rule's own documentation**, and #557 nearly shipped a leak because of it.
+
+**What was wrong.** Both the `UserPublic` schema description in `openapi.yaml` and the doc comment
+on `users.rowToAPI` stated the precedence as three rungs — `profile.display_name → user.fullname →
+user.username` — with no mention of the anonymous case. The correct code sat **four lines below
+that comment**. A brief written from the published description told a coding agent to *"reuse that
+resolution"* for the new feed card's author header. Seeded users all carry a real name in
+`fullname` and no `display_name`, so following it would have rendered **"Akira Tanaka"** on a
+public feed card where the rule requires `akira.tanaka`.
+
+**What changed.** The precedence is now one exported expression — `users.ResolveDisplayName` —
+taking `anonymous` as an argument, called by both the profile path and the new post-author path.
+The schema description and doc comment now state the anonymous exception. Removing the skip fails
+tests in *both* packages, which is the proof the expression is genuinely shared rather than
+copied.
+
+**The transferable lesson, recorded because it is not really about display names.** A rule with a
+*security exception* is the dangerous kind to document by summary: the happy path matches the
+summary, so the divergence only appears on the path nobody demos, and the summary is what everyone
+downstream quotes. When this ADR's decisions are implemented, the implementing expression should
+say so and name this ADR — and anyone briefing work against it should state the rule from the
+**function body**, citing `file:line`, rather than from a description.
+
+⚠️ **Known remaining gap, tracked as #1023.** The opt-out is honoured by the profile route (404)
+and now by the post author (`author: null`), but **not** by `owner_display_name` on a
+restricted-member placeholder, which still names an opted-out user to anonymous callers. It cannot
+leak a real name (that path never consults `fullname`), so this is an opt-out gap rather than a
+PII leak — but it is the same question answered inconsistently across three call sites, and the
+answer should live in one expression.
+
 ## Context
 
 The route/link-integrity net from ADR 0068 (added in #477) surfaced
