@@ -7,6 +7,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Added
+
+- **You can save someone else's post to your own collection.** Collections could already hold
+  another person's files; posts were the missing half. A post you are allowed to read now has a
+  "Save to collection…" action, and what lands in your collection is a *reference* to their
+  post, not a copy of it (#882).
+
+  Saving a post and saving all of its files are deliberately separate actions on the same menu.
+  Saving the post keeps the author's framing — their title, their description, the order they
+  arranged the images in — as a reference that lives and dies with their post. Saving the files
+  lifts the images out onto your own shelf, where they stay regardless of what the author does
+  next.
+
+  Note that a post card's "Save to collection" previously saved the post's *cover image*. It now
+  saves the post.
+
+  Saving something changes nothing about who can see it. You can only save what you could
+  already read, and putting it in a collection you share does not pass your access on to anyone
+  else. If the author deletes their post, it disappears from every collection that saved it — and
+  if they restore it, it comes back to those collections intact.
+
 ### Security
 
 - **A vulnerable copy of a small library no longer ships.** One of the packages bundled into

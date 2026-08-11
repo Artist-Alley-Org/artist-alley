@@ -19,6 +19,39 @@ tags:
 excerpt: >-
   The prior generation of DAM tooling presents users with at least six visible collection "types" — Personal, Public, Featured, Smart, Request, Upload — plus a parallel structure for "featured categories" (a curator-maintained tree), a separate table for smart collections that pretend to be real ones in the UI, and external access keys grafted on as a sharing mechanism.
 ---
+## Amendment (2026-08-11): a post is collectible, and a soft-deleted member does not leave the collection
+
+#882 (PR #1018) made a **post** collectible the way an asset already was, which settles two
+things this ADR left implicit.
+
+**1. The divergence in point 3 below now has its post-shaped half.** Collecting another user's
+post is a *reference*, never a copy, and it widens nothing: the gate is
+`visibility.PostReadable`, and adding a post to your collection gives you exactly the read you
+already had. The asset half shipped earlier in #898 via `visibility.CanAttachAsset`. Both rules
+live in `visibility/` with the callers in `posts`/`collections` delegating, so there is one
+expression per rule rather than one per caller. The write half is separately gated on
+`canMutateCollection` — you may save a stranger's post into *your* collection, never into
+theirs.
+
+**2. Membership survives a soft delete, and that is the decision — not an accident of FK
+wiring.** `collection_posts` has an `ON DELETE CASCADE` to `posts`, and it is tempting to read
+that as "the author deletes their post and it leaves every collection." It does not fire on the
+path users actually take: `DELETE /posts/{id}` is a **soft** delete
+(`UPDATE posts SET deleted_at = NOW()`), so no row leaves `posts`. The membership row remains;
+the reference stops rendering because the gated listing carries `deleted_at IS NULL`.
+
+Keep it that way. The author's control is preserved — their post vanishes from every collection
+that saved it the moment they delete it — while a **restore** returns it to those collections
+intact. A hard cascade would destroy that association permanently, making restore silently
+lossy for everyone except the author. The FK still governs a genuine hard delete, and the test
+in `posts/collection_posts_test.go` pins both halves so a future change from soft to hard
+deletion cannot land quietly.
+
+⚠️ The corollary for anything reasoning about collection contents: **an
+absent-from-the-listing member is not an absent row.** Count rows and you will count
+soft-deleted posts; the `deleted_at IS NULL` conjunct is load-bearing and belongs in every
+query that reports membership to a user.
+
 ## Amendment (2026-08-05): a prior-art pass on collections × search — one confirmation, one gap, one deliberate divergence
 
 Two mature DAMs were read for how collections and search interact (facts in memory
