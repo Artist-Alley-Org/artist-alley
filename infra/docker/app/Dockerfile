@@ -54,7 +54,7 @@ RUN CGO_ENABLED=1 GOOS=linux GOFLAGS="${GOFLAGS}" GOMAXPROCS="${GOMAXPROCS}" go 
 # `chromium` package instead (one Chromium for the image, kept current by
 # Debian security updates). node_modules + the node binary are copied
 # into the runtime below.
-FROM node:22-bookworm-slim AS threejs-deps
+FROM node:26-bookworm-slim AS threejs-deps
 WORKDIR /app/threejs
 ENV PUPPETEER_SKIP_DOWNLOAD=1
 COPY scripts/threejs/package.json scripts/threejs/package-lock.json ./
