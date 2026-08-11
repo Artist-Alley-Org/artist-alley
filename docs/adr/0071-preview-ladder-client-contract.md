@@ -126,6 +126,42 @@ a client confidently requesting URLs that 404.
   content hash is exactly what preview regeneration rewrites, so ladder URLs addressed by
   *asset id* are not immutable. Cache validators must derive from the stored bytes.
 
+## Amendment 2026-08-11 — §3 generalises: "public-mode governed" is the default shape for a new anonymous read (#709)
+
+§3 decided this for `GET /previews`. #709 needed the same call for `GET /browse-views` — the
+operator's enabled browse layouts — and the reasoning transferred without modification, which
+makes it a rule rather than a one-off. Recording it here so the next anonymous read does not
+re-derive it, and because **the brief for #709 got it wrong in the direction that looks safer**.
+
+**The rule.** A new read that anonymous callers need takes `security: []` **plus registration in
+`auth.PublicSurfaceRoutes`** — anonymous on a public install, 401 on a private one. Being excused
+from that governance, the way `/appearance` and `/site-text` are, requires a specific
+justification: **the endpoint renders the login card.** Fonts, branding and UI strings qualify
+because an install that refused them could not draw its own sign-in page. Nothing else does by
+default.
+
+**Where the #709 brief went wrong.** It specified unconditional `security: []`, citing `/site-text`
+as the precedent, on the reasoning that "a logged-out visitor browses too." The premise is true
+and the conclusion does not follow: a logged-out visitor browses **only on a public install**,
+which is exactly the case public-mode governance answers. On a private install the browse switcher
+is already behind auth, so there is no anonymous surface for the layout set to serve — and
+answering anyway would hand an unauthenticated caller the operator's configuration for nothing.
+The coding agent caught this and applied §3 instead. Verified on a live stack: public install +
+anonymous → 200, private install + anonymous → 401, private install + signed in → 200.
+
+**The guard that makes this hard to get wrong is a build-time one, and it is worth knowing about.**
+`security: []` on an operation that is not named in `PublicSurfaceRoutes` (or in
+`notGovernedAnonymousOps`) fails `TestPublicSurfaceCoversAnonymousOperations`. So the brief's
+version would not have shipped quietly — it would have failed CI in front of the author. That is
+the property `publicmode.go` describes as recovering the allowlist guarantee "at BUILD time instead
+of request time," and #709 is the first time it fired on a genuinely mistaken instruction rather
+than an oversight.
+
+⚠️ **The corollary for anyone reading `security: []` in `openapi.yaml`: it does not mean
+"ungated."** It means "this operation's gate is not a credential" — the gate may still be the
+public-mode toggle. The `/browse-views` operation carries a comment saying so at its `security`
+block, because the two-word declaration reads exactly like the thing it is not.
+
 ## Amendment 2026-08-02 — the announcement flags are DB-first BY DESIGN, and reconcile keeps them truthful (#829)
 
 `preview_available` / `ladder_available` are answered from `storage_variants` rows, not

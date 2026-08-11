@@ -9,6 +9,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **You choose which browse layouts your install offers.** All five — grid, masonry, thumbnail,
+  list and feed — were shown to everyone, always. Admin → System → Browse layouts now lets you
+  pick, and the view switcher offers only what you left on (#709).
+
+  Anyone already using a layout you turn off is moved to one that is still on, so nobody lands
+  on an empty page — and their old choice is remembered, so turning that layout back on gives it
+  to them again. At least one layout has to stay on; turning them all off is refused rather than
+  leaving nobody able to browse. An install that never touches this setting keeps all five.
+
 - **You can save someone else's post to your own collection.** Collections could already hold
   another person's files; posts were the missing half. A post you are allowed to read now has a
   "Save to collection…" action, and what lands in your collection is a *reference* to their
