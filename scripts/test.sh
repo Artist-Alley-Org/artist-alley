@@ -236,10 +236,31 @@ docker run --rm \
 # node) is a defect no amount of testing app/ alone can see. Mounting
 # it is what lets TestFieldCatalogue_* check the real file rather than
 # a second copy of it that could drift.
+#
+# web/src/lib/i18n is mounted for exactly the same reason, and #956 is
+# what proved it was missing. app/internal/sitetext/catalogue.json is a
+# generated copy of the frontend's en.json, and
+# TestEmbeddedCatalogueMatchesFrontend exists to catch it going stale —
+# its doc says it asserts the invariant from inside the test suite "so
+# removing the CI step does not silently remove the guarantee".
+#
+# It could never do that. It reads ../../../web/src/lib/i18n/en.json,
+# which resolves to /src/web/... — a path this container did not have —
+# so it took its t.Skipf branch on every run here and in CI, and that
+# branch says "the CI drift check still covers this". A backstop whose
+# fallback is the thing it backs up is not a backstop. #956 added two
+# i18n keys, ./scripts/test.sh went green with a stale catalogue, and
+# the Codegen drift check caught it on the PR instead.
+#
+# ONLY the i18n directory, not all of web/: the mount should expose
+# what a test legitimately reads and nothing more. It is also the whole
+# blast radius — that const is the only path literal anywhere in app/
+# that resolves into web/, so no other test can notice this.
 if ! docker run --rm \
     --network "$NET" \
     -v "${ROOT}/app:/src/app" \
     -v "${ROOT}/seed:/src/seed:ro" \
+    -v "${ROOT}/web/src/lib/i18n:/src/web/src/lib/i18n:ro" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     -e GOFLAGS -e GOMAXPROCS \

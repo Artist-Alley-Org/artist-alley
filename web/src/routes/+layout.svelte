@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import { theme } from '$stores/theme.svelte';
   import { auth } from '$stores/auth.svelte';
+  import { browseView } from '$stores/browseView.svelte';
   import { site } from '$stores/site.svelte';
   import BrandMark from '$components/BrandMark.svelte';
   import { lang, t } from '$stores/lang.svelte';
@@ -25,6 +26,7 @@
   import NotificationsButton from '$components/NotificationsButton.svelte';
   import ExploreMenu from '$components/ExploreMenu.svelte';
   import CardTooltip from '$components/CardTooltip.svelte';
+  import ToastHost from '$components/ToastHost.svelte';
 
   let { children } = $props();
 
@@ -36,19 +38,47 @@
     // pages get the right brand fonts.
     appearance.init();
     // i18n: must run AFTER auth state has hydrated so user pref wins
-    // over the cookie. +layout.ts has populated `auth.user` by now
-    // via hydrateFrom — but caps don't ride that path, so we pull
-    // them here.
+    // over the cookie. +layout.ts has populated the auth store by now
+    // via hydrateFrom, capabilities included (#871) — there is
+    // deliberately no follow-up capability fetch here. One used to
+    // live at this spot, and because it landed AFTER +layout.ts had
+    // already flipped `ready`, the /admin gate got to decide with an
+    // empty capability set and rendered "you don't have permission"
+    // at real administrators until the second response arrived.
     lang.init();
-    // Caps load unconditionally — `refreshCaps` bails early when
-    // there's no user. Without this, the admin menu stays hidden
-    // even for admins because +layout.ts's hydrateFrom doesn't
-    // populate caps (only user fields).
-    void auth.refreshCaps();
+    // Which browse layouts this install offers (#709). Public boot
+    // payload like appearance: applies the cached set synchronously so
+    // the switcher's first paint is right, then refreshes. Resolved
+    // here rather than per browse page because it also filters the
+    // mode every page hydrates with, and a page that resolved its own
+    // mode before this landed would show a layout the operator
+    // disabled. `void` — nothing downstream waits on it, and a failure
+    // leaves every layout offered, which is what shipped before.
+    void browseView.loadEnabledModes();
     // Drop-anywhere-to-upload — install once globally. The store
     // returns a cleanup but layouts don't unmount in normal use, so
     // we ignore it.
     upload.installGlobalDragListeners();
+  });
+
+  // Re-apply the account's appearance + browse preferences when the
+  // session identity changes (#677, #706).
+  //
+  // onMount above is not enough on its own. This layout mounts once and
+  // never unmounts, so a visitor who lands on /login — or browses a
+  // public install as a guest — has already run `theme.init()` and
+  // possibly `browseView.init()` with no account to consult. Signing in
+  // is a client-side navigation, so without this the preferences they
+  // set on another device do not appear until a full reload.
+  //
+  // Keyed on `ref` rather than the preference values themselves: this
+  // fires when WHO is signed in changes, not when what they prefer
+  // does. Both callees are no-ops for any setting this device has made
+  // locally, so re-running them can never overwrite a choice made here.
+  $effect(() => {
+    void auth.user?.ref;
+    theme.syncFromAccount();
+    browseView.applyAccountDefaults();
   });
 
   // Pages that show the global nav chrome. Login/setup keep the bare
@@ -292,10 +322,24 @@
                 placeholder={t('nav.search_placeholder')}
               />
             </div>
+            <!-- The entry point to the search SURFACE (#850).
+                 It used to read "Advanced search" and it pointed here
+                 already — the label named a page (`/search/advanced`)
+                 that no longer exists, and the destination it actually
+                 opens is now just search: one result grid, with the kind
+                 filter, the facet counts and the query builder inside
+                 it. So the control is named after where it goes.
+
+                 It CARRIES whatever is in the box beside it. A control
+                 labelled "Search" sitting next to a search input, that
+                 navigates away and silently drops what you typed, is a
+                 trap — and renaming it without wiring it would have
+                 built one. Empty box ⇒ plain `/search`. -->
             <a
-              href="/search"
-              title={t('nav.advanced_search')}
-              aria-label={t('nav.advanced_search')}
+              href={searchValue.trim() ? `/search?q=${encodeURIComponent(searchValue.trim())}` : '/search'}
+              title={t('nav.search_page')}
+              aria-label={t('nav.search_page')}
+              data-testid="nav-search-page"
               class="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted hover:bg-state-hover hover:text-fg"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -306,7 +350,7 @@
                 <circle cx="12" cy="18" r="1.5" />
                 <circle cx="19" cy="6"  r="1.5" />
               </svg>
-              <span class="hidden lg:inline">{t('nav.advanced_search')}</span>
+              <span class="hidden lg:inline">{t('nav.search_page')}</span>
             </a>
           </div>
         {:else}
@@ -363,6 +407,13 @@
        and re-running the show delay, which is what made a per-card
        tooltip strobe. -->
   <CardTooltip />
+
+  <!-- Transient action feedback (#981) — one instance for the whole
+       app, same reasoning as CardTooltip. Not gated on auth: it is
+       raised by whatever the user just did, and each toast portals
+       itself to the right host at push time (a viewer dialog occupies
+       the top layer, where a body-level node is invisible). -->
+  <ToastHost />
 
   {#if !!auth.user}
     <!-- Upload modal + drop overlay are gated on auth: only signed-in

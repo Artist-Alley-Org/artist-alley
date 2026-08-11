@@ -62,15 +62,23 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var callerRef *int64
+	var caps visibility.ContentCaps
+	var postCaps visibility.PostCaps
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		callerRef = &ref
+		caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
+		// #873 — the tag facet counts through posts, so it needs the
+		// capability that opens the post read rule's `private` tier.
+		postCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
 	}
 
 	req := facet.Request{
 		QueryText: q,
 		Facets:    types,
 		Caller:    visibility.NewCaller(callerRef),
+		Caps:      caps,
+		PostCaps:  postCaps,
 	}
 	resp := h.Dispatcher.Run(r.Context(), req)
 	writeJSON(w, http.StatusOK, resp)

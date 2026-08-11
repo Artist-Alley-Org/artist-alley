@@ -236,6 +236,39 @@ the manifest cache — keyed only on `anonymous` vs `authenticated` — would ha
 entitled caller's manifest to every later one. Splicing the predicate into a read path is not
 finished until the path's cache key is at least as specific as the predicate's inputs.
 
+**Update 2026-08-04 (#873). The post branch is no longer `public OR author`, and the
+paragraph above that promised it would stay so "byte-for-byte" is retired.** #212 is done,
+and it was never actually gated on #462 the way this ADR recorded — that gating assumed the
+local read semantics for `org-only`, `followers` and `explicit-share` were still unmade
+product calls. They were made and shipped, in `posts/read_rule.go`, by #660 and #667. So the
+open question was closed *outside* the predicate, and what remained was a copy: browse
+composed the rich rule, `EntityPost` composed the coarse one, and the three splice sites that
+read posts — search results, the tag facet, the suggest completions — silently returned less
+than their caller could read. An org-only post, the *default* tier, was on your feed and
+absent from your search results, with no error and no empty state to say so.
+
+The rule now lives in `visibility/post_rule.go` and `posts` obtains it through `Filter` like
+every other caller. Three things this settles, each of which the earlier deferral had assumed
+was harder than it is:
+
+- **Capabilities do not have to be threaded through `Filter`.** The `private` tier needs
+  `posts.admin`, and the objection recorded above — that admitting a capability checker would
+  move every splice site — is answered by resolving it to a value first, exactly as #899 did
+  for the content plane. `PostCaps` is a two-state struct set by an `Option`; no other
+  entity's branch reads it, so no other splice site moved.
+- **The follow graph was never the obstacle.** It is an `EXISTS` against `user_follows` in
+  the same statement, not a Go lookup.
+- **A caller-scoped predicate needs a caller-scoped cache key** — the second lesson from #661,
+  applied forward rather than after the fact. `posts.admin` widens which rows the cached
+  search result contains, so the key folds in `PostCaps.CacheKey()`; a caller who loses the
+  capability stops being served the wider page immediately rather than at TTL expiry.
+
+Soft-delete stays outside the rule expression and inside `ToSQL`, so `IncludeSoftDeleted`
+waives that conjunct and nothing else. That separation is structural on purpose: the admin
+trash view must not be able to shed an authorization disjunct along with the soft-delete one,
+and that failure returns extra rows which look exactly like the deleted ones the caller asked
+for.
+
 ## Consequences
 
 - Content visibility has exactly one definition; new read paths inherit it by construction,

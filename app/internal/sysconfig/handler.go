@@ -84,7 +84,19 @@ type Handler struct {
 	// login card and read-only banner can render. Defaults to the zero
 	// value (false) — a normal install never advertises demo mode.
 	DemoMode bool
+
+	// BrowseViews is the cached read of the operator's enabled browse
+	// layouts (#709), used by the public boot-path endpoint. nil-safe:
+	// unwired, GetPublicBrowseViews reads the store directly, which is
+	// correct-but-uncached — the cache is a performance property here,
+	// not a correctness one, so a fixture needs no registry.
+	BrowseViews BrowseViewsReader
 }
+
+// SetBrowseViewsReader wires the cached browse-view read
+// post-construction, the same way SetAuditRecorder wires audit. Boot
+// calls this after the cache registry exists.
+func (h *Handler) SetBrowseViewsReader(r BrowseViewsReader) { h.BrowseViews = r }
 
 // EmailDeps bundles the email-related dependencies the handler
 // needs for the test-send surface. Held behind a single struct so
@@ -757,4 +769,111 @@ func (h *Handler) UpdatePublicMode(
 			beforeArg, &cfg, nil)
 	}
 	return openapi.UpdatePublicMode200JSONResponse{Enabled: cfg.Enabled}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Browse views (#709) — which layouts the install offers
+// ---------------------------------------------------------------------------
+//
+// Three endpoints for one setting, because they have two different
+// audiences. The admin pair is capability-gated and is what the
+// operator's settings panel talks to. GetPublicBrowseViews is what
+// every client renders from: it is on the frontend's boot path, so it
+// is cache-fronted and carries no capability check.
+//
+// Read is gated on system.config.read and write on system.config.write,
+// matching the other system settings. There is no separate
+// `system.browse_views.write` cap — a role that can curate the layout
+// switcher but not touch the rest of the install's configuration does
+// not exist.
+
+func (h *Handler) GetBrowseViews(
+	ctx context.Context,
+	_ openapi.GetBrowseViewsRequestObject,
+) (openapi.GetBrowseViewsResponseObject, error) {
+	if _, denied := h.requireCap(ctx, CapConfigRead); denied != nil {
+		return browseViewsDenial(denied), nil
+	}
+	cfg, err := h.Store.GetBrowseViews(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get browse views: %w", err)
+	}
+	return openapi.GetBrowseViews200JSONResponse(browseViewsToAPI(cfg)), nil
+}
+
+func (h *Handler) UpdateBrowseViews(
+	ctx context.Context,
+	req openapi.UpdateBrowseViewsRequestObject,
+) (openapi.UpdateBrowseViewsResponseObject, error) {
+	id, denied := h.requireCap(ctx, CapConfigWrite)
+	if denied != nil {
+		return browseViewsUpdateDenial(denied), nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateBrowseViews400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	before, beforeErr := h.Store.GetBrowseViews(ctx)
+	cfg := browseViewsFromAPI(*req.Body)
+	// SetBrowseViews owns the empty-set and unknown-mode refusals, and
+	// it returns them as errors rather than persisting a repaired
+	// value. Surfacing them as a 400 keeps the invariant in one place:
+	// every caller that can reach the store gets the same refusal,
+	// whether or not it came through this handler.
+	if err := h.Store.SetBrowseViews(ctx, cfg); err != nil {
+		return openapi.UpdateBrowseViews400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+	// Invalidate BEFORE returning, so the browser's immediate re-fetch
+	// of /browse-views already sees the new set. Without this the
+	// switcher would keep drawing the disabled button until the entry
+	// aged out, which reads as the save having done nothing.
+	InvalidateBrowseViews(ctx, h.CacheReg)
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*BrowseViewsConfig)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminBrowseViewsUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
+	}
+	// Echo the RESOLVED set rather than the request body, so the
+	// operator's UI redraws from what was actually stored — canonical
+	// order, duplicates dropped — instead of from what it happened to
+	// send.
+	return openapi.UpdateBrowseViews200JSONResponse(browseViewsToAPI(cfg)), nil
+}
+
+// GetPublicBrowseViews is the boot-path read every client renders from.
+//
+// "Public" here means PUBLIC-MODE GOVERNED, not unauthenticated: the
+// route is registered in auth.PublicSurfaceRoutes, so it serves
+// anonymous callers on a public install and 401s on a private one. The
+// handler itself performs no auth check because the middleware has
+// already decided — do not read the absence of one here as the endpoint
+// being open.
+//
+// Reads through the cached reader rather than the store: this is on the
+// cold-load path of every page on the install, and the value changes
+// only when an operator changes their mind.
+func (h *Handler) GetPublicBrowseViews(
+	ctx context.Context,
+	_ openapi.GetPublicBrowseViewsRequestObject,
+) (openapi.GetPublicBrowseViewsResponseObject, error) {
+	if h.BrowseViews != nil {
+		return openapi.GetPublicBrowseViews200JSONResponse(
+			browseViewsToAPI(h.BrowseViews(ctx))), nil
+	}
+	// Unwired (test fixtures) — fall back to the uncached read. The
+	// cache is a performance property, not a correctness one.
+	cfg, err := h.Store.GetBrowseViews(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get browse views: %w", err)
+	}
+	return openapi.GetPublicBrowseViews200JSONResponse(browseViewsToAPI(cfg)), nil
 }

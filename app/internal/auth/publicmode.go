@@ -160,6 +160,29 @@ var PublicSurfaceRoutes = []publicRoute{
 	// It carries no asset, user or access decision, so the exposure on a
 	// public install is the install's own image-pipeline configuration.
 	{path: "/previews", why: "configured preview variant ladder (#591)"},
+
+	// The operator's enabled browse layouts (#709) — which buttons the
+	// view switcher draws, and the set every mode rung is filtered
+	// through before it can be applied.
+	//
+	// GOVERNED for the same reason /previews is, and the reasoning
+	// there carries over almost word for word: the first consumer is
+	// the browse switcher, which on a private install is already behind
+	// auth. Nothing before sign-in needs it — it does not render the
+	// login card the way /appearance and /site-text do — so it follows
+	// the content it describes rather than being excused as
+	// boot-critical when it is not.
+	//
+	// A logged-out visitor browses only on a public install, which is
+	// precisely where this answers, so being governed costs the feature
+	// nothing. The frontend treats a 401 here as "no opinion" and keeps
+	// the shipped five, which on a private install nobody anonymous can
+	// browse with anyway.
+	//
+	// It carries no asset, user or access decision: the exposure on a
+	// public install is which layout buttons that install draws, which
+	// a caller can already read off the rendered switcher.
+	{path: "/browse-views", why: "operator-enabled browse layouts (#709)"},
 }
 
 // NOT governed by this toggle, recorded so that "absent" and

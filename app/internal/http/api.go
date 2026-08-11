@@ -37,7 +37,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
-	"github.com/mscrnt/artist-alley/app/internal/i18n"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
@@ -50,6 +49,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/trash"
 
 	"github.com/mscrnt/artist-alley/app/internal/ai"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
@@ -131,23 +131,30 @@ type apiServer struct {
 	// GetBuildInfo for the admin About page (#406).
 	version string
 
-	auth               *auth.Handler
-	resourceType       *assettype.Handler
-	storage            *storage.Handler
-	assets             *assets.Handler
-	metadata           *metadata.Handler
-	collections        *collections.Handler
-	posts              *posts.Handler
-	teams              *teams.Handler
-	users              *users.Handler
-	social             *social.Handler
-	setup              *setup.Handler
-	workflow           *workflow.Handler
-	sysconfigH         *sysconfig.Handler
-	i18n               *i18n.Handler
-	jobs               *jobs.HTTPHandler
-	brushpacks         *brushpacks.Handler
-	audit              *audit.HTTPHandler
+	auth         *auth.Handler
+	resourceType *assettype.Handler
+	storage      *storage.Handler
+	assets       *assets.Handler
+	metadata     *metadata.Handler
+	collections  *collections.Handler
+	posts        *posts.Handler
+	teams        *teams.Handler
+	users        *users.Handler
+	social       *social.Handler
+	// #937 — GET /account/trash. Reads across assets/posts/collections
+	// but owns none of them; see the package doc for why it is one
+	// endpoint and not three.
+	trash      *trash.Handler
+	setup      *setup.Handler
+	workflow   *workflow.Handler
+	sysconfigH *sysconfig.Handler
+	jobs       *jobs.HTTPHandler
+	brushpacks *brushpacks.Handler
+	audit      *audit.HTTPHandler
+	// #600 — GET /account/activity. Reads audit_events scoped to the
+	// caller. Separate from `audit` because that one is admin-gated;
+	// see audit/activity.go for why they are two structs.
+	activity           *audit.AccountHandler
 	scheduledActions   *scheduledactions.HTTPHandler
 	licensing          *licensing.Handler
 	userprefs          *userprefs.Handler
@@ -296,14 +303,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		teams:            teams.NewHandler(pool, logger, cacheReg),
 		users:            usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
 		social:           social.NewHandler(pool, logger, cacheReg),
+		trash:            trash.NewHandler(pool, sysCfg, logger),
 		setup:            setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:         workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:       sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cacheReg, cfg.DemoMode, storageSvc),
-		i18n:             i18n.NewHandler(logger),
 		jobs:             jobs.NewHTTPHandler(jobSvc, logger),
 		jobsSvc:          jobSvc,
 		brushpacks:       brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:            audit.NewHTTPHandler(pool, logger),
+		activity:         audit.NewAccountHandler(pool, logger),
 		scheduledActions: scheduledactions.NewHTTPHandler(scheduledactions.NewStore(pool), logger),
 		licensing:        licensing.NewHandler(licState, logger),
 		userprefs:        userprefs.NewHandler(pool, logger, cacheReg),
@@ -634,6 +642,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// invalidations via the existing LISTEN/NOTIFY channel.
 	s.iiifCounter = iiif.NewHealthCounter(0)
 	s.iiifManifestCache = presentation.NewCache(cacheReg)
+	// #935 — an asset PATCH / delete / restore changes the manifest
+	// (LoadAsset selects title + description and applies EntityAsset's
+	// row predicate), so the assets handler has to be able to evict it.
+	// A setter because the cache is built here, after the handler.
+	s.assets.SetManifestCache(s.iiifManifestCache)
 	s.iiifFedResolver = iiiffederation.NewResolver(pool)
 	s.iiifLoader = presentation.NewLoader(pool)
 	s.iiifBuilder = presentation.NewBuilder(presentation.BuilderConfig{
@@ -875,6 +888,50 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// initial tick at boot (idempotent via next-tick timestamp key).
 		{
 			sdSvc := softdelete.NewService(pool, auditRec)
+			// #935 — the hard-delete cache fan-out. This is the one
+			// asset write that reaches other domains through the
+			// SCHEMA: ON DELETE CASCADE on asset_subtitle_tracks and
+			// post_assets empties rows in packages the GC has never
+			// heard of, and the in-process LRUs those packages keep go
+			// on answering from the pre-delete world until a restart.
+			//
+			// Listed here, at the composition root, rather than
+			// scattered into softdelete/ — one place to read off which
+			// caches a hard delete touches, and no dependency
+			// inversion on three domain packages.
+			//
+			// Best-effort by construction: every callee is nil-safe and
+			// returns at most an error we log. The delete has already
+			// committed; a cache miss-to-evict must not turn a
+			// completed GC pass into a failed job.
+			sdSvc.OnAssetsHardDeleted = func(ctx context.Context, ids []uuid.UUID) {
+				for _, id := range ids {
+					// Subtitle tracks: CASCADE wiped the rows, but
+					// GetForAsset is read-through and would keep
+					// serving the cached slice. This is the call site
+					// subtitles/handler.go has claimed in prose since
+					// 1.18.B-3 while having zero callers.
+					subtitles.InvalidateForAsset(s.subtitles, id)
+					// The IIIF manifest is built from the asset row
+					// that no longer exists.
+					if err := presentation.InvalidateAssetOn(ctx, s.iiifManifestCache, id); err != nil {
+						logger.LogAttrs(ctx, slog.LevelWarn, "softdelete.gc.manifest_cache.invalidate.error",
+							slog.String("asset_id", id.String()),
+							slog.String("err", err.Error()),
+						)
+					}
+					// #920 on a third path. Its two wired call sites
+					// are the SOFT delete and the restore; the CASCADE
+					// on post_assets drops the membership here too, and
+					// nothing was evicting the holding posts.
+					if err := posts.InvalidateForAsset(ctx, cacheReg, pool, id); err != nil {
+						logger.LogAttrs(ctx, slog.LevelWarn, "softdelete.gc.posts_cache.invalidate.error",
+							slog.String("asset_id", id.String()),
+							slog.String("err", err.Error()),
+						)
+					}
+				}
+			}
 			jobSvc.Registry.Register(&softdelete.CoordinatorJob{
 				Service:   sdSvc,
 				Sysconfig: sysCfg,
@@ -998,6 +1055,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.social.SetMentions(mentionSvc)
 	s.posts.SetMentions(mentionSvc)
 
+	// #875 — "someone shared a post with you". Same adapter over the
+	// same writer, so a share notification goes through the identical
+	// block + channel-preference gating every other verb does.
+	s.posts.SetNotifier(socialNotifyAdapter{w: notifWriter})
+
+	// #891 — the browse feed's per-user content filters. Reads through
+	// the userprefs handler's own LRU (the same one ChannelsFor uses),
+	// so a feed page costs a cache hit rather than a query, and a PATCH
+	// to /account/preferences invalidates it process-wide + across peers.
+	s.posts.SetFeedFilters(userprefsFeedFilterAdapter{h: s.userprefs})
+
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
 	// injected post-construction.
@@ -1091,7 +1159,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		s.sharesRegistry,
 		s.activities,
 		auditRec,
-		ownerResolverFor(pool),
+		// The owner map lives in the shares package (#893) so the
+		// grant path here and the transitive gate path answer "who
+		// owns this object" from one place; see shares/owner.go.
+		shares.NewObjectOwnerResolver(pool),
 		peerLookupFor(s.peers),
 		sysconfigBaseURLFn(sysCfg),
 		usernameResolverFor(s.users),
@@ -1255,6 +1326,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.requests = requests.NewHandler(pool, logger, cacheReg)
 	s.requests.SetAuditRecorder(auditRec)
 	s.requests.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	// #931 — granting a restoration appeal performs the restore. The
+	// adapter lives here rather than in requests/ for the same reason
+	// OnAssetsHardDeleted does: the per-kind CACHE fan-out is a fact
+	// about which domains cache an asset, and the composition root is
+	// where this codebase keeps that.
+	//
+	// nil-safe: s.softdeleteSvc is only set when the GC block ran, and
+	// a Handler with no restorer denies-and-submits normally but
+	// refuses to GRANT an appeal (ErrRestoreUnwired) rather than
+	// reporting success over an item nothing put back.
+	if s.softdeleteSvc != nil {
+		s.requests.SetRestorer(restoreAdapter{
+			sd:          s.softdeleteSvc,
+			assets:      s.assets,
+			collections: s.collections,
+		})
+	}
 	s.requestsHTTP = requests.NewHTTPHandler(s.requests, logger)
 	s.capabilitySweeper.SetRequestCascade(s.requests.MarkExpired)
 
@@ -1432,6 +1520,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.posts.SetPreviewLadder(ladderReader)
 	s.collections.SetPreviewLadder(ladderReader)
 	s.featuredDomain.SetPreviewLadder(ladderReader)
+	// #850 — a search hit now carries the same card payload a browse row
+	// does, so the search engine is the fifth surface that has to report
+	// ladder_available, and it reads the SAME configured ladder. A
+	// separately-constructed reader here would be a fifth cache that
+	// could disagree with browse for a request or two after an operator
+	// edits the config — and the tile the user is looking at would flip
+	// between the responsive srcset and the square `col` crop depending
+	// on which page they reached it from.
+	if s.searchService != nil {
+		s.searchService.Engine().SetPreviewLadder(ladderReader)
+	}
 	return s
 }
 
@@ -1521,40 +1620,6 @@ func (a socialUserExistsAdapter) UserExists(ctx context.Context, ref int64) (boo
 }
 
 // --- 1.22.C-c federation_shares adapters ---------------------------------
-
-// ownerResolverFor returns the shares.ObjectOwnerResolver closure
-// boot wires into the shares admin handler. Checks the per-
-// domain owner columns: posts.author_user_ref,
-// collections.owner_user_ref, assets.owner_user_ref. Unknown
-// kinds default to "no" — system.admin still wins at the caller
-// because the resolver short-circuits before this is called.
-func ownerResolverFor(pool *pgxpool.Pool) shares.ObjectOwnerResolver {
-	return func(ctx context.Context, kind federation.ShareObjectKind, objectID uuid.UUID, caller *auth.Identity) (bool, error) {
-		var column, table string
-		switch kind {
-		case federation.ShareObjectKindPost:
-			table, column = "posts", "author_user_ref"
-		case federation.ShareObjectKindCollection:
-			table, column = "collections", "owner_user_ref"
-		case federation.ShareObjectKindAsset:
-			table, column = "assets", "owner_user_ref"
-		default:
-			// workspace + brand_kit tables don't exist yet;
-			// user-kind shares are server-internal (Accept(Follow)
-			// path). Reject ownership claims for these.
-			return false, nil
-		}
-		var ownerRef int64
-		err := pool.QueryRow(ctx,
-			"SELECT "+column+" FROM "+table+" WHERE id = $1",
-			objectID,
-		).Scan(&ownerRef)
-		if err != nil {
-			return false, nil // unknown object → reject (caller maps to 404)
-		}
-		return ownerRef == caller.UserRef, nil
-	}
-}
 
 // peerLookupFor wraps peer.Registry.ByID with the projection
 // shapes shares needs: id, instance_url, enabled flag, and
@@ -2049,6 +2114,18 @@ func (a userprefsPrefsAdapter) CadenceFor(ctx context.Context, ref int64, verb s
 	return a.h.CadenceFor(ctx, ref, verb)
 }
 
+// userprefsFeedFilterAdapter satisfies posts' feedFilterReader via
+// *userprefs.Handler (#891). Separate from userprefsPrefsAdapter above
+// because the two seams answer to different consumers — notifications
+// asks "which channels for this verb", posts asks "does this reader
+// want restricted members shown" — and bundling them would make the
+// posts package depend on a notification-shaped interface.
+type userprefsFeedFilterAdapter struct{ h *userprefs.Handler }
+
+func (a userprefsFeedFilterAdapter) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
+	return a.h.ShowRestrictedFeedMembers(ctx, ref)
+}
+
 // socialNotifyAdapter satisfies the social package's Notifier
 // interface by wrapping the notifications.Writer's typed Input.
 type socialNotifyAdapter struct{ w *notifications.Writer }
@@ -2062,6 +2139,88 @@ func (a socialNotifyAdapter) Notify(ctx context.Context, recipient int64, actor 
 		TargetID:         targetID,
 		Payload:          payload,
 	})
+}
+
+// restoreAdapter satisfies the requests package's restorer interface:
+// "put this thing back" for any of the three soft-deletable kinds
+// (#931).
+//
+// Two jobs, and the second is the one worth reading twice.
+//
+//  1. Dispatch to the matching softdelete primitive — the SAME call the
+//     per-kind restore endpoints make, so an appeal and a self-restore
+//     write identical state and emit identical audit.
+//
+//  2. Run the per-kind cache fan-out those endpoints run. This is the
+//     part a "just call softdelete" adapter would silently omit, and
+//     omitting it is #920: the caches were evicted on DELETE and
+//     re-populated WITHOUT the item, so an asset restored without this
+//     stays missing from its posts and from its IIIF manifest until the
+//     process restarts — while the decider sees a 200 and the DB looks
+//     right. The evictions are obtained from the domain handlers rather
+//     than restated here, so a domain that grows a new cache updates
+//     one place.
+//
+// Per kind, from the restore endpoints:
+//
+//	asset      → posts + IIIF manifest (assets.InvalidateAfterRestore)
+//	collection → the by-id cache (collections.InvalidateAfterRestore)
+//	post       → nothing. posts.Handler.RestorePost evicts nothing, so
+//	             neither does this.
+type restoreAdapter struct {
+	sd          *softdelete.Service
+	assets      *assets.Handler
+	collections *collections.Handler
+}
+
+func (a restoreAdapter) Restore(
+	ctx context.Context,
+	req *http.Request,
+	kind requests.TargetKind,
+	id uuid.UUID,
+	actorUserRef int64,
+) error {
+	var err error
+	switch kind {
+	case requests.TargetKindAsset:
+		err = a.sd.RestoreAsset(ctx, req, id, actorUserRef)
+	case requests.TargetKindPost:
+		err = a.sd.RestorePost(ctx, req, id, actorUserRef)
+	case requests.TargetKindCollection:
+		err = a.sd.RestoreCollection(ctx, req, id, actorUserRef)
+	default:
+		return fmt.Errorf("restoreAdapter: unknown kind %q", kind)
+	}
+
+	switch {
+	case err == nil:
+	case errors.Is(err, softdelete.ErrNotDeleted):
+		// Already live. Success for the appeal — the requester asked
+		// for the item back and it is back — but there is nothing to
+		// evict, because whoever restored it ran this fan-out already.
+		return requests.ErrTargetAlreadyLive
+	case errors.Is(err, softdelete.ErrNotFound):
+		// Hard-deleted out from under the pending appeal by the
+		// retention GC. Distinct from the case above: nothing comes
+		// back, so the decision must not report success.
+		return requests.ErrTargetGone
+	default:
+		return err
+	}
+
+	switch kind {
+	case requests.TargetKindAsset:
+		if a.assets != nil {
+			a.assets.InvalidateAfterRestore(ctx, id)
+		}
+	case requests.TargetKindCollection:
+		if a.collections != nil {
+			a.collections.InvalidateAfterRestore(ctx, id)
+		}
+	case requests.TargetKindPost:
+		// Nothing, deliberately — see the type comment.
+	}
+	return nil
 }
 
 // usersHandlerWithAudit constructs the users handler + attaches the
@@ -2096,6 +2255,10 @@ func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logge
 	// cached read of the flag. Without this the toggle appears inert
 	// until the cache entry ages out.
 	h.CacheReg = cacheReg
+	// #709 — the public /browse-views read sits on the frontend's boot
+	// path, so it reads through the same NOTIFY-fed cache registry the
+	// admin write above invalidates.
+	h.SetBrowseViewsReader(sysconfig.NewBrowseViewsReader(store, cacheReg, logger))
 	h.DemoMode = demoMode
 	return h
 }
@@ -2861,6 +3024,21 @@ func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCo
 func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.collections.RemoveCollectionResource(ctx, req)
 }
+
+// The /collections/{id}/posts trio delegates to POSTS, not collections
+// (#882). The payload is a hydrated Post and the gate is the post read
+// rule; both live there, and the collection half is obtained from
+// collections.ResolveMemberWrite rather than restated. See the file
+// header on posts/collection_posts.go for the full argument.
+func (s *apiServer) ListCollectionPosts(ctx context.Context, req openapi.ListCollectionPostsRequestObject) (openapi.ListCollectionPostsResponseObject, error) {
+	return s.posts.ListCollectionPosts(ctx, req)
+}
+func (s *apiServer) AddCollectionPost(ctx context.Context, req openapi.AddCollectionPostRequestObject) (openapi.AddCollectionPostResponseObject, error) {
+	return s.posts.AddCollectionPost(ctx, req)
+}
+func (s *apiServer) RemoveCollectionPost(ctx context.Context, req openapi.RemoveCollectionPostRequestObject) (openapi.RemoveCollectionPostResponseObject, error) {
+	return s.posts.RemoveCollectionPost(ctx, req)
+}
 func (s *apiServer) ListCollectionAcls(ctx context.Context, req openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
 	return s.collections.ListCollectionAcls(ctx, req)
 }
@@ -2910,10 +3088,25 @@ func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.Update
 	return s.social.UpdateTextAnnotation(ctx, req)
 }
 
+// --- account trash ---------------------------------------------------------
+
+func (s *apiServer) ListMyTrash(ctx context.Context, req openapi.ListMyTrashRequestObject) (openapi.ListMyTrashResponseObject, error) {
+	return s.trash.ListMyTrash(ctx, req)
+}
+
+// --- account activity ------------------------------------------------------
+
+func (s *apiServer) ListMyActivity(ctx context.Context, req openapi.ListMyActivityRequestObject) (openapi.ListMyActivityResponseObject, error) {
+	return s.activity.ListMyActivity(ctx, req)
+}
+
 // --- posts -----------------------------------------------------------------
 
 func (s *apiServer) ListPosts(ctx context.Context, req openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
 	return s.posts.ListPosts(ctx, req)
+}
+func (s *apiServer) ListPostsSharedWithMe(ctx context.Context, req openapi.ListPostsSharedWithMeRequestObject) (openapi.ListPostsSharedWithMeResponseObject, error) {
+	return s.posts.ListPostsSharedWithMe(ctx, req)
 }
 func (s *apiServer) GetPostsByAsset(ctx context.Context, req openapi.GetPostsByAssetRequestObject) (openapi.GetPostsByAssetResponseObject, error) {
 	return s.posts.GetPostsByAsset(ctx, req)
@@ -2994,6 +3187,15 @@ func (s *apiServer) AddTeamMember(ctx context.Context, req openapi.AddTeamMember
 func (s *apiServer) RemoveTeamMember(ctx context.Context, req openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
 	return s.teams.RemoveTeamMember(ctx, req)
 }
+func (s *apiServer) FollowTeam(ctx context.Context, req openapi.FollowTeamRequestObject) (openapi.FollowTeamResponseObject, error) {
+	return s.teams.FollowTeam(ctx, req)
+}
+func (s *apiServer) UnfollowTeam(ctx context.Context, req openapi.UnfollowTeamRequestObject) (openapi.UnfollowTeamResponseObject, error) {
+	return s.teams.UnfollowTeam(ctx, req)
+}
+func (s *apiServer) GetMyFollowedTeams(ctx context.Context, req openapi.GetMyFollowedTeamsRequestObject) (openapi.GetMyFollowedTeamsResponseObject, error) {
+	return s.teams.GetMyFollowedTeams(ctx, req)
+}
 func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	return s.teams.GetMyTeams(ctx, req)
 }
@@ -3036,8 +3238,14 @@ func (s *apiServer) UpdateAdminUserGates(ctx context.Context, req openapi.Update
 func (s *apiServer) RequestAssetAccess(ctx context.Context, req openapi.RequestAssetAccessRequestObject) (openapi.RequestAssetAccessResponseObject, error) {
 	return s.requestsHTTP.RequestAssetAccess(ctx, req)
 }
+func (s *apiServer) RequestRestore(ctx context.Context, req openapi.RequestRestoreRequestObject) (openapi.RequestRestoreResponseObject, error) {
+	return s.requestsHTTP.RequestRestore(ctx, req)
+}
 func (s *apiServer) ListOwnRequests(ctx context.Context, req openapi.ListOwnRequestsRequestObject) (openapi.ListOwnRequestsResponseObject, error) {
 	return s.requestsHTTP.ListOwnRequests(ctx, req)
+}
+func (s *apiServer) ListIncomingRequests(ctx context.Context, req openapi.ListIncomingRequestsRequestObject) (openapi.ListIncomingRequestsResponseObject, error) {
+	return s.requestsHTTP.ListIncomingRequests(ctx, req)
 }
 func (s *apiServer) ListAdminRequests(ctx context.Context, req openapi.ListAdminRequestsRequestObject) (openapi.ListAdminRequestsResponseObject, error) {
 	return s.requestsHTTP.ListAdminRequests(ctx, req)
@@ -3208,10 +3416,14 @@ func (s *apiServer) UpdatePublicMode(ctx context.Context, req openapi.UpdatePubl
 	return s.sysconfigH.UpdatePublicMode(ctx, req)
 }
 
-// --- i18n ------------------------------------------------------------------
-
-func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
-	return s.i18n.ListLocales(ctx, req)
+func (s *apiServer) GetBrowseViews(ctx context.Context, req openapi.GetBrowseViewsRequestObject) (openapi.GetBrowseViewsResponseObject, error) {
+	return s.sysconfigH.GetBrowseViews(ctx, req)
+}
+func (s *apiServer) UpdateBrowseViews(ctx context.Context, req openapi.UpdateBrowseViewsRequestObject) (openapi.UpdateBrowseViewsResponseObject, error) {
+	return s.sysconfigH.UpdateBrowseViews(ctx, req)
+}
+func (s *apiServer) GetPublicBrowseViews(ctx context.Context, req openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
+	return s.sysconfigH.GetPublicBrowseViews(ctx, req)
 }
 
 // --- audit viewer (Phase 1.17.K) ------------------------------------------
@@ -4888,6 +5100,28 @@ func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID,
 	// row read back empty, so skip_if_set never fired and the
 	// equal-value short-circuit never hit — every extraction pass over
 	// the same file would have rewritten the same keywords.
+	// A MIRRORED field (#822) has no row here and never will, so the probe
+	// reads the COLUMN instead. Without this branch skip_if_set would see
+	// "nothing there" for an asset that plainly has a title, and every
+	// extraction pass would overwrite it — the exact defect skip_if_set
+	// exists to prevent, reintroduced by the field having moved house.
+	if col, ok, err := metadata.MirrorColumnForField(ctx, a.pool, fieldID); err != nil {
+		return assetmetadata.FieldValueSnapshot{}, false, err
+	} else if ok {
+		v, rErr := metadata.ReadMirroredValue(ctx, a.pool, assetID, col)
+		if rErr != nil {
+			return assetmetadata.FieldValueSnapshot{}, false, rErr
+		}
+		if v == "" {
+			return assetmetadata.FieldValueSnapshot{}, false, nil
+		}
+		// set_by is `manual`, and that is the honest reading rather than a
+		// convenience: a column an operator can edit through the asset form
+		// carries no provenance, so extraction must treat what it finds as
+		// somebody's decision and leave it alone under skip_if_set.
+		return assetmetadata.FieldValueSnapshot{ValueText: &v, SetBy: "manual"}, true, nil
+	}
+
 	err := a.pool.QueryRow(ctx, `
 		SELECT value_text, value_num, value_date, value_options, set_by
 		  FROM asset_field_value
@@ -4938,6 +5172,29 @@ type metaValueWriterAdapter struct {
 func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p assetmetadata.WriteAssetFieldValueParams) error {
 	pgAsset := pgtype.UUID{Bytes: p.AssetID, Valid: true}
 	pgField := pgtype.UUID{Bytes: p.FieldID, Valid: true}
+
+	// A MIRRORED field (#822) is written by writing the column it declares.
+	// One UPDATE, so no transaction and no history append — the same two
+	// decisions the API path makes, obtained from the same helper rather
+	// than restated. This is what lets #800 wire `title ← iptc_ObjectName`
+	// at all: without it the write would hit the guard trigger.
+	//
+	// No caller gate here, deliberately. Extraction is system-owned and has
+	// no identity to check — the same reason this adapter bypasses the HTTP
+	// handler's capability checks for every other field. The gate belongs to
+	// the caller-facing path, and that is where mirroredWriteRefusal lives.
+	if col, ok, mErr := metadata.MirrorColumnForField(ctx, a.pool, p.FieldID); mErr != nil {
+		return fmt.Errorf("metadata extraction: mirror lookup: %w", mErr)
+	} else if ok {
+		if p.Value.Kind != assetmetadata.ValueKindText {
+			return fmt.Errorf("metadata extraction: field %s mirrors assets.%s and takes a text value", p.FieldID, col)
+		}
+		s := p.Value.Text
+		if sanitised := richtext.SanitizeValueText(p.FieldType, &s); sanitised != nil {
+			s = *sanitised
+		}
+		return metadata.WriteMirroredValue(ctx, a.pool, p.AssetID, col, s)
+	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

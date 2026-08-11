@@ -20,7 +20,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE (
         CASE WHEN sqlc.narg('status')::TEXT IS NULL
@@ -40,7 +40,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -54,7 +54,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -64,7 +64,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -81,7 +81,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary;
+          open_vocabulary, mirrors_column, show_on_card;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -100,6 +100,7 @@ UPDATE field_definition SET
     display_order             = COALESCE(sqlc.narg('display_order'),             display_order),
     display_group             = COALESCE(sqlc.narg('display_group'),             display_group),
     open_vocabulary           = COALESCE(sqlc.narg('open_vocabulary'),           open_vocabulary),
+    show_on_card              = COALESCE(sqlc.narg('show_on_card'),              show_on_card),
     status                    = COALESCE(sqlc.narg('status'),                    status),
     deprecated_replacement_id = COALESCE(sqlc.narg('deprecated_replacement_id'), deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
@@ -118,7 +119,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary;
+          open_vocabulary, mirrors_column, show_on_card;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit
@@ -144,7 +145,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary;
+          open_vocabulary, mirrors_column, show_on_card;
 
 -- name: LockFieldDefinitionVocabulary :one
 -- Reads the live options document under a ROW LOCK, for the
@@ -208,9 +209,16 @@ UPDATE field_definition
 -- asserts both halves of that claim, so if the authenticated predicate
 -- ever tightens (#210's sensitivity rule) or this endpoint is ever
 -- opened to anonymous callers, the test fails and points here.
+-- `f.display_group` / `f.display_order` ride along because a MIRRORED
+-- field's value never appears in this result — the guard trigger from
+-- migration 00044 refuses it a row in asset_field_value at all — so
+-- ListAssetMirroredValues supplies those rows separately and the
+-- handler merges the two lists. A merge needs the sort keys, and the
+-- ORDER BY below could not hand them over.
 SELECT v.field_id, v.value_text, v.value_num, v.value_date, v.value_options, v.value_ref,
        v.set_by, v.set_at, v.set_by_user_ref,
        f.code, f.label, f.type, f.status, f.options,
+       f.display_group, f.display_order,
        r.id AS ref_asset_id,
        -- COALESCE rather than a bare r.title: sqlc infers a LEFT-joined
        -- NOT NULL column as non-nullable and would scan a NULL into a
@@ -280,6 +288,79 @@ RETURNING asset_id, field_id, value_text, value_num, value_date,
 
 -- name: DeleteAssetFieldValue :exec
 DELETE FROM asset_field_value WHERE asset_id = $1 AND field_id = $2;
+
+-- ---------------------------------------------------------------------------
+-- MIRRORED fields — a definition that declares `mirrors_column` is a VIEW
+-- onto that column of `assets`, not storage of its own (#822, migration
+-- 00044).
+--
+-- Every query below obtains the column from `field_definition.mirrors_column`
+-- and hands it to the accessor functions the migration installs. NOTHING in
+-- this file, or in Go, names `title` or `description`: the CHECK constraint on
+-- the column is the only enumeration of what is mirrorable, so widening the
+-- set is a migration and not a sweep through the query layer.
+-- ---------------------------------------------------------------------------
+
+-- name: ListAssetMirroredValues :many
+-- The mirrored half of ListAssetFieldValues. Those rows cannot come from
+-- that query because they do not exist in asset_field_value and never
+-- will — the guard trigger refuses them — so they are projected from the
+-- column here and merged by the handler on (display_group, display_order,
+-- code), the same order the stored half arrives in.
+--
+-- An EMPTY column yields no row, which is the same contract the stored
+-- half honours: a field nobody has set has no entry, and the mirrorable
+-- columns default to the empty string, which is how they say "unset".
+-- Without this a mirrored field would appear on every asset in the
+-- catalogue carrying a blank value.
+--
+-- Archived fields are excluded. The stored half returns them (a value on
+-- an archived field is still data an editor must be able to see and
+-- clear); a mirrored field has nothing of its own to strand, so an
+-- archived one is simply off.
+--
+-- The soft-delete rule is asset_mirror_read's, so it is stated once — see
+-- ListAssetFieldValues' note on why row-plane visibility for an
+-- authenticated caller reduces to deleted_at IS NULL.
+SELECT f.id AS field_id,
+       public.asset_mirror_read(a.id, f.mirrors_column) AS value_text,
+       f.code, f.label, f.type, f.status, f.options,
+       f.display_group, f.display_order,
+       a.updated_at AS set_at
+  FROM field_definition f
+  CROSS JOIN assets a
+ WHERE a.id = $1
+   AND a.deleted_at IS NULL
+   AND f.mirrors_column IS NOT NULL
+   AND f.subject_kind = 'asset'
+   AND f.status <> 'archived'
+   AND coalesce(public.asset_mirror_read(a.id, f.mirrors_column), '') <> ''
+ ORDER BY f.display_group, f.display_order, f.code;
+
+-- name: ReadAssetMirroredValue :one
+-- One mirrored field's value, for the extraction pipeline's skip_if_set
+-- probe. Empty means unset, and an absent or soft-deleted asset reads
+-- empty too: both answers are "there is nothing here to preserve", which
+-- is the only question the probe asks.
+SELECT coalesce(public.asset_mirror_read(sqlc.arg('asset_id'), sqlc.arg('mirrors_column')), '')::TEXT AS value;
+
+-- name: GetAssetMirrorSubject :one
+-- The authorisation probe for a mirrored write. A mirrored field's
+-- payload is an `assets` column, so the gate that binds is the COLUMN's
+-- (owner / team-scoped assets.admin / global), not the field plane's
+-- "any authenticated caller". Deliberately the same projection
+-- assets.GetAssetMutationSubject reads, for the same reason: the gate
+-- needs a nullable owner alongside team_id and must answer for a row the
+-- caller may not be entitled to read.
+SELECT owner_user_ref, team_id
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetFieldMirrorColumn :one
+-- Just the declaration, for a caller that holds a field id and no row —
+-- the extraction writer adapter, which is handed a bare field id by the
+-- applier.
+SELECT mirrors_column FROM field_definition WHERE id = $1;
 
 -- ---------------------------------------------------------------------------
 -- asset_field_value_history — append-only audit
@@ -431,7 +512,12 @@ ORDER BY display_order ASC, label ASC;
 --
 -- applies_to is honoured here: a field that does not apply to this asset
 -- type has no business defaulting onto it.
-SELECT f.id, f.code, f.type, f.options, f.default_value,
+--
+-- f.mirrors_column rides along because a default on a MIRRORED field
+-- (#822) fills the COLUMN, not asset_field_value — the guard trigger
+-- refuses the latter — and this pass has to know which it is holding
+-- before it writes.
+SELECT f.id, f.code, f.type, f.options, f.default_value, f.mirrors_column,
        o.team_id, o.default_value AS override_value
 FROM field_definition f
 LEFT JOIN field_default_override o

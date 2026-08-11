@@ -12,6 +12,21 @@
 // /account/tokens) keep their flat paths — the [stub] route only
 // catches slugs that aren't already a static page. As phases land,
 // tiles flip from future → stub → live.
+//
+// What `status` actually does (#600 — it is easy to over-read):
+// the tile grid and the sidebar render EVERY item regardless of
+// status, with no badge and no filter. The only consumer is
+// /account/[stub]/+page.ts. So `status` is a claim about which page
+// answers the href, not a visibility switch:
+//
+//   'live'   → a static +page.svelte owns this href. Asserted by
+//              sections.test.ts, so a wrong label fails CI instead of
+//              waiting for a user to click through to a 404.
+//   'stub'   → served by /account/[stub] as a "coming soon" panel,
+//              OR by a static placeholder page of its own (the `ai`
+//              tile is the latter).
+//   'future' → currently unused here; kept for parity with
+//              lib/admin/sections.ts.
 
 export type TileStatus = 'live' | 'stub' | 'future';
 
@@ -47,25 +62,38 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   { slug: 'connected',   group: 'identity', status: 'stub', href: '/account/connected' },
 
   // Communication
-  { slug: 'messages',      group: 'communication', status: 'stub', href: '/account/messages' },
+  { slug: 'messages',      group: 'communication', status: 'live', href: '/account/messages' },
   { slug: 'notifications', group: 'communication', status: 'live', href: '/account/notifications' },
   { slug: 'subscriptions', group: 'communication', status: 'stub', href: '/account/subscriptions' },
 
   // Workspace
+  { slug: 'shared',        group: 'workspace', status: 'live', href: '/account/shared' },
+  // Sits next to `shared` on purpose: one tile is access someone gave
+  // you, the other is access you asked for. The page (Phase 1.17.E)
+  // shipped without a nav entry, so nothing linked to it until #600.
+  { slug: 'requests',      group: 'workspace', status: 'live', href: '/account/requests' },
   { slug: 'tokens',        group: 'workspace', status: 'live', href: '/account/tokens' },
-  { slug: 'saved-searches', group: 'workspace', status: 'stub', href: '/account/saved-searches' },
+  { slug: 'saved-searches', group: 'workspace', status: 'live', href: '/account/saved-searches' },
   { slug: 'bookmarks',     group: 'workspace', status: 'stub', href: '/account/bookmarks' },
   { slug: 'drafts',        group: 'workspace', status: 'stub', href: '/account/drafts' },
-  { slug: 'trash',         group: 'workspace', status: 'stub', href: '/account/trash' },
+  // Live since #937. It stayed `stub` through #936 on purpose: the
+  // restore CAPABILITY shipped first, but nothing told an owner which
+  // items they could restore, so a page here would have been an empty
+  // promise. GET /account/trash is what made it answerable.
+  { slug: 'trash',         group: 'workspace', status: 'live', href: '/account/trash' },
 
   // Activity & insights
-  { slug: 'activity',  group: 'activity', status: 'stub', href: '/account/activity' },
+  // Live since #600. It could not ship earlier for the same reason
+  // `trash` could not: the audit rows existed, but no endpoint would
+  // hand a caller their own, so a page here would have had nothing to
+  // render. GET /account/activity is what made it answerable.
+  { slug: 'activity',  group: 'activity', status: 'live', href: '/account/activity' },
   { slug: 'stats',     group: 'activity', status: 'stub', href: '/account/stats' },
-  { slug: 'following', group: 'activity', status: 'stub', href: '/account/following' },
+  { slug: 'following', group: 'activity', status: 'live', href: '/account/following' },
 
   // Help
-  { slug: 'help',      group: 'help', status: 'stub', href: '/account/help' },
-  { slug: 'shortcuts', group: 'help', status: 'stub', href: '/account/shortcuts' },
+  { slug: 'help',      group: 'help', status: 'live', href: '/account/help' },
+  { slug: 'shortcuts', group: 'help', status: 'live', href: '/account/shortcuts' },
 ];
 
 export function itemBySlug(slug: string): AccountItem | undefined {

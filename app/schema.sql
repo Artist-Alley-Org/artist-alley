@@ -181,6 +181,107 @@ $$;
 
 
 --
+-- Name: asset_member_post_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_member_post_search_text_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT post_id FROM public.post_assets WHERE asset_id = NEW.id LOOP
+        PERFORM public.rebuild_post_search_text(r.post_id);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: asset_mirror_fill(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_mirror_fill(p_asset uuid, p_column text, p_value text) RETURNS TABLE(mirrored_value text, mirrored_at timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+    IF p_asset IS NULL OR p_column IS NULL THEN
+        RETURN;
+    END IF;
+    RETURN QUERY EXECUTE format(
+        'UPDATE public.assets SET %I = $1, updated_at = now() '
+        || 'WHERE id = $2 AND deleted_at IS NULL AND %I = '''' RETURNING %I, updated_at',
+        p_column, p_column, p_column)
+        USING coalesce(p_value, ''), p_asset;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION asset_mirror_fill(p_asset uuid, p_column text, p_value text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_mirror_fill(p_asset uuid, p_column text, p_value text) IS 'The if-absent counterpart of asset_mirror_write, for the upload-defaults pass: writes only when the column is still empty. Returns no row when something was already there, which is InsertAssetFieldValueIfAbsent''s zero-rows answer in the mirrored plane.';
+
+
+--
+-- Name: asset_mirror_read(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_mirror_read(p_asset uuid, p_column text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE
+    v text;
+BEGIN
+    IF p_asset IS NULL OR p_column IS NULL THEN
+        RETURN NULL;
+    END IF;
+    EXECUTE format('SELECT %I FROM public.assets WHERE id = $1 AND deleted_at IS NULL', p_column)
+        INTO v
+        USING p_asset;
+    RETURN v;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION asset_mirror_read(p_asset uuid, p_column text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_mirror_read(p_asset uuid, p_column text) IS 'Projects the column a mirrored field declares. Soft-deleted assets read NULL, which is exactly ListAssetFieldValues'' existing visibility rule for the row plane (ADR 0063/0064).';
+
+
+--
+-- Name: asset_mirror_write(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.asset_mirror_write(p_asset uuid, p_column text, p_value text) RETURNS TABLE(mirrored_value text, mirrored_at timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+    IF p_asset IS NULL OR p_column IS NULL THEN
+        RETURN;
+    END IF;
+    -- The columns are NOT NULL DEFAULT '' — clearing a mirrored field is
+    -- the empty string, never a NULL the column would reject.
+    RETURN QUERY EXECUTE format(
+        'UPDATE public.assets SET %I = $1, updated_at = now() '
+        || 'WHERE id = $2 AND deleted_at IS NULL RETURNING %I, updated_at',
+        p_column, p_column)
+        USING coalesce(p_value, ''), p_asset;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION asset_mirror_write(p_asset uuid, p_column text, p_value text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.asset_mirror_write(p_asset uuid, p_column text, p_value text) IS 'Writes the column a mirrored field declares, returning the persisted value and the row''s new updated_at. Returns no row when the asset is absent or soft-deleted, which the caller reports as 404.';
+
+
+--
 -- Name: asset_type_acl_sweep_on_role_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -451,7 +552,13 @@ DECLARE asset_search TEXT; post_tag_text TEXT;
 BEGIN
     SELECT COALESCE(string_agg(COALESCE(a.search_text::text, ''), ' '), '') INTO asset_search
       FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
-     WHERE pa.post_id = p_post_id AND a.deleted_at IS NULL;
+     WHERE pa.post_id = p_post_id
+       AND a.deleted_at IS NULL
+       -- #883: only members every caller could see standalone
+       -- contribute their words to the shared post document.
+       AND a.sensitivity = 'public'
+       AND a.status = 'active'
+       AND a.processing_status = 'ready';
     SELECT COALESCE(string_agg(tag, ' '), '') INTO post_tag_text FROM post_tags WHERE post_id = p_post_id;
     UPDATE posts SET search_text =
         setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
@@ -460,6 +567,65 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
      WHERE id = p_post_id;
 END; $$;
+
+
+--
+-- Name: refuse_mirror_over_existing_values(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_mirror_over_existing_values() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    n bigint;
+BEGIN
+    IF NEW.mirrors_column IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.mirrors_column IS NOT DISTINCT FROM NEW.mirrors_column THEN
+        RETURN NEW;
+    END IF;
+    SELECT count(*) INTO n FROM public.asset_field_value WHERE field_id = NEW.id;
+    IF n > 0 THEN
+        RAISE EXCEPTION
+            'field % already holds % stored value(s); clear them before declaring it a view onto assets.%',
+            NEW.id, n, NEW.mirrors_column
+            USING ERRCODE = '23514';
+    END IF;
+    SELECT count(*) INTO n FROM public.asset_field_value_history WHERE field_id = NEW.id;
+    IF n > 0 THEN
+        RAISE EXCEPTION
+            'field % already holds % history row(s); clear them before declaring it a view onto assets.%',
+            NEW.id, n, NEW.mirrors_column
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: refuse_mirrored_field_value(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_mirrored_field_value() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    col text;
+BEGIN
+    SELECT mirrors_column INTO col
+      FROM public.field_definition
+     WHERE id = NEW.field_id;
+    IF col IS NOT NULL THEN
+        RAISE EXCEPTION
+            'field % is a view onto assets.% and stores no value of its own; write the column',
+            NEW.field_id, col
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 
 --
@@ -892,6 +1058,7 @@ CREATE TABLE public.assets (
     sensitivity text DEFAULT 'public'::text NOT NULL,
     page_count integer,
     deleted_reason text,
+    deleted_by_user_ref bigint,
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1096,6 +1263,7 @@ CREATE TABLE public.collections (
     smart_query text,
     deleted_at timestamp with time zone,
     deleted_reason text,
+    deleted_by_user_ref bigint,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -1664,7 +1832,12 @@ CREATE TABLE public.field_definition (
     extraction_mode text DEFAULT 'skip_if_set'::text NOT NULL,
     default_value jsonb,
     open_vocabulary boolean DEFAULT false NOT NULL,
+    mirrors_column text,
+    show_on_card boolean DEFAULT false NOT NULL,
     CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
+    CONSTRAINT field_definition_mirrors_column_check CHECK (((mirrors_column IS NULL) OR (mirrors_column = ANY (ARRAY['title'::text, 'description'::text])))),
+    CONSTRAINT field_definition_mirrors_column_subject_check CHECK (((mirrors_column IS NULL) OR (subject_kind = 'asset'::text))),
+    CONSTRAINT field_definition_show_on_card_ungated_check CHECK ((NOT (show_on_card AND (COALESCE(read_capability, ''::text) <> ''::text)))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
@@ -1686,6 +1859,20 @@ COMMENT ON COLUMN public.field_definition.open_vocabulary IS 'When true, a write
 
 
 --
+-- Name: COLUMN field_definition.mirrors_column; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.mirrors_column IS 'When set, this field is a VIEW onto that column of `assets` rather than storage of its own: reads project the column and writes update it, gated by the column''s own mutation rule. A mirrored field can hold no asset_field_value / _history row — the triggers below refuse one — so the field and the column cannot disagree. NULL (the default) = ordinary field-owned storage. Local declaration: it names a column of THIS server''s schema, so per ADR 0083''s exclusion criterion it does NOT travel in a federated field-schema envelope (#822).';
+
+
+--
+-- Name: COLUMN field_definition.show_on_card; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.field_definition.show_on_card IS 'Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083''s exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.';
+
+
+--
 -- Name: goose_db_version; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1693,7 +1880,7 @@ CREATE TABLE public.goose_db_version (
     id integer NOT NULL,
     version_id bigint NOT NULL,
     is_applied boolean NOT NULL,
-    tstamp timestamp without time zone DEFAULT now() NOT NULL
+    tstamp timestamp without time zone DEFAULT now()
 );
 
 
@@ -1701,14 +1888,20 @@ CREATE TABLE public.goose_db_version (
 -- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-ALTER TABLE public.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
-    SEQUENCE NAME public.goose_db_version_id_seq
+CREATE SEQUENCE public.goose_db_version_id_seq
+    AS integer
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
-    CACHE 1
-);
+    CACHE 1;
+
+
+--
+-- Name: goose_db_version_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.goose_db_version_id_seq OWNED BY public.goose_db_version.id;
 
 
 --
@@ -1903,6 +2096,7 @@ CREATE TABLE public.posts (
     cover_thumbnail_asset_id uuid,
     subtitle_track_override jsonb,
     deleted_reason text,
+    deleted_by_user_ref bigint,
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 
@@ -1921,7 +2115,7 @@ COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for
 CREATE TABLE public.resource_request (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     requester_user_ref bigint NOT NULL,
-    target_asset_id uuid NOT NULL,
+    target_id uuid NOT NULL,
     requested_capability text NOT NULL,
     reason text DEFAULT ''::text NOT NULL,
     state text DEFAULT 'pending'::text NOT NULL,
@@ -1930,7 +2124,9 @@ CREATE TABLE public.resource_request (
     decision_reason text DEFAULT ''::text NOT NULL,
     expires_at timestamp with time zone,
     requested_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text])))
+    target_kind text DEFAULT 'asset'::text NOT NULL,
+    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text]))),
+    CONSTRAINT resource_request_target_kind_check CHECK ((target_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text])))
 );
 
 
@@ -2217,6 +2413,17 @@ CREATE TABLE public.team_closure (
 
 
 --
+-- Name: team_follows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.team_follows (
+    user_ref bigint NOT NULL,
+    team_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: team_memberships; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2369,7 +2576,8 @@ CREATE TABLE public.user_preferences (
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL
+    email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL,
+    feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
 
@@ -2391,7 +2599,7 @@ CREATE TABLE public.user_profiles (
     language text DEFAULT ''::text NOT NULL,
     theme text DEFAULT ''::text NOT NULL,
     hide_from_anonymous boolean DEFAULT false NOT NULL,
-    CONSTRAINT user_profiles_theme_check CHECK ((theme = ANY (ARRAY[''::text, 'light'::text, 'dark'::text])))
+    CONSTRAINT user_profiles_theme_check CHECK ((theme = ANY (ARRAY[''::text, 'light'::text, 'dark'::text, 'system'::text])))
 );
 
 
@@ -2495,6 +2703,13 @@ CREATE TABLE public.workflow_transitions (
     required_capability text,
     requires_team_scope boolean DEFAULT false NOT NULL
 );
+
+
+--
+-- Name: goose_db_version id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goose_db_version ALTER COLUMN id SET DEFAULT nextval('public.goose_db_version_id_seq'::regclass);
 
 
 --
@@ -2751,6 +2966,14 @@ ALTER TABLE ONLY public.digest_queue
 
 ALTER TABLE ONLY public.direct_messages
     ADD CONSTRAINT direct_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: email_template email_template_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_template
+    ADD CONSTRAINT email_template_pkey PRIMARY KEY (template_name, part);
 
 
 --
@@ -3146,14 +3369,6 @@ ALTER TABLE ONLY public.sessions
 
 
 --
--- Name: email_template email_template_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.email_template
-    ADD CONSTRAINT email_template_pkey PRIMARY KEY (template_name, part);
-
-
---
 -- Name: site_text site_text_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3215,6 +3430,14 @@ ALTER TABLE ONLY public.system_config
 
 ALTER TABLE ONLY public.team_closure
     ADD CONSTRAINT team_closure_pkey PRIMARY KEY (ancestor_id, descendant_id);
+
+
+--
+-- Name: team_follows team_follows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_follows
+    ADD CONSTRAINT team_follows_pkey PRIMARY KEY (user_ref, team_id);
 
 
 --
@@ -3628,6 +3851,13 @@ CREATE INDEX assets_title_trgm ON public.assets USING gin (title public.gin_trgm
 --
 
 CREATE INDEX assets_type_idx ON public.assets USING btree (asset_type) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: audit_events__actor_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_events__actor_time_idx ON public.audit_events USING btree (actor_user_ref, occurred_at DESC) WHERE (actor_user_ref IS NOT NULL);
 
 
 --
@@ -4128,10 +4358,24 @@ CREATE INDEX field_definition_group_idx ON public.field_definition USING btree (
 
 
 --
+-- Name: field_definition_mirrors_column_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_definition_mirrors_column_idx ON public.field_definition USING btree (mirrors_column) WHERE (mirrors_column IS NOT NULL);
+
+
+--
 -- Name: field_definition_options_gin; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX field_definition_options_gin ON public.field_definition USING gin (options);
+
+
+--
+-- Name: field_definition_show_on_card_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX field_definition_show_on_card_idx ON public.field_definition USING btree (display_group, display_order, code) WHERE show_on_card;
 
 
 --
@@ -4331,17 +4575,17 @@ CREATE INDEX idx_notifications_unread ON public.notifications USING btree (recip
 
 
 --
--- Name: idx_resource_request_by_asset; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_resource_request_by_asset ON public.resource_request USING btree (target_asset_id);
-
-
---
 -- Name: idx_resource_request_by_requester; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_resource_request_by_requester ON public.resource_request USING btree (requester_user_ref, requested_at DESC);
+
+
+--
+-- Name: idx_resource_request_by_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_resource_request_by_target ON public.resource_request USING btree (target_kind, target_id);
 
 
 --
@@ -4590,6 +4834,13 @@ CREATE INDEX resource_request_decided_by_idx ON public.resource_request USING bt
 
 
 --
+-- Name: resource_request_one_pending_per_ask; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX resource_request_one_pending_per_ask ON public.resource_request USING btree (requester_user_ref, target_kind, target_id, requested_capability) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: roles__parent_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4755,6 +5006,13 @@ CREATE INDEX storage_variants_updated_at_idx ON public.storage_variants USING bt
 --
 
 CREATE INDEX team_closure_descendant_idx ON public.team_closure USING btree (descendant_id);
+
+
+--
+-- Name: team_follows_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX team_follows_team_idx ON public.team_follows USING btree (team_id, created_at DESC);
 
 
 --
@@ -4975,6 +5233,20 @@ CREATE TRIGGER acl_sweep_after_team_delete AFTER DELETE ON public.teams FOR EACH
 
 
 --
+-- Name: asset_field_value_history asset_field_value_history_refuse_mirrored; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER asset_field_value_history_refuse_mirrored BEFORE INSERT OR UPDATE ON public.asset_field_value_history FOR EACH ROW EXECUTE FUNCTION public.refuse_mirrored_field_value();
+
+
+--
+-- Name: asset_field_value asset_field_value_refuse_mirrored; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER asset_field_value_refuse_mirrored BEFORE INSERT OR UPDATE ON public.asset_field_value FOR EACH ROW EXECUTE FUNCTION public.refuse_mirrored_field_value();
+
+
+--
 -- Name: asset_field_value asset_field_value_search_text; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4993,6 +5265,13 @@ CREATE TRIGGER asset_type_acl_sweep_after_role_delete AFTER DELETE ON public.rol
 --
 
 CREATE TRIGGER asset_type_acl_sweep_after_team_delete AFTER DELETE ON public.teams FOR EACH ROW EXECUTE FUNCTION public.asset_type_acl_sweep_on_team_delete();
+
+
+--
+-- Name: assets assets_member_post_search_text; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_member_post_search_text AFTER UPDATE OF search_text, sensitivity, status, processing_status, deleted_at ON public.assets FOR EACH ROW EXECUTE FUNCTION public.asset_member_post_search_text_trigger();
 
 
 --
@@ -5049,6 +5328,13 @@ CREATE TRIGGER federation_inbox_dispatch_notify_trg AFTER INSERT ON public.feder
 --
 
 CREATE TRIGGER federation_outbox_dispatch_notify_trg AFTER INSERT ON public.federation_outbox FOR EACH ROW EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
+
+
+--
+-- Name: field_definition field_definition_refuse_mirror_over_values; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER field_definition_refuse_mirror_over_values BEFORE INSERT OR UPDATE ON public.field_definition FOR EACH ROW EXECUTE FUNCTION public.refuse_mirror_over_existing_values();
 
 
 --
@@ -5402,6 +5688,14 @@ ALTER TABLE ONLY public.digest_queue
 
 
 --
+-- Name: email_template email_template_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_template
+    ADD CONSTRAINT email_template_updated_by_user_ref_fkey FOREIGN KEY (updated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
 -- Name: email_verification_token email_verification_token_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5730,14 +6024,6 @@ ALTER TABLE ONLY public.sessions
 
 
 --
--- Name: email_template email_template_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.email_template
-    ADD CONSTRAINT email_template_updated_by_user_ref_fkey FOREIGN KEY (updated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
-
-
---
 -- Name: site_text site_text_updated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5783,6 +6069,22 @@ ALTER TABLE ONLY public.team_closure
 
 ALTER TABLE ONLY public.team_closure
     ADD CONSTRAINT team_closure_descendant_id_fkey FOREIGN KEY (descendant_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: team_follows team_follows_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_follows
+    ADD CONSTRAINT team_follows_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: team_follows team_follows_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_follows
+    ADD CONSTRAINT team_follows_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
 
 
 --

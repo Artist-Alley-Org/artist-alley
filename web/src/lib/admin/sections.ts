@@ -71,7 +71,21 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'content',
     iconKey: 'content',
     tiles: [
-      { key: 'asset_types', status: 'live',   href: '/admin/asset-types' },
+      // Gated on the ADMIN cap, not a read cap (#961), for the same
+      // reason site_text is gated on its write cap (#794): the list GET
+      // (/asset_types) is anonymous — it is the upload type picker — so
+      // the page never 403s on load. What it 403s on is the only thing
+      // the page is FOR. Every route past the index reads or writes the
+      // per-type ACLs, and all three of those endpoints gate on
+      // `system.asset_types.admin` (assettype/acls_handler.go).
+      //
+      // Before this the tile carried no cap, which means superuser-only:
+      // `system.admin` holders saw it and nobody else did, so an operator
+      // who delegated `system.asset_types.admin` to a named account left
+      // them with a capability and no way to find the page. Naming the
+      // cap makes the delegation discoverable and keeps the invariant —
+      // a visible tile never 403s on click — true in both directions.
+      { key: 'asset_types', status: 'live',   href: '/admin/asset-types', cap: 'system.asset_types.admin' },
       { key: 'fields',         status: 'live',   href: '/admin/fields' },
       { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures', cap: 'system.metadata_extraction.read' },
       { key: 'field_options',  status: 'future' },
@@ -214,6 +228,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // section landing pages would each show partial overlapping
       // sets).
       { key: 'themes',       status: 'live',   href: '/admin/system/themes', cap: 'system.config.read' },
+      // #709 — which browse layouts the install offers. Gated on the
+      // READ cap like its neighbours in this section, not on the write
+      // cap the way site_text is: this page loads through the ADMIN
+      // GET, so `system.config.read` is what it actually needs to
+      // render. The save button is disabled without the write cap.
+      { key: 'browse_views', status: 'live',   href: '/admin/system/browse-views', cap: 'system.config.read' },
       { key: 'maintenance',  status: 'future' },
       { key: 'feature_flags', status: 'future' },
       { key: 'backup',       status: 'future' },

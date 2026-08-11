@@ -878,6 +878,3 @@ func (a authOnlyImpl) GetAIConfig(_ context.Context, _ openapi.GetAIConfigReques
 func (a authOnlyImpl) UpdateAIConfig(_ context.Context, _ openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
 	panic("UpdateAIConfig called from auth test shim")
 }
-func (a authOnlyImpl) ListLocales(_ context.Context, _ openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
-	panic("ListLocales called from auth test shim")
-}

@@ -2,8 +2,9 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Reverse-image search dropzone (Phase 1.55.W). Sits above the DSL
-  // builder on /search/advanced. Accepts a drag+drop or click-selected
-  // image, POSTs it multipart to the existing POST /search/by-image
+  // builder, which #850 moved into /search's advanced panel. Accepts a
+  // drag+drop or click-selected image, POSTs it multipart to the
+  // existing POST /search/by-image
   // endpoint (feature-complete since #199 + #205 + #206), and renders
   // the visually-similar hits as an AssetCard grid.
   //

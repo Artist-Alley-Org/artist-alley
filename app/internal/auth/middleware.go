@@ -4,6 +4,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -141,6 +142,49 @@ func (id *Identity) Can(code string, opts ...CanOption) bool {
 		}
 	}
 	return false
+}
+
+// ScopedTeams returns the closure-expanded set of teams on which this
+// identity holds `code` as a SCOPED capability, sorted so callers can
+// fold it into a stable cache key.
+//
+// It exists because `scopedCaps` is unexported and [Identity.Can] can
+// only answer one team at a time — a caller that needs to test MANY
+// rows against the caller's scope (the read gates in
+// visibility.FieldsReadable, #939) would otherwise call Can() per row,
+// or worse, re-derive the scope in SQL from `user_capability_grants`
+// alone and silently miss every capability conferred through a
+// team-scoped ROLE assignment.
+//
+// The returned slice is a fresh copy — the underlying map is shared
+// with the per-user capability CACHE, and handing out a reference to it
+// would let one request's mutation reach every subsequent request.
+//
+// Deliberately NOT included:
+//
+//   - GLOBAL holdings of `code`. This answers "which teams", and a
+//     global grant is not a team. Callers test that separately, the way
+//     Can() does.
+//   - The `system.admin` wildcard, for the same reason.
+//
+// The license gate runs first, exactly as it does in Can(): a
+// capability the install has not licensed confers no scope either.
+func (id *Identity) ScopedTeams(code string) []uuid.UUID {
+	if id == nil || code == "" || !capLicenseAllows(code) {
+		return nil
+	}
+	set, ok := id.scopedCaps[code]
+	if !ok || len(set) == 0 {
+		return nil
+	}
+	out := make([]uuid.UUID, 0, len(set))
+	for team := range set {
+		out = append(out, team)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return bytes.Compare(out[i][:], out[j][:]) < 0
+	})
+	return out
 }
 
 type ctxKey int
@@ -356,6 +400,29 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, req)
 	})
+}
+
+// LoadIdentity builds the Identity the request middleware would hand a
+// handler for this user — global capabilities AND team-scoped grants,
+// closure-expanded — without going through a session or a token.
+//
+// It exists because `scopedCaps` is unexported and there is no other
+// way for a gate outside this package to be exercised against a REAL
+// scoped grant. Hand-constructing an Identity literal, which is what
+// every other package's tests do, can only ever populate the global
+// list — so a test for "a grant scoped to team X reaches X's
+// descendants" written that way would assert against a map the test
+// itself built rather than against the closure expansion the resolver
+// performs. That is the difference between testing the gate and
+// testing the fixture (#930).
+//
+// Same failure mode as loadCapabilities: a lookup error leaves the cap
+// sets empty rather than failing, so the caller can do nothing
+// privileged.
+func (r *Resolver) LoadIdentity(ctx context.Context, userRef int64) *Identity {
+	id := &Identity{UserRef: userRef, AuthMethod: "session"}
+	r.loadCapabilities(ctx, New(r.Pool), id)
+	return id
 }
 
 // loadCapabilities populates id.Capabilities (global) and id.scopedCaps

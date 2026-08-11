@@ -16,6 +16,7 @@ SELECT user_ref,
        notification_channels,
        default_views,
        email_cadence,
+       feed_filters,
        origin_server_id,
        created_at,
        updated_at
@@ -29,6 +30,7 @@ type GetUserPreferencesRow struct {
 	NotificationChannels []byte
 	DefaultViews         []byte
 	EmailCadence         []byte
+	FeedFilters          []byte
 	OriginServerID       pgtype.UUID
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
@@ -47,6 +49,7 @@ func (q *Queries) GetUserPreferences(ctx context.Context, userRef int64) (GetUse
 		&i.NotificationChannels,
 		&i.DefaultViews,
 		&i.EmailCadence,
+		&i.FeedFilters,
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -59,13 +62,15 @@ INSERT INTO user_preferences (
     user_ref,
     notification_channels,
     default_views,
-    email_cadence
+    email_cadence,
+    feed_filters
 )
-VALUES ($1, $2, $3, $4)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (user_ref) DO UPDATE
 SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
     email_cadence         = EXCLUDED.email_cadence,
+    feed_filters          = EXCLUDED.feed_filters,
     updated_at            = NOW()
 `
 
@@ -74,10 +79,11 @@ type UpsertUserPreferencesParams struct {
 	NotificationChannels []byte
 	DefaultViews         []byte
 	EmailCadence         []byte
+	FeedFilters          []byte
 }
 
 // Idempotent persistence — first save creates the row, subsequent
-// saves replace both JSONB blobs and bump updated_at. The handler
+// saves replace every JSONB blob and bump updated_at. The handler
 // always sends the full prefs object (PATCH semantics are applied
 // service-side via merge before this call), so the JSONB blobs here
 // are authoritative replacements.
@@ -87,6 +93,7 @@ func (q *Queries) UpsertUserPreferences(ctx context.Context, arg UpsertUserPrefe
 		arg.NotificationChannels,
 		arg.DefaultViews,
 		arg.EmailCadence,
+		arg.FeedFilters,
 	)
 	return err
 }

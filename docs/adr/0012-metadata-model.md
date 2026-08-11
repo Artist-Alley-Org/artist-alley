@@ -986,6 +986,88 @@ The "never instantiated, therefore never exercised" condition still applies to `
 reading, not by driving them. The seeder's RFC3339-only `parseTime` (noted in the tree
 amendment) remains the one known concrete instance and remains open.
 
+## Amendment 2026-08-10 (second) — a field definition may declare itself a VIEW onto a column (#822, PR #1007)
+
+`assets.title` and `assets.description` were real columns **and** shipped field definitions, with
+nothing expressing that they are the same thing. Two independent stores for one concept, free to
+drift the moment anything wrote a field value.
+
+**Decision: the column stays the storage; the field declares itself a view onto it.**
+`field_definition.mirrors_column` (migration 00044, CHECK-constrained) names the column. Rejected:
+deleting the duplicate definitions (extraction must be able to target `title` through the field
+system — IPTC `ObjectName` maps to it — and it would drop them from search config and display
+groups), and promoting the columns into fields (93 Go references to `.Title`; far too hot).
+
+**Enforcement is in the DATABASE, not in Go.** Three plpgsql accessors resolve the declared
+identifier with `format('%I')`, so no Go or query-layer code names `title` or `description` — the
+CHECK constraint is the only enumeration, and widening it is a migration rather than a sweep. Two
+triggers reject any `asset_field_value` / `asset_field_value_history` row whose field declares a
+mirror, and a third refuses to *declare* a mirror over a field that already holds values. **A path
+that has not learned to route fails loudly rather than quietly writing a second copy** — that
+covers the seed loader, `psql`, imports and untaught Go alike, which a Go-side branch would not.
+
+### ⛔ The authorisation half, which the issue did not anticipate
+
+Making a field a view onto a column **merges two different permission planes**, and they were not
+equivalent. The field plane admitted any authenticated caller; the column plane requires owner,
+team-scoped `assets.admin`, or global. Left alone, `PUT /assets/{id}/fields/{title_id}` would have
+let **every signed-in account retitle every asset on the instance** — an authorisation regression
+arriving as a side effect of a data-model tidy-up.
+
+**The rule: a mirrored write must satisfy the underlying column's gate, and the field's own
+`write_capability` composes on top.** It now has one home in
+`visibility.AssetMutationCaps.MayMutateOwned`; `assets.canMutateAsset` is a thin adapter holding no
+logic of its own, because `metadata` cannot import `assets` (a real cycle) and two statements of an
+authorisation rule is the same defect this ADR is about, one plane over.
+
+Corollaries: a `required` mirrored field cannot be blanked, so the field plane cannot reach a state
+`PATCH /assets/{id}` forbids; and no history rows are written for mirrored fields, because a
+per-field trail covering only edits made through *this* endpoint would lie by omission.
+
+**Generalisable** — when one concept gains a second write path, the gates on both paths must be
+reconciled explicitly. The permissive one wins by default, and that default is a security bug.
+
+## Amendment 2026-08-10 — a card-display flag is a display hint, and display hints FEDERATE
+
+#552 adds a per-field flag for "show this at-a-glance on the card". Two questions came with it,
+and both are now settled rather than left for the sprint to invent.
+
+**1. It is a display HINT, under this ADR's existing rule.** The schema block above annotates
+`display_order` / `display_group` as *"Display hints — UI may use; do not gate logic on these."*
+The card flag joins them. Nothing may branch on it for access, filtering, or correctness — a
+client that ignores it entirely must still be correct, merely plainer.
+
+**2. It TRAVELS in the federated envelope.** Not a preference — ADR 0083 already decides the
+criterion. `display_group` and `display_order` are **in** the envelope (settled during #738), and
+the exclusion rule there is that a property is left out "because it names something that exists
+only on the sender". A card-display flag names nothing sender-specific: it describes the field,
+not the server. So it goes **in**, and the envelope list in both this ADR and 0083 gains it when
+#552 lands.
+
+The consequence worth stating plainly: **a peer's fields render the way that peer meant them to.**
+A field its owner marked as at-a-glance shows at-a-glance here too. That is the point of shipping
+the hint rather than re-deriving presentation locally.
+
+### The counterweight the operator set (2026-08-10): seamless, but never anonymous
+
+> *"if they are sharing, federation should work seamlessly, but be distinct enough to know it's
+> from another server"*
+
+Both halves bind, and they pull against each other by design:
+
+- **Seamless** — federated content is not second-class. It uses the same card, the same viewer,
+  the same hints. No degraded rendering, no "remote" fallback layout.
+- **Distinct** — the *origin* must remain legible. A user must never mistake another server's
+  content for something this instance vouches for. `origin_server_id` already exists on the
+  relevant tables (baseline schema), and `federation/RestrictedShareBanner.svelte` is the closest
+  existing treatment; the card surface has no provenance affordance yet.
+
+**This constrains #552 and #557 both**, and the constraint is easy to get backwards: seamlessness
+is about *layout and capability*, provenance is about *attribution*. Making remote content look
+different is the wrong reading; making it look identical **and unattributed** is the other wrong
+reading. Whatever the card does, it must answer "whose is this?" without answering it in a way
+that makes remote work feel lesser.
+
 ## Amendment 2026-08-02 — a vocabulary can be open, and open means the WRITE POLICY differs
 
 **PR #846 / issue #830 (part A of #789).** The 2026-07-30 amendment gave options a lifecycle

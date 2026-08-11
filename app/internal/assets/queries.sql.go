@@ -149,15 +149,15 @@ const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash
+    state_id, processing_status, thumbhash, team_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at
+          created_at, updated_at, team_id
 `
 
 type CreateAssetParams struct {
@@ -174,6 +174,7 @@ type CreateAssetParams struct {
 	StateID          pgtype.UUID
 	ProcessingStatus string
 	Thumbhash        []byte
+	TeamID           pgtype.UUID
 }
 
 type CreateAssetRow struct {
@@ -193,6 +194,7 @@ type CreateAssetRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
@@ -210,6 +212,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.StateID,
 		arg.ProcessingStatus,
 		arg.Thumbhash,
+		arg.TeamID,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -229,6 +232,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -274,7 +278,7 @@ const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, team_id
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -296,6 +300,7 @@ type GetAssetRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
 }
 
 // Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -324,6 +329,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -505,6 +511,22 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 	return i, err
 }
 
+const getAssetDeletedBy = `-- name: GetAssetDeletedBy :one
+SELECT deleted_by_user_ref
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NOT NULL
+`
+
+// Who soft-deleted this asset. Errors with pgx.ErrNoRows when the row
+// is live or absent, which is the same answer the restore path gives
+// those two cases anyway.
+func (q *Queries) GetAssetDeletedBy(ctx context.Context, id pgtype.UUID) (*int64, error) {
+	row := q.db.QueryRow(ctx, getAssetDeletedBy, id)
+	var deleted_by_user_ref *int64
+	err := row.Scan(&deleted_by_user_ref)
+	return deleted_by_user_ref, err
+}
+
 const getAssetForAIBridge = `-- name: GetAssetForAIBridge :one
 
 SELECT
@@ -569,6 +591,44 @@ func (q *Queries) GetAssetForAIBridge(ctx context.Context, id pgtype.UUID) (GetA
 		&i.FileHash,
 		&i.FileExtension,
 		&i.ExistingTagsJson,
+	)
+	return i, err
+}
+
+const getAssetMutationSubject = `-- name: GetAssetMutationSubject :one
+SELECT owner_user_ref, team_id, status, updated_at
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetAssetMutationSubjectRow struct {
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+	Status       string
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// The authorisation probe behind UpdateAsset / DeleteAsset. Deliberately
+// NOT GetAsset: the mutation gate needs a nullable `owner_user_ref`
+// alongside `team_id` (for the team-scoped `assets.admin` disjunct), and
+// it must answer for a row the caller may not be entitled to read at
+// all — a gate that borrowed the read projection would be one edit away
+// from inheriting the read rule's filters. (`team_id` is now on the read
+// projection too, since #953 made it settable and therefore something a
+// client has to be able to observe; that does not merge the two.)
+// `status` comes along because the publication boundary
+// in UpdateAsset compares against the current value, and `updated_at`
+// because the optimistic-concurrency check needs the same row — one
+// read, so the gate and the conflict check can never disagree about
+// which version of the row they looked at.
+func (q *Queries) GetAssetMutationSubject(ctx context.Context, id pgtype.UUID) (GetAssetMutationSubjectRow, error) {
+	row := q.db.QueryRow(ctx, getAssetMutationSubject, id)
+	var i GetAssetMutationSubjectRow
+	err := row.Scan(
+		&i.OwnerUserRef,
+		&i.TeamID,
+		&i.Status,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -688,6 +748,54 @@ func (q *Queries) ListAssetCompanions(ctx context.Context, assetID pgtype.UUID) 
 			&i.ContentType,
 			&i.SizeBytes,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAssetOrigins = `-- name: ListAssetOrigins :many
+SELECT a.id AS asset_id, p.id AS peer_id, p.display_name, p.instance_url
+  FROM assets a
+  JOIN federation_peers p ON p.id = a.origin_server_id
+ WHERE a.id = ANY($1::UUID[])
+   AND a.deleted_at IS NULL
+`
+
+type ListAssetOriginsRow struct {
+	AssetID     pgtype.UUID
+	PeerID      pgtype.UUID
+	DisplayName string
+	InstanceUrl string
+}
+
+// Which peer an asset came from, for the card's provenance affordance
+// (#552). Local rows (origin_server_id IS NULL) are simply absent from the
+// result, so "no row" reads as "ours" without a sentinel.
+//
+// Batched with the page for the same reason ListCardFieldValues is. The
+// join is to federation_peers.display_name, the name an operator gave the
+// peer at handshake — never the raw UUID, which answers "whose is this?"
+// with a number.
+func (q *Queries) ListAssetOrigins(ctx context.Context, assetIds []pgtype.UUID) ([]ListAssetOriginsRow, error) {
+	rows, err := q.db.Query(ctx, listAssetOrigins, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssetOriginsRow
+	for rows.Next() {
+		var i ListAssetOriginsRow
+		if err := rows.Scan(
+			&i.AssetID,
+			&i.PeerID,
+			&i.DisplayName,
+			&i.InstanceUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -834,7 +942,7 @@ const listAssetsPage = `-- name: ListAssetsPage :many
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, deleted_at, deleted_reason
+       created_at, updated_at, deleted_at, deleted_reason, team_id
 FROM assets
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT IS NULL OR owner_user_ref = $2::BIGINT)
@@ -880,6 +988,7 @@ type ListAssetsPageRow struct {
 	UpdatedAt        pgtype.Timestamptz
 	DeletedAt        pgtype.Timestamptz
 	DeletedReason    *string
+	TeamID           pgtype.UUID
 }
 
 // NOT THE ENFORCEMENT PATH. This query applies no visibility predicate,
@@ -937,6 +1046,118 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.DeletedReason,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCardFieldValues = `-- name: ListCardFieldValues :many
+
+SELECT a.id AS asset_id,
+       f.id AS field_id,
+       f.code,
+       f.label,
+       f.type,
+       f.options,
+       f.display_group,
+       f.display_order,
+       -- coalesced to '' rather than left nullable: the two states this
+       -- query can produce for "nothing here" — no asset_field_value row and
+       -- an empty mirrored column — are one answer to the card, which drops
+       -- the entry either way. (It also keeps sqlc from typing a CASE with
+       -- NULL branches as interface{}.)
+       coalesce(
+           CASE WHEN f.mirrors_column IS NOT NULL
+                THEN public.asset_mirror_read(a.id, f.mirrors_column)
+                ELSE v.value_text
+           END, '')::TEXT AS value_text,
+       v.value_num,
+       v.value_date,
+       v.value_options
+  FROM assets a
+  CROSS JOIN field_definition f
+  LEFT JOIN asset_field_value v ON v.asset_id = a.id AND v.field_id = f.id
+ WHERE a.id = ANY($1::UUID[])
+   AND a.deleted_at IS NULL
+   AND f.show_on_card
+   AND f.subject_kind = 'asset'
+   AND f.status <> 'archived'
+   AND (cardinality(f.applies_to) = 0 OR a.asset_type = ANY(f.applies_to))
+ ORDER BY a.id, f.display_group, f.display_order, f.code
+`
+
+type ListCardFieldValuesRow struct {
+	AssetID      pgtype.UUID
+	FieldID      pgtype.UUID
+	Code         string
+	Label        string
+	Type         string
+	Options      []byte
+	DisplayGroup string
+	DisplayOrder int32
+	ValueText    string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+}
+
+// Phase 1.14.B embedding queries live under
+// app/internal/ai/embeddings/queries.sql so the writer + reader code
+// can package alongside them. assets package keeps focus on asset
+// CRUD + the bridge read/write surface for AI tags.
+// The at-a-glance field values for a PAGE of assets (#552).
+//
+// One query for the whole page, not one per asset. The card is a browse
+// surface: an N+1 here is 50 round trips per scroll, and the existing
+// per-row ListAssetTags call is the precedent NOT to follow.
+//
+// Both halves of a field's storage are covered, and the caller cannot tell
+// them apart — which is the point of #822's mirror. An ordinary field's
+// value comes from asset_field_value; a MIRRORED field's comes from the
+// column it declares, because it has no row here and the guard trigger
+// guarantees it never will.
+//
+// The flag is a DISPLAY HINT and nothing here treats it otherwise: it
+// SELECTS which fields are candidates and takes no part in deciding which
+// assets or which values a caller may see. Row visibility was already
+// decided by ListAssetsPageGated before this runs, and only readable rows
+// are passed in. Gated fields cannot reach the card at all — the CHECK
+// constraint in migration 00045 refuses `show_on_card` on a field carrying
+// a read_capability, so this query needs no capability argument and cannot
+// acquire one by accident.
+//
+// Typed columns come back raw rather than formatted: metadata.DisplayValue
+// resolves a vocabulary slug to its label, and doing that in SQL would be a
+// second implementation of a rule ADR 0012 keeps in one place.
+func (q *Queries) ListCardFieldValues(ctx context.Context, assetIds []pgtype.UUID) ([]ListCardFieldValuesRow, error) {
+	rows, err := q.db.Query(ctx, listCardFieldValues, assetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCardFieldValuesRow
+	for rows.Next() {
+		var i ListCardFieldValuesRow
+		if err := rows.Scan(
+			&i.AssetID,
+			&i.FieldID,
+			&i.Code,
+			&i.Label,
+			&i.Type,
+			&i.Options,
+			&i.DisplayGroup,
+			&i.DisplayOrder,
+			&i.ValueText,
+			&i.ValueNum,
+			&i.ValueDate,
+			&i.ValueOptions,
 		); err != nil {
 			return nil, err
 		}
@@ -1152,17 +1373,23 @@ func (q *Queries) SetAssetThumbhashIfMissing(ctx context.Context, arg SetAssetTh
 
 const softDeleteAsset = `-- name: SoftDeleteAsset :exec
 UPDATE assets
-SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type SoftDeleteAssetParams struct {
-	ID            pgtype.UUID
-	DeletedReason *string
+	ID               pgtype.UUID
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
+// deleted_by_user_ref records WHO removed the row, because #931's
+// restore rule turns on it: you may undo your own delete, and an
+// admin's delete is undone by that admin or by system.admin. NULL is
+// the honest answer for a system-scheduled retention delete, and it
+// fails closed — nobody self-restores a row whose deleter is unknown.
 func (q *Queries) SoftDeleteAsset(ctx context.Context, arg SoftDeleteAssetParams) error {
-	_, err := q.db.Exec(ctx, softDeleteAsset, arg.ID, arg.DeletedReason)
+	_, err := q.db.Exec(ctx, softDeleteAsset, arg.ID, arg.DeletedReason, arg.DeletedByUserRef)
 	return err
 }
 
@@ -1177,7 +1404,7 @@ WHERE id = $5 AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at
+          created_at, updated_at, team_id
 `
 
 type UpdateAssetParams struct {
@@ -1205,6 +1432,7 @@ type UpdateAssetRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -1235,6 +1463,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }

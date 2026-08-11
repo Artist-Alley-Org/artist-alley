@@ -12,13 +12,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // The two post list queries, with the read rule spliced in (#660).
 //
 // Why these are hand-built SQL rather than the sqlc queries they replace
 // (ListPostsPage / ListPostsByAsset, both deleted from queries.sql):
-// readRule.sql returns a runtime fragment and sqlc queries are static
+// readRuleSQL returns a runtime fragment and sqlc queries are static
 // strings with fixed placeholders — the same reason every other splice
 // site of visibility.Predicate is hand-built (see assets/list_page.go).
 //
@@ -29,7 +30,7 @@ import (
 
 // ListPostsPageParams carries the caller-supplied filters for one feed
 // page. Visibility is a NARROWING filter only: it selects among the
-// tiers the caller's identity already admits (readRule), and can never
+// tiers the caller's identity already admits (the read rule), and can never
 // widen them. `?visibility=private` therefore means "the private posts I
 // may read" — my own, plus everyone's for a moderator — not "everyone's
 // private posts", which is what it used to mean.
@@ -43,9 +44,75 @@ type ListPostsPageParams struct {
 	Q               *string
 	Tag             *string
 	FeedFollowerRef *int64
-	CursorPostedAt  pgtype.Timestamptz
-	CursorID        pgtype.UUID
-	RowLimit        int32
+	// TeamID scopes the page to one team's posts (#684). NARROWING ONLY:
+	// it is a plain conjunct beside the read rule, never a disjunct with
+	// it, so a team page shows the caller exactly the subset of that
+	// team's posts browse would already have shown them. Membership of
+	// the team grants nothing here — the read rule never consults
+	// team_id (see visibility/post_rule.go), and this filter must not
+	// become the place that starts.
+	TeamID         pgtype.UUID
+	CursorPostedAt pgtype.Timestamptz
+	CursorID       pgtype.UUID
+	RowLimit       int32
+	// Ascending flips the feed to oldest-first (?dir=asc). It moves the
+	// ORDER BY and the keyset predicate TOGETHER — see feedOrder.
+	Ascending bool
+}
+
+// feedOrder is the (posted_at, id) keyset in one direction, expressed
+// once (#868).
+//
+// The ORDER BY and the cursor comparison are the SAME fact stated
+// twice, and the whole bug class this closes is what happens when only
+// one of them moves. The feed's toggle used to send `?dir=asc` to a
+// server that declared no such parameter, so nothing moved at all and
+// "Oldest" quietly rendered newest. The obvious half-fix — flip the
+// ORDER BY, leave the predicate — is strictly worse than the bug it
+// replaces: `posted_at < cursor` walking an ascending scan asks for
+// rows BEHIND the ones just returned, so page 2 re-serves page 1's
+// window and everything past it is unreachable.
+//
+// So the direction is a single struct with a single constructor, and
+// both strings come out of it. There is no way to hold one without the
+// other.
+type feedOrder struct {
+	// cmp is the strict inequality that advances the scan: `<` walking
+	// down, `>` walking up.
+	cmp string
+	// dir is the SQL keyword for both ORDER BY terms.
+	dir string
+}
+
+func newFeedOrder(ascending bool) feedOrder {
+	if ascending {
+		return feedOrder{cmp: ">", dir: "ASC"}
+	}
+	return feedOrder{cmp: "<", dir: "DESC"}
+}
+
+// keysetSQL renders the "strictly past the cursor" predicate for the
+// (posted_at, id) key, with the timestamp at $tsN and the tiebreak id
+// at $idN. NULL cursor means "first page", which admits every row.
+//
+// The id tiebreak carries the same comparison as the timestamp on
+// purpose: it is the low-order digit of one composite key, not a
+// separate ordering. Pinning it to `<` while the timestamp flipped
+// would make posts that share a posted_at (the seeded case, and any
+// bulk import) the only ones that paginate wrongly — a defect that
+// hides completely behind timestamps that happen to be distinct.
+func (o feedOrder) keysetSQL(col, idCol string, tsN, idN int) string {
+	return fmt.Sprintf(
+		`($%d::TIMESTAMPTZ IS NULL
+       OR %s %s $%d::TIMESTAMPTZ
+       OR (%s = $%d::TIMESTAMPTZ AND %s %s $%d::UUID))`,
+		tsN, col, o.cmp, tsN, col, tsN, idCol, o.cmp, idN,
+	)
+}
+
+// orderBySQL renders the matching ORDER BY clause.
+func (o feedOrder) orderBySQL(col, idCol string) string {
+	return fmt.Sprintf("ORDER BY %s %s, %s %s", col, o.dir, idCol, o.dir)
 }
 
 // ListPostsPageRow mirrors the SELECT list below. Order matters: rows
@@ -78,15 +145,24 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
        deleted_at, deleted_reason`
 
 // ListPostsPageGated runs the feed query for one caller. Cursor
-// pagination on (posted_at DESC, id DESC). Filters:
+// pagination on the (posted_at, id) keyset, in whichever direction
+// `Ascending` selects — both halves of that key move together via
+// feedOrder, which is the point of it. Filters:
 //   - author_user_ref: limit to posts by a given user
 //   - visibility: narrow to one tier WITHIN what the caller may read
 //   - q: plain-text TSVECTOR search across post search_text
 //   - tag: single-tag filter (intersects with q if both given)
 //   - feed_follower_ref: restrict to authors the given ref follows
 //     (?feed=following). EXISTS hits the user_follows PK.
+//   - team_id: restrict to one team's posts (#684)
 //
-// Placeholder discipline (ADR 0063): the builder binds $1–$9, the rule's
+// Every one of those NARROWS. The read rule is ANDed onto the result,
+// never ORed into it, so no filter here can surface a row the caller
+// could not already read — least obviously `team_id`, which looks like
+// it ought to mean "the team's space" and does not. It means "the part
+// of the team's space this caller can already see".
+//
+// Placeholder discipline (ADR 0063): the builder binds $1–$10, the rule's
 // fragment owns everything above, and its args are appended LAST.
 func (h *Handler) ListPostsPageGated(
 	ctx context.Context,
@@ -103,9 +179,15 @@ func (h *Handler) ListPostsPageGated(
 		p.CursorPostedAt,  // $7
 		p.CursorID,        // $8
 		p.RowLimit,        // $9
+		p.TeamID,          // $10
 	}
-	ruleFrag, ruleArgs := readRuleFor(id).sql("posts", len(args))
+	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
+	if err != nil {
+		return nil, err
+	}
 	args = append(args, ruleArgs...)
+
+	order := newFeedOrder(p.Ascending)
 
 	var b strings.Builder
 	b.WriteString(`SELECT ` + listPostsPageColumns + `
@@ -121,12 +203,11 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
        OR EXISTS (SELECT 1 FROM user_follows ff
                     WHERE ff.follower_user_ref = $6::BIGINT
                       AND ff.followee_user_ref = posts.author_user_ref))
-  AND ($7::TIMESTAMPTZ IS NULL
-       OR posted_at < $7::TIMESTAMPTZ
-       OR (posted_at = $7::TIMESTAMPTZ AND id < $8::UUID))`)
+  AND ($10::UUID IS NULL OR team_id = $10::UUID)
+  AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(ruleFrag)
 	b.WriteString(`
-ORDER BY posted_at DESC, id DESC
+` + order.orderBySQL("posted_at", "id") + `
 LIMIT $9::INTEGER`)
 
 	rows, err := h.Pool.Query(ctx, b.String(), args...)
@@ -154,6 +235,82 @@ LIMIT $9::INTEGER`)
 	return out, nil
 }
 
+// ListSharedWithMeGated returns one page of "posts somebody explicitly
+// shared with me" (#875): the posts on which this caller holds a live
+// post_acls grant. Newest-first on the same (posted_at, id) cursor key
+// as the feed.
+//
+// The predicate is visibility.PostLiveGrantSQL — the SAME fragment the
+// post read rule ORs in as its ACL disjunct, not a second copy of it.
+// It moved to the shared package with the rest of the rule (#873) and is
+// exported for this one caller. That is the whole design
+// of this surface: "shared with me" and "a grant lets me read this" must
+// be the same question, so a post can never appear here that
+// GET /posts/{id} then refuses, and expiry/revocation drop an item off
+// this page for free rather than because someone remembered to repeat
+// the `expires_at` clause.
+//
+// No further read-rule conjunct is applied, and that is not an omission.
+// ADR 0010 L6: a grant is purely additive, so a live grant alone is
+// sufficient authorization to read the post at any tier — the rule's own
+// disjunct sits at the top level for exactly that reason. AND-ing the
+// full rule in here would be a no-op on every row this query can return.
+//
+// Soft-delete is the caller's axis as always: a deleted post is not
+// shared content, and unlike the feed this surface has no admin
+// trash-view mode, so it is filtered unconditionally.
+//
+// An anonymous caller cannot reach this (the handler 401s first) and
+// would have no principal to match anyway.
+func (h *Handler) ListSharedWithMeGated(
+	ctx context.Context,
+	userRef int64,
+	cursorPostedAt pgtype.Timestamptz,
+	cursorID pgtype.UUID,
+	rowLimit int32,
+) ([]ListPostsPageRow, error) {
+	args := []any{
+		cursorPostedAt, // $1
+		cursorID,       // $2
+		rowLimit,       // $3
+		userRef,        // $4 — consumed by PostLiveGrantSQL
+	}
+
+	sql := `SELECT ` + listPostsPageColumns + `
+FROM posts
+WHERE deleted_at IS NULL
+  AND ($1::TIMESTAMPTZ IS NULL
+       OR posted_at < $1::TIMESTAMPTZ
+       OR (posted_at = $1::TIMESTAMPTZ AND id < $2::UUID))
+  AND ` + visibility.PostLiveGrantSQL("", 4) + `
+ORDER BY posted_at DESC, id DESC
+LIMIT $3::INTEGER`
+
+	rows, err := h.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("posts: shared with me: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ListPostsPageRow
+	for rows.Next() {
+		var i ListPostsPageRow
+		if err := rows.Scan(
+			&i.ID, &i.AuthorUserRef, &i.Title, &i.Description, &i.Visibility,
+			&i.CoverAssetID, &i.CoverThumbnailAssetID, &i.PostedAt,
+			&i.LikeCount, &i.CommentCount, &i.OriginServerID, &i.TeamID,
+			&i.StateID, &i.CreatedAt, &i.UpdatedAt, &i.DeletedAt, &i.DeletedReason,
+		); err != nil {
+			return nil, fmt.Errorf("posts: shared with me scan: %w", err)
+		}
+		out = append(out, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("posts: shared with me rows: %w", err)
+	}
+	return out, nil
+}
+
 // ListPostsByAssetGated returns the ids of posts the caller may read
 // whose members include the given asset (#478 slice-2, ADR 0070).
 // Bounded (no cursor) — an asset lands in few posts, and the client only
@@ -171,7 +328,10 @@ func (h *Handler) ListPostsByAssetGated(
 	assetID uuid.UUID,
 ) ([]pgtype.UUID, error) {
 	args := []any{assetID} // $1
-	ruleFrag, ruleArgs := readRuleFor(id).sql("p", len(args))
+	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "p", len(args))
+	if err != nil {
+		return nil, err
+	}
 	args = append(args, ruleArgs...)
 
 	sql := `SELECT p.id

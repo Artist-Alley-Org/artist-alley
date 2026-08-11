@@ -140,6 +140,33 @@ func ApplyAssetDefaults(ctx context.Context, db DBTX, p ApplyDefaultsParams) ([]
 			continue
 		}
 
+		// A default on a MIRRORED field (#822) fills the COLUMN, and only
+		// when the column is still empty — the same "a value already on the
+		// row is never touched" rule, one plane over. Falling through to the
+		// writer below would hit migration 00044's guard trigger and fail
+		// the whole upload transaction over a convenience.
+		//
+		// No history row for the same reason the API path writes none: a
+		// per-field trail that exists only for changes made through the
+		// field plane is a trail that lies by omission.
+		if col, ok := mirrorColumn(group.MirrorsColumn); ok {
+			if params.ValueText == nil {
+				continue
+			}
+			wrote, mErr := mirrorFill(ctx, db, assetID, col, *params.ValueText)
+			if mErr != nil {
+				return applied, fmt.Errorf("metadata: defaults: mirror %s: %w", group.Code, mErr)
+			}
+			if wrote {
+				applied = append(applied, AppliedDefault{
+					FieldID:   uuid.UUID(group.ID.Bytes),
+					FieldCode: group.Code,
+					TeamID:    fromTeam,
+				})
+			}
+			continue
+		}
+
 		n, err := q.InsertAssetFieldValueIfAbsent(ctx, InsertAssetFieldValueIfAbsentParams{
 			AssetID:      assetID,
 			FieldID:      group.ID,
@@ -190,12 +217,15 @@ func ApplyAssetDefaults(ctx context.Context, db DBTX, p ApplyDefaultsParams) ([]
 // candidateGroup is one field plus every override row that came back
 // for it.
 type candidateGroup struct {
-	ID        pgtype.UUID
-	Code      string
-	Type      string
-	Options   []byte
-	Default   []byte
-	Overrides []candidateOverride
+	ID      pgtype.UUID
+	Code    string
+	Type    string
+	Options []byte
+	Default []byte
+	// MirrorsColumn is the assets column this field declares itself a view
+	// onto (#822), or nil for ordinary field-owned storage.
+	MirrorsColumn *string
+	Overrides     []candidateOverride
 }
 
 type candidateOverride struct {
@@ -213,11 +243,12 @@ func groupCandidates(rows []ListAssetDefaultCandidatesRow) []candidateGroup {
 		i, seen := index[key]
 		if !seen {
 			out = append(out, candidateGroup{
-				ID:      r.ID,
-				Code:    r.Code,
-				Type:    r.Type,
-				Options: r.Options,
-				Default: r.DefaultValue,
+				ID:            r.ID,
+				Code:          r.Code,
+				Type:          r.Type,
+				Options:       r.Options,
+				Default:       r.DefaultValue,
+				MirrorsColumn: r.MirrorsColumn,
 			})
 			i = len(out) - 1
 			index[key] = i

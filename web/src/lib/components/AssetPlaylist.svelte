@@ -29,14 +29,19 @@
   // a contextSlot for the post-specific sidebar (author / likes /
   // comments / tags / edit / delete / etc).
 
-  import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { onDestroy, onMount, tick, type Snippet } from 'svelte';
   import AssetViewer from './viewers/AssetViewer.svelte';
   import { kindForAsset } from './viewers/controller';
-  import type { ToolDef } from './viewers/tools/contract';
+  import { snippetToolHookKey, type ToolDef } from './viewers/tools/contract';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
+  import RequestAccessDialog from './RequestAccessDialog.svelte';
+  import ConfirmDeleteDialog from './ConfirmDeleteDialog.svelte';
+  import { toasts } from '$stores/toasts.svelte';
+  import { canDelete, deleteEntity, restoreEntity, shouldAskReason } from '$lib/deletable';
 
   interface Props {
     source: PlaylistSource;
@@ -50,8 +55,18 @@
         renders a brush/annotation surface over the asset canvas
         without losing the sidebar or top toolbar. */
     canvasOverlay?: Snippet;
-    /** Called when the user closes the playlist (× / ESC / backdrop). */
-    onClose: () => void;
+    /** Called when the user closes the playlist (× / ESC / backdrop).
+     *
+     *  May be async — /assets/{id} and /posts/{id} both pass the
+     *  close-to-origin policy. AWAITING IT IS NOT THE SAME AS THE
+     *  SURFACE BEING GONE, and #991 was the bill for assuming it was:
+     *  that policy `goto`s only on a cold entry, and `history.back()`s
+     *  on an in-app one — a history entry cannot be awaited, so the
+     *  promise resolves with this dialog still open and the popstate
+     *  still a frame away. Anything that must outlive the surface has
+     *  to survive being adopted by it; see confirmDelete and
+     *  $lib/portal. */
+    onClose: () => void | Promise<void>;
     /** True when the playlist is a full-page route (e.g. /posts/[id])
         rather than an overlay over the browse feed. Drives the close
         button affordance — back-arrow vs ×. */
@@ -77,7 +92,6 @@
     onEditMetadata?: (assetId: string) => void;
     onDownloadVariant?: (assetId: string) => void;
     onShareAsset?: (assetId: string) => void;
-    onDeleteAsset?: (assetId: string) => void;
     /** Extra rows to append to the global TipsSection footer at the
         bottom of the side panel. Hosts that own mode-specific tool
         surfaces (whiteboard, annotation, future review modes) pass
@@ -113,7 +127,6 @@
     onEditMetadata,
     onDownloadVariant,
     onShareAsset,
-    onDeleteAsset,
     extraTips,
     customTools = [],
     whiteboardSession,
@@ -173,6 +186,15 @@
 
   const currentItem = $derived(source.items[source.cursor] ?? null);
   const hasMultipleItems = $derived(source.items.length > 1);
+
+  // #918 — the host's Details body, reached directly rather than through
+  // AssetViewer's tool registry, for the one state where no AssetViewer
+  // exists to carry it: a playlist with nothing in it. See the empty
+  // branch in the markup below. Undefined for hosts that contribute no
+  // details pane, which then get the bare message they always had.
+  const emptyHostPane = $derived(
+    (hostHooks?.[snippetToolHookKey('details')] as { body?: Snippet } | undefined)?.body,
+  );
   // When every member of the playlist is an audiobook (.m4b /
   // asset_type=11), the AudiobookTool's Tracks section in the side
   // panel becomes the canonical navigator and the strip below
@@ -391,6 +413,11 @@
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
       return;
     }
+    // A modal opened FROM the shell owns the keyboard while it is up
+    // (#881). Without this, Escape closes the whole playlist out from
+    // under the request dialog instead of dismissing it, and the user
+    // loses their place as well as what they typed.
+    if (askOpenFor) return;
     switch (e.key) {
       // ← / → navigate between sibling PLAYLISTS in the surrounding
       // context (next post in the feed, next collection, etc). The
@@ -473,6 +500,170 @@
   function colVariantUrl(assetId: string): string {
     return `/api/v1/assets/${assetId}/variants/col`;
   }
+
+  // #881 — "request access" state for restricted members.
+  //
+  // Keyed by asset id rather than a single boolean because a playlist
+  // walks between members: a flat `asked` flag would follow the cursor
+  // and label the next restricted member as already-asked. The set is
+  // session-local optimism over the server's answer; a reload re-reads
+  // the truth from /account/requests.
+  let askOpenFor: string | null = $state(null);
+  let askedFor: string[] = $state([]);
+
+  // ── Delete the asset under the cursor (#981, #987) ─────────────────
+  //
+  // WHY THE SHELL AND NOT THE HOST. #981 wired "Delete asset" into
+  // PostHost, which is a POST-shaped host — so the affordance existed
+  // only where an asset happened to be inside a post, and /assets/{id}
+  // (the asset-shaped route, ADR 0067) had no delete at all (#987).
+  // The menu seam was never the problem: both routes render this shell,
+  // which threads one `onDeleteAsset` into AssetViewer → ViewerMenuBar.
+  // What PostHost owned that the standalone route could not reach was
+  // the FLOW — the confirm dialog, the request, the toast.
+  //
+  // None of that flow is post-shaped. It asks about the asset under the
+  // cursor, which is the one thing every host of this shell has by
+  // definition, so it belongs here and the hosts get it for free. The
+  // host prop is gone rather than kept as an override: PostHost was its
+  // only caller, and a second way to spell the same action is the drift
+  // that becomes the bug.
+  //
+  // The confirm dialog is declared INSIDE this component's <dialog>
+  // (down with RequestAccessDialog) and that placement is load-bearing
+  // for the same reason PostHost's comment gives: Modal portals to the
+  // nearest OPEN <dialog> resolved from where it was DECLARED, and this
+  // shell calls showModal() when maximized. Declared on the page
+  // instead, the confirm would land on <body> and render UNDERNEATH the
+  // viewer's top layer — present, correct, and invisible.
+
+  // itemId and assetId are two DIFFERENT things and both are needed.
+  // PlaylistItem.id is the position key — for most sources it IS the
+  // asset id, but the contract allows an envelope id so a source can
+  // carry the same asset twice (a favourites playlist with dupes). The
+  // endpoint takes the asset id; the splice below matches on the
+  // position key. Carrying one value for both is correct today and
+  // silently wrong for the first source that uses envelopes.
+  let deleteTarget = $state<{
+    itemId: string;
+    assetId: string;
+    title: string;
+    ownerRef: number | null | undefined;
+  } | null>(null);
+  let deleteBusy = $state(false);
+  let deleteError = $state<string | null>(null);
+
+  // Owner, or a holder of the global assets.admin — canDelete's ceiling
+  // and its reasoning are documented in $lib/deletable. A restricted
+  // member is excluded because the shell was handed a placeholder: it
+  // has no owner_user_ref to judge, so the honest answer is no button.
+  // The server gates the request regardless of what we draw here.
+  const canDeleteCurrent = $derived(
+    !!currentItem &&
+      !currentItem.restricted &&
+      canDelete('asset', currentItem.asset?.owner_user_ref),
+  );
+
+  // Reads the item under the cursor rather than taking an id and
+  // looking it back up: the menu item can only ever mean "this one",
+  // and a lookup by id is where the itemId/assetId confusion above
+  // would enter.
+  function openDeleteDialog() {
+    const it = currentItem;
+    if (!it) return;
+    deleteError = null;
+    deleteTarget = {
+      itemId: it.id,
+      assetId: it.asset.id,
+      title: it.asset.title ?? '',
+      ownerRef: it.asset.owner_user_ref ?? null,
+    };
+  }
+
+  function closeDeleteDialog() {
+    if (deleteBusy) return;
+    deleteTarget = null;
+    deleteError = null;
+  }
+
+  async function confirmDelete(reason: string) {
+    const target = deleteTarget;
+    if (!target || deleteBusy) return;
+    deleteBusy = true;
+    deleteError = null;
+    const err = await deleteEntity('asset', target.assetId, reason);
+    deleteBusy = false;
+    if (err) {
+      // Keep the dialog open so the message lands beside the button
+      // that produced it.
+      deleteError = err;
+      return;
+    }
+    deleteTarget = null;
+
+    // Drop the member from the live playlist rather than re-fetching the
+    // source; #920 / #935 already invalidated every other surface's
+    // cached copy of it. The SOURCE does the dropping — the shell used
+    // to splice `source.items` itself, which worked and logged
+    // `ownership_invalid_mutation` on every delete (see
+    // PlaylistSource.removeItem). A source that cannot lose items omits
+    // the method, and the count it would have returned is the count we
+    // already have.
+    const remaining = source.removeItem?.(target.itemId) ?? source.items.length;
+
+    // Nothing left to look at — the surface showing it cannot stay. For
+    // a playlist of 1 (the /assets/{id} route) that is EVERY delete, and
+    // onClose there is the close-to-origin policy, so the page goes
+    // away; for an overlay it closes back onto whatever was underneath.
+    //
+    // Before the toast, and awaited. Not because the toast depends on it
+    // — #991 established that it cannot, since the close-to-origin
+    // policy `history.back()`s on an in-app entry and a history entry is
+    // not awaitable, so this await returns with the dialog still open
+    // and still owning the top layer. $lib/portal is what keeps the
+    // toast alive across that; see its header. The order stands because
+    // acknowledging a delete after the surface has gone is the right
+    // sequence for the user, not because it is load-bearing.
+    if (remaining === 0) {
+      await onClose();
+      await tick();
+    }
+
+    toasts.push({
+      message: t('delete_confirm.deleted_asset'),
+      href: '/account/trash',
+      linkLabel: t('delete_confirm.view_trash'),
+      action: {
+        label: t('delete_confirm.undo'),
+        run: () => undoDelete(target.assetId),
+      },
+    });
+  }
+
+  // The Undo in the delete toast. Safe to offer unconditionally: we just
+  // performed the delete, so we ARE the deleter, and CanRestoreDeleted
+  // grants restore to the deleter. It can never be an affordance the
+  // server refuses.
+  //
+  // No re-insert into `source.items` on success. The restored asset's
+  // position comes from the server's ordering, not from where it sat in
+  // the array we spliced — and on the standalone route the shell has
+  // already navigated away, so there is no list left to put it back
+  // into. The toast links to /account/trash, which is the surface that
+  // can show the result either way.
+  async function undoDelete(id: string) {
+    const err = await restoreEntity('asset', id);
+    if (err) {
+      toasts.push({
+        message: t('delete_confirm.undo_error'),
+        tone: 'error',
+        href: '/account/trash',
+        linkLabel: t('delete_confirm.view_trash'),
+      });
+      return;
+    }
+    toasts.push({ message: t('delete_confirm.undone') });
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -512,7 +703,48 @@
       </div>
     {:else if currentItem}
       <div class="relative flex flex-1 overflow-hidden bg-black">
-        {#if currentItem.asset.file_hash}
+        {#if currentItem.restricted}
+          <!-- #883 — the viewer may not see this member. FIRST branch:
+               everything below reads asset fields the server did not
+               send, and would render an untitled, preview-less asset
+               that looks like a failed render rather than a refusal.
+               No AssetViewer is mounted, so no byte request is made. -->
+          <div class="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center text-white/70">
+            <svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <p class="text-sm font-medium uppercase tracking-widest text-white">
+              {t('card.restricted.label')}
+            </p>
+            <p class="text-sm">
+              {currentItem.ownerDisplayName
+                ? t('card.restricted.owner', { owner: currentItem.ownerDisplayName })
+                : t('card.restricted.owner_unknown')}
+            </p>
+            <!-- #881 — the same ask as the grid tile, at the one other
+                 place a restricted member is rendered. Nothing here
+                 names the asset: the id is posted, never printed, and
+                 the label is a fixed string. -->
+            {#if auth.user}
+              <button
+                type="button"
+                data-testid="request-access-open"
+                disabled={askedFor.includes(currentItem.asset.id)}
+                aria-label={askedFor.includes(currentItem.asset.id)
+                  ? t('card.restricted.asked')
+                  : t('card.restricted.ask')}
+                class="mt-1 rounded-md border border-white/35 px-3 py-1.5 text-sm text-white
+                       hover:bg-white/10 disabled:cursor-default disabled:opacity-60"
+                onclick={() => (askOpenFor = currentItem.asset.id)}
+              >
+                {askedFor.includes(currentItem.asset.id)
+                  ? t('card.restricted.asked')
+                  : t('card.restricted.ask')}
+              </button>
+            {/if}
+          </div>
+        {:else if currentItem.asset.file_hash}
           <!-- AssetViewer owns the canvas double-click gesture
                (toggles reviewMode). Wrapping it in another dblclick
                handler here would fight the toggle. -->
@@ -548,9 +780,7 @@
               onShareAsset={onShareAsset
                 ? () => onShareAsset(currentItem.asset.id)
                 : undefined}
-              onDeleteAsset={onDeleteAsset
-                ? () => onDeleteAsset(currentItem.asset.id)
-                : undefined}
+              onDeleteAsset={canDeleteCurrent ? openDeleteDialog : undefined}
             />
           </div>
         {:else}
@@ -662,7 +892,18 @@
                   aria-label={t('viewer_playlist.show_asset_n', { n: i + 1 })}
                   aria-current={i === source.cursor ? 'true' : undefined}
                 >
-                  {#if item.asset.file_hash && item.asset.preview_available}
+                  {#if item.restricted}
+                    <!-- #883 — a lock, not the generic empty frame: the
+                         strip is where a viewer counts what is in the
+                         post, so a restricted member must read as
+                         withheld rather than as not-yet-rendered. -->
+                    <div class="flex h-full w-full items-center justify-center bg-surface text-fg-muted/60">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </div>
+                  {:else if item.asset.file_hash && item.asset.preview_available}
                     <img
                       src={colVariantUrl(item.asset.id)}
                       alt=""
@@ -683,12 +924,77 @@
         </div>
       {/if}
     {:else}
-      <!-- Loaded but no items: friendly empty state. -->
-      <div class="flex flex-1 items-center justify-center p-8 text-fg-muted">
-        <p>{t('viewer_playlist.empty')}</p>
+      <!-- Loaded but no items.
+           The message alone used to be the WHOLE of this branch, and
+           that is the other half of #918. Everything a host contributes
+           — the post header, the author, the ⋮ menu with edit / delete /
+           manage access — is threaded in as AssetViewer's Details tool,
+           and AssetViewer is only mounted by the `currentItem` branch
+           above. So a post whose last member was soft-deleted, or one
+           that never had a member (an article, ADR 0073), rendered one
+           grey sentence and nothing else, to its own author included.
+           Ungating the menu inside PostHost cannot help while the pane
+           carrying it is never mounted.
+           So render the host's pane beside the message. Same snippet,
+           same hook key AssetViewer resolves it under — this is the
+           fallback mount, not a second copy.
+
+           Stacks below 640px: side-by-side at 390px left the pane about
+           240px to render a post header, a ⋮ menu and a comment box in,
+           and clipped all three. The message is one line and can sit
+           above it. -->
+      <div class="flex flex-1 flex-col overflow-hidden sm:flex-row">
+        <div class="flex shrink-0 items-center justify-center p-8 text-center text-fg-muted sm:flex-1">
+          <p>{t('viewer_playlist.empty')}</p>
+        </div>
+        {#if emptyHostPane}
+          <aside
+            class="w-full flex-1 overflow-y-auto border-t border-border bg-surface sm:max-w-sm sm:flex-none sm:border-l sm:border-t-0"
+            data-testid="asset-playlist-empty-pane"
+          >
+            {@render emptyHostPane()}
+          </aside>
+        {/if}
       </div>
     {/if}
   </div>
+
+  <!-- #881 — INSIDE the <dialog>, and that is load-bearing.
+       This shell is a native `<dialog open>`, which the browser puts in
+       the TOP LAYER. A fixed-position overlay mounted as a sibling
+       renders beneath it and cannot be clicked: driven in a browser, the
+       request dialog was invisible and every click on its Send button
+       was swallowed by the playlist behind it. A descendant of the
+       <dialog> shares its top-layer stacking context and behaves.
+
+       Keyed on the asset id it was opened for, so walking to another
+       restricted member cannot leave a dialog pointed at the previous
+       one. -->
+  {#if askOpenFor}
+    <RequestAccessDialog
+      assetId={askOpenFor}
+      ownerName={currentItem?.ownerDisplayName ?? null}
+      open={true}
+      onclose={() => (askOpenFor = null)}
+      onsubmitted={() => {
+        if (askOpenFor) askedFor = [...askedFor, askOpenFor];
+      }}
+    />
+  {/if}
+
+  <!-- Same placement rule, same reason (#981, #987): the delete confirm
+       is raised from a menu that lives inside this dialog, so it has to
+       be declared where Modal's portal can find that dialog. -->
+  <ConfirmDeleteDialog
+    open={deleteTarget !== null}
+    kind="asset"
+    title={deleteTarget?.title}
+    askReason={deleteTarget ? shouldAskReason(deleteTarget.ownerRef) : false}
+    busy={deleteBusy}
+    error={deleteError}
+    onconfirm={confirmDelete}
+    onclose={closeDeleteDialog}
+  />
 </dialog>
 
 <!-- Hotkey legend — passed through AssetViewer and rendered as the
@@ -708,20 +1014,34 @@
     <dt class="font-mono text-fg">↑ · ↓</dt>
     <dd class="text-fg-muted">{t('viewer_hotkeys.prev_asset')} · {t('viewer_hotkeys.next_asset')}</dd>
   {/if}
-  {#if onNavigateSibling}
+  <!-- Rows below are filtered by who actually owns the key right now
+       (#885). AssetViewer stops propagation for keys it acts on, so a
+       row that is true for an image is a lie for a video: ← / → step
+       frames there and never reach this component. Same for I, which
+       marks a loop-in on a timeline asset instead of toggling the
+       pane. And while the whiteboard overlay is up AssetViewer bails
+       out entirely — arrows and I come back to the playlist, while F
+       and R belong to the whiteboard (fit / rectangle). -->
+  {#if onNavigateSibling && (whiteboardSession || !isTimelineKind)}
     <dt class="font-mono text-fg">← · →</dt>
     <dd class="text-fg-muted">{t('viewer_hotkeys.prev_post')} · {t('viewer_hotkeys.next_post')}</dd>
   {/if}
-  <dt class="font-mono text-fg">I</dt><dd class="text-fg-muted">{t('viewer_hotkeys.toggle_panel')}</dd>
-  <dt class="font-mono text-fg">F</dt><dd class="text-fg-muted">{t('viewer_hotkeys.fullscreen')}</dd>
-  <dt class="font-mono text-fg">R</dt><dd class="text-fg-muted">{t('viewer_hotkeys.reset_view')}</dd>
+  {#if whiteboardSession || !isTimelineKind}
+    <dt class="font-mono text-fg">I</dt><dd class="text-fg-muted">{t('viewer_hotkeys.toggle_panel')}</dd>
+  {/if}
+  {#if !whiteboardSession}
+    <dt class="font-mono text-fg">F</dt><dd class="text-fg-muted">{t('viewer_hotkeys.fullscreen')}</dd>
+    <dt class="font-mono text-fg">R</dt><dd class="text-fg-muted">{t('viewer_hotkeys.reset_view')}</dd>
+  {/if}
   <dt class="font-mono text-fg">Esc</dt><dd class="text-fg-muted">{t('viewer_hotkeys.close')}</dd>
   {#if isTimelineKind}
     <dt class="col-span-2 mt-1 text-fg-muted/70">{t('viewer_hotkeys.section_playback')}</dt>
     <dt class="font-mono text-fg">Space · K</dt><dd class="text-fg-muted">{t('viewer_hotkeys.play_pause')}</dd>
     <dt class="font-mono text-fg">J · L</dt><dd class="text-fg-muted">{t('viewer_hotkeys.rewind_forward')}</dd>
-    <dt class="font-mono text-fg">, · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward')}</dd>
-    <dt class="font-mono text-fg">⇧ + , · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward_10')}</dd>
+    <!-- ← / → are listed here, not under navigation: on a timeline
+         asset the player claims them for frame stepping (#885). -->
+    <dt class="font-mono text-fg">← · → · , · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward')}</dd>
+    <dt class="font-mono text-fg">⇧ + ← · →</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward_10')}</dd>
     <dt class="font-mono text-fg">1 – 5</dt><dd class="text-fg-muted">{t('viewer_hotkeys.speed_range')}</dd>
     <dt class="font-mono text-fg">G</dt><dd class="text-fg-muted">{t('viewer_hotkeys.goto_frame')}</dd>
     <dt class="font-mono text-fg">I · O</dt><dd class="text-fg-muted">{t('viewer_hotkeys.loop_in_out')}</dd>

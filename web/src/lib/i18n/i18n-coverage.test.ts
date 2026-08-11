@@ -87,6 +87,11 @@ const TRACKED_FILES = [
   'src/routes/admin/system/users/+page.svelte',
   'src/routes/account/profile/+page.svelte',
   'src/routes/admin/fields/+page.svelte',
+  // — #854 the per-field page. Tracked from the day it lands: it is
+  //   where the app explains what a mirrored field is and why its
+  //   column cannot be retargeted, and an operator running in another
+  //   language has to be able to read that. —
+  'src/routes/admin/fields/[code]/+page.svelte',
   'src/lib/components/CollectionFieldsSection.svelte',
   'src/routes/admin/federation/peers/+page.svelte',
   'src/routes/admin/federation/directories/+page.svelte',
@@ -95,10 +100,9 @@ const TRACKED_FILES = [
   'src/routes/posts/[id]/+page.svelte',
   'src/routes/setup/+page.svelte',
   'src/routes/search/+page.svelte',
-  'src/routes/search/advanced/+page.svelte',
   'src/routes/collections/+page.svelte',
   'src/routes/collections/[id]/+page.svelte',
-  'src/lib/components/CollectionModal.svelte',
+  'src/lib/components/Modal.svelte',
   'src/lib/components/SearchBar.svelte',
   'src/lib/components/NavUploadButton.svelte',
   'src/lib/components/UserMenu.svelte',
@@ -113,6 +117,10 @@ const TRACKED_FILES = [
   'src/lib/components/upload/ThumbnailPicker.svelte',
   // — 1.55.W reverse-image dropzone —
   'src/lib/components/search/ReverseImageDropzone.svelte',
+  // — #850 one result surface: the advanced builder became a panel and
+  //   the facet rail became a slide-over —
+  'src/lib/components/search/AdvancedQueryBuilder.svelte',
+  'src/lib/components/search/SearchSlideOver.svelte',
   // — #737 field-options editor —
   'src/lib/components/FieldEditor.svelte',
   // — #774 surfaces whose keys were dead until the resolution guard
@@ -122,6 +130,29 @@ const TRACKED_FILES = [
   'src/lib/components/SimilarAssetsPanel.svelte',
   'src/lib/components/AssetTagBadge.svelte',
   'src/lib/components/FieldValueInput.svelte',
+  // — #881 the request-access loop. Tracked from the start: the
+  //   dialog's copy is the only place the app tells a user what a
+  //   granted request does and does not do, and an operator override
+  //   has to be able to reach it. —
+  // — #880 the share loop. The dialog is the only place the app states
+  //   what a grant does, how long it lasts, and which principal kinds
+  //   are inert, so its copy is exactly the kind an operator override
+  //   has to be able to reach. —
+  'src/lib/components/ShareEntityModal.svelte',
+  'src/lib/components/CardRestricted.svelte',
+  'src/lib/components/RequestAccessDialog.svelte',
+  'src/lib/components/RequestQueue.svelte',
+  'src/routes/account/requests/+page.svelte',
+  'src/routes/admin/requests/+page.svelte',
+  'src/routes/account/trash/+page.svelte',
+  // — #981 the delete affordances. Tracked from the start for the same
+  //   reason as the request-access dialog: the confirm dialog's copy is
+  //   the only place the app states what a delete DOES (it is
+  //   recoverable, it goes to your trash, the owner reads your reason),
+  //   and an operator override has to be able to reach it. The toast is
+  //   the acknowledgement of the same act. —
+  'src/lib/components/ConfirmDeleteDialog.svelte',
+  'src/lib/components/ToastHost.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)

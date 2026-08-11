@@ -126,8 +126,14 @@
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); flushScroll(); session.goPrev(); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); flushScroll(); session.goNext(); }
+    // stopPropagation, not just preventDefault (#885): AssetPlaylist
+    // listens for ← / → on `window` to flip between sibling posts. This
+    // listener is on `document`, which bubbles first, so claiming the
+    // key here keeps the reader's chapter turn from also changing the
+    // post. Same ownership rule as AssetViewer.handleKey: the reader
+    // owns the arrows because it acts on them.
+    if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); flushScroll(); session.goPrev(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); flushScroll(); session.goNext(); }
   }
 
   // Read the iframe's current scroll position. Returns 0 when the

@@ -7,9 +7,1268 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+## [v0.9.0] — 2026-08-11 — Permissions made one rule, deletion made reversible, and the surfaces that were only half there
+
+### Added
+
+- **The feed tells you who made this.** Feed view was a wider grid tile — the same picture, no
+  author, no way to react. It is now a proper post card: whoever made it at the top with their
+  picture and handle, the image at its own shape rather than cropped square, and like, comment
+  and share along the bottom. The ⋯ menu is where it should be (#557).
+
+  Reacting works from the feed now — the heart reflects whether *you* have liked it, and the
+  count moves when you press it. Previously that count could sit stale until the server
+  restarted; it no longer can.
+
+  Someone who has asked not to appear to logged-out visitors still doesn't: their card shows the
+  picture without naming them, rather than quietly making an exception for the feed.
+
+- **The view bar comes back when you reach for it.** The layout, sort and filter controls at the
+  bottom of browse slide away when you scroll down, and used to return only when you scrolled
+  back up — so reaching for a control meant scrolling in a direction you didn't want to go.
+  Moving the pointer toward the bottom of the window now brings them back, and they slide away
+  again when you move off (#1020).
+
+  The bar at the top stays where it is. Tabbing to a control brings the bar back too, and
+  pressing Escape dismisses it. On a touchscreen nothing changes — there is no pointer to
+  approach with, and a hidden strip along the bottom edge of a phone would sit exactly where
+  your thumbs do.
+
+- **You choose which browse layouts your install offers.** All five — grid, masonry, thumbnail,
+  list and feed — were shown to everyone, always. Admin → System → Browse layouts now lets you
+  pick, and the view switcher offers only what you left on (#709).
+
+  Anyone already using a layout you turn off is moved to one that is still on, so nobody lands
+  on an empty page — and their old choice is remembered, so turning that layout back on gives it
+  to them again. At least one layout has to stay on; turning them all off is refused rather than
+  leaving nobody able to browse. An install that never touches this setting keeps all five.
+
+- **You can save someone else's post to your own collection.** Collections could already hold
+  another person's files; posts were the missing half. A post you are allowed to read now has a
+  "Save to collection…" action, and what lands in your collection is a *reference* to their
+  post, not a copy of it (#882).
+
+  Saving a post and saving all of its files are deliberately separate actions on the same menu.
+  Saving the post keeps the author's framing — their title, their description, the order they
+  arranged the images in — as a reference that lives and dies with their post. Saving the files
+  lifts the images out onto your own shelf, where they stay regardless of what the author does
+  next.
+
+  Note that a post card's "Save to collection" previously saved the post's *cover image*. It now
+  saves the post.
+
+  Saving something changes nothing about who can see it. You can only save what you could
+  already read, and putting it in a collection you share does not pass your access on to anyone
+  else. If the author deletes their post, it disappears from every collection that saved it — and
+  if they restore it, it comes back to those collections intact.
+
+### Security
+
+- **A vulnerable copy of a small library no longer ships.** One of the packages bundled into
+  the site pulled in an outdated version of `nanoid` with a known flaw. Five other copies in
+  the same build were already on the fixed version — this one had simply never been refreshed
+  (#1001).
+
+  Nothing about it was reachable through a feature you use; it is the kind of thing found by
+  scanning what ships rather than by anything going wrong. It is now on the fixed version, and
+  the shipped bundle reports no remaining high-severity findings.
+
+- **You can edit a file's details.** Title, description and tags were changeable through the
+  API and through nothing you could click — there was no edit screen, and the card's edit
+  entry was a placeholder that opened a "coming soon" box (#549).
+
+  There is now an edit page, reachable from the card. If someone else changes the file while
+  you have it open, saving tells you rather than quietly overwriting their work.
+
+  Whoever owns a file can also publish, archive or restore it from there. That control only
+  appears to people who can actually use it.
+
+- **Signing in now shows the site in your language straight away.** An account set to French
+  saw English until something else happened to reload the page (#869).
+
+- **A read-only administrator role now exists.** Seven permissions for reading admin
+  screens — federation peers, the access-request queue, licence status, activity history and
+  others — had been defined for months and given to nobody. The only way to let someone read
+  those screens was to make them a full super-administrator, which is the opposite of what
+  those permissions are for (#958).
+
+  There is now an **Auditor** role that holds them. Someone with it can look at those screens
+  and change nothing; they still cannot reach anything a super-administrator does.
+
+  One of the seven was deliberately left out. Approving an access request writes a permission
+  chosen by whoever filed it, and nothing prevents a request asking for super-administrator —
+  so giving that power to a read-only role would have created a way out of it. It stays with
+  the roles that already had it.
+
+  The audit, jobs and storage screens are readable by it too — their permissions had the same
+  gap, and their own notes said all along that they existed for exactly this kind of role
+  (#961). Reading the audit log does **not** include the personal details inside it; that
+  stays a separate permission nobody was given.
+
+  Someone given the job of managing asset-type permissions can now also find the page for it.
+  It was reachable only by a full super-administrator, so the permission could be handed out
+  with no way to use it.
+
+- **Changing a post's small cover picture did nothing, and said it worked.** The field was
+  documented, accepted, and answered "saved" — while leaving the picture exactly as it was.
+  Everything behind it was in place; the one step that actually writes the value had been
+  missed (#946).
+
+  It now saves. And, like the main cover picture before it, you can only point it at a file
+  you are allowed to open — a file you cannot see answers the same "not found" a made-up one
+  does, so it cannot be used to work out which files exist.
+
+- **You could be told you lacked permission when the server simply couldn't tell.** If working
+  out what an administrator was allowed to do failed — a momentary database hiccup was
+  enough — the answer came back looking exactly like "you are allowed nothing", and the
+  admin area told them, in red, that they did not have permission to view the page (#956).
+
+  There was no way to tell that apart from genuinely lacking access: not for the person
+  reading it, and not for our own tests, which is why a nightly failure caused by it took
+  four rounds of investigation to pin down.
+
+  The server now says which of the two it means. Being unable to determine your permissions
+  still shows you nothing you are not entitled to — that part was already right and has not
+  changed — but it now reads as a temporary problem to retry rather than an accusation.
+
+- **You could label a post with a studio you have nothing to do with.** Creating a post let you
+  name any team on the instance as its owner, and nothing checked whether you were in it. The
+  only thing standing in the way was that the team had to exist (#954).
+
+  Nothing became visible that wasn't already — but the label is not just a label. A post
+  attached to a studio can be edited and deleted by the people who manage that studio's work.
+  So the field quietly handed strangers authority over your post, and put your post in their
+  space.
+
+  You can now only attach something to a team you actually belong to, or one you have been
+  given the job of managing. A team that exists but isn't yours answers exactly the same as one
+  that doesn't exist, so the field can't be used to find out which studios are on an instance.
+
+- **You can put your own upload in a team.** Files could belong to a team — the permission
+  rules, the team-only visibility tier and the whole management story were built on it — but
+  there was no way to say so when uploading. Only the sample-data tool could do it, which meant
+  a demo could show something the product could not actually do (#953).
+
+  Uploading now takes an optional team, under the same rule as posts above. A file in a team can
+  be seen by that team when marked team-only, and managed by whoever manages that team's work.
+
+  ⚠️ **This is set when the file is created and cannot be changed afterwards.** Moving a file
+  between teams changes both who can edit it and who can see it, so it needs its own thought
+  rather than being folded in here.
+
+- **A post's cover picture skipped the check its other pictures got.** Naming a file as a
+  post's cover — rather than as one of its contents — was never checked against whether
+  you were allowed to open that file. The contents had been checked since the previous
+  release; the cover had not, on either creating a post or editing one (#941).
+
+  Nothing was ever shown that shouldn't have been: a viewer who isn't entitled to a file
+  still sees a placeholder with its real owner's name. What it allowed was the same
+  **unwanted association** the contents check closed — building your post around someone
+  else's restricted work without their say-so.
+
+  Both paths now apply the same rule, and a file you can't open answers the same "not
+  found" a made-up ID does, so the endpoint can't be used to fish for which files exist.
+  Nothing is written when a cover is refused.
+
+### Fixed
+
+- **Editing the site's code shows your change again (contributors only).** On Windows machines
+  running the development stack, saving a file did nothing: the page kept showing the old code
+  no matter how many times you reloaded, and the only way through was restarting a container.
+  Everyone working on this had absorbed it as "hot reloading doesn't work here" and worked
+  around it for months (#993).
+
+  Hot reloading was never broken. The file watcher simply could not hear about changes, because
+  change notifications do not cross from Windows into the Linux container. It now checks for
+  changes itself instead of waiting to be told, and edits appear as you save them. It also skips
+  the production-build folder while doing so, which on a machine that has built the site once was
+  most of what it was checking (#997).
+
+  This affects contributors' machines only. It changes nothing about the released application.
+
+- **The Undo notice no longer disappears when you delete a file from its own page.** Deleting
+  a file worked, and it went to your bin as it should — but if you had arrived at the file
+  from somewhere else in the app, the confirmation that appears with the **Undo** button was
+  swept away in the same instant the page closed. You were left with no acknowledgement and
+  no one-click way back; the only recovery was to go and find the bin yourself (#991).
+
+  The notice now outlives the page that raised it, on every delete.
+
+- **Your deleted things have a place now.** Anything you delete goes to a trash page in
+  your account, where it shows what it was, when you deleted it, and how long until it is
+  gone for good — and a Restore button puts it back where it was (#937).
+
+  Something removed by an administrator or a team manager shows up there too, but without
+  the button: restoring those needs a request, which is coming next. The page says so
+  plainly instead of pretending the button was forgotten.
+
+  What it never does is show you anyone else's trash, or let the page be used to find out
+  what other people deleted.
+
+- **Studios have a home page now, and you can follow them.** Eleven studios' worth of work
+  was reachable only through admin screens or tag search. There is now a studio directory,
+  and each studio has its own page — its posts, its files, its members (#684).
+
+  Following a studio adds it to a rail beside your feed, so the studios you care about are
+  one click away. Following is just a bookmark: it grants nothing, changes nothing about
+  what you can see, and unfollowing removes only itself (#577).
+
+  What a studio's page shows you is exactly what you could already see of that studio's
+  work elsewhere — restricted pieces stay as placeholders. A studio page never widens
+  anything.
+
+- **One keystroke, one action.** Pressing an arrow key on a video inside a feed both stepped
+  a frame *and* moved to the next post — two things at once, whichever you wanted. The same
+  double-firing hit the info toggle, page-turns in the book reader, and every key while the
+  whiteboard was open, where a shortcut ran the whiteboard's action and the video player's
+  underneath it (#885).
+
+  A key now belongs to the surface that actually uses it: arrows step frames on video and
+  audio, and move between posts on everything else. The whiteboard, while open, owns its
+  keys outright.
+
+  Two advertised shortcuts that never existed now do: `[` and `]` change the brush size on
+  the whiteboard, and Ctrl+F opens Find in the document reader. The shortcuts cheatsheet was
+  corrected to match reality — one entry had been describing the double-firing as intended.
+
+- **When the sample-data step dies in testing, it now leaves a verdict.** An intermittent
+  database crash during our own nightly test runs had gone undiagnosed for weeks because
+  nothing recorded what happened — by the time anyone looked, the evidence was gone. The
+  failure now captures the container's state, the kernel's memory counters and the decisive
+  log lines at the moment it happens, so the next occurrence names its cause instead of
+  starting an investigation (#886).
+
+- **"Oldest first" now actually shows oldest first.** The feed's sort toggle sent its choice
+  to a server that never read it, so both directions returned newest-first. Now the order —
+  and the paging underneath it — genuinely follow the toggle, and scrolling deep in either
+  direction neither skips nor repeats a post (#868).
+
+- **A typo in an upload no longer prints database internals.** Creating a file with a bad
+  type, workflow state or upload reference answered with a raw database-constraint message —
+  the kind of text that names tables and columns to whoever sent the request. All three now
+  answer with a plain sentence naming the field. Nothing else changed (#966).
+
+- **The page now tells assistive tech what language it is in.** A screen reader on a French
+  session was reading French text with English pronunciation rules, because the page still
+  declared itself English. It declares the real language now, the first paint arrives in the
+  right language instead of flashing English, and signing out returns a shared machine to the
+  default rather than leaving the previous person's language behind (#967).
+
+- **Building previews no longer pushes the server into being killed.** A catalogue-wide
+  preview rebuild could take the app to its own memory ceiling and have the kernel
+  terminate it mid-run — leaving half-finished jobs and errors that read as though they
+  came from somewhere else entirely (#887).
+
+  Resizing a picture needs a scratch buffer sized by the **source**, not by the thumbnail
+  coming out of it: a 6780×7071 photo costs 889 MB of scratch to produce its largest
+  preview. Eight workers doing that at once put several gigabytes in memory at the same
+  instant, and Go's collector sizes its own next run against that — so several more
+  gigabytes of already-finished work piled up behind it. A measured rebuild peaked at
+  93.6 % of the ceiling and touched it.
+
+  Resizes now share a memory budget derived from the container's limit, so the cheap ones
+  — nine in ten — never wait and only the expensive ones take turns. The 3D turntable
+  sheet, which resized 36 same-sized frames and threw its buffer away between every one,
+  now keeps one buffer for the set. The same rebuild peaks at 78.8 % and finishes in the
+  same time (158 s against 163 s), and every preview it writes is byte-for-byte the file
+  it wrote before.
+
+  An idle server also holds a gigabyte less afterwards. Once a rebuild finished — no
+  children left running, the Go side collected back down to 165 MB — the container still
+  held **1.02 GB** it never gave back. That memory belongs to the C image encoder, which
+  keeps a separate pool per thread and only ever hands back the first one. Capped at two
+  pools, the same idle server settles at **0.14 GB**, with no measurable cost in time.
+
+- **A container that renders previews for weeks no longer runs out of process slots.**
+  Rendering shells out to ffmpeg, ghostscript, unar and a headless browser, and those
+  spawn children of their own. The app cleaned up the programs it started directly, but
+  the grandchildren they left behind had nobody to collect them: one rebuild ended with
+  328 dead-but-not-collected entries, climbing and never released (#890).
+
+  Nothing visible went wrong until the table filled, at which point the next thing that
+  needed to start a program simply couldn't — a failure that looks like a broken render
+  or a broken upload, not like a leak. A short-lived CI container never lived long enough
+  to notice; the demo box runs for weeks.
+
+  The image now starts a small init process that collects them. The same rebuild ends with
+  none, and a program that fails still reports the exit code it actually failed with.
+
+- **Renaming a file left the old name showing everywhere else.** Editing a file's title
+  or description updated the file — and nothing else. Every post containing it, and every
+  IIIF manifest describing it, went on serving the old text until the server happened to
+  restart (#935).
+
+  This is the same staleness that was fixed for deleting and restoring a file in the
+  previous release, on the path people actually use every day. It survived because
+  attention went to the dramatic operations: deletion looks like it should invalidate
+  things, an ordinary edit doesn't.
+
+  Permanently deleting a file had a related gap. Because the database removes a file's
+  subtitle tracks and post memberships automatically, that cleanup happened in parts of
+  the system that never ran any code — so they kept answering from before the deletion.
+  Those caches are now told explicitly.
+
+- **A public collection handed out its guest list.** Listing the access grants on a
+  collection passed for the owner, for an administrator — and for **anyone at all with
+  an account**, as long as the collection was `public`. Every grant row came back: who
+  the collection had been shared with, at what permission level, by whom, and when it
+  expires (#933).
+
+  Marking a collection `public` is a statement about what is *in* it. It is not a
+  statement about **who the owner individually shared it with** — that is information
+  about the owner's working relationships, and it was reaching people with no connection
+  to the collection whatsoever. Posts settled this same question a while back; the
+  collection surface never got the same treatment.
+
+  Listing a collection's grants now requires **write** access — owner,
+  `collections.admin`, or `system.admin`. Someone who holds only a read grant can still
+  use the collection; they no longer learn who else was let in. The two surfaces now
+  apply the same rule.
+
+- **You could put someone else's restricted work in your post.** Creating a post, or
+  attaching a file to an existing one, checked only that the file *existed* — never that
+  you were allowed to see it. Any signed-in account could name any file on the instance
+  as part of its own post (#922).
+
+  This never exposed the file itself: viewers who are not independently entitled see a
+  placeholder carrying the real owner's name, exactly as before. What it allowed is
+  **unwanted association** — attaching an artist's restricted work to your post without
+  their consent, so that everyone who *is* entitled to see it meets it framed by you.
+
+  Both paths now apply the same rule the collection surface already applied: you may
+  attach a file you can actually read. A file you cannot read answers the same "not
+  found" a made-up ID does, so the endpoint cannot be used to probe which IDs are real.
+  Nothing is written when a member is refused.
+
+- **Anyone signed in could edit or delete anyone's assets.** `PATCH /assets/{id}` and
+  `DELETE /assets/{id}` checked one thing: that you were logged in. Not that you owned
+  the asset, not that you had any standing over it — just that you had an account. Any
+  account could therefore retitle, re-tag, rewrite the metadata of, or soft-delete
+  **every asset on the instance**. Posts have gated on `posts.admin` and collections on
+  `collections.admin` since they were written; assets were the outlier (#930).
+
+  The damage was lopsided. Deleting took an account. **Undoing** took `system.admin` —
+  so one ordinary user could remove a studio's entire library and nobody below a
+  super-administrator could put it back.
+
+  Both endpoints now answer **403**, and the row is untouched. You may edit or delete an
+  asset if you own it, if you hold the new `assets.admin` capability, or if you are a
+  `system.admin`.
+
+- **`assets.admin` — manage a team's files without owning them.** A new capability for
+  the case the owner asked for: *"a concept art director should be able to manage a file
+  of someone on their team"*, while *"members shouldn't be able to change other
+  member['s work]"*. Grant it **scoped to a team** and it covers that team **and every
+  team beneath it** — a grant on a division reaches its squads without granting anything
+  outside the division. Grant it globally and it covers the instance.
+
+  It does **not** confer publication. Changing an asset's `status` is what decides
+  whether a stranger can see the asset at all, so it is a decision about disclosure
+  rather than about content, and it stays with the owner and `system.admin`. A team lead
+  can fix your title; they cannot push your unfinished work live. The same line is drawn
+  for posts: a *team-scoped* `posts.admin` can now manage its team's posts but can
+  neither change a post's `visibility` nor **grant anyone access to it** — both are the
+  same lever reached through different endpoints. (A global `posts.admin` is the instance
+  moderator role and is unchanged.)
+
+  Sharing a team with someone still grants you nothing over their files. Only the
+  capability does.
+
+- **Team-scoped moderators could not moderate.** `posts.admin` was only ever consulted as
+  a *global* grant, so an art director whose grant was scoped to one team could not touch
+  that team's posts. It is now scope-aware, the same way `assets.admin` is.
+
+- **`posts.admin` and `collections.admin` were impossible to grant.** Both existed only
+  as strings inside the server. Neither was ever a row in the capabilities table, and
+  every grant path is foreign-keyed to that table — so granting either one, to a person
+  or to a role, failed outright. The two moderator gates that read them could only ever
+  be satisfied by a full `system.admin`. Both are now real capabilities you can grant.
+  Doing so is still a deliberate act: neither is attached to any role, and seeding a
+  capability gives nobody anything until an administrator hands it out.
+
+### Added
+
+- **You choose which details show on a file's card.** Cards showed one fixed line — the date —
+  and nothing else, however much metadata a file carried. An operator can now mark any metadata
+  field as "show at a glance", and it appears on the card across every view density (#552).
+
+  Values read as words rather than as internal codes: a field set to `pass-1` shows as
+  "Pass 1". Cards with nothing configured look exactly as they did before.
+
+  Files shared from another server now say so, on the card itself — in the grid, the details
+  view and the tooltip. They use the same card and the same layout as local work, because
+  federated content is not second-class; but you can always tell whose it is.
+
+- **Every metadata field now has its own settings page.** Editing a field meant expanding a row
+  inside a nine-column table, with the form, the options list and the tree editor all competing
+  for the same cramped space (#854).
+
+  Each field now opens its own full-width page, which you can link to and bookmark. The list
+  becomes a list again — five columns, three on a phone — and everything that used to be
+  squeezed into a cell has room: the vocabulary editor, the extraction settings, the upload
+  default.
+
+  Several settings that had no screen at all are editable for the first time, tucked into an
+  Advanced section so the everyday ones stay uncluttered. And a field that mirrors a file's own
+  title or description now says so plainly, explaining why it behaves differently instead of
+  leaving you guessing.
+
+- **A file's title and description can no longer disagree with themselves.** Title and
+  description existed twice over: once as the file's own fields, and once as entries in the
+  configurable metadata list. Nothing connected them, so the moment anything wrote to the
+  second one you would have had two answers to the same question and no way to tell which was
+  right (#822).
+
+  They are now one thing. The metadata entry is a window onto the file's real title, not a copy
+  of it — edit either and you are editing the same value. The database itself refuses to store a
+  second copy, so this cannot quietly come back through an import, a script, or a future feature
+  that has not been taught the rule.
+
+  Nobody had hit this yet, which is why it was worth fixing now: there was no divergence to
+  untangle, only one to prevent. Editing a title through the metadata screen also now requires
+  the same permission as editing the file, which was not previously true.
+
+- **Your account has an activity log.** The site has recorded who did what since the first
+  release, and the only way to read any of it was to be a site administrator looking at the
+  whole log. There was no way to answer "when was my account disabled", or "did I really delete
+  that", without asking someone (#600).
+
+  **Account → Activity log** now lists what you have done and what has been done to your
+  account, newest first, as plain sentences — "You deleted an asset", "Your account was
+  disabled" — rather than the raw log an administrator reads.
+
+  It shows the act, not the other person. For something you did, you see the details, because
+  they are yours. For something done to your account you see what happened and when, and
+  nothing else: not who did it, and not the note they wrote about it. That is the same line the
+  bin already draws when it tells you an item was removed without naming the remover — being
+  told about a decision is not the same as being handed the file on it. Sign-in locations stay
+  where they were, on the sessions page, which is the screen that can also end them.
+
+- **Files opened on their own page can be deleted.** The delete entry added earlier in this
+  release only appeared when a file was being viewed inside a post. Open the same file by its own link —
+  a shared URL, a search result, a collection tile — and the entry was missing, for its owner
+  and for moderators alike (#987).
+
+  It is there now, and it behaves the same everywhere: the same confirmation, the same reason
+  box when you are removing someone else's work, the same **Undo**. Deleting a file this way
+  takes you back where you came from, since the page you were on no longer has anything to show.
+
+  The reason it was missing is that the entry had been attached to posts rather than to files.
+  It now belongs to the file viewer itself, so every screen that can show you a file offers the
+  same thing.
+
+- **If a moderator removed your work, you can now ask for it back.** Your bin already showed
+  items someone else removed, but they were a dead end — no way to ask about them, and the
+  reason the remover wrote (which the delete dialog promises you will see) was never actually
+  shown (#931).
+
+  Both are fixed. Each removed item in your bin now shows the reason it was removed, and items
+  you can't restore yourself carry a **Request restoration** button. The request goes to the
+  person who removed the item — only they, or a site administrator, can approve it; approving
+  puts the item straight back. You're notified either way.
+
+  The approval is deliberately narrow: the person asking can never approve their own request,
+  and approving one restores that one item — it grants no lasting permission of any kind.
+
+- **You can delete things by clicking Delete.** The delete entries on files, posts and
+  collections were placeholders — two opened a "coming soon" box and the third was a greyed-out
+  button — so the whole delete-and-restore arc built over the last releases was reachable only
+  through the API (#981).
+
+  All three now work. A confirmation dialog asks first, and when you delete someone else's
+  work — something moderators can do — it also asks for a reason, which the owner will see.
+  Deleting your own work skips that question; nobody needs to explain a deletion to themselves.
+
+  After a delete, a small notice appears with an **Undo** button and a link to the bin, so a
+  slip is one click to take back. And the bin gained a second tab, **Deleted by me**: if you
+  removed a colleague's file, the undo right was yours, but the only bin it appeared in was the
+  owner's — where it showed as not-restorable. Now the person who can undo a deletion can also
+  find it. The new tab lists only your own past deletions and shows no more about each item
+  than the delete itself already did.
+
+- **When the server runs out of memory, it now leaves something to read.** The app was being
+  killed by its own container ceiling roughly eleven times in sixteen hours, and from outside
+  the process there was no way to tell an honest peak from a slow leak — both climb, both die
+  at the ceiling. The previous answer was to raise the ceiling, which turns one of those into
+  "fine" and the other into "the same crash, later" (#888).
+
+  The server now writes a memory line every fifteen seconds carrying three different views:
+  what the Go runtime thinks it is using, what the container is actually charged (the only
+  number that decides whether it gets killed), and a per-command breakdown of the helper
+  programs it has spawned — ffmpeg, ghostscript, headless Chromium and the rest. Those three
+  regularly disagree by gigabytes, and the third is what explains the gap.
+
+  When the container passes 80 % of its ceiling it also writes a heap profile and a full
+  stack dump to a small ring of files that keeps the five most recent and deletes the rest.
+  Nobody has to be watching, and nothing has to be switched on beforehand.
+
+  The boot log now states the memory ceiling actually in force and where it came from, read
+  back out of the running process rather than from what was intended.
+
+  Every part of this is adjustable, and switching it off is one setting — see
+  `AA_MEM_SAMPLE_INTERVAL` and its siblings in `docs/install/config/aa.env.example`.
+  Profiles land in a container-local directory and never under the storage root, because a
+  heap profile contains whatever the server was holding at the time.
+
+- **Publishing can be handed to someone other than the owner.** Making a file live, retiring
+  it, or bringing it back were reserved to whoever uploaded it and to system administrators.
+  A team lead trusted to manage a library could edit and delete files, and could not publish
+  one (#938).
+
+  Three separate permissions now exist, and each covers only the moves it names — publish,
+  archive, un-archive. Someone given the power to retire work cannot use it to make work
+  public, which matters because making a file **live** is what makes it visible to people
+  who are not signed in. That one act always requires the publish permission, by whichever
+  route it is reached.
+
+  The two halves of managing a file are also separated now. Being trusted to publish does
+  not carry the power to rewrite a title, and being trusted to edit does not carry the power
+  to publish. Previously the two came bundled, which is why neither could be delegated on
+  its own.
+
+  ⚠️ **Currently this only works for permissions granted across the whole instance, not for
+  ones scoped to a single team** — nothing yet assigns a file to a team, so a team-scoped
+  grant has nothing to match against. Being fixed (#953).
+
+- **Someone who manages your team's files can now read their details — but still can't
+  open them.** A team lead with permission to edit, delete and restore their team's work
+  was, until now, shown the same blank placeholder as a stranger. They could rename a file
+  they had never been allowed to see, and delete one they had never been shown (#939).
+
+  They now see the **written details** — title, description, tags, the rest of the
+  metadata — for exactly the files they are entitled to manage. They still cannot see the
+  **picture**, not even the blurred preview, and still cannot download the original. The
+  result is a fuller placeholder rather than an open door.
+
+  This deliberately does not turn a management permission into a viewing permission. Those
+  remain separate: being trusted to tidy up a library is not the same as being cleared to
+  look at everything in it, and a great many studios need exactly that distinction for
+  work under embargo or licensed from someone else.
+
+  A permission granted on a parent team reaches the teams beneath it, as it already did
+  everywhere else.
+
+- **You can undo your own delete.** Assets, posts and collections now record **who**
+  deleted them, and restoring is no longer administrators-only: if you deleted it, you
+  can put it back. If someone else deleted it, you cannot — you ask for it back instead,
+  which is the case the owner described as *"users should be able to recover their own
+  deleted files, unless deleted by an admin. Then they would need to request for
+  restoration"* (#931). The request-and-approve flow for that second case is not built
+  yet; #931 stays open for it.
+
+  Whoever could delete a thing can now reverse themselves, including a team lead acting
+  under a scoped `assets.admin`. Anything deleted before this release, and anything
+  removed by the automatic retention sweeper, has no recorded deleter and remains
+  restorable by a `system.admin` only.
+
+- **An asset you cannot open no longer hands you its metadata.** A `restricted` asset
+  owned by someone else refused you its **bytes** — `/file`, `/download` and every
+  `/variants/*` returned 404, correctly, and always had. It then described itself in full
+  through every surface that lists it. `GET /assets/{id}` returned **200** carrying the
+  title, the description, the complete SHA-256, the exact byte size, the original
+  filename and the whole free-form `metadata` blob. Browse returned the same. Search
+  returned the title and description; the autocomplete would **complete that title from a
+  prefix**, letter by letter; and the sensitivity facet counted the asset as
+  `restricted 1`. The card on screen said "restricted" the whole time — the API behind it
+  did not (#899).
+
+  The hash was the sharpest of these. It is a content identifier, so it confirms whether
+  a file you already hold is the same one, and it would have survived any later
+  tightening of the other fields.
+
+  An asset you may not open now returns a **placeholder** carrying exactly three things:
+  its id, a `restricted` marker, and **the owner's display name**. Nothing else — not the
+  title, not the file type, not the dimensions, not the thumbnail blur. Fields are
+  **absent** rather than blanked, so you cannot tell "withheld" from "genuinely empty" and
+  infer from the difference. The same shape now comes back from the single asset, the
+  browse list, a search hit, the similar-assets panel and a post or collection member —
+  one rule, `visibility.FieldsReadable`, in one place, rather than a version of it per
+  surface. Autocomplete is the one exception, and it drops the row instead: a completion
+  *is* the title, so there is nothing to withhold.
+
+  **The row is still there**, which is the half worth stating. Sensitivity gates content,
+  not rows (ADR 0064), so a restricted asset stays in your feed and in your search
+  results as a placeholder with its owner's name on it. That is deliberate: you are meant
+  to be able to tell there is something there you cannot see, or "request access" has
+  nothing to point at.
+
+  **Nothing changes for people who can already open the asset.** Its owner sees their own
+  work in full at every tier, including drafts; so do administrators and the read-all
+  content role the public demo runs on. The facet counts moved with the same rule — they
+  now count what *you* can open, so you still see `restricted 3` for your own work and no
+  longer see a count of other people's.
+
+  The viewer also stops offering a **Download original** button for an asset whose bytes
+  it knows it cannot fetch. The download always 404'd; now it is not drawn.
+
+  No-spec-impact for federation — asset metadata was never sent to peers. **Wire-format
+  change:** the `Asset` schema's `required` list shrank to `id` and `restricted`, because
+  a contract that demands `title` and `file_hash` cannot express a payload that withholds
+  them. Every field a readable asset carried, it still carries.
+
+- **You can only put something in a collection if you can actually see it.** Adding an
+  asset to a collection was authorised against the **collection** — "is this your
+  collection" — and never looked at the asset at all. Anyone who could create a
+  collection could therefore pin any asset on the instance, including one they had never
+  been allowed to view, given nothing but its UUID (#882).
+
+  Adding now requires the asset to be **readable by you**: it has to exist, not be in the
+  trash, and you have to be entitled to its content under its sensitivity tier — the same
+  standard that decides whether a collection member renders for you at all, rather than a
+  second, slightly different rule that could drift from it. Your own work is unaffected at
+  every tier, including drafts.
+
+  **Collecting other people's work still works**, which is the half worth stating: if you
+  can view it, you can collect it. That is the whole point of the feature, and this only
+  removes the cases where you could collect something you could never open.
+
+  It also closes a probe. An asset you cannot read and a UUID that does not exist now
+  produce the **identical** response — same status, same body — so the endpoint can no
+  longer be used to confirm that a guessed asset id is real. Nothing was exposed by the
+  old behaviour: a member you cannot read has rendered as a placeholder carrying only the
+  owner's name since #883. What it leaked was **existence**, and what it broke was the
+  integrity of the collection itself.
+
+  No-spec-impact. Removing from a collection is deliberately unchanged and still needs no
+  readability check: it only un-pins a row from a collection you already own, and gating
+  it would strand a member whose sensitivity was raised after you collected it.
+
+- **Sharing a collection with another instance now shares only the members you own.**
+  A federated share on a collection granted the peer scope over **every** asset in it,
+  and the only ownership check in the system sat on the container: you may share a
+  collection because you own the collection. Nothing then re-checked the contents. The
+  membership lookup that walks collection → asset carried no constraint on who owns the
+  member at all (#893).
+
+  Put someone else's asset in your own collection — which the API already allows, since
+  adding to a collection is authorised against the collection and never against the
+  asset — share the collection with a peer, and the peer was granted scope over an asset
+  that was never yours to share. This matters more than the equivalent mistake against a
+  local reader: a peer is a **separate instance**, which takes its own copy of that
+  decision and can act on it afterwards — there is no single place to take it back.
+
+  A container share now confers scope on a member only if the share's grantor could have
+  shared that member **directly** — they own it, or they hold `system.admin`. That is the
+  same pair of conditions the grant endpoint already enforces, and it is now asked from
+  one place rather than two, so the two answers cannot drift. An asset with no local
+  owner — a federated mirror, a system import — is nobody's to re-share and is refused.
+
+  **Sharing a collection of your own work is unchanged**, which is the half worth
+  stating: the fix is per member, not per collection, so a shared collection still
+  carries every member its grantor owns, and an admin's share still reaches everything.
+  A refusal on this ground carries its own reason — `grantor_not_owner` rather than the
+  misleading "no share row" — so an operator reading a rejection can tell "the grant was
+  never the grantor's to make" from "there is no grant".
+
+  Nothing was exposed in a shipped release: the decision function this fixes has no
+  caller yet — the inbox dispatcher does not consult it, so no inbound activity has ever
+  been admitted or refused by it. The guard lands **before** that wiring and before the
+  change that lets a collection hold someone else's work (#882), so the window in which
+  the hole would have been reachable never opens. No-spec-impact — no wire format
+  changes, and no existing share row is revoked or altered.
+
+- **Three known CVEs stop shipping inside the published image, and the blind spot that
+  let them sit there is closed.** `ip-address` — one **high**, two medium — reached us
+  through puppeteer's proxy-resolution chain in the headless three.js preview renderer.
+  That renderer is not developer tooling: both the release Dockerfile and the
+  local-compose one install `scripts/threejs/package-lock.json` and copy the resulting
+  `node_modules` into the runtime stage, so the vulnerable code was in the artifact an
+  operator would actually run. It is now at 10.4.0, a plain transitive bump — the two
+  direct dependencies, `puppeteer` and `three`, are untouched, and no `overrides` block
+  was needed, because the range `socks` already declares admits the patched version.
+
+  **The reason these sat open is the part worth fixing.** Dependabot raises security
+  *alerts* for any lockfile in the repository, but it only opens a *fix* PR for
+  directories listed in its config — and that config watched four directories, none of
+  them this one. Nothing was ever going to bump it. `scripts/threejs`,
+  `scripts/dogfood/ui` and `seed/scripts` each have their own `package.json` and
+  lockfile and are now watched on the same weekly cadence as `web/`; the two
+  `infra/docker/` images are now watched alongside the root Dockerfile, which the docker
+  updater never covered because it does not recurse into subdirectories. Without that
+  second half the next advisory would have waited exactly as long as these did.
+
+  No behaviour change: the renderer's own smoke test — chromium launching and rendering
+  all ten model formats, which is the code path the proxy chain sits in — passes against
+  a locally built production image. No-spec-impact (#905).
+
+### Changed
+
+- **A search no longer answers with a shelf of things you did not ask about.** The
+  **Featured** rail — the curated strip of collections an operator pins to the hub — sat
+  at the top of the browse page whether or not the page was still browse. Typing into the
+  navbar search box takes you to the same route with a `?q=`, so your results arrived
+  underneath a row of curated collections that had nothing to do with what you typed, and
+  the first thing on screen after a search was the thing you were looking at before it
+  (#908).
+
+  The rail now renders on **unfiltered browse only**. Search results are just the results.
+
+  Nothing else changes about it. An unfiltered browse still opens on the rail for
+  everyone, signed in or not — for a signed-out visitor it is the entire landing page
+  (posts are members-only), which is the case the rail exists for and the one worth being
+  careful about (ADR 0065, #417). Changing view mode, sort direction or the feed pill
+  keeps it, because those rearrange the same set of posts rather than asking a question.
+
+- **Creating a collection no longer asks you a question it already knows the answer to.**
+  The New collection dialog offered four visibility buttons — Private, Org-only,
+  Followers, Explicit share — pre-selected to **Private**, which is precisely what the
+  server picks when you say nothing. It was a required-looking decision, in front of a
+  collection that did not exist yet, whose default was already the safe answer and which
+  is a click away from being changed afterwards from **Edit details** (#914).
+
+  The dialog now asks for a name and a description. It says what you get — collections
+  start private — instead of asking you to choose it.
+
+- **Searching no longer feels like leaving the app.** Everywhere else in artist-alley,
+  work is a wall of tiles: the artwork itself, at the size you chose, with the hover
+  preview and the view mode you were last using. **/search** was the exception. It
+  returned a column of text rows — a title, a line of description, and `score 1.000`
+  beside each one — in a narrow column with a fixed filter rail down the left. The same
+  piece of art you had been looking at as a tile a second earlier came back as a line of
+  type. Search results are now the SAME grid, the SAME cards, and the SAME view modes as
+  browse: grid, masonry, feed, thumbnail. Switch the home feed to masonry and your
+  searches are masonry (#850).
+
+  That was not a styling change. A search hit only ever carried a title, a summary and a
+  blur-up thumbnail — nothing a tile could be drawn from — which is why the page rendered
+  text in the first place. A hit now carries what a card needs: the file type (so the
+  video and 3D badges appear and the hover scrub plays), the responsive image rungs, the
+  recorded dimensions that let a masonry tile reserve its shape before the image loads,
+  and — for a post — its cover art, its like and comment counts and how many pieces it
+  bundles. A collection hit carries its visibility so the tile badges it. **None of that
+  reaches a caller who cannot open the asset**: a restricted result is still a
+  placeholder carrying its id, the marker and the owner's name, and nothing else. The
+  widening went *through* the same permission check the rest of the app uses, not around
+  it.
+
+  Three more things changed with it:
+
+  **The filter rail is gone.** It was a fixed 16rem column that could not fit beside a
+  grid on a phone, so /search scrolled sideways at 390px (#901). Facet counts now open in
+  a panel — the same panel at every width, so there is nothing to retrofit for small
+  screens later — and the kind filter (**Everything / Artwork / Posts / Collections**)
+  sits as chips over the results, where it filters for real and stays in the URL so a
+  filtered result page is a link you can send someone. The facet counts themselves are
+  counts, not controls: the search API accepts no facet filters yet, and the checkboxes
+  that used to sit beside those numbers never filtered anything.
+
+  **The advanced query builder is a panel, not a page.** It used to be its own
+  destination at `/search/advanced`, which made "advanced" a separate *mode* of
+  searching — you left your results, built a query somewhere else, and arrived back at a
+  different page. It now opens over the results you are already looking at and composes
+  the same query. Reverse-image search moved with it. `/search?advanced=1` opens it
+  directly.
+
+  The button beside the navbar search box changed with it. It read **Advanced search**
+  and it has always gone to `/search` — so the label named a page that no longer exists,
+  while the place it opens is now simply where you search. It reads **Search**, and it
+  **carries whatever you have typed in the box** rather than dropping it: a control named
+  after a search box next to it, that navigated away and lost your query, would be a
+  trap.
+
+  **The relevance score is no longer printed on every result.** An artist does not need
+  to be told that their own drawing scored 1.000; the ordering it describes is the
+  ordering on screen. Thumbs-up / thumbs-down feedback is still there, on hover over the
+  tile.
+
+  Results also use the whole window now instead of a ~1150px column, which on a wide
+  display is the difference between five tiles and eleven.
+
+  No-spec-impact for federation. **Wire-format change:** a `/search` hit's `extra` object
+  gained per-type presentation fields, and its `thumbhash_b64` key is now spelled
+  `thumbhash` — the name every other endpoint uses for the same value.
+
+### Added
+
+- **The feed no longer shows you doors you cannot open.** Since #899 and #883, a piece of
+  work you are not entitled to see comes back as a **placeholder** — a tile that names its
+  owner and says, in effect, "there is something here, and it is not for you". It is honest
+  about what exists, and it is what #913's **Request access** button has to sit on. But on
+  an instance where a lot of work is restricted, a feed can be mostly placeholders, and
+  that is a wall of locked doors rather than a gallery. On our own seed data one account's
+  feed was 82 posts of which **27 were entirely placeholders** — a third of the grid.
+
+  So the browse feed **leaves them out by default** (#891 built it, #921 made it the
+  default). The line we settled on, which is why the other screens behave differently: a
+  placeholder belongs where you **asked a question** or **opened a container** — not where
+  you were handed a feed.
+
+  Three things happen in the feed, and the third is the one that took the thought:
+
+  - A restricted item is **left out** of a post rather than drawn as a placeholder.
+  - A post whose items are **all** restricted drops out of the feed entirely. The
+    alternative — an empty card where a post used to be — is worse than the placeholder it
+    replaced.
+  - **Your own posts never disappear.** A post you wrote can contain someone else's
+    restricted work, so the rule above, applied literally, would delete your own post from
+    your own feed. It does not. Your post stays, with its restricted items hidden like
+    anyone else's.
+
+  **Where the placeholders still are, unchanged:** **open** a post and you see them, and
+  can still ask for access. Look inside a **collection** and you see them there too — so
+  you can tell there is restricted work in a project without it flooding your feed. Neither
+  of those is an oversight. The reason an all-restricted post leaves the feed is that an
+  empty card is worse than a placeholder, and hiding the items on the post page itself
+  would put that empty card back on the one screen the rule could not reach.
+
+  It cannot show you anything you could not already see. The rule about what you may read
+  runs first and is completely untouched by this; the feed only decides how much of its own
+  answer to draw.
+
+  **Want them back?** **Settings → Preferences → Feed filters → Show items I don't have
+  access to** restores the old feed exactly, placeholders and all. The trade is stated in
+  the setting's own help text rather than left to be found: **Request access** lives on the
+  placeholder tile, so while that setting is off the button is not in your feed — open the
+  post, or a collection it is in, to ask.
+
+  The setting travels with your account, so it is the same on every device you sign in
+  from, and it applies from the first frame of the page rather than after a flicker.
+
+- **You can now share a post with someone.** Three rounds of work built the whole
+  receiving half of post sharing — an ACL row on a post grants read (#667), the person you
+  share with gets a notification and the post lands on their "Shared with me" (#875), and
+  they cannot enumerate the rest of the guest list (#876). All of it worked, and there was
+  no way to create a grant. `GET/POST/DELETE /posts/{id}/acls` had **zero callers in the
+  frontend**; "Share" on a card copied a link (#880).
+
+  Posts now have **Manage access…**, on the post's own ⋮ menu and on the ⋮ of a post card
+  you authored. It is the same dialog collections have always had, generalised rather than
+  copied — one share surface for both, so the next change lands in one place.
+
+  Three things the dialog does that the collection-only version did not:
+
+  - **You type a username, not a database id.** The field used to be free text
+    placeholdered "id or username", and a username typed into it wrote a row that granted
+    nothing and notified nobody — the grant is keyed on the numeric user ref, which the
+    typed name never matched. The name is now resolved before the grant is written: a
+    typo is an error on screen, not a dead row nobody sees. The list of current grants
+    reads back as names too, so you can tell who you shared with.
+  - **A share can expire.** Never / 1 hour / 24 hours / 7 days / 30 days, or a date you
+    pick. An expired grant stops granting on its own — the read rule checks it, so there
+    is nothing to come back and revoke — and the post drops off the other person's
+    "Shared with me" when it lapses. Expiry was always settable through the API and never
+    offered in the app.
+  - **It only offers grants that work.** The picker used to offer *user*, *role* and
+    *team*. Only *user* confers anything: role and team are ADR 0010 Layer 5 and are
+    unimplemented on both the post and the collection read rule, so those two options
+    recorded a row that looked like access and was not. The dialog now grants to users
+    only. Any role or team row already in a list is still shown, marked as granting
+    nothing yet, rather than quietly hidden.
+
+  Unchanged: who may grant (the author, or `posts.admin` / `system.admin`), what a grant
+  confers, and who may see the guest list. This is an entry point onto the existing rules,
+  not a new one.
+
+- **A restricted item that says "no" now also says "you can ask".** A restricted asset you
+  cannot open renders as a placeholder carrying its owner's name and nothing else (#883,
+  #899). That was the whole of it: the tile stated a refusal and offered no way past it,
+  and the request workflow behind it — a full typed lifecycle with a requester list, an
+  approver queue and a decision dialog — had **no entry point anywhere in the app**.
+  Nothing in the frontend had ever called `POST /assets/{id}/request-access` (#881).
+
+  The placeholder now carries a **Request access** button, on the grid tile and on the
+  restricted member inside a post. It opens a short dialog — an optional line about why
+  you are asking — and files the request. Signed-in viewers only: an anonymous visitor
+  has no account to ask from, so they get the plate as before rather than a button that
+  cannot work.
+
+  **The placeholder still leaks nothing.** The button's label, its aria-label and every
+  word of the dialog are fixed strings plus the owner's display name. The asset's id is
+  posted and never rendered. The rule is the owner's — *"the placeholder should never
+  leak info. Not even title. Only the owner's name."* — and it is now held by a test that
+  takes every string the tile puts in the DOM, attributes included, and requires each one
+  to be on an allow-list, so a field added later fails by default instead of shipping.
+
+- **Someone is told when a request arrives, and the artist can answer it themselves.**
+  Two gaps made "request access" a message into a void even once it could be sent.
+
+  **Nobody was notified.** The only notification in the request lifecycle fired on the
+  *decision*, to the requester. Creating a request pinged no one — the approver queue
+  filled in silence and `/admin/requests` was a page you had to think to visit. A new
+  request now notifies the asset's **owner** and every approver, through the existing
+  notification pipeline, so it inherits your channel preferences and block settings. The
+  notification carries ids and nothing else: no title, no filename, not even the reason
+  you wrote.
+
+  **The owner could not decide it.** Deciding required `share.grant` or `system.admin` —
+  operator capabilities an artist has no reason to hold — so the person with the
+  strongest claim to answer a request about their own work was the one person who
+  couldn't, and every request routed through an administrator who knows nothing about
+  the piece. An asset's owner can now grant or deny requests on their own assets, from a
+  new **Requests for your work** section on **/account/requests**, holding no capability
+  at all. The section appears only when there is something to decide.
+
+  That widening is deliberately narrow. A request names a capability, and that name is
+  chosen by the *requester* — so an owner who could decide any request could be talked
+  into granting `system.admin` from a panel that looks like it is about a picture. An
+  owner can therefore decide only requests naming `content.access.request`, the code the
+  Request access button submits, which grants nothing on its own. Everything else still
+  needs a real approver.
+
+  **Asking twice is not asking twice.** Repeating a request you already have pending
+  returns the one you already sent, rather than filing a duplicate the approver would
+  have to deny. A request that was **denied** does not block a new one: a refusal is
+  final for that request, not for you.
+
+  **What approval does not do — and we say so in the app.** Granting a request records
+  that the owner agreed. It does **not** currently reveal the asset, because there is no
+  way yet to say "this one person may view this one asset" — capability grants have no
+  per-asset scope, and the only capability that opens restricted content opens *all* of
+  it. That is a known deferral (ADR 0064), tracked as #912. Both the request dialog and
+  the decision panel say it in as many words, because a granted request that silently
+  changes nothing would be worse than no button at all.
+
+- **Four more tiles on your account page now lead somewhere.** The grid at
+  **/account** has always drawn every tile it knows about, whether or not the page
+  behind it existed, so a good number of them were a click into a "coming in a later
+  phase" panel. Four of those are now real (#600):
+
+  **Account → Following** lists the people you follow and the people who follow you, on
+  two tabs, with the date each connection started and an *Unfollow* button on your own
+  list. Clicking anyone opens their profile. There is no *remove a follower* button:
+  blocking is how you sever an incoming connection, and that lives on the profile page.
+  Read-only over endpoints that already existed — `GET /users/{ref}/following` and
+  `GET /users/{ref}/followers`, plus `DELETE /users/{ref}/follow` for the button.
+
+  **Account → Keyboard shortcuts** is the cheatsheet, and this is the first time an
+  ordinary signed-in user can reach one: the existing copy sits under **/admin/help**,
+  which shows a "no permission" panel to anyone without an admin capability. It also
+  got considerably longer, because the old list only covered video playback and the
+  search box. It now documents the viewer's navigation keys, the ebook reader, sprite
+  sheets, and the whole whiteboard — tools, clipboard, and zoom — grouped by where each
+  key works, with the caveats spelled out (there is no global shortcut; arrow keys mean
+  two things at once on a video in a feed; the whiteboard's F wins over the viewer's).
+  Every row was checked against the handler that implements it, and rows for keys we
+  never bound were dropped, including the old *Esc = exit fullscreen* line. Operators
+  see the same list at **/admin/help/shortcuts** — it is one catalogue rendered twice.
+
+  **Account → Help & support** points at the documentation site, the cheatsheet above,
+  and the project's issue tracker. It deliberately does not mirror the /admin/help
+  section, because every link there needs an admin capability to open.
+
+  **Account → Access requests** is not new — the page has existed since 1.17.E — but it
+  had no entry in the account menu, so nothing anywhere in the app linked to it. You
+  could only reach it by typing the URL. It now sits next to *Shared with me*, which is
+  its natural pair: one is access someone gave you, the other is access you asked for.
+  Requesting access from an asset you cannot open is still a separate piece of work
+  (#881).
+
+  Still placeholders, because each needs a backend that does not exist yet: bookmarks,
+  drafts, trash, activity log, stats, subscriptions, connected accounts, and AI
+  preferences. No-spec-impact.
+
+- **A post shared with you now tells you, and stays somewhere you can find it.**
+  Since #667 a share genuinely grants read, but nothing announced it and nothing
+  collected it: no notification was sent, and the browse grid shows the walled-garden
+  `org-only` tier whatever you have been granted, so a shared post never appeared in
+  it. Sharing only worked if the sharer separately sent you a link (#875).
+
+  Two things change. Granting a person read on a post now sends them a notification —
+  *A post was shared with you* — naming the post and linking straight to it, delivered
+  through the same channel preferences and block rules as every other notification, so
+  you can mute it in Account → Preferences like any other event. And **Account → Shared
+  with me** is a new page listing every post someone has given you access to. Access
+  that lapses or is revoked drops off that page immediately; there is nothing to tidy
+  up. Grants to a `role` or `team` name no single recipient and notify nobody, matching
+  the fact that they do not grant read yet either.
+
+  The browse feed is deliberately unchanged. Shares are few and important, which makes
+  them worth announcing rather than burying in the busiest grid in the app — every
+  comparable tool reaches the same conclusion. New endpoint
+  `GET /account/shared-posts` returns the same `PostList` shape as the feed; new
+  notification verb `post_shared_with_me`. (Finding a shared post by *search* was a
+  separate rule that did not honour grants; that is fixed below, in the same release,
+  by #873.) No-spec-impact.
+
+### Fixed
+
+- **Deleting an asset now removes it from the posts it was in.** Deleting an asset
+  reported success, and the asset really was deleted — its bytes stopped being served and
+  it left the browse grid. But every **post** that included it went on showing it: the
+  title, the description, the full SHA-256, the byte size, the dimensions, the metadata.
+  Not a stale thumbnail — the whole record, served fresh on every request, to everyone,
+  indefinitely. Restarting the server was the only thing that cleared it (#920).
+
+  The database was right the entire time; the query that lists a post's contents has
+  always skipped deleted assets. What was wrong is that deleting an asset never told the
+  posts holding it that their cached copy was now wrong, because deleting an asset does
+  not touch any post. Now it does, and so does **restoring** one — restore had the mirror
+  image of the same fault, where an asset you brought back stayed missing from its posts
+  until a restart.
+
+  Worth stating plainly: for as long as a post outlived the asset in it, "delete" did not
+  mean deleted anywhere someone was looking at that post. No-spec-impact; no wire-format
+  change.
+
+- **Sharing something with a username no longer silently does nothing.** `POST
+  /posts/{id}/acls` and the collection equivalent take a `principal_id`, and that field
+  wants a numeric user **reference**, not a name. Passing a username — the obvious thing
+  to pass — was accepted, stored, and answered **204 No Content**, exactly as a successful
+  share does. Nothing was shared. The row could never match anyone, the person was never
+  notified, and there was no way to tell from the outside: the grant appeared in the
+  access list looking real (#916).
+
+  The API already knew. The notification step parses the same value, and when it failed to
+  it wrote a line to the server log and returned — after the useless row had been written.
+  It now rejects the request with **400** and says what the field wants, and writes
+  nothing.
+
+  The same check covers asset-type ACLs, where a role or team id must be a UUID.
+
+  **`role` and `team` grants on a post or collection are now refused** rather than stored.
+  They were in the same position as a username: recorded, and matched by nothing, because
+  group-based access to content is not built yet. They now return 400 saying so. Grant to
+  individual users instead. (Asset-type ACLs are unaffected — role and team work properly
+  there and continue to.)
+
+- **A post with nothing attached to it now opens.** Not "renders badly" — did not open at
+  all. It showed a loading shimmer, forever, on a blank screen: no title, no description,
+  no comments, no author, and for its own author no **Edit post**, no **Delete post** and
+  no **Manage access**. Behind that shimmer the page was re-requesting the post as fast as
+  the network would carry it — **over 1,600 requests in six seconds**, measured, for as
+  long as the tab stayed open (#918).
+
+  Two faults stacked, and it took both to hide either. The post loader skipped a re-fetch
+  when it was already showing the post you asked for **and had at least one item to show**;
+  for a post with no items that second half was never true, so it re-fetched, which
+  re-rendered, which re-fetched. And every scrap of post detail — the header, the author,
+  the ⋮ menu — is contributed by the viewer's details panel, which the shell only mounts
+  when there is an item to view, so the empty state was a single grey sentence and nothing
+  else.
+
+  A post reaches this state without anyone doing anything strange: its last attachment gets
+  deleted, or it never had one (a text post, ADR 0073). It now loads once and renders the
+  post — description, likes, comments, and the author's own full menu — beside a plain "no
+  assets in this playlist".
+
+- **The ⋮ menu on a post no longer keys off how many items the post has.** The whole menu
+  was drawn only when there was at least one visible item. The guard was about the
+  **items**; the menu is about the **post**. The actions that operate on the contents (add
+  all to a collection, download all, tag all) are still hidden when there are no contents.
+  Everything that operates on the post — edit, delete, **Manage access** — stays (#918).
+
+- **Share is no longer offered on a collection that is not yours.** The action toolbar's
+  owner-only block closed one button early, so **Share** was drawn for every reader.
+  Clicking it opened the dialog, and the server — correctly — refused with *"not the
+  collection owner"*, which since #915 is now visible rather than silent. Nothing leaked;
+  it was simply an offer that could not be accepted, and the refusal was the first anyone
+  heard of it. Share now follows the same ownership rule as Edit and Upload here. **Copy
+  link** is unchanged for everyone: if you can open a collection, you can link to it
+  (#918).
+
+- **A post you can read is now a post you can find.** Search asked a narrower question
+  than the feed did. Browse, `GET /posts/{id}` and the post-by-asset lookup all applied
+  the real rule — your own posts at every tier, public and **org-only**, `followers`
+  posts by people you follow, `private` posts if you moderate, and anything explicitly
+  **shared with you** — while `/search`, the search **facets** and the search-box
+  **autocomplete** applied only "public, or written by me". Everything else was dropped
+  from your results. No error, no message, no empty state that explained itself; the
+  post was on your feed and simply did not exist as far as search was concerned (#873).
+
+  `org-only` is the default tier for a post, so in practice most of the corpus was
+  unfindable. Typing a post's exact title returned nothing. The tag counts beside your
+  results were computed the same way, so a tag that appears only on org-only posts read
+  `0` or went missing entirely — and an undercount looks exactly like a correct count.
+  Autocomplete would not complete a title it had no business hiding.
+
+  All four surfaces now compose **one expression of the rule**, in one place, so they
+  can no longer answer differently. **This widens what search returns.** It returns more
+  posts than it did — specifically, the posts you could already open from your feed and
+  from their own page. It does **not** widen who may read a post: a post becoming
+  findable does not make its restricted members' fields readable, an expired share still
+  grants nothing, and administrators' trash view still applies the same authorization it
+  did before. Nothing became readable that was not readable yesterday; things you could
+  read became reachable through the search box. No-spec-impact for federation.
+
+- **The app container's memory ceiling was too low, and it was killing itself.** On
+  our own CI host the app process was OOM-killed by the kernel roughly once every 90
+  minutes — eleven times in sixteen hours — always against the container's *own*
+  ceiling, never because the machine was short of memory (that host had 40 GiB free
+  throughout). A process that dies mid-render leaves connection errors, half-written
+  data and timeouts behind it, so this was showing up as a scatter of unrelated-looking
+  failures rather than as one problem.
+
+  **The ceiling changed, so operators who did not set it get a new default:**
+  `AA_APP_MEM_LIMIT` is now **8g**, up from 4g. Measuring a ~150-asset preview render
+  storm put the peak at **5.4 GB** — which the old 4 GB default cannot hold at all, so
+  any instance that renders previews was relying on the kernel's mercy. `mem_limit` is
+  a ceiling and not a reservation, so a machine that never reaches it gives up nothing.
+  If you pinned `AA_APP_MEM_LIMIT` yourself, your value still wins, and 4g is now known
+  to be too small for preview work.
+
+  **`AA_GOMEMLIMIT_RATIO` has been 0.9 and is now 0.8** — the share of that ceiling
+  handed to the Go runtime. The reserve is not spare change: preview rendering shells
+  out to ffmpeg, ghostscript, ImageMagick and a headless-browser 3D renderer, all of
+  which live inside the same container and were measured holding a full **1.0 GB** at
+  peak, none of it visible to the Go runtime's own accounting. 10 % of the ceiling
+  never covered that.
+
+  **And `AA_GOMEMLIMIT_RATIO` now actually does something in Docker.** It was
+  documented as a knob but was never passed into the app container, so setting it had
+  no effect on any containerised deployment — the process never saw the variable. It is
+  forwarded now (#887).
+
+  The peak itself is untouched by any of this: 3.3 GB of it is live, in-flight render
+  buffers that no garbage collector can shrink. Bounding *that* is a separate piece of
+  work. No-spec-impact.
+
+- **Two account tiles were filed as unbuilt long after their pages shipped.** *Saved
+  searches* and *Messages* were still marked "not built yet" in the account menu's
+  registry even though both pages had been working for releases. **Nothing on screen
+  changes** — the tile grid never filtered on that flag, so both tiles were already
+  visible and already opened their real pages. This is bookkeeping, not a feature, and
+  it is listed only because the flag now has teeth: a tile claiming to have a page is
+  checked against the actual route tree on every test run, so the next tile that
+  ships — or that is marked ready a release early — fails the build instead of waiting
+  for someone to click it and get a 404. Three tiles carried a wrong flag for a full
+  release with no signal at all (#600). The `mscrnt/artist-alley` GitHub links on the
+  admin help pages, left over from the move to the `Artist-Alley-Org` organisation, now
+  point at the current URLs. No-spec-impact.
+
+- **Sharing a post no longer shows the recipient the rest of the guest list.** Wiring
+  grants into the read rule (#667) had a side effect nobody wanted: `GET
+  /posts/{id}/acls` let anyone who could read a post list its grants, so sharing a post
+  with one person disclosed to them everybody else it was shared with, who granted each
+  one, and when each expires (#876). Any signed-in user could do the same for any
+  `org-only` post.
+
+  Listing a post's grants now requires the ability to edit the post — its author, or an
+  administrator. Who a post is shared with is management information about the post,
+  not part of its content, which is the line collections have always drawn. Nothing
+  about reading a shared post changes: the share still works, the post still opens, and
+  it still appears on your *Shared with me* page. No-spec-impact.
+
+- **Sharing a post with someone now actually shares it.** Granting a person read on
+  one of your posts (`POST /posts/{id}/acls`) recorded the grant, listed it back, and
+  changed nothing whatsoever for the person you granted it to (#667). The post stayed
+  missing from their browse list and `GET /posts/{id}` still refused it, because no
+  read path had ever consulted the grants table — share was a button that stored a row.
+
+  A live grant now opens the post on both read paths at once: the link you send opens
+  for them, and `GET /posts` hands the post back when asked for the tier it sits in.
+  Grants are purely additive, per ADR 0010 Layer 6 — a share can only ever open a post
+  that was closed, never close one that was open, and nothing you can see today becomes
+  invisible. `expires_at` works as advertised, so a time-boxed share stops granting the
+  moment it lapses without anyone having to revoke it. Grants to a `user` principal are
+  what read paths honour; `role` and `team` principals can still be recorded but do not
+  grant yet, exactly as for collections.
+
+  One thing a share still does not do, unchanged by this and tracked separately: it
+  does not put the post in the recipient's default browse grid (that feed shows the
+  walled-garden `org-only` tier and only that, whatever you have been granted).
+  Searching for it *does* now work — #873, later in this same release, made the search
+  rule the browse rule. No-spec-impact.
+
+- **Admin pages no longer accuse administrators of lacking permission.** Opening an
+  `/admin` page directly — a bookmark, a pasted link, a reload — showed a red *"You
+  don't have permission to view this page."* panel for a moment before the page
+  appeared (#871). Nothing was actually denied and no action ever failed; the console
+  simply asked the server *who are you* and *what may you do* as two separate
+  questions, decided what to show the instant the first answer arrived, and had to
+  correct itself when the second one landed. On a slower connection the wrong answer
+  was on screen long enough to read, and long enough to file a bug about.
+
+  Your permissions now arrive with your session, in the same response, so there is no
+  moment at which the console knows who you are but not what you may do. The dedicated
+  `GET /auth/me/capabilities` endpoint is unchanged and still published — this changes
+  when the console learns the answer, not what the API offers. Wire change:
+  `CurrentUser` (returned by `/auth/me`, `/auth/login` and `/auth/register`) gains a
+  `capabilities` array of your global capability codes. No-spec-impact.
+
+- **Your default browse view is now the view you get.** Account → Preferences has
+  offered a home tab, a browse layout and a browse sort since 1.17.G. All three saved,
+  survived a restart, and were read by nothing: browse hydrated purely from that
+  browser's `localStorage`, so the setting changed what the preferences page said and
+  nothing else (#706).
+
+  They now seed the browse view — and only seed it. The rule is *explicit local choice
+  beats the account preference beats the built-in default*: a device that has never had
+  its view changed by hand opens in your account's layout, tab and order, while a device
+  where you picked masonry stays on masonry through reloads even if the account says
+  grid. Changing the view while browsing is still a local act and never rewrites the
+  account setting; that stays a deliberate visit to the preferences page. Signing in
+  applies the settings immediately, without a reload. `feed` — the single-column layout
+  phones already default to — is selectable as an account default for the first time.
+  No-spec-impact.
+
+- **Preferences no longer offer views the server cannot produce.** The home-tab picker
+  listed **Trending** and **For you**; the sort picker listed **Popular** and
+  **Trending**. None of the four existed anywhere behind the API — `GET /posts` accepts
+  only `latest` and `following` and takes no ranking parameter at all — so choosing one
+  saved a durable preference, flashed "saved", and left you on the plain latest feed
+  under a label that promised otherwise (#736). All four are gone; the remaining options
+  are exactly what the app can serve. Ranking is a feature that needs a model, not a
+  label, and a guessed one is worse than none.
+
+  An account that already stored one of the removed values is not an error. The stored
+  string now reads back as "use default", on both the preferences page and the browse
+  view, and saving anything clears it for good.
+
+- **Your theme follows your account, not just your browser.** The light / dark / system
+  choice was written to a cookie and read back from it, so it stopped at whichever
+  browser made it — signing in somewhere new put you back on the default, and the
+  per-user `theme` the API had been returning all along was read by nothing (#677). The
+  choice is now saved to your account and adopted by any device that has not been set
+  by hand, with the same precedence as the browse settings: a browser where you have
+  explicitly picked a theme keeps it.
+
+  The cookie remains what actually paints the page, so there is no flash of the wrong
+  theme: when a new device adopts your account's theme it writes the cookie too, and
+  every load after the first resolves before the first paint. "System" is now stored as
+  its own value rather than as the absence of one, so an explicit *follow my OS* travels
+  between devices instead of being mistaken for never having chosen (migration `00033`).
+  No-spec-impact.
+
 ## [v0.8.0] — 2026-08-03 — Operator configuration: field vocabularies, tree editor, site text, and email templates
 
 ### Security
+
+- **Putting someone's work in a post or collection no longer makes it more visible.**
+  A post carried a complete asset record for every member, gated by nothing. A
+  collection carried the same fields flat. So attaching a **restricted** asset to a
+  **public** post published its title, its description, its file extension, its exact
+  byte size, its free-form metadata blob — EXIF, including GPS coordinates — and its
+  thumbhash, which is a blurred rendering of the actual picture, to anyone who opened
+  the post. Anonymous visitors included, for whom that asset does not exist at all
+  anywhere else on the site (#883).
+
+  A member you may not see is now a **placeholder**: a lock, the word *Restricted*, and
+  the owner's display name. Nothing else. Not the title — that is the whole point, and
+  it is why the fields are **absent** from the response rather than blanked, so there is
+  no empty-versus-withheld difference to read anything off. The permitted key set is a
+  closed list — the membership row's own columns, a `restricted` flag, and
+  `owner_display_name` — checked by a test that asserts the payload is a **subset** of
+  it. No column of the asset record can cross that boundary, including one added next
+  year; denylisting the fields we know about today is exactly how the SSO `config` blob
+  leaked credentials, two entries down this list.
+
+  The placeholder is **visible, not hidden**. Dropping the member from the list would
+  have been the smaller change and it is the wrong one: it conceals that a restriction
+  exists, and there would be nothing to attach "request access" to (#881, next).
+
+  Who sees a member is now decided in one place for the three surfaces that expose one —
+  post contents, collection contents, and IIIF collection manifests — and it is the
+  conjunction of the two rules an asset already lives under: could you have opened that
+  asset on its own, **and** are you entitled to its content tier (ADR 0064). The IIIF
+  manifest was leaking a restricted member's title as its label to every signed-in
+  caller; the check there had only ever run for anonymous ones. It now omits such
+  members rather than showing a placeholder, because a IIIF collection's entries are
+  links that viewers follow and a placeholder would be a broken one.
+
+  **Search counted them too, which is worse than showing them.** A post's search
+  document absorbed the text of every member, so a public post containing a restricted
+  asset was returned for a phrase that appeared only in that asset's title. Nothing in
+  the response named the asset — the *result count* was the tell, and a stranger could
+  walk a title token by token off it without ever being shown a field. Post documents
+  now include only members that everyone can see, and — separately, because a filter is
+  only worth as much as its refresh — a post's document is now rebuilt when a member
+  asset is restricted, unpublished or renamed, which nothing did before. Renaming an
+  asset used to leave every post containing it matching the old name indefinitely.
+
+  Wire-format change: `PostMember.asset` is absent on a restricted member and
+  `PostMember.restricted` is new; `CollectionResource`'s asset-derived fields moved out
+  of `required` for the same reason and gained the same flag. On a member you *can* see,
+  every one of those fields is sent exactly as before.
 
 - **postcss bumped past a path-traversal advisory.** The web build's copy of `postcss`
   was 8.5.17, which auto-loads source maps in a way that can be pointed at files outside

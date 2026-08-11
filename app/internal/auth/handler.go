@@ -24,6 +24,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -500,6 +501,11 @@ func (h *Handler) loginViaRegistry(
 		Usergroup:  user.Usergroup,
 		AuthMethod: "session",
 	})
+	// Signing in IS the moment a cross-device preference has to prove
+	// itself — it is the first thing a user does on a second machine.
+	// Sign-in is a client-side navigation, so this response is the only
+	// chance to deliver these before the browse page paints.
+	h.hydrateSessionUser(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -615,6 +621,9 @@ func (h *Handler) loginInlinePassword(
 		Usergroup:  user.Usergroup,
 		AuthMethod: "session",
 	})
+	// Same as the password path above — a provider sign-in lands a user
+	// on a fresh device just as often, so it needs the same payload.
+	h.hydrateSessionUser(ctx, user.Ref, &current)
 	return loginSetCookieResponse{
 		token:       token,
 		sessionDays: h.SessionDays,
@@ -768,29 +777,279 @@ func (h *Handler) GetCurrentUser(
 		}
 	}
 
-	// Pull language + theme from the user's profile so the frontend
-	// can hydrate the language store + theme on the first paint
-	// without a separate round-trip. One small SELECT; the row is
-	// missing entirely for users who haven't created a profile yet,
-	// in which case both prefs default to empty (= "follow system").
-	var lang, theme string
-	err := h.Pool.QueryRow(ctx,
-		`SELECT COALESCE(language, ''), COALESCE(theme, '') FROM user_profiles WHERE user_ref = $1`,
-		id.UserRef,
-	).Scan(&lang, &theme)
-	if err == nil {
-		if lang != "" {
-			l := lang
-			cu.Language = &l
-		}
-		if theme != "" {
-			t := openapi.CurrentUserTheme(theme)
-			cu.Theme = &t
-		}
-	}
-	// pgx.ErrNoRows is fine; we leave the fields nil.
+	h.hydrateSessionUser(ctx, id.UserRef, &cu)
 
 	return openapi.GetCurrentUser200JSONResponse(cu), nil
+}
+
+// hydrateSessionUser fills every field on a CurrentUser that does not
+// come straight off the Identity: the stored preferences (language,
+// theme, default views) and the caller's resolved capability set.
+//
+// THIS is the one function every CurrentUser producer calls. It exists
+// so that "did this endpoint remember to populate X?" is a question
+// with one answer for all of X, rather than one answer per field. Both
+// halves of it were shipped incomplete exactly once — the preferences
+// in #706, the capabilities in #871 — and in both cases the endpoint
+// that forgot was the one nobody thought of as a session endpoint. A
+// new field on CurrentUser belongs behind this call, not at the call
+// sites.
+func (h *Handler) hydrateSessionUser(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	if h.Pool == nil || cu == nil {
+		return
+	}
+	h.hydrateAccountPrefs(ctx, userRef, cu)
+	h.hydrateCapabilities(ctx, userRef, cu)
+}
+
+// hydrateCapabilities fills CurrentUser.capabilities with the user's
+// resolved GLOBAL capability codes (#871).
+//
+// Why this rides the session response at all: the SPA's auth store
+// flips `ready` the moment /auth/me or /auth/login resolves, and the
+// admin shell's gate reads `ready` and the capability set in the same
+// breath. Capabilities that arrive on a second request
+// (GET /auth/me/capabilities) therefore arrive strictly after the gate
+// has already decided, and the gate's answer without them is "you
+// don't have permission" — shown to a real administrator, in red,
+// until the follow-up landed and it silently corrected itself. There
+// is no ordering fix for that on the client; the only fix is for the
+// answer to be in the response the decision is made from.
+//
+// The context short-circuit is not an optimisation detail, it is the
+// correct source: on /auth/me the resolver middleware has ALREADY
+// resolved this exact set for this exact request (and cached it), so
+// re-deriving it from the DB would be both slower and a second chance
+// to disagree with the identity the request is actually running as.
+// It is guarded on the ref matching because POST /auth/login is
+// reachable while holding somebody else's cookie — there the refs
+// differ and we fall through to the query, which is what makes the
+// response describe the account that just signed in rather than the
+// one that was already signed in.
+//
+// Scoped (per-team) capabilities are deliberately excluded. The wire
+// field is a flat list of codes with no room to say "…but only inside
+// team X", and a scoped code flattened into it would read as global —
+// i.e. the UI would offer a control that 403s. Global-only is the
+// shape GET /auth/me/capabilities already publishes.
+//
+// Still best-effort, matching hydrateAccountPrefs: a failed lookup does
+// not fail the session call. Failing the call would be worse than the
+// bug — /auth/me is the boot gate for the WHOLE app, so a capability
+// blip would lock a user out of the browse page rather than out of
+// /admin.
+//
+// What changed in #956 is not the direction, it is the expressiveness.
+// Failing closed on rights is right and stays; the response now also
+// says WHICH closed door the client is looking at, via
+// `capabilities_status`:
+//
+//   - resolved   — `capabilities` is authoritative. An empty list means
+//     the account genuinely holds nothing.
+//   - unavailable — the lookup failed. `capabilities` is omitted and
+//     carries no information about this account.
+//
+// Before that field, those two were one wire shape. A transient
+// resolver error handed an administrator an empty capability set, and
+// web/src/routes/admin/+layout.svelte rendered "You don't have
+// permission to view this page." — a sentence that is true for a
+// powerless account and false for a database blip, with nothing on the
+// wire to tell them apart. Neither the operator reading the panel nor a
+// test asserting on it could distinguish them, which is why the nightly
+// that hit this took four triage passes to narrow. The client still
+// grants nothing on `unavailable`; it just stops calling it a
+// permission decision.
+//
+// EVERY branch below assigns the status. That is the invariant this
+// function owns: `CurrentUser.CapabilitiesStatus` is a required wire
+// field whose Go zero value ("") is not a member of the enum, so a
+// branch that returns without setting it ships an invalid response.
+// TestSession_CapabilitiesStatusOnEveryProducer pins it.
+func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	if id := IdentityFromContext(ctx); id != nil && id.UserRef == userRef && id.Capabilities != nil {
+		caps := append([]string{}, id.Capabilities...)
+		cu.Capabilities = &caps
+		cu.CapabilitiesStatus = openapi.Resolved
+		return
+	}
+	caps, err := New(h.Pool).EffectiveCapabilitiesForUser(ctx, userRef)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.caps.session_hydrate.error",
+				slog.Int64("user_ref", userRef), slog.String("err", err.Error()))
+		}
+		// Leave Capabilities nil. `unavailable` is what makes that
+		// absence mean "unknown" rather than "none" — an empty slice
+		// here would be a claim we cannot support.
+		cu.CapabilitiesStatus = openapi.Unavailable
+		return
+	}
+	if caps == nil {
+		caps = []string{}
+	}
+	cu.Capabilities = &caps
+	cu.CapabilitiesStatus = openapi.Resolved
+}
+
+// hydrateAccountPrefs fills the four stored-preference fields on a
+// CurrentUser: language, theme, default views, and feed filters.
+// Reached through [Handler.hydrateSessionUser], which is what producers
+// call.
+//
+// EVERY endpoint that returns a CurrentUser must call this, and that
+// is the whole reason it is a method rather than four lines inlined in
+// /auth/me. `CurrentUser` is one schema used by both /auth/me and
+// /auth/login, so a login response that omits these fields is not a
+// smaller response — it is the declared schema, returned with three
+// documented fields silently empty.
+//
+// That is exactly what shipped and what #706 review caught: the browse
+// store and the theme store both read these off the session, both
+// correctly no-opped when they were absent, and the account
+// preferences therefore did not apply until the user happened to
+// trigger a full page load. `language` had the same hole and nobody
+// had noticed, because a locale that only takes effect on the second
+// page load looks like a slow render rather than a bug.
+//
+// The frontend cannot paper over this with a follow-up /auth/me: the
+// point of carrying the fields on the session response is that they
+// arrive BEFORE first paint, and a second round-trip lands after it.
+//
+// The anchor sub-select is what makes the two LEFT JOINs safe: a user
+// can have preferences without a profile row or the reverse (they are
+// written by different surfaces), and joining from either table would
+// drop the other's values whenever its own row happens to be missing.
+// Anchoring on the ref means exactly one row comes back, with NULLs
+// standing in for whichever side has nothing yet.
+//
+// Best-effort by design. These are render hints on the call that gates
+// the entire app, so a failure leaves them nil and the client falls
+// back to its built-in defaults — it never fails the login or the
+// session check.
+//
+// One producer deliberately does NOT go through hydrateSessionUser:
+// setup.Handler's /setup/complete, which mints the very first admin.
+// It lives in another package and would need an auth-handler
+// dependency plumbed in to fill a response the client immediately
+// discards — the setup page calls auth.refresh() (i.e. /auth/me) the
+// line after it lands, so the session the operator actually browses on
+// is fully hydrated regardless. It is still a real omission rather
+// than a provable no-op: /setup/complete commits the admin's role
+// assignment before it builds the response, so the capability list it
+// leaves absent is one that exists.
+//
+// What #956 changed is that the omission is now DECLARED. That handler
+// sets capabilities_status: unavailable, so anything that ever starts
+// reading its body as a session gets "this response cannot tell you
+// your rights" — a retry — instead of a silently empty set that the
+// /admin gate would render as "you don't have permission". It is also
+// why that status field is required rather than "absent means
+// unknown": `capabilities` is legitimately absent there while the
+// account demonstrably holds things, so absence alone could never have
+// carried the meaning.
+func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
+	var lang, theme string
+	var viewsJSON, filtersJSON []byte
+	err := h.Pool.QueryRow(ctx, `
+		SELECT COALESCE(p.language, ''),
+		       COALESCE(p.theme, ''),
+		       COALESCE(up.default_views, '{}'::jsonb),
+		       COALESCE(up.feed_filters, '{}'::jsonb)
+		FROM (SELECT $1::bigint AS user_ref) k
+		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
+		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
+		userRef,
+	).Scan(&lang, &theme, &viewsJSON, &filtersJSON)
+	if err != nil {
+		// pgx.ErrNoRows is fine; we leave the fields nil.
+		return
+	}
+	if lang != "" {
+		l := lang
+		cu.Language = &l
+	}
+	if theme != "" {
+		t := openapi.CurrentUserTheme(theme)
+		cu.Theme = &t
+	}
+	if v, ok := decodeDefaultViews(viewsJSON); ok {
+		cu.DefaultViews = &v
+	}
+	if f, ok := decodeFeedFilters(filtersJSON); ok {
+		cu.FeedFilters = &f
+	}
+}
+
+// decodeFeedFilters parses the user_preferences.feed_filters blob into
+// the wire type (#891). Reports false when every key is at its zero
+// value, so /auth/me omits the object for the overwhelming majority of
+// accounts rather than shipping an object of falses — which is also what
+// keeps this key invisible to every session on the build's defaults.
+//
+// #921 inverted the default and this held with no change of SHAPE, only
+// of which accounts are the majority: the key is now `show_restricted`
+// and it is still the opted-IN accounts that carry an object. Preserve
+// that. "Omit when nil-or-false" is what makes an absent object and a
+// default account the same fact on the wire.
+//
+// Same "render hint, never fail the call" posture as decodeDefaultViews
+// above, and for the sharper reason: this field's whole job is to let
+// the browse page EXPLAIN its feed. Failing /auth/me over an unreadable
+// preferences column would lock the user out of the page where they
+// could change the setting.
+func decodeFeedFilters(raw []byte) (openapi.UserPreferencesFeedFilters, bool) {
+	var f openapi.UserPreferencesFeedFilters
+	if len(raw) == 0 {
+		return f, false
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return openapi.UserPreferencesFeedFilters{}, false
+	}
+	if f.ShowRestricted == nil || !*f.ShowRestricted {
+		return openapi.UserPreferencesFeedFilters{}, false
+	}
+	return f, true
+}
+
+// decodeDefaultViews parses the user_preferences.default_views blob
+// into the wire type, dropping any selection this build no longer
+// serves. Reports false when nothing survives, so /auth/me omits the
+// key entirely rather than shipping an empty object.
+//
+// It decodes straight into the GENERATED type rather than a local
+// struct, which is what keeps the vocabulary in one place: the enum
+// members and the Valid() methods below both come from
+// UserPreferencesViews in openapi.yaml, so a value removed there
+// starts being dropped here with no second list to remember to edit.
+// (The obvious alternative — importing userprefs, which owns the same
+// rule for GET /account/preferences — is an import cycle: userprefs
+// depends on this package for IdentityFromContext.)
+//
+// A malformed blob is treated as "no selections". This is a render
+// hint on the session endpoint, and failing /auth/me — the call that
+// gates the entire app — over an unreadable preferences column would
+// lock a user out of the page where they could fix it.
+func decodeDefaultViews(raw []byte) (openapi.UserPreferencesViews, bool) {
+	var v openapi.UserPreferencesViews
+	if len(raw) == 0 {
+		return v, false
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return openapi.UserPreferencesViews{}, false
+	}
+	if v.HomeTab != nil && (*v.HomeTab == "" || !v.HomeTab.Valid()) {
+		v.HomeTab = nil
+	}
+	if v.BrowseLayout != nil && (*v.BrowseLayout == "" || !v.BrowseLayout.Valid()) {
+		v.BrowseLayout = nil
+	}
+	if v.BrowseSort != nil && (*v.BrowseSort == "" || !v.BrowseSort.Valid()) {
+		v.BrowseSort = nil
+	}
+	if v.HomeTab == nil && v.BrowseLayout == nil && v.BrowseSort == nil {
+		return openapi.UserPreferencesViews{}, false
+	}
+	return v, true
 }
 
 // ---------------------------------------------------------------------------

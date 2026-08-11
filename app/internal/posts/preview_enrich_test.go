@@ -80,6 +80,15 @@ func peHash(id uuid.UUID) string {
 // pePostOwner, with a storage object and optionally a `col` variant.
 func seedPreviewAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string, withCol bool) uuid.UUID {
 	t.Helper()
+	return seedPreviewAssetOwned(t, pool, sensitivity, withCol, pePostOwner)
+}
+
+// seedPreviewAssetOwned is the same thing with the owner spelled out.
+// #891's tests need a restricted asset owned by someone OTHER than the
+// post's author — that combination is the whole reason "never hide the
+// caller's own post" is a rule and not an accident.
+func seedPreviewAssetOwned(t *testing.T, pool *pgxpool.Pool, sensitivity string, withCol bool, owner int64) uuid.UUID {
+	t.Helper()
 	ctx := context.Background()
 	id := uuid.New()
 	hash := peHash(id)
@@ -97,7 +106,7 @@ func seedPreviewAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string, with
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status, file_hash)
 		 VALUES ($1,$2,$3,(SELECT MIN(ref) FROM asset_types),'active',$4,'ready',$5)`,
-		id, "pe-"+sensitivity, pePostOwner, sensitivity, hash); err != nil {
+		id, "pe-"+sensitivity, owner, sensitivity, hash); err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id) })
@@ -138,12 +147,23 @@ func ctxAs(ref int64) context.Context {
 	return auth.WithIdentity(context.Background(), &auth.Identity{UserRef: ref, AuthMethod: "session"})
 }
 
+// memberFlag reads preview_available for one member.
+//
+// Since #883 a member the caller may not see carries NO asset object at
+// all — the flag is subsumed by the placeholder, which is a strictly
+// stronger statement than preview_available=false. So the lookup keys on
+// PostMember.AssetId (always present) rather than on Asset.Id, and a
+// redacted member reports false.
 func memberFlag(t *testing.T, p *openapi.Post, assetID uuid.UUID) bool {
 	t.Helper()
 	for _, m := range p.Members {
-		if uuid.UUID(m.Asset.Id) == assetID {
-			return m.Asset.PreviewAvailable
+		if uuid.UUID(m.AssetId) != assetID {
+			continue
 		}
+		if m.Restricted || m.Asset == nil {
+			return false
+		}
+		return vOf(m.Asset.PreviewAvailable)
 	}
 	t.Fatalf("asset %v not a member of the post", assetID)
 	return false
@@ -193,6 +213,16 @@ func TestEnrichPreview_PerCaller(t *testing.T) {
 	if memberFlag(t, strangerPost, restrictedCol) {
 		t.Error("stranger: restricted+col MUST be false — the #471 gate")
 	}
+	// #883 subsumed the flag with a redaction: the stranger no longer
+	// gets an asset object to carry a flag on at all. Asserted here as
+	// well as in member_allowlist_test.go so this file's fixture cannot
+	// drift into a state where memberFlag's nil branch is what makes the
+	// assertion above pass.
+	for _, m := range strangerPost.Members {
+		if uuid.UUID(m.AssetId) == restrictedCol && (!m.Restricted || m.Asset != nil) {
+			t.Error("stranger: the restricted member should be a placeholder with no asset")
+		}
+	}
 }
 
 // TestEnrichPreview_CacheIsolation is the leak test the posts path was
@@ -222,6 +252,9 @@ func TestEnrichPreview_CacheIsolation(t *testing.T) {
 	}
 
 	// The CACHED post must be untouched — still false. This is the leak.
+	// Note the cached row is the UNREDACTED one (#883 redaction is
+	// per-request, never baked); member_allowlist_test.go's cache test
+	// asserts that direction.
 	cached, ok := h.byID.Get(key)
 	if !ok {
 		t.Fatal("post was not cached; test cannot verify isolation")
@@ -258,9 +291,15 @@ func setThumbhash(t *testing.T, pool *pgxpool.Pool, assetID uuid.UUID, raw []byt
 func memberThumbhash(t *testing.T, p *openapi.Post, assetID uuid.UUID) *string {
 	t.Helper()
 	for _, m := range p.Members {
-		if uuid.UUID(m.Asset.Id) == assetID {
-			return m.Asset.Thumbhash
+		if uuid.UUID(m.AssetId) != assetID {
+			continue
 		}
+		if m.Restricted || m.Asset == nil {
+			// A redacted member ships no thumbhash — the blur-up is
+			// derived from the real pixels, so it is content (#883).
+			return nil
+		}
+		return m.Asset.Thumbhash
 	}
 	t.Fatalf("asset %v not a member of the post", assetID)
 	return nil

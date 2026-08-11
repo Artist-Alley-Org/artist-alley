@@ -47,9 +47,11 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/iiif/presentation"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -162,6 +164,26 @@ type Handler struct {
 	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
 	epubChapters *cache.Cache[[]byte]
 
+	// registry is kept for cross-package invalidations. Soft-deleting
+	// or restoring an asset changes what every post holding it renders,
+	// and those posts are cached in posts/ (#920). Nil-safe — the
+	// helper no-ops on a nil registry.
+	registry *cache.Registry
+
+	// manifests is the IIIF Presentation manifest cache (#935).
+	// presentation.LoadAsset selects the asset's title + description
+	// and applies EntityAsset's ROW predicate, so a PATCH, a delete
+	// and a restore each change what the manifest says — and the
+	// manifest is cached under its own domain, which nothing on those
+	// paths was evicting.
+	//
+	// Injected post-construction via SetManifestCache: the cache is
+	// built at the composition root AFTER this handler (it needs the
+	// same registry), and a constructor parameter would have forced
+	// that ordering to change. Nil-safe on every method, so tests and
+	// any build without IIIF wired simply no-op.
+	manifests *presentation.Cache
+
 	// similarReader is the embeddings-side seam for the
 	// /assets/{id}/similar endpoint. Injected post-construction via
 	// SetSimilarReader to avoid pulling ai/embeddings into this
@@ -201,6 +223,12 @@ type SimilarNeighbour struct {
 // /assets/{id}/similar endpoint. Boot wire is the only caller.
 func (h *Handler) SetSimilarReader(r SimilarReader) { h.similarReader = r }
 
+// SetManifestCache injects the IIIF Presentation manifest cache so
+// asset writes can evict it (#935). Boot wire is the only caller; the
+// cache is constructed after this handler, which is why this is a
+// setter and not a constructor argument.
+func (h *Handler) SetManifestCache(c *presentation.Cache) { h.manifests = c }
+
 // VisualEmbedDispatcher is the narrow surface this package needs from
 // the visualembed package. *visualembed.Dispatcher satisfies it. The
 // interface lives here (consumer-defined) so the assets package
@@ -238,7 +266,7 @@ func (h *Handler) ladder(ctx context.Context) []string {
 }
 
 func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry, sysCfg *sysconfig.Store) *Handler {
-	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg}
+	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg, registry: registry}
 	if registry != nil {
 		// 5_000 keys × ~512 bytes/entry ≈ 2.5MB resident. Working set
 		// is "active assets being reviewed" which is well under that
@@ -289,6 +317,40 @@ func (h *Handler) CreateAsset(
 		return openapi.CreateAsset400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "status must be one of draft|active|archived"},
 		}, nil
+	}
+
+	// #953 — the team gate, the SAME rule POST /posts runs (#954), from
+	// the same home (visibility.CanAssignToTeam). Before this there was
+	// no way at all to put an uploaded asset in a team: the seeder set
+	// the column, the API never could, so `sensitivity='team'`,
+	// team-scoped `assets.admin` (#930), the team-scoped field plane
+	// (#939) and team-scoped publication (#938) all worked on seeded
+	// rows and on nothing a user made.
+	//
+	// The grant half asks about `assets.admin`, the code
+	// canMutateAsset consults — assignment is what CONFERS that
+	// team-scoped right over this row, so the code that names the right
+	// is the one entitled to hand it out.
+	//
+	// Runs BEFORE the dedup pre-check and before the transaction: a
+	// refusal must not first tell the caller whether they already own a
+	// file with these bytes, and must never write a row it rolls back.
+	//
+	// The refusal is 404 "team not found" — identical to the FK
+	// violation below, so an unauthorised team and a nonexistent one
+	// cannot be told apart.
+	var teamID pgtype.UUID
+	if in.TeamId != nil {
+		ok, gErr := h.mayAssignToTeam(ctx, id, uuid.UUID(*in.TeamId))
+		if gErr != nil {
+			return nil, fmt.Errorf("assets: team gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.CreateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+		teamID = pgtype.UUID{Bytes: uuid.UUID(*in.TeamId), Valid: true}
 	}
 
 	metadataJSON, err := encodeMetadata(in.Metadata)
@@ -412,8 +474,37 @@ func (h *Handler) CreateAsset(
 		StateID:          stateID,
 		ProcessingStatus: processingStatus,
 		Thumbhash:        thumbhashBytes,
+		TeamID:           teamID,
 	})
 	if err != nil {
+		// The team gate above already refused every team this caller
+		// cannot assign to, absent ones included, so a 23503 here means
+		// the team was hard-deleted in the gap. Same 404 as the gate —
+		// a race must not be distinguishable from a refusal either.
+		if isFKViolation(err, "assets_team_id_fkey") {
+			return openapi.CreateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+		// Every OTHER foreign key this INSERT carries a client value
+		// into (#966). Unlike team_id above, none of these hides
+		// anything: an asset type, a workflow state and an uploaded
+		// object are not private, so the honest answer is "you named
+		// one that does not exist" and the honest status is 400.
+		//
+		// Without this the row's constraint name reached the caller
+		// verbatim. NewStrictHandler's default response-error handler
+		// is `http.Error(w, err.Error(), 500)`, so `fmt.Errorf("assets:
+		// insert: %w", err)` below put pgx's full message — table,
+		// column, constraint, SQLSTATE — in the body of a 500 that
+		// ordinary bad input could trigger unauthenticated-adjacent.
+		// The message says the field the CALLER sent and nothing about
+		// the schema it landed in.
+		if msg, bad := createAssetFKMessage(err); bad {
+			return openapi.CreateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+			}, nil
+		}
 		// Race-loser: a concurrent upload won the unique
 		// constraint between our pre-check + this INSERT. Re-
 		// fetch + return the same dedup-response the pre-check
@@ -758,8 +849,8 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 			PixelWidth:       full.PixelWidth,
 			PreviewAvailable: full.PreviewAvailable,
 			ScrubAvailable:   full.ScrubAvailable,
-			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
-			Status:           openapi.AssetWithDedupStatus(full.Status),
+			ProcessingStatus: ptr(openapi.AssetWithDedupProcessingStatus(strDefault((*string)(full.ProcessingStatus), ""))),
+			Status:           ptr(openapi.AssetWithDedupStatus(strDefault((*string)(full.Status), ""))),
 			Thumbhash:        full.Thumbhash,
 			Title:            full.Title,
 			UpdatedAt:        full.UpdatedAt,
@@ -776,10 +867,10 @@ func (h *Handler) dedupResponse(ctx context.Context, behavior sysconfig.DedupBeh
 func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 	out := openapi.Asset{
 		Id:               openapi_types.UUID(uuid.UUID(r.ID.Bytes)),
-		Title:            r.Title,
-		AssetType:        r.AssetType,
-		Status:           openapi.AssetStatus(r.Status),
-		ProcessingStatus: openapi.AssetProcessingStatus(r.ProcessingStatus),
+		Title:            &r.Title,
+		AssetType:        &r.AssetType,
+		Status:           ptr(openapi.AssetStatus(r.Status)),
+		ProcessingStatus: ptr(openapi.AssetProcessingStatus(r.ProcessingStatus)),
 		FileHash:         r.FileHash,
 		FileExtension:    r.FileExtension,
 		FileSizeBytes:    r.FileSizeBytes,
@@ -790,10 +881,10 @@ func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
 		out.Description = &s
 	}
 	if r.CreatedAt.Valid {
-		out.CreatedAt = r.CreatedAt.Time
+		out.CreatedAt = &r.CreatedAt.Time
 	}
 	if r.UpdatedAt.Valid {
-		out.UpdatedAt = r.UpdatedAt.Time
+		out.UpdatedAt = &r.UpdatedAt.Time
 	}
 	if len(r.Metadata) > 0 {
 		var m map[string]any
@@ -824,6 +915,102 @@ func isPgUniqueViolation(err error) bool {
 		return pe.Code == "23505"
 	}
 	return false
+}
+
+// isFKViolation reports whether err is a Postgres SQLSTATE 23503
+// (foreign_key_violation) raised by the NAMED constraint. Twin of
+// posts.isFKError; matched on SQLSTATE + constraint name, never on
+// message text, which varies across Postgres versions.
+//
+// The constraint name matters as much as the code: a bare "23503 means
+// team not found" would answer 404 "team not found" for a violation of
+// any other FK on the row, which is how a 500 gets dressed up as a
+// client error.
+func isFKViolation(err error, constraint string) bool {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code == "23503" && pe.ConstraintName == constraint
+	}
+	return false
+}
+
+// createAssetFKConstraints maps every foreign key on `assets` that the
+// create path carries a CLIENT-SUPPLIED value into, to the message the
+// caller gets when that value names nothing (#966).
+//
+// The table is enumerated, not derived, and that is the point. #941 and
+// #946 both cost weeks because a rule was applied to the one column
+// somebody happened to be looking at while its siblings kept the old
+// behaviour; `asset_type` was simply the column the stale seed script
+// hit first. Every FK on the row is listed here or excluded below with
+// a reason, so "did anyone check the others" has an answer in the file.
+//
+// EXCLUDED, deliberately:
+//
+//   - assets_team_id_fkey — handled above, and NOT as a 400. Team
+//     membership is exactly the thing a caller should not be able to
+//     probe for, so an unassignable team and a nonexistent one both
+//     answer 404 "team not found". Folding it in here would turn the
+//     asset-create endpoint into a team-existence oracle, which is the
+//     leak #953 closed. Its absence from this map is load-bearing.
+//
+// NOT A FOREIGN KEY, so nothing can violate:
+//
+//   - owner_user_ref — server-set from the identity, and the user
+//     tables carry no FK by federation design.
+//   - origin_server_id — server-set, always NULL on this path.
+//
+// The message names the REQUEST FIELD and describes the value in the
+// caller's own vocabulary. It must never name a table, a constraint, a
+// SQLSTATE or a relation; asset_fk_leak_test.go asserts that directly
+// rather than trusting the strings below to stay clean.
+var createAssetFKConstraints = map[string]string{
+	"assets_asset_type_fkey": "asset_type: no such asset type",
+	"assets_state_id_fkey":   "state_id: no such workflow state",
+	"assets_file_hash_fkey":  "file_hash: no uploaded object with that hash — upload the bytes first",
+}
+
+// createAssetFKMessage classifies an INSERT error as "the caller named
+// something that does not exist" and returns the 400 body for it.
+//
+// Matched on SQLSTATE + constraint name, never on message text — the
+// same discipline isFKViolation applies, for the same reason. An
+// unrecognised constraint returns false and falls through to the 500,
+// because a foreign key nobody enumerated here is a server-side
+// surprise and blaming the caller for it would be a second lie.
+func createAssetFKMessage(err error) (string, bool) {
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) || pe.Code != "23503" {
+		return "", false
+	}
+	msg, known := createAssetFKConstraints[pe.ConstraintName]
+	return msg, known
+}
+
+// mayAssignToTeam adapts an *auth.Identity to
+// visibility.CanAssignToTeam — the SHARED rule behind
+// `AssetCreate.team_id` (#953) and `PostCreate.team_id` (#954).
+// posts.Handler has the mirror-image adapter; the rule itself exists
+// once, in `visibility`, for the reason epic #665 exists.
+//
+// The SCOPED half asks about `assets.admin` — the code canMutateAsset
+// consults, and the right assignment confers on the receiving team.
+// Posts ask about `posts.admin` for exactly the same reason. A single
+// cross-entity code would let a holder of one plant rows in the other's
+// space; a NEW code would be held by nobody, which is how the team tier
+// got into the state #953 describes.
+func (h *Handler) mayAssignToTeam(ctx context.Context, id *auth.Identity, teamID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAssignToTeam(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		id.ScopedTeams(CapAssetsAdmin),
+		teamID,
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -889,7 +1076,7 @@ func (h *Handler) GetAsset(
 // enrichAssetDerived fills the four fields a single-asset projection
 // cannot carry off its own row — preview_available (#471),
 // ladder_available (#610) and the recorded pixel dimensions (#640) —
-// for the request's caller.
+// for the request's caller, AND applies the #899 field withholding.
 //
 // ONE place, because the class of bug this closes is a response shape
 // that disagrees with itself depending on which verb produced it (#655).
@@ -899,11 +1086,51 @@ func (h *Handler) GetAsset(
 // openapi.Asset calls this; adding a fifth derived field means editing
 // this function, not auditing every caller.
 //
+// #899: that "any handler emitting an openapi.Asset calls this"
+// property is why the withholding lives here too — but it is NOT the
+// whole hook, and assuming it was would have left the leak open. The
+// BROWSE LIST does not come through here: it computes its flags in SQL
+// in one pass (list_page.go) and never calls this function, so it
+// applies the same rule at its own site, from its own copy of the same
+// decision.
+//
+// The withholding and the three availability flags are derived from ONE
+// readability decision, for the same reason the post preview enrich
+// does it that way — deriving them separately would let them disagree
+// on a restricted asset.
+//
 // Reads `out.Id` and `out.FileHash`, so the caller must have populated
 // the row first. No-op on the zero-value id.
 func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) error {
 	assetID := uuid.UUID(out.Id)
 	if assetID == uuid.Nil {
+		return nil
+	}
+	// The readability inputs + the owner's display name, in one round
+	// trip. This REPLACED a CanReadContent call that loaded three of the
+	// same columns: FieldsReadable is the conjunction of the row and
+	// content planes rather than the content plane alone, and it is the
+	// same function the container surfaces and the browse list use, so
+	// the four cannot drift (#899).
+	detCaller, detCaps := contentCaller(ctx)
+	fieldsRow, ownerName, err := visibility.LoadFieldsRow(ctx, h.Pool, detCaller, assetID, mutationCaps(ctx))
+	if err != nil {
+		return fmt.Errorf("assets: readability inputs: %w", err)
+	}
+	readable := visibility.FieldsReadable(fieldsRow, detCaller, detCaps)
+	// #939 — TWO decisions from one row. `readable` is the FIELD plane
+	// and now admits a team-scoped `assets.admin` holder; `picture` is
+	// the same conjunction WITHOUT that disjunct, and gates the
+	// thumbhash blur plus the three availability flags. A mutation
+	// holder gets a richer placeholder — real fields, no picture — per
+	// ADR 0064.
+	picture := visibility.PreviewReadable(fieldsRow, detCaller, detCaps)
+	if !readable {
+		// Replace the WHOLE value, not selected fields — see
+		// withheldAsset's doc for why this is a literal and not a
+		// blanking pass. Nothing below this line runs, so no derived
+		// field can reintroduce a column after the withholding.
+		*out = withheldAsset(out.Id, ownerName)
 		return nil
 	}
 	// Source pixel dimensions (#640). The detail response carries them
@@ -913,9 +1140,16 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 	// not a hot loop, and this is the same trade the tag-details query
 	// above already makes.
 	//
-	// NOT gated on the content plane: these are metadata about a row the
-	// caller has already been handed, like file_size_bytes. Nothing about
-	// a width confirms readable bytes.
+	// The blur is the picture, not a field (#939). ADR 0064 puts the
+	// thumbhash on the BINARY side — "a thumbhash IS a blur" — so a
+	// caller who reaches these columns only through a mutation
+	// capability gets the fields with the picture cleared.
+	if !picture {
+		out.Thumbhash = nil
+	}
+	// Reached only when `readable` — a source resolution is a fact about
+	// a file, and #899 retired the earlier reasoning that dimensions ride
+	// the same plane as the row rather than the same plane as the bytes.
 	var detW, detH *int32
 	if err := h.Pool.QueryRow(ctx,
 		`SELECT `+pixeldims.SelectColumnsSQL("assets.id")+` FROM assets WHERE assets.id = $1::uuid`,
@@ -927,14 +1161,8 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		out.PixelWidth, out.PixelHeight = detW, detH
 	}
 	// preview_available (#471): a servable `col` exists AND the caller
-	// passes the content plane. Detail is not a hot loop, so an EXISTS +
-	// CanReadContent here is fine (the list path joins both in one pass).
-	detCaller, detCaps := contentCaller(ctx)
-	readable, err := visibility.CanReadContent(ctx, h.Pool, detCaller, detCaps, assetID)
-	if err != nil {
-		return fmt.Errorf("assets: content check: %w", err)
-	}
-	if readable && out.FileHash != nil && *out.FileHash != "" {
+	// passes the content plane — the same `readable` decided above.
+	if out.FileHash != nil && *out.FileHash != "" {
 		// All three flags in one round trip. ladder_available is computed
 		// against the CONFIGURED ladder (#591), never a hardcoded rung
 		// list — an operator who drops a rung must move this flag, not
@@ -948,11 +1176,285 @@ func (h *Handler) enrichAssetDerived(ctx context.Context, out *openapi.Asset) er
 		).Scan(&hasCol, &hasLadder, &hasScrub); err != nil {
 			return fmt.Errorf("assets: variant check: %w", err)
 		}
-		out.PreviewAvailable = hasCol
-		out.LadderAvailable = hasLadder
-		out.ScrubAvailable = hasScrub
+		// AND with `picture`, not `readable` (#939): these three are a
+		// promise the binary handlers must keep, and those still refuse a
+		// mutation holder. A true flag on gated bytes is a 403 the client
+		// walks straight into.
+		hasCol = hasCol && picture
+		hasLadder = hasLadder && picture
+		hasScrub = hasScrub && picture
+		out.PreviewAvailable = &hasCol
+		out.LadderAvailable = &hasLadder
+		out.ScrubAvailable = &hasScrub
 	}
+	// One asset shape, one meaning per field: the detail response carries
+	// the at-a-glance strip and the provenance for the same reason it
+	// carries pixel dimensions. Reached only when `readable`, below the
+	// withholding return above.
+	page := []openapi.Asset{*out}
+	if err := h.decorateCards(ctx, page); err != nil {
+		return fmt.Errorf("assets: card decoration: %w", err)
+	}
+	*out = page[0]
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Authorization helpers
+// ---------------------------------------------------------------------------
+
+// CapAssetsAdmin lets a holder manage assets that are not theirs —
+// metadata edit, soft-delete, and undo of their own delete. Named to
+// read alike beside posts.CapPostsAdmin ("posts.admin") and
+// collections' "collections.admin", the two capabilities it behaves
+// like; migration 00037 seeds it.
+//
+// It is scope-aware. A grant with `user_capability_grants.team_id = X`
+// covers X and every descendant of X, because the resolver
+// pre-expands scoped grants through `team_closure` before Can() ever
+// runs (auth/middleware.go). That is what makes "a concept art
+// director may manage a file belonging to someone on their team" one
+// call rather than a tree walk.
+//
+// It does NOT confer publication. That is a separate set of verbs —
+// CapAssetsPublish / CapAssetsArchive / CapAssetsUnarchive below, wired
+// by #938 — and the design note in migration 00037 explains why the two
+// were never allowed to merge.
+//
+// The string is declared ONCE, in `visibility`, because #939 made the
+// read gate consult it too and `assets` imports `visibility` (the edge
+// only runs that way). This alias keeps the name readable at the write
+// sites below; it is not a second declaration.
+const CapAssetsAdmin = visibility.AssetsAdmin
+
+// canMutateAsset decides whether the caller may edit or delete this
+// asset. Owner, a team-scoped or global `assets.admin`, or
+// `system.admin`.
+//
+// Assets were the outlier here: UpdateAsset and DeleteAsset checked
+// only that the caller was authenticated, so any signed-in account
+// could rewrite or remove every asset in the instance (#930). Posts
+// and collections have had canMutatePost / canMutateCollection since
+// they were written. This is deliberately ONE helper serving both
+// handlers rather than two inline checks, because two copies of a
+// security rule drift and the drift is the bug.
+//
+// The three arguments come from GetAssetMutationSubject, and each of
+// the two nullable ones is a trap:
+//
+//   - ownerRef is *int64: `assets.owner_user_ref` is NULLABLE. A
+//     NULL owner must match NOBODY. Dereferencing it blind panics;
+//     treating nil as "unowned, so fair game" would hand every
+//     ownerless asset to every caller. Only system.admin reaches one.
+//
+//   - teamID may be invalid: `assets.team_id` is NULLABLE too. An
+//     asset with no team has no scope for InTeam to check, so the
+//     scoped disjunct is SKIPPED and the caller falls back to owner
+//     or a GLOBAL grant. It must never fall back to "no scope
+//     required, therefore anyone passes" — a team-scoped grant holder
+//     gets nothing from a team-less asset.
+//
+// And the caller side has the third: the anonymous sentinel carries
+// UserRef 0 (auth.Identity.IsAnonymous). visibility/content.go
+// documents the same hazard on the read path — an asset owned by ref
+// 0 would make a bare `*ownerRef == id.UserRef` hand ownership to
+// every anonymous visitor. So non-anonymity is established BEFORE any
+// ownership comparison, and ref 0 is refused as an owner outright.
+//
+// # Where the rule actually lives now (#822)
+//
+// The logic moved to visibility.AssetMutationCaps.MayMutateOwned and
+// this is the adapter that hands it an *auth.Identity. It moved because
+// `PATCH /assets/{id}` is no longer the only way to change
+// `assets.title`: a field definition can declare itself a view onto that
+// column, so `PUT /assets/{id}/fields/{field_id}` writes it too — and
+// the metadata package cannot import this one (this one imports it).
+// The alternative was a second copy of an authorisation rule, which is
+// what the paragraph above already says is the bug.
+func canMutateAsset(id *auth.Identity, ownerRef *int64, teamID pgtype.UUID) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	var team *uuid.UUID
+	if teamID.Valid {
+		t := uuid.UUID(teamID.Bytes)
+		team = &t
+	}
+	caps := visibility.ResolveAssetMutationCaps(
+		func(code string) bool { return id.Can(code) },
+		id.ScopedTeams(CapAssetsAdmin),
+	)
+	return caps.MayMutateOwned(id.UserRef, ownerRef, team)
+}
+
+// The publication verbs (#938). Seeded in migration 00001 and granted
+// to roles there, they gated NOTHING until this file consulted them:
+// changing `status` was owner-or-system.admin, so publication could not
+// be delegated at all. An operator who granted `assets.publish` to a
+// lead had delegated nothing and had no way to find that out — the
+// "accepted but inert" defect class, in capability clothing.
+//
+// They are deliberately SEPARATE from CapAssetsAdmin. `assets.admin` is
+// content management; `status` is a disclosure lever, because
+// visibility/predicate.go demands `status = 'active'` before an
+// anonymous reader may see the row. Folding these into `assets.admin`
+// would undo the boundary #936 drew — the same separation Kubernetes
+// draws by withholding `escalate` / `bind` from ordinary edit rights.
+//
+// `assets.submit` and `assets.review` are NOT here. Their seeded
+// descriptions name a `pending_review` status, and the live constraint
+// is `CHECK (status = ANY (ARRAY['draft','active','archived']))` — they
+// gate the exit from a state that does not exist, so there is nothing
+// to enforce. Adding it is a schema decision belonging to #895/#896/
+// #897; #951 tracks the choice between building it and deleting them.
+// Migration 00038 rewrites their descriptions to say so plainly, so an
+// operator reading the capabilities table is not sold a no-op.
+const (
+	CapAssetsPublish   = "assets.publish"
+	CapAssetsArchive   = "assets.archive"
+	CapAssetsUnarchive = "assets.unarchive"
+)
+
+// assetStatusCapabilities maps a status transition onto the capability
+// codes a NON-OWNER must hold to perform it, and reports whether the
+// pair is one this handler recognises (an unknown pair fails closed).
+//
+// The live enum is `draft | active | archived`, so there are six
+// ordered pairs, and the three verbs do not partition them one-to-one.
+// The rule that resolves the overlaps, and the reason for it:
+//
+//	ENTERING `active` ALWAYS requires assets.publish, with no
+//	substitute.
+//
+// That is the only security-critical clause. `active` is the state the
+// anonymous read branch tests for, so `→ active` is THE disclosure act;
+// if any other verb could reach it, that verb would silently be a
+// publication right and the separation above would be decorative.
+// LEAVING `active` is not a disclosure — it only removes reach — so it
+// does not need the same protection, and the remaining transitions are
+// governed by whichever verb names them.
+//
+//	draft     → active    publish              the verb's own transition
+//	archived  → active    publish + unarchive  a disclosure AND an exit from archived
+//	draft     → archived  archive              entering archived; source is irrelevant,
+//	                                           neither state is publicly reachable
+//	active    → archived  archive              retiring published work; de-disclosure
+//	archived  → draft     unarchive            leaving archived, to a private state
+//	active    → draft     publish              retraction — the inverse of the publish
+//	                                           decision, and there is no `assets.unpublish`
+//
+// Two of those deserve their reasoning stated, because the mapping is
+// not forced:
+//
+//   - `draft → archived` takes `archive` alone. Archiving a draft is
+//     entering the archive, which is what the verb means; requiring
+//     `publish` too would mean a lead who may retire work cannot retire
+//     work that was never published, which is nonsense, and neither
+//     endpoint is anonymously readable so nothing is disclosed.
+//
+//   - `active → draft` (unpublishing) takes `publish`. Whoever may
+//     decide a thing is public may decide it is not — retraction is the
+//     publish decision pointing the other way, and it is exactly what
+//     the withheld right in #936 described. Handing it to `archive`
+//     would make `archive` mean two different things, and handing it to
+//     nobody would leave a published asset un-retractable by the very
+//     person trusted to have published it.
+//
+// `archived → active` requiring BOTH is the one conjunction, and it is
+// deliberate: an `unarchive` holder must not be able to publish (that
+// is a side door into `active`), and a `publish` holder does not
+// thereby get to decide what comes out of the archive. `unarchive`
+// alone is still a real, useful grant — it performs `archived → draft`,
+// returning work to its owner for rework.
+func assetStatusCapabilities(from, to string) ([]string, bool) {
+	switch {
+	case from == to:
+		return nil, true
+	case to == "active" && from == "draft":
+		return []string{CapAssetsPublish}, true
+	case to == "active" && from == "archived":
+		return []string{CapAssetsPublish, CapAssetsUnarchive}, true
+	case to == "archived":
+		return []string{CapAssetsArchive}, true
+	case to == "draft" && from == "archived":
+		return []string{CapAssetsUnarchive}, true
+	case to == "draft" && from == "active":
+		return []string{CapAssetsPublish}, true
+	}
+	return nil, false
+}
+
+// canTransitionAssetStatus decides whether the caller may move this
+// asset from `from` to `to`. It REPLACES canSetAssetStatus, which
+// answered the coarser "may you touch status at all" as owner-or-
+// system.admin; there is deliberately no second predicate beside this
+// one, because two copies of a security rule drift and the drift is the
+// bug (the note on canMutateAsset says the same thing).
+//
+// It mirrors canMutateAsset's shape exactly — anonymous refused,
+// system.admin, owner, team-scoped grant, global grant — and for the
+// same reasons, including the two nullable traps documented there:
+// a NULL owner matches nobody, and a team-less asset SKIPS the scoped
+// disjunct rather than treating "no scope required" as "anyone passes".
+//
+// It resolves the scoped question through id.Can(code, auth.InTeam(…))
+// and nothing else. That is not a shortcut, it is the only correct
+// route: `Identity.scopedCaps` is built by the resolver from FOUR
+// inputs — direct grants, role_capabilities reached by a recursive walk
+// of roles.parent_id carrying user_roles.team_id, minus
+// user_capability_revokes, then expanded through team_closure. A
+// team-scoped ROLE assignment produces ZERO rows in
+// user_capability_grants, and these three verbs are granted through a
+// role in the baseline (role_capabilities, 00001), so any hand-rolled
+// derivation from the grants table would miss precisely the path that
+// matters here.
+//
+// Every required code must pass. See assetStatusCapabilities for which
+// codes each transition requires and why.
+func canTransitionAssetStatus(
+	id *auth.Identity,
+	ownerRef *int64,
+	teamID pgtype.UUID,
+	from, to string,
+) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	// system.admin is the global override everywhere, and reaches
+	// NULL-owner and team-less assets too.
+	if id.Can(auth.SuperAdminCapability) {
+		return true
+	}
+	// The owner keeps their own publication lever, unconditionally.
+	// Both sides must be a real user: ref 0 is the anonymous sentinel.
+	if ownerRef != nil && *ownerRef != 0 && id.UserRef != 0 && *ownerRef == id.UserRef {
+		return true
+	}
+	codes, known := assetStatusCapabilities(from, to)
+	if !known {
+		return false
+	}
+	for _, code := range codes {
+		if !hasAssetCapability(id, code, teamID) {
+			return false
+		}
+	}
+	// codes is empty only for from == to, which the handler does not
+	// route here; treat it as permitted rather than as a bare `true`
+	// for an unrecognised pair, which the !known branch already caught.
+	return true
+}
+
+// hasAssetCapability answers one capability code against one asset's
+// team scope, the way canMutateAsset does inline: prefer the
+// team-scoped question when the asset actually HAS a team, and fall
+// back to a GLOBAL holding. A team-scoped grant confers nothing on a
+// team-less asset.
+func hasAssetCapability(id *auth.Identity, code string, teamID pgtype.UUID) bool {
+	if teamID.Valid && id.Can(code, auth.InTeam(uuid.UUID(teamID.Bytes))) {
+		return true
+	}
+	return id.Can(code)
 }
 
 // ---------------------------------------------------------------------------
@@ -963,7 +1465,8 @@ func (h *Handler) UpdateAsset(
 	ctx context.Context,
 	req openapi.UpdateAssetRequestObject,
 ) (openapi.UpdateAssetResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil || caller.IsAnonymous() {
 		return openapi.UpdateAsset401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
@@ -1018,35 +1521,95 @@ func (h *Handler) UpdateAsset(
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := New(tx)
 
+	// Read the row the gate and the concurrency check both need,
+	// inside the tx and BEFORE the UPDATE. Order matters twice over:
+	//
+	//   - Before the UPDATE, so a refused caller changes nothing. A
+	//     gate that answers 403 after writing is a gate that does not
+	//     exist, and a status-only assertion would not catch it.
+	//   - Inside the tx, so the authorisation decision and the
+	//     optimistic-concurrency comparison are made against the same
+	//     version of the row that the UPDATE then locks.
+	subject, err := q.GetAssetMutationSubject(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: load mutation subject: %w", err)
+	}
+	// ONE request, TWO planes, and #938 is the issue that separated them.
+	//
+	// `assets.admin` is content management. `status` is a disclosure
+	// lever — visibility/predicate.go demands `status = 'active'` before
+	// an anonymous reader may see the row — and the publication verbs
+	// govern it. Before this the handler required content-management
+	// authority for the whole request, which had two consequences: the
+	// publication verbs enforced nothing, and publication could not be
+	// delegated WITHOUT also handing over the power to rewrite. Both
+	// halves of that bundling are the bug.
+	//
+	// So each plane is gated by its own rule and neither implies the
+	// other. `changesStatus` is compared against the CURRENT value, so a
+	// PATCH that merely echoes the status back is not a transition —
+	// the boundary is about CHANGING who can reach the asset.
+	touchesContent := titlePtr != nil || descPtr != nil || metaJSON != nil || in.Tags != nil
+	changesStatus := statusPtr != nil && *statusPtr != subject.Status
+
+	// The content plane. Skipped ONLY for a request whose sole effect is
+	// a status transition. A no-op PATCH still lands here — it commits an
+	// UPDATE and bumps updated_at, so it is a write on someone's asset
+	// even when no column changes value.
+	if touchesContent || !changesStatus {
+		if !canMutateAsset(caller, subject.OwnerUserRef, subject.TeamID) {
+			return openapi.UpdateAsset403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "you may not edit this asset"},
+			}, nil
+		}
+	}
+	// The publication plane, gated PER TRANSITION: which verb is needed
+	// depends on which way the status moves.
+	//
+	// A holder who passes here but not the content gate still cannot read
+	// what they published if the read rule refuses them — the 200 body is
+	// built by enrichAssetDerived, which applies the #899/#939 field
+	// withholding to every openapi.Asset this handler emits. A publish
+	// grant is a right to decide reachability, not a side door into the
+	// field plane.
+	if changesStatus {
+		if !canTransitionAssetStatus(caller, subject.OwnerUserRef, subject.TeamID, subject.Status, *statusPtr) {
+			// Name the capability. A bare "forbidden" leaves an operator
+			// guessing which of three verbs they failed to grant, and the
+			// codes are already visible to them in the admin capability
+			// list.
+			codes, _ := assetStatusCapabilities(subject.Status, *statusPtr)
+			msg := fmt.Sprintf("changing this asset's status from %q to %q is reserved to its owner", subject.Status, *statusPtr)
+			if len(codes) > 0 {
+				msg += " or a holder of " + strings.Join(codes, " and ")
+			}
+			return openapi.UpdateAsset403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: msg},
+			}, nil
+		}
+	}
+
 	// Phase 1.16 optimistic-concurrency check. Done inside the tx
 	// so two simultaneous edits can't both pass the gate + both
 	// commit (the tx isolation guarantees this row is locked by
 	// the UPDATE that follows). Caller opts in by passing
 	// if_unchanged_since; absent = legacy last-write-wins.
 	if in.IfUnchangedSince != nil {
-		var currentUpdatedAt time.Time
-		err := tx.QueryRow(ctx,
-			`SELECT updated_at FROM assets WHERE id = $1 AND deleted_at IS NULL`,
-			pgID,
-		).Scan(&currentUpdatedAt)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return openapi.UpdateAsset404JSONResponse{
-					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-				}, nil
-			}
-			return nil, fmt.Errorf("assets: load updated_at: %w", err)
-		}
 		// Truncate both sides to microsecond precision — Postgres
 		// stores timestamptz at µs while Go's JSON marshalling
 		// round-trips at ns. A bare equality check would false-
 		// positive on the trailing ns.
-		stored := currentUpdatedAt.Truncate(time.Microsecond)
+		stored := subject.UpdatedAt.Time.Truncate(time.Microsecond)
 		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
 		if !stored.Equal(sent) {
 			return openapi.UpdateAsset409JSONResponse{
 				Error:     "asset was edited by someone else after your last load; reload and try again",
-				UpdatedAt: currentUpdatedAt,
+				UpdatedAt: subject.UpdatedAt.Time,
 			}, nil
 		}
 	}
@@ -1095,6 +1658,14 @@ func (h *Handler) UpdateAsset(
 		return nil, fmt.Errorf("assets: commit: %w", err)
 	}
 
+	// #935. This path invalidated NOTHING — not even the posts cache
+	// #920 wired into delete and restore. Editing an asset's title left
+	// every post holding it, and its IIIF manifest, serving the old one
+	// until the process restarted: the identical defect #920 fixed, on
+	// the path nobody covered, and reachable by any owner clicking
+	// Save.
+	h.invalidateDerivedCaches(ctx, uuid.UUID(pgID.Bytes), "update")
+
 	// Same shape a GET returns (#655). The UPDATE's RETURNING row carries
 	// no preview / ladder / dimension columns, so without this a PATCH
 	// answered `preview_available: false` for an asset whose GET answers
@@ -1115,7 +1686,8 @@ func (h *Handler) DeleteAsset(
 	ctx context.Context,
 	req openapi.DeleteAssetRequestObject,
 ) (openapi.DeleteAssetResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil || caller.IsAnonymous() {
 		return openapi.DeleteAsset401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
@@ -1134,22 +1706,45 @@ func (h *Handler) DeleteAsset(
 		}
 		return nil, err
 	}
+	// Same gate as UpdateAsset, same helper, checked before the write.
+	// The scope comes from the dedicated authorisation probe rather than
+	// the read projection: the gate must answer for a row this caller
+	// may have no entitlement to read, and borrowing the read query
+	// would leave it one edit away from inheriting the read filters.
+	// (GetAssetRow does carry team_id since #953 made it settable; that
+	// is a projection for the client, not a substitute for this.)
+	subject, err := q.GetAssetMutationSubject(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.DeleteAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: load mutation subject: %w", err)
+	}
+	if !canMutateAsset(caller, subject.OwnerUserRef, subject.TeamID) {
+		return openapi.DeleteAsset403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "you may not delete this asset"},
+		}, nil
+	}
 	reason := extractSoftDeleteReason(req.Body)
 	if len(reason) > softDeleteReasonMaxLen {
 		return openapi.DeleteAsset400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "reason exceeds 500 chars"},
 		}, nil
 	}
+	// deleted_by_user_ref is what makes the delete undoable by the
+	// person who did it (#931) — see auth.CanRestoreDeleted.
+	deleter := caller.UserRef
 	if err := q.SoftDeleteAsset(ctx, SoftDeleteAssetParams{
-		ID:            pgID,
-		DeletedReason: softDeleteReasonPtr(reason),
+		ID:               pgID,
+		DeletedReason:    softDeleteReasonPtr(reason),
+		DeletedByUserRef: &deleter,
 	}); err != nil {
 		return nil, fmt.Errorf("assets: soft-delete: %w", err)
 	}
 	if h.Audit != nil {
-		if id := auth.IdentityFromContext(ctx); id != nil {
-			h.Audit.AdminAssetSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), id.UserRef, reason)
-		}
+		h.Audit.AdminAssetSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), caller.UserRef, reason)
 	}
 	if row.FileHash != nil {
 		if err := h.Storage.RemovePin(ctx, storage.PinRef{
@@ -1163,7 +1758,68 @@ func (h *Handler) DeleteAsset(
 			)
 		}
 	}
+	h.invalidateDerivedCaches(ctx, uuid.UUID(pgID.Bytes), "delete")
 	return openapi.DeleteAsset204Response{}, nil
+}
+
+// InvalidateAfterRestore is invalidateDerivedCaches' "restore" case,
+// exported for callers OUTSIDE this package that put an asset back.
+//
+// There is exactly one: the composition root's restorer adapter, which
+// a granted restoration appeal (#931) goes through instead of
+// RestoreAsset. Without this, an appeal would flip deleted_at and leave
+// the asset missing from its posts and from the IIIF manifest until the
+// process restarted — #920's bug, re-armed on a third path, and
+// invisible from the 200 the decider sees.
+//
+// A hook rather than an export of the whole helper: the caller says
+// "this asset is live again", not "run these two evictions", so the SET
+// of evictions can grow here without every caller learning about it.
+func (h *Handler) InvalidateAfterRestore(ctx context.Context, assetID uuid.UUID) {
+	h.invalidateDerivedCaches(ctx, assetID, "restore")
+}
+
+// invalidateDerivedCaches evicts every OTHER domain's cached answer
+// that this asset write just changed. An asset write touches only the
+// asset row, but three caches key on something else entirely and none
+// of them can see it happen:
+//
+//   - posts/ caches the whole rendered post, joined asset payloads
+//     included, keyed on the POST (#920);
+//   - iiif/presentation caches the manifest, which carries the asset's
+//     title and description, keyed on its own domain (#935).
+//
+// Called from all three write paths — update, delete, restore —
+// because all three change what those caches would answer:
+//
+//	PATCH    retitles the asset. Both caches serve the OLD title.
+//	DELETE   removes it from posts (the join reads deleted_at) and
+//	         from the manifest (the row predicate does).
+//	RESTORE  is the same bug wearing the other hat: the copies were
+//	         evicted on delete and repopulated WITHOUT the asset.
+//
+// The stale answer survives until the process restarts, which is what
+// identifies all of this as invalidation rather than a read-rule gap —
+// and what let #920 sit unnoticed on the delete path.
+//
+// Best-effort: the asset write has already committed and succeeded, so
+// a cache failure is logged, not propagated. Same discipline as the
+// storage-unpin step above. Both callees are nil-safe.
+func (h *Handler) invalidateDerivedCaches(ctx context.Context, assetID uuid.UUID, op string) {
+	if err := posts.InvalidateForAsset(ctx, h.registry, h.Pool, assetID); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.posts_cache.invalidate.error",
+			slog.String("asset_id", assetID.String()),
+			slog.String("op", op),
+			slog.String("err", err.Error()),
+		)
+	}
+	if err := presentation.InvalidateAssetOn(ctx, h.manifests, assetID); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.manifest_cache.invalidate.error",
+			slog.String("asset_id", assetID.String()),
+			slog.String("op", op),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,8 +1827,16 @@ func (h *Handler) DeleteAsset(
 // ---------------------------------------------------------------------------
 
 // RestoreAsset clears deleted_at + deleted_reason on a soft-deleted
-// asset. Admin-only. 404 if the asset is already live (or doesn't
-// exist); 403 for non-admin authenticated callers; 401 for anon.
+// asset. 404 if the asset is already live (or doesn't exist); 403 for
+// a caller who didn't delete it and isn't system.admin; 401 for anon.
+//
+// Until #931 this was system.admin ONLY, while DeleteAsset was open to
+// every authenticated user — anyone could remove a studio's library and
+// nobody below super-admin could undo it. The gate is now
+// auth.CanRestoreDeleted: you undo your own delete, system.admin
+// undoes any.
+// See that helper for why the rule turns on the DELETER rather than on
+// the caller's standing authority.
 //
 // The audit event fires from softdelete.Service.RestoreAsset itself
 // so the write + audit stay together.
@@ -1186,9 +1850,23 @@ func (h *Handler) RestoreAsset(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	deletedBy, err := New(h.Pool).GetAssetDeletedBy(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Live or absent — the same 404 the restore itself gives
+			// those two cases.
+			return openapi.RestoreAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: load deleted_by: %w", err)
+	}
+	if !auth.CanRestoreDeleted(id, deletedBy) {
 		return openapi.RestoreAsset403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "this asset was deleted by someone else; ask an administrator to restore it",
+			},
 		}, nil
 	}
 	if h.SoftDelete == nil {
@@ -1205,6 +1883,10 @@ func (h *Handler) RestoreAsset(
 		}
 		return nil, fmt.Errorf("assets: restore: %w", err)
 	}
+	// Restore is the same bug wearing the other hat: without this the
+	// asset stays MISSING from its posts until a restart, because the
+	// cached copies were evicted on delete and re-populated without it.
+	h.invalidateDerivedCaches(ctx, uuid.UUID(req.Id), "restore")
 	return openapi.RestoreAsset204Response{}, nil
 }
 
@@ -1283,6 +1965,27 @@ func (h *Handler) ListAssets(
 		tagFilter = req.Params.Tag
 	}
 
+	// ?team_id= scopes the page to one team's assets — the assets tab on
+	// the team page (#684).
+	//
+	// No authorization decision is taken here, deliberately. There is no
+	// membership check and no liveness probe: the visibility predicate
+	// still selects the rows and the field plane still decides which of
+	// them arrive as placeholders, and neither reads team_id. So the
+	// filter can only ever REMOVE assets from the page this caller would
+	// already have been served. A non-member browsing a studio sees its
+	// public work and a wall of placeholders where its restricted work
+	// is — exactly what unfiltered browse shows them, minus everyone
+	// else's rows.
+	//
+	// It follows that this is not a team-existence probe either: an
+	// unknown team, a soft-deleted team and an empty team are one
+	// answer, an empty page.
+	var teamFilter pgtype.UUID
+	if req.Params.TeamId != nil {
+		teamFilter = pgtype.UUID{Bytes: *req.Params.TeamId, Valid: true}
+	}
+
 	q := New(h.Pool)
 
 	// One-shot paging: fetch limit+1 to know whether there's a next page.
@@ -1308,10 +2011,12 @@ func (h *Handler) ListAssets(
 		Status:          statusPtr,
 		Q:               qText,
 		Tag:             tagFilter,
+		TeamID:          teamFilter,
 		CursorCreatedAt: cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
 		Ladder:          h.ladder(ctx),
+		MutationCaps:    mutationCaps(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assets: list: %w", err)
@@ -1320,14 +2025,31 @@ func (h *Handler) ListAssets(
 		if i >= int(limit) {
 			break
 		}
+		// #899 — an asset whose columns this caller may not receive never
+		// gets built into a full record at all. The tag fetch is skipped
+		// with it: tags are asset columns, and a withheld row must not
+		// spend a query gathering fields it will not emit.
+		//
+		// The decision was already made, once, by
+		// visibility.FieldsReadable inside ListAssetsPageGated — the SAME
+		// function GetAsset and the container surfaces use. This site
+		// consumes it rather than re-deciding, because a second decision
+		// is a second thing to keep in sync.
+		if !r.Readable {
+			assetsList = append(assetsList,
+				withheldAsset(openapi_types.UUID(r.ID.Bytes), r.OwnerDisplayName))
+			lastCreatedAt = r.CreatedAt.Time
+			lastID = uuid.UUID(r.ID.Bytes)
+			continue
+		}
 		tags, err := q.ListAssetTags(ctx, r.ID)
 		if err != nil {
 			return nil, fmt.Errorf("assets: list tags: %w", err)
 		}
 		a := rowToAsset(listRowToGetRow(r.ListAssetsPageRow), tags)
-		a.PreviewAvailable = r.PreviewAvailable
-		a.LadderAvailable = r.LadderAvailable
-		a.ScrubAvailable = r.ScrubAvailable
+		a.PreviewAvailable = &r.PreviewAvailable
+		a.LadderAvailable = &r.LadderAvailable
+		a.ScrubAvailable = &r.ScrubAvailable
 		// #640 — the tile's aspect ratio, joined by the same pass.
 		// The gated row already applied the pair-or-neither rule.
 		a.PixelWidth = r.PixelWidth
@@ -1344,6 +2066,14 @@ func (h *Handler) ListAssets(
 		lastID = uuid.UUID(r.ID.Bytes)
 	}
 	rowCount = len(rows)
+
+	// The at-a-glance strip + provenance for the whole page (#552), in two
+	// queries rather than two per row. Runs last, on the rows already
+	// chosen, because it is presentation: it cannot add, remove or reorder
+	// an asset, and a failure here must not cost the caller their page.
+	if err := h.decorateCards(ctx, assetsList); err != nil {
+		return nil, fmt.Errorf("assets: card decoration: %w", err)
+	}
 
 	resp := openapi.AssetList{Items: assetsList}
 	if rowCount > int(limit) {
@@ -1385,6 +2115,28 @@ func contentCaller(ctx context.Context) (visibility.Caller, visibility.Capabilit
 		return visibility.NewCaller(&id.UserRef), func(code string) bool { return id.Can(code) }
 	}
 	return visibility.NewCaller(nil), nil
+}
+
+// mutationCaps resolves the caller's asset-mutation capabilities for
+// the READ gates (#939, ADR 0064) — the field plane a mutation holder
+// is owed, never the bytes.
+//
+// Separate from contentCaller because it is a different plane and a
+// different shape: contentCaller hands out a CapabilityChecker that
+// answers GLOBAL codes only (`id.Can(code)` with no InTeam option), and
+// `assets.admin` is team-scoped, so a scoped-only holder answers false
+// through that checker. The team set has to travel as data.
+//
+// Anonymous resolves to the zero value, which permits nothing.
+func mutationCaps(ctx context.Context) visibility.AssetMutationCaps {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return visibility.AssetMutationCaps{}
+	}
+	return visibility.ResolveAssetMutationCaps(
+		func(code string) bool { return id.Can(code) },
+		id.ScopedTeams(visibility.AssetsAdmin),
+	)
 }
 
 func (h *Handler) DownloadAssetFile(
@@ -1657,6 +2409,12 @@ func dedupeTags(in []string) []string {
 	return out
 }
 
+// ptr returns a pointer to a copy of v. openapi.Asset's fields became
+// pointers when #899 shrank the schema's `required` list to the two
+// keys a withheld payload carries, so absence is expressible; this is
+// the noise that buys it.
+func ptr[T any](v T) *T { return &v }
+
 // strDefault returns *p or the default if p is nil.
 func strDefault(p *string, def string) string {
 	if p == nil {
@@ -1707,13 +2465,13 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTagsDetailedRow) openapi.Asset {
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
-		Title:            row.Title,
-		AssetType:        row.AssetType,
-		Status:           openapi.AssetStatus(row.Status),
-		ProcessingStatus: openapi.AssetProcessingStatus(row.ProcessingStatus),
-		CreatedAt:        row.CreatedAt.Time,
-		UpdatedAt:        row.UpdatedAt.Time,
-		Tags:             tags,
+		Title:            &row.Title,
+		AssetType:        &row.AssetType,
+		Status:           ptr(openapi.AssetStatus(row.Status)),
+		ProcessingStatus: ptr(openapi.AssetProcessingStatus(row.ProcessingStatus)),
+		CreatedAt:        &row.CreatedAt.Time,
+		UpdatedAt:        &row.UpdatedAt.Time,
+		Tags:             &tags,
 	}
 	if len(details) > 0 {
 		td := make([]openapi.AssetTagDetail, 0, len(details))
@@ -1750,6 +2508,13 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		v := openapi_types.UUID(row.StateID.Bytes)
 		a.StateId = &v
 	}
+	// #953 — the team an asset was created into. Absent, not null, when
+	// it has none: the common case, and the same absence discipline the
+	// rest of this projection uses.
+	if row.TeamID.Valid {
+		v := openapi_types.UUID(row.TeamID.Bytes)
+		a.TeamId = &v
+	}
 	if len(row.Thumbhash) > 0 {
 		// Base64-encoded for JSON transport. The frontend
 		// thumbhash decoder accepts both base64 and the raw byte
@@ -1764,7 +2529,7 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		}
 	}
 	if a.Tags == nil {
-		a.Tags = []string{}
+		a.Tags = &[]string{}
 	}
 	return a
 }
@@ -1775,6 +2540,7 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 // have a marshaller for.
 func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 	return GetAssetRow{
+		TeamID:           r.TeamID,
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
@@ -1796,6 +2562,7 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 
 func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 	return GetAssetRow{
+		TeamID:           r.TeamID,
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
@@ -1817,6 +2584,7 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 	return GetAssetRow{
+		TeamID:           r.TeamID,
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,

@@ -21,7 +21,13 @@ export const testIds = {
   nav: {
     brand:            'nav-brand',
     search:           'nav-search',
-    advancedSearch:   'nav-advanced-search',
+    // The link to the search SURFACE. Renamed from `advancedSearch` /
+    // `nav-advanced-search` in #850: the label named `/search/advanced`,
+    // a page that no longer exists — the builder is a panel inside
+    // /search now. It was also registered here and never applied to the
+    // element, which is why the two specs that use it located it by
+    // accessible name and both broke the moment the name changed.
+    searchPage:       'nav-search-page',
     upload:           'nav-upload-button',
     notifications:    'nav-notifications-button',
     messages:         'nav-messages-button',
@@ -68,6 +74,22 @@ export const testIds = {
     inputPrefix:      'site-text-input-',   // suffix with the i18n key
     savePrefix:       'site-text-save-',    // suffix with the i18n key
     revertPrefix:     'site-text-revert-',  // suffix with the i18n key
+  },
+
+  // Account → tiles that stopped being placeholders (#600) -----
+  account: {
+    // The overview grid. Scope tile locators to it — the /account
+    // sidebar renders the same hrefs, so an unscoped
+    // a[href="/account/x"] is a strict-mode violation.
+    tiles:              'account-tiles',
+    followingTabPrefix: 'following-tab-',  // suffix: following | followers
+    followingTable:     'following-table',
+    followingEmpty:     'following-empty',
+    requestsList:       'requests-list',
+    requestsEmpty:      'requests-empty',
+    helpLinks:          'help-links',
+    shortcutsGroups:    'shortcuts-groups',
+    shortcutGroupPrefix: 'shortcut-group-', // suffix with the group id
   },
 
   // Generic page surfaces ------------------------------------

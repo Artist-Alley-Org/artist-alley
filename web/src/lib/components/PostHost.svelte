@@ -15,7 +15,7 @@
   // here so the shell is reusable for CollectionHost / ReviewHost /
   // SearchHost in follow-up commits.
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$api/client';
@@ -25,6 +25,7 @@
   import CommentsThread from './CommentsThread.svelte';
   import FollowButton from './FollowButton.svelte';
   import Menu from './Menu.svelte';
+  import ShareEntityModal from './ShareEntityModal.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
   import DetailsIcon from './viewers/tools/DetailsTool/Icon.svelte';
@@ -36,6 +37,9 @@
   import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
   import { formatFieldValue, type AssetFieldValue } from '$lib/fieldDisplay';
   import { t } from '$stores/lang.svelte';
+  import ConfirmDeleteDialog from './ConfirmDeleteDialog.svelte';
+  import { toasts } from '$stores/toasts.svelte';
+  import { canDelete, deleteEntity, restoreEntity, shouldAskReason } from '$lib/deletable';
 
   interface Props {
     postId: string;
@@ -294,6 +298,39 @@
   const isOwner = $derived(
     !!auth.user && !!post && auth.user.ref === post.author_user_ref,
   );
+  // #981 — "delete this post" asks about the POST's author, not about
+  // `isOwner`-as-a-proxy for anything else. It is spelled through
+  // canDelete() rather than reusing isOwner directly so the global
+  // posts.admin holder gets the item too.
+  //
+  // It falls back to the caller's GLOBAL capability set, which is the
+  // documented ceiling: a TEAM-scoped grant is invisible to the client
+  // and its holder sees no button even though the API would accept
+  // them. See $lib/deletable for why that is not worked around.
+  //
+  // "Delete asset" is NOT here, and its absence is the #987 fix rather
+  // than an omission. It asks about the asset's own owner_user_ref — a
+  // post author does not automatically own every member, and an asset
+  // owner may not have authored the post it appears in — so it was
+  // never a post-shaped question. It now lives in AssetPlaylist, which
+  // is the shell that always has an asset under the cursor, so the
+  // asset-shaped /assets/{id} route gets the same affordance instead of
+  // none at all.
+  const canDeleteThisPost = $derived(
+    !!post && canDelete('post', post.author_user_ref),
+  );
+  // #918 — two separate questions the header menu used to conflate.
+  // `hasVisibleMembers` gates the items that ACT on the members ("add
+  // all", "download all", "tag all"). `hasMenuItems` exists only so the
+  // trigger doesn't open an empty panel — the single case where neither
+  // an owner action nor a member action qualifies.
+  const hasVisibleMembers = $derived(pl.source.items.length > 0);
+  // Any signed-in reader now has at least one item — "save this post"
+  // (#882) — so the empty-panel case narrowed to anonymous readers of
+  // a memberless post they did not write.
+  const hasMenuItems = $derived(
+    hasVisibleMembers || isOwner || canDeleteThisPost || !!auth.user,
+  );
   const postedRelative = $derived(post ? relativeTime(post.posted_at) : '');
   const postedAbsolute = $derived(post ? new Date(post.posted_at).toLocaleString() : '');
 
@@ -410,19 +447,35 @@
   onDestroy(() => {});
 
   // ── Collection-picker state ───────────────────────────────────────
-  // pickerAssetIds is the working set the picker operates on. For
-  // single-asset (Edit menu) we set it to [currentAssetId]; for the
-  // bulk action we set it to every item id. Driving both flows from
-  // one state field keeps the modal rendered at most once.
+  // pickerAssetIds / pickerPostIds are the working set the picker
+  // operates on. For single-asset (Edit menu) we set the assets to
+  // [currentAssetId]; for the bulk action to every item id; for "save
+  // this post" (#882) we set the POST instead and leave the assets
+  // empty. Driving every flow from one pair of state fields keeps the
+  // modal rendered at most once.
+  //
+  // Saving the POST and saving ALL ITS ASSETS are different actions and
+  // both are on the menu: one keeps the author's framing (title,
+  // description, the carousel's order) as a reference that dies with
+  // their post; the other lifts the images out into your own shelf.
   let pickerAssetIds = $state<string[]>([]);
+  let pickerPostIds = $state<string[]>([]);
   let pickerOpen = $state(false);
 
   function openPickerForCurrent(assetId: string) {
     pickerAssetIds = [assetId];
+    pickerPostIds = [];
     pickerOpen = true;
   }
   function openPickerForAll() {
     pickerAssetIds = pl.source.items.map((it) => it.id);
+    pickerPostIds = [];
+    pickerOpen = true;
+  }
+  function openPickerForPost() {
+    if (!post) return;
+    pickerAssetIds = [];
+    pickerPostIds = [post.id];
     pickerOpen = true;
   }
   function closePicker() {
@@ -468,8 +521,15 @@
   function stubAction(label: string) {
     alert(`${label} — coming soon (stub).`);
   }
-  function editTags(_assetId: string) {
-    stubAction('Edit tags');
+  // No longer a stub (#549): the viewer's Edit ▸ Edit tags is the
+  // in-context entry to the asset edit route, which is where tags are
+  // edited. Edit metadata stays stubbed on purpose — that route
+  // deliberately does not offer `metadata`, because PATCH /assets/{id}
+  // REPLACES the blob and the blob is extractor-written; per-field
+  // metadata editing is #552. Pointing this item at a page that does
+  // not do what it says would be the worse half of a stub.
+  function editTags(id: string) {
+    void goto(`/assets/${id}/edit`);
   }
   function editMetadata(_assetId: string) {
     stubAction('Edit metadata');
@@ -480,9 +540,6 @@
   function shareAsset(_assetId: string) {
     stubAction('Share asset');
   }
-  function deleteAsset(_assetId: string) {
-    stubAction('Delete asset');
-  }
   function bulkDownloadZip() {
     stubAction('Download all as ZIP');
   }
@@ -492,11 +549,114 @@
   function sharePlaylist() {
     stubAction('Share playlist');
   }
+  // Manage access — the author-facing entry point onto post_acls
+  // (#880). #667 made a `post_acls` row confer read and #875 notified
+  // the grantee, but nothing in the product could write the row; this
+  // menu item is that missing entry point. It sits with edit / delete
+  // because it is an author-only mutation of the post, not a read-only
+  // affordance like "share playlist" (which copies a link).
+  let shareOpen = $state(false);
+
+  function manageAccess() {
+    shareOpen = true;
+  }
   function editPost() {
     stubAction('Edit post');
   }
+
+  // ── Delete this post (#981) ───────────────────────────────────────
+  // "Delete post" was stubAction() until that issue: the whole soft-
+  // delete/restore arc (#930 ownership gates, #936 self-restore,
+  // #920/#935 cache fan-out, #937 the trash page) was reachable only
+  // through the API. It now opens the shared ConfirmDeleteDialog and
+  // calls the real endpoint through $lib/deletable, which is also what
+  // the collection page uses.
+  //
+  // The asset half of this moved to AssetPlaylist in #987 — see the
+  // canDeleteThisPost comment above for why it was never post-shaped.
+
+  let deleteTarget = $state<{
+    id: string;
+    title: string;
+    ownerRef: number | null | undefined;
+  } | null>(null);
+  let deleteBusy = $state(false);
+  let deleteError = $state<string | null>(null);
+
   function deletePost() {
-    stubAction('Delete post');
+    if (!post) return;
+    deleteError = null;
+    deleteTarget = {
+      id: post.id,
+      title: post.title ?? '',
+      ownerRef: post.author_user_ref,
+    };
+  }
+
+  function closeDeleteDialog() {
+    if (deleteBusy) return;
+    deleteTarget = null;
+    deleteError = null;
+  }
+
+  async function confirmDelete(reason: string) {
+    const target = deleteTarget;
+    if (!target || deleteBusy) return;
+    deleteBusy = true;
+    deleteError = null;
+    const err = await deleteEntity('post', target.id, reason);
+    deleteBusy = false;
+    if (err) {
+      // Keep the dialog open so the message lands beside the button
+      // that produced it.
+      deleteError = err;
+      return;
+    }
+    deleteTarget = null;
+
+    // The post is gone; the surface showing it cannot stay. The
+    // standalone route has nowhere to fall back to, so it navigates;
+    // the feed overlay closes back onto the feed underneath.
+    //
+    // Before the toast, so the acknowledgement arrives on the surface
+    // the user lands on rather than over the one they just left. It is
+    // not what keeps the toast alive: a toast raised while the viewer
+    // dialog is still open is parented INTO it (it has to be — the
+    // dialog owns the top layer), and no ordering here can guarantee
+    // the dialog is gone, because `onClose` below may be the
+    // close-to-origin policy and that `history.back()`s. Surviving a
+    // host that ends is $lib/portal's job (#991).
+    if (standalone) await goto('/');
+    else onClose();
+    await tick();
+
+    toasts.push({
+      message: t('delete_confirm.deleted_post'),
+      href: '/account/trash',
+      linkLabel: t('delete_confirm.view_trash'),
+      action: {
+        label: t('delete_confirm.undo'),
+        run: () => undoDelete(target.id),
+      },
+    });
+  }
+
+  // The Undo in the delete toast. Safe to offer unconditionally: we
+  // just performed the delete, so we ARE the deleter, and
+  // auth.CanRestoreDeleted grants restore to the deleter. It can never
+  // be an affordance the server refuses.
+  async function undoDelete(id: string) {
+    const err = await restoreEntity('post', id);
+    if (err) {
+      toasts.push({
+        message: t('delete_confirm.undo_error'),
+        tone: 'error',
+        href: '/account/trash',
+        linkLabel: t('delete_confirm.view_trash'),
+      });
+      return;
+    }
+    toasts.push({ message: t('delete_confirm.undone') });
   }
 </script>
 
@@ -534,7 +694,6 @@
   onEditMetadata={isOwner ? editMetadata : undefined}
   onDownloadVariant={downloadVariant}
   onShareAsset={shareAsset}
-  onDeleteAsset={isOwner ? deleteAsset : undefined}
 />
 
 <!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
@@ -600,6 +759,7 @@
 {#if pickerOpen}
   <CollectionPicker
     assetIds={pickerAssetIds}
+    postIds={pickerPostIds}
     onClose={closePicker}
   />
 {/if}
@@ -688,45 +848,91 @@
           </div>
         {/if}
       </div>
-      <Menu align="right" panelClass="min-w-[12rem]">
-        {#snippet trigger({ open })}
-          <span
-            class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"
-            class:bg-surface-elevated={open}
-            aria-label={t('post_menu.actions_button')}
-            title={t('post_menu.actions_button')}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="5" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-              <circle cx="12" cy="19" r="1.5" />
-            </svg>
-          </span>
-        {/snippet}
-        {#if pl.source.items.length > 0}
-          <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-            {t('playlist_actions.add_all_to_collection')}
-          </button>
-          <button type="button" role="menuitem" onclick={bulkDownloadZip} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-            {t('playlist_actions.download_all_zip')}
-          </button>
-          <button type="button" role="menuitem" onclick={sharePlaylist} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-            {t('playlist_actions.share_playlist')}
-          </button>
-          {#if isOwner}
-            <div class="my-1 h-px bg-border"></div>
-            <button type="button" role="menuitem" onclick={bulkTag} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-              {t('playlist_actions.bulk_tag')}
+      <!-- #918 — the menu is about the POST; only the items that act on
+           the members are about the members. One `items.length > 0`
+           around the whole panel meant a post rendering no visible
+           members stripped its own author of edit, delete and (since
+           #915 moved it in here) manage access.
+
+           A post reaches zero members without anyone deleting it: its
+           only asset gets soft-deleted, or it never had one (an article,
+           ADR 0073). The author is then the one person who could still
+           act on it and the only one shown nothing to act with.
+
+           `hasMenuItems` keeps the trigger from opening an empty panel
+           in the one case where nothing at all qualifies — a reader on a
+           memberless post they did not write. -->
+      {#if hasMenuItems}
+        <Menu align="right" panelClass="min-w-[12rem]">
+          {#snippet trigger({ open })}
+            <span
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"
+              class:bg-surface-elevated={open}
+              aria-label={t('post_menu.actions_button')}
+              title={t('post_menu.actions_button')}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="5" r="1.5" />
+                <circle cx="12" cy="12" r="1.5" />
+                <circle cx="12" cy="19" r="1.5" />
+              </svg>
+            </span>
+          {/snippet}
+          <!-- #882 — save the POST itself, as a reference. Above the
+               member actions because it is the one people reach for:
+               the whole post is what they saw. It is offered to every
+               signed-in reader, not just the author — the server
+               decides what may be collected by whether the caller can
+               READ it, and this surface has already read it. -->
+          {#if auth.user}
+            <button type="button" role="menuitem" onclick={openPickerForPost} data-testid="post-add-to-collection" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('post_menu.add_to_collection')}
             </button>
-            <button type="button" role="menuitem" onclick={editPost} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+          {/if}
+          {#if hasVisibleMembers}
+            <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.add_all_to_collection')}
+            </button>
+            <button type="button" role="menuitem" onclick={bulkDownloadZip} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.download_all_zip')}
+            </button>
+            <button type="button" role="menuitem" onclick={sharePlaylist} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.share_playlist')}
+            </button>
+          {/if}
+          {#if isOwner}
+            {#if hasVisibleMembers}
+              <div class="my-1 h-px bg-border"></div>
+            {/if}
+            <button type="button" role="menuitem" onclick={manageAccess} data-testid="post-manage-access" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('post_menu.manage_access')}
+            </button>
+            {#if hasVisibleMembers}
+              <button type="button" role="menuitem" onclick={bulkTag} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+                {t('playlist_actions.bulk_tag')}
+              </button>
+            {/if}
+            <button type="button" role="menuitem" onclick={editPost} data-testid="post-edit" class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('post_menu.edit_post')}
             </button>
-            <button type="button" role="menuitem" onclick={deletePost} class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
+          {/if}
+          <!-- Delete sits OUTSIDE the isOwner block (#981). Every other
+               item up there is author-only by design — manage access is
+               a disclosure lever (canWidenPostAccess), edit is
+               authorship. Delete is not: canMutatePost accepts a global
+               posts.admin holder, which is the instance moderator role,
+               and hiding the item from them would mean moderation had
+               to happen through the API. -->
+          {#if canDeleteThisPost}
+            {#if isOwner || hasVisibleMembers}
+              <div class="my-1 h-px bg-border"></div>
+            {/if}
+            <button type="button" role="menuitem" onclick={deletePost} data-testid="post-delete" class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
               {t('post_menu.delete_post')}
             </button>
           {/if}
-        {/if}
-      </Menu>
+        </Menu>
+      {/if}
     </header>
 
     <div class="p-4 text-sm">
@@ -972,6 +1178,36 @@
         <CommentsThread postId={post.id} />
       </div>
     </div>
+
+    <!-- Mounted INSIDE this snippet, not at the component's top level,
+         and that placement is load-bearing. AssetPlaylist renders the
+         social pane inside a native <dialog>, which the browser puts in
+         the top layer; Modal.svelte portals itself to the nearest OPEN
+         <dialog> and falls back to <body>. Declared at the top level of
+         PostHost there is no such ancestor, so the dialog wins the
+         stacking contest and the share modal renders UNDERNEATH the
+         viewer — present in the DOM, invisible, and unclickable. Driven
+         in a browser that reads as "the menu item does nothing". -->
+    <ShareEntityModal
+      open={shareOpen}
+      kind="post"
+      id={post.id}
+      onclose={() => (shareOpen = false)}
+    />
+
+    <!-- Same placement rule, same reason (#981): the delete confirm is
+         raised from menus that live inside the viewer dialog, so it has
+         to be declared where Modal's portal can find that dialog. -->
+    <ConfirmDeleteDialog
+      open={deleteTarget !== null}
+      kind="post"
+      title={deleteTarget?.title}
+      askReason={deleteTarget ? shouldAskReason(deleteTarget.ownerRef) : false}
+      busy={deleteBusy}
+      error={deleteError}
+      onconfirm={confirmDelete}
+      onclose={closeDeleteDialog}
+    />
   {/if}
 {/snippet}
 

@@ -232,3 +232,114 @@ backend behind it, and per-domain config picks `in-process` vs
   multi-instance scaling demands it.
 - Search-result caching — needs ADR 0010 (search DSL) first so the
   cache key shape is stable.
+
+---
+
+### Amendment 2026-08-06 (#935, PR #945) — writes that reach other domains through the SCHEMA
+
+This ADR describes how a cache is invalidated by *the code that owns the write*. That is the
+common case and it is unchanged. It does not cover the case where a write empties rows in a
+package that never runs — and that gap produced two live staleness bugs.
+
+**A hard delete is the one asset write that crosses domains through the database rather than
+through code.** `asset_subtitle_tracks` and `post_assets` carry `ON DELETE CASCADE`, so deleting
+an asset removes rows in packages the deleting code has never heard of. **The database ends up
+consistent; the in-process LRUs those packages keep do not, and nothing in the database can tell
+them.** A read-through cache goes on answering from the pre-delete world until the process
+restarts.
+
+The decision:
+
+- **A write whose effects propagate via schema-level CASCADE owes an explicit cache fan-out.**
+  Consistency in Postgres is not consistency in the caches, and the FK gives no callback.
+- **The fan-out belongs at the composition root, behind a hook on the writing service** — here
+  `softdelete.Service.OnAssetsHardDeleted`. Calling the affected domains directly would give a
+  generic GC primitive imports of `subtitles`, `posts` and `iiif/presentation`, inverting the
+  dependency direction for three domains at once. The hook keeps one readable list of which
+  caches a hard delete touches.
+- **Best-effort, never propagating.** The write has already committed; a failure to evict must
+  not turn a completed job into a failed one. Log and continue — the same discipline the
+  storage-unpin step already uses.
+
+**The corollary that actually bit us: every mutating path needs the sweep, not just the dramatic
+ones.** `UpdateAsset` — an ordinary metadata PATCH — invalidated **nothing at all**, so renaming
+an asset left every holding post and its IIIF manifest serving the old title until a restart.
+That is the same defect #920 fixed for delete and restore, on the path users actually hit, and it
+survived because attention went to the destructive operations. The helper is now
+`assets.invalidateDerivedCaches` and runs on **update, delete and restore**.
+
+**A cross-package `Invalidate*` helper with no callers is a claim, not a mechanism.** Three such
+helpers existed; two were genuinely unwired and one was correct-as-is, and *all three* had doc
+comments asserting callers that did not exist. When adding one, wire it in the same change or say
+in its doc why nothing calls it — see [[feedback_a_comment_is_not_a_call_site]].
+
+---
+
+### Amendment 2026-08-11 (#557, PR #1022) — a cross-caller cache must never hold caller-dependent data, and the mutation that moves a counter must invalidate the domain that serves it
+
+Two rules, both learned the hard way on the same sprint.
+
+**1. Caller-dependent redaction does not belong in a shared cache entry.** The post payload is
+served from a cache shared by every caller. #557 needed an *author identity* on it — and identity
+is exactly the kind of value that differs by who is asking: an anonymous reader must not see a
+`hide_from_anonymous` user's name, and must not see the `fullname` rung at all (ADR 0070 §3).
+
+Putting the resolved identity **into** the cached entry would mean **the first reader to warm it
+decides what every later reader sees.** An authenticated reader warms the entry with full
+identity; the next anonymous request is served that entry. The leak would be intermittent,
+ordering-dependent, and invisible in any test that populates the cache from the same caller it
+asserts with.
+
+So the cache stores the caller-independent post, and identity is applied in an **enrichment pass
+after the cache read**, per request, against that caller's own visibility. The rule generalises:
+
+> **If a value depends on who is asking, it is computed after the cache, not stored in it.**
+> A shared entry may hold only what every caller may see.
+
+This is the caching-shaped statement of the same principle ADR 0064 applies to fields and ADR
+0070 to profiles. Note that the brief for #557 said *"do it in the list query as a JOIN"* — which
+is both impossible here (the list query only picks rows; payloads come from the cache, so a joined
+column is discarded) and, had it worked, would have written caller-dependent data straight into
+the shared entry.
+
+**2. A mutation must invalidate the domain that SERVES the value it changed — not the domain it
+belongs to.** `social`'s like and comment paths move `posts.like_count` via triggers, and
+invalidated only their own follow/block domains. Nothing invalidated the post-by-id domain, so a
+like updated the row and the API kept serving the stale count — measured at DB `like_count = 4`
+against an API-served `3`. It survived because `like_count` was hover-overlay decoration nobody
+watched; a like *button* turns it into a heart that fills over a number that never moves, even
+after a reload.
+
+The package boundary is what hid it: `social` cannot import `posts`, so the domain constant now
+lives in the shared `cache` package and both sides name the same one. **When a write in package A
+changes a value package B serves, the invalidation belongs on A's write path, and the domain
+constant belongs somewhere neither owns.** A test asserting the constants match is cheap and was
+mutation-tested here.
+
+---
+
+### Amendment 2026-08-08 (#887, PR #971) — a declined cache: scratch buffers under a cgroup ceiling
+
+The preview resampler's scratch buffers (`x/image/draw` kernel scalers) presented a textbook cache
+opportunity: constructed scalers reuse their internal buffers, and the measured tuple hit rate on a
+real render storm was **94.6%**. **The process-wide cache was declined anyway**, and the reasoning
+is the decision worth recording:
+
+- A scratch buffer is sized destination-width × **source**-height — the largest observed single
+  buffer was **889 MB**. A process-wide cache pins its largest entries **resident forever**.
+- Under a cgroup ceiling, **bounded churn beats permanent residency**: churn is reclaimable the
+  moment pressure ends (measured: 3.49 GB released within one sample of storm end); a pinned cache
+  is a permanent bite out of the ceiling that no GC returns.
+- So reuse is **job-scoped only** — a scaler lives for one job (the 36-frame turntable loop) and
+  dies with it.
+
+**The companion decision: the scratch budget is tied to `GOMEMLIMIT`, not core count.** Concurrent
+resamples share a byte-weighted semaphore with budget `GOMEMLIMIT/10`, clamped [128 MiB, 1 GiB],
+logged at boot as `preview.scale_budget`. Bytes rather than worker-count because the cost
+distribution is extreme (7% of ops are 62% of the bytes) — a count bound either starves the cheap
+90% or fails to bound the expensive 7%. Tying to `GOMEMLIMIT` keeps one knob: resize the container
+and every derived ceiling moves with it (same principle as #781's GOMEMLIMIT derivation).
+
+**The general rule this adds to the ADR**: when deciding whether to cache under a memory ceiling,
+weigh *reclaimability*, not just hit rate. A 94.6% hit rate argued for the cache; the 889 MB
+pinned-forever tail argued against; the tail wins under a cgroup.

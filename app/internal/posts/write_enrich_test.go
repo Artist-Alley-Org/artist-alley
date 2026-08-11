@@ -166,12 +166,18 @@ func memberKeys(t *testing.T, raw map[string]any) map[string]bool {
 func weFields(t *testing.T, p *openapi.Post, assetID uuid.UUID) weEnriched {
 	t.Helper()
 	for _, m := range p.Members {
-		if uuid.UUID(m.Asset.Id) != assetID {
+		// Keyed on PostMember.AssetId, not Asset.Id: since #883 a member
+		// the caller may not see carries no asset object at all.
+		if uuid.UUID(m.AssetId) != assetID {
 			continue
 		}
+		if m.Restricted || m.Asset == nil {
+			t.Fatalf("asset %v came back REDACTED — this fixture's caller is supposed "+
+				"to be able to read it, so the enrich comparison is meaningless", assetID)
+		}
 		return weEnriched{
-			PreviewAvailable: m.Asset.PreviewAvailable,
-			LadderAvailable:  m.Asset.LadderAvailable,
+			PreviewAvailable: vOf(m.Asset.PreviewAvailable),
+			LadderAvailable:  vOf(m.Asset.LadderAvailable),
 			PixelWidth:       m.Asset.PixelWidth,
 			PixelHeight:      m.Asset.PixelHeight,
 			Thumbhash:        m.Asset.Thumbhash,
@@ -404,13 +410,31 @@ func TestWritePathDoesNotPoisonCache(t *testing.T) {
 		t.Errorf("read after create returned a cached unenriched shape (%s)", f)
 	}
 
-	// A stranger must NOT inherit the author's readability.
+	// A stranger must NOT inherit the author's readability. Since #883
+	// the answer is stronger than `preview_available: false` — the member
+	// comes back as a placeholder with no asset object at all, so the
+	// assertion is on the redaction rather than on the flag. weFields is
+	// deliberately NOT used here: it fatals on a redacted member, which
+	// is right for the fixtures that expect a readable one and wrong as a
+	// way to express this.
 	strangerRead, err := h.GetPost(ctxAs(peStranger), openapi.GetPostRequestObject{Id: created.Id})
 	if err != nil {
 		t.Fatalf("GetPost stranger: %v", err)
 	}
 	strangerPost, _ := bodyOf(t, strangerRead.(openapi.GetPost200JSONResponse).VisitGetPostResponse)
-	if f := weFields(t, &strangerPost, restricted); f.PreviewAvailable {
-		t.Errorf("LEAK: a stranger inherited the author's preview_available from the write path (%s)", f)
+	found := false
+	for _, m := range strangerPost.Members {
+		if uuid.UUID(m.AssetId) != restricted {
+			continue
+		}
+		found = true
+		if !m.Restricted || m.Asset != nil {
+			t.Errorf("LEAK: a stranger inherited the author's view of a restricted member "+
+				"from the write path (restricted=%v, asset=%v)", m.Restricted, m.Asset)
+		}
+	}
+	if !found {
+		t.Error("the restricted member vanished from the stranger's response — #883 requires a " +
+			"VISIBLE placeholder, not an omission")
 	}
 }

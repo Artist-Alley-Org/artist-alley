@@ -103,6 +103,12 @@ func TestApply_RespectsExplicitGOMEMLIMIT(t *testing.T) {
 	if res.Applied {
 		t.Error("Apply overrode an operator-set GOMEMLIMIT; it must defer")
 	}
+	// The boot line reports Kind, and an operator reading a failed run
+	// has to be able to tell "deferred to the environment" from
+	// "found no cgroup" without parsing English out of Source (#888).
+	if res.Kind != KindEnv {
+		t.Errorf("kind = %q, want %q", res.Kind, KindEnv)
+	}
 }
 
 func TestApply_RatioZeroDisables(t *testing.T) {
@@ -111,6 +117,9 @@ func TestApply_RatioZeroDisables(t *testing.T) {
 	res := Apply(0)
 	if res.Applied {
 		t.Error("ratio 0 must disable; this is the off switch used to profile unbounded")
+	}
+	if res.Kind != KindDisabled {
+		t.Errorf("kind = %q, want %q", res.Kind, KindDisabled)
 	}
 }
 
@@ -174,5 +183,28 @@ func TestApply_DerivedLimitUnderCeiling(t *testing.T) {
 	}
 	if got := debug.SetMemoryLimit(-1); got != res.Limit {
 		t.Errorf("runtime limit = %d, want %d — Apply reported a value it did not install", got, res.Limit)
+	}
+	if res.Kind != KindDerived {
+		t.Errorf("kind = %q, want %q", res.Kind, KindDerived)
+	}
+	// Effective is read back OUT of the runtime rather than echoing
+	// the value we meant to set. "What we intended" and "what is in
+	// force" are precisely the two things #886/#887 could not tell
+	// apart from outside the process.
+	if res.Effective != res.Limit {
+		t.Errorf("effective = %d, want %d", res.Effective, res.Limit)
+	}
+}
+
+func TestEffectiveReadsWithoutMutating(t *testing.T) {
+	restoreMemLimit(t)
+	debug.SetMemoryLimit(777 << 20)
+	if got := Effective(); got != 777<<20 {
+		t.Fatalf("Effective() = %d, want %d", got, 777<<20)
+	}
+	// Reading must not itself be a write — a boot-line helper that
+	// changed the limit it reports would be worse than no line.
+	if got := debug.SetMemoryLimit(-1); got != 777<<20 {
+		t.Fatalf("limit after Effective() = %d, want unchanged", got)
 	}
 }

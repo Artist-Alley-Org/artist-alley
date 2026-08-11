@@ -11,14 +11,13 @@
     "gallery": "Gallery",
     "menu": "Menu",
     "blogs": "Blogs",
+    "teams": "Teams",
     "collections": "Collections",
     "review": "Review",
-    "advanced_search": "Advanced search",
-    "upload_button_title": "Upload (or drop files anywhere)"
+    "upload_button_title": "Upload (or drop files anywhere)",
+    "search_page": "Search"
   },
   "search": {
-    "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
-    "coming_soon": "Advanced search is not yet available. For now, the navbar input runs a full-text search.",
     "facets_heading": "Facets",
     "advanced_builder": "Advanced builder",
     "save_search_button": "Save search",
@@ -56,7 +55,6 @@
       "saved": "Saved. Runs every {minutes} minutes."
     },
     "advanced": {
-      "title": "Advanced search",
       "heading": "Advanced search",
       "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
       "freetext_label": "Free-text query (optional)",
@@ -96,6 +94,22 @@
       "err_not_configured": "Visual search isn't configured on this instance.",
       "err_unavailable": "The visual-search service is temporarily unavailable. Try again shortly.",
       "err_generic": "Reverse-image search failed. Try again."
+    },
+    "page_title": "Search",
+    "idle": "Search the library — artwork, posts and collections in one place.",
+    "facets_intro": "What is in these results. Counts reflect what you can open.",
+    "kind": {
+      "all": "Everything",
+      "assets": "Artwork",
+      "posts": "Posts",
+      "collections": "Collections"
+    },
+    "facet": {
+      "asset_type": "Type",
+      "tag": "Tags",
+      "sensitivity": "Sensitivity",
+      "owner": "Owner",
+      "extension": "File type"
     }
   },
   "blogs": {
@@ -176,6 +190,28 @@
       "embedding_pending": "Embedding pending — check back after the indexer catches up.",
       "empty": "No similar assets in your library yet.",
       "distance_label": "cosine distance: {d}"
+    },
+    "edit": {
+      "title": "Edit asset",
+      "back": "Back to asset",
+      "field_title": "Title",
+      "field_description": "Description",
+      "field_tags": "Tags",
+      "field_status": "Status",
+      "tag_placeholder": "Add a tag and press Enter",
+      "tag_remove": "Remove tag {tag}",
+      "tags_replace_note": "Saving replaces this asset's whole tag list.",
+      "status_draft": "Draft — only you and your team can find it",
+      "status_active": "Published — anyone who can reach this site can see it",
+      "status_archived": "Archived — kept, but out of the way",
+      "status_note": "Publishing decides who can reach this asset, not how it looks.",
+      "error_save": "Couldn't save this asset.",
+      "forbidden_heading": "You can't edit this asset",
+      "forbidden_body": "It belongs to someone else, and your account doesn't hold the rights to change other people's work.",
+      "forbidden_demo": "The demo is read-only, so nothing here can be changed.",
+      "conflict_heading": "Somebody else edited this first",
+      "conflict_body": "This asset changed on the server after you opened this form. Reload to see their version, or save anyway to replace it with yours.",
+      "conflict_overwrite": "Save anyway"
     }
   },
   "card": {
@@ -183,14 +219,19 @@
       "row_label": "Quick actions",
       "menu_label": "More actions",
       "info": "View details",
-      "share": "Copy link",
+      "copy_link": "Copy link",
       "copied": "Link copied",
-      "add_to_collection": "Add to collection…"
+      "manage_access": "Manage access…",
+      "add_to_collection": "Add to collection…",
+      "edit": "Edit…"
     },
     "select": {
       "label": "Select",
       "deselect": "Deselect"
     },
+    "origin_from": "from {peer}",
+    "origin_label": "This item is hosted by another server",
+
     "multi": {
       "badge_label": "{count} assets in this post"
     },
@@ -214,6 +255,24 @@
         "archive": "Archive",
         "placeholder": "File"
       }
+    },
+    "restricted": {
+      "label": "Restricted",
+      "owner": "by {owner}",
+      "owner_unknown": "Owner not shown",
+      "sr": "This item is restricted. You do not have access to it.",
+      "ask": "Request access",
+      "asked": "Requested"
+    },
+    "feed": {
+      "author_profile": "View {name}'s profile",
+      "like": "Like",
+      "unlike": "Unlike",
+      "likes": "{count} likes",
+      "comment": "Comment",
+      "comments": "{count} comments",
+      "share": "Share",
+      "shared": "Link copied"
     }
   },
   "selection": {
@@ -303,7 +362,38 @@
       "empty": "You haven't submitted any requests.",
       "decision_reason": "Decision reason",
       "expires_at": "Access expires: {ts}",
-      "view_asset": "View asset"
+      "view_asset": "View asset",
+      "incoming_title": "Requests you decide",
+      "incoming_intro": "{total} pending. You decide these — they are about work you own, or about items you removed.",
+      "outgoing_title": "Requests you sent",
+      "view_target_asset": "View asset",
+      "view_target_post": "View post",
+      "view_target_collection": "View collection"
+    },
+    "following": {
+      "title": "Following",
+      "intro": "People you follow, and the people following you.",
+      "tab_following": "Following",
+      "tab_followers": "Followers",
+      "empty_following": "You aren't following anyone yet. Follow someone from their profile and they'll show up here.",
+      "empty_followers": "Nobody follows you yet.",
+      "col_user": "User",
+      "col_since": "Since",
+      "col_actions": "Actions",
+      "unfollow": "Unfollow",
+      "load_error": "Could not load your follow lists.",
+      "unfollow_error": "Could not unfollow that user."
+    },
+    "help": {
+      "title": "Help & support",
+      "intro": "Documentation, the keyboard cheatsheet, and where to report a problem.",
+      "link_docs": "Documentation",
+      "desc_docs": "Guides and reference for everything in the app.",
+      "link_shortcuts": "Keyboard shortcuts",
+      "desc_shortcuts": "Every key the viewer, whiteboard, and search bar listen for.",
+      "link_issues": "Report a bug or request a feature",
+      "desc_issues": "The project's public issue tracker on GitHub.",
+      "self_hosted_note": "This install is self-hosted open source. There's no vendor helpdesk — for anything specific to this site, contact whoever runs it."
     },
     "overview": {
       "title": "Overview",
@@ -374,6 +464,14 @@
         "title": "Subscriptions",
         "blurb": "Tags, users, and collections you follow."
       },
+      "shared": {
+        "title": "Shared with me",
+        "blurb": "Posts other people have given you access to."
+      },
+      "requests": {
+        "title": "Access requests",
+        "blurb": "Access you've asked for, and what approvers decided."
+      },
       "tokens": {
         "title": "API tokens",
         "blurb": "Personal access tokens for scripts and integrations."
@@ -404,7 +502,7 @@
       },
       "following": {
         "title": "Following",
-        "blurb": "People and tags you follow + your followers."
+        "blurb": "People you follow, and the people following you."
       },
       "help": {
         "title": "Help & support",
@@ -440,6 +538,51 @@
       "col_since": "Blocked since",
       "col_actions": "Actions"
     },
+    "shared": {
+      "title": "Shared with me",
+      "intro": "Posts other people have given you access to. They stay here for as long as the access lasts — revoke it or let it expire, and the post drops off this page. Shared posts don't appear in Browse; you get a notification when someone shares one.",
+      "empty": "Nobody has shared a post with you yet.",
+      "empty_hint": "When someone gives you access to one of their posts, it shows up here and you'll get a notification.",
+      "load_more": "Load more"
+    },
+    "trash": {
+      "title": "Trash",
+      "intro": "Assets, posts and collections of yours that have been deleted. They stay here for a while before being removed for good, and you can put back anything you deleted yourself.",
+      "empty": "Your trash is empty.",
+      "empty_hint": "Anything you delete lands here first, so you can change your mind.",
+      "empty_action": "Go to your profile",
+      "kind_asset": "Asset",
+      "kind_post": "Post",
+      "kind_collection": "Collection",
+      "untitled": "Untitled",
+      "deleted_on": "Deleted",
+      "purges_in": "removed for good in",
+      "day": "day",
+      "days": "days",
+      "restore": "Restore",
+      "restoring": "Restoring…",
+      "restored": "Put back. It's out of the trash and back where it was.",
+      "admin_deleted": "Removed by someone else — restoring it needs an administrator.",
+      "deleted_reason_label": "Reason given:",
+      "appeal": "Ask for it back",
+      "appealing": "Sending…",
+      "appeal_sent": "Restoration requested",
+      "appeal_sent_hint": "We've told whoever removed it. You'll get a notification when they decide.",
+      "appeal_reason_label": "Say why it should come back (optional)",
+      "appeal_reason_placeholder": "A line for whoever removed it",
+      "appeal_cancel": "Cancel",
+      "appeal_send": "Send request",
+      "appeal_error": "Couldn't send that request.",
+      "load_error": "Couldn't load your trash.",
+      "restore_error": "Couldn't put that back.",
+      "load_more": "Load more",
+      "tab_mine": "Mine",
+      "tab_deleted_by_me": "Deleted by me",
+      "tab_mine_hint": "Things you own that are in the trash.",
+      "tab_deleted_by_me_hint": "Things belonging to other people that you removed. You can put any of them back.",
+      "empty_deleted_by_me": "You haven't removed anyone else's work.",
+      "empty_hint_deleted_by_me": "If you remove something belonging to someone else, it shows up here so you can undo it."
+    },
     "preferences": {
       "title": "Preferences",
       "intro": "These follow you across browsers when you sign in.",
@@ -467,29 +610,30 @@
       "notif_event_post_from_followed_user": "New post from someone you follow",
       "notif_event_direct_message_received": "Direct message received",
       "notif_event_broadcast_received": "Broadcast / announcement",
+      "notif_event_post_shared_with_me": "A post was shared with you",
       "notif_event_resource_request_received_to_approve": "Asset access request awaiting your approval",
       "notif_event_resource_request_approved": "Your asset access request was approved",
       "notif_event_resource_request_denied": "Your asset access request was denied",
       "notif_event_license_expiring_soon": "License expiring soon",
       "notif_event_license_expired": "License expired",
       "views_title": "Default views",
-      "views_intro": "Where the app lands you by default. Leaves the per-route default in place when set to “use default.”",
+      "views_intro": "Where browse opens on a device you haven’t set up by hand. Changing the view while you browse only affects that device and leaves these settings alone.",
+      "filters_title": "Feed filters",
+      "filters_show_restricted": "Show items I don’t have access to",
+      "filters_show_restricted_help": "By default your browse feed leaves out work you can’t open, and a post whose items are all restricted doesn’t appear at all — except your own posts, which always stay. Turn this on and those items come back as a “you don’t have access” tile. The Request access button sits on that tile, so while this is off you won’t find it in your feed — open the post itself, or a collection it’s in, to ask.",
       "views_use_default": "Use default",
       "views_home_tab": "Home tab",
       "views_home_tab_latest": "Latest",
       "views_home_tab_following": "Following",
-      "views_home_tab_trending": "Trending",
-      "views_home_tab_for_you": "For you",
       "views_browse_layout": "Browse layout",
       "views_browse_layout_grid": "Grid",
       "views_browse_layout_masonry": "Masonry",
       "views_browse_layout_thumbnail": "Thumbnail",
       "views_browse_layout_list": "List",
+      "views_browse_layout_feed": "Feed",
       "views_browse_sort": "Browse sort",
       "views_browse_sort_newest": "Newest",
       "views_browse_sort_oldest": "Oldest",
-      "views_browse_sort_popular": "Popular",
-      "views_browse_sort_trending": "Trending",
       "cadence_off": "Off",
       "cadence_immediate": "Immediate",
       "cadence_hourly": "Hourly digest",
@@ -546,25 +690,207 @@
       "revoke": "Sign out",
       "revoking": "Signing out…",
       "revoked": "Session revoked."
+    },
+    "activity": {
+      "title": "Activity log",
+      "intro": "Recent things you've done, and things that happened to your account. Older entries are removed over time.",
+      "empty": "Nothing here yet.",
+      "empty_hint": "Sign-ins, permission changes and anything you delete or restore will show up here.",
+      "load_error": "We couldn't load your activity. Try again in a moment.",
+      "load_more": "Show older",
+      "unknown_event": "An account event was recorded ({type}).",
+      "detail_asset": "Asset {id}",
+      "detail_post": "Post {id}",
+      "detail_collection": "Collection {id}",
+      "detail_capability": "Permission: {capability}",
+      "detail_reason": "Reason: {reason}",
+      "detail_sessions_revoked": "Other sessions signed out: {count}",
+      "event": {
+        "login.succeeded": {
+          "by_me": "You signed in.",
+          "on_my_account": "You signed in."
+        },
+        "login.failed": {
+          "by_me": "A sign-in attempt was refused.",
+          "on_my_account": "A sign-in to your account was attempted and refused."
+        },
+        "logout": {
+          "by_me": "You signed out.",
+          "on_my_account": "You signed out."
+        },
+        "session.revoked": {
+          "by_me": "You signed a session out.",
+          "on_my_account": "One of your sessions was signed out."
+        },
+        "auth.lockout.triggered": {
+          "by_me": "Sign-in was locked after repeated failures.",
+          "on_my_account": "Your account was temporarily locked after repeated failed sign-ins."
+        },
+        "auth.lockout.cleared": {
+          "by_me": "You lifted a sign-in lock.",
+          "on_my_account": "The sign-in lock on your account was lifted."
+        },
+        "user.registered": {
+          "by_me": "You created your account.",
+          "on_my_account": "Your account was created."
+        },
+        "user.email_verified": {
+          "by_me": "You confirmed your email address.",
+          "on_my_account": "Your email address was confirmed."
+        },
+        "user.password_changed": {
+          "by_me": "You changed your password.",
+          "on_my_account": "Your password was changed."
+        },
+        "user.password_reset": {
+          "by_me": "You reset someone's password.",
+          "on_my_account": "Your password was reset by an administrator."
+        },
+        "user.profile_updated": {
+          "by_me": "You edited a profile.",
+          "on_my_account": "Your profile was edited."
+        },
+        "user.status_changed": {
+          "by_me": "You changed an account's status.",
+          "on_my_account": "Your account status was changed."
+        },
+        "admin.users.approved": {
+          "by_me": "You approved an account.",
+          "on_my_account": "Your account was approved."
+        },
+        "admin.users.disabled": {
+          "by_me": "You disabled an account.",
+          "on_my_account": "Your account was disabled."
+        },
+        "admin.users.archived": {
+          "by_me": "You archived an account.",
+          "on_my_account": "Your account was archived."
+        },
+        "admin.users.restored": {
+          "by_me": "You restored an account.",
+          "on_my_account": "Your account was restored."
+        },
+        "admin.users.refused_last_admin": {
+          "by_me": "A change was refused because it would have left no administrators.",
+          "on_my_account": "A change to your account was refused because it would have left no administrators."
+        },
+        "admin.user.hard_deleted_by_gc": {
+          "by_me": "An account was removed for good.",
+          "on_my_account": "Your account was removed for good."
+        },
+        "admin.impersonation.started": {
+          "by_me": "You started viewing the site as another user.",
+          "on_my_account": "An administrator started viewing the site as you."
+        },
+        "admin.impersonation.ended": {
+          "by_me": "You stopped viewing the site as another user.",
+          "on_my_account": "An administrator stopped viewing the site as you."
+        },
+        "admin.search.feedback.audit_viewed": {
+          "by_me": "You opened a user's search feedback log.",
+          "on_my_account": "An administrator opened your search feedback log."
+        },
+        "user.capability_granted": {
+          "by_me": "You granted a permission.",
+          "on_my_account": "You were granted a permission."
+        },
+        "user.capability_revoked": {
+          "by_me": "You revoked a permission.",
+          "on_my_account": "A permission of yours was revoked."
+        },
+        "user.capability_grant_removed": {
+          "by_me": "You withdrew a permission you had granted.",
+          "on_my_account": "A permission you had been granted was withdrawn."
+        },
+        "user.capability_revoke_removed": {
+          "by_me": "You lifted a permission block.",
+          "on_my_account": "A block on one of your permissions was lifted."
+        },
+        "user.capability_grant_expired_swept": {
+          "by_me": "A temporary permission expired.",
+          "on_my_account": "A temporary permission of yours expired."
+        },
+        "user.capability_revoke_expired_swept": {
+          "by_me": "A temporary permission block expired.",
+          "on_my_account": "A temporary block on one of your permissions expired."
+        },
+        "request.created": {
+          "by_me": "You asked for access to an asset.",
+          "on_my_account": "Access to an asset was requested for you."
+        },
+        "request.granted": {
+          "by_me": "You approved an access request.",
+          "on_my_account": "Your access request was approved."
+        },
+        "request.denied": {
+          "by_me": "You declined an access request.",
+          "on_my_account": "Your access request was declined."
+        },
+        "request.expired": {
+          "by_me": "An access grant expired.",
+          "on_my_account": "Access you were given has expired."
+        },
+        "admin.asset.soft_deleted": {
+          "by_me": "You deleted an asset.",
+          "on_my_account": "An asset of yours was deleted."
+        },
+        "admin.asset.restored": {
+          "by_me": "You restored an asset.",
+          "on_my_account": "An asset of yours was restored."
+        },
+        "admin.post.soft_deleted": {
+          "by_me": "You deleted a post.",
+          "on_my_account": "A post of yours was deleted."
+        },
+        "admin.post.restored": {
+          "by_me": "You restored a post.",
+          "on_my_account": "A post of yours was restored."
+        },
+        "admin.collection.soft_deleted": {
+          "by_me": "You deleted a collection.",
+          "on_my_account": "A collection of yours was deleted."
+        },
+        "admin.collection.restored": {
+          "by_me": "You restored a collection.",
+          "on_my_account": "A collection of yours was restored."
+        },
+        "federation.user.key_generated": {
+          "by_me": "A signing key was created for your account.",
+          "on_my_account": "A signing key was created for your account."
+        },
+        "federation.user.key_rotated": {
+          "by_me": "You rotated a signing key.",
+          "on_my_account": "The signing key for your account was rotated."
+        }
+      }
     }
   },
   "admin": {
     "title": "Admin",
     "intro": "Manage the install. Changes here affect every user on this server.",
+    "caps_unavailable_title": "We couldn't check what you're allowed to do",
+    "caps_unavailable_body": "The server couldn't work out your permissions just now, so this page is hidden until it can. This isn't a decision about your account — nothing has changed about what you're allowed to do. Try again in a moment.",
     "status": {
       "live": "Live",
       "stub": "Stub"
     },
     "requests": {
       "title": "Resource requests",
-      "intro": "{total} pending requests. Approve a request to mint a time-bound capability grant for the requester.",
+      "intro": "{total} pending requests. What approving does depends on the request: an access request mints a capability grant for the requester; a restoration request puts the item back.",
       "empty": "No pending requests.",
       "decide": "Decide",
       "reason": "Reason (optional)",
       "expires_at": "Expires (optional; permanent if blank)",
       "grant": "Grant",
       "deny": "Deny",
-      "decided": "Decision recorded ({decision})."
+      "decided": "Decision recorded ({decision}).",
+      "target_asset": "asset",
+      "target_post": "post",
+      "target_collection": "collection",
+      "restore_appeal": "Restoration request",
+      "restore_grant_restores": "Approving this puts the item back straight away. It grants no other access, and it cannot be given an expiry.",
+      "not_yours_to_decide": "Only the person who removed this item can decide it.",
+      "grant_restore": "Put it back"
     },
     "featured": {
       "title": "Featured content",
@@ -883,32 +1209,6 @@
         "link_api": "API Explorer — every endpoint, live",
         "link_shortcuts": "Keyboard shortcuts",
         "link_release": "Release notes"
-      },
-      "shortcuts": {
-        "title": "Keyboard shortcuts",
-        "intro": "Shortcuts for the asset viewer and the global search bar. Viewer keys apply while an asset is open and no text field is focused.",
-        "group_playback": "Playback",
-        "group_loop": "Loop range",
-        "group_view": "View",
-        "group_search": "Search",
-        "play_pause": "Play / pause",
-        "play": "Play",
-        "pause": "Pause",
-        "step_back": "Step back one frame",
-        "frame_back": "Frame back (Shift = 10)",
-        "frame_fwd": "Frame forward (Shift = 10)",
-        "rate": "Playback rate (0.25× – 4×)",
-        "loop_in": "Set loop in-point",
-        "loop_out": "Set loop out-point",
-        "loop_clear": "Clear loop range",
-        "fullscreen": "Toggle fullscreen",
-        "reset_view": "Reset pan / zoom",
-        "goto_frame": "Go to frame",
-        "tile_mode": "Toggle tile preview",
-        "exit_fullscreen": "Exit fullscreen",
-        "search_nav": "Move through suggestions",
-        "search_go": "Run the search",
-        "search_close": "Close suggestions"
       },
       "release_notes": {
         "title": "Release notes",
@@ -1276,6 +1576,10 @@
             "title": "Themes & branding",
             "blurb": "Brand colors and custom CSS hooks."
           },
+          "browse_views": {
+            "title": "Browse layouts",
+            "blurb": "Choose which browse layouts your users can pick from."
+          },
           "maintenance": {
             "title": "Maintenance mode",
             "blurb": "Read-only mode and the banner shown to users."
@@ -1599,6 +1903,24 @@
       "code_placeholder": "snake_case_code",
       "edit": "Edit",
       "edit_required": "Required",
+      "flags": "Flags",
+      "flag_on_card": "On cards",
+      "description": "Description",
+      "description_help": "Shown to whoever fills this field in. Say what belongs here, not what the field is called.",
+      "section_basics": "Basics",
+      "section_vocabulary": "Vocabulary",
+      "section_advanced": "Advanced",
+      "advanced_help": "Where this field sits in a form, and what it applies to. Safe to ignore until you have more fields than fit on one screen.",
+      "group_placeholder": "general",
+      "display_order": "Order",
+      "display_help": "Fields are grouped by name and sorted by order within a group, lowest first. Both are hints — a surface may ignore them.",
+      "applies_to_all": "Every asset type.",
+      "applies_to_help": "Only the asset types ticked below.",
+      "applies_to_none": "No asset types are defined on this instance yet.",
+      "read_capability": "Read capability",
+      "write_capability": "Write capability",
+      "capability_none": "none",
+      "capability_readonly_help": "Capabilities decide who can see and change this field's values. They are shown here but not edited here — changing who can read a field is an access decision, not a layout one.",
       "options_help": "Options are never deleted — an asset may already store one. Deprecate a term to stop offering it while assets that have it keep working; archive it to retire it outright.",
       "options_none": "No options yet. Add one below.",
       "options_label": "Display label",
@@ -1663,8 +1985,28 @@
       "default_override_add": "Add override",
       "default_override_add_help": "The override uses whatever value is selected above.",
       "default_override_needs_value": "Pick a value above before adding an override.",
+      "show_on_card": "Show on cards",
+      "show_on_card_help": "Render this field at a glance on asset cards in browse and grids. A card falls back to the upload date when nothing is chosen.",
+      "show_on_card_gated": "This field has a read capability, so it cannot be shown on cards — a card renders on browse, where per-field capabilities have not been checked.",
       "open_vocabulary": "Let values add new terms",
       "open_vocabulary_help": "A value naming a term this field doesn't have creates it instead of being refused. Matching is case-insensitive on the slug or the label, so “Sunset” and “sunset” stay one term."
+    },
+    "field_detail": {
+      "back": "← Back to fields",
+      "not_found": "No field with the code “{code}” — it may have been renamed or never existed.",
+      "mirror_badge": "Mirrored",
+      "mirror_heading": "This field is a view onto the asset's “{column}”",
+      "mirror_body": "It has no storage of its own: reading it reads the asset's {column}, and writing it writes the asset's {column}. That is why the two can never disagree, and why this field holds no values of its own you could edit or export separately.",
+      "mirror_auth": "Changing a value through this field is changing the asset, so it needs the same permission editing the asset would — being signed in is not enough.",
+      "mirror_column_label": "Mirrors column",
+      "mirror_readonly": "Which columns can be mirrored is fixed by the database, not by this page — there is no control here because there is no way to point a field at a different column without a schema change.",
+      "extraction_help": "Where this field's value comes from when a file carries one. Leave the source empty to keep the field entirely operator-managed.",
+      "facts": "Details",
+      "field_id": "Field ID",
+      "status": "Status",
+      "created": "Created",
+      "updated": "Last edited",
+      "lifecycle_help": "Fields are archived, never deleted: archiving hides a field from the live schema and leaves every value assets already hold intact and readable."
     },
     "asset_types": {
       "title": "Asset types",
@@ -2123,6 +2465,19 @@
         "org_binding_error_label": "Cross-binding failed",
         "org_binding_recovery_hint": "Recovery: copy the original org.key into place (file permissions 0600), or run scripts/customer-activation in the license-server repo to generate a new one and request a license re-issuance against the new public key."
       },
+      "browse_views": {
+        "title": "Browse layouts",
+        "description": "Pick the layouts the view switcher offers on this install. This applies to everyone — anyone already using a layout you turn off is moved to one that is still on, so nobody lands on an empty page.",
+        "legend": "Layouts users can pick",
+        "min_one": "At least one layout has to stay on. Turning them all off would leave nobody able to browse.",
+        "saved": "Saved. The switcher updates on the next page load.",
+        "read_only": "You can view this setting but not change it.",
+        "mode_grid": "Cards in an even grid. The default on desktop.",
+        "mode_masonry": "Cards flow in columns at their natural heights.",
+        "mode_thumbnail": "A denser grid — a preview wall.",
+        "mode_list": "A sortable table with columns you choose.",
+        "mode_feed": "One column, image at full width. The default on phones."
+      },
       "themes": {
         "title": "Themes & branding",
         "intro": "Pick install-wide fonts for the brand mark, headings, body, and code. Changes preview live and apply to every user once saved.",
@@ -2167,6 +2522,33 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
+  "channels": {
+    "follow": "Follow",
+    "following": "Following",
+    "unfollow": "Unfollow",
+    "rail_title": "Your channels",
+    "browse_all": "All teams",
+    "empty": "You aren't following any teams yet.",
+    "empty_cta": "Find some",
+    "directory_title": "Teams",
+    "directory_blurb": "Studios and groups on this instance. Follow one to keep it in your channels.",
+    "directory_empty": "No teams yet",
+    "directory_empty_hint": "Teams appear here once an administrator creates them.",
+    "guest_title": "Teams are for members",
+    "guest_hint": "Sign in to browse the studios on this instance and follow the ones you want to keep up with.",
+    "not_found": "Team not found",
+    "not_found_body": "This team may have been deleted, or the link may be wrong.",
+    "members": "Members",
+    "member_count": "{count} members",
+    "member_count_one": "1 member",
+    "content_count": "{count} works",
+    "content_count_one": "1 work",
+    "tab_posts": "Posts",
+    "tab_assets": "Assets",
+    "no_posts": "This team hasn't posted anything yet.",
+    "no_assets": "This team has no assets yet.",
+    "load_more": "Load more"
+  },
   "messages": {
     "title": "Messages",
     "empty": "No conversations yet.",
@@ -2204,6 +2586,7 @@
     "verb_post_from_followed_user": "New post from someone you follow",
     "verb_direct_message_received": "New direct message",
     "verb_broadcast_received": "Announcement",
+    "verb_post_shared_with_me": "A post was shared with you",
     "verb_resource_request_received_to_approve": "Asset access request awaiting your approval",
     "verb_resource_request_approved": "Your asset access request was approved",
     "verb_resource_request_denied": "Your asset access request was denied",
@@ -2349,10 +2732,10 @@
     "new_first": "Create your first collection",
     "new_title": "New collection",
     "edit_title": "Edit collection",
-    "share_title": "Share collection",
     "name": "Name",
     "description": "Description",
     "visibility": "Visibility",
+    "new_visibility_note": "New collections start private. You can change who can see it once it exists.",
     "vis_private": "Private",
     "vis_org_only": "Org-only",
     "vis_followers": "Followers",
@@ -2377,11 +2760,9 @@
     "empty_public": "No public collections yet.",
     "empty_shared": "No collections have been shared with you yet.",
     "empty_all": "No collections match your filter.",
-    "detail_empty": "No assets in this collection yet.",
+    "detail_empty": "Nothing in this collection yet.",
     "upload_here": "Upload here",
     "upload_first": "Upload first asset",
-    "add_posts": "Add posts",
-    "add_posts_soon": "Post-level membership lands in a follow-up commit.",
     "share": "Share",
     "more": "More actions",
     "edit": "Edit details",
@@ -2390,17 +2771,6 @@
     "set_cover": "Set cover",
     "set_cover_soon": "Custom cover picker coming soon.",
     "delete": "Delete collection",
-    "delete_soon": "Delete confirmation flow coming soon.",
-    "share_add_heading": "Grant access",
-    "share_existing_heading": "Current grants",
-    "share_empty": "No one else has access yet.",
-    "principal_user": "User",
-    "principal_role": "Role",
-    "principal_team": "Team",
-    "principal_id_placeholder": "id or username",
-    "perm_read": "Read",
-    "perm_write": "Write",
-    "perm_admin": "Admin",
     "error_load": "Couldn't load collections.",
     "error_create": "Couldn't create the collection.",
     "error_save": "Couldn't save the collection.",
@@ -2411,18 +2781,47 @@
     "conflict_heading": "Someone else edited this collection",
     "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
     "conflict_overwrite": "Overwrite their changes with mine",
-    "error_load_share": "Couldn't load sharing settings.",
-    "error_add_share": "Couldn't add the grant.",
-    "error_remove_share": "Couldn't revoke the grant.",
     "include_deleted": "Include deleted",
     "restore_failed": "restore failed",
     "deleted_at_banner": "Deleted {date}",
     "deleted_reason": "— {reason}",
     "restoring": "Restoring…",
-    "restore": "Restore"
+    "restore": "Restore",
+    "detail_empty_hint": "Open a post or an asset and choose \"Save to collection\" to add it here.",
+    "posts_heading": "Posts",
+    "assets_heading": "Assets",
+    "posts_loading": "Loading posts…"
   },
   "errors": {
     "save_failed": "Couldn't save changes."
+  },
+  "share": {
+    "title_post": "Share post",
+    "title_collection": "Share collection",
+    "add_heading": "Grant access",
+    "existing_heading": "Current grants",
+    "empty": "No one else has access yet.",
+    "username_label": "Username to share with",
+    "username_placeholder": "Username",
+    "permission_label": "Permission",
+    "perm_read": "Read",
+    "perm_write": "Write",
+    "perm_admin": "Admin",
+    "expiry_label": "Access ends",
+    "expiry_never": "Never",
+    "expiry_1h": "In 1 hour",
+    "expiry_24h": "In 24 hours",
+    "expiry_7d": "In 7 days",
+    "expiry_30d": "In 30 days",
+    "expiry_custom": "On a date…",
+    "expiry_hint": "An expired grant stops giving access on its own — you don't have to come back and revoke it.",
+    "expires_at": "Access ends {when}",
+    "expired_at": "Access ended {when}",
+    "inert_principal": "grants nothing yet",
+    "error_load": "Couldn't load sharing settings.",
+    "error_add": "Couldn't add the grant.",
+    "error_remove": "Couldn't revoke the grant.",
+    "error_no_such_user": "No user called \"{name}\"."
   },
   "viewer_menu": {
     "file": "File",
@@ -2474,7 +2873,7 @@
   },
   "collection_picker": {
     "title_single": "Add to collection",
-    "title_bulk": "Add {n} assets to collection",
+    "title_bulk": "Add {n} items to collection",
     "search_placeholder": "Search your collections…",
     "loading": "Loading collections…",
     "empty": "You don't have any collections yet. Create one below.",
@@ -2492,9 +2891,115 @@
     "share_playlist": "Share playlist"
   },
   "post_menu": {
+    "manage_access": "Manage access…",
     "edit_post": "Edit post…",
     "delete_post": "Delete post…",
-    "actions_button": "Post actions"
+    "actions_button": "Post actions",
+    "add_to_collection": "Save to collection…"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "intro": "Every key the app listens for, grouped by where it works. There is no global shortcut — each set applies only while that surface is open, and none of them fire while you're typing in a text field.",
+    "group": {
+      "viewer_nav": "Asset viewer",
+      "playback": "Video & audio playback",
+      "loop": "Loop range",
+      "view": "Zoom & fullscreen",
+      "ebook": "Ebook reader",
+      "document": "Document reader",
+      "sprite": "Sprite sheets",
+      "whiteboard_tools": "Whiteboard tools",
+      "whiteboard_edit": "Whiteboard editing",
+      "search": "Search bar",
+      "text": "Tags & message boxes"
+    },
+    "note": {
+      "viewer_nav": "Left and right move between posts only when you opened the asset from a feed or collection, and only on assets that don't use them for something else — a video steps frames instead, an ebook turns pages. Up and down always move within the post.",
+      "playback": "Only on video and audio. Left and right step frames as well, and on a video they no longer also jump to the next post — the player has the arrows while it is open.",
+      "ebook": "The reader has the arrows while it is open, so they turn pages instead of moving to the next post.",
+      "document": "Available while the Document panel is open. With it closed, Ctrl/⌘ F is your browser's own find.",
+      "whiteboard_edit": "While the whiteboard is open its keys win: F fits the drawing instead of going fullscreen."
+    },
+    "viewer": {
+      "sibling": "Previous / next post",
+      "within": "Previous / next asset in this post",
+      "toggle_pane": "Show or hide the side panel",
+      "close": "Close the viewer"
+    },
+    "playback": {
+      "play_pause": "Play / pause",
+      "play": "Play",
+      "pause": "Pause",
+      "step_back": "Step back one frame",
+      "frame_back": "Frame back (hold Shift for 10)",
+      "frame_fwd": "Frame forward (hold Shift for 10)",
+      "rate": "Playback speed (0.25× – 4×)",
+      "goto_frame": "Jump to a frame or timecode"
+    },
+    "loop": {
+      "in": "Mark the loop in-point",
+      "out": "Mark the loop out-point",
+      "clear": "Clear the loop range"
+    },
+    "view": {
+      "fullscreen": "Toggle fullscreen",
+      "reset": "Reset pan and zoom",
+      "tile": "Toggle tile preview (images)",
+      "zoom": "Zoom the canvas"
+    },
+    "ebook": {
+      "chapter": "Previous / next chapter"
+    },
+    "doc": {
+      "find": "Jump to the Find box"
+    },
+    "sprite": {
+      "play_pause": "Play / pause the animation",
+      "prev_frame": "Previous frame",
+      "next_frame": "Next frame",
+      "onion": "Toggle onion-skinning"
+    },
+    "wb": {
+      "select": "Select",
+      "pen": "Pen",
+      "marker": "Marker",
+      "highlighter": "Highlighter",
+      "eraser": "Eraser",
+      "line": "Line",
+      "arrow": "Arrow",
+      "rect": "Rectangle",
+      "ellipse": "Ellipse",
+      "triangle": "Triangle",
+      "bucket": "Bucket fill",
+      "eyedropper": "Eyedropper",
+      "text": "Text",
+      "lasso": "Lasso",
+      "crop": "Crop",
+      "swap_colors": "Swap primary and secondary colour",
+      "undo": "Undo",
+      "redo": "Redo",
+      "select_all": "Select everything",
+      "clipboard": "Copy · cut · paste",
+      "duplicate": "Duplicate the selection",
+      "delete": "Delete the selection",
+      "pan": "Pan the canvas",
+      "fit": "Fit the drawing to the window",
+      "reset_zoom": "Reset zoom",
+      "zoom": "Zoom in / out",
+      "size": "Decrease / increase brush size (hold Shift for bigger steps)",
+      "exit": "Leave the whiteboard"
+    },
+    "search": {
+      "nav": "Move through recent searches",
+      "go": "Run the search",
+      "close": "Close the list, then clear the box"
+    },
+    "text": {
+      "add_tag": "Add the typed tag",
+      "remove_tag": "Remove the last tag (empty box)",
+      "send": "Send the message",
+      "newline": "Start a new line instead of sending"
+    }
   },
   "viewer_hotkeys": {
     "title": "Shortcuts",
@@ -2785,5 +3290,40 @@
     "term_unknown": "“{term}” isn't one of this field's terms, and this field doesn't accept new ones.",
     "term_unslugifiable": "A term needs at least one letter or number.",
     "truncated": "Showing the first {count} — keep typing to narrow it down."
+  },
+  "request_access": {
+    "title": "Request access",
+    "body": "Ask {owner} for access to this item. They decide.",
+    "body_owner_unknown": "Ask the owner for access to this item. They decide.",
+    "no_unlock_yet": "Approval records that the owner agreed. It does not reveal the item yet — per-item access is still being built, and you will not be able to open this until it is.",
+    "reason_label": "Why you are asking (optional)",
+    "reason_placeholder": "A line about what you need it for",
+    "send": "Send request",
+    "sending": "Sending…",
+    "error": "Could not send the request. Try again."
+  },
+  "requests": {
+    "grant_does_not_unlock": "Granting records that you agreed. It does not yet give the requester access to the item — per-item access is still being built."
+  },
+  "delete_confirm": {
+    "title_asset": "Delete asset?",
+    "title_post": "Delete post?",
+    "title_collection": "Delete collection?",
+    "body_asset": "“{title}” will be removed from browse, and from any post or collection it appears in.",
+    "body_post": "“{title}” will be removed, along with its likes and comments.",
+    "body_collection": "“{title}” will be removed. The assets inside it are not deleted — only the collection.",
+    "recoverable": "It goes to your trash — you can restore it from there. Your trash shows the exact date each item is removed for good.",
+    "reason_label": "Why you're removing it (optional)",
+    "reason_placeholder": "A line the owner will read",
+    "reason_hint": "You don't own this, so the owner will be shown what you write here.",
+    "confirm": "Delete",
+    "deleting": "Deleting…",
+    "deleted_asset": "Asset deleted.",
+    "deleted_post": "Post deleted.",
+    "deleted_collection": "Collection deleted.",
+    "undo": "Undo",
+    "view_trash": "View trash",
+    "undo_error": "Couldn't put that back. Open your trash to try again.",
+    "undone": "Put back."
   }
 }

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -2838,7 +2838,21 @@ paths:
       description: |
         Creates a `pending` resource_request for the calling user
         against the target asset. Any authenticated user may submit
-        a request; the approver decides via /admin/requests.
+        a request; the asset's owner — or an approver — decides.
+        Owners see their queue at GET /account/requests/incoming.
+
+        Repeating an ask you already have pending returns **200** with
+        the existing request, unchanged. One ask is
+        (requester, asset, capability); asking twice is the same
+        question, not a second one. A DECIDED request does not block a
+        new ask — `denied` is terminal for the row, not for the person.
+
+        Granting a request does **not** currently unlock the asset.
+        `user_capability_grants` has no per-object scope, so there is no
+        capability meaning "you may view this one asset"; a grant here
+        records that the owner agreed. Per-asset unlocking is tracked
+        separately (#912) and ADR 0064 documents the deferral. Clients
+        must not tell the user that approval will reveal the asset.
 
         When the approver grants the request, a row lands in
         user_capability_grants with `request_ref` populated — the
@@ -2859,16 +2873,39 @@ paths:
           application/json:
             schema:
               type: object
-              required: [capability]
               properties:
                 capability:
                   type: string
-                  description: Capability code being requested.
+                  description: |
+                    Capability code being requested. **Optional**, and
+                    the request-access UI never sends one: it defaults
+                    to `content.access.request`, an inert marker code
+                    that confers no access on its own.
+
+                    The field is requester-controlled input, so a
+                    request naming any other code — including
+                    `system.admin` — is decidable only by a holder of
+                    `share.grant` or `system.admin`, never by the
+                    asset's owner.
+
+                    `content.restore.request` is **refused** here with
+                    400. That marker's gate is about a soft-deleted
+                    row's owner and its deleter, and none of those
+                    checks run on this path — see
+                    `POST /account/trash/{kind}/{id}/request-restore`.
                 reason:
                   type: string
                   maxLength: 1000
                   description: Optional free-text justification.
       responses:
+        "200":
+          description: |
+            An identical ask was already pending. The existing request
+            is returned unchanged; nothing was created and nobody was
+            notified again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
         "201":
           description: Request created.
           content:
@@ -2907,6 +2944,71 @@ paths:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/ResourceRequest" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/requests/incoming:
+    get:
+      operationId: listIncomingRequests
+      summary: List pending requests the caller is the one to decide
+      description: |
+        The non-operator decision queue: pending requests this caller
+        can act on without holding any capability, oldest first.
+
+        No capability is required and none would help — the gate is a
+        join, not a check. This exists because /admin/requests is gated
+        on `requests.read` / `share.grant`, capabilities an artist has
+        no reason to hold, which left the people with the strongest
+        claim to decide unable to reach the queue.
+
+        Two disjoint sets, joined on two different facts:
+
+        * **Access requests** against assets the caller OWNS (#881),
+          joined on `assets.owner_user_ref`. Live assets only — an
+          owner has no decision to make about access to something they
+          deleted.
+        * **Restoration appeals** against items the caller DELETED
+          (#931), joined on the target's `deleted_by_user_ref` across
+          all three soft-deletable kinds. Keyed to the deleter rather
+          than the owner because the owner IS the requester here, and
+          `auth.CanRestoreDeleted` gives the undo to whoever performed
+          the delete.
+
+        They cannot overlap: the first requires a live asset, the
+        second a soft-deleted target.
+
+        Decisions go to POST /admin/requests/{id}/decide, whose gate is
+        the authority here — `decidable_by_caller` on each row is that
+        same gate, computed rather than restated.
+      tags: [requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Pending requests against the caller's own assets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ResourceRequest" }
+                  total:
+                    type: integer
+                    format: int64
+                    description: Total pending count against the caller's assets.
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -2961,12 +3063,59 @@ paths:
         Atomic CAS — only pending requests transition. Re-deciding
         an already-decided request returns 409.
 
+        There are two kinds of request behind this one endpoint, and
+        `requested_capability` — not the caller's rank — decides which
+        gate and which consequence apply.
+
+        ## Access requests (anything except `content.restore.request`)
+
+        Requires `share.grant` OR `system.admin` — **or** ownership of
+        the requested asset, for requests naming
+        `content.access.request` only. The owner disjunct is narrower on
+        purpose: `requested_capability` is requester-controlled, so an
+        owner who could decide any request could be induced to grant
+        `system.admin` from a panel about their own artwork.
+
         On grant, a user_capability_grants row is inserted in the
         same tx as the resource_request CAS. expires_at on the
         grant is the same value the operator supplied here; the
         CapabilitySweeper reaps both together when it fires.
 
-        Requires `share.grant` capability OR `system.admin`.
+        A grant does **not** unlock the asset's bytes. There is no
+        per-object capability scope, so approval records agreement, not
+        access — see #912 and ADR 0064.
+
+        ## Restoration appeals (`content.restore.request`, #931)
+
+        Decidable ONLY by a caller who passes `auth.CanRestoreDeleted`
+        against the TARGET's deleter: the person who deleted it, or
+        `system.admin`. `share.grant` alone does **not** qualify —
+        authority over sharing is not authority over moderation — and
+        neither does ownership, so a requester can never decide their
+        own appeal.
+
+        On grant the server performs the restore and writes **no**
+        `user_capability_grants` row. The marker confers nothing and
+        there is nothing to confer: what was asked for is a state change
+        on the item, not a standing right. This is also what keeps the
+        #881 escalation surface closed — the grant path that copies
+        `requested_capability` verbatim into a capability grant is not
+        reached on this branch at all.
+
+        `expires_at` on a restore grant is **400**. A performed restore
+        cannot expire, and silently ignoring the field would let an
+        operator believe they had set a deadline.
+
+        If someone else already restored the target, the grant still
+        succeeds: the requested end-state holds, and the decision reason
+        records that it was already live.
+
+        ## Failure shape
+
+        A caller who is neither an approver nor the owner gets 403 for
+        every failure, including a request id that does not exist: a 404
+        here would let a non-approver probe for request ids and read off
+        which capability each names.
       tags: [requests]
       security:
         - cookieAuth: []
@@ -3549,6 +3698,12 @@ paths:
         `asset:<new-asset-id>` and the caller's prior `user:` pin
         for that hash is dropped (the bytes are now owned by the
         asset, not the uploader).
+
+        Answers **404** when `team_id` names a team that does not
+        exist OR one this caller may not assign to — the two are
+        deliberately the same response, so this endpoint cannot be
+        used to enumerate the instance's teams. See
+        `AssetCreate.team_id`.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -3581,6 +3736,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: |
             Asset with the same content hash already exists in the
@@ -3627,6 +3784,24 @@ paths:
           required: false
           description: Single-tag filter (intersection with other filters).
           schema: { type: string }
+        - name: team_id
+          in: query
+          required: false
+          description: |
+            Scope the page to one team's assets — the assets tab on a
+            team page (#684).
+
+            NARROWING ONLY. It is a filter, never a grant: asking for a
+            team's page does not make you a member of it. The visibility
+            predicate still selects the rows and the field plane still
+            decides which arrive as placeholders, so a non-member sees
+            that team's public work plus a placeholder for each of its
+            restricted assets — the same rows unfiltered browse would
+            have shown them, minus every other team's.
+
+            Not a team-existence probe: an unknown team, a soft-deleted
+            team and a team with no assets all answer with an empty page.
+          schema: { type: string, format: uuid }
         - name: q
           in: query
           required: false
@@ -3705,6 +3880,20 @@ paths:
         known `updated_at` value as `if_unchanged_since` in the
         body; if the row has been edited since, the server returns
         409 with the current `updated_at` so the client can reload.
+
+        AUTHORISATION. The asset's owner, a holder of `assets.admin`
+        (globally, or scoped to the asset's team or any ancestor of
+        it), or `system.admin`. Anyone else gets 403 and the row is
+        not touched. Until #930 this checked only that the caller was
+        signed in, so any account could rewrite any asset.
+
+        `status` is held to a NARROWER gate than the rest of the body:
+        the owner or `system.admin` only. Publication decides who can
+        REACH the asset — an anonymous reader requires
+        `status = 'active'` — so it is a disclosure decision rather
+        than content management, and `assets.admin` does not confer it.
+        A non-owner sending the status the asset already has is fine;
+        only a CHANGE is refused.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -3726,6 +3915,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -3745,6 +3936,16 @@ paths:
 
         Accepts optional `{reason}` body captured
         into `deleted_reason` for the admin recovery-window audit.
+
+        AUTHORISATION is the same gate as `PATCH /assets/{id}`: the
+        owner, a holder of `assets.admin` (global or scoped to the
+        asset's team or an ancestor of it), or `system.admin`. Anyone
+        else gets 403 and the row is not touched. Until #930 this
+        checked only that the caller was signed in, so any account
+        could delete any asset while only `system.admin` could restore.
+
+        The caller is recorded in `deleted_by_user_ref`, which is what
+        `POST /admin/assets/{id}/restore` then lets them undo.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -3761,6 +3962,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3774,14 +3977,25 @@ paths:
       operationId: restoreAsset
       summary: Restore a soft-deleted asset
       description: |
-        Admin-only. Clears `deleted_at` + `deleted_reason` on the
-        asset row and fires an `admin.asset.restored` audit event
-        carrying the prior reason + how long the asset had been
-        soft-deleted.
+        Clears `deleted_at` + `deleted_reason` on the asset row and
+        fires an `admin.asset.restored` audit event carrying the prior
+        reason + how long the asset had been soft-deleted.
+
+        AUTHORISATION turns on WHO DELETED IT, not on the caller's
+        standing authority (#931): you may undo your own delete, and
+        `system.admin` may undo any. Nothing else. That keeps restore
+        authority matched to delete authority — whoever passed the
+        delete gate can reverse themselves — while an administrator's
+        removal is not silently undone by the owner the moment it
+        lands; the owner asks for restoration instead.
+
+        A row whose `deleted_by_user_ref` is NULL — deleted before this
+        was recorded, or removed by a system-scheduled retention
+        action — is restorable by `system.admin` only.
 
         Returns 404 if the asset is already live (or doesn't
-        exist). Returns 401 for anonymous callers; 403 for
-        non-admins.
+        exist). Returns 401 for anonymous callers; 403 when the caller
+        did not delete it.
       tags: [assets]
       security:
         - cookieAuth: []
@@ -5107,6 +5321,8 @@ paths:
       responses:
         "204":
           description: Cleared
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5303,6 +5519,23 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: team_id
+          in: query
+          required: false
+          description: |
+            Scope the feed to one team's posts — the team page (#684).
+
+            NARROWING ONLY, like every other filter on this operation.
+            The read rule is ANDed onto the result rather than ORed
+            into it, and it never consults `team_id`, so this parameter
+            can only remove posts from the page the caller would
+            otherwise have received. Membership of the team confers
+            nothing here.
+
+            Not a team-existence probe: an unknown team, a soft-deleted
+            team and a team with no readable posts are one answer, an
+            empty page.
+          schema: { type: string, format: uuid }
         - name: feed
           in: query
           required: false
@@ -5317,6 +5550,30 @@ paths:
           schema:
             type: string
             enum: [latest, following]
+        - name: dir
+          in: query
+          required: false
+          description: |
+            Sort direction over the feed's `(posted_at, id)` key.
+
+            - `desc` (default) — newest first.
+            - `asc` — oldest first.
+
+            It moves the KEYSET COMPARISON as well as the `ORDER BY`,
+            because a cursor is only meaningful relative to the order
+            that produced it. A `desc` cursor replayed against an `asc`
+            page would ask for "older than X" while the page walks
+            forward, which skips rows and then repeats them.
+
+            A cursor therefore belongs to ONE direction. Flipping `dir`
+            mid-scroll means starting a new scan: send no `cursor` on
+            the first request after the flip. The browse page already
+            works this way — its result-set identity key includes the
+            direction, so changing it resets the accumulated pages.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: limit
           in: query
           required: false
@@ -5350,6 +5607,14 @@ paths:
         already in storage (POST /storage/objects) and the asset
         entities are already created (POST /assets); this endpoint
         ties them together with the descriptive metadata.
+
+        Every asset named in `members` must be one the caller can
+        actually read — the same two-plane rule
+        `addCollectionResource` applies (#922, #882, ADR 0064). An
+        asset the caller cannot read answers `404` with the identical
+        body a nonexistent UUID gets, so the endpoint is not a
+        UUID-existence probe. Nothing is written when a member is
+        refused: the gate runs before the transaction opens.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -5503,9 +5768,17 @@ paths:
       operationId: restorePost
       summary: Restore a soft-deleted post
       description: |
-        Admin-only. Clears `deleted_at` + `deleted_reason` on the
-        post row and fires an `admin.post.restored` audit event.
-        Returns 404 if the post is already live (or doesn't exist).
+        Clears `deleted_at` + `deleted_reason` on the post row and
+        fires an `admin.post.restored` audit event.
+
+        AUTHORISATION is the same rule as
+        `POST /admin/assets/{id}/restore`: you may undo your own
+        delete, `system.admin` may undo any, and a NULL
+        `deleted_by_user_ref` is restorable by `system.admin` only
+        (#931).
+
+        Returns 404 if the post is already live (or doesn't exist);
+        403 when the caller did not delete it.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -5532,7 +5805,18 @@ paths:
       description: |
         Returns every ACL row attached to this post. ACL rows are
         additive grants on top of the post's visibility and the
-        role / team-scope checks. Requires read access to the post.
+        role / team-scope checks.
+
+        Requires WRITE access to the post — author, `posts.admin` or
+        `system.admin` — not merely read access (#876). Who a post is
+        shared with, who granted it and when it expires is management
+        information about the post, not part of the post's content:
+        being able to read something must not disclose the rest of its
+        guest list.
+
+        `listCollectionAcls` applies the same rule. It used to diverge
+        — it additionally admitted any authenticated caller when the
+        collection was `public` — and #933 closed that.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -5560,6 +5844,12 @@ paths:
         Requires write access to the post (owner / posts.admin /
         system.admin) so a contributor can't grant access beyond
         their own ability to mutate.
+
+        A `user` grant also emits a `post_shared_with_me` notification
+        to the grantee (#875), so a share is not silent. `role` and
+        `team` grants name no single recipient and notify nobody.
+        Notification delivery is best-effort and runs after the row is
+        written: the grant stands whether or not the notification does.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -6025,6 +6315,16 @@ paths:
     post:
       operationId: addPostAsset
       summary: Attach an existing asset to a post
+      description: |
+        Two independent gates apply (#922). Write access to the POST —
+        author, `posts.admin` or `system.admin` — answers "may you
+        change this container", and read access to the ASSET answers
+        "may you reach the thing being put in it". Both are required.
+
+        The asset gate is the same two-plane rule `createPost` and
+        `addCollectionResource` apply (ADR 0064). An asset the caller
+        cannot read answers `404` with the identical body a nonexistent
+        UUID gets.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -6309,9 +6609,17 @@ paths:
       operationId: restoreCollection
       summary: Restore a soft-deleted collection
       description: |
-        Admin-only. Clears `deleted_at` + `deleted_reason` on the
-        collection row and fires an `admin.collection.restored`
-        audit event. Returns 404 if already live (or doesn't exist).
+        Clears `deleted_at` + `deleted_reason` on the collection row
+        and fires an `admin.collection.restored` audit event.
+
+        AUTHORISATION is the same rule as
+        `POST /admin/assets/{id}/restore`: you may undo your own
+        delete, `system.admin` may undo any, and a NULL
+        `deleted_by_user_ref` is restorable by `system.admin` only
+        (#931).
+
+        Returns 404 if already live (or doesn't exist); 403 when the
+        caller did not delete it.
       tags: [collections]
       security:
         - cookieAuth: []
@@ -6371,6 +6679,14 @@ paths:
         Idempotent on `(collection_id, asset_id)`. Re-adding an
         existing membership updates `sort_order`, `pinned`, and
         `expires_at` but keeps `added_at` fixed.
+
+        You may only collect what you can actually see. The asset must
+        be readable by the caller on both planes — it must exist and
+        not be soft-deleted, AND the caller must be entitled to its
+        content under the sensitivity tier (ADR 0064). An asset the
+        caller cannot read is reported exactly as one that does not
+        exist: `404` with `asset not found`, so this endpoint cannot
+        be used to probe whether a UUID exists.
       tags: [collections]
       security:
         - cookieAuth: []
@@ -6419,6 +6735,134 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /collections/{id}/posts:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listCollectionPosts
+      summary: List the posts pinned in a collection
+      description: |
+        Returns posts currently pinned in this collection (excludes
+        rows where the per-membership `expires_at` has passed), in
+        `sort_order ASC, added_at ASC` order so the list matches the
+        curator's arranged sequence.
+
+        TWO gates apply and both are required. The PARENT collection
+        must be visible to the caller, and each POST is filtered by the
+        one post read rule — the same expression `GET /posts` and
+        `GET /posts/{id}` use. A collection may contain posts its
+        curator can read and you cannot (that is what #882 makes
+        possible), so membership never widens a post: a post you may
+        not read is simply not in this list.
+
+        That is deliberately NOT the placeholder shape
+        `GET /collections/{id}/resources` uses for assets. An asset
+        placeholder exists so the reader can see that a restriction is
+        there and ask for access (#881/#883); a post carries its
+        author's title and description in the row itself, and the post
+        surface has no request-access flow to attach to. Absence is the
+        honest answer here.
+      tags: [collections]
+      # Anonymous-readable, same as the resources listing (#438).
+      # Documentary only — the handler guard enforces access.
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of posts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addCollectionPost
+      summary: Add (or re-pin) an existing post in a collection
+      description: |
+        Adds a REFERENCE, never a copy (#882). The post keeps its
+        author, its visibility and its lifecycle; the collection holds
+        a pointer. If the author deletes the post it disappears from
+        every collection that referenced it
+        (`collection_posts_post_id_fkey … ON DELETE CASCADE`), which is
+        the point: "the owner can still delete it from everywhere".
+
+        Idempotent on `(collection_id, post_id)`. Re-adding an existing
+        membership updates `sort_order`, `pinned` and `expires_at` but
+        keeps `added_at` fixed.
+
+        You may only collect what you can actually read. The post must
+        pass the same read rule `GET /posts/{id}` applies — so anyone
+        can pin an org-only post, only a follower can pin a
+        followers-tier one, and a stranger's private post cannot be
+        pinned at all. A post the caller may not read is reported
+        exactly as one that does not exist: `404` with `post not
+        found`, so this endpoint cannot be used to probe whether a UUID
+        exists.
+
+        The collection must be one the caller may mutate. An absent
+        collection, a soft-deleted one and someone else's are all
+        `404` here — unlike the asset route, which grandfathers a
+        distinguishable `403`.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionPostWrite" }
+      responses:
+        "204":
+          description: Post added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/posts/{post_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: removeCollectionPost
+      summary: Remove a post from a collection
+      description: |
+        Un-pins the reference. It does NOT delete the post, and it does
+        not touch any other collection that references the same post —
+        removing from your collection is yours alone (#882).
+
+        Not gated on readability, deliberately, for the same reason the
+        asset route is not: a post whose visibility was narrowed after
+        it was pinned would otherwise be permanently stranded in a
+        collection its curator can no longer remove it from.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed (or was already absent)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /collections/{id}/acls:
     parameters:
       - name: id
@@ -6431,8 +6875,24 @@ paths:
       description: |
         Returns every ACL row attached to this collection. ACLs are
         additive grants on top of the collection's visibility +
-        collection_grant rows. Requires read access to the
-        collection.
+        collection_grant rows.
+
+        Requires WRITE access to the collection — owner,
+        `collections.admin` or `system.admin` — not merely read access
+        (#933). Who else was granted what, by whom, and until when is
+        management information about the collection rather than part of
+        its content, so the grant disjunct that the row-visibility
+        predicate carries is deliberately dropped here (#661).
+
+        A `public` collection is no exception, and that is the #933
+        change. `visibility: public` says the collection's CONTENTS are
+        public; it says nothing about who the owner individually shared
+        it with. Admitting every authenticated caller to the grant list
+        disclosed each grantee's principal and permission level to
+        anyone with an account and no connection to the collection.
+
+        This is now the same rule `listPostAcls` applies (#876). The
+        two surfaces no longer diverge.
       tags: [collections]
       security:
         - cookieAuth: []
@@ -6986,6 +7446,121 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/follow:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: followTeam
+      summary: Follow a team (subscribe to its channel)
+      description: |
+        Adds the caller to `team_follows` (#577). Requires `teams.read`
+        — the same capability that lets you see the team at all.
+
+        ## A follow is a BOOKMARK, not a relationship
+
+        It grants nothing. It does not touch `team_memberships`, it is
+        never read by any authorization rule, and following a studio
+        does not widen one row of what you can see of its work — the
+        visibility planes decide that and do not consult this table.
+        All it does is put the team in your channels rail.
+
+        There is deliberately no unread model and no notification
+        fanout behind it; channels are not notifications.
+
+        ## Idempotent
+
+        Following a team you already follow is a no-op `204`, not a
+        `409`. The insert is `ON CONFLICT DO NOTHING`, so a
+        double-tapped button and a retried request are the same
+        request.
+
+        ## Refusals are indistinguishable
+
+        A nonexistent team and a soft-deleted team both answer `404`
+        with the same body, because the FK cannot see `teams.deleted_at`
+        and an explicit liveness probe therefore runs first. The two
+        MUST stay indistinguishable: any difference between them turns
+        this endpoint into a team-existence oracle over every studio on
+        the instance, which is the discipline
+        `visibility.CanAssignToTeam` carries for the same reason.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Followed (or already following)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: unfollowTeam
+      summary: Unfollow a team
+      description: |
+        Removes the caller's `team_follows` row (#577). Idempotent:
+        unfollowing a team you do not follow is a `204`, not a `404`.
+
+        No liveness probe and no `404` branch at all, on purpose. The
+        `POST` needs one because it writes a row that must point at a
+        live team; a DELETE only ever removes the caller's own row, and
+        a row pointing at a since-deleted team is exactly the row a
+        user would most want to be able to drop. Refusing to let them
+        would strand it in their rail forever.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unfollowed (or was not following)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/me/followed-teams:
+    get:
+      operationId: getMyFollowedTeams
+      summary: Teams the caller follows (the channels rail)
+      description: |
+        The caller's `team_follows` rows, resolved to teams and ordered
+        by name (#577). Soft-deleted teams are filtered out, so a
+        studio that is deleted simply leaves the rail.
+
+        Distinct from `GET /auth/me/teams`, which returns MEMBERSHIPS.
+        The two lists overlap only by coincidence: you can follow a
+        team you are not in, and being in a team does not put it here.
+        Keeping them separate endpoints is what keeps a bookmark from
+        being mistaken for an authorization fact.
+      tags: [teams, auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Teams the caller follows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /users/{ref}:
     parameters:
       - name: ref
@@ -7533,6 +8108,360 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /account/shared-posts:
+    get:
+      operationId: listPostsSharedWithMe
+      summary: Posts other people have explicitly shared with me
+      description: |
+        The "Shared with me" surface (#875). Returns the posts on
+        which the caller holds a live `post_acls` grant — the same
+        grant `POST /posts/{id}/acls` writes and the post read rule
+        honours, evaluated by the same SQL fragment so the two can
+        never disagree about what a grant means.
+
+        This exists because the browse feed deliberately does NOT
+        surface shares: `GET /posts` defaults to the `org-only` tier,
+        and widening that default would put low-volume, high-salience
+        content into the hottest query in the app. Shares are
+        announced by a `post_shared_with_me` notification and
+        accumulate here instead.
+
+        Expiry and revocation are evaluated in SQL: a grant whose
+        `expires_at` has passed, or whose row has been deleted,
+        drops off this list immediately. Soft-deleted posts never
+        appear. Newest-first, cursor-paginated on the same
+        (posted_at, id) key as the feed.
+      tags: [posts, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of posts shared with the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /account/activity:
+    get:
+      operationId: listMyActivity
+      summary: My activity — what I did, and what was done to my account
+      description: |
+        One newest-first list of the audit rows that name the caller,
+        on either side: `actor_user_ref = caller` (things the caller
+        did) or `subject_user_ref = caller` (things done to the
+        caller's account). The `role` discriminator says which.
+
+        WHY THIS IS NOT THE ADMIN AUDIT VIEWER WITH A FILTER. The
+        admin surface (`GET /admin/audit`) is a log reader: every
+        column, arbitrary actor/subject filters, and `ip` behind
+        `system.audit.pii.read` (#425). Handing an ordinary caller a
+        pre-filtered version of it would ship them a projection built
+        for an auditor. This one answers a narrower question — "what
+        happened involving me" — and its projection is cut to that
+        question rather than trimmed down from the other one.
+
+        THE PROJECTION, AND WHY IT REFUSES WHAT IT REFUSES. It follows
+        the `/account/trash` precedent: disclose the ACT, never the
+        other party's details.
+
+        `metadata` ships only on `by_me` rows. A `by_me` row is the
+        caller's own action read back, so its payload is a record of
+        something they did and already knew. An `on_my_account` row is
+        somebody ELSE's action, and there the event type plus the time
+        IS the disclosure: you are told that your account was disabled
+        and when, which is the fact you need in order to ask about it.
+        The metadata of an administrative action is that
+        administrator's working note — the free-text `reason` on a
+        status change, the `capability` and `team_id` on a grant — and
+        volunteering it here would be widening by convenience, the
+        same move the trash listing refuses when it declines to name
+        the deleter.
+
+        For the same reason `on_my_account` rows carry NO actor
+        identity. The trash projection returns whether the caller may
+        undo a delete and never who performed it; this returns that an
+        event happened to the caller and never who caused it. Neither
+        act disclosed the identity of the person who took it, and an
+        account page is not the place to start.
+
+        NO `ip` AND NO `user_agent`, IN EITHER ROLE. Not gated —
+        absent. `/account/sessions` already owns "where has my account
+        been signed in from", with its own shape and its own
+        revocation controls, and #425's capability rule is an
+        admin-side rule about reading OTHER people's personal data.
+        Answering the same question a second way here would be a
+        second surface to keep correct for no new answer.
+
+        Ordering and pagination are the (`occurred_at`, `id`) keyset,
+        DESC, with the id tiebreak carrying the same comparison as the
+        timestamp — audit rows written by one request share a
+        timestamp to the microsecond, so the tiebreak is the common
+        case rather than the rare one.
+
+        Rows are subject to the audit retention purge (ADR 0032), so
+        this is a window on the log, not a permanent history.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque token from a previous response's `next_cursor`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of the caller's own activity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivityList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /account/trash:
+    get:
+      operationId: listMyTrash
+      summary: My trash — the soft-deleted items I own, or the ones I deleted
+      description: |
+        One mixed, newest-deleted-first list of everything the caller
+        OWNS that is currently soft-deleted, across all three
+        soft-deletable entities. Each row carries the `kind` needed to
+        pick the matching restore endpoint.
+
+        `scope=deleted_by_me` answers the OTHER half of the same
+        question (#981). `CanRestoreDeleted` grants the undo to whoever
+        performed the delete, so a team lead who removes a colleague's
+        asset may restore it — but the default scope is owner-scoped,
+        so that item lists in the OWNER's trash (non-restorable for
+        them, since they did not delete it) and in nobody's as
+        restorable. The lead held a restore right they could not reach.
+        This scope lists exactly the rows where
+        `deleted_by_user_ref = caller AND owner IS DISTINCT FROM caller`
+        — the caller's own deletions of other people's things — and
+        every one of them comes back `restorable_by_caller: true` by
+        the same predicate, because the deleter is the caller.
+
+        IT IS NOT A PROBE. The two scopes disclose on different
+        grounds, and this one's ground is the caller's own prior act:
+        the delete already succeeded for this caller against this row,
+        which means they could both see it and mutate it at that
+        moment. The response therefore reveals nothing they did not
+        already have. It also cannot be steered — there is no
+        `user`/`owner` filter, only the caller's own ref taken from
+        the session — so it lists a caller's history, never a search
+        over someone else's content. The projection is byte-for-byte
+        the one the owned scope returns; in particular it does NOT add
+        the owner's identity, which would be a disclosure the delete
+        itself never made.
+
+        WHY THIS EXISTS SEPARATELY FROM `include_deleted=true` (#937).
+        `GET /assets`, `GET /posts` and `GET /collections` all accept
+        `include_deleted=true` and all silently drop it for anyone
+        below `system.admin`. That is deliberate and stays: those
+        listings are not owner-scoped, so honouring the flag for an
+        ordinary caller would turn each of them into a probe for
+        deleted rows that caller has no other way to observe. Self-
+        service restore (#936) shipped nonetheless, which left the
+        owner able to restore items but with no way to learn their
+        ids. This endpoint closes that without touching the admin
+        flag: it answers a strictly narrower question — "what of MINE
+        is in the bin" — and so cannot disclose anything the caller
+        did not already know existed.
+
+        `restorable_by_caller` is the same decision the matching
+        `POST /admin/{assets,posts,collections}/{id}/restore` will
+        make, computed by the same predicate rather than by a second
+        copy of the rule, so the button this list renders can never
+        disagree with the endpoint it calls. It is FALSE when someone
+        else deleted the item — an administrator moderating it, or a
+        team-mate with mutation rights — and also false when the
+        deleter was never recorded (rows predating migration 00037,
+        and system-scheduled retention deletes), because both fail
+        closed to `system.admin`. The identity of the deleter is NOT
+        returned: the owner needs to know whether they may undo it,
+        not who did it, and `deleted_by_user_ref` stays server-side.
+
+        Ordering and pagination are the (`deleted_at`, `id`) keyset,
+        DESC, with the id tiebreak carrying the same comparison as the
+        timestamp — items deleted in one batch share a `deleted_at`
+        almost exactly, so the tiebreak is the common case here, not
+        the rare one.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          description: |
+            `owned_by_me` (default) — soft-deleted items the caller
+            owns, whoever deleted them. `deleted_by_me` — items the
+            caller deleted that they do NOT own; always restorable by
+            them. The two sets are disjoint by construction, so a
+            client showing both as tabs never double-lists a row.
+          schema:
+            type: string
+            enum: [owned_by_me, deleted_by_me]
+            default: owned_by_me
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque token from a previous response's `next_cursor`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of the caller's own soft-deleted items.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /account/trash/{kind}/{id}/request-restore:
+    post:
+      operationId: requestRestore
+      summary: Appeal a delete you cannot undo yourself
+      description: |
+        Files a `pending` resource_request asking whoever deleted this
+        item to put it back (#931).
+
+        This is the OTHER half of `auth.CanRestoreDeleted`. That rule
+        gives the undo to the deleter, and to `system.admin` — so an
+        owner whose work an administrator removed sees a trash row that
+        says someone else deleted it and, before this endpoint, was
+        offered nothing further. The row was a dead end.
+
+        ## The capability is not an input
+
+        The server writes `content.restore.request` and there is no
+        field on this body to say otherwise. `requested_capability`
+        feeds an authorisation decision, and ADR 0064 already names the
+        hazard of taking it from the requester: "nothing stops a request
+        naming system.admin". `/assets/{id}/request-access` still
+        ACCEPTS an explicit code for admin tooling that predates the
+        button; this endpoint accepts none at all, because there is no
+        second thing an appeal could ask for.
+
+        ## Who may file one
+
+        The item's owner, and only while the item is soft-deleted.
+        Someone who could restore it directly gets **409** rather than a
+        request nobody needs to answer — the honest reply to "please ask
+        them to undo it" when you may undo it yourself is "you can do
+        that". Any other caller gets **404**: an appeal endpoint that
+        distinguished "not yours" from "no such row" would be a probe
+        for other people's deleted items.
+
+        Repeating an appeal you already have pending returns **200**
+        with the existing row, unchanged, matching
+        `/assets/{id}/request-access`. One ask is
+        (requester, kind, id, capability); asking twice is the same
+        question, and a second row would make the decider deny one of
+        them.
+
+        ## What granting it does
+
+        Performs the restore. The grant branch calls the same
+        `softdelete` primitive the per-kind restore endpoints call and
+        writes NO `user_capability_grants` row — the marker confers
+        nothing and there is nothing to confer, because the outcome the
+        requester asked for is a state change on the item, not a
+        standing right. See `POST /admin/requests/{id}/decide`.
+      tags: [account, requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          description: Which soft-deletable entity `id` names.
+          schema:
+            type: string
+            enum: [asset, post, collection]
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1000
+                  description: |
+                    Optional free text for the decider — why this
+                    should come back.
+      responses:
+        "200":
+          description: |
+            An identical appeal was already pending. The existing
+            request is returned unchanged; nothing was created and
+            nobody was notified again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
+        "201":
+          description: Appeal filed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            No such soft-deleted row of that kind, or it is not the
+            caller's. One response for both, deliberately.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            The caller may already restore this item directly (they
+            deleted it, or they hold `system.admin`). Nothing to
+            appeal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /account/notifications:
     get:
       operationId: listMyNotifications
@@ -7814,31 +8743,6 @@ paths:
                 items: { $ref: "#/components/schemas/WorkflowState" }
         "400":
           $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /i18n/locales:
-    get:
-      operationId: listLocales
-      summary: List supported UI locales
-      description: |
-        Returns the locales the frontend has a catalogue for. Used by
-        the language picker in the user menu and on the account
-        preferences page. Static per server build; the response is
-        derived from the bundled frontend catalogues plus a small
-        completion-pct hint.
-      tags: [i18n]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of supported locales
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Locale" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -8702,6 +9606,80 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/browse-views:
+    get:
+      operationId: getBrowseViews
+      summary: Read which browse layouts this install offers
+      description: |
+        The browse layouts (`grid`, `masonry`, `thumbnail`, `list`,
+        `feed`) enabled for every user on this install, in the
+        switcher's canonical order.
+
+        An install that has never configured this reads back all five —
+        the shipped default is the ABSENCE of a stored value, not a
+        seeded row, so an install upgraded into this feature keeps
+        exactly the behaviour it already had.
+
+        This is the admin read. The public counterpart every client
+        actually renders from is `GET /browse-views`.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The enabled layouts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateBrowseViews
+      summary: Choose which browse layouts this install offers
+      description: |
+        Replaces the enabled set. Requires the `system.config.write`
+        capability. The change takes effect on the next request without
+        a restart, and is recorded as an
+        `admin.system.browse_views_updated` audit event.
+
+        AT LEAST ONE LAYOUT MUST STAY ENABLED. An empty array is
+        refused with a 400 and nothing is persisted — the same shape as
+        the last-admin invariant, and for the same reason: an install
+        with no enabled layout has an unreachable browse page and no
+        recovery path short of a database shell. Unknown layout names
+        are refused too, rather than filtered out, so a typo cannot
+        quietly save a smaller set than the operator chose.
+
+        Disabling a layout somebody is already using is safe. Every
+        rung that can name a mode — this device's stored choice, the
+        account default, the coarse-pointer default — is filtered
+        through the enabled set at resolve time, so those users land on
+        an enabled layout instead of an empty page.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
+      responses:
+        "200":
+          description: The updated enabled layouts, in canonical order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /site-text:
     get:
       operationId: getSiteText
@@ -9088,6 +10066,58 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PreviewLadder" }
+
+  /browse-views:
+    get:
+      operationId: getPublicBrowseViews
+      summary: Read the browse layouts this install offers
+      description: |
+        The layouts the operator has enabled, in the switcher's
+        canonical order. The frontend fetches this once at boot and
+        renders only these buttons — and, more importantly, filters
+        every rung that can name a layout through this set: the
+        device's stored choice, the signed-in account's default, and
+        the coarse-pointer default. A user whose browser still
+        remembers a layout the operator has since disabled therefore
+        lands on one that is offered rather than on an empty page.
+
+        Read separately from the admin `GET /admin/system/browse-views`
+        rather than folded into it because the caller is every visitor,
+        not the operator: this one carries no capability check and is
+        cached as a single install-wide entry.
+
+        An install that has never configured this returns all five. The
+        set is never empty — the write endpoint refuses that, and this
+        endpoint falls back to all five if it somehow reads one anyway,
+        because an empty answer here would mean a browse page with no
+        way to look at anything.
+
+        GOVERNED BY PUBLIC MODE (#445), like `/previews`: anonymous on a
+        public install, **401 on a private one**. It is deliberately NOT
+        excused the way `/appearance` and `/site-text` are — those two
+        render the login card, so an install that refused them
+        anonymously could not draw its own sign-in page, whereas the
+        first consumer of this is the browse switcher, which on a
+        private install is already behind auth. A logged-out visitor
+        browses only where anonymous browse exists, and that is exactly
+        where this answers. The registration and the full reasoning live
+        in `auth.PublicSurfaceRoutes` — that table, not this
+        description, is what the gate actually reads.
+
+        What it exposes on a public install is which layout buttons the
+        install draws: no asset, no user, no access decision, and
+        nothing a caller could not read off the rendered switcher.
+      tags: [system]
+      # Governed by public mode, exactly like /previews above.
+      # Documentary only — auth.PublicSurfaceRoutes enforces the gate,
+      # not this block. Do not read `security: []` here as "ungated".
+      security: []
+      responses:
+        "200":
+          description: The enabled layouts, in canonical order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
 
   /brush-packs:
     get:
@@ -10369,6 +11399,31 @@ components:
             the default, and the state of any install that has never
             set it — those routes return 401 to anonymous callers.
           example: false
+    BrowseViewsConfig:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: array
+          description: |
+            The browse layouts this install offers, in the switcher's
+            canonical order. The server reorders whatever it is sent
+            into that order and drops duplicates, so layout order stays
+            a frontend decision and only availability is the operator's.
+
+            MUST NOT BE EMPTY. A write enabling nothing is refused with
+            a 400 and nothing is persisted — an install offering no
+            layout has an unreachable browse page, and the recovery path
+            would be a database shell.
+
+            An install that has never configured this reads back all
+            five. That is the shipped default expressed as the absence
+            of a stored value, not as a seeded row.
+          minItems: 1
+          items:
+            type: string
+            enum: [grid, masonry, thumbnail, list, feed]
+          example: [grid, list, feed]
     SMTPConfig:
       type: object
       required: [host, port, encryption, from_address]
@@ -11254,35 +12309,9 @@ components:
           description: Whether this entry is the currently applied logo.
           example: false
 
-    Locale:
-      type: object
-      description: |
-        One UI locale the frontend has a catalogue for. Used by the
-        language picker. `completion_pct` is the share of source-of-
-        truth (en) keys translated — useful for showing "(70%)"
-        beside a locale name so users know it's incomplete.
-      required: [code, name, native_name, completion_pct]
-      properties:
-        code:
-          type: string
-          description: IETF BCP47 tag (e.g. "en", "es-AR").
-        name:
-          type: string
-          description: English name (e.g. "Spanish (Argentina)").
-        native_name:
-          type: string
-          description: Endonym (e.g. "Español (Argentina)").
-        region:
-          type: string
-          description: Optional regional sub-tag (e.g. "AR").
-        completion_pct:
-          type: integer
-          minimum: 0
-          maximum: 100
-          description: 0..100 — share of en keys this catalogue translates.
     CurrentUser:
       type: object
-      required: [ref, username, auth_method]
+      required: [ref, username, auth_method, capabilities_status]
       properties:
         ref:
           type: integer
@@ -11312,10 +12341,117 @@ components:
             without a separate round-trip.
         theme:
           type: string
-          enum: ['', 'light', 'dark']
+          enum: ['', 'light', 'dark', 'system']
           description: |
-            User's theme pref. Empty string = follow system. Same
-            "join on /auth/me" rationale as `language`.
+            User's theme pref. `system` follows the OS; empty string
+            means the account has NO stored preference and the device
+            falls back to the app default (dark, #590). The two are
+            deliberately distinct — collapsing them made an explicit
+            "follow my OS" indistinguishable from "never chose", so it
+            could not travel to a second device (#677). Same "join on
+            /auth/me" rationale as `language`.
+        default_views:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesViews"
+          description: |
+            The account's default-view selections, joined from
+            user_preferences at /auth/me time (#706).
+
+            Same rationale as `language` and `theme`, and the same
+            timing guarantee, which is the point: the root layout's
+            load awaits /auth/me before any page renders, so the browse
+            store can consult these synchronously in its `init()`
+            rather than seeding itself from a second round-trip that
+            lands after the grid has already painted.
+        feed_filters:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesFeedFilters"
+          description: |
+            The account's browse-feed content filters (#891), joined
+            from user_preferences at /auth/me time.
+
+            The filtering itself is the SERVER's — `GET /posts` reads
+            this preference and applies it, so no client can forget to
+            and no client can turn it off. What rides the session is the
+            fact that it is ON, because a feed that is quietly shorter
+            than it would otherwise be has to say so on the same paint
+            that renders it. Learning it from a second round-trip means
+            the browse page renders a thinner grid with no explanation
+            and then pops a banner in afterwards — the same first-paint
+            race #867 and #872 closed for `default_views`, `theme` and
+            `capabilities`, arriving at the same surface.
+
+            OMITTED when every filter is off, which is every account
+            that has not opted in — so this changes no existing session
+            response.
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: |
+            The caller's resolved GLOBAL capability codes — the same set
+            GET /auth/me/capabilities reports in its `capabilities`
+            field, after role inheritance, per-user grants and revokes
+            have all been applied. Team-scoped capabilities are NOT
+            included; ask the scoped endpoints for those.
+
+            Rides the session response for the same reason `theme` and
+            `default_views` do, and for a sharper one (#871): the client
+            marks its auth store "ready" the instant this response
+            lands, and every capability-gated surface reads the store at
+            that moment. A capability set that arrives on a SECOND
+            round-trip therefore arrives after the gate has already
+            decided, which rendered a "you don't have permission" panel
+            at real admins until the follow-up landed. One response, one
+            decision, no window.
+
+            OMITTED when `capabilities_status` is `unavailable`. Read
+            that field first: this one is only meaningful when the
+            lookup succeeded.
+        capabilities_status:
+          type: string
+          enum: [resolved, unavailable]
+          description: |
+            Whether `capabilities` above could be determined for this
+            session. THREE outcomes, not two, and the difference between
+            the last two is the whole point of this field (#956):
+
+              * `resolved` + a non-empty list — the caller holds those
+                codes.
+              * `resolved` + an empty list — the lookup succeeded and
+                the account genuinely holds nothing.
+              * `unavailable` — the lookup FAILED. `capabilities` is
+                omitted and says nothing whatsoever about what this
+                account holds.
+
+            Before this field existed, the second and third collapsed
+            into one wire shape, and the SPA rendered "You don't have
+            permission to view this page." for both. That panel is
+            correct for a powerless account and a lie for a resolver
+            blip, and neither the operator reading it nor a test
+            asserting on it could tell which had happened — which is
+            exactly how #956's nightly failure survived four triage
+            passes.
+
+            Clients MUST fail closed on `unavailable`: grant nothing,
+            render no gated control. What they MUST NOT do is describe
+            it as a permission decision. It is the absence of one, and
+            the honest surface is an error with a retry.
+
+            This is a status, not a permission: `unavailable` never
+            widens what a caller may do, and every action is enforced
+            server-side against a freshly resolved set regardless of
+            what any session response said.
+
+            Required, and deliberately so. Making it optional and
+            treating absent as "unknown" was the smaller diff and the
+            wrong one: `capabilities` is ALREADY legitimately absent
+            from POST /setup/complete, whose response omits it while
+            the admin's role is committed. Overloading absence would
+            have made that response assert a degraded state that is not
+            true, and would have let any future producer that forgets a
+            field silently emit an error state on a healthy session. A
+            required enum makes every producer answer the question.
         impersonated_by:
           type: object
           nullable: true
@@ -11516,6 +12652,58 @@ components:
           description: |
             Write behaviour when extraction has a value. Empty =
             default (skip_if_set).
+        show_on_card:
+          type: boolean
+          description: |
+            Render this field at a glance on an asset card (#552).
+
+            A DISPLAY HINT, in the same class as `display_order` and
+            `display_group`: nothing may gate access, filtering or
+            correctness on it, and a client that ignores it entirely
+            must still be correct, merely plainer. With no field
+            marked, a card falls back to its own default.
+
+            It FEDERATES with the definition. ADR 0083 leaves a
+            property out of a schema envelope when it "names something
+            that exists only on the sender"; this names the field, not
+            the server, so a peer's fields render the way that peer
+            meant them to.
+
+            Refused on a field carrying a `read_capability`. A card is
+            rendered on browse, for a page of assets, where the server
+            has evaluated no per-field capability — so the combination
+            is a 400 rather than a setting that silently does nothing.
+            The refusal holds in both directions: a field already on
+            the card cannot acquire a read capability either.
+        mirrors_column:
+          type: string
+          nullable: true
+          readOnly: true
+          description: |
+            When set, this field is a VIEW onto that column of the
+            `assets` row rather than storage of its own (#822): reading
+            it projects the column, writing it updates the column, and
+            it can hold no value of its own — so the field and the
+            column cannot disagree. `title` and `description` ship this
+            way; `null` (the default) is an ordinary field.
+
+            Two consequences for a client:
+
+            * A write to a mirrored field is a write to the ASSET and
+              is gated as one — the caller needs the same authority a
+              `PATCH /assets/{id}` would demand, not merely a session.
+            * A surface that already renders the column with a
+              first-class control (the upload form's title box, an
+              asset header) should skip the mirrored field rather than
+              offer a second editor for the same value.
+
+            Read-only over the API, deliberately: which columns are
+            mirrorable is a schema decision enforced by a CHECK
+            constraint, not something an operator can retarget at a
+            column that may not exist. It is also LOCAL — it names a
+            column of this server's schema — so per ADR 0083's
+            exclusion criterion it does not travel in a federated
+            field-schema envelope.
         status:
           type: string
           enum: [active, deprecated, archived]
@@ -11689,6 +12877,13 @@ components:
             Let values create terms this field does not have yet. See
             FieldDefinition.open_vocabulary — honoured for
             `multi_select` only, inert elsewhere.
+        show_on_card:
+          type: boolean
+          description: |
+            Show this field at a glance on an asset card. See
+            FieldDefinition.show_on_card. Refused with 400 on a field
+            carrying a `read_capability`, and refused in the same way
+            when this request would give a carded field one.
         required: { type: boolean }
         searchable: { type: boolean }
         applies_to:
@@ -11735,7 +12930,7 @@ components:
         value_ref: { type: string, format: uuid, nullable: true }
         set_by:
           type: string
-          enum: [manual, exif, iptc, xmp, api, import, computed, default]
+          enum: [manual, exif, iptc, xmp, api, import, computed, default, mirror]
           description: |
             Where this value came from. `default` means an upload
             default put it here and nothing has improved on it since —
@@ -11744,6 +12939,13 @@ components:
             client cannot claim: `AssetFieldValueWrite.set_by` has no
             `default` member, because a value a caller chose to send is
             by definition not one nobody chose.
+
+            `mirror` means the field declares `mirrors_column` and this
+            value IS the asset column — nothing was stored under the
+            field. It is not a claim about who last edited it, because
+            the column carries no such record; `set_at` is the asset's
+            `updated_at` and `set_by_user_ref` is always null. Like
+            `default` it is server-only: a caller cannot send it.
         set_at: { type: string, format: date-time }
         set_by_user_ref: { type: integer, format: int64, nullable: true }
         resolved_options:
@@ -12182,11 +13384,34 @@ components:
         One asset's membership in a collection, joined with the
         asset's identifying columns so the UI can render without a
         follow-up fetch.
+
+        RESTRICTED MEMBERS (#883) — identical contract to PostMember, see
+        there for the reasoning. When the caller fails
+        `visibility.FieldsReadable` this row degrades to a placeholder:
+        `restricted` is true and EVERY joined-in `assets` column below
+        (title, asset_type, status, file_hash, file_extension, thumbhash,
+        pixel_width, pixel_height, asset_created_at, and the three
+        availability flags) is ABSENT — not empty-string, not zero, not
+        null — so a client cannot distinguish "withheld" from "genuinely
+        empty" and infer from the difference.
+
+        That is why those fields moved out of `required`. The permitted
+        key set on a restricted row is exactly the `collection_resources`
+        row's own columns — collection_id, asset_id, sort_order, pinned,
+        expires_at, added_at — plus `restricted` and
+        `owner_display_name`. No column of `assets` crosses the boundary,
+        so a column added to that table later is withheld by
+        construction.
+
+        On a NON-restricted row every one of those fields is still sent,
+        unchanged and unconditionally; #595's argument for keeping the
+        card-critical ones non-optional (a surface that hand-maps a
+        narrower object silently loses video badges and sprite-scrub)
+        still holds, and the allow-list test in
+        `collections/member_allowlist_test.go` is what now pins it,
+        because `required` no longer can.
       required:
-        [collection_id, asset_id, sort_order, pinned, added_at,
-         title, asset_type, status, preview_available, ladder_available,
-         scrub_available,
-         file_hash, file_extension, thumbhash, pixel_width, pixel_height]
+        [collection_id, asset_id, sort_order, pinned, added_at, restricted]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id: { type: string, format: uuid }
@@ -12197,6 +13422,17 @@ components:
           format: date-time
           nullable: true
         added_at: { type: string, format: date-time }
+        restricted:
+          type: boolean
+          description: |
+            True when the caller may not see this member. Every
+            asset-derived field is then absent and the client renders a
+            placeholder tile (#883).
+        owner_display_name:
+          type: string
+          description: |
+            Set only when `restricted` is true: the display name of the
+            asset's owner. Absent — not empty — when unresolvable.
         title: { type: string }
         asset_type: { type: integer, format: int64 }
         status: { type: string, enum: [draft, active, archived] }
@@ -12284,21 +13520,98 @@ components:
         next_cursor:
           type: string
           nullable: true
+    CollectionPostWrite:
+      type: object
+      description: |
+        The body of `POST /collections/{id}/posts` (#882). Mirrors
+        CollectionResourceWrite field for field, because
+        `collection_posts` and `collection_resources` carry the same
+        membership columns — a reference plus the curator's ordering.
+
+        There is no post-side counterpart of `CollectionResource`: the
+        listing returns whole `Post` objects, so the collection page
+        renders the same PostCard as browse rather than a second,
+        narrower post shape that would drift from it.
+      required: [post_id]
+      properties:
+        post_id: { type: string, format: uuid }
+        sort_order: { type: integer, default: 0 }
+        pinned: { type: boolean, default: true }
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
     Asset:
       type: object
-      # file_hash / file_extension / thumbhash are REQUIRED-but-nullable
-      # on purpose (#595). They are the three fields CardThumb needs to
-      # decide what a tile IS — has bytes, what media type, what blur-up
-      # — so every asset-shaped payload must carry them even when null.
-      # As OPTIONAL fields they generated `field?: T` in the frontend
-      # types, which let a surface hand-map a narrower object and drop
-      # them with no type error; that is exactly how the collection page
-      # silently lost its video/3D badges and sprite-scrub previews.
-      required: [id, title, asset_type, status, processing_status, preview_available, created_at, updated_at, tags,
-                 file_hash, file_extension, thumbhash, ladder_available,
-                 scrub_available, pixel_width, pixel_height]
+      description: |
+        WITHHELD ASSETS (#899). An asset you cannot OPEN must not hand
+        you its metadata. When the caller fails
+        `visibility.FieldsReadable` — the conjunction of the row plane
+        and the ADR 0064 content plane — this object degrades to a
+        placeholder: `restricted` flips to true and the ONLY other keys
+        present are `id` and `owner_display_name`.
+
+        The placeholder is deliberately PRESENT rather than 404. ADR 0064
+        holds that sensitivity gates content, not rows, so the row stays
+        visible; a reader is meant to be able to tell that something is
+        there they cannot see, because that is what makes "request
+        access" (#881) mean anything.
+
+        ALLOW-LIST, not deny-list. The permitted key set on a withheld
+        asset is exactly `id`, `restricted`, `owner_display_name` — an
+        identifier the caller already holds, a marker, and the one
+        asset-derived value the owner permitted ("the placeholder should
+        never leak info. Not even title. Only the owner's name.").
+        Everything else is ABSENT, not blanked, so a client cannot tell
+        "withheld" from "genuinely empty" and infer from the difference.
+        A field added to this schema later is therefore withheld by
+        construction rather than by remembering to add it to a list of
+        known-sensitive names.
+
+        That key set is the SAME one `PostMember`'s placeholder carries,
+        and deliberately so: the field set on this surface must never be
+        wider than the field set for the same asset reached through a
+        container, or membership becomes the narrower path and the three
+        surfaces drift apart again.
+
+        WHY `required` IS SHORT. It used to name sixteen fields, on the
+        #595 reasoning that `field?: T` in the frontend types let a
+        surface hand-map a narrower object and silently drop the three
+        CardThumb needs. That reasoning still holds for a readable
+        asset — and it is exactly why absence has to be expressible for
+        an unreadable one. A contract that DEMANDS `title` and
+        `file_hash` cannot express a payload that withholds them. So
+        `required` is now the two keys every asset payload carries at
+        every tier, and the client branches on `restricted` (which is
+        required, and therefore always present to branch on) before
+        reading anything else.
+      required: [id, restricted]
       properties:
         id: { type: string, format: uuid }
+        restricted:
+          type: boolean
+          description: |
+            True when the caller may not see this asset's columns. Every
+            other key except `id` and `owner_display_name` is then
+            absent, and the client renders a placeholder tile.
+
+            REQUIRED, so it is always present to branch on: an optional
+            marker would read as `undefined` on a withheld payload from
+            an older server and fall through to "not restricted", which
+            is the wrong default for a security marker.
+        owner_display_name:
+          type: string
+          description: |
+            Set only when `restricted` is true: the display name of the
+            asset's owner, so the placeholder can say whose work it is
+            and #881 can address the request. Absent — not empty — when
+            the owner has no resolvable name or the asset is unowned, so
+            a client cannot tell "withheld" from "genuinely empty".
+
+            Not carried on a readable asset, which has `owner_user_ref`
+            and can resolve the profile itself. `owner_user_ref` is NOT
+            carried on a withheld one: the placeholder's allow-list is
+            the owner's NAME, and a ref is a second way to ask.
         title: { type: string }
         description: { type: string }
         asset_type: { type: integer, format: int64 }
@@ -12333,6 +13646,18 @@ components:
           format: uuid
           nullable: true
           description: Optional workflow state (domain = 'asset').
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The team this asset is scoped to, or absent when it has
+            none — which is the common case. Set at create time via
+            `AssetCreate.team_id` (#953) and not changeable afterwards.
+
+            It is on the FIELD plane, so a withheld asset does not
+            carry it: which studio holds a file you may not open is a
+            fact about that file.
         processing_status:
           type: string
           enum: [pending, ready, failed]
@@ -12489,6 +13814,65 @@ components:
             (image, 3D, document, etc.). Tracks ride along with the
             asset; they do NOT appear in asset-count queries and do
             NOT federate as standalone activities.
+        card_fields:
+          type: array
+          items: { $ref: '#/components/schemas/CardField' }
+          description: |
+            The values of the fields an operator marked
+            `show_on_card`, already resolved to display strings and in
+            the order the field definitions declare (#552).
+
+            Absent or empty when nothing is marked, when this asset
+            carries no value for any of them, or on a `restricted`
+            placeholder — a card MUST fall back to its own default
+            rather than render an empty strip. That fallback is what
+            makes the flag a hint: a client that never reads this key
+            is plainer, not wrong.
+
+            Only ungated fields can appear, structurally: the schema
+            refuses `show_on_card` on a field carrying a
+            `read_capability`, so this array cannot become a side door
+            around a per-field gate.
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/ContentOrigin'
+          nullable: true
+          description: |
+            The peer this asset came from, or absent/null when it is
+            ours. Present so a surface can answer "whose is this?"
+            without making remote work look lesser — federated content
+            uses the same card, the same viewer and the same display
+            hints; what it must not do is arrive unattributed.
+    CardField:
+      type: object
+      description: |
+        One at-a-glance field value on a card (#552). Deliberately a
+        DISPLAY shape and not a second AssetFieldValue: the card shows
+        one line per field, so the server resolves the vocabulary slug
+        to its label here rather than shipping the slug plus a
+        resolution map to every tile on a browse page.
+      required: [code, label, value]
+      properties:
+        code: { type: string, description: "The field definition's federation-stable slug." }
+        label: { type: string, description: "The operator-facing name, for the caption." }
+        value:
+          type: string
+          description: |
+            The value as one line. Never empty — a field with nothing
+            on this asset is omitted from the array rather than sent
+            blank.
+    ContentOrigin:
+      type: object
+      description: |
+        Attribution for content that came from a federated peer.
+        `display_name` is the name the operator gave that peer at
+        handshake; `instance_url` is where it lives. Never a bare UUID:
+        answering "whose is this?" with an identifier answers nothing.
+      required: [peer_id, display_name]
+      properties:
+        peer_id: { type: string, format: uuid }
+        display_name: { type: string }
+        instance_url: { type: string }
     FeaturedItem:
       type: object
       description: |
@@ -12590,7 +13974,7 @@ components:
         is pending → granted / denied (admin decision); granted
         → expired (CapabilitySweeper cascade). Terminal states
         admit no further transitions.
-      required: [id, requester_user_ref, target_asset_id, requested_capability, state, requested_at]
+      required: [id, requester_user_ref, target_kind, target_id, requested_capability, state, requested_at]
       properties:
         id:
           type: string
@@ -12598,11 +13982,49 @@ components:
         requester_user_ref:
           type: integer
           format: int64
-        target_asset_id:
+        target_kind:
+          type: string
+          enum: [asset, post, collection]
+          description: |
+            Which table `target_id` refers to. Access requests (#881)
+            are always `asset`; restoration appeals (#931) may name any
+            of the three soft-deletable kinds.
+        target_id:
           type: string
           format: uuid
+          description: |
+            The requested object, in the table named by `target_kind`.
+            Called `target_asset_id` before #931, when the workflow
+            could only ever name an asset.
         requested_capability:
           type: string
+          description: |
+            The capability code this request names. Two of them are
+            inert markers that confer nothing and exist only to TYPE
+            the row for its decide gate:
+
+            * `content.access.request` — "may I see this asset" (#881).
+              Decidable by the asset's owner, `share.grant`, or
+              `system.admin`.
+            * `content.restore.request` — "please undo this delete"
+              (#931). Decidable ONLY by whoever deleted the target, or
+              by `system.admin`. `share.grant` does not qualify:
+              authority over sharing is not authority over moderation.
+              Granting one performs the restore; it writes no
+              capability grant.
+        decidable_by_caller:
+          type: boolean
+          description: |
+            True when THIS caller may decide THIS row right now,
+            computed by the same gate the decide endpoint applies.
+            Populated on the queue listings (`/admin/requests`,
+            `/account/requests/incoming`) and absent elsewhere.
+
+            It exists because the two queues have different gates and
+            the admin queue is readable by people who cannot act on
+            every row it contains: `share.grant` sees restoration
+            appeals but may not decide them. Rendering a decide control
+            from row presence alone would offer a button that 403s.
         reason:
           type: string
         state:
@@ -12763,6 +14185,28 @@ components:
             `workflow_state` whose `domain = 'asset'`. When omitted,
             the asset is placed in the `asset` domain's initial state
             (or NULL if the domain has none).
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional — scope the asset to a team (#953). Mirrors
+            `PostCreate.team_id`, and is gated by the same rule: you
+            may assign to a team you are a DIRECT MEMBER of, one you
+            hold a team-scoped `assets.admin` over (closure-expanded,
+            so a grant on a parent team reaches its descendants), or
+            any team if you hold `system.admin`.
+
+            `team_id` is an authorization input, not a label. It is the
+            scope a team-scoped `assets.admin` grant matches against,
+            and at `sensitivity = 'team'` it is what makes the asset
+            readable by that team — so assigning is a disclosure act.
+
+            A team you may not assign to answers **404 `team not
+            found`**, byte-identical to a team that does not exist, so
+            this endpoint cannot be used to enumerate the instance's
+            teams. Reassignment after creation is deliberately NOT
+            offered: `AssetUpdate` carries no `team_id`.
     AssetUpdate:
       type: object
       description: |
@@ -12916,6 +14360,41 @@ components:
       properties:
         id: { type: string, format: uuid }
         author_user_ref: { type: integer, format: int64 }
+        author:
+          allOf: [{ $ref: "#/components/schemas/PostAuthor" }]
+          nullable: true
+          description: |
+            The renderable identity behind `author_user_ref` (#557).
+
+            WHY IT IS ON THE POST. A feed card carries an author
+            header, and a page is ~20 cards. Resolving each one
+            through `GET /users/{ref}` is twenty profile round trips
+            per page — a permanent tax on the hottest surface in the
+            app, and there is no batch user endpoint outside admin.
+            So the identity travels WITH the post, resolved once per
+            page for the distinct set of authors on it.
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO AUTHOR". Every post
+            has an author — `author_user_ref` is required and always
+            present. This object is omitted when the caller is not
+            entitled to the identity behind that ref:
+
+              * the author set `hide_from_anonymous` and the caller is
+                anonymous (ADR 0070 §3 / ADR 0024's opt-out). The
+                author's own profile 404s for this caller, so putting
+                their name and face on a card would be that opt-out
+                defeated by a JOIN.
+              * the `user` row is gone (a hard-deleted account).
+
+            There is deliberately NO placeholder identity. "Someone
+            who opted out posted this" still discloses that they
+            posted; the card renders with no author header instead.
+
+            PER-CALLER, THEREFORE NOT CACHED. Like
+            `members[].preview_available` (#471) and `restricted`
+            (#883), this is derived per request from the caller's
+            identity and never written into the cross-caller post
+            cache. See posts.enrichAuthors.
         title: { type: string }
         description: { type: string }
         visibility:
@@ -12949,6 +14428,23 @@ components:
             workflow tracking on this post.
         posted_at: { type: string, format: date-time }
         like_count: { type: integer, format: int64 }
+        liked:
+          type: boolean
+          description: |
+            Whether THIS caller has liked this post. Always false for
+            an anonymous caller, who has no identity to have liked
+            with.
+
+            Shipped with the feed card (#557) for the same reason
+            `author` is, and it is the same round-trip arithmetic:
+            `GET /posts/{id}/like` answers this for one post, and a
+            feed card needs it for twenty. Without it the heart on
+            every card is drawn unfilled until clicked — a control
+            that lies about the reader's own state — or the page
+            issues one request per card to find out.
+
+            PER-CALLER, therefore derived after the post cache and
+            never written into it. See posts.enrichLiked.
         comment_count: { type: integer, format: int64 }
         tags:
           type: array
@@ -12960,6 +14456,21 @@ components:
           type: string
           format: uuid
           nullable: true
+        origin:
+          allOf: [{ $ref: "#/components/schemas/ContentOrigin" }]
+          nullable: true
+          description: |
+            The peer this post came from, or absent when it is ours —
+            the post-level twin of `Asset.origin` (#552), added with
+            the feed card (#557).
+
+            `origin_server_id` has always been on this schema and is
+            not enough on its own: it is a bare UUID, and answering
+            "whose is this?" with an identifier answers nothing. A
+            feed card attributes remote work by the name the operator
+            gave the peer at handshake, in the same card and the same
+            layout local work uses. Federated content is not lesser;
+            what it must not be is unattributed.
         team_id:
           type: string
           format: uuid
@@ -12984,16 +14495,107 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+    PostAuthor:
+      type: object
+      description: |
+        The renderable identity of a post's author (#557) — exactly
+        what a feed card's author header draws and nothing else.
+
+        ALLOW-LIST, NOT DENY-LIST. This is a purpose-built shape, not
+        a trimmed `UserPublic`, and that is the point: the server
+        BUILDS the permitted object rather than building the full one
+        and deleting fields from it. A field added to the user or
+        profile row later is therefore withheld by construction
+        instead of by someone remembering to strip it — the same
+        discipline `PostMember`'s restricted placeholder and
+        `ActivityEvent` apply.
+
+        Notably ABSENT, and deliberately: `fullname`, `bio`,
+        `location`, `website_url`, `social_links`, `language`,
+        `theme`, `member_since`, `post_count`. A card header needs a
+        face, a name and somewhere to click. Everything else is what
+        the profile page is for, and that page answers with its own
+        gate.
+      required: [ref, username, display_name]
+      properties:
+        ref: { type: integer, format: int64 }
+        username:
+          type: string
+          description: |
+            The handle. Also the profile link target
+            (`/users/by-username/{username}`).
+        display_name:
+          type: string
+          description: |
+            Resolved display string ready to render — never empty.
+
+            RESOLUTION IS CALLER-DEPENDENT and matches `UserPublic`'s
+            exactly, because it is literally the same expression
+            (`users.ResolveDisplayName`):
+
+              authenticated: profile.display_name → user.fullname → username
+              anonymous:     profile.display_name → username
+
+            The anonymous rung skips `fullname` on purpose. Real name
+            is authenticated-only (ADR 0070 §3), and a display-name
+            fallback that reaches it would be that rule defeated by a
+            COALESCE.
+        avatar_url:
+          type: string
+          nullable: true
+          description: |
+            Null for users with no uploaded avatar; the card renders
+            a generated initials disc in that case.
     PostMember:
       type: object
       description: |
         An asset attached to a post, with its sort_order in the
         carousel and the asset payload joined-in to avoid an N+1.
-      required: [asset_id, sort_order, asset]
+
+        RESTRICTED MEMBERS (#883). A post's author can attach an asset
+        that the *reader* is not entitled to — their own restricted
+        work, or (once #882 lands) someone else's. Membership must never
+        WIDEN an item, so when the reader fails
+        `visibility.FieldsReadable` this object degrades to a
+        placeholder: `restricted` flips to true, `asset` is ABSENT, and
+        the only thing carried across from the asset row is
+        `owner_display_name`.
+
+        The placeholder is deliberately PRESENT rather than dropped from
+        the array. A reader is meant to be able to tell that something is
+        there they cannot see — that is what makes "request access"
+        (#881) meaningful, and silently omitting the member would hide
+        the restriction instead of stating it.
+
+        ALLOW-LIST, not deny-list. The permitted key set on a restricted
+        member is exactly `asset_id`, `sort_order`, `restricted`,
+        `owner_display_name` — the `post_assets` row's own columns plus a
+        marker plus the one asset-derived value the owner permitted. NO
+        column of `assets` crosses this boundary. A field added to
+        `Asset` later is therefore withheld by construction rather than
+        by remembering to add it to a list of known-sensitive names.
+      required: [asset_id, sort_order, restricted]
       properties:
         asset_id: { type: string, format: uuid }
         sort_order: { type: integer }
-        asset: { $ref: "#/components/schemas/Asset" }
+        restricted:
+          type: boolean
+          description: |
+            True when the caller may not see this member. `asset` is then
+            absent and the client renders a placeholder tile.
+        owner_display_name:
+          type: string
+          description: |
+            Set only when `restricted` is true: the display name of the
+            asset's owner, so the placeholder can say whose work it is
+            and #881 can address the request. Absent — not empty — when
+            the owner has no resolvable name or the asset is unowned, so
+            a client cannot tell "withheld" from "genuinely empty".
+        asset:
+          allOf: [{ $ref: "#/components/schemas/Asset" }]
+          description: |
+            ABSENT when `restricted` is true. Present, and complete, in
+            every other case.
     PostCreate:
       type: object
       required: [members]
@@ -13065,6 +14667,16 @@ components:
           type: string
           format: uuid
           nullable: true
+          description: |
+            Standalone cover thumbnail (not a post member). Gated on
+            content-readability exactly as `cover_asset_id` is: an
+            asset the caller cannot read is refused with the SAME 404
+            a nonexistent one gets, so this field cannot be used to
+            probe which asset UUIDs exist.
+
+            Before #946 this property was declared here and silently
+            dropped by the handler — the request answered 200 and the
+            column was unchanged.
         state_id:
           type: string
           format: uuid
@@ -13243,6 +14855,41 @@ components:
             `ancestor` filter; this field is just the edges out of
             the current node.
           items: { $ref: "#/components/schemas/TeamParentLink" }
+        member_count:
+          type: integer
+          format: int64
+          description: |
+            Direct memberships. Present on `listTeams` — the directory
+            card shows it (#684) — and ABSENT from `getTeam`.
+
+            The asymmetry is deliberate and is about staleness, not
+            taste. `getTeam` reads through an LRU that only the
+            team-row and parent-edge endpoints invalidate; adding a
+            membership does not, and never needed to, because nothing
+            membership-shaped was cached. A count served from that
+            entry would go stale the first time somebody joined. The
+            list path is uncached, so it can carry the number honestly.
+
+            A team page that wants the count reads
+            `GET /teams/{id}/members`, which it already fetches for the
+            member strip.
+        content_count:
+          type: integer
+          format: int64
+          description: |
+            Live (non-soft-deleted) assets carrying this team_id — the
+            directory card's "how much is in here" hint (#684). Present
+            on `listTeams` only, for the same caching reason as
+            `member_count`.
+
+            NOT visibility-filtered, deliberately. It counts assets
+            whose fields the caller may not read. That discloses
+            nothing new: this operation needs `teams.read`, so the
+            caller is signed in, and the authenticated asset predicate
+            already hands them restricted rows as placeholders — the
+            same number is reachable by paging
+            `/assets?team_id=X`. Filtering it would make the card
+            disagree with the page it links to.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -13414,29 +15061,132 @@ components:
     UserPreferencesViews:
       type: object
       description: |
-        Default-view selections. Unset fields fall back
-        to per-route defaults at render time. Adding a new view knob
-        is a string-additive change; the valid value sets grow as new
-        layouts ship in later phases.
+        Default-view selections — the SEED for a device that has no
+        local choice of its own, never an override of one. The browse
+        store reads these once at hydration and only for the keys
+        `localStorage` does not already hold, so picking masonry on
+        one laptop survives a reload even when the account default
+        says grid.
+
+        Every value set below is a closed enum, and each member is a
+        state the app can actually reach: `home_tab` mirrors the `feed`
+        enum on `GET /posts`, `browse_layout` mirrors the browse
+        store's `ViewMode`, and `browse_sort` carries only the two
+        orderings the client can produce. Widening one of these means
+        first building the thing it names (#736) — a value here that
+        nothing can serve is a promise the UI breaks silently.
       properties:
         home_tab:
           type: string
           description: |
-            Which tab the home page lands on. Valid values today:
-            `following`, `latest`, `trending`, `for_you`. Empty/unset
-            falls back to `latest`.
+            Which feed segment browse lands on. Empty/unset falls back
+            to `latest`. `trending` and `for_you` were removed in
+            #736: neither existed in the `feed` enum, so choosing one
+            put the plain latest feed under a label promising
+            otherwise. They come back when a ranking model does.
+          enum: ["", latest, following]
         browse_layout:
           type: string
           description: |
-            Default browse-feed layout. Valid values today: `grid`,
-            `masonry`, `thumbnail`, `list`. Empty/unset falls back to
-            the route's default.
+            Default browse-feed layout. Empty/unset falls back to the
+            per-device default (`feed` on a coarse pointer, `grid`
+            otherwise). `feed` is selectable here as of #706 — it was
+            already a mode a phone could land on but not one a user
+            could ask for.
+          enum: ["", grid, masonry, thumbnail, list, feed]
         browse_sort:
           type: string
           description: |
-            Default browse-feed sort. Valid values today: `newest`,
-            `oldest`, `popular`, `trending`. Empty/unset falls back
-            to the route's default.
+            Default browse ordering: `newest` (posted_at descending,
+            the built-in) or `oldest`. Empty/unset falls back to
+            `newest`. `popular` and `trending` were removed in #706 —
+            `GET /posts` has no ranking parameter and no ranking
+            model, so both were labels over the default order.
+          enum: ["", newest, oldest]
+
+    UserPreferencesFeedFilters:
+      type: object
+      description: |
+        What the browse feed shows this account beyond the read rule's
+        own output (#891, default inverted by #921).
+
+        Sibling to `default_views`, and deliberately not a key inside
+        it: `default_views` rearranges the same set of posts, these
+        change which posts are in it. Every member is a boolean whose
+        default is `false`, and each is NAMED so that `false` is the
+        build's default experience — so an account that has never touched
+        this object gets the same feed as every other default account,
+        and an absent key never means the opposite of what its name says.
+
+        #921 is why that naming rule is stated rather than assumed. Its
+        one member used to be `hide_restricted`, default `false`; hiding
+        became the default, and the key was RENAMED rather than having
+        its default flipped, because `hide_restricted: true`-by-default
+        would have made an absent key assert the reverse of its own name.
+
+        SUBTRACTIVE ONLY. Nothing here is ever consulted to decide what
+        a caller MAY read — the post read rule and
+        `visibility.FieldsReadable` have both already run by the time
+        these apply. A filter that could ADD a row would be a second
+        expression of the read rule, and each of the two we have unpicked
+        (#892, #904) cost a sprint. Inverting the default did not weaken
+        this: the ceiling is still exactly what the rule returned, and
+        these keys only choose how much of it is drawn.
+      properties:
+        show_restricted:
+          type: boolean
+          default: false
+          description: |
+            Keep the restricted-member placeholders (#883) in
+            `GET /posts` instead of subtracting them.
+
+            **Default `false` — the feed hides them (#921).** #891
+            shipped this machinery as an opt-in on the theory that the
+            placeholder is the more informative answer. Measured against
+            the stock seed dataset, a reader with no capabilities got 82
+            posts of which 27 were entirely placeholders: a third of the
+            grid was locked doors. The principle the default now encodes
+            is that a placeholder belongs where the reader ASKED A
+            QUESTION or OPENED A CONTAINER, not where they were handed a
+            feed.
+
+            With the default (`false`), three rules, and the third is the
+            one that matters:
+
+            1. A member the caller cannot read is OMITTED from
+               `members` rather than sent as a `restricted: true`
+               placeholder.
+            2. A post left with NO visible members — one that HAD
+               members and none survived — is omitted from the page.
+               A post with no members at all (an article, ADR 0073) is
+               unaffected: it was never showing you anything you
+               couldn't see.
+            3. A post the CALLER AUTHORED is never omitted, however
+               restricted its members are. An author's post can carry
+               other people's assets, so rule 2 alone would make your
+               own work vanish from your own feed over a display
+               default.
+
+            Set it `true` and `GET /posts` returns the pre-#921 payload
+            exactly: every placeholder present, every all-restricted post
+            back in the page.
+
+            Applies to `GET /posts` and stops there. `GET /posts/{id}` is
+            an explicit request for one post and answers with the
+            placeholders intact whatever this is set to, which is not an
+            inconsistency: rule 2 exists BECAUSE an all-restricted post
+            rendering as an empty card is worse than the placeholder it
+            replaced, and filtering members on the single-post read would
+            rebuild that empty card on the one surface rule 2 could not
+            protect. Collection contents render placeholders for the same
+            reason — an opened container should say what is in it.
+
+            It also keeps the ask alive. #913's "Request access" button
+            lives on the placeholder, so it survives wherever the
+            placeholder does: the post page and collections. The trade
+            the DEFAULT makes — no placeholders in the feed means no
+            Request access in the feed — is stated in the setting's own
+            help text rather than left to be discovered.
 
     UserPreferencesRequest:
       type: object
@@ -13469,6 +15219,14 @@ components:
             Unknown event types or cadence values trigger a 400.
         default_views:
           $ref: "#/components/schemas/UserPreferencesViews"
+        feed_filters:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesFeedFilters"
+          description: |
+            Browse-feed content filters. Absent object, or an absent key
+            inside it, means the filter is OFF — there is no third state
+            for a boolean to fall back to, so this follows the
+            full-object-replacement contract like everything else here.
 
     UserPreferencesResponse:
       type: object
@@ -13482,6 +15240,7 @@ components:
       required:
         - notification_channels
         - default_views
+        - feed_filters
         - known_event_types
         - known_channels
         - default_channels_by_event
@@ -13499,6 +15258,15 @@ components:
             immediate. Values: immediate | hourly | daily | weekly.
         default_views:
           $ref: "#/components/schemas/UserPreferencesViews"
+        feed_filters:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesFeedFilters"
+          description: |
+            Browse-feed content filters, always present with every key
+            populated — unlike `default_views`, where "unset" and "the
+            default" are different states the UI renders differently, a
+            boolean filter has no third value, so omitting it would only
+            make the client guess `false` rather than read it.
         known_event_types:
           type: array
           items: { type: string }
@@ -14293,10 +16061,21 @@ components:
       type: object
       description: |
         Merged user + profile view. `display_name` is the resolved
-        display string (profile.display_name → user.fullname →
-        user.username, first non-empty). `avatar_url` is null for
-        users without an uploaded avatar; the frontend renders a
-        generated initials disc in that case.
+        display string, first non-empty of:
+
+          authenticated: profile.display_name → user.fullname → username
+          anonymous:     profile.display_name → username
+
+        The anonymous ladder skips `fullname`, and has since #478 —
+        real name is authenticated-only (ADR 0070 §3), so a fallback
+        that reached it would defeat that rule silently, for exactly
+        the users who never set a display name. This sentence used to
+        describe only the authenticated ladder, which made the schema
+        the stale source; the rule itself is one Go expression
+        (`users.ResolveDisplayName`), shared with `PostAuthor`.
+
+        `avatar_url` is null for users without an uploaded avatar; the
+        frontend renders a generated initials disc in that case.
       required:
         [ref, username, display_name, member_since, post_count]
       properties:
@@ -14337,11 +16116,11 @@ components:
             switcher in the user menu.
         theme:
           type: string
-          enum: ['', 'light', 'dark']
+          enum: ['', 'light', 'dark', 'system']
           description: |
-            UI theme preference. Empty string = follow system / OS.
-            Persisted alongside the profile so it follows the user
-            across browsers.
+            UI theme preference. `system` follows the OS; empty string
+            = no stored preference. Persisted alongside the profile so
+            it follows the user across browsers (#677).
         member_since: { type: string, format: date-time }
         post_count:
           type: integer
@@ -14396,9 +16175,12 @@ components:
             the picker to a known list.
         theme:
           type: string
-          enum: ['', 'light', 'dark']
+          enum: ['', 'light', 'dark', 'system']
           description: |
-            Empty string resets the pref to "follow system".
+            `system` follows the OS. Empty string CLEARS the account's
+            preference, which is not the same thing — a cleared account
+            leaves each device on the app default, an account set to
+            `system` makes every device follow its own OS.
         hide_from_anonymous:
           type: boolean
           description: |
@@ -16155,6 +17937,24 @@ components:
         principal_id:
           type: string
           maxLength: 64
+          pattern: "^([0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          description: |
+            A REFERENCE, not a name. BIGINT `user.ref` when
+            principal_type=user; the row's UUID when it is role or team.
+
+            The pattern admits the union of both forms because one
+            schema serves all three principal types; the handler
+            enforces the type-specific half and rejects a mismatch with
+            400. Passing a username here used to be accepted and stored,
+            producing a grant that no read rule could ever match (#916).
+
+            Which principal types actually CONFER access depends on the
+            surface. `asset_type_acls` honours all three. `post_acls`
+            and `collection_acls` honour `user` only — their read rules
+            gate on `principal_type = 'user'` because role/team scoping
+            on content is ADR 0010 Layer 5 and unimplemented — so those
+            two endpoints reject role and team with 400 rather than
+            storing a grant that does nothing.
         permission:
           type: string
           enum: [read, write, admin]
@@ -16174,6 +17974,18 @@ components:
           type: integer
           format: int64
           nullable: true
+        username:
+          type: string
+          description: |
+            The member's username. Added for the team page's member
+            strip (#684) — without it a client can only render the ref,
+            and resolving names would be one request per member.
+        display_name:
+          type: string
+          nullable: true
+          description: |
+            The member's profile display name, or null when they have
+            no profile row. A client should fall back to `username`.
 
     EpubSpineEntry:
       type: object
@@ -16778,6 +18590,170 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/MetadataBackfillRun" }
+
+    ActivityEvent:
+      type: object
+      description: |
+        One audit row that names the caller, projected for the caller
+        rather than for an auditor (#600). See `GET /account/activity`
+        for why each omission is an omission.
+      required: [id, event_type, occurred_at, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            The audit row id. Carried so the page can key rows and so a
+            support conversation can name one exactly; it is not a
+            handle to anything the caller can fetch.
+        event_type:
+          type: string
+          description: |
+            The raw dotted event type (`user.password_changed`,
+            `admin.asset.soft_deleted`, ...). Sent raw, not as a
+            pre-rendered sentence, because the client already owns the
+            translations and a server-side sentence would be one
+            language baked into an API. Clients MUST render an unknown
+            type as a readable fallback rather than a raw payload —
+            new types land continuously and a page that only knows
+            today's list must not degrade to a JSON dump.
+        occurred_at:
+          type: string
+          format: date-time
+        role:
+          type: string
+          enum: [by_me, on_my_account]
+          description: |
+            `by_me` — the caller is the actor. `on_my_account` — the
+            caller is the subject and somebody (or something) else
+            acted.
+
+            A row where the caller is BOTH actor and subject is
+            `by_me`: changing your own password is an act, not
+            something that happened to you, and reporting it as the
+            latter would make a self-service change read like an
+            intrusion.
+
+            Rows with no actor at all (a system sweep, an expiry)
+            reach the caller only as subject, so they are
+            `on_my_account` — which is the honest reading: nobody the
+            caller can ask did it.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: |
+            The event's payload — PRESENT ONLY ON `by_me` ROWS, where
+            it is a record of the caller's own action. Absent, not
+            empty, on `on_my_account` rows: an empty object would
+            claim the event had no detail, when the truth is that its
+            detail belongs to whoever acted. See the endpoint
+            description.
+
+            Shapes are per-event-type and are not part of this
+            contract; clients read the keys they recognise and ignore
+            the rest.
+    ActivityList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ActivityEvent" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque token for the next page; omitted on the final page.
+            Pass back unchanged as the `cursor` query parameter.
+    TrashItem:
+      type: object
+      description: |
+        One soft-deleted thing the caller owns (#937). Deliberately a
+        thin projection rather than the entity itself: trash needs to
+        identify an item and offer to undo, and shipping the full
+        Asset/Post/Collection here would make three read contracts
+        reachable through a fourth door with a different gate.
+      required: [kind, id, title, deleted_at, restorable_by_caller, restore_requested]
+      properties:
+        kind:
+          type: string
+          enum: [asset, post, collection]
+          description: |
+            Which entity this is, and therefore which restore endpoint
+            applies: `/admin/assets/{id}/restore`,
+            `/admin/posts/{id}/restore` or
+            `/admin/collections/{id}/restore`. (Those routes live under
+            `/admin` for historical reasons; since #936 they admit the
+            deleter as well as `system.admin`.)
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: |
+            The item's title — `collections.name` for a collection.
+            May be empty: assets and posts both default `title` to ''.
+        deleted_at:
+          type: string
+          format: date-time
+        restorable_by_caller:
+          type: boolean
+          description: |
+            True when this caller may restore this item right now.
+            False means an administrator or another user with mutation
+            rights deleted it, or no deleter was recorded — either way
+            the owner must ask (#931). Renders the difference between a
+            Restore button and an explanation; never a button that 403s.
+        deleted_reason:
+          type: string
+          nullable: true
+          description: |
+            The reason the deleter typed, if any (#985). Null when none
+            was given.
+
+            Disclosed in BOTH scopes, for different reasons. In
+            `owned_by_me` it is the promise the delete dialog already
+            makes to whoever writes it — "you don't own this, so the
+            owner will be shown what you write here" — and until #931
+            the field was not projected, so that promise was never
+            kept. In `deleted_by_me` it is simply the caller's own
+            words read back.
+        restore_requested:
+          type: boolean
+          description: |
+            True when this caller already has a `pending` restoration
+            appeal filed against this row (#931), so the UI shows a
+            quiet "requested" state instead of an Appeal button that
+            would coalesce onto the existing row and look like nothing
+            happened.
+
+            Only ever about the CALLER's own request. It is not a count
+            and does not disclose that anyone else has appealed.
+        purge_after:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the retention GC becomes eligible to hard-delete this
+            item: `deleted_at` plus the configured retention window for
+            its kind (`soft_delete.{asset,post,collection}_retention_days`,
+            default 30). Advisory, not a guarantee — the GC wakes once a
+            day and works in batches, so the real purge lands at or
+            after this instant. Absent only if the window could not be
+            read.
+    TrashList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TrashItem" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque token for the next page; omitted on the final page.
+            Pass back unchanged as the `cursor` query parameter.
   responses:
     BadRequest:
       description: Malformed request

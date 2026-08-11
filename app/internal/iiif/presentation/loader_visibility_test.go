@@ -417,7 +417,7 @@ func TestIIIFCollectionMembers_AnonymousRowPlane(t *testing.T) {
 	f := seedIIIF(t, pool)
 
 	members, err := NewLoader(pool).LoadCollectionMembers(
-		context.Background(), f.collections["coll-public"], visibility.NewCaller(nil), 200)
+		context.Background(), f.collections["coll-public"], visibility.NewCaller(nil), nil, visibility.AssetMutationCaps{}, 200)
 	if err != nil {
 		t.Fatalf("LoadCollectionMembers: %v", err)
 	}
@@ -428,6 +428,11 @@ func TestIIIFCollectionMembers_AnonymousRowPlane(t *testing.T) {
 	for _, m := range members {
 		if !allowed[m.ID] {
 			t.Errorf("anonymous member list included %v (%q), which the anonymous predicate withholds", m.ID, m.Title)
+		}
+		// #883 — and every row it DOES return must be marked readable,
+		// or the manifest builder would silently drop it.
+		if !m.MemberReadable {
+			t.Errorf("member %v survived the predicate but MemberReadable is false", m.ID)
 		}
 	}
 }

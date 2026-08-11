@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/acls"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
@@ -574,9 +575,13 @@ func (h *Handler) DeleteCollection(
 	err = h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity: em.Activity,
 	}, func(tx pgx.Tx) error {
+		// deleted_by_user_ref is what makes the delete undoable by the
+		// person who did it (#931) — see auth.CanRestoreDeleted.
+		deleter := caller.UserRef
 		return New(tx).DeleteCollection(ctx, DeleteCollectionParams{
-			ID:            pgID,
-			DeletedReason: softDeleteReasonPtr(reason),
+			ID:               pgID,
+			DeletedReason:    softDeleteReasonPtr(reason),
+			DeletedByUserRef: &deleter,
 		})
 	})
 	if err != nil {
@@ -594,7 +599,10 @@ func (h *Handler) DeleteCollection(
 // ---------------------------------------------------------------------------
 
 // RestoreCollection clears deleted_at + deleted_reason on a soft-
-// deleted collection. Admin-only.
+// deleted collection. See auth.CanRestoreDeleted for the rule: you undo
+// your own delete, system.admin undoes any. Previously system.admin
+// only, while DeleteCollection was open to the owner — so an owner
+// could delete their collection and then not get it back (#931).
 func (h *Handler) RestoreCollection(
 	ctx context.Context,
 	req openapi.RestoreCollectionRequestObject,
@@ -605,15 +613,26 @@ func (h *Handler) RestoreCollection(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	deletedBy, err := New(h.Pool).GetCollectionDeletedBy(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RestoreCollection404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("collections: load deleted_by: %w", err)
+	}
+	if !auth.CanRestoreDeleted(id, deletedBy) {
 		return openapi.RestoreCollection403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "this collection was deleted by someone else; ask an administrator to restore it",
+			},
 		}, nil
 	}
 	if h.SoftDelete == nil {
 		return nil, fmt.Errorf("collections: RestoreCollection: SoftDelete service unwired")
 	}
-	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	if err := h.SoftDelete.RestoreCollection(ctx, nil, uuid.UUID(req.Id), id.UserRef); err != nil {
 		if errors.Is(err, softdelete.ErrNotDeleted) || errors.Is(err, softdelete.ErrNotFound) {
 			return openapi.RestoreCollection404JSONResponse{
@@ -865,8 +884,16 @@ func (h *Handler) ListCollectionResources(
 	// caps only short-circuits preview_available for SystemAdmin /
 	// content.read.all (#471); it does not affect row visibility.
 	var caps visibility.CapabilityChecker
+	// #939 — the caller's `assets.admin` scope, which widens the FIELD
+	// plane of a restricted member (ADR 0064). Resolved beside caps
+	// because it is the same question asked of a different plane.
+	var mutCaps visibility.AssetMutationCaps
 	if id := auth.IdentityFromContext(ctx); id != nil {
 		caps = func(code string) bool { return id.Can(code) }
+		mutCaps = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 	}
 	fetch := limit + 1
 	rows, err := ListCollectionResourcesPageGated(ctx, h.Pool, caller, caps,
@@ -876,6 +903,7 @@ func (h *Handler) ListCollectionResources(
 			CursorAddedAt:   cursorAdded,
 			RowLimit:        fetch,
 			Ladder:          h.ladder(ctx),
+			MutationCaps:    mutCaps,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)
@@ -888,16 +916,7 @@ func (h *Handler) ListCollectionResources(
 		if i >= int(limit) {
 			break
 		}
-		item := resourceRowToAPI(r.ListCollectionResourcesPageRow)
-		item.PreviewAvailable = r.PreviewAvailable
-		item.LadderAvailable = r.LadderAvailable
-		item.ScrubAvailable = r.ScrubAvailable
-		// #640 — the member tile's aspect ratio. Same pair-or-neither
-		// contract as everywhere else; the gated row already dropped a
-		// half-populated pair.
-		item.PixelWidth = r.PixelWidth
-		item.PixelHeight = r.PixelHeight
-		items = append(items, item)
+		items = append(items, resourceRowToAPI(r))
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
 	}
@@ -950,6 +969,26 @@ func (h *Handler) AddCollectionResource(
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(in.AssetId), Valid: true}
 	assetIDStr := uuid.UUID(in.AssetId).String()
 
+	// #882 — the ASSET gate. Everything above authorises the
+	// COLLECTION; until this landed nothing looked at the asset at all,
+	// so any collection owner could pin any asset in the instance given
+	// its UUID, and a 404-vs-204 probe confirmed whether an arbitrary
+	// UUID existed.
+	//
+	// A refusal here is deliberately the SAME 404 the FK miss below
+	// returns — same status, same body. Anything else (403
+	// "forbidden", a distinct message) re-creates the enumeration
+	// oracle this check exists to remove.
+	collectible, err := h.mayCollectAsset(ctx, caller, uuid.UUID(in.AssetId))
+	if err != nil {
+		return nil, fmt.Errorf("collections: add resource: asset gate: %w", err)
+	}
+	if !collectible {
+		return openapi.AddCollectionResource404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+
 	// Gold-standard path: Add(object=asset, target=collection)
 	// per AP §6.6 / §7.8. 1.22.B-cleanup made activities required.
 	var fkAssetMissing bool
@@ -990,8 +1029,51 @@ func (h *Handler) AddCollectionResource(
 
 // errAssetMissing is the sentinel signalling FK-violation on
 // asset_id inside the WithEmission closure. Used to roll back +
-// return 404 without surfacing as a 500 server error.
+// return 404 without surfacing as a 500 server error. It is now a
+// race backstop rather than the primary path — mayCollectAsset
+// rejects an absent asset before any activity is emitted.
 var errAssetMissing = errors.New("collections: asset row absent")
+
+// mayCollectAsset answers "may this caller put THIS asset into a
+// collection" (#882). You may only collect what you can actually see.
+//
+// # Why this is not visibility.CanSee alone
+//
+// The obvious call — CanSee(EntityAsset) — gates NOTHING here. Per ADR
+// 0064 sensitivity lives on the CONTENT plane, not the row plane, so
+// EntityAsset's authenticated predicate is `deleted_at IS NULL` and
+// nothing more (visibility/predicate.go, EntityAsset branch; CanSee's
+// own doc says as much). Every authenticated caller is row-visible to
+// every undeleted asset, so a gate built on CanSee alone would return
+// true for a restricted asset it has never been allowed to view, and
+// would review as if it worked.
+//
+// # The rule
+//
+// The two-plane conjunction that answers it — CanSee(EntityAsset) AND
+// CanReadContent — lives in visibility.CanAttachAsset, which carries the
+// full reasoning: why each plane is load-bearing on its own account, why
+// the SystemAdmin / ContentReadAll short-circuits are inherited, and why
+// it fails closed. #922 needed the identical question on the post
+// surface, so the composition moved beside the planes it composes rather
+// than being copied — a second expression of a security rule is the
+// defect epic #665 exists to remove.
+//
+// This wrapper is the collections-side adapter: nil / identity handling,
+// and the auth.Identity → visibility.Caller + CapabilityChecker
+// translation.
+func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAttachAsset(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		assetID,
+	)
+}
 
 // ---------------------------------------------------------------------------
 // RemoveCollectionResource
@@ -1078,8 +1160,9 @@ func (h *Handler) ListCollectionAcls(
 		}
 		return nil, err
 	}
-	// canRead: owner always; public visibility always; otherwise need
-	// mutate to view the ACL list (a stricter rule than read).
+	// Requires WRITE access — owner, collections.admin or system.admin.
+	// Read access is deliberately NOT enough (#933), which is the same
+	// rule #876 settled for ListPostAcls.
 	//
 	// #661 flagged this as a hand-maintained restatement of
 	// visibility.Filter that should be consolidated onto it. It is
@@ -1087,16 +1170,23 @@ func (h *Handler) ListCollectionAcls(
 	// folding it into the predicate would WIDEN access rather than
 	// consolidate it. The authenticated EntityCollection predicate is
 	// `public OR owner OR a live collection_acls grant`; this gate
-	// drops the grant disjunct (a read-grantee may use the collection
-	// without seeing who else was granted what) and adds a
-	// collections.admin / system.admin bypass the predicate
-	// deliberately refuses to carry. "Who may read the grant list" is
-	// a management question, not the row-visibility question ADR 0063
-	// answers.
+	// drops BOTH the public disjunct and the grant disjunct, and adds a
+	// collections.admin / system.admin bypass the predicate deliberately
+	// refuses to carry. "Who may read the grant list" is a management
+	// question, not the row-visibility question ADR 0063 answers.
+	//
+	// The public disjunct was the #933 leak. `visibility = 'public'` is
+	// a statement about the collection's CONTENTS. It says nothing about
+	// who the owner individually shared it with — that is a statement
+	// about the owner's working relationships, and admitting every
+	// authenticated caller to it handed out each grantee's principal_id
+	// and permission level to anyone with an account and no connection
+	// to the collection. The comment above this gate already argued for
+	// the tighter rule while the condition below it did the opposite.
 	//
 	// The soft-delete dimension is covered upstream: getByIDCached
 	// reads GetCollection, which filters `deleted_at IS NULL`.
-	if row.OwnerUserRef != caller.UserRef && row.Visibility != "public" && !canMutateCollection(caller, row) {
+	if !canMutateCollection(caller, row) {
 		return openapi.ListCollectionAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -1153,6 +1243,16 @@ func (h *Handler) AddCollectionAcl(
 	if !canMutateCollection(caller, row) {
 		return openapi.AddCollectionAcl403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the collection owner"},
+		}, nil
+	}
+	// Same boundary check as AddPostAcl — collection_acls has the
+	// identical shape and the identical read rule, so it had the
+	// identical defect (#916).
+	if err := acls.ValidateContentPrincipal(
+		string(req.Body.PrincipalType), req.Body.PrincipalId,
+	); err != nil {
+		return openapi.AddCollectionAcl400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 	var expires pgtype.Timestamptz
@@ -1244,6 +1344,18 @@ func (h *Handler) cacheAdd(row Collection) {
 	h.byID.Add(uuidString(row.ID), row)
 }
 
+// InvalidateAfterRestore evicts the by-id cache for a collection that
+// has just come back, for callers outside this package.
+//
+// The one caller is the composition root's restorer adapter, which a
+// granted restoration appeal (#931) goes through instead of
+// RestoreCollection. Mirrors assets.Handler.InvalidateAfterRestore; the
+// posts handler needs no equivalent, because its restore path evicts
+// nothing.
+func (h *Handler) InvalidateAfterRestore(ctx context.Context, id uuid.UUID) {
+	h.cacheInvalidate(ctx, pgtype.UUID{Bytes: id, Valid: true})
+}
+
 func (h *Handler) cacheInvalidate(ctx context.Context, id pgtype.UUID) {
 	if h.byID == nil {
 		return
@@ -1272,11 +1384,25 @@ const (
 // carries an override capability. The PHP layer still owns shared
 // collection permissions through `collection_grants`; that table
 // arrives in Phase 1.11.C.
+//
+// The two guards mirror canMutatePost (#936): an anonymous identity is
+// never a principal, and ref 0 is the anonymous SENTINEL rather than a
+// user, so it must not match on either side of the ownership
+// comparison. `collections.owner_user_ref` is `bigint NOT NULL`, so
+// there is no NULL-owner case to trap the way assets have — but a row
+// written with owner_user_ref = 0 would otherwise be "owned" by every
+// anonymous caller. No user holds ref 0 today; that is data, not a
+// structural guarantee.
+//
+// Deliberately NOT mirrored from canMutatePost: the team-scoped
+// disjunct. `collections` has no team_id column at all, so auth.InTeam
+// would have nothing to scope against. Giving collections a team is a
+// schema decision, not a hardening.
 func canMutateCollection(id *auth.Identity, row Collection) bool {
-	if id == nil {
+	if id == nil || id.IsAnonymous() {
 		return false
 	}
-	if row.OwnerUserRef == id.UserRef {
+	if id.UserRef != 0 && row.OwnerUserRef != 0 && row.OwnerUserRef == id.UserRef {
 		return true
 	}
 	return id.Can(CapCollectionsAdmin) || id.Can(CapSystemAdmin)
@@ -1309,23 +1435,73 @@ func rowToAPI(r Collection) openapi.Collection {
 	return c
 }
 
-func resourceRowToAPI(r ListCollectionResourcesPageRow) openapi.CollectionResource {
+// resourceRowToAPI serialises ONE membership row.
+//
+// The two branches are the #883 allow-list. The placeholder branch is
+// written as a complete literal rather than as "build the full row, then
+// clear the sensitive fields": a field added to CollectionResource later
+// is absent from a literal by construction, whereas a clear-list has to
+// be remembered. That is the deny-list failure mode this issue exists to
+// avoid, and it is why the shared assignments below are duplicated
+// instead of hoisted.
+func resourceRowToAPI(r ListCollectionResourcesPageGatedRow) openapi.CollectionResource {
+	if r.Restricted {
+		out := openapi.CollectionResource{
+			// collection_resources columns only — nothing from `assets`.
+			CollectionId: openapi_types.UUID(r.CollectionID.Bytes),
+			AssetId:      openapi_types.UUID(r.AssetID.Bytes),
+			SortOrder:    int(r.SortOrder),
+			Pinned:       r.Pinned,
+			AddedAt:      r.AddedAt.Time,
+			Restricted:   true,
+		}
+		if r.ExpiresAt.Valid {
+			t := r.ExpiresAt.Time
+			out.ExpiresAt = &t
+		}
+		// Absent, not "", when the owner has no resolvable name — a
+		// client must not be able to read anything off the difference
+		// between "withheld" and "empty".
+		if r.OwnerDisplayName != "" {
+			v := r.OwnerDisplayName
+			out.OwnerDisplayName = &v
+		}
+		return out
+	}
+
+	title := r.Title
+	assetType := r.AssetType
+	status := openapi.CollectionResourceStatus(r.Status)
+	preview, ladder, scrub := r.PreviewAvailable, r.LadderAvailable, r.ScrubAvailable
 	out := openapi.CollectionResource{
 		CollectionId: openapi_types.UUID(r.CollectionID.Bytes),
 		AssetId:      openapi_types.UUID(r.AssetID.Bytes),
 		SortOrder:    int(r.SortOrder),
 		Pinned:       r.Pinned,
 		AddedAt:      r.AddedAt.Time,
-		Title:        r.Title,
-		AssetType:    r.AssetType,
-		Status:       openapi.CollectionResourceStatus(r.Status),
+		Restricted:   false,
+		Title:        &title,
+		AssetType:    &assetType,
+		Status:       &status,
 		FileHash:     r.FileHash,
 		// #595 — the media-type + blur-up fields. A member tile renders
 		// through the same CardThumb as a browse tile, and CardThumb
 		// reads the media type off the extension alone (video / 3D badge
 		// + sprite-scrub hover preview). Without these the tile is an
 		// untyped still. Encoded exactly as assets.assetRowToAPI does.
-		FileExtension: r.FileExtension,
+		// They are `omitempty` pointers now only because the placeholder
+		// branch above needs them absent; on THIS branch every one is
+		// still populated unconditionally, and member_allowlist_test.go
+		// pins that.
+		FileExtension:    r.FileExtension,
+		PreviewAvailable: &preview,
+		LadderAvailable:  &ladder,
+		ScrubAvailable:   &scrub,
+		// #640 — the member tile's aspect ratio. Same pair-or-neither
+		// contract as everywhere else; the gated row already dropped a
+		// half-populated pair.
+		PixelWidth:  r.PixelWidth,
+		PixelHeight: r.PixelHeight,
 	}
 	if len(r.Thumbhash) > 0 {
 		v := base64.StdEncoding.EncodeToString(r.Thumbhash)

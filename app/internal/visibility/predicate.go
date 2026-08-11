@@ -56,7 +56,15 @@ import (
 //     branch filtered on 'public' while the CHECK constraint forbade
 //     that value, so it matched zero rows and only looked like
 //     working anonymous support. 00008 makes it real.
-//   - Post, authenticated: soft-delete + (public OR author), unchanged.
+//   - Post, authenticated: soft-delete + the full post read rule —
+//     author OR public/org-only OR private-with-posts.admin OR
+//     followers-you-follow OR a live post_acls grant. This branch used
+//     to read `public OR author` while the browse list composed the
+//     rich rule from posts' own copy, so search, facets and suggest
+//     silently dropped every org-only and followers post the caller
+//     could read anywhere else (#873). One expression now, in
+//     post_rule.go, spliced by both. The `private` disjunct needs the
+//     caller's capabilities: pass [WithPostCaps].
 //
 // The anonymous branches bind NO arguments. Callers append the
 // returned args last and never hard-code a placeholder after the
@@ -122,9 +130,11 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 		// #445 made it observable by opening the anonymous side.
 		//
 		// The invariant this restores: an authenticated caller sees AT
-		// LEAST what an anonymous one sees. EntityPost below has always
-		// had exactly this shape (`visibility = 'public' OR author`);
-		// collections were the outlier.
+		// LEAST what an anonymous one sees. EntityPost below had exactly
+		// this shape (`visibility = 'public' OR author`) when that was
+		// written; collections were the outlier. The post branch has
+		// since grown the full read rule (#873) and keeps the same
+		// invariant — `public` is still one of its disjuncts.
 		//
 		// Soft-delete conjoins the WHOLE predicate, not just the public
 		// disjunct (#451). #448 originally scoped deleted_at into the
@@ -137,16 +147,19 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 		// anyone else. So the shape now mirrors EntityPost below:
 		//   deleted_at IS NULL AND (public OR owner OR ACL)
 		//
-		// NO system.admin bypass here, deliberately. Caller carries a
-		// user ref and nothing else; admitting capabilities would mean
-		// threading a checker through Filter and therefore through all
-		// twelve splice sites, to answer a product question nobody has
-		// asked yet — whether an admin may browse OTHER people's
-		// PRIVATE collections. An admin sees every public collection
-		// plus their own plus anything ACL'd to them, the same floor as
-		// every other authenticated caller. If admins need more, that is
-		// an explicit, narrow option in the shape of IncludeSoftDeleted
-		// (#429), enforced by the caller — not a silent bypass here.
+		// NO system.admin bypass here, deliberately — and the reason is
+		// now a product one only. The mechanical objection this comment
+		// used to carry ("threading a capability checker through Filter
+		// would move every splice site") was answered by #873: a
+		// capability resolved to a value and carried as an Option moves
+		// nothing, because only the branch that reads it changes. See
+		// [WithPostCaps]. What is still unanswered is the product
+		// question — whether an admin may browse OTHER people's PRIVATE
+		// collections — and nobody has asked it. An admin sees every
+		// public collection plus their own plus anything ACL'd to them,
+		// the same floor as every other authenticated caller. If admins
+		// need more, that is an explicit, narrow option, enforced by the
+		// caller (cf. IncludeSoftDeleted, #429) — not a silent bypass.
 		//
 		// includeSoftDeleted (superadmin escape hatch) waives ONLY the
 		// soft-delete conjunct, never the visibility disjunction — same
@@ -169,29 +182,23 @@ func (p Predicate) ToSQL(alias string, argOffset int) (fragment string, args []a
 		}
 		return fmt.Sprintf(" AND (%sdeleted_at IS NULL AND (%s))", a, visible), []any{p.caller.UserRef}
 	case EntityPost:
-		if p.caller.IsAnonymous {
-			// No author comparison: an anonymous caller cannot be an
-			// author, and binding AnonymousCaller (0) against
-			// author_user_ref would be a coincidence waiting to happen
-			// if a real ref were ever 0.
-			if p.includeSoftDeleted {
-				return fmt.Sprintf(" AND (%svisibility = 'public')", a), nil
-			}
-			return fmt.Sprintf(
-				" AND (%sdeleted_at IS NULL AND %svisibility = 'public')", a, a,
-			), nil
-		}
-		idx := argOffset + 1
+		// The whole rule lives in postReadableExpr (post_rule.go) —
+		// author, the five tiers, the follow graph and live ACL grants
+		// — because `posts` splices the SAME expression and #873 was
+		// what happened when it did not: browse composed the rich rule
+		// and search composed `public OR author`, so an org-only post
+		// you could read while browsing did not exist in search.
+		//
+		// Soft-delete stays HERE, outside the expression, so
+		// IncludeSoftDeleted can waive it and nothing else. The admin
+		// trash view must not be able to shed an authorization disjunct
+		// along with the soft-delete conjunct, and that failure would be
+		// silent.
+		expr, args := postReadableExpr(a, argOffset+1, p.caller, p.postCaps)
 		if p.includeSoftDeleted {
-			return fmt.Sprintf(
-				" AND ((%svisibility = 'public' OR %sauthor_user_ref = $%d))", a, a, idx,
-			), []any{p.caller.UserRef}
+			return " AND (" + expr + ")", args
 		}
-		frag := fmt.Sprintf(
-			" AND (%sdeleted_at IS NULL AND (%svisibility = 'public' OR %sauthor_user_ref = $%d))",
-			a, a, a, idx,
-		)
-		return frag, []any{p.caller.UserRef}
+		return fmt.Sprintf(" AND (%sdeleted_at IS NULL AND (%s))", a, expr), args
 	}
 	// Unreachable — Filter constructor validates entity type.
 	return " AND (FALSE)", nil

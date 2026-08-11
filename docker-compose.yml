@@ -75,6 +75,20 @@ services:
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
+      # Fraction of the container ceiling below handed to GOMEMLIMIT.
+      # Read by app/internal/memlimit at boot; forwarded here because a
+      # value the Go process never sees is not a knob (#887).
+      AA_GOMEMLIMIT_RATIO: ${AA_GOMEMLIMIT_RATIO:-0.8}
+      # Memory instrumentation (#888). Forwarded explicitly for the
+      # same reason the ratio above is: a value the Go process never
+      # sees is not a knob. Defaults are ON — the evidence has to
+      # already be collected when the container dies, and an opt-in
+      # trail is one nobody switched on before the 03:00 OOM kill.
+      AA_MEM_SAMPLE_INTERVAL: ${AA_MEM_SAMPLE_INTERVAL:-15s}
+      AA_MEM_CAPTURE_THRESHOLD: ${AA_MEM_CAPTURE_THRESHOLD:-0.8}
+      AA_MEM_CAPTURE_DIR: ${AA_MEM_CAPTURE_DIR:-/tmp/aa-memcapture}
+      AA_MEM_CAPTURE_KEEP: ${AA_MEM_CAPTURE_KEEP:-5}
+      AA_MEM_CAPTURE_MIN_INTERVAL: ${AA_MEM_CAPTURE_MIN_INTERVAL:-2m}
       TZ: ${TZ:-UTC}
     # Memory ceiling for the app container (#781).
     #
@@ -91,7 +105,15 @@ services:
     # app/internal/memlimit), so this number is the single place the
     # ceiling is stated. Raise it for an instance with a big catalogue
     # and heavy preview concurrency; the runtime follows automatically.
-    mem_limit: ${AA_APP_MEM_LIMIT:-4g}
+    #
+    # 8g, not the original 4g (#887). A ~150-asset preview render storm
+    # was measured at 5.39 GB of cgroup `anon` at peak — 3.31 GB of it
+    # LIVE Go heap (concurrent decode buffers held by running jobs, which
+    # no amount of GC pacing can shrink), ~1.0 GB non-Go anon from the
+    # ffmpeg/ghostscript/node+chromium children that share this cgroup.
+    # A 4g ceiling cannot hold that peak at all, so any instance that
+    # renders previews was living on the kernel's mercy.
+    mem_limit: ${AA_APP_MEM_LIMIT:-8g}
     volumes:
       - aa-storage:/var/lib/aa-storage
     depends_on:
@@ -144,7 +166,16 @@ services:
           # port and ignores this.
           - vite.aa
     volumes:
-      # Bind-mount the whole web/ tree so file edits trigger Vite HMR.
+      # Bind-mount the whole web/ tree so host edits reach the dev
+      # server without a rebuild. The change *events* do not come for
+      # free though: Vite documents that filesystem watching is broken
+      # under WSL2 (and under Docker with a WSL2 backend) when the
+      # project sits on a Windows filesystem, which is where this
+      # checkout lives. inotify never crosses the mount, so
+      # web/vite.config.ts turns on watcher polling — see
+      # `server.watch` there for the measured cost. Without it Vite
+      # never learns a file changed and even a full page reload
+      # serves the stale module it cached on first request (#993).
       # node_modules is masked by an anonymous volume so the image's
       # baked-in modules are used (avoids host-Linux symlink + perms
       # quirks on Windows / macOS).
@@ -273,11 +304,22 @@ services:
       AA_MASTER_KEY: ${AA_MASTER_KEY:?AA_MASTER_KEY is required; see scripts/bootstrap.sh}
       AA_BOOTSTRAP_DEFAULT_ADMIN: "1"
       AA_STORAGE_FS_ROOT: /var/lib/aa-storage
+      AA_GOMEMLIMIT_RATIO: ${AA_GOMEMLIMIT_RATIO:-0.8}
+      # Memory instrumentation (#888). Forwarded explicitly for the
+      # same reason the ratio above is: a value the Go process never
+      # sees is not a knob. Defaults are ON — the evidence has to
+      # already be collected when the container dies, and an opt-in
+      # trail is one nobody switched on before the 03:00 OOM kill.
+      AA_MEM_SAMPLE_INTERVAL: ${AA_MEM_SAMPLE_INTERVAL:-15s}
+      AA_MEM_CAPTURE_THRESHOLD: ${AA_MEM_CAPTURE_THRESHOLD:-0.8}
+      AA_MEM_CAPTURE_DIR: ${AA_MEM_CAPTURE_DIR:-/tmp/aa-memcapture}
+      AA_MEM_CAPTURE_KEEP: ${AA_MEM_CAPTURE_KEEP:-5}
+      AA_MEM_CAPTURE_MIN_INTERVAL: ${AA_MEM_CAPTURE_MIN_INTERVAL:-2m}
       TZ: ${TZ:-UTC}
     # Same ceiling as `app` — this runs the identical binary and the
     # identical preview pipeline, so leaving it uncapped would recreate
     # exactly the asymmetry #781 removes.
-    mem_limit: ${AA_APP_MEM_LIMIT:-4g}
+    mem_limit: ${AA_APP_MEM_LIMIT:-8g}
     volumes:
       - aa-storage-b:/var/lib/aa-storage
     depends_on:

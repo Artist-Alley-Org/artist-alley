@@ -98,6 +98,14 @@ func NewCache(reg *appcache.Registry, maxEntries int, ttl time.Duration, logger 
 // keyForQuery returns the LRU key for a Query. Includes caller
 // user_ref so User A's cached result never serves to User B —
 // the visibility floor at the cache layer.
+//
+// #899 — it also includes the caller's CONTENT CAPABILITIES, because
+// the cached QueryResult is now the post-withholding one. User ref
+// alone was sufficient while every caller with the same ref got the
+// same bytes; it stopped being sufficient the moment two requests from
+// the same ref could differ. The direction that matters is REVOKE: a
+// caller who loses `content.read.all` would otherwise keep being served
+// the cached UNREDACTED titles and thumbhashes for the rest of the TTL.
 func keyForQuery(q Query) string {
 	var callerID int64
 	if q.CallerUserRef != nil {
@@ -118,6 +126,23 @@ func keyForQuery(q Query) string {
 	sb.WriteString(strings.Join(types, ","))
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatInt(callerID, 10))
+	sb.WriteByte('|')
+	sb.WriteString(q.Caps.CacheKey())
+	sb.WriteByte('|')
+	// #873 — and the post capabilities, for the same reason in the same
+	// direction: `posts.admin` widens which post ROWS the result set
+	// contains, so a caller who loses it would otherwise keep being
+	// served the cached wider page for the rest of the TTL.
+	sb.WriteString(q.PostCaps.CacheKey())
+	sb.WriteByte('|')
+	// #939 — and the asset-mutation scope, same reason, same direction:
+	// `assets.admin` widens the FIELDS a restricted asset's card
+	// carries, so a caller who LOSES it would otherwise keep being
+	// served the cached titles, descriptions and tags for the rest of
+	// the TTL. Folding a per-caller value in costs no cross-caller hit
+	// rate, because the key already includes the caller's user_ref —
+	// see AssetMutationCaps.CacheKey for the full argument.
+	sb.WriteString(q.MutationCaps.CacheKey())
 	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')

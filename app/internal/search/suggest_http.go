@@ -47,15 +47,28 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var callerRef *int64
+	var caps visibility.ContentCaps
+	var postCaps visibility.PostCaps
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		callerRef = &ref
+		// #899 — a completion is an asset TITLE, so this surface needs
+		// the content plane and therefore the capabilities that
+		// short-circuit it. Without them a demo-viewer holding
+		// content.read.all would lose completions for a catalogue it
+		// can fully read.
+		caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
+		// #873 — and the post plane, which decides which post TITLES
+		// exist to complete at all.
+		postCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
 	}
 
 	req := suggest.Request{
-		Prefix: prefix,
-		Caller: visibility.NewCaller(callerRef),
-		Limit:  limit,
+		Prefix:   prefix,
+		Caller:   visibility.NewCaller(callerRef),
+		Caps:     caps,
+		PostCaps: postCaps,
+		Limit:    limit,
 	}
 	resp, err := h.Service.Suggest(r.Context(), req)
 	if err != nil {

@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/acls"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
@@ -61,13 +63,22 @@ import (
 
 // Cache domain name. Stable string used as NOTIFY target — peer
 // instances key off this when dispatching invalidations.
-const cacheDomainPostByID = "post.id"
+// cacheDomainPostByID is cache.DomainPostByID. Aliased rather than
+// re-spelled: the constant moved to the cache package because `social`
+// has to invalidate this domain too and cannot import this one (see
+// cache.DomainPostByID for the whole argument).
+const cacheDomainPostByID = cache.DomainPostByID
 
 // Capability gates. `posts.admin` lets a moderator edit/delete any
 // post; `system.admin` is the global override.
+//
+// Aliases of the shared package's constants rather than fresh literals:
+// the post READ rule consults the same two codes from inside
+// visibility (#873), and two spellings of a capability code is the same
+// class of defect as two spellings of the rule that reads it.
 const (
-	CapPostsAdmin  = "posts.admin"
-	CapSystemAdmin = "system.admin"
+	CapPostsAdmin  = visibility.PostsAdmin
+	CapSystemAdmin = visibility.SystemAdmin
 )
 
 const maxListLimit = 200
@@ -136,6 +147,30 @@ type Handler struct {
 	// unwired (tests) means no mention notifications, and the post
 	// still saves normally.
 	mentions *mention.Service
+
+	// notifier fires the "someone shared a post with you" notification
+	// from AddPostAcl (#875). Same local-interface shape social and
+	// messages use, and at boot it is the SAME socialNotifyAdapter over
+	// the one notifications.Writer, so shares inherit the block and
+	// channel-preference gating every other verb goes through.
+	//
+	// nil-safe: unwired (tests that don't care) means the grant lands
+	// silently, which is precisely the pre-#875 behaviour rather than a
+	// panic.
+	notifier notifier
+
+	// feedFilters resolves the caller's browse-feed content filters
+	// (#891) — today just "hide restricted members". See
+	// feed_filters.go for the seam and why nil means "filter nothing".
+	feedFilters feedFilterReader
+}
+
+// notifier is the notifications.Writer slice this package needs.
+// Declared locally so posts doesn't import notifications for the writer
+// itself (it already imports the package for the verb + payload-key
+// constants, which are just strings).
+type notifier interface {
+	Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error
 }
 
 // The social-graph seam this package used to carry (followChecker /
@@ -145,9 +180,9 @@ type Handler struct {
 // `followers` tier as public whenever the seam was unwired — a fixture
 // convenience that would have opened every followers-tier post on any
 // boot-order slip. The follow check is now a conjunct of the one read
-// rule (readRule.sql), evaluated against user_follows in the same query
-// that returns the rows, so there is nothing to inject and nothing to
-// degrade to.
+// rule (visibility.postReadableExpr), evaluated against user_follows in
+// the same query that returns the rows, so there is nothing to inject
+// and nothing to degrade to.
 
 // SetPreviewLadder installs the cached configured-ladder reader (#591).
 func (h *Handler) SetPreviewLadder(r sysconfig.PreviewLadderReader) { h.previewLadder = r }
@@ -164,6 +199,10 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 // SetMentions installs the @-mention notification service (Phase
 // 1.55.X). Post-construction setter, same shape as the others.
 func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
+
+// SetNotifier installs the cross-package notifications writer (#875).
+// Post-construction setter, same shape as social.Handler's.
+func (h *Handler) SetNotifier(n notifier) { h.notifier = n }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}
@@ -231,6 +270,64 @@ func (h *Handler) CreatePost(
 		coverThumbnailID = pgtype.UUID{Bytes: uuid.UUID(*in.CoverThumbnailAssetId), Valid: true}
 	}
 
+	// #922 — the member gate, widened to the covers by #941. Every
+	// asset the BODY names has to be one this caller can actually read,
+	// and it runs BEFORE the transaction opens so a refusal never
+	// writes a post row it then has to roll back.
+	//
+	// The refusal is the same shape as the FK-violation 404 below,
+	// deliberately: an unreadable asset and a nonexistent one must be
+	// indistinguishable, or POST /posts becomes a UUID-existence probe.
+	//
+	// The covers are here rather than in a check of their own because
+	// the rule has exactly one home (visibility.CanAttachAsset, ADR
+	// 0064) and consolidating it there was the whole point of #922.
+	// Only the EXPLICIT covers are added: the implicit cover is
+	// members[0], already in this list, and re-gating it would just
+	// double the query count on the common path.
+	for _, aid := range attachablesOf(in) {
+		ok, gErr := h.mayAttachAsset(ctx, id, aid)
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: member gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + aid.String()},
+			}, nil
+		}
+	}
+
+	// #954 — the team gate. `team_id` used to be taken verbatim from the
+	// body with the FOREIGN KEY as its only validation, so any EXISTING
+	// team id was accepted: a post could be attributed to any studio on
+	// the instance, which also handed that team's `posts.admin` holders
+	// edit and delete rights over it.
+	//
+	// The rule has one home — visibility.CanAssignToTeam, shared with
+	// assets.CreateAsset (#953) — and the refusal is deliberately the
+	// SAME 404 the FK violation below answers with, so an unauthorised
+	// team and a nonexistent one are indistinguishable and POST /posts
+	// does not become a team-existence probe.
+	//
+	// The grant half asks about `posts.admin`: that is already the "I
+	// manage this team's posts" claim, and it is exactly the right
+	// assignment confers on the receiving team. ScopedTeams deliberately
+	// excludes GLOBAL holdings — see CanAssignToTeam.
+	//
+	// Runs before the transaction opens, like the member gate above, so
+	// a refusal never writes a row it has to roll back.
+	if in.TeamId != nil {
+		ok, gErr := h.mayAssignToTeam(ctx, id, uuid.UUID(*in.TeamId))
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: team gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("posts: begin tx: %w", err)
@@ -267,10 +364,25 @@ func (h *Handler) CreatePost(
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
 			}, nil
 		}
+		// Cover RACE BACKSTOP, the counterpart of the member one below
+		// (#941). The gate above already refused every cover this
+		// caller cannot read, absent ones included, so reaching here
+		// means the asset was hard-deleted in the gap. Before #941 an
+		// unreadable-or-absent cover fell straight through to the
+		// wrapped error and answered 500 — an unhandled SQLSTATE 23503
+		// dressed up as a server fault.
+		if id, is := fkCoverAsset(err, coverID, coverThumbnailID); is {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + id},
+			}, nil
+		}
 		return nil, fmt.Errorf("posts: create: %w", err)
 	}
 
 	// Members. Idempotent on (post_id, asset_id) so de-dupes on input.
+	// The FK branch below is a RACE BACKSTOP since #922 — the gate
+	// above already refused every absent asset — kept because the asset
+	// can still be hard-deleted between the two.
 	for _, m := range in.Members {
 		if err := q.AddPostAsset(ctx, AddPostAssetParams{
 			PostID:    row.ID,
@@ -380,7 +492,7 @@ func (h *Handler) CreatePost(
 	// the cached ListPostAssets row (pixel dimensions, the async
 	// thumbhash). Four fields accumulated in that hole because the write
 	// paths never made the call — see enrichPreview's own doc comment.
-	if err := h.enrichPreview(ctx, full); err != nil {
+	if err := h.enrichForCaller(ctx, full); err != nil {
 		return nil, err
 	}
 	return openapi.CreatePost201JSONResponse(*full), nil
@@ -419,9 +531,21 @@ func (h *Handler) GetPost(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
 	}
-	if err := h.enrichPreview(ctx, full); err != nil {
+	if err := h.enrichForCaller(ctx, full); err != nil {
 		return nil, err
 	}
+	// #891 stops at the feed, and this is the line. The preference hides
+	// a post from a LIST when nothing in it is visible, precisely so the
+	// reader is never handed an empty card — "arguably worse than a
+	// placeholder" is the reason that rule exists. Applying the member
+	// half here would rebuild that empty card on the one surface it was
+	// avoided on: an all-restricted post opened by id would render a
+	// viewer with nothing in it and no statement of why.
+	//
+	// So a post asked for BY NAME answers with its placeholders, and
+	// #913's "Request access" button — which lives on the placeholder —
+	// survives the filter. Drive the setting from browse; open a post and
+	// you see what is actually in it.
 	return openapi.GetPost200JSONResponse(*full), nil
 }
 
@@ -462,7 +586,7 @@ func (h *Handler) UpdatePost(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, current.AuthorUserRef) {
+	if !canMutatePost(caller, current.AuthorUserRef, current.TeamID) {
 		return openapi.UpdatePost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -492,23 +616,109 @@ func (h *Handler) UpdatePost(
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
 			}, nil
 		}
+		// The disclosure boundary. canMutatePost now admits a
+		// team-scoped posts.admin (#930); changing `visibility` is a
+		// decision about who can REACH the post, not about what it
+		// says, and is held to the narrower gate. Compared against the
+		// current value so a PATCH that merely echoes the visibility
+		// back is not refused.
+		if s != current.Visibility && !canWidenPostAccess(caller, current.AuthorUserRef) {
+			return openapi.UpdatePost403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+					Error: "changing a post's visibility is reserved to its author",
+				},
+			}, nil
+		}
 		visPtr = &s
 	}
+	// #941 — the cover gate on the UPDATE path. A gate that only
+	// guards CreatePost is not a gate: PATCH /posts/{id} sets
+	// `cover_asset_id` on an existing post, so the same unreadable
+	// asset walks in one call later. #922 learned this once already,
+	// with POST /posts/{id}/assets.
+	//
+	// Placed AFTER canMutatePost on purpose. The post-level refusal has
+	// to be settled first, or a caller who may not touch this post at
+	// all would learn from the 404-vs-403 which asset UUIDs exist.
+	//
+	// The tx is open, but nothing has been written into it yet and the
+	// deferred Rollback covers the return — so, as on create, a refusal
+	// leaves no row behind.
 	var coverPtr pgtype.UUID
 	if in.CoverAssetId != nil {
-		coverPtr = pgtype.UUID{Bytes: uuid.UUID(*in.CoverAssetId), Valid: true}
+		coverID := uuid.UUID(*in.CoverAssetId)
+		ok, gErr := h.mayAttachAsset(ctx, caller, coverID)
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: cover gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.UpdatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + coverID.String()},
+			}, nil
+		}
+		coverPtr = pgtype.UUID{Bytes: coverID, Valid: true}
+	}
+
+	// #946 — the OTHER cover column, which this handler never passed at
+	// all. `cover_thumbnail_asset_id` was declared on `PostUpdate` and
+	// accepted by `UpdatePostParams`, and nothing joined the two: it
+	// arrived as a NULL narg, the query's COALESCE kept the current
+	// value, and the caller got 200 for a write that never happened.
+	// CreatePost has always set it; only PATCH dropped it.
+	//
+	// It is gated rather than merely wired. This column is not a post
+	// member and carries its own FK, so it is a second door into the
+	// same room #941 just locked — connecting it ungated would re-open
+	// that hole on the one column nobody was watching. Same adapter,
+	// same rule, one home (visibility.CanAttachAsset, ADR 0064).
+	//
+	// The refusal is byte-identical to the cover's, and to the FK
+	// backstop below, so an unreadable thumbnail and a nonexistent one
+	// stay indistinguishable — otherwise PATCH becomes a UUID-existence
+	// probe on a second field.
+	//
+	// `state_id` has the identical plumbing defect on this handler and
+	// is deliberately left alone: wiring it would add a fifth site that
+	// writes a client-supplied workflow state with no transition
+	// validation, on a subsystem whose Transition() still has zero
+	// callers. That is #949, blocked on #895/#896/#897.
+	var thumbPtr pgtype.UUID
+	if in.CoverThumbnailAssetId != nil {
+		thumbID := uuid.UUID(*in.CoverThumbnailAssetId)
+		ok, gErr := h.mayAttachAsset(ctx, caller, thumbID)
+		if gErr != nil {
+			return nil, fmt.Errorf("posts: cover thumbnail gate: %w", gErr)
+		}
+		if !ok {
+			return openapi.UpdatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + thumbID.String()},
+			}, nil
+		}
+		thumbPtr = pgtype.UUID{Bytes: thumbID, Valid: true}
 	}
 
 	if _, err := q.UpdatePost(ctx, UpdatePostParams{
-		ID:           pgID,
-		Title:        in.Title,
-		Description:  in.Description,
-		Visibility:   visPtr,
-		CoverAssetID: coverPtr,
+		ID:                    pgID,
+		Title:                 in.Title,
+		Description:           in.Description,
+		Visibility:            visPtr,
+		CoverAssetID:          coverPtr,
+		CoverThumbnailAssetID: thumbPtr,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.UpdatePost404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+			}, nil
+		}
+		// Cover race backstop — see CreatePost. Same 404 body as the
+		// gate above, so "you may not read it" and "it is gone" stay
+		// indistinguishable on this path too (#941). Both columns are
+		// passed now: the thumbnail's FK is a distinct constraint, and
+		// handing fkCoverAsset a zero UUID for it would name
+		// 00000000-… in the body of a refusal about a real asset (#946).
+		if id, is := fkCoverAsset(err, coverPtr, thumbPtr); is {
+			return openapi.UpdatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found: " + id},
 			}, nil
 		}
 		return nil, fmt.Errorf("posts: update: %w", err)
@@ -564,7 +774,7 @@ func (h *Handler) UpdatePost(
 		return nil, err
 	}
 	// Same shape a GET returns (#655). See CreatePost.
-	if err := h.enrichPreview(ctx, full); err != nil {
+	if err := h.enrichForCaller(ctx, full); err != nil {
 		return nil, err
 	}
 	return openapi.UpdatePost200JSONResponse(*full), nil
@@ -596,7 +806,7 @@ func (h *Handler) DeletePost(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.DeletePost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -621,9 +831,13 @@ func (h *Handler) DeletePost(
 		err := h.activities.WithEmission(ctx, activities.EmissionInput{
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
+			// deleted_by_user_ref is what makes the delete undoable
+			// by the person who did it (#931) — see auth.CanRestoreDeleted.
+			deleter := caller.UserRef
 			return New(tx).SoftDeletePost(ctx, SoftDeletePostParams{
-				ID:            pgID,
-				DeletedReason: softDeleteReasonPtr(reason),
+				ID:               pgID,
+				DeletedReason:    softDeleteReasonPtr(reason),
+				DeletedByUserRef: &deleter,
 			})
 		})
 		if err != nil {
@@ -645,7 +859,11 @@ func (h *Handler) DeletePost(
 // ---------------------------------------------------------------------------
 
 // RestorePost clears deleted_at + deleted_reason on a soft-deleted
-// post. Admin-only. See assets.Handler.RestoreAsset for the shape.
+// post. See assets.Handler.RestoreAsset for the shape and
+// auth.CanRestoreDeleted for the rule: you undo your own delete, system.admin
+// undoes any. Previously system.admin only, while DeletePost was open
+// to the author — so an author could delete their post and then not
+// get it back (#931).
 func (h *Handler) RestorePost(
 	ctx context.Context,
 	req openapi.RestorePostRequestObject,
@@ -656,9 +874,21 @@ func (h *Handler) RestorePost(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	deletedBy, err := New(h.Pool).GetPostDeletedBy(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RestorePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("posts: load deleted_by: %w", err)
+	}
+	if !auth.CanRestoreDeleted(id, deletedBy) {
 		return openapi.RestorePost403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "this post was deleted by someone else; ask an administrator to restore it",
+			},
 		}, nil
 	}
 	if h.SoftDelete == nil {
@@ -740,7 +970,7 @@ func (h *Handler) ListPosts(
 	// equivalent of legacy 'public' for the walled-garden feed).
 	//
 	// `?visibility=` NARROWS within what the caller may read; it never
-	// widens it. Authorization is the read rule's job (readRule.sql,
+	// widens it. Authorization is the read rule's job (readRuleSQL,
 	// spliced into the query below), so this parameter is a plain
 	// display filter: `?visibility=private` means "the private posts I
 	// may read" — my own, plus everyone's for a moderator — and
@@ -782,6 +1012,29 @@ func (h *Handler) ListPosts(
 		tagPtr = req.Params.Tag
 	}
 
+	// ?team_id= scopes the feed to one team's posts — the team page's
+	// content (#684).
+	//
+	// It NARROWS and cannot widen. There is no authorization decision
+	// here on purpose: no membership check, no liveness probe, no 404
+	// for a team the caller isn't in. The read rule (readRuleSQL, spliced
+	// below) still decides every row, and it never consults team_id, so
+	// this conjunct can only ever remove posts from the page the caller
+	// would have got anyway. A non-member asking for a team they have
+	// nothing to do with gets that team's posts THEY could already read
+	// — typically just the org-only tier — which is the same answer
+	// browse gives them, filtered.
+	//
+	// Which also means the endpoint is not a team-existence probe: an
+	// unknown, a soft-deleted and a real-but-empty team all answer with
+	// an empty page. Adding a "team not found" 404 here would create the
+	// probe that visibility.CanAssignToTeam goes to some trouble to
+	// avoid on the write side.
+	var teamID pgtype.UUID
+	if req.Params.TeamId != nil {
+		teamID = pgtype.UUID{Bytes: *req.Params.TeamId, Valid: true}
+	}
+
 	// feed=following (Phase 1.17.G2) restricts the page to authors
 	// the caller follows. Anonymous callers can never satisfy this
 	// (the 401 path above returns first); for authenticated callers
@@ -801,6 +1054,27 @@ func (h *Handler) ListPosts(
 		includeDeletedArg = &t
 	}
 
+	// ?dir=asc walks the feed oldest-first (#868). The browse page's
+	// Newest/Oldest control has sent this since #706 seeded it from the
+	// `browse_sort` preference; until now nothing declared it, so the
+	// server never saw it and "Oldest" rendered newest under a label
+	// that promised otherwise — the same defect #691 removed from the
+	// feed FILTER, left in place on the SORT.
+	//
+	// The flag reaches the keyset predicate as well as the ORDER BY
+	// (feedOrder), because a cursor only means anything relative to the
+	// order that produced it.
+	//
+	// Only `asc` is read; absent, empty and anything else are `desc`.
+	// That is a deliberate default rather than a missing validation:
+	// nothing in this stack enforces a query-parameter enum at bind
+	// time (the generated wrapper binds `dir` as a plain string and
+	// `ListPostsParamsDir.Valid()` has no caller), so the comparison
+	// has to be positive. `?feed=` is read exactly the same way one
+	// block above. A junk value therefore lands on the documented
+	// default instead of a 500 or an arbitrary order.
+	ascending := req.Params.Dir != nil && *req.Params.Dir == openapi.Asc
+
 	fetch := limit + 1
 	rows, err := h.ListPostsPageGated(ctx, caller, ListPostsPageParams{
 		IncludeDeleted:  includeDeletedArg,
@@ -809,9 +1083,11 @@ func (h *Handler) ListPosts(
 		Q:               qText,
 		Tag:             tagPtr,
 		FeedFollowerRef: followerPtr,
+		TeamID:          teamID,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
+		Ascending:       ascending,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)
@@ -845,16 +1121,51 @@ func (h *Handler) ListPosts(
 		lastID = uuid.UUID(r.ID.Bytes)
 	}
 
-	// preview_available (#471) is per-caller, so it's derived here from
-	// the per-request identity — never baked into the cross-caller Post
-	// cache. Pointers into `items` so enrichPreview can replace each
-	// post's Members slice in place.
+	// The per-caller derivations — preview_available (#471), member
+	// readability (#883), and the author identity (#557) — all happen
+	// here, from the per-request identity, and are never baked into the
+	// cross-caller Post cache. Pointers into `items` so enrichPreview can
+	// replace each post's Members slice in place.
 	ptrs := make([]*openapi.Post, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
 		return nil, err
+	}
+
+	// #921 — restricted placeholders are subtracted from the feed BY
+	// DEFAULT, applied STRICTLY ON TOP of everything above. enrichPreview
+	// has just marked every member this caller may not read;
+	// applyHideRestricted reads that mark and nothing else, so this can
+	// only subtract from a page the read rule already decided. See
+	// feed_filters.go.
+	//
+	// Read the condition as "unless the reader asked for them back".
+	// #891 shipped this as an opt-in and the default was measured wrong:
+	// a third of one seeded account's 82-post feed was entirely
+	// placeholders. The line the default draws — a placeholder belongs
+	// where you asked a question or opened a container, not where you
+	// were handed a feed — is why GetPost (an explicit request for one
+	// post) and collection contents (an opened container) both still
+	// render them, and why extending this filter to either would be a
+	// bug and not a consistency fix.
+	//
+	// NOTHING ABOUT THE READ RULE MOVED. ListPosts still receives every
+	// row the rule returns; this subtracts afterwards off one
+	// already-computed field. ADR 0020 and ADR 0064 are amended to name
+	// that split — the rule is unchanged, the default PRESENTATION is
+	// not.
+	//
+	// After the cursor bookkeeping on purpose. `lastPostedAt`/`lastID`
+	// track the last row the QUERY returned, and `next_cursor` keys off
+	// `len(rows)`, so a page that hides three posts still hands back a
+	// cursor that resumes exactly where the SQL left off — it returns
+	// fewer items, never a different window. (`PostList` carries no
+	// total, so there is no count to disagree with what renders; the
+	// client's infinite scroll follows the cursor.)
+	if show := h.showRestricted(ctx, caller.UserRef); !show {
+		items = applyHideRestricted(items, caller.UserRef)
 	}
 
 	resp := openapi.PostList{Items: items}
@@ -865,6 +1176,107 @@ func (h *Handler) ListPosts(
 	return openapi.ListPosts200JSONResponse(resp), nil
 }
 
+// ---------------------------------------------------------------------------
+// ListPostsSharedWithMe — the "Shared with me" surface (#875)
+// ---------------------------------------------------------------------------
+//
+// Where shares accumulate. A grant used to be findable only if the
+// sharer also sent a link out of band: the notification did not exist,
+// and ListPosts above pins visibility to `org-only` when the caller
+// sends no `?visibility=`, which no frontend surface does — so a shared
+// post never entered the recipient's grid.
+//
+// The fix is NOT to widen that default. A share is low-volume and
+// high-salience: burying it in the busiest grid in the app is the wrong
+// place for it, and putting an EXISTS over post_acls into the feed would
+// change the shape (and the cache key) of the hottest query in the app
+// for content better served by being announced. Every prior-art surface
+// worth copying does the same two things instead — tell the recipient,
+// and give shares somewhere of their own to land. This is the second.
+//
+// Everything after the query is the feed's own tail: fetchFullPost per
+// row through the shared post cache, then enrichPreview for the
+// per-caller preview flags. Deliberately identical, so a post looks the
+// same here as it does anywhere else it is listed.
+func (h *Handler) ListPostsSharedWithMe(
+	ctx context.Context,
+	req openapi.ListPostsSharedWithMeRequestObject,
+) (openapi.ListPostsSharedWithMeResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListPostsSharedWithMe401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+
+	limit := int32(50)
+	if req.Params.Limit != nil {
+		l := *req.Params.Limit
+		if l < 1 {
+			l = 1
+		}
+		if l > maxListLimit {
+			l = maxListLimit
+		}
+		limit = int32(l)
+	}
+
+	var cursorTs pgtype.Timestamptz
+	var cursorID pgtype.UUID
+	if req.Params.Cursor != nil && *req.Params.Cursor != "" {
+		ts, id, err := decodeCursor(*req.Params.Cursor)
+		if err != nil {
+			return openapi.ListPostsSharedWithMe500JSONResponse{
+				InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: "invalid cursor"},
+			}, nil
+		}
+		cursorTs = pgtype.Timestamptz{Time: ts, Valid: true}
+		cursorID = pgtype.UUID{Bytes: id, Valid: true}
+	}
+
+	rows, err := h.ListSharedWithMeGated(ctx, caller.UserRef, cursorTs, cursorID, limit+1)
+	if err != nil {
+		return nil, fmt.Errorf("posts: shared with me: %w", err)
+	}
+
+	items := make([]openapi.Post, 0, limit)
+	var lastPostedAt time.Time
+	var lastID uuid.UUID
+	for i, r := range rows {
+		if i >= int(limit) {
+			break
+		}
+		full, err := h.fetchFullPost(ctx, r.ID)
+		if err != nil {
+			// The query already filters deleted_at IS NULL, so a miss
+			// here means the post was deleted between the two reads.
+			// Drop it rather than 500 — this surface has no trash view.
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return nil, err
+		}
+		items = append(items, *full)
+		lastPostedAt = r.PostedAt.Time
+		lastID = uuid.UUID(r.ID.Bytes)
+	}
+
+	ptrs := make([]*openapi.Post, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
+		return nil, err
+	}
+
+	resp := openapi.PostList{Items: items}
+	if len(rows) > int(limit) {
+		next := encodeCursor(lastPostedAt, lastID)
+		resp.NextCursor = &next
+	}
+	return openapi.ListPostsSharedWithMe200JSONResponse(resp), nil
+}
+
 // GetPostsByAsset returns the visibility-filtered posts whose members
 // include the given asset (#478 slice-2, ADR 0070). An asset is a
 // many-to-many member of ≥0 posts, so this is a slice of the same feed
@@ -873,7 +1285,7 @@ func (h *Handler) ListPosts(
 // Anonymous admission is decided upstream by the public-mode gate
 // (auth.PublicSurfaceRoutes): with public mode off an anonymous request
 // never reaches here. Visibility is the same read rule the feed and
-// GetPost use (readRule.sql) rather than a tier list restated here —
+// GetPost use (readRuleSQL) rather than a tier list restated here —
 // anonymous sees the public tier, an authenticated caller additionally
 // sees org-only, their own posts at every tier, followed authors'
 // followers-tier posts, and (as a moderator) private ones. Bounded
@@ -900,13 +1312,13 @@ func (h *Handler) GetPostsByAsset(
 		items = append(items, *full)
 	}
 
-	// preview_available (#471) is per-caller — derive it from the
-	// request identity, same as ListPosts.
+	// preview_available (#471) and the author (#557) are per-caller —
+	// derive them from the request identity, same as ListPosts.
 	ptrs := make([]*openapi.Post, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
 		return nil, err
 	}
 
@@ -943,17 +1355,37 @@ func (h *Handler) AddPostAsset(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.AddPostAsset403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
+	// #922 — the same member gate CreatePost applies. A gate on create
+	// alone would not be a gate: this endpoint attaches an asset to an
+	// EXISTING post and is reachable by exactly the same callers.
+	//
+	// canMutatePost above answered "may you change this post"; this
+	// answers the separate question "may you reach this asset". Both
+	// are required — the first is about the container, the second about
+	// the thing being put in it.
+	attachable, err := h.mayAttachAsset(ctx, caller, uuid.UUID(req.Body.AssetId))
+	if err != nil {
+		return nil, fmt.Errorf("posts: member gate: %w", err)
+	}
+	if !attachable {
+		return openapi.AddPostAsset404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Body.AssetId), Valid: true}
 	if err := q.AddPostAsset(ctx, AddPostAssetParams{
 		PostID:    pgID,
 		AssetID:   pgAsset,
 		SortOrder: int32Or(req.Body.SortOrder, 0),
 	}); err != nil {
+		// Race backstop since #922; the gate above refuses an absent
+		// asset before this runs.
 		if isFKError(err, "post_assets_asset_id_fkey") {
 			return openapi.AddPostAsset404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
@@ -986,7 +1418,7 @@ func (h *Handler) RemovePostAsset(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.RemovePostAsset403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -1005,9 +1437,33 @@ func (h *Handler) RemovePostAsset(
 // ACLs — additive grants on top of role/team/visibility (ADR 0010 L6)
 // ---------------------------------------------------------------------------
 //
-// Authorization: reading the ACL list requires read access to the post
-// (canReadPost). Adding/removing requires write access (canMutatePost)
-// so a viewer can't expand their own access by editing the ACL list.
+// Authorization: adding, removing AND listing all require write access
+// to the post (canMutatePost) — author, posts.admin or system.admin.
+// Add/remove has always been gated that way so a viewer can't expand
+// their own access by editing the ACL list; listing joined it in #876.
+//
+// #667 wired post_acls into the read rule, which incidentally handed the
+// grant list to every GRANTEE: share a post with someone and they could
+// enumerate everyone else it was shared with, who granted it and when
+// each grant expires. That followed from gating on "can read the post",
+// and the note left here at the time named the fix — "a separate
+// authorization here, not a second read rule" — which is what this is.
+//
+// The gate is a DIFFERENT rule from the read rule, not a restatement of
+// it, and the difference is the point: it drops the grant disjunct (a
+// grantee may use the share without seeing the guest list) and drops the
+// org-only tier too (being signed in is not a management relationship
+// with somebody else's post). collections.ListCollectionAcls has always
+// drawn exactly this line, for exactly this reason — "who may read the
+// grant list is a management question, not the row-visibility question".
+//
+// Note what did NOT change: the read rule. A grantee still reads the
+// post, still finds it at GET /posts/{id}, still sees it on their
+// "Shared with me" surface. Only the guest list closed.
+//
+// The 404-before-403 order is kept: a caller who cannot mutate a post
+// that does not exist gets "not found", same as every other post route,
+// so this endpoint stays no more enumerable than GetPost.
 
 func (h *Handler) ListPostAcls(
 	ctx context.Context,
@@ -1020,7 +1476,7 @@ func (h *Handler) ListPostAcls(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	full, err := h.fetchFullPost(ctx, pgID)
+	cur, err := New(h.Pool).GetPost(ctx, pgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.ListPostAcls404JSONResponse{
@@ -1029,13 +1485,9 @@ func (h *Handler) ListPostAcls(
 		}
 		return nil, err
 	}
-	readable, err := h.canReadPost(ctx, caller, full)
-	if err != nil {
-		return nil, err
-	}
-	if !readable {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.ListPostAcls403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
 	rows, err := New(h.Pool).ListPostAcls(ctx, pgID)
@@ -1088,9 +1540,36 @@ func (h *Handler) AddPostAcl(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	// NOT canMutatePost. Writing an ACL row hands a named principal
+	// access to the post — the same lever as `visibility`, reached
+	// through a different endpoint, and therefore held to the same
+	// narrower gate (#930). Widening canMutatePost to team-scoped
+	// grants without this would have let a team lead share a
+	// colleague's private post with whoever they liked.
+	//
+	// RemovePostAcl deliberately keeps the wider gate: revoking a grant
+	// narrows access, and a management capability that can tidy up but
+	// not hand out is the right asymmetry.
+	if !canWidenPostAccess(caller, cur.AuthorUserRef) {
 		return openapi.AddPostAcl403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "granting access to a post is reserved to its author",
+			},
+		}, nil
+	}
+	// The principal has to be a reference the read rule can actually
+	// match, and the type has to be one this surface honours. Before
+	// #916 neither was checked: `principal_id` is TEXT, so a username
+	// went straight into the column, the read rule compared it against
+	// `$n::BIGINT::TEXT` and never matched, and the caller got a 204
+	// for a grant that did nothing. notifyShare below was the only code
+	// that noticed — it parses the same value, and on failure it told
+	// the log rather than the caller.
+	if err := acls.ValidateContentPrincipal(
+		string(req.Body.PrincipalType), req.Body.PrincipalId,
+	); err != nil {
+		return openapi.AddPostAcl400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
 	}
 
@@ -1109,7 +1588,69 @@ func (h *Handler) AddPostAcl(
 		return nil, fmt.Errorf("posts: add acl: %w", err)
 	}
 	h.cacheInvalidate(ctx, pgID)
+	h.notifyShare(ctx, caller.UserRef, cur, req.Body)
 	return openapi.AddPostAcl204Response{}, nil
+}
+
+// notifyShare tells the grantee a post was shared with them (#875).
+//
+// Before this, a share was completely silent AND invisible: nothing was
+// sent, and the browse feed's default `org-only` filter meant the post
+// never appeared in the recipient's grid either. Sharing only worked if
+// the sharer separately sent a link out of band. The notification is how
+// you LEARN; /account/shared-posts is where shares accumulate.
+//
+// Runs AFTER the row is written and deliberately returns nothing: the
+// grant is the user's action and it has already succeeded, so a notify
+// failure is logged and dropped rather than turned into a 500 that would
+// tell the author their share failed when it did not. Same best-effort
+// discipline as the @-mention emit in CreatePost.
+//
+// Only `user` principals notify. A `role` or `team` grant names no
+// single recipient — resolving one into a recipient set is a fan-out
+// this surface does not have (and role/team principals do not even grant
+// read yet; see visibility.PostLiveGrantSQL). Skipping is the honest
+// answer; inventing a fan-out here would be a second, undertested
+// membership rule.
+//
+// principal_id is TEXT in the schema and a user ref is a BIGINT, so a
+// row whose principal_id is not parseable as one is not a recipient. It
+// is logged rather than ignored: a user-typed grant that can never
+// notify is a data problem worth seeing, not a routine skip.
+func (h *Handler) notifyShare(
+	ctx context.Context,
+	actorRef int64,
+	post GetPostRow,
+	body *openapi.AclCreate,
+) {
+	if h.notifier == nil || body == nil || string(body.PrincipalType) != "user" {
+		return
+	}
+	recipient, err := strconv.ParseInt(body.PrincipalId, 10, 64)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.acl.notify.bad_principal",
+				slog.String("principal_id", body.PrincipalId),
+				slog.String("post_id", uuidString(post.ID)),
+			)
+		}
+		return
+	}
+	actor := actorRef
+	if err := h.notifier.Notify(ctx, recipient, &actor,
+		notifications.VerbPostSharedWithMe,
+		notifications.TargetKindPost,
+		uuidString(post.ID),
+		map[string]any{
+			notifications.PayloadKeyPostTitle: post.Title,
+		},
+	); err != nil && h.Logger != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.acl.notify.error",
+			slog.Int64("recipient", recipient),
+			slog.String("post_id", uuidString(post.ID)),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 func (h *Handler) RemovePostAcl(
@@ -1133,7 +1674,7 @@ func (h *Handler) RemovePostAcl(
 		}
 		return nil, err
 	}
-	if !canMutatePost(caller, cur.AuthorUserRef) {
+	if !canMutatePost(caller, cur.AuthorUserRef, cur.TeamID) {
 		return openapi.RemovePostAcl403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
@@ -1208,28 +1749,201 @@ func (h *Handler) cacheInvalidate(ctx context.Context, id pgtype.UUID) {
 	}
 }
 
+// InvalidateForAsset drops the cached copy of every post that lists
+// assetID as a member. It is the cross-package entry point assets/
+// calls after a write that changes whether the asset is a member the
+// API will render — soft-delete and restore.
+//
+// Why this is needed at all: ListPostAssets joins `assets` with
+// `a.deleted_at IS NULL`, so the QUERY has always been right. What was
+// wrong is that soft-deleting an asset writes only the asset row, and
+// the post cache is keyed on the post. Nothing on the delete path told
+// the post cache that its answer had changed, so `GET /posts/{id}`
+// went on serving the deleted asset in full — title, description,
+// file hash, byte size — until the process restarted (#920).
+//
+// Uses Registry.InvalidateNow rather than Emit: the caller's next read
+// can be the very next request, so the local LRU has to be dropped
+// synchronously and not via a NOTIFY round-trip.
+//
+// Best-effort and nil-safe. A cache invalidation failing must not turn
+// a completed delete into a 500 — the same discipline cacheInvalidate
+// applies. Returns the first error purely so callers can log it.
+func InvalidateForAsset(
+	ctx context.Context,
+	registry *cache.Registry,
+	pool *pgxpool.Pool,
+	assetID uuid.UUID,
+) error {
+	if registry == nil || pool == nil {
+		return nil
+	}
+	ids, err := New(pool).PostIDsForAsset(ctx, pgtype.UUID{Bytes: assetID, Valid: true})
+	if err != nil {
+		return fmt.Errorf("posts: post ids for asset %s: %w", assetID, err)
+	}
+	var firstErr error
+	for _, id := range ids {
+		if err := registry.InvalidateNow(ctx, cacheDomainPostByID, uuidString(id)); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 
 // ---------------------------------------------------------------------------
 // Authorization helpers
 // ---------------------------------------------------------------------------
 
-// canMutatePost returns true if the caller can edit/delete this post.
-// Author, system.admin, or posts.admin.
-func canMutatePost(id *auth.Identity, authorRef int64) bool {
+// mayAttachAsset answers "may this caller make THIS asset a member of a
+// post" (#922).
+//
+// # What was wrong before
+//
+// The members loop handled exactly one failure — a foreign-key
+// violation became a 404 — and there was no readability check at all.
+// Any authenticated caller could name any asset UUID as a member of
+// their own post, including assets they had never been allowed to view.
+//
+// That does not leak the CONTENT: ADR 0064's member conjunction still
+// runs per-caller at render time, so a viewer who is not independently
+// entitled sees a placeholder carrying the real owner's name. What it
+// permitted is unwanted ASSOCIATION — attaching someone's restricted
+// work to your post without their consent, so that everyone who IS
+// entitled to see it meets it framed by you.
+//
+// Whether referencing another artist's work should be a first-class
+// feature with consent rules is #923, a policy question above this
+// floor. This is only the floor.
+//
+// # Why it is not a second rule
+//
+// The two-plane conjunction lives in visibility.CanAttachAsset, which
+// the collection surface calls through collections.mayCollectAsset
+// (#882). This is the posts-side adapter over the same function, not a
+// second readability notion — epic #665, and the sprints #892 and #904
+// each spent deleting one.
+func (h *Handler) mayAttachAsset(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
 	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAttachAsset(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		assetID,
+	)
+}
+
+// mayAssignToTeam adapts an *auth.Identity to visibility.CanAssignToTeam
+// — the SHARED rule behind `PostCreate.team_id` (#954) and
+// `AssetCreate.team_id` (#953). assets.Handler has the mirror-image
+// adapter; the rule itself exists once.
+//
+// It is a method for the same reason mayAttachAsset is: CreatePost
+// declares a local `visibility` string for the post's visibility tier,
+// which shadows the package name at that call site.
+//
+// The capability the SCOPED half asks about is `posts.admin`, the same
+// code canMutatePost consults. That is deliberate rather than a shared
+// cross-entity code: assignment CONFERS the team-scoped mutation right
+// on the receiving team, so the code that names that right is the one
+// entitled to hand it out. `assets.admin` plays the identical role on
+// the asset side, and a single code for both would let a holder of one
+// plant rows in the other's space.
+func (h *Handler) mayAssignToTeam(ctx context.Context, id *auth.Identity, teamID uuid.UUID) (bool, error) {
+	if id == nil {
+		return false, nil
+	}
+	return visibility.CanAssignToTeam(
+		ctx,
+		h.Pool,
+		visibility.NewCaller(&id.UserRef),
+		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
+		id.ScopedTeams(CapPostsAdmin),
+		teamID,
+	)
+}
+
+// canMutatePost returns true if the caller can edit/delete this post.
+// Author, system.admin, a global posts.admin, or a posts.admin scoped
+// to the post's team.
+//
+// The team-scoped disjunct is #930's other half: an art director whose
+// grant is scoped to one team could not manage that team's posts,
+// because this only ever consulted GLOBAL grants. teamID comes from
+// `posts.team_id`, which is NULLABLE — a post with no team has no
+// scope for InTeam to check, so the disjunct is skipped rather than
+// treated as "no scope required, therefore anyone passes".
+//
+// The closure walk is already done: the resolver pre-expands scoped
+// grants through `team_closure`, so a grant on a parent team covers
+// every descendant without this function knowing the hierarchy exists.
+func canMutatePost(id *auth.Identity, authorRef int64, teamID pgtype.UUID) bool {
+	if id == nil || id.IsAnonymous() {
 		return false
 	}
-	if id.UserRef == authorRef {
+	// Authorship. Ref 0 is the anonymous sentinel and is never a
+	// principal on either side of the comparison.
+	if id.UserRef != 0 && authorRef != 0 && id.UserRef == authorRef {
+		return true
+	}
+	if id.Can(CapSystemAdmin) {
+		return true
+	}
+	if teamID.Valid && id.Can(CapPostsAdmin, auth.InTeam(uuid.UUID(teamID.Bytes))) {
+		return true
+	}
+	return id.Can(CapPostsAdmin)
+}
+
+// canWidenPostAccess is the narrower question canMutatePost is not:
+// may this caller change WHO CAN REACH the post, as opposed to what it
+// says? Author, global posts.admin, or system.admin — deliberately not
+// a holder who arrives only through the new team-scoped disjunct.
+//
+// Two endpoints reach that lever and both use this gate:
+//
+//   - `PATCH /posts/{id}` carries `visibility`, so extending
+//     canMutatePost to team-scoped grants would otherwise have handed a
+//     team lead the power to flip a colleague's private post to
+//     org-only.
+//   - `AddPostAcl` writes a grant row naming a principal, which is the
+//     same widening reached through a different endpoint. Gating it on
+//     canMutatePost — as it was, before canMutatePost grew a
+//     team-scoped disjunct — would have let a team lead share a
+//     colleague's private post with anyone they chose.
+//
+// Removing an ACL is NOT here: revoking narrows access, and a
+// management capability that can tidy up but not hand out is the right
+// asymmetry.
+//
+// That is a disclosure decision, and "manage my team's posts" is not a
+// grant of it — the same boundary migration 00037 draws for
+// `assets.admin` and `status`.
+//
+// Global posts.admin keeps it: that is the instance moderator role and
+// this change is not the place to renegotiate what it means.
+func canWidenPostAccess(id *auth.Identity, authorRef int64) bool {
+	if id == nil || id.IsAnonymous() {
+		return false
+	}
+	if id.UserRef != 0 && authorRef != 0 && id.UserRef == authorRef {
 		return true
 	}
 	return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
 }
 
-// canReadPost gates the single-item read paths (GetPost, ListPostAcls).
+// canReadPost gates the single-item read path (GetPost). ListPostAcls
+// used to share it and no longer does — listing a post's grants is a
+// management question gated on canMutatePost since #876; see the note
+// above that handler.
 //
 // It does not decide anything itself: it runs the ONE read rule
-// (readRule.sql) as an EXISTS probe against the post's id, which is the
+// (readRuleSQL) as an EXISTS probe against the post's id, which is the
 // same fragment ListPostsPageGated filters the feed with. That is the
 // #660 fix — before it, this function was the real rule and the list
 // query was a second, weaker restatement of it, so the list returned
@@ -1297,10 +2011,17 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 		out.StateId = &v
 	}
 	for _, m := range members {
+		a := memberToAsset(m)
+		// Restricted is FALSE here and the asset is complete, always.
+		// This row is CACHED cross-caller (h.byID), so it must not carry
+		// any per-caller decision; enrichPreview re-derives #883's
+		// redaction on a fresh copy for each request. Baking it here
+		// would serve one caller's answer to the next — the same trap
+		// preview_available fell into (#471).
 		out.Members = append(out.Members, openapi.PostMember{
 			AssetId:   openapi_types.UUID(m.AssetID.Bytes),
 			SortOrder: int(m.SortOrder),
-			Asset:     memberToAsset(m),
+			Asset:     &a,
 		})
 	}
 	return out
@@ -1349,20 +2070,35 @@ func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
 // trips — joining `col` variant existence + the caller's team membership,
 // then decides readability in-Go via visibility.ContentReadable.
 //
+// It is ALSO the #883 redaction point: a member the caller fails
+// visibility.FieldsReadable on is rewritten in place as a placeholder —
+// asset_id + sort_order + restricted + the owner's display name, and no
+// `asset` object at all. Same pass, same batched query, because it is the
+// same per-caller readability decision; splitting them would be two
+// expressions of one rule that can disagree.
+//
 // CACHE SAFETY (the reason the posts path was deferred): the full Post is
 // cached by id in h.byID, and its Members slice header aliases the cached
-// backing array. preview_available is PER-CALLER, so writing it into that
-// shared array would leak one caller's readability to the next. This
-// therefore replaces each post's Members with a FRESH slice (PostMember —
-// including its Asset — is a value, so copy() detaches it) and mutates
-// only the copy; the cached array is never touched. The cache keeps the
-// baked-in false, and every request re-derives the flag for its caller.
+// backing array. Readability is PER-CALLER, so writing it into that
+// shared array would leak one caller's answer to the next. This therefore
+// replaces each post's Members with a FRESH slice and mutates only the
+// copy. PostMember.Asset is a POINTER (#883 made it optional so a
+// placeholder can omit it), so copy() alone no longer detaches — the
+// Asset VALUE is cloned per member below, or the enrich would write
+// straight through into the cached object.
 func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) error {
 	caller := visibility.NewCaller(nil)
 	var caps visibility.CapabilityChecker
+	// #939 — the caller's `assets.admin` scope. Widens the FIELD plane
+	// of a restricted member (ADR 0064) and nothing else.
+	var mut visibility.AssetMutationCaps
 	if id := auth.IdentityFromContext(ctx); id != nil {
 		caller = visibility.NewCaller(&id.UserRef)
 		caps = func(code string) bool { return id.Can(code) }
+		mut = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 	}
 
 	idSet := make(map[uuid.UUID]struct{})
@@ -1371,7 +2107,7 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			continue
 		}
 		for _, m := range p.Members {
-			idSet[uuid.UUID(m.Asset.Id)] = struct{}{}
+			idSet[uuid.UUID(m.AssetId)] = struct{}{}
 		}
 	}
 	if len(idSet) == 0 {
@@ -1390,8 +2126,14 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		ladder = h.previewLadder(ctx)
 	}
 
+	// a.status + a.processing_status feed visibility.FieldsReadable's
+	// row-plane conjuncts, and the owner display name is the ONE
+	// asset-derived value a #883 placeholder carries. Both ride this
+	// query rather than a second round-trip — the LEFT JOINs mirror
+	// users/queries.sql's projection.
 	rows, err := h.Pool.Query(ctx, `
-		SELECT a.id, a.sensitivity, a.owner_user_ref,
+		SELECT a.id, a.sensitivity, a.status, a.processing_status, a.owner_user_ref,
+		       COALESCE(NULLIF(up.display_name, ''), u.username, '') AS owner_display_name,
 		       (a.file_hash IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
@@ -1402,9 +2144,12 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       (a.team_id IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM team_memberships tm
 		             WHERE tm.team_id = a.team_id AND tm.user_ref = $2::BIGINT)) AS is_member,
+		       a.team_id,
 		       a.thumbhash,
 		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
+		LEFT JOIN "user" u         ON u.ref = a.owner_user_ref
+		LEFT JOIN user_profiles up ON up.user_ref = a.owner_user_ref
 		WHERE a.id = ANY($1::uuid[])`,
 		ids, caller.UserRef, ladder)
 	if err != nil {
@@ -1437,11 +2182,21 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// exists to close. Read per request instead; it costs one more column
 	// on a query that already runs.
 	hashes := make(map[uuid.UUID]string, len(idSet))
+	// #883 — per-caller member readability, and the owner display name
+	// that is the only thing a redacted member carries. A member whose id
+	// is MISSING from `readable` (the asset row vanished between the
+	// cached member list and this query) stays false and is therefore
+	// redacted: fail closed.
+	readable := make(map[uuid.UUID]bool, len(idSet))
+	ownerNames := make(map[uuid.UUID]string, len(idSet))
 	for rows.Next() {
 		var (
 			id        pgtype.UUID
 			sens      string
+			status    string
+			procState string
 			owner     *int64
+			ownerName string
 			hasCol    bool
 			hasLadder bool
 			hasScrub  bool
@@ -1449,28 +2204,48 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			thumb     []byte
 			pxW       *int32
 			pxH       *int32
+			teamID    *uuid.UUID
 		)
-		if err := rows.Scan(&id, &sens, &owner, &hasCol, &hasLadder, &hasScrub, &isMember, &thumb, &pxW, &pxH); err != nil {
+		if err := rows.Scan(&id, &sens, &status, &procState, &owner, &ownerName,
+			&hasCol, &hasLadder, &hasScrub, &isMember, &teamID, &thumb, &pxW, &pxH); err != nil {
 			return fmt.Errorf("posts: preview enrich scan: %w", err)
 		}
 		if pixeldims.Sane(pxW, pxH) {
 			dims[uuid.UUID(id.Bytes)] = [2]int32{*pxW, *pxH}
 		}
-		if len(thumb) > 0 {
+		// TWO decisions from one row (#939). `ok` is the FIELD plane and
+		// admits a scoped `assets.admin` holder; `picture` is the same
+		// conjunction WITHOUT that disjunct and gates the blur plus the
+		// three availability flags, because ADR 0064 puts the thumbhash
+		// on the binary side — "a thumbhash IS a blur" — and the flags
+		// are a promise the binary handlers still refuse to keep.
+		//
+		// They agree for every caller except a mutation holder, so the
+		// original invariant (flags and redaction never disagree on a
+		// restricted asset) is preserved: a true ladder flag on gated
+		// bytes is still impossible.
+		fr := visibility.FieldsRow{
+			Sensitivity:      sens,
+			Status:           status,
+			ProcessingStatus: procState,
+			OwnerUserRef:     owner,
+			IsTeamMember:     isMember,
+			TeamID:           teamID,
+		}
+		fr.ApplyMutationCaps(mut)
+		ok := visibility.FieldsReadable(fr, caller, caps)
+		picture := visibility.PreviewReadable(fr, caller, caps)
+		if len(thumb) > 0 && picture {
 			// Base64 on the wire, matching assets.rowToAPI — the
 			// frontend decoder takes either form and this is the one
 			// every other surface already ships.
 			hashes[uuid.UUID(id.Bytes)] = base64.StdEncoding.EncodeToString(thumb)
 		}
-		// ONE readability decision feeds BOTH flags. Deriving
-		// ladder_available from anything other than the same
-		// ContentReadable call that gates preview_available would let the
-		// two disagree on a restricted asset — and a true ladder flag on
-		// gated bytes is a 403 the client walks straight into.
-		readable := visibility.ContentReadable(sens, owner, caller, caps, isMember)
-		avail[uuid.UUID(id.Bytes)] = hasCol && readable
-		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && readable
-		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && readable
+		readable[uuid.UUID(id.Bytes)] = ok
+		ownerNames[uuid.UUID(id.Bytes)] = ownerName
+		avail[uuid.UUID(id.Bytes)] = hasCol && picture
+		ladderOK[uuid.UUID(id.Bytes)] = hasLadder && picture
+		scrubOK[uuid.UUID(id.Bytes)] = hasScrub && picture
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("posts: preview enrich rows: %w", err)
@@ -1481,20 +2256,49 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 			continue
 		}
 		fresh := make([]openapi.PostMember, len(p.Members))
-		copy(fresh, p.Members) // detaches from the cached backing array
-		for i := range fresh {
-			fresh[i].Asset.PreviewAvailable = avail[uuid.UUID(fresh[i].Asset.Id)]
-			fresh[i].Asset.LadderAvailable = ladderOK[uuid.UUID(fresh[i].Asset.Id)]
-			fresh[i].Asset.ScrubAvailable = scrubOK[uuid.UUID(fresh[i].Asset.Id)]
-			fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = nil, nil
-			if wh, ok := dims[uuid.UUID(fresh[i].Asset.Id)]; ok {
-				w, h := wh[0], wh[1]
-				fresh[i].Asset.PixelWidth, fresh[i].Asset.PixelHeight = &w, &h
+		for i, m := range p.Members {
+			id := uuid.UUID(m.AssetId)
+			if !readable[id] {
+				// The #883 placeholder, written as a complete literal so
+				// that a field added to PostMember later is absent by
+				// construction rather than by remembering to clear it.
+				// Asset is nil: the whole object is withheld, not
+				// blanked, so there is no empty-vs-withheld difference
+				// for a client to read anything off.
+				fresh[i] = openapi.PostMember{
+					AssetId:    m.AssetId,
+					SortOrder:  m.SortOrder,
+					Restricted: true,
+				}
+				if n := ownerNames[id]; n != "" {
+					v := n
+					fresh[i].OwnerDisplayName = &v
+				}
+				continue
 			}
-			fresh[i].Asset.Thumbhash = nil
-			if th, ok := hashes[uuid.UUID(fresh[i].Asset.Id)]; ok {
+			// CLONE the asset value. p.Members[i].Asset points into the
+			// cross-caller cache; mutating through it would write this
+			// caller's flags into every subsequent caller's response.
+			a := *m.Asset
+			prev, lad, scr := avail[id], ladderOK[id], scrubOK[id]
+			a.PreviewAvailable = &prev
+			a.LadderAvailable = &lad
+			a.ScrubAvailable = &scr
+			a.PixelWidth, a.PixelHeight = nil, nil
+			if wh, ok := dims[id]; ok {
+				w, h := wh[0], wh[1]
+				a.PixelWidth, a.PixelHeight = &w, &h
+			}
+			a.Thumbhash = nil
+			if th, ok := hashes[id]; ok {
 				v := th
-				fresh[i].Asset.Thumbhash = &v
+				a.Thumbhash = &v
+			}
+			fresh[i] = openapi.PostMember{
+				AssetId:    m.AssetId,
+				SortOrder:  m.SortOrder,
+				Restricted: false,
+				Asset:      &a,
 			}
 		}
 		p.Members = fresh
@@ -1502,19 +2306,24 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	return nil
 }
 
+// ptrPM returns a pointer to a copy of v. openapi.Asset's fields became
+// pointers when #899 shrank the schema's `required` list so a withheld
+// payload could omit them.
+func ptrPM[T any](v T) *T { return &v }
+
 func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 	a := openapi.Asset{
 		Id:            openapi_types.UUID(m.AssetID.Bytes),
-		Title:         m.Title,
+		Title:         &m.Title,
 		Description:   &m.Description,
-		AssetType:     m.AssetType,
-		Status:        openapi.AssetStatus(m.Status),
+		AssetType:     &m.AssetType,
+		Status:        ptrPM(openapi.AssetStatus(m.Status)),
 		FileHash:      m.FileHash,
 		FileExtension: m.FileExtension,
 		FileSizeBytes: m.FileSizeBytes,
-		Tags:          []string{},
-		CreatedAt:     m.AssetCreatedAt.Time,
-		UpdatedAt:     m.AssetUpdatedAt.Time,
+		Tags:          &[]string{},
+		CreatedAt:     &m.AssetCreatedAt.Time,
+		UpdatedAt:     &m.AssetUpdatedAt.Time,
 	}
 	if m.OwnerUserRef != nil {
 		a.OwnerUserRef = m.OwnerUserRef
@@ -1589,6 +2398,46 @@ func int32Or(p *int, def int32) int32 {
 		return def
 	}
 	return int32(*p)
+}
+
+// attachablesOf lists every asset a PostCreate body names, in the
+// order the refusal message should report them: members first (so the
+// #922 behaviour is byte-identical for a body with no explicit cover),
+// then the explicit cover, then the explicit cover thumbnail.
+//
+// The implicit cover is deliberately absent. When `cover_asset_id` is
+// omitted the handler copies members[0], which is already in this list;
+// adding it again would double the gate query on the path almost every
+// upload takes.
+func attachablesOf(in *openapi.PostCreate) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(in.Members)+2)
+	for _, m := range in.Members {
+		out = append(out, uuid.UUID(m.AssetId))
+	}
+	if in.CoverAssetId != nil {
+		out = append(out, uuid.UUID(*in.CoverAssetId))
+	}
+	if in.CoverThumbnailAssetId != nil {
+		out = append(out, uuid.UUID(*in.CoverThumbnailAssetId))
+	}
+	return out
+}
+
+// fkCoverAsset maps a foreign-key violation on either cover column back
+// to the UUID that caused it, so the 404 can name the same asset the
+// gate would have named. Returns false for any other error.
+//
+// The thumbnail constraint name CONTAINS neither of the other two as a
+// substring, which matters because isFKError matches on substring:
+// posts_cover_asset_id_fkey vs posts_cover_thumbnail_asset_id_fkey.
+func fkCoverAsset(err error, cover, thumb pgtype.UUID) (string, bool) {
+	switch {
+	case isFKError(err, "posts_cover_thumbnail_asset_id_fkey"):
+		return uuidString(thumb), true
+	case isFKError(err, "posts_cover_asset_id_fkey"):
+		return uuidString(cover), true
+	}
+	return "", false
 }
 
 func isFKError(err error, constraint string) bool {

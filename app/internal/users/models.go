@@ -95,8 +95,9 @@ type Asset struct {
 	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
 	Sensitivity string
 	// For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.
-	PageCount     *int32
-	DeletedReason *string
+	PageCount        *int32
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
 type AssetAlternate struct {
@@ -280,9 +281,10 @@ type Collection struct {
 	UpdatedAt      pgtype.Timestamptz
 	SearchText     interface{}
 	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
-	SmartQuery    *string
-	DeletedAt     pgtype.Timestamptz
-	DeletedReason *string
+	SmartQuery       *string
+	DeletedAt        pgtype.Timestamptz
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
 type CollectionAcl struct {
@@ -655,6 +657,10 @@ type FieldDefinition struct {
 	DefaultValue []byte
 	// When true, a write naming a term this field does not have CREATES the term instead of being refused. Honoured for multi_select only (#830).
 	OpenVocabulary bool
+	// When set, this field is a VIEW onto that column of `assets` rather than storage of its own: reads project the column and writes update it, gated by the column's own mutation rule. A mirrored field can hold no asset_field_value / _history row — the triggers below refuse one — so the field and the column cannot disagree. NULL (the default) = ordinary field-owned storage. Local declaration: it names a column of THIS server's schema, so per ADR 0083's exclusion criterion it does NOT travel in a federated field-schema envelope (#822).
+	MirrorsColumn *string
+	// Display hint (#552): render this field at a glance on an asset card. Same class as display_order / display_group — UI may use it, nothing may gate access, filtering or correctness on it, and a client that ignores it must still be correct, merely plainer. FEDERATES with the definition: it names the field, not the server (ADR 0012 amendment 2026-08-10, against ADR 0083's exclusion criterion). Refused on a field carrying a read_capability, because the card renders on browse where no per-field capability has been evaluated.
+	ShowOnCard bool
 }
 
 type GooseDbVersion struct {
@@ -773,6 +779,7 @@ type Post struct {
 	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
 	SubtitleTrackOverride []byte
 	DeletedReason         *string
+	DeletedByUserRef      *int64
 }
 
 type PostAcl struct {
@@ -800,7 +807,7 @@ type PostTag struct {
 type ResourceRequest struct {
 	ID                  pgtype.UUID
 	RequesterUserRef    int64
-	TargetAssetID       pgtype.UUID
+	TargetID            pgtype.UUID
 	RequestedCapability string
 	Reason              string
 	State               string
@@ -809,6 +816,7 @@ type ResourceRequest struct {
 	DecisionReason      string
 	ExpiresAt           pgtype.Timestamptz
 	RequestedAt         pgtype.Timestamptz
+	TargetKind          string
 }
 
 type Role struct {
@@ -995,6 +1003,12 @@ type TeamClosure struct {
 	Depth        int32
 }
 
+type TeamFollow struct {
+	UserRef   int64
+	TeamID    pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type TeamMembership struct {
 	TeamID         pgtype.UUID
 	UserRef        int64
@@ -1085,6 +1099,7 @@ type UserPreference struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	EmailCadence         []byte
+	FeedFilters          []byte
 }
 
 type UserProfile struct {

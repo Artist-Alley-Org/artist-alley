@@ -68,10 +68,16 @@ rule itself instead of *obtaining* it from the one component that owns it
 (#650, #657, #660, #661; epic #665). Each copy was correct when written, and each
 drifted when the shared rule moved. None was caught by a test.
 
-`posts` visibility now lives in exactly one place — `app/internal/posts/read_rule.go`
-renders the rule once and is spliced into the feed, the by-asset lookup **and**
-`canReadPost`, so the list and single-item paths are literally the same SQL and
-cannot disagree (#666).
+`posts` visibility now lives in exactly one place — `app/internal/visibility/post_rule.go`
+renders the rule once and is spliced into the feed, the by-asset lookup, the
+single-item gate **and** the three search surfaces, so every path is literally the
+same SQL and they cannot disagree (#666, #873). It lived in
+`app/internal/posts/read_rule.go` until #873, which found the sixth expression this
+section warns about already in the tree: `visibility.Filter`'s own `EntityPost`
+branch, still rendering `public OR author` while `posts` rendered the real rule.
+The moral holds and gains a corollary — "one place" has to mean the place every
+reader can reach, and a package-private rule guarantees the surfaces outside that
+package will write their own.
 
 A parallel `articles` table would need its **own** visibility expression: its own
 predicate splice, its own single-item gate, its own agreement test. That is a
@@ -93,6 +99,31 @@ soft-delete semantics, and the audit trail.
   filter belongs in the shared query builder, not restated per call site.
 - **The `showcase` default must be written explicitly**, not inferred. A NULL kind
   is a third state nobody designed.
+
+### Addendum: a post with zero members is a REACHABLE state (recorded 2026-08-05, #918)
+
+An article is the obvious post with nothing attached, but it is not the only one, and until
+#918 the zero-member case was effectively untested — which cost two stacked defects that
+between them made such a post **fail to open at all**. Recorded so nobody treats the state as
+hypothetical again:
+
+- **The API refuses to create one.** `POST /posts` rejects an empty `members` array with
+  `400 "members: at least one asset required"` (verified 2026-08-05). So the state is not
+  reachable by construction through the current endpoint.
+- **It is reachable by deletion.** Soft-delete the last member's asset and the post remains,
+  with zero visible members. That is an ordinary thing to do, not an edge case someone has to
+  go looking for.
+- Whatever the article surface ends up being, it will need a create path that produces exactly
+  this shape — so the renderer has to handle it regardless.
+
+The failure it produced is worth naming because it was invisible rather than loud: the post
+loader's re-fetch guard read `state.items.length > 0`, which is never true here, so the post
+re-requested itself indefinitely (measured at over 1,600 requests in six seconds) and sat on a
+loading skeleton forever. Separately, every scrap of post chrome — header, author, the actions
+menu — is contributed as the viewer's Details tool, which only mounts when there is an item to
+view, so even once loading stopped the empty branch was a single line of grey text. Both are
+fixed; the lesson is that "no members" is a first-class render state for posts, not an error
+path.
 
 ## Consequences
 

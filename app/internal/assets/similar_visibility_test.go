@@ -281,18 +281,18 @@ func TestSimilar_AnonymousSeesOnlyVisibleNeighbours(t *testing.T) {
 		}
 		if a, ok := byID[ids[s.label]]; ok {
 			t.Errorf("anonymous /similar leaked %q asset %v (status=%s processing=%s title=%q)",
-				s.label, a.Id, a.Status, a.ProcessingStatus, a.Title)
+				s.label, a.Id, vOf(a.Status), vOf(a.ProcessingStatus), vOf(a.Title))
 		}
 	}
 
 	// Belt and braces on the two dimensions the response surfaces, so a
 	// fixture that grows a row the table forgets is still caught.
 	for _, r := range got.Results {
-		if string(r.Asset.Status) != "active" {
-			t.Errorf("anonymous /similar returned non-active asset %v status=%s", r.Asset.Id, r.Asset.Status)
+		if string(vOf(r.Asset.Status)) != "active" {
+			t.Errorf("anonymous /similar returned non-active asset %v status=%s", r.Asset.Id, vOf(r.Asset.Status))
 		}
-		if string(r.Asset.ProcessingStatus) != "ready" {
-			t.Errorf("anonymous /similar returned not-ready asset %v processing_status=%s", r.Asset.Id, r.Asset.ProcessingStatus)
+		if string(vOf(r.Asset.ProcessingStatus)) != "ready" {
+			t.Errorf("anonymous /similar returned not-ready asset %v processing_status=%s", r.Asset.Id, vOf(r.Asset.ProcessingStatus))
 		}
 	}
 }
@@ -362,7 +362,7 @@ func TestSimilar_SubsetOfBrowse(t *testing.T) {
 			for _, r := range got.Results {
 				if !browse[r.Asset.Id] {
 					t.Errorf("/similar returned asset %v (%q) that GET /assets withholds from the same caller",
-						r.Asset.Id, r.Asset.Title)
+						r.Asset.Id, vOf(r.Asset.Title))
 				}
 			}
 		})

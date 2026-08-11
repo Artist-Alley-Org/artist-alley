@@ -19,6 +19,86 @@ tags:
 excerpt: >-
   The prior generation of DAM tooling presents users with at least six visible collection "types" — Personal, Public, Featured, Smart, Request, Upload — plus a parallel structure for "featured categories" (a curator-maintained tree), a separate table for smart collections that pretend to be real ones in the UI, and external access keys grafted on as a sharing mechanism.
 ---
+## Amendment (2026-08-11): a post is collectible, and a soft-deleted member does not leave the collection
+
+#882 (PR #1018) made a **post** collectible the way an asset already was, which settles two
+things this ADR left implicit.
+
+**1. The divergence in point 3 below now has its post-shaped half.** Collecting another user's
+post is a *reference*, never a copy, and it widens nothing: the gate is
+`visibility.PostReadable`, and adding a post to your collection gives you exactly the read you
+already had. The asset half shipped earlier in #898 via `visibility.CanAttachAsset`. Both rules
+live in `visibility/` with the callers in `posts`/`collections` delegating, so there is one
+expression per rule rather than one per caller. The write half is separately gated on
+`canMutateCollection` — you may save a stranger's post into *your* collection, never into
+theirs.
+
+**2. Membership survives a soft delete, and that is the decision — not an accident of FK
+wiring.** `collection_posts` has an `ON DELETE CASCADE` to `posts`, and it is tempting to read
+that as "the author deletes their post and it leaves every collection." It does not fire on the
+path users actually take: `DELETE /posts/{id}` is a **soft** delete
+(`UPDATE posts SET deleted_at = NOW()`), so no row leaves `posts`. The membership row remains;
+the reference stops rendering because the gated listing carries `deleted_at IS NULL`.
+
+Keep it that way. The author's control is preserved — their post vanishes from every collection
+that saved it the moment they delete it — while a **restore** returns it to those collections
+intact. A hard cascade would destroy that association permanently, making restore silently
+lossy for everyone except the author. The FK still governs a genuine hard delete, and the test
+in `posts/collection_posts_test.go` pins both halves so a future change from soft to hard
+deletion cannot land quietly.
+
+⚠️ The corollary for anything reasoning about collection contents: **an
+absent-from-the-listing member is not an absent row.** Count rows and you will count
+soft-deleted posts; the `deleted_at IS NULL` conjunct is load-bearing and belongs in every
+query that reports membership to a user.
+
+## Amendment (2026-08-05): a prior-art pass on collections × search — one confirmation, one gap, one deliberate divergence
+
+Two mature DAMs were read for how collections and search interact (facts in memory
+`reference_rs_search_baseline`). This ADR's core decision holds; three things are worth
+recording so they are not re-derived or re-opened.
+
+**1. CONFIRMED — a collection is both a thing you find and a thing you search inside.**
+Both products return collections as ordinary rows in the main result set rather than on a
+separate surface: one exposes them through the same control that picks resource types (the
+equivalent of our kind chips), the other models containers as `DocType`s and interleaves them.
+The owner reached the same call independently on 2026-08-05 — *"we can search collections"* —
+and #850 shipped it. **No change needed; recorded because an unrecorded null result is why the
+question gets asked again.**
+
+The corollary the owner drew is the sharper half and belongs here: *a collection you searched
+for is a result; a collection promoted at you while you were reading results is not.* One
+product's curated surface lives on its home page (its collection table has `home_page_publish` /
+`home_page_text` / `home_page_image` columns naming it) and its results page carries no curated
+shelf. Ours did, unconditionally — tracked as **#908**.
+
+**2. GAP — "smart" membership is declared and unimplemented.** `collections.membership` CHECKs
+`('manual','query','hybrid')` and `collections.smart_query` exists, but
+`collections/handler.go:237` rejects anything but `manual` with *"only membership=manual is
+supported in this release"*, and `smart_query` is SELECTed everywhere and evaluated nowhere.
+"Save as collection" materialises a **snapshot** (`search/saveas.go:125`), which is a real
+feature but not what the column promises.
+
+This ADR's Context criticises the prior generation for *"a separate table for smart collections
+that pretend to be real ones in the UI"* — and it was right that a parallel table is the wrong
+shape. But **declaring three membership modes and implementing one is its own version of the
+same problem**: the model claims a capability the system does not have. Either implement the
+modes or narrow the CHECK. Tracked as **#911**, which also carries the decisions it needs
+(read-time vs materialised, per-caller evaluation, and what a query-backed collection means when
+it federates).
+
+**3. DELIBERATE DIVERGENCE — container membership does not grant access, and we are the outlier.**
+One product surveyed cascades permissions from container to contents **by default**
+(`DisableInheritance` maps to "Apply to Contained Assets" and defaults to on). We chose the
+opposite in #883 / #892 / #894: membership never widens an item's visibility, a foreign
+restricted member renders as a placeholder carrying only its owner's name, and a federated
+collection share stops at the members its grantor owned.
+
+That divergence is intentional and should stay. Cascade-by-default makes "add it to a collection
+you can share" a one-click privilege escalation, which is precisely the primitive #883 exists to
+prevent. Any future work on collection sharing inherits this, including **#910**
+(search-inside-a-collection): scoping is a narrowing, never a widening.
+
 ## Context
 
 The prior generation of DAM tooling presents users with at least six

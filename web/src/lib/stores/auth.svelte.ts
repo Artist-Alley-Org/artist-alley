@@ -14,10 +14,43 @@
 //   - Login / logout update state in place; no manual refetch needed.
 //   - 401 responses from anywhere in the app should call auth.clear()
 //     so the chrome reflects the logged-out state immediately.
+//   - Capabilities ride the session response and are adopted with the
+//     user, never fetched separately. See adopt() (#871).
 
 import { api } from '$api/client';
-import { t } from '$stores/lang.svelte';
+import { lang, t } from '$stores/lang.svelte';
 import { ADMIN_TILE_CAPS } from '$lib/admin/sections';
+
+/** The account's default-view selections, as `/auth/me` reports them
+ *  (`CurrentUser.default_views`). Snake_case because it is the wire
+ *  shape, unwrapped; the store that consumes it is
+ *  browseView.svelte.ts. Absent keys mean "no account preference",
+ *  which is a different thing from a stored empty string. */
+export interface AccountViewDefaults {
+  home_tab?: string | null;
+  browse_layout?: string | null;
+  browse_sort?: string | null;
+}
+
+/**
+ * The account's browse-feed content preferences (#891, default inverted
+ * by #921), joined onto the session response from
+ * `user_preferences.feed_filters`.
+ *
+ * The FILTERING is the server's — `GET /posts` reads the stored
+ * preference and applies it, so nothing here decides what the feed
+ * contains. What the client needs is the FACT of the setting, on the
+ * same paint as the grid, so the feed can explain its own shape instead
+ * of popping an explanation in a frame later.
+ *
+ * Absent for every account on the build's defaults: `/auth/me` omits the
+ * object when every key is at its zero value, and since #921 the zero
+ * value is "hide the placeholders" rather than "show everything". Read
+ * an absent object as the DEFAULT feed, never as "unfiltered".
+ */
+export interface AccountFeedFilters {
+  show_restricted?: boolean | null;
+}
 
 export interface AuthUser {
   ref: number;
@@ -28,7 +61,17 @@ export interface AuthUser {
   authMethod?: string;
   /** User's persisted UI prefs (joined into the response by the API). */
   language?: string | null;
-  theme?: 'light' | 'dark' | '' | null;
+  /** `''` = the account has no stored preference (each device falls
+   *  back to the app default); `'system'` = follow the OS, everywhere.
+   *  The two are not the same value — see #677 / migration 00033. */
+  theme?: 'light' | 'dark' | 'system' | '' | null;
+  /** Account-level browse defaults, joined from user_preferences.
+   *  A SEED for devices with no local choice, never an override of one
+   *  — the precedence rule lives in browseView.init() (#706). */
+  defaultViews?: AccountViewDefaults | null;
+  /** Account-level browse-feed content preferences (#891/#921). Absent —
+   *  not an object of falses — for every account on the defaults. */
+  feedFilters?: AccountFeedFilters | null;
   /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
@@ -41,18 +84,58 @@ export interface AuthUser {
 // Mirrors `Identity.SuperAdminCapability` in app/internal/auth.
 const SYSTEM_ADMIN = 'system.admin';
 
+/**
+ * Mirrors `CurrentUser.capabilities_status` (#956). `resolved` means
+ * `caps` is authoritative — an empty array then means the account
+ * genuinely holds nothing. `unavailable` means the server could not
+ * determine the set at all, and `caps` says nothing about the account.
+ *
+ * Those are not two ways of saying "no rights". Collapsing them is what
+ * let a resolver blip render an administrator a permission refusal.
+ */
+export type CapsStatus = 'resolved' | 'unavailable';
+
 class AuthState {
   user = $state<AuthUser | null>(null);
   ready = $state(false);
-  /** Capability codes the caller holds globally. Loaded by refresh(). */
+  /** Capability codes the caller holds globally. Loaded by refresh().
+   *  Only meaningful when `capsStatus === 'resolved'`. */
   caps = $state<string[]>([]);
+  /**
+   * Whether `caps` above could be determined. Assigned by the same
+   * setter, from the same response, as `caps` itself — see adopt().
+   *
+   * Defaults to `resolved` because the pre-boot state is "signed out,
+   * holding nothing", which is a determination, not a failure. Nothing
+   * gated reads this before `ready` anyway.
+   */
+  capsStatus = $state<CapsStatus>('resolved');
+
+  /**
+   * True when the server told us it could not work out what this
+   * account may do. Surfaces MUST still grant nothing (`can()` returns
+   * false throughout), but they must describe THIS rather than a
+   * permission decision: the honest render is an error with a retry,
+   * not "you don't have permission to view this page".
+   */
+  get capsUnavailable(): boolean {
+    return this.capsStatus === 'unavailable';
+  }
 
   /**
    * `system.admin` short-circuits every check, matching the backend's
    * Identity.Can. Used by the admin menu visibility gate and any
    * capability-aware UI bits.
+   *
+   * Unknown rights are NO rights (#956). The explicit guard is belt to
+   * `adopt()`'s braces: the server omits `capabilities` whenever it
+   * reports `unavailable`, so `caps` is already empty on that path —
+   * but "the gate cannot open on a set we do not trust" is the rule,
+   * and a rule enforced only by a coincidence of another layer is one
+   * refactor from being untrue.
    */
   can(code: string): boolean {
+    if (this.capsUnavailable) return false;
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
     return this.caps.includes(code);
   }
@@ -68,6 +151,8 @@ class AuthState {
    * that reference it inside their own $derived/effect stay reactive.
    */
   get canSeeAdmin(): boolean {
+    // Unknown rights are no rights (#956) — same rule as can().
+    if (this.capsUnavailable) return false;
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
     return ADMIN_TILE_CAPS.some((c) => this.caps.includes(c));
   }
@@ -90,40 +175,65 @@ class AuthState {
     return this.can(tile.cap ?? SYSTEM_ADMIN);
   }
 
+  /**
+   * Adopt a session payload (the `CurrentUser` schema, as returned by
+   * /auth/me, /auth/login and /auth/register) as the signed-in
+   * identity.
+   *
+   * The ONE place `user`, `caps` and `capsStatus` are assigned, and
+   * they are assigned together, from the same response, synchronously
+   * (#871). That is the whole invariant: `ready` is what the
+   * capability-gated surfaces wait on, so any path that can publish a
+   * user without their capabilities is a path that can tell an
+   * administrator they have no permission. Fetching the caps separately
+   * is exactly such a path — it is how the /admin gate came to flash a
+   * red panel at real admins — so there is no setter for one without
+   * the other.
+   *
+   * `capsStatus` joins the set for the same reason and travels with it
+   * (#956): a capability list and the question "is this list real?" are
+   * one fact, and reading them a frame apart would recreate #871 with
+   * an extra step.
+   */
+  private adopt(u: Record<string, unknown>): void {
+    this.user = mapUser(u);
+    this.caps = mapCaps(u);
+    this.capsStatus = mapCapsStatus(u);
+    // The account's language arrives on this same body and has to be
+    // APPLIED, not merely stored (#869). It hangs here for the reason
+    // the caps do: this is the one place a user is published, so every
+    // path that can produce a signed-in identity — login(), refresh(),
+    // and hydrateFrom() on boot — applies it, and a fourth path cannot
+    // be added that quietly does not.
+    //
+    // Measured before the fix, because "which path was broken" was not
+    // what the issue assumed: a COLD NAVIGATE was already correct, since
+    // lang.init() reads auth.user in +layout.svelte's onMount and
+    // +layout.ts has awaited hydration by then. SIGNING IN was not — the
+    // root layout mounts once, so a visitor who lands on /login runs
+    // init() against a null user and keeps English until a full reload.
+    // Same mount-once gap theme.syncFromAccount() was written for. The
+    // apply sits on adopt() rather than on login() so the two paths
+    // cannot answer differently again.
+    lang.syncFromAccount();
+  }
+
   /** Re-fetch the current session from the server. */
   async refresh(): Promise<void> {
     const { data, error, response } = await api.GET('/auth/me');
     if (error || !data) {
       this.user = null;
       this.caps = [];
+      // Not a degraded capability lookup: there is no session to
+      // resolve capabilities FOR. Anonymous genuinely holds nothing,
+      // and +layout.ts sends a user-less visitor to /login anyway.
+      this.capsStatus = 'resolved';
     } else {
-      this.user = mapUser(data);
-      // Caps load in parallel — soft fail (empty caps = no admin
-      // UI). Anonymous callers shouldn't reach this branch.
-      void this.refreshCaps();
+      this.adopt(data);
     }
     // 401 just means anonymous — not an error condition for refresh.
     void response;
     this.ready = true;
-  }
-
-  /**
-   * Pull the caller's resolved capability set from
-   * GET /auth/me/capabilities. Called by refresh() and after login.
-   */
-  async refreshCaps(): Promise<void> {
-    if (!this.user) {
-      this.caps = [];
-      return;
-    }
-    try {
-      const { data } = await api.GET('/auth/me/capabilities');
-      if (data && Array.isArray(data.capabilities)) {
-        this.caps = data.capabilities;
-      }
-    } catch {
-      this.caps = [];
-    }
   }
 
   /**
@@ -145,21 +255,34 @@ class AuthState {
       if (code === 'invalid_2fa_code') throw new LoginNeedsTOTPError('invalid_2fa_code');
       throw new Error(code);
     }
-    this.user = mapUser(data);
+    this.adopt(data);
     this.ready = true;
-    void this.refreshCaps();
   }
 
   async logout(): Promise<void> {
     await api.POST('/auth/logout');
     this.user = null;
     this.caps = [];
+    this.capsStatus = 'resolved';
+    // The account's language leaves with the account (#967). adopt()
+    // applies it AND writes the device cookie so the next cold load
+    // paints it without a flash; without this, that cookie would outlive
+    // the session and the next visitor at a shared machine would get the
+    // previous account's language on their first paint.
+    //
+    // The pairing is the point: syncFromAccount() only earns the right
+    // to write device state because logout() takes it back. Deliberately
+    // NOT in clear() below — that is the 401 path, and a session that
+    // aged out is not somebody leaving the machine.
+    lang.reset();
   }
 
-  /** Drop in-memory state without a network call. Used on 401. */
+  /** Drop in-memory state without a network call. Used on 401.
+   *  Signed out is a determination, not a failed one — see refresh(). */
   clear(): void {
     this.user = null;
     this.caps = [];
+    this.capsStatus = 'resolved';
   }
 
   /**
@@ -168,9 +291,13 @@ class AuthState {
    * load function doesn't have to go through the api client wrapper
    * (which uses the global fetch and would trip SvelteKit's hydration
    * warning).
+   *
+   * This is the BOOT path — the one that decides what a cold navigate
+   * to /admin/* renders on its first frame — so it takes capabilities
+   * off the same body, via the same setter, as every other path.
    */
   hydrateFrom(u: Record<string, unknown>): void {
-    this.user = mapUser(u);
+    this.adopt(u);
   }
 
   /** Mark the store as initialised even when no user was loaded. */
@@ -206,11 +333,44 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     usergroup: (u.usergroup ?? null) as number | null,
     authMethod: u.auth_method as string | undefined,
     language: (u.language ?? null) as string | null,
-    theme: (u.theme ?? null) as 'light' | 'dark' | '' | null,
+    theme: (u.theme ?? null) as 'light' | 'dark' | 'system' | '' | null,
+    defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
+    feedFilters: (u.feed_filters ?? null) as AccountFeedFilters | null,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,
   };
+}
+
+/** Read `CurrentUser.capabilities` off a session body. Absent, null or
+ *  malformed all yield an empty set — the safe fallback. WHY it is
+ *  empty is `capabilities_status`'s job, not this function's; read
+ *  mapCapsStatus() alongside it and never treat an empty array on its
+ *  own as "the account has no rights" (#956). */
+function mapCaps(u: Record<string, unknown>): string[] {
+  const c = u.capabilities;
+  if (!Array.isArray(c)) return [];
+  return c.filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * Read `CurrentUser.capabilities_status` off a session body (#956).
+ *
+ * Strict allowlist, and the direction is deliberate: ONLY the literal
+ * `'resolved'` is taken as "this list is real". Anything else — absent,
+ * null, a typo, a value from a schema version this build does not know
+ * — reads as `unavailable`.
+ *
+ * That is the safe direction on both axes at once. `unavailable` grants
+ * nothing (can() returns false throughout), so an unrecognised body can
+ * never widen access; and it renders as "we could not determine your
+ * rights, retry" rather than "you have no permission", so an
+ * unrecognised body can never accuse the user of something untrue
+ * either. Defaulting the other way would restore the exact conflation
+ * this field exists to end, and would do it silently.
+ */
+function mapCapsStatus(u: Record<string, unknown>): CapsStatus {
+  return u.capabilities_status === 'resolved' ? 'resolved' : 'unavailable';
 }
 
 function extractError(err: unknown): string | undefined {

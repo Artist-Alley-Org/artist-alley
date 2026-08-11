@@ -96,7 +96,7 @@ type AddPostAssetParams struct {
 
 // The two post LIST queries (ListPostsPage, ListPostsByAsset) are NOT
 // here. They live in list_page.go as hand-built SQL, because the read
-// rule they must apply is a runtime fragment (readRule.sql) and a sqlc
+// rule they must apply is a runtime fragment (readRuleSQL) and a sqlc
 // query is a static string — the same reason every splice site of
 // visibility.Predicate is hand-built.
 //
@@ -265,6 +265,21 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 	return i, err
 }
 
+const getPostDeletedBy = `-- name: GetPostDeletedBy :one
+SELECT deleted_by_user_ref
+  FROM posts
+ WHERE id = $1 AND deleted_at IS NOT NULL
+`
+
+// Who soft-deleted this post. pgx.ErrNoRows when the row is live or
+// absent — the two cases the restore path already conflates.
+func (q *Queries) GetPostDeletedBy(ctx context.Context, id pgtype.UUID) (*int64, error) {
+	row := q.db.QueryRow(ctx, getPostDeletedBy, id)
+	var deleted_by_user_ref *int64
+	err := row.Scan(&deleted_by_user_ref)
+	return deleted_by_user_ref, err
+}
+
 const listPostAcls = `-- name: ListPostAcls :many
 
 
@@ -283,7 +298,7 @@ ORDER BY granted_at DESC, principal_type, principal_id, permission
 // private post in a collection the day somebody wired it up is not a
 // head start, it is a trap; deleting it is strictly better than
 // auditing it. A future collection-posts listing must go through
-// posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
+// the post read rule (posts.readRuleSQL) the way ListPostsByAssetGated does.
 // ---------------------------------------------------------------------------
 // ACLs (Phase 1.7.B-7b)
 // ---------------------------------------------------------------------------
@@ -414,6 +429,37 @@ func (q *Queries) ListPostTags(ctx context.Context, postID pgtype.UUID) ([]strin
 	return items, nil
 }
 
+const postIDsForAsset = `-- name: PostIDsForAsset :many
+SELECT post_id FROM post_assets WHERE asset_id = $1
+`
+
+// Every post that lists this asset as a member. Drives cache
+// invalidation when the ASSET changes in a way that changes what
+// ListPostAssets returns — soft-delete and restore, which flip the
+// `a.deleted_at IS NULL` half of that join without touching any post
+// row (#920). No visibility filter: this answers "whose cached copy is
+// now wrong", which is every holder, not just the ones a given reader
+// may see.
+func (q *Queries) PostIDsForAsset(ctx context.Context, assetID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, postIDsForAsset, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var post_id pgtype.UUID
+		if err := rows.Scan(&post_id); err != nil {
+			return nil, err
+		}
+		items = append(items, post_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const removeCollectionPost = `-- name: RemoveCollectionPost :exec
 DELETE FROM collection_posts WHERE collection_id = $1 AND post_id = $2
 `
@@ -506,17 +552,20 @@ func (q *Queries) ReplacePostTags(ctx context.Context, arg ReplacePostTagsParams
 }
 
 const softDeletePost = `-- name: SoftDeletePost :exec
-UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type SoftDeletePostParams struct {
-	ID            pgtype.UUID
-	DeletedReason *string
+	ID               pgtype.UUID
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
+// deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
+// restore gate reads it, so every soft-delete path has to write it.
 func (q *Queries) SoftDeletePost(ctx context.Context, arg SoftDeletePostParams) error {
-	_, err := q.db.Exec(ctx, softDeletePost, arg.ID, arg.DeletedReason)
+	_, err := q.db.Exec(ctx, softDeletePost, arg.ID, arg.DeletedReason, arg.DeletedByUserRef)
 	return err
 }
 

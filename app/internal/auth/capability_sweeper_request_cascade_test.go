@@ -158,7 +158,7 @@ func (r *cascadeRecorder) OnCascade(_ context.Context, requestID uuid.UUID, _ ti
 func seedFakeRequestRow(t *testing.T, pool *pgxpool.Pool, id uuid.UUID, requesterRef int64) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO resource_request (id, requester_user_ref, target_asset_id, requested_capability)
+		`INSERT INTO resource_request (id, requester_user_ref, target_id, requested_capability)
 		 VALUES ($1, $2, $3, $4)`,
 		id, requesterRef, uuid.New(), "posts.publish",
 	); err != nil {

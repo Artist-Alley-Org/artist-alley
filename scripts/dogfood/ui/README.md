@@ -98,9 +98,14 @@ Fallback ordering:
      `TextField`/`Menu`, or `data-testid="…"` for everything else)
    - Use `page.locator(tid('your-id'))` in the test
 4. Run `./scripts/dogfood/run-ui.sh --grep ui-NN` while iterating.
-5. **Restart the `web` container if you added testids** — Vite
-   HMR in this project doesn't reliably pick up new attributes
-   (see `feedback_vite_hmr_doesnt_work.md` in auto-memory).
+5. New testids show up without restarting anything. This used to
+   need a `docker compose restart web`, and the reason was never
+   HMR: the dev container's bind mount sits on a filesystem that
+   drops inotify, so Vite's watcher never heard about the edit and
+   kept serving the module it had cached. `web/vite.config.ts` now
+   polls instead (#993). Detection takes up to ~0.5s, so a test run
+   fired the same instant you saved can still race the watcher —
+   give it a beat.
 
 ## Pre-reqs
 

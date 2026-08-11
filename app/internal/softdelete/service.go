@@ -55,6 +55,28 @@ var ErrNotFound = errors.New("softdelete: row not found")
 type Service struct {
 	Pool *pgxpool.Pool
 	Rec  *audit.Recorder
+
+	// OnAssetsHardDeleted fires once per batch, after the DELETE
+	// commits, with the ids that are now gone (#935).
+	//
+	// A hard delete is the one asset write that reaches other domains
+	// through the SCHEMA rather than through code: the FKs on
+	// asset_subtitle_tracks and post_assets are ON DELETE CASCADE, so
+	// rows vanish in packages this one has never heard of. The database
+	// ends up consistent; the in-process LRUs those packages keep do
+	// not, and nothing in the DB can tell them.
+	//
+	// This is a hook rather than a direct call because the GC is a
+	// generic primitive — giving it imports of subtitles, posts and
+	// iiif/presentation would invert the dependency direction for
+	// three domains at once. The composition root owns the fan-out and
+	// stays the one place you can read off which caches a hard delete
+	// touches.
+	//
+	// Best-effort and optional: nil means "nothing to notify", and a
+	// panicking or slow hook is the composition root's problem, not a
+	// reason to fail a delete that has already committed.
+	OnAssetsHardDeleted func(ctx context.Context, ids []uuid.UUID)
 }
 
 // NewService returns a Service. Audit recorder may be nil (tests);
@@ -244,6 +266,13 @@ func (s *Service) HardDeletePastAssets(ctx context.Context, retentionDays int, b
 	}
 	if _, err := s.Pool.Exec(ctx, `DELETE FROM assets WHERE id = ANY($1)`, ids); err != nil {
 		return 0, fmt.Errorf("softdelete: assets delete: %w", err)
+	}
+	// The CASCADEs have fired; tell the packages whose caches they
+	// silently emptied. After the DELETE and before the audit fanout,
+	// so a stale cache window can't outlive the transaction by the
+	// length of a batch's worth of audit writes.
+	if s.OnAssetsHardDeleted != nil {
+		s.OnAssetsHardDeleted(ctx, ids)
 	}
 	if s.Rec != nil {
 		for _, v := range victims {

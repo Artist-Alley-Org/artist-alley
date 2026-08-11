@@ -22,10 +22,63 @@ tags:
 excerpt: >-
   The authorization model laid down in migration 00002_capabilities_roles.sql (Phase 1.3) gave us three of the seven layers a real production permissions system needs:
 ---
+## Amendment (2026-08-04): Layer 7 is NOT implemented — and one shape changed
+
+~~The "fully implemented" claim below covers Layer 7.~~ It does not, and a
+verification pass on 2026-08-04 established that it never did. Layers 1–6 shipped
+as described; **Layer 7 shipped its schema and stopped.** Corrections, with
+evidence:
+
+- **`workflow.Transition()` has zero production callers.** The helper exists
+  (`app/internal/workflow/service.go:118`) and is covered by seven passing tests,
+  but nothing outside those tests calls it. The only non-test importer of
+  `internal/workflow` is `app/internal/http/api.go:300`, wiring the read-only
+  `GET /workflow/states` handler — the single workflow path in the API.
+- **Therefore the central-helper property this ADR argued for does not hold.**
+  `state_id` is written as a raw client-supplied UUID on create *and* on update:
+  `posts/handler.go:271-276`, `posts/queries.sql:36` (`UpdatePost` sets
+  `state_id = COALESCE(narg, state_id)`, so `PATCH /posts/{id}` reaches any state),
+  `assets/handler.go:318-319`, and `scheduledactions/executor.go:165`. The eleven
+  seeded `workflow_transitions` rows and their `required_capability` values are
+  never consulted, and `workflow_audit` is never written by the API.
+
+  The Decision section's claim that this design is *"the explicit fix for the
+  'every call site has to remember the permission check' anti-pattern"* is the
+  intent, not the current behaviour. Tracked as **#896**.
+- **States are seeded-only.** The `workflow.admin` capability is seeded but gates
+  no endpoint; there is no way to define a state or a transition without SQL
+  against the database. Only `post` and `asset:1` (Photo) have any states, so
+  every other asset type carries `state_id = NULL`. Tracked as **#897**.
+- **`visible_by_default` is unread.** It is set deliberately in the baseline
+  (false for draft/pending_review/archived/deleted) but no code consumes it.
+  Whether workflow state should gate visibility at all is **undecided**, and it
+  bears directly on ADR 0063/0064 — a second row-hiding plane keyed on state would
+  contradict the single-predicate arrangement those ADRs establish. Decide there
+  before building on it; part of #897.
+
+### Shape change: `domain TEXT`, not `asset_type_id UUID`
+
+The schema below specifies
+`workflow_states.asset_type_id UUID NOT NULL REFERENCES asset_types(id)`. **The
+implemented table has `domain TEXT NOT NULL` instead**, with an
+`asset:<resource_type_ref>` convention produced by
+`workflow.AssetDomain(int64) string` (`service.go:47`), plus a bare `post` domain.
+
+This supersedes the ADR's shape and the reason is sound: posts have no asset type,
+so an `asset_type_id` FK could not have expressed the `post` domain at all. Record
+the cost too — the key is stringly-typed with no referential integrity, so
+deleting an asset type silently orphans its states, and a typo is
+indistinguishable from an empty domain. That is not hypothetical: **#895** is a
+whole feature made dead by the difference between `asset` and `asset:1`.
+
+Read this amendment together with the memory `reference_workflow_states_baseline`,
+which holds the verified per-file detail.
+
 ## Implementation status (2026-06-19)
 
 The decision recorded here is **fully implemented** as of the
-1.17 arc landing on `dev`:
+1.17 arc landing on `dev` — **except Layer 7; see the 2026-08-04
+amendment above**:
 
 - **1.17.A — User approval states + admin approval workflow** ✅
   PR #138. Typed state machine, single-gate authn, session-cascade
@@ -222,7 +275,159 @@ The primary path is:
 - Owner → always readable and writable.
 
 ACLs grant *additional* access beyond those defaults. They never
-restrict below them. Schema:
+restrict below them.
+
+#### Amendment 2026-08-06 (#930, PR #936) — Layer 5 reaches content mutation, and a mutate gate must not also be a grant gate
+
+Layer 5 was implemented for capability *resolution* (`Can(code, InTeam(id))`, `scopedCaps`
+pre-expanded through `team_closure`) and **never called by a content handler**. `UpdateAsset` and
+`DeleteAsset` had no authorisation at all — any authenticated caller could edit or delete any
+asset, while only a super-admin could restore. Posts and collections were gated; assets were the
+outlier.
+
+`assets.admin` now exists, and `canMutateAsset` is `owner ∨ Can(cap, InTeam(team)) ∨ Can(cap) ∨
+system.admin`. That is the "an art director manages their team's files, a team member does not
+manage a colleague's" requirement, and it is Layer 4's closure doing the cascading.
+
+**Two findings worth recording, because both were invisible until something depended on them:**
+
+**1. `posts.admin` and `collections.admin` had never been grantable.** They existed as Go string
+constants and were **never rows in `capabilities`**. Since `user_capability_grants.capability_code`
+and `role_capabilities.capability_code` are both FK-constrained to `capabilities(code)`, neither
+could ever be granted to a user or a role — so both moderator gates were, in practice,
+`system.admin`-only. A whole permission tier was declared and unreachable. Seeded in 00037.
+
+**⛔ 2. A gate that guards editing must NOT also guard granting.** `canMutatePost` had **seven**
+call sites, and one of them was `AddPostAcl`. Adding the team-scoped disjunct to it — which is what
+the sprint brief instructed — would have let a team-scoped holder **grant a stranger read access to
+a colleague's post**. The escalation hid behind the gate's *name*: it reads as "may edit this post"
+and in fact answered "may administer this post", including who else may reach it.
+
+The rule this establishes:
+
+> **Scope a capability to what the operation DOES, not to the object it acts on.** Mutation and
+> access-widening are different rights over the same row and need different gates.
+
+So the post surface now splits:
+
+| gate | team-scoped? | guards |
+|---|---|---|
+| `canMutatePost` | **yes** | edit, delete, restore, and the rest |
+| `canWidenPostAccess` | **no** — owner ∨ *global* `posts.admin` ∨ `system.admin` | post `visibility`, `AddPostAcl` |
+
+`RemovePostAcl` deliberately keeps the wider gate: revoking narrows access, and narrowing is not
+an escalation.
+
+The same logic gates `assets.status` to owner + `system.admin` rather than to `assets.admin`:
+`visibility/predicate.go` requires `status='active'` for the anonymous read branch, so publishing
+a colleague's draft **is** the disclosure act even though `AssetUpdate` carries no `visibility`
+field. (Delegating publication deliberately, via the unwired `assets.publish`, is **#938**.)
+
+**This is the second privilege escalation to reach a sprint brief** — see ADR 0064's 2026-08-05
+amendment for the first (#881, a decide gate scoped to its principal but not its payload). Both
+were caught in implementation. The common shape: *a gate was widened without enumerating what it
+authorised.*
+
+**One seam left open on purpose**: a holder of `assets.admin` may mutate an asset whose content
+they cannot read — `visibility.FieldsReadable` knows nothing about the capability. Whether mutation
+should imply readability is **#939**, and it is a product decision rather than an oversight.
+
+#### Amendment 2026-08-06 (#916, PR #932) — the three ACL surfaces do NOT accept the same principals
+
+`principal_type` admits `user | role | team` on all three `*_acls` tables, and the CHECK
+constraint is identical on each. **That uniformity is misleading, and the API now says so.**
+
+| surface | `user` | `role` / `team` |
+|---|---|---|
+| `asset_type_acls` | works | **works** — `assettype/queries.sql` resolves them against `user_roles` and `team_memberships` |
+| `post_acls` | works | **inert** — the read rule gates on `principal_type = 'user'` before it looks at `principal_id` |
+| `collection_acls` | works | **inert** — same |
+
+Role and team scoping *on content* is Layer 5, and Layer 5 is implemented for **capabilities**
+(`Can(code, InTeam(id))`, pre-expanded through `team_closure`) but **not for content ACL rows**.
+So a role or team grant on a post or collection was written, matched by nothing, and answered
+`204`.
+
+**Decision: the content ACL surfaces reject `role` and `team` with a 400 rather than storing an
+inert row.** An API that accepts a reference it knows confers no access, and reports success, is
+the same defect as accepting a username where a numeric ref is required — which is what #916 was.
+Fixing one and not the other would have fixed half a bug.
+
+Consequences worth stating:
+
+- **This reversed an existing test.** `TestAddPostAcl_RoleAndTeamGrantsNotifyNobody` asserted the
+  rows *were* stored, on the reasoning that *"notifies nobody is not licence to skip the grant"*.
+  That reasoning was correct **about the notify path** — a notifier failure must never roll back a
+  real grant — but it was applied to a grant that was never real.
+- **`asset_type_acls` is deliberately exempt** and validates shape only. The distinction lives in
+  one place, `internal/acls`: `ValidatePrincipalRef` (shape) versus `ValidateContentPrincipal`
+  (shape **and** inertness, returning `ErrPrincipalInert`). One implementation, three call sites.
+- **When Layer 5 extends to content ACLs, delete the validator call** — a 400 is trivially
+  reversible. A table of inert rows would not have been: nothing distinguishes "granted before it
+  worked" from "granted after" without archaeology.
+- Pre-release, so there were no stored grants to preserve.
+
+**A related divergence is NOT settled by this amendment**: `ListCollectionAcls` admits any caller
+when the collection is `public`, while `ListPostAcls` requires owner-or-mutate. Tracked as **#933**;
+whichever way it goes, the two surfaces should agree.
+
+#### Amendment 2026-08-07 (#938, PR #952) — publication is delegable, per verb
+
+The 2026-08-06 (#930) amendment above says *"the same logic gates `assets.status` to owner +
+`system.admin` rather than to `assets.admin`"* and calls delegating it **#938**. That is now
+implemented, and the sentence should be read as history: `assets.status` is gated to owner,
+`system.admin`, **or the publication verb the specific transition requires**.
+
+`assets.publish`, `assets.archive` and `assets.unarchive` were seeded in the baseline, granted to a
+role there, listed in the admin capability surface — and consulted by nothing. That is the same
+*accepted-but-inert* defect as #916's ACL rows: an operator granted one, believed they had
+delegated publication, and had not.
+
+The live enum is `draft | active | archived` — there is no `published` and no `pending_review` —
+so the three verbs do not partition the six ordered transitions one-to-one. **One clause resolves
+every overlap:**
+
+> **Entering `active` always requires `assets.publish`, with no substitute.**
+
+`active` is the state `visibility/predicate.go` tests for on the anonymous read branch, so
+`→ active` is *the* disclosure act. A second route into it would silently turn some other verb into
+a publication right. Leaving `active` is not a disclosure — it only removes reach — so the rest are
+governed by whichever verb names them:
+
+| transition | requires | why |
+|---|---|---|
+| `draft → active` | `publish` | the verb's own transition |
+| `archived → active` | `publish` **and** `unarchive` | a disclosure *and* an exit from the archive; neither holder gets the other's decision |
+| `draft → archived` | `archive` | entering the archive; neither endpoint is publicly reachable |
+| `active → archived` | `archive` | retiring published work is a de-disclosure |
+| `archived → draft` | `unarchive` | leaving the archive, to a private state |
+| `active → draft` | `publish` | retraction is the publish decision reversed, and there is no `assets.unpublish` |
+
+Consequences worth stating:
+
+- **The two planes in `UpdateAsset` are now gated separately, and neither implies the other.** A
+  content edit needs `canMutateAsset`; a status transition needs the matching verb. Requiring
+  `assets.admin` *as well* would have meant publication could not be delegated without also handing
+  over the power to rewrite — the same bundling this ADR's rule rejects, pointed the other way.
+- **No new field-plane exposure.** A publication-only holder's `200` body is built by
+  `enrichAssetDerived`, which already applies the #899/#939 withholding, so a publish grant is a
+  right to decide reachability and not a side door into reading what you published.
+- **`assets.submit` and `assets.review` remain unenforced**, and migration 00038 rewrites their
+  descriptions to say so. They gate the exit from `pending_review`, which does not exist; building
+  it is a schema decision for #895/#896/#897, and **#951** carries the choice between building it
+  and deleting the two codes.
+- **The seam was `assets.team_id`.** ~~Nothing in production writes it, so every asset created
+  through the API has `team_id = NULL` and only a *global* publication grant reaches it.~~
+  **Superseded 2026-08-07 by #953 / PR #955** — `AssetCreate` now carries an optional `team_id`, so
+  the team-scoped path is reachable through the API.
+
+  ⚠️ **The original claim here was wrong and is preserved struck through as a caution.** The seeder
+  had been writing the column all along (`app/internal/seed/queries.sql`, ~1,900 rows in a seeded
+  install); the search that "proved" its absence required `team_id` and `INSERT INTO assets` on one
+  line, and that INSERT is multi-line. **To assert that nothing writes a column, query the data.**
+  The real gap was narrower: the seeder could assign a team, the API could not.
+
+Schema:
 
 ```sql
 CREATE TABLE post_acls (
@@ -248,6 +453,12 @@ ACL rows) covers the gap.
 to this post for 7 days") without a separate share-links table.
 
 ### Layer 7: Workflow states (configurable per resource type)
+
+> **Not implemented as written — read the 2026-08-04 amendment at the top before
+> designing against this section.** The tables exist and the central helper
+> exists, but nothing calls it; `asset_type_id` shipped as `domain TEXT`; and
+> "configurable" is aspirational (states are seeded, and there is no admin
+> surface). Issues **#895**, **#896**, **#897**.
 
 Each resource type owns its own state list and its own transition
 graph. A concept-art pipeline can run `idea → wip → review → final`;
@@ -579,3 +790,64 @@ backfill.
   resource has no team and falls back to visibility-only checks.
   Default to nullable; revisit if a real install demands every
   resource have a team.
+
+---
+
+### Amendment 2026-08-07 (#954 + #953, PR #955) — who may put something in a team
+
+`team_id` on `posts` and `assets` is an **authorization input, not a label**. It decides who may
+mutate the row — `canMutatePost` / `canMutateAsset` consult a Layer-5 scoped grant only when the row
+carries a team — and for assets it also decides who may read it at `sensitivity='team'`.
+
+It had been treated as neither. `CreatePost` accepted a **caller-asserted** `team_id` with only the
+foreign key guarding it, so a post could be attributed to any team on the instance (#954). Assets
+had the opposite defect: no API field at all, so only the seeder could assign one (#953).
+
+**Decision: one rule, one implementation — `visibility.CanAssignToTeam`.** A caller may assign to a
+team when they are a **direct member** of it, hold a **team-scoped** admin grant over it, or are
+`system.admin`. Two thin adapters call it; nothing else expresses the rule.
+
+Three parts of that are not obvious and are the reason this amendment exists:
+
+- **A GLOBAL admin grant is deliberately insufficient.** `ScopedTeams` excludes globals and the
+  wildcard by design, and assignment honours that. A global `posts.admin` is the *instance-moderator*
+  role; #954 is precisely about content appearing in a studio's space it has nothing to do with, and
+  a moderator is not thereby a member of every studio. `system.admin` is the sole escape hatch.
+- **Membership is DIRECT; grants close over the hierarchy.** The asymmetry is deliberate.
+  Delegated administration expands through `team_closure` (Layer 5), but membership does not —
+  `is_team_member` is a plain `EXISTS` against `team_memberships` in `ContentReadable`,
+  `ContentReadableSQL` and `FieldsColumnsSQL`, with no closure walk anywhere. A parent-team member
+  permitted to assign into a descendant would hand out an audience they are not in, and could not
+  read the result themselves. Direct is also the narrower reading, so it fails closed.
+- **A soft-deleted team is unassignable by anyone**, `system.admin` included. The FK is
+  `REFERENCES public.teams(id) ON DELETE SET NULL` and never consults `teams.deleted_at`, so without
+  an explicit liveness probe a deleted team would satisfy it silently. The probe runs *before* the
+  authorization disjunction.
+
+**The capability is per-entity** — `posts.admin` for posts, `assets.admin` for assets — because
+assignment is what *confers* the team-scoped mutation right over the new row, so the code naming
+that right is the one entitled to hand it out. A single cross-entity code would let a holder of one
+plant rows in the other's space; a new `teams.assign` code would be held by nobody and seeded by
+nothing, which is how the team tier reached the state #953 describes in the first place.
+
+**Refusals are indistinguishable.** An unauthorised-but-real team returns byte-identical output to a
+nonexistent one; otherwise the endpoint is a team-existence probe across the instance. Same
+discipline as #922 / #941 / #952.
+
+**Not decided here: reassignment.** Neither `PostUpdate` nor `AssetUpdate` carries `team_id`. Moving
+a row between teams changes who may mutate it *and* who may read it at the team tier, and wants its
+own gate rather than a shared one.
+
+---
+
+### Amendment 2026-08-09 (#937, PR #980) — the restore rule has one home
+
+*Who may undo a soft delete* had grown three hand-copied implementations — `assets.canRestoreDeleted`,
+`posts.canRestorePost`, `collections.canRestoreCollection` — each commented *"mirrors
+assets.canRestoreDeleted exactly"*, which is a promise no comment can keep. All three are deleted;
+the rule lives once as **`auth.CanRestoreDeleted`** (`app/internal/auth/restore_gate.go`): the
+deleter may restore (`deleted_by_user_ref == caller`), `system.admin` may always, a NULL deleter
+(pre-#936 rows) is admin-only. Four consumers — the three restore endpoints and the trash listing's
+`restorable_by_caller` flag — obtain the rule rather than restating it, so the listing structurally
+cannot disagree with the endpoint it fronts. Same consolidation discipline as the attach rule
+(#940, ADR 0064) and epic #665's premise: one expression of a security rule per system.

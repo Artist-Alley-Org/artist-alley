@@ -38,6 +38,9 @@
   const NAV_LINKS: Array<{ href: string; labelKey: string; public?: boolean }> = [
     { href: '/',            labelKey: 'nav.gallery',      public: true },
     { href: '/blogs',       labelKey: 'nav.blogs' },
+    // No `public` flag: /teams needs `teams.read`, held by Base and not
+    // by anonymous, so a guest offered it would bounce to sign-in (#684).
+    { href: '/teams',       labelKey: 'nav.teams' },
     { href: '/collections', labelKey: 'nav.collections',  public: true },
     { href: '/review',      labelKey: 'nav.review' },
   ];

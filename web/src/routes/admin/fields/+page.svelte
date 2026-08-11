@@ -1,15 +1,24 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
+  // The fields INDEX (#854).
+  //
+  // This page used to be the whole feature: nine columns, and three
+  // separate editors expanded inside its own cells. The owner's call
+  // on 2026-08-02 was that it is too cramped, and each addition to the
+  // fields arc made the cell denser. So editing moved to
+  // /admin/fields/{code} and what is left here is what an index is
+  // for — scanning, filtering, and getting to the one you want.
+  //
+  // Five columns, and every one of them answers a question you ask
+  // WHILE scanning. `applies_to`, `display_group`, the extraction
+  // wiring and the default summary all answer questions you ask about
+  // ONE field, so they live on that field's page.
+
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
-  import ExtractionConfigPicker from '$components/ExtractionConfigPicker.svelte';
-  import FieldEditor from '$components/FieldEditor.svelte';
-  import FieldDefaultEditor from '$components/FieldDefaultEditor.svelte';
-  import { describeDefault, typeSupportsDefault, CONTEXT_KEYS, type FieldDefault } from '$lib/fieldDefaults';
-  import { normalizeOptions, optionLabel } from '$lib/fieldOptions';
 
   interface Field {
     id: string;
@@ -18,42 +27,10 @@
     type: string;
     subject_kind: 'asset' | 'collection';
     required: boolean;
-    applies_to: number[];
-    display_group?: string;
-    extraction_source?: string;
-    extraction_mode?: string;
-    options?: Record<string, unknown>;
-    open_vocabulary?: boolean;
-    default_value?: FieldDefault | null;
+    show_on_card?: boolean;
+    mirrors_column?: string | null;
     updated_at: string;
   }
-
-  // Per-row toggle for the upload-default editor. Keyed by field id.
-  let defaulting = $state<Record<string, boolean>>({});
-  function toggleDefault(id: string) { defaulting[id] = !defaulting[id]; }
-
-  // What the row's button says. A field with a default should say what
-  // it is without being opened — the operator's question is almost
-  // always "which fields default, and to what".
-  function defaultSummary(f: Field): string {
-    if (!f.default_value) return '';
-    const vocab = normalizeOptions(f.options);
-    return describeDefault(
-      f.default_value,
-      f.type,
-      (slug) => optionLabel(vocab, slug),
-      (c) => t(CONTEXT_KEYS[c]),
-      (on) => t(on ? 'common.yes' : 'common.no'),
-    );
-  }
-
-  // Per-row toggle for the extraction picker. Keyed by field id.
-  let expanded = $state<Record<string, boolean>>({});
-  function toggleExtraction(id: string) { expanded[id] = !expanded[id]; }
-
-  // Per-row toggle for the field editor (label / required / options).
-  let editing = $state<Record<string, boolean>>({});
-  function toggleEdit(id: string) { editing[id] = !editing[id]; }
 
   let fields = $state<Field[]>([]);
   let loading = $state(true);
@@ -73,10 +50,6 @@
 
   onMount(() => void load());
 
-  // `silent` refreshes the rows WITHOUT flipping `loading`. Toggling
-  // loading swaps the whole table for a spinner, which destroys any
-  // open row editor — taking its unsaved state and its "saved"
-  // confirmation with it. Post-save refreshes must be silent.
   async function load(silent = false) {
     if (!silent) loading = true;
     try {
@@ -256,132 +229,67 @@
 {:else if fields.length === 0}
   <p class="rounded-md bg-surface-elevated px-4 py-6 text-center text-fg-muted">{t('admin.fields.no_fields')}</p>
 {:else}
-  <!-- The row set is wider than a phone viewport. Without this the
-       overflow is unreachable rather than scrollable — the editor's
-       Save button ended up at x=-235 at 390px. -->
-  <div class="overflow-x-auto">
-  <table class="w-full text-sm">
+  <!--
+    Five columns at a desk, three on a phone. A phone REDUCES rather
+    than shrinks: `code` folds under the label (where it is still
+    readable and still copyable) and `subject` goes, because the two
+    filter chips above already answer "asset or collection" and the
+    field's own page answers it again. Nothing lands off-screen behind
+    a sideways scroll nobody discovers — the failure the old
+    nine-column row had at this width.
+  -->
+  <table class="w-full table-fixed text-sm">
     <thead class="text-left text-xs uppercase tracking-wider text-fg-muted">
       <tr>
-        <th class="py-2">{t('admin.fields.code')}</th>
         <th class="py-2">{t('admin.fields.label')}</th>
+        <th class="hidden py-2 sm:table-cell">{t('admin.fields.code')}</th>
         <th class="py-2">{t('admin.fields.type')}</th>
-        <th class="py-2">{t('admin.fields.subject_kind')}</th>
-        <th class="py-2">{t('admin.fields.applies_to')}</th>
-        <th class="py-2">{t('admin.fields.group')}</th>
-        <th class="py-2">{t('admin.fields.extraction')}</th>
-        <th class="py-2">{t('admin.fields.default')}</th>
-        <th class="py-2">{t('admin.fields.edit')}</th>
+        <th class="hidden py-2 sm:table-cell">{t('admin.fields.subject_kind')}</th>
+        <th class="py-2">{t('admin.fields.flags')}</th>
       </tr>
     </thead>
     <tbody>
       {#each fields as f (f.id)}
-        <tr class="border-t border-border" data-testid="admin-fields-row-{f.code}">
-          <td class="py-2 font-mono text-xs">{f.code}</td>
-          <td class="py-2">{f.label}</td>
-          <td class="py-2 text-fg-muted">{f.type}</td>
-          <td class="py-2 text-fg-muted">
+        <tr class="border-t border-border align-top" data-testid="admin-fields-row-{f.code}">
+          <td class="py-2 pr-2">
+            <!-- The whole row's job is to get you to the page. A real
+                 <a>, so middle-click, ⌘-click and "copy link" all work
+                 — the point of the route is that a field is somewhere
+                 you can SEND someone. -->
+            <a
+              href="/admin/fields/{f.code}"
+              data-testid="admin-fields-open-{f.code}"
+              class="block break-words font-medium text-accent hover:underline"
+            >{f.label}</a>
+            <span class="block break-all font-mono text-xs text-fg-muted sm:hidden">{f.code}</span>
+          </td>
+          <td class="hidden break-all py-2 pr-2 font-mono text-xs text-fg-muted sm:table-cell">{f.code}</td>
+          <td class="break-words py-2 pr-2 text-fg-muted">{f.type}</td>
+          <td class="hidden py-2 pr-2 text-fg-muted sm:table-cell">
             {f.subject_kind === 'collection' ? t('admin.fields.subject_collection') : t('admin.fields.subject_asset')}
           </td>
-          <td class="py-2 text-fg-muted">{f.applies_to?.length ? f.applies_to.join(', ') : 'all'}</td>
-          <td class="py-2 text-fg-muted">{f.display_group ?? ''}</td>
           <td class="py-2">
-            <button
-              type="button"
-              onclick={() => toggleExtraction(f.id)}
-              class="rounded border border-border px-2 py-0.5 text-xs text-fg-muted hover:bg-state-hover"
-              data-testid="admin-fields-extraction-toggle-{f.code}"
-            >
-              {#if f.extraction_source}
-                <code class="text-xs">{f.extraction_source}</code> · {f.extraction_mode || 'skip_if_set'}
-              {:else}
-                — wire —
+            <span class="flex flex-wrap gap-1 text-[10px] uppercase tracking-wider">
+              {#if f.required}
+                <span class="rounded border border-border bg-surface px-1.5 py-0.5 text-fg-muted"
+                >{t('admin.fields.edit_required')}</span>
               {/if}
-            </button>
-          </td>
-          <td class="py-2">
-            {#if f.subject_kind === 'asset' && typeSupportsDefault(f.type)}
-              <button
-                type="button"
-                onclick={() => toggleDefault(f.id)}
-                class="min-h-11 rounded border border-border px-2 py-0.5 text-xs text-fg-muted hover:bg-state-hover"
-                data-testid="admin-fields-default-toggle-{f.code}"
-              >
-                {#if f.default_value}
-                  {defaultSummary(f) || t('admin.fields.default_set')}
-                {:else}
-                  — {t('admin.fields.default_none')} —
-                {/if}
-              </button>
-            {:else}
-              <span class="text-xs text-fg-muted">—</span>
-            {/if}
-          </td>
-          <td class="py-2">
-            <button
-              type="button"
-              onclick={() => toggleEdit(f.id)}
-              class="min-h-11 rounded border border-border px-2 py-0.5 text-xs text-fg-muted hover:bg-state-hover"
-              data-testid="admin-fields-edit-toggle-{f.code}"
-            >
-              {editing[f.id] ? t('common.cancel') : t('admin.fields.edit')}
-            </button>
+              {#if f.show_on_card}
+                <span
+                  data-testid="admin-fields-card-badge-{f.code}"
+                  class="rounded border border-border bg-surface px-1.5 py-0.5 text-fg-muted"
+                >{t('admin.fields.flag_on_card')}</span>
+              {/if}
+              {#if f.mirrors_column}
+                <span
+                  data-testid="admin-fields-mirror-badge-{f.code}"
+                  class="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-accent"
+                >{t('admin.field_detail.mirror_badge')}</span>
+              {/if}
+            </span>
           </td>
         </tr>
-        {#if expanded[f.id]}
-          <tr class="border-t border-border/30 bg-bg-soft/40">
-            <td class="px-2 py-2" colspan="9">
-              <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
-                <ExtractionConfigPicker
-                  fieldId={f.id}
-                  initialSource={f.extraction_source ?? ''}
-                  initialMode={f.extraction_mode ?? ''}
-                  onSaved={() => load(true)}
-                />
-              </div>
-            </td>
-          </tr>
-        {/if}
-        {#if defaulting[f.id]}
-          <tr class="border-t border-border/30 bg-bg-soft/40">
-            <td class="px-2 py-2" colspan="9">
-              <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
-                <FieldDefaultEditor
-                  fieldId={f.id}
-                  fieldType={f.type}
-                  initialDefault={f.default_value}
-                  initialOptions={f.options}
-                  onSaved={() => load(true)}
-                />
-              </div>
-            </td>
-          </tr>
-        {/if}
-        {#if editing[f.id]}
-          <tr class="border-t border-border/30 bg-bg-soft/40">
-            <td class="px-2 py-2" colspan="9">
-              <div class="sticky left-0 w-[calc(100vw-2rem)] max-w-full sm:w-auto">
-                <!-- Deliberately not keyed on updated_at: the editor
-                     re-baselines itself from its own PATCH response,
-                     and a baseline made stale by someone ELSE's write
-                     should surface as a visible conflict rather than
-                     be silently swapped underneath the operator. -->
-                <FieldEditor
-                  fieldId={f.id}
-                  fieldType={f.type}
-                  initialLabel={f.label}
-                  initialRequired={f.required}
-                  initialOptions={f.options}
-                  initialOpenVocabulary={f.open_vocabulary === true}
-                  initialUpdatedAt={f.updated_at}
-                  onSaved={() => load(true)}
-                />
-              </div>
-            </td>
-          </tr>
-        {/if}
       {/each}
     </tbody>
   </table>
-  </div>
 {/if}

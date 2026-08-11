@@ -129,25 +129,154 @@ class LangState {
   }
 
   /**
+   * Apply a locale: state, `<html lang>`, and optionally the cookie.
+   *
+   * ONE path, called by every path that changes the rendered locale, so
+   * the three things that must agree cannot drift apart (#967).
+   *
+   * `<html lang>` is the part that was missing entirely. app.html
+   * hardcodes `lang="en"` and nothing ever wrote it, so a fully French
+   * render still announced itself as English. That is an accessibility
+   * defect rather than a cosmetic one: screen readers pick voice and
+   * pronunciation rules off that attribute and CSS `:lang()` keys off
+   * it, so a French page read aloud in an English voice is worse than an
+   * untranslated one — the user cannot tell it is wrong from the text.
+   * It carries `resolved`, never `pref`: `pref` may be '' or a tag we
+   * have no catalogue for, and the attribute must describe the language
+   * actually on screen.
+   *
+   * `persist` is false for init() alone, and the asymmetry is
+   * deliberate. init() READ the cookie; writing it straight back would
+   * be a device-state write on a non-user action, and in the
+   * no-cookie-no-account case it would pin a navigator-derived guess
+   * into the cookie permanently — the same trap theme.syncFromAccount()
+   * documents for its own default. Every path that changes the locale
+   * to something the cookie does NOT already say persists it.
+   */
+  private apply(pref: string, resolved: string, persist: boolean): void {
+    this.pref = pref;
+    this.resolved = resolved;
+    applyLangToDom(resolved);
+    if (persist) writeCookie(COOKIE_NAME, pref, COOKIE_MAX_AGE);
+  }
+
+  /**
    * Initialise from cookie + user profile + navigator.language.
    * Called once from +layout.svelte's onMount.
    */
   init(): void {
-    // 1. Cookie wins for the initial paint (no network).
+    // 1. Cookie, else the browser's own preference. No network.
     const cookiePref = readCookie(COOKIE_NAME);
-    // 2. Auth user profile — overrides cookie if non-empty (DB is
-    //    the canonical source once signed in).
-    const profilePref = (auth.user as unknown as { language?: string } | null)?.language ?? '';
-
-    const chosen = profilePref || cookiePref || '';
-    this.pref = chosen;
-    this.resolved = chosen ? resolveLocale(chosen) : resolveLocale(systemPref());
+    this.apply(
+      cookiePref,
+      cookiePref ? resolveLocale(cookiePref) : resolveLocale(systemPref()),
+      false,
+    );
+    // 2. The account, which outranks the device — the DB is canonical
+    //    once signed in. Delegated rather than repeated: syncFromAccount
+    //    runs on every path that publishes a user (#869) and this one
+    //    runs at mount, so two copies of "does the account win" would be
+    //    two rules to keep in step, and the drift would present as the
+    //    same user getting a different language depending on which ran
+    //    last. Whichever fires here is a no-op when auth.user is null.
+    this.syncFromAccount();
 
     // Apply the cached overrides synchronously, then refresh from the
     // server. Mirrors appearance.init() — same first-paint problem,
     // same shape of answer.
     this.overrides = readOverrideCache();
     void this.refreshOverrides();
+  }
+
+  /**
+   * Adopt the signed-in account's `language` (#869).
+   *
+   * Called from AuthState.adopt(), which is the one place `user` is
+   * assigned — so this runs on the sign-in path (login()), the boot
+   * path (hydrateFrom(), via +layout.ts) and the re-fetch path
+   * (refresh()) alike, and cannot be reached by a fourth path that
+   * forgets to call it.
+   *
+   * init() alone does not cover this and cannot. The root layout mounts
+   * ONCE, so init() runs against whatever `auth.user` held at that
+   * moment: for a visitor who lands on /login that is null, and their
+   * account language would then never be applied until a full reload
+   * picked it up off the profile. theme.syncFromAccount() exists for
+   * exactly the same gap; this is the language half of it.
+   *
+   * PRECEDENCE IS THE OPPOSITE OF THEME'S, and deliberately so. Theme
+   * returns early when the device cookie is set — the device has spoken
+   * and the account does not argue. Language overwrites it: the ACCOUNT
+   * is canonical once signed in, which is the precedence init() has
+   * always applied (`profilePref || cookiePref`) and which now lives
+   * here alone. A language is a property of the person; a colour scheme
+   * is a property of the screen they happen to be sitting at.
+   *
+   * It sends no PATCH — mirroring a value the server just told us back
+   * to the server is a write nobody asked for.
+   *
+   * It DOES now write the cookie, which is the reversal #967 asked for
+   * and the whole of the first-paint fix. This is a static build: the
+   * page paints before /auth/me answers, so the account language cannot
+   * be known before hydration, and without a cookie a French account got
+   * an English first paint on EVERY cold load and then swapped. The
+   * cookie is the only thing app.html's pre-paint script can read.
+   *
+   * The sprint that found this declined the write for a real reason — it
+   * changes device state as a side effect of a non-user action, and it
+   * OUTLIVES LOGOUT, so a shared machine would carry one account's
+   * language into the next visitor's first paint. That objection is
+   * answered rather than overruled: reset() clears the cookie, and
+   * logout() calls it. The write is safe because its lifetime is now
+   * bounded by the session that caused it.
+   */
+  syncFromAccount(): void {
+    const account = (auth.user as unknown as { language?: string | null } | null)?.language ?? '';
+    // Null / absent / empty is the NORMAL state, not a fault: it is the
+    // stored value for every account that has never picked a language,
+    // and it means "follow this device". Falling back to the cookie
+    // then navigator.language then en is correct, and silent, because
+    // nothing was asked for and nothing is being ignored.
+    if (!account) return;
+    const resolved = resolveLocale(account);
+    // An UNRECOGNISED tag is a different thing and gets a warning.
+    // UserProfileUpdate.language is validated only by maxLength server-
+    // side, so `de` or `en_US` or a typo can genuinely be stored; the
+    // account asked for something and is about to be handed English
+    // instead. That is the right fallback and the wrong thing to do
+    // quietly — the person sees a language they did not choose and has
+    // no way to find out why.
+    if (resolved !== account && resolved !== account.split('-')[0]) {
+      console.warn(
+        `[i18n] account language ${JSON.stringify(account)} is not a supported locale `
+        + `(${SUPPORTED_LOCALES.map((l) => l.code).join(', ')}); rendering ${resolved}`,
+      );
+    }
+    this.apply(account, resolved, true);
+  }
+
+  /**
+   * Forget the device's language and go back to the default (#967).
+   *
+   * Called from AuthState.logout() and from nowhere else, and the "and
+   * from nowhere else" is the rule, not an implementation detail.
+   *
+   * It is NOT tied to being anonymous. An anonymous visitor who picks
+   * French from the picker keeps French across reloads for a year —
+   * that is their explicit choice and it is what set() stored. What gets
+   * cleared is a language this device only knows because an ACCOUNT was
+   * signed in on it, and the moment that account signs out the device
+   * has no business still speaking it: the next person at a shared
+   * machine gets the default, not a stranger's language.
+   *
+   * Deliberately not called from clear(), the 401 path. An expired
+   * session is not somebody leaving; wiping their language because a
+   * token aged out would be a surprise mid-visit, and they are about to
+   * sign in again and re-adopt it anyway.
+   */
+  reset(): void {
+    clearCookie(COOKIE_NAME);
+    this.apply('', resolveLocale(systemPref()), false);
   }
 
   /**
@@ -202,9 +331,7 @@ class LangState {
    * the choice follows the user across browsers.
    */
   async set(pref: string): Promise<void> {
-    this.pref = pref;
-    this.resolved = pref ? resolveLocale(pref) : resolveLocale(systemPref());
-    writeCookie(COOKIE_NAME, pref, COOKIE_MAX_AGE);
+    this.apply(pref, pref ? resolveLocale(pref) : resolveLocale(systemPref()), true);
     if (auth.user) {
       try {
         await api.PATCH('/users/{ref}', {
@@ -274,6 +401,29 @@ function writeCookie(name: string, value: string, maxAgeSeconds: number): void {
   if (typeof document === 'undefined') return;
   const sec = ['', name + '=' + encodeURIComponent(value), 'Path=/', `Max-Age=${maxAgeSeconds}`, 'SameSite=Lax'];
   document.cookie = sec.filter(Boolean).join('; ');
+}
+
+/** Expire the cookie now. Same name and Path as writeCookie — a cookie
+ *  written at `Path=/` is not removed by expiring one at a different
+ *  path, and the leftover would keep painting the old language. */
+function clearCookie(name: string): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+/**
+ * Write the active locale onto `<html lang>` (#967).
+ *
+ * MUST stay in lockstep with the pre-paint script in app.html, which
+ * sets the same attribute from the same cookie before hydration. If the
+ * two disagree the attribute changes after paint — assistive tech that
+ * already chose a voice does not necessarily revisit that choice, which
+ * is the flash-of-wrong-language equivalent the script exists to
+ * prevent. `langScript.test.ts` pins them together.
+ */
+function applyLangToDom(resolved: string): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.setAttribute('lang', resolved);
 }
 
 export const lang = new LangState();

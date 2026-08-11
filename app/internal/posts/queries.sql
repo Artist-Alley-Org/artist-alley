@@ -41,12 +41,21 @@ RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: SoftDeletePost :exec
-UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+-- deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
+-- restore gate reads it, so every soft-delete path has to write it.
+UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetPostDeletedBy :one
+-- Who soft-deleted this post. pgx.ErrNoRows when the row is live or
+-- absent — the two cases the restore path already conflates.
+SELECT deleted_by_user_ref
+  FROM posts
+ WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- The two post LIST queries (ListPostsPage, ListPostsByAsset) are NOT
 -- here. They live in list_page.go as hand-built SQL, because the read
--- rule they must apply is a runtime fragment (readRule.sql) and a sqlc
+-- rule they must apply is a runtime fragment (readRuleSQL) and a sqlc
 -- query is a static string — the same reason every splice site of
 -- visibility.Predicate is hand-built.
 --
@@ -73,6 +82,16 @@ ON CONFLICT (post_id, asset_id) DO UPDATE SET
 
 -- name: RemovePostAsset :exec
 DELETE FROM post_assets WHERE post_id = $1 AND asset_id = $2;
+
+-- name: PostIDsForAsset :many
+-- Every post that lists this asset as a member. Drives cache
+-- invalidation when the ASSET changes in a way that changes what
+-- ListPostAssets returns — soft-delete and restore, which flip the
+-- `a.deleted_at IS NULL` half of that join without touching any post
+-- row (#920). No visibility filter: this answers "whose cached copy is
+-- now wrong", which is every holder, not just the ones a given reader
+-- may see.
+SELECT post_id FROM post_assets WHERE asset_id = $1;
 
 -- name: ListPostAssets :many
 -- Members of a post, in display order, joined onto the asset row so
@@ -138,7 +157,7 @@ DELETE FROM collection_posts WHERE collection_id = $1 AND post_id = $2;
 -- private post in a collection the day somebody wired it up is not a
 -- head start, it is a trap; deleting it is strictly better than
 -- auditing it. A future collection-posts listing must go through
--- posts.readRule (read_rule.go) the way ListPostsByAssetGated does.
+-- the post read rule (posts.readRuleSQL) the way ListPostsByAssetGated does.
 
 -- ---------------------------------------------------------------------------
 -- ACLs (Phase 1.7.B-7b)

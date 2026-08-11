@@ -87,8 +87,16 @@ persists it under `AA_BOOTSTRAP_ADMIN_PATH` (default
 | `:vX.Y.Z`            | exact version (immutable, recommended for prod) |
 | `:vX.Y`, `:vX`       | latest patch on that line                    |
 | `:latest`            | most recent stable release                   |
-| `:edge`              | latest commit on `dev` (continuous; not stable) |
-| `:edge-{sha}`        | exact dev commit (immutable, pinnable)       |
+| `:edge`              | newest built state of `dev` (continuous; not stable) |
+| `:edge-{sha}`        | exact dev commit that changed the application (immutable, pinnable) |
+
+`:edge-{sha}` is published only for `dev` commits that touch the
+application. Docs-only commits are skipped — they would produce a
+byte-identical image — so the tip of `dev` is often a commit with no
+image of its own. Pin a sha you can see under
+[Packages](https://github.com/Artist-Alley-Org/artist-alley/pkgs/container/artist-alley)
+rather than whatever `git rev-parse dev` returns. `:edge` always
+points at the newest built application state.
 
 ---
 

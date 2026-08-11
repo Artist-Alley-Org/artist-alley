@@ -195,20 +195,26 @@ func (q *Queries) ExecAssetChangeState(ctx context.Context, arg ExecAssetChangeS
 
 const execAssetSoftDelete = `-- name: ExecAssetSoftDelete :execrows
 UPDATE assets
-SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type ExecAssetSoftDeleteParams struct {
-	ID            pgtype.UUID `json:"id"`
-	DeletedReason *string     `json:"deleted_reason"`
+	ID               pgtype.UUID `json:"id"`
+	DeletedReason    *string     `json:"deleted_reason"`
+	DeletedByUserRef *int64      `json:"deleted_by_user_ref"`
 }
 
 // Soft-delete (set deleted_at); the nightly GC hard-deletes later. Only
 // acts on a live row, so re-running against an already-deleted asset is
 // a no-op the executor reports as rows-affected=0.
+//
+// deleted_by_user_ref is the scheduled action's `created_by`, which is
+// itself nullable — a system-scheduled retention delete has no human
+// behind it. NULL there means "nobody may self-restore this", which is
+// the correct fail-closed answer rather than a gap (#931).
 func (q *Queries) ExecAssetSoftDelete(ctx context.Context, arg ExecAssetSoftDeleteParams) (int64, error) {
-	result, err := q.db.Exec(ctx, execAssetSoftDelete, arg.ID, arg.DeletedReason)
+	result, err := q.db.Exec(ctx, execAssetSoftDelete, arg.ID, arg.DeletedReason, arg.DeletedByUserRef)
 	if err != nil {
 		return 0, err
 	}

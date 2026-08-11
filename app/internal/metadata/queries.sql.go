@@ -108,7 +108,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary
+          open_vocabulary, mirrors_column, show_on_card
 `
 
 type CreateFieldDefinitionParams struct {
@@ -178,6 +178,8 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.ExtractionMode,
 		&i.DefaultValue,
 		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -277,6 +279,31 @@ func (q *Queries) GetAssetFieldValue(ctx context.Context, arg GetAssetFieldValue
 	return i, err
 }
 
+const getAssetMirrorSubject = `-- name: GetAssetMirrorSubject :one
+SELECT owner_user_ref, team_id
+  FROM assets
+ WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetAssetMirrorSubjectRow struct {
+	OwnerUserRef *int64
+	TeamID       pgtype.UUID
+}
+
+// The authorisation probe for a mirrored write. A mirrored field's
+// payload is an `assets` column, so the gate that binds is the COLUMN's
+// (owner / team-scoped assets.admin / global), not the field plane's
+// "any authenticated caller". Deliberately the same projection
+// assets.GetAssetMutationSubject reads, for the same reason: the gate
+// needs a nullable owner alongside team_id and must answer for a row the
+// caller may not be entitled to read.
+func (q *Queries) GetAssetMirrorSubject(ctx context.Context, id pgtype.UUID) (GetAssetMirrorSubjectRow, error) {
+	row := q.db.QueryRow(ctx, getAssetMirrorSubject, id)
+	var i GetAssetMirrorSubjectRow
+	err := row.Scan(&i.OwnerUserRef, &i.TeamID)
+	return i, err
+}
+
 const getCollectionFieldValue = `-- name: GetCollectionFieldValue :one
 SELECT v.collection_id, v.field_id, v.value_text, v.value_num, v.value_date,
        v.value_options, v.value_ref, v.set_by, v.set_at, v.set_by_user_ref,
@@ -362,7 +389,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE code = $1
 `
 
@@ -395,6 +422,8 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.ExtractionMode,
 		&i.DefaultValue,
 		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -406,7 +435,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition WHERE id = $1
 `
 
@@ -439,8 +468,24 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.ExtractionMode,
 		&i.DefaultValue,
 		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
+}
+
+const getFieldMirrorColumn = `-- name: GetFieldMirrorColumn :one
+SELECT mirrors_column FROM field_definition WHERE id = $1
+`
+
+// Just the declaration, for a caller that holds a field id and no row —
+// the extraction writer adapter, which is handed a bare field id by the
+// applier.
+func (q *Queries) GetFieldMirrorColumn(ctx context.Context, id pgtype.UUID) (*string, error) {
+	row := q.db.QueryRow(ctx, getFieldMirrorColumn, id)
+	var mirrors_column *string
+	err := row.Scan(&mirrors_column)
+	return mirrors_column, err
 }
 
 const getReferencedAsset = `-- name: GetReferencedAsset :one
@@ -546,7 +591,7 @@ func (q *Queries) InsertAssetFieldValueIfAbsent(ctx context.Context, arg InsertA
 
 const listAssetDefaultCandidates = `-- name: ListAssetDefaultCandidates :many
 
-SELECT f.id, f.code, f.type, f.options, f.default_value,
+SELECT f.id, f.code, f.type, f.options, f.default_value, f.mirrors_column,
        o.team_id, o.default_value AS override_value
 FROM field_definition f
 LEFT JOIN field_default_override o
@@ -570,6 +615,7 @@ type ListAssetDefaultCandidatesRow struct {
 	Type          string
 	Options       []byte
 	DefaultValue  []byte
+	MirrorsColumn *string
 	TeamID        pgtype.UUID
 	OverrideValue []byte
 }
@@ -592,6 +638,11 @@ type ListAssetDefaultCandidatesRow struct {
 //
 // applies_to is honoured here: a field that does not apply to this asset
 // type has no business defaulting onto it.
+//
+// f.mirrors_column rides along because a default on a MIRRORED field
+// (#822) fills the COLUMN, not asset_field_value — the guard trigger
+// refuses the latter — and this pass has to know which it is holding
+// before it writes.
 func (q *Queries) ListAssetDefaultCandidates(ctx context.Context, arg ListAssetDefaultCandidatesParams) ([]ListAssetDefaultCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, listAssetDefaultCandidates, arg.TeamIds, arg.Rt)
 	if err != nil {
@@ -607,6 +658,7 @@ func (q *Queries) ListAssetDefaultCandidates(ctx context.Context, arg ListAssetD
 			&i.Type,
 			&i.Options,
 			&i.DefaultValue,
+			&i.MirrorsColumn,
 			&i.TeamID,
 			&i.OverrideValue,
 		); err != nil {
@@ -672,6 +724,7 @@ const listAssetFieldValues = `-- name: ListAssetFieldValues :many
 SELECT v.field_id, v.value_text, v.value_num, v.value_date, v.value_options, v.value_ref,
        v.set_by, v.set_at, v.set_by_user_ref,
        f.code, f.label, f.type, f.status, f.options,
+       f.display_group, f.display_order,
        r.id AS ref_asset_id,
        -- COALESCE rather than a bare r.title: sqlc infers a LEFT-joined
        -- NOT NULL column as non-nullable and would scan a NULL into a
@@ -701,6 +754,8 @@ type ListAssetFieldValuesRow struct {
 	Type          string
 	Status        string
 	Options       []byte
+	DisplayGroup  string
+	DisplayOrder  int32
 	RefAssetID    pgtype.UUID
 	RefAssetTitle string
 }
@@ -735,6 +790,12 @@ type ListAssetFieldValuesRow struct {
 // asserts both halves of that claim, so if the authenticated predicate
 // ever tightens (#210's sensitivity rule) or this endpoint is ever
 // opened to anonymous callers, the test fails and points here.
+// `f.display_group` / `f.display_order` ride along because a MIRRORED
+// field's value never appears in this result — the guard trigger from
+// migration 00044 refuses it a row in asset_field_value at all — so
+// ListAssetMirroredValues supplies those rows separately and the
+// handler merges the two lists. A merge needs the sort keys, and the
+// ORDER BY below could not hand them over.
 func (q *Queries) ListAssetFieldValues(ctx context.Context, assetID pgtype.UUID) ([]ListAssetFieldValuesRow, error) {
 	rows, err := q.db.Query(ctx, listAssetFieldValues, assetID)
 	if err != nil {
@@ -759,8 +820,103 @@ func (q *Queries) ListAssetFieldValues(ctx context.Context, assetID pgtype.UUID)
 			&i.Type,
 			&i.Status,
 			&i.Options,
+			&i.DisplayGroup,
+			&i.DisplayOrder,
 			&i.RefAssetID,
 			&i.RefAssetTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAssetMirroredValues = `-- name: ListAssetMirroredValues :many
+
+SELECT f.id AS field_id,
+       public.asset_mirror_read(a.id, f.mirrors_column) AS value_text,
+       f.code, f.label, f.type, f.status, f.options,
+       f.display_group, f.display_order,
+       a.updated_at AS set_at
+  FROM field_definition f
+  CROSS JOIN assets a
+ WHERE a.id = $1
+   AND a.deleted_at IS NULL
+   AND f.mirrors_column IS NOT NULL
+   AND f.subject_kind = 'asset'
+   AND f.status <> 'archived'
+   AND coalesce(public.asset_mirror_read(a.id, f.mirrors_column), '') <> ''
+ ORDER BY f.display_group, f.display_order, f.code
+`
+
+type ListAssetMirroredValuesRow struct {
+	FieldID      pgtype.UUID
+	ValueText    string
+	Code         string
+	Label        string
+	Type         string
+	Status       string
+	Options      []byte
+	DisplayGroup string
+	DisplayOrder int32
+	SetAt        pgtype.Timestamptz
+}
+
+// ---------------------------------------------------------------------------
+// MIRRORED fields — a definition that declares `mirrors_column` is a VIEW
+// onto that column of `assets`, not storage of its own (#822, migration
+// 00044).
+//
+// Every query below obtains the column from `field_definition.mirrors_column`
+// and hands it to the accessor functions the migration installs. NOTHING in
+// this file, or in Go, names `title` or `description`: the CHECK constraint on
+// the column is the only enumeration of what is mirrorable, so widening the
+// set is a migration and not a sweep through the query layer.
+// ---------------------------------------------------------------------------
+// The mirrored half of ListAssetFieldValues. Those rows cannot come from
+// that query because they do not exist in asset_field_value and never
+// will — the guard trigger refuses them — so they are projected from the
+// column here and merged by the handler on (display_group, display_order,
+// code), the same order the stored half arrives in.
+//
+// An EMPTY column yields no row, which is the same contract the stored
+// half honours: a field nobody has set has no entry, and the mirrorable
+// columns default to the empty string, which is how they say "unset".
+// Without this a mirrored field would appear on every asset in the
+// catalogue carrying a blank value.
+//
+// Archived fields are excluded. The stored half returns them (a value on
+// an archived field is still data an editor must be able to see and
+// clear); a mirrored field has nothing of its own to strand, so an
+// archived one is simply off.
+//
+// The soft-delete rule is asset_mirror_read's, so it is stated once — see
+// ListAssetFieldValues' note on why row-plane visibility for an
+// authenticated caller reduces to deleted_at IS NULL.
+func (q *Queries) ListAssetMirroredValues(ctx context.Context, id pgtype.UUID) ([]ListAssetMirroredValuesRow, error) {
+	rows, err := q.db.Query(ctx, listAssetMirroredValues, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssetMirroredValuesRow
+	for rows.Next() {
+		var i ListAssetMirroredValuesRow
+		if err := rows.Scan(
+			&i.FieldID,
+			&i.ValueText,
+			&i.Code,
+			&i.Label,
+			&i.Type,
+			&i.Status,
+			&i.Options,
+			&i.DisplayGroup,
+			&i.DisplayOrder,
+			&i.SetAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1012,7 +1168,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE (
         CASE WHEN $1::TEXT IS NULL
@@ -1078,6 +1234,8 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.ExtractionMode,
 			&i.DefaultValue,
 			&i.OpenVocabulary,
+			&i.MirrorsColumn,
+			&i.ShowOnCard,
 		); err != nil {
 			return nil, err
 		}
@@ -1096,7 +1254,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
        subject_kind, extraction_source, extraction_mode, default_value,
-       open_vocabulary
+       open_vocabulary, mirrors_column, show_on_card
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -1141,6 +1299,8 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.ExtractionMode,
 			&i.DefaultValue,
 			&i.OpenVocabulary,
+			&i.MirrorsColumn,
+			&i.ShowOnCard,
 		); err != nil {
 			return nil, err
 		}
@@ -1234,6 +1394,26 @@ func (q *Queries) LockFieldDefinitionVocabulary(ctx context.Context, id pgtype.U
 	return i, err
 }
 
+const readAssetMirroredValue = `-- name: ReadAssetMirroredValue :one
+SELECT coalesce(public.asset_mirror_read($1, $2), '')::TEXT AS value
+`
+
+type ReadAssetMirroredValueParams struct {
+	AssetID       pgtype.UUID
+	MirrorsColumn string
+}
+
+// One mirrored field's value, for the extraction pipeline's skip_if_set
+// probe. Empty means unset, and an absent or soft-deleted asset reads
+// empty too: both answers are "there is nothing here to preserve", which
+// is the only question the probe asks.
+func (q *Queries) ReadAssetMirroredValue(ctx context.Context, arg ReadAssetMirroredValueParams) (string, error) {
+	row := q.db.QueryRow(ctx, readAssetMirroredValue, arg.AssetID, arg.MirrorsColumn)
+	var value string
+	err := row.Scan(&value)
+	return value, err
+}
+
 const setFieldDefinitionOptions = `-- name: SetFieldDefinitionOptions :exec
 UPDATE field_definition
    SET options = $2, updated_at = NOW()
@@ -1266,7 +1446,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary
+          open_vocabulary, mirrors_column, show_on_card
 `
 
 type SetFieldExtractionConfigParams struct {
@@ -1313,6 +1493,8 @@ func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtr
 		&i.ExtractionMode,
 		&i.DefaultValue,
 		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }
@@ -1330,25 +1512,26 @@ UPDATE field_definition SET
     display_order             = COALESCE($9,             display_order),
     display_group             = COALESCE($10,             display_group),
     open_vocabulary           = COALESCE($11,           open_vocabulary),
-    status                    = COALESCE($12,                    status),
-    deprecated_replacement_id = COALESCE($13, deprecated_replacement_id),
+    show_on_card              = COALESCE($12,              show_on_card),
+    status                    = COALESCE($13,                    status),
+    deprecated_replacement_id = COALESCE($14, deprecated_replacement_id),
     -- default_value needs a CLEAR path, which COALESCE cannot express:
     -- passing NULL means "leave it alone" everywhere else in this
     -- statement, so "remove the default" would be unsayable. The
     -- explicit boolean makes removal a deliberate act rather than an
     -- ambiguity in the absence of a value.
-    default_value             = CASE WHEN $14::BOOLEAN THEN NULL
-                                     ELSE COALESCE($15, default_value) END,
+    default_value             = CASE WHEN $15::BOOLEAN THEN NULL
+                                     ELSE COALESCE($16, default_value) END,
     updated_at                = NOW(),
-    updated_by_user_ref       = $16
-WHERE id = $17
+    updated_by_user_ref       = $17
+WHERE id = $18
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, read_capability, write_capability,
           display_order, display_group, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
           subject_kind, extraction_source, extraction_mode, default_value,
-          open_vocabulary
+          open_vocabulary, mirrors_column, show_on_card
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -1363,6 +1546,7 @@ type UpdateFieldDefinitionParams struct {
 	DisplayOrder            *int32
 	DisplayGroup            *string
 	OpenVocabulary          *bool
+	ShowOnCard              *bool
 	Status                  *string
 	DeprecatedReplacementID pgtype.UUID
 	ClearDefault            bool
@@ -1388,6 +1572,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		arg.DisplayOrder,
 		arg.DisplayGroup,
 		arg.OpenVocabulary,
+		arg.ShowOnCard,
 		arg.Status,
 		arg.DeprecatedReplacementID,
 		arg.ClearDefault,
@@ -1422,6 +1607,8 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.ExtractionMode,
 		&i.DefaultValue,
 		&i.OpenVocabulary,
+		&i.MirrorsColumn,
+		&i.ShowOnCard,
 	)
 	return i, err
 }

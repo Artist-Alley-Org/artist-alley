@@ -69,6 +69,73 @@ export interface CardAsset {
    *  card falls back to measuring the image on load. */
   pixel_width: number | null;
   pixel_height: number | null;
+  /** The viewer may not see this item, and the server sent a placeholder
+   *  rather than the row (#883). OPTIONAL, unlike everything above,
+   *  because it is a property of MEMBERSHIP: only a container surface (a
+   *  collection's contents, a post's members) can produce one. Browse and
+   *  the profile grids list assets in their own right and never set it.
+   *
+   *  When true, none of the fields above carry real values — the API
+   *  omitted them — and CardThumb short-circuits to the restricted plate
+   *  before reading any of them. */
+  restricted?: boolean;
+  /** The asset owner's display name: the ONE asset-derived value a
+   *  restricted placeholder is allowed to carry. Null/absent when the
+   *  server could not resolve one. */
+  owner_display_name?: string | null;
+  /** Who owns this asset, when the surface knows (#549). Drives the
+   *  card's edit affordance and nothing about presentation, which is
+   *  why it is OPTIONAL where the four presentation fields above are
+   *  required: a hand-mapped row that omits it loses a menu item on
+   *  that one surface, not the tile's identity, and `/assets/{id}/edit`
+   *  remains reachable and answers the permission question itself.
+   *
+   *  Nullable as well as optional, because the column is: an asset can
+   *  genuinely have no owner (only system.admin may mutate one), and
+   *  `null` must never read as "mine". Absent on a `restricted`
+   *  placeholder by design — see owner_display_name above; a ref there
+   *  would be a second way to ask who holds a withheld row. */
+  owner_user_ref?: number | null;
+  /** The at-a-glance field values an operator marked `show_on_card`
+   *  (#552), already resolved to display strings and in the order the
+   *  field definitions declare.
+   *
+   *  OPTIONAL, like owner_user_ref and unlike the presentation fields
+   *  above, and that is the contract rather than an oversight: the flag
+   *  is a DISPLAY HINT in `display_order`'s class (ADR 0012), so a
+   *  surface that hand-maps a narrower row and drops it renders a
+   *  PLAINER card, never a wrong one. The card falls back to its own
+   *  default whenever this is absent or empty, which is the same
+   *  behaviour it had before the flag existed. Absent on a `restricted`
+   *  placeholder by design — see owner_display_name. */
+  card_fields?: CardFieldValue[] | null;
+  /** Which peer this asset came from, or absent/null when it is ours
+   *  (#552).
+   *
+   *  The card must answer "whose is this?" without making remote work
+   *  look lesser: same tile, same layout, same hints — plus an
+   *  attribution line. Making federated content look DIFFERENT is the
+   *  wrong reading of the constraint; making it look identical and
+   *  UNATTRIBUTED is the other wrong reading. */
+  origin?: ContentOrigin | null;
+}
+
+/** One at-a-glance field value on a card. `value` is a display string,
+ *  never a stored slug: the server resolves the vocabulary label, so a
+ *  tile shows "Pass 1" and not `pass-1`. */
+export interface CardFieldValue {
+  code: string;
+  label: string;
+  value: string;
+}
+
+/** Attribution for content that came from a federated peer. The name is
+ *  the one the operator gave that peer at handshake; a UUID answers
+ *  "whose is this?" with nothing a person can read. */
+export interface ContentOrigin {
+  peer_id: string;
+  display_name: string;
+  instance_url?: string;
 }
 
 /** The asset payload joined into a post member — the same presentation

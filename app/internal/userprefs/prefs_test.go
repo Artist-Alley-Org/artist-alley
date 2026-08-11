@@ -136,7 +136,7 @@ func TestChannelsFor_NilReceiverSafe(t *testing.T) {
 // must produce a zero-value struct (not an error) because that's
 // what the first-visit-no-row case looks like upstream.
 func TestUnmarshalPreferencesRow_EmptyBytesProduceZero(t *testing.T) {
-	p, err := UnmarshalPreferencesRow(nil, nil, nil)
+	p, err := UnmarshalPreferencesRow(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("empty bytes should not error, got %v", err)
 	}
@@ -157,7 +157,7 @@ func TestUnmarshalPreferencesRow_RoundTrip(t *testing.T) {
 	}
 	channelsJSON, _ := MarshalNotificationChannels(want.NotificationChannels)
 	viewsJSON, _ := MarshalDefaultViews(want.DefaultViews)
-	got, err := UnmarshalPreferencesRow(channelsJSON, viewsJSON, nil)
+	got, err := UnmarshalPreferencesRow(channelsJSON, viewsJSON, nil, nil)
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -210,5 +210,93 @@ func TestValidatePreferences_RejectsBadCadence(t *testing.T) {
 	p2 := Preferences{EmailCadence: EmailCadences{"not_a_real_event": CadenceDaily}}
 	if err := ValidatePreferences(p2); err == nil {
 		t.Fatal("expected unknown event type in email_cadence to be rejected")
+	}
+}
+
+// ── Default-view vocabularies (#706, #736) ──────────────────────────
+//
+// The three view knobs are the part of this package a user can point
+// at, and the bug they shipped with was not a crash: every value
+// persisted fine, and four of them named screens that did not exist.
+// So the tests below cover the two directions that keep the vocabulary
+// honest — a new phantom value cannot be written, and an old one
+// cannot break the page that would let you clear it.
+
+func TestValidatePreferences_AllowsEveryOfferedViewValue(t *testing.T) {
+	// Every member of every set, including the "" that means unset.
+	// This is what fails if a value leaves the vocabulary without the
+	// preferences page's option list following it.
+	for _, tab := range append([]string{""}, KnownHomeTabs...) {
+		p := Preferences{DefaultViews: DefaultViews{HomeTab: tab}}
+		if err := ValidatePreferences(p); err != nil {
+			t.Errorf("home_tab %q must validate, got %v", tab, err)
+		}
+	}
+	for _, layout := range append([]string{""}, KnownBrowseLayouts...) {
+		p := Preferences{DefaultViews: DefaultViews{BrowseLayout: layout}}
+		if err := ValidatePreferences(p); err != nil {
+			t.Errorf("browse_layout %q must validate, got %v", layout, err)
+		}
+	}
+	for _, sort := range append([]string{""}, KnownBrowseSorts...) {
+		p := Preferences{DefaultViews: DefaultViews{BrowseSort: sort}}
+		if err := ValidatePreferences(p); err != nil {
+			t.Errorf("browse_sort %q must validate, got %v", sort, err)
+		}
+	}
+}
+
+func TestValidatePreferences_RejectsUnservableViewValues(t *testing.T) {
+	// The four #706/#736 removals plus one never-existed value per
+	// field, so this fails if a later change quietly re-widens a set.
+	cases := []struct {
+		name  string
+		views DefaultViews
+	}{
+		{"home_tab trending", DefaultViews{HomeTab: "trending"}},
+		{"home_tab for_you", DefaultViews{HomeTab: "for_you"}},
+		{"home_tab team", DefaultViews{HomeTab: "team"}},
+		{"browse_sort popular", DefaultViews{BrowseSort: "popular"}},
+		{"browse_sort trending", DefaultViews{BrowseSort: "trending"}},
+		{"browse_layout carousel", DefaultViews{BrowseLayout: "carousel"}},
+	}
+	for _, tc := range cases {
+		if err := ValidatePreferences(Preferences{DefaultViews: tc.views}); err == nil {
+			t.Errorf("%s: expected rejection, got nil", tc.name)
+		}
+	}
+}
+
+// The read path must survive a row saved before the vocabulary shrank.
+//
+// Asserting "no error" alone would pass even if the stale value came
+// straight back out, which is the failure that matters: the
+// preferences page would render a <select> with no matching option
+// (so it displays the first one, silently mislabelling what is
+// stored) and the browse store would be handed a mode it cannot use.
+// So this pins the VALUE, not just the absence of an error.
+func TestUnmarshalPreferencesRow_DropsStaleViewValues(t *testing.T) {
+	legacy := []byte(`{"home_tab":"trending","browse_layout":"masonry","browse_sort":"popular"}`)
+	got, err := UnmarshalPreferencesRow(nil, legacy, nil, nil)
+	if err != nil {
+		t.Fatalf("a stale stored value must not error the read, got %v", err)
+	}
+	if got.DefaultViews.HomeTab != "" {
+		t.Errorf("stale home_tab must read as unset, got %q", got.DefaultViews.HomeTab)
+	}
+	if got.DefaultViews.BrowseSort != "" {
+		t.Errorf("stale browse_sort must read as unset, got %q", got.DefaultViews.BrowseSort)
+	}
+	// The still-valid neighbour is untouched — sanitizing is per-field,
+	// not "one bad value blanks the row".
+	if got.DefaultViews.BrowseLayout != "masonry" {
+		t.Errorf("valid browse_layout must survive, got %q", got.DefaultViews.BrowseLayout)
+	}
+}
+
+func TestSanitized_KeepsEverythingServable(t *testing.T) {
+	in := DefaultViews{HomeTab: "following", BrowseLayout: "feed", BrowseSort: "oldest"}
+	if got := in.Sanitized(); got != in {
+		t.Errorf("servable selections must survive sanitizing: %+v became %+v", in, got)
 	}
 }

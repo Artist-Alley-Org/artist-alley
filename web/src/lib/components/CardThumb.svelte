@@ -45,6 +45,7 @@
     type SpriteCue,
   } from '$lib/util/spriteCues';
   import CardFallback from './CardFallback.svelte';
+  import CardRestricted from './CardRestricted.svelte';
 
   interface Props {
     /** Asset whose variants back the thumbnail (the cover asset for a
@@ -118,6 +119,30 @@
      *  (#556). Both are correct as squares. See `tileRatio` below for
      *  where the ratio comes from. */
     variableAspect?: boolean;
+    /** A floor on the variable-aspect ratio — the TALLEST the tile may
+     *  get, expressed as width/height (#557). Only read when
+     *  `variableAspect` is on.
+     *
+     *  Masonry passes nothing and wants nothing: a column is ~270px, so
+     *  even a 1:4 portrait lands about a thousand pixels tall and that
+     *  is what a masonry is for. The FEED card is the case that needs
+     *  it — one column at a 46rem measure, where the same 1:4 image is
+     *  nearly 3000px and the reader scrolls past a single post for
+     *  three screens. Every social feed worth copying caps portrait at
+     *  4:5 for exactly this reason.
+     *
+     *  It LETTERBOXES rather than crops, which is slice 1's rule
+     *  everywhere `fill` is off: the art stays whole on the matte. The
+     *  alternative — clipping to the cap — is what Instagram does and
+     *  what this codebase deliberately does not, outside grid's contact
+     *  sheet.
+     *
+     *  ⚠️ Not for a caller whose ratio is PREDICTED elsewhere.
+     *  MasonryColumns buckets by `cardTileRatio` one layer up, and a
+     *  floor applied only in CSS would desynchronise the columns (#651
+     *  / #652). The feed is one column and predicts nothing, so it is
+     *  safe there and would not be in masonry. */
+    ratioFloor?: number | null;
     /** The tile may be only as tall as the control floor (#652) — set
      *  in masonry, where a 5.33:1 waveform lands at ~60px. Strips the
      *  chrome that cannot survive at that size to leave exactly the two
@@ -142,6 +167,23 @@
      *  plate reads it, to avoid printing the same string twice 8px
      *  apart; see CardFallback. */
     titleAdjacent?: boolean;
+    /** The caller may not see this member (#883). The server sent a
+     *  placeholder — no title, no extension, no asset id, no thumbhash —
+     *  so the tile states the restriction instead of rendering a thing
+     *  it was not given. Takes priority over every other branch. */
+    restricted?: boolean;
+    /** The asset owner's display name, the only asset-derived value a
+     *  restricted placeholder carries. Null when unresolvable. */
+    restrictedOwnerName?: string | null;
+    /** Offer "request access" on the restricted plate (#881), against
+     *  this asset id. Null (the default) is a plate with no ask.
+     *
+     *  Separate from `assetId` on purpose. `assetId` is "what would this
+     *  tile show bytes for", and it is deliberately never dereferenced
+     *  on a restricted tile; this is "what is the viewer asking about".
+     *  A PostCard passes a cover id as the former and nothing as the
+     *  latter — see CardRestricted's prop note. */
+    requestAssetId?: string | null;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -163,14 +205,22 @@
     framed = true,
     fill = false,
     variableAspect = false,
+    ratioFloor = null,
     compact = false,
     pixelWidth = null,
     pixelHeight = null,
     titleAdjacent = false,
+    restricted = false,
+    restrictedOwnerName = null,
+    requestAssetId = null,
     children,
   }: Props = $props();
 
-  const colUrl = $derived(assetId ? `/api/v1/assets/${assetId}/variants/col` : '');
+  // A restricted tile never addresses the asset: no col variant, no
+  // ladder rung, no sprite sheet. Killing the URL at the source rather
+  // than relying on the render branch means an added branch cannot
+  // reintroduce the request.
+  const colUrl = $derived(assetId && !restricted ? `/api/v1/assets/${assetId}/variants/col` : '');
 
   // Responsive source set (#502/#589). Three conditions, all required:
   //
@@ -189,7 +239,9 @@
   // colUrl exactly as it did before this change.
   onMount(() => previewLadder.init());
   const srcset = $derived(
-    ladderAvailable && !fill && assetId ? (previewLadder.srcsetFor(assetId) ?? '') : '',
+    ladderAvailable && !fill && assetId && !restricted
+      ? (previewLadder.srcsetFor(assetId) ?? '')
+      : '',
   );
   // `src` is the fallback for a browser that ignores srcset, and the
   // thing the loader uses before it picks a candidate. The smallest
@@ -302,7 +354,17 @@
       : null,
   );
   const measuredRatio = $derived(loadedRatio === null ? null : clampRatio(loadedRatio));
-  const tileRatio = $derived(variableAspect ? (declaredRatio ?? measuredRatio) : null);
+  // `ratioFloor` caps how TALL the tile may get (see the prop). Applied
+  // after the ratio resolves rather than inside clampRatio, because
+  // clampRatio's bounds are a guard against corrupt metadata and this is
+  // a per-caller layout decision — a 1:4 portrait is not bad data, it is
+  // just too tall for one 46rem column.
+  const tileRatio = $derived.by(() => {
+    if (!variableAspect) return null;
+    const r = declaredRatio ?? measuredRatio;
+    if (r === null) return null;
+    return ratioFloor && ratioFloor > 0 ? Math.max(r, ratioFloor) : r;
+  });
 
   // The tile floor (#652). Applied to every variable-aspect tile, not
   // only the ones currently under it: the ratio can change under us
@@ -407,7 +469,8 @@
   // per asset for the session; the sheet is an ordinary browser image
   // cache hit on every hover after the first.
   $effect(() => {
-    if (!hovering || !scrubAvailable || !assetId || !spriteUrl || reducedMotion) return;
+    if (!hovering || !scrubAvailable || !assetId || !spriteUrl || reducedMotion || restricted)
+      return;
     let live = true;
     void loadSpriteCues(assetId).then((c) => {
       if (live) cues = c;
@@ -527,7 +590,15 @@
            ? 'after:ring-black/[0.07] dark:after:ring-white/[0.06]'
            : 'after:ring-black/[0.12] dark:after:ring-white/[0.10]'}"
 >
-  {#if isDoc}
+  {#if restricted}
+    <!-- #883 — the caller may not see this member. FIRST branch, before
+         anything that reads a title, an extension or an asset id: the
+         server sends none of those for a restricted member, and putting
+         this check anywhere below would mean the branches above are
+         trusted to have been handed nothing. Nothing here requests
+         bytes. -->
+    <CardRestricted ownerName={restrictedOwnerName} assetId={requestAssetId} />
+  {:else if isDoc}
     <!-- Text/code assets get no rasterised preview variant at all, so
          the plate IS their tile rather than a fallback from one (#558). -->
     <CardFallback {title} {fileExtension} {assetType} {titleAdjacent} />

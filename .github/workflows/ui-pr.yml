@@ -258,12 +258,12 @@ jobs:
 
       - name: Seed diagnostic on failure
         if: failure()
-        run: |
-          docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
-            "SELECT 'users', count(*) FROM \"user\"
-             UNION ALL SELECT 'assets', count(*) FROM assets
-             UNION ALL SELECT 'posts', count(*) FROM posts
-             UNION ALL SELECT 'comments', count(*) FROM comments;" || true
+        # Same blind spot as ui-nightly's copy (#886): the row counts
+        # could not say whether postgres was killed, crashed or restarted.
+        # studio-a only here, so no dogfood profile.
+        uses: ./.github/actions/seed-forensics
+        with:
+          services: postgres
 
       - name: Install Playwright + browsers
         working-directory: scripts/dogfood/ui
@@ -291,12 +291,44 @@ jobs:
       # videos. On the PR run it landed on the first ~2.5 minutes of the
       # suite — four timeouts, then every remaining spec under a second.
       #
-      # Scoped to `preview.%` deliberately. The recurring coordinators
+      # Scoped to preview jobs deliberately. The recurring coordinators
       # (email.digest, audit.retention, soft_delete.gc,
       # scheduled_actions.reap, saved_search.notify) sit `pending` with
       # a future `scheduled_for` for the life of the stack, so a wait on
       # "all outstanding jobs" would never reach zero and would burn the
       # full cap on every single run.
+      #
+      # And scoped to a NAMED LIST of preview kinds rather than
+      # `type LIKE 'preview.%'` (#877). The wildcard also waited on
+      # `preview.3d`, which is both the slowest kind by a wide margin
+      # and the one kind no standalone spec consumes:
+      #
+      #   - the CI profile enqueues ~31 3D renders against a
+      #     type_concurrency cap of 2, so they ARE the drain. A healthy
+      #     run measured 141s total with 31 preview.3d + 4 preview.video
+      #     outstanding at t=0; a single heavy model on a slow runner hit
+      #     533.1s and blew the 480s cap, failing PR #874 before one test
+      #     ran. A re-run of the identical commit passed.
+      #   - no spec asserts on 3D output. The only two mentions of
+      #     3d/glb/gltf/obj/fbx across tests/standalone/*.spec.ts are
+      #     comments, and ui-30-collection-asset-permalink.spec.ts says
+      #     it outright: it picks a ready RASTER asset because "arbitrary
+      #     Postgres order — often a 3D/failed/non-preview asset" flaked
+      #     it. Every spec that touches rendered bytes
+      #     (ui-12-iiif-smoke, ui-13-iiif-mirador-dogfood, ui-30) is on
+      #     an image path.
+      #
+      # An allow-list, not `type <> 'preview.3d'`, so a future slow kind
+      # cannot silently re-introduce this: it fails toward "we only wait
+      # for what we named". Adding a kind to the list is the deliberate
+      # act. Add one if a spec starts reading its output, or if it is
+      # expensive enough that leaving it running would starve the app
+      # during the suite (that is why preview.video is here — it is 74%
+      # of render CPU and was the whole of #768/#777).
+      #
+      # preview.3d is still RENDERED, just not waited for; it finishes
+      # alongside the suite at concurrency 2. The step still prints the
+      # ungated kinds so the log says what it chose not to wait for.
       #
       # BOUNDED, and on expiry it FAILS the step (#777). Letting the
       # suite run against a still-draining queue was the whole flake:
@@ -321,14 +353,30 @@ jobs:
             docker compose exec -T postgres psql -U artist_alley \
               -d artist_alley -tAc "$1" 2>/dev/null || echo ""
           }
-          pending="status IN ('pending','running') AND type LIKE 'preview.%'"
+          # The preview kinds this gate waits on. Every per-asset render
+          # kind EXCEPT preview.3d — see the note above for why 3D is
+          # out and what earns a place in here.
+          gated_kinds="'preview.raster','preview.gif','preview.vector',
+                       'preview.psd','preview.eps','preview.pdf',
+                       'preview.comic','preview.ebook','preview.text',
+                       'preview.font','preview.archive','preview.audio',
+                       'preview.video','preview.video.poster',
+                       'preview.thumbhash_backfill'"
+          pending="status IN ('pending','running') AND type IN (${gated_kinds})"
+          ungated="status IN ('pending','running') AND type LIKE 'preview.%'
+                     AND type NOT IN (${gated_kinds})"
           outstanding="SELECT count(*) FROM jobs WHERE ${pending};"
           breakdown="SELECT '  ' || type || ' ' || status || ' x' || count(*)
                        FROM jobs WHERE ${pending} GROUP BY type, status ORDER BY 1;"
+          # Same shape, over the kinds we deliberately do NOT wait for,
+          # so the log still shows the whole preview queue (#877).
+          skipped="SELECT '  (not gated) ' || type || ' ' || status || ' x' || count(*)
+                     FROM jobs WHERE ${ungated} GROUP BY type, status ORDER BY 1;"
 
           start=$(date +%s)
-          echo "preview queue after seed: $(q "$outstanding") job(s) outstanding"
+          echo "preview queue after seed: $(q "$outstanding") gated job(s) outstanding"
           q "$breakdown"
+          q "$skipped"
 
           while :; do
             left=$(q "$outstanding")
@@ -342,9 +390,10 @@ jobs:
                                   round(extract(epoch from (now() - started_at))::numeric, 1) || 's'
                              FROM jobs WHERE ${pending} AND started_at IS NOT NULL
                              ORDER BY (now() - started_at) DESC LIMIT 1;")
-              echo "::error::preview queue did not drain: ${left} job(s) outstanding" \
+              echo "::error::preview queue did not drain: ${left} gated job(s) outstanding" \
                    "after ${elapsed}s (cap ${DRAIN_TIMEOUT_SECONDS}s; slowest: ${slowest:-none})"
               q "$breakdown"
+              q "$skipped"
               exit 1
             fi
             sleep 5
@@ -367,17 +416,29 @@ jobs:
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
 
+      # Same two settings, same reasoning, as ui-nightly's upload (#956):
+      # upload-artifact@v4 excludes hidden files by default and every
+      # path here is dot-prefixed, so this step has been reporting a
+      # one-second success and uploading nothing on every red PR run.
+      # `include-hidden-files: true` makes it collect the report;
+      # `if-no-files-found: error` makes a future empty upload announce
+      # itself instead of passing as coverage. The dead
+      # `apply-state-*.json` glob is dropped — nothing writes it.
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: pw-report-standalone-${{ github.run_id }}
+          # The negation drops Playwright's storageState, which carries
+          # the suite's live admin session cookie — see the nightly's
+          # copy of this step for the reasoning.
           path: |
             scripts/dogfood/ui/.pw-report/
             scripts/dogfood/ui/.pw-results/
-            apply-state-*.json
+            !scripts/dogfood/ui/.pw-results/admin-state.json
+          include-hidden-files: true
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       # Job-queue state on failure (#768). `docker compose logs
       # --tail=200` is the wrong instrument for "was the worker busy
@@ -397,7 +458,12 @@ jobs:
 
       - name: Container logs on failure
         if: failure()
-        run: docker compose logs --tail=200
+        # Shared action (#956) so "captured nothing" reds the step
+        # instead of passing silently. No dogfood profile here — ui-pr
+        # runs studio-a only.
+        uses: ./.github/actions/container-logs
+        with:
+          tail: "200"
 
       - name: Detach runner from the compose network
         if: always()

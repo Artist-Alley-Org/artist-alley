@@ -49,6 +49,28 @@ const ChannelName = "cache_invalidate"
 // safely no-ops, which is acceptable pre-release.
 const WildcardDomain = "*"
 
+// DomainPostByID names the post-by-id cache: the LRU `posts` fills
+// from fetchFullPost, keyed by the post's UUID string.
+//
+// It lives HERE, in the registry that owns domain names, rather than in
+// `posts` beside the cache it names — because the writers that
+// invalidate it are not all in `posts`. `social` owns like and comment
+// mutations, both of which move a counter ON the posts row
+// (`like_count`, `comment_count`) via database trigger, and both of
+// which therefore stale this cache. It cannot import `posts` to learn
+// the string: `posts` imports `social`, so that is a cycle.
+//
+// The alternative — `social` hardcoding "post.id" — is the same string
+// written twice with nothing keeping them equal, and the failure mode
+// is silent: an invalidation published to a domain nobody registered is
+// dropped without error, so the counter simply never updates and looks
+// like a UI bug (#557 found exactly this, as a like whose count did not
+// move on reload).
+//
+// Add other cross-package domains here as they acquire a second writer.
+// A domain with exactly one writer is better off unexported next to it.
+const DomainPostByID = "post.id"
+
 // Payload is the NOTIFY message format. Producers must marshal
 // this exact shape; the metadata handler does so already.
 type Payload struct {
@@ -155,6 +177,32 @@ func Register[V any](r *Registry, name string, size int) *Cache[V] {
 // it directly too.
 func (r *Registry) Emit(ctx context.Context, domain, key string) error {
 	return publish(ctx, r.Pool, Payload{Domain: domain, Key: key, Op: "upsert"})
+}
+
+// InvalidateNow is Cache.Invalidate for a caller that does not hold the
+// typed Cache: it drops the key from THIS process's cache immediately
+// and then broadcasts to peers.
+//
+// Emit alone is not equivalent. A bare Emit reaches the local process
+// only by round-tripping through Postgres and back down the LISTEN
+// connection, so for a window after the write returns, this instance
+// still serves the stale entry from its own LRU. That window is small
+// but it is on the wrong side of "the write returned 204" — a client
+// that writes and immediately reads can observe the pre-write value,
+// which is exactly the class of bug #920 was.
+//
+// Cross-package invalidation helpers should prefer this over Emit
+// whenever the write and the subsequent read can be the same request
+// chain. Unknown domains are a no-op locally and still broadcast, since
+// the domain may be registered on a peer but not here.
+func (r *Registry) InvalidateNow(ctx context.Context, domain, key string) error {
+	r.mu.RLock()
+	inv := r.domains[domain]
+	r.mu.RUnlock()
+	if inv != nil {
+		inv.invalidate(key)
+	}
+	return r.Emit(ctx, domain, key)
 }
 
 // EmitFlushAll publishes a wildcard cache-flush NOTIFY that purges every

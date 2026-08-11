@@ -37,6 +37,61 @@ type Preferences struct {
 	// from NotificationChannels for that topic; cadence only refines
 	// *when* email fires when it IS enabled.
 	EmailCadence EmailCadences `json:"email_cadence"`
+	// FeedFilters are the content filters the browse feed subtracts with
+	// (#891). Distinct from DefaultViews, which only rearranges the same
+	// set.
+	FeedFilters FeedFilters `json:"feed_filters"`
+}
+
+// FeedFilters is the browse feed's per-user presentation set (#891,
+// default inverted by #921).
+//
+// Every member is a BOOLEAN THAT DEFAULTS TO FALSE, and that is a
+// contract rather than an accident: the zero value of this struct — what
+// a user with no preferences row, an empty `{}` blob, or a key this
+// build has never heard of all decode to — is THE BUILD'S DEFAULT FEED.
+// Each key is therefore NAMED so that `false` is the default experience,
+// not so that `false` is "no filtering". #921 is what made those two
+// things different: hiding restricted work became the default, so the
+// key that used to be `hide_restricted` is now `show_restricted` and the
+// storage guarantee survives untouched — absent still means "whatever
+// this build does by default".
+//
+// Renaming rather than flipping a default is the whole point. Leaving
+// the key called `hide_restricted` and defaulting it to TRUE would have
+// made an absent key mean the opposite of what the name asserts, which
+// is precisely how the next reader gets it backwards.
+//
+// It can only SUBTRACT. Nothing here is ever consulted to decide whether
+// a caller MAY read something — that is visibility.FieldsReadable's job
+// and it has already run by the time these are applied (see
+// posts.applyHideRestricted). A filter that could add a row would be a
+// second expression of the read rule, which is the defect class epic
+// #665 exists for. That is still true with the default inverted: the
+// feed's UNFILTERED state is the set of rows the read rule returned, and
+// `show_restricted` selects between "all of it" and "all of it minus the
+// placeholders". It never reaches past the rule's output.
+type FeedFilters struct {
+	// ShowRestricted keeps the #883 placeholders in the browse feed.
+	//
+	// OFF by default, and off means the feed SUBTRACTS them: members the
+	// caller cannot read are omitted rather than rendered as "you can't
+	// see this", and a post whose members are ALL restricted drops out of
+	// the page entirely — unless the caller wrote it, because your own
+	// work does not disappear from your own feed over a display
+	// preference.
+	//
+	// #921 inverted this. #891 shipped the machinery as an opt-in on the
+	// theory that the placeholder is the more informative answer; a
+	// measurement on the stock seed dataset said otherwise — a third of
+	// one account's 82-post feed was entirely placeholders. The principle
+	// the default now encodes: a placeholder belongs where the user asked
+	// a question (a post opened by name) or opened a container (a
+	// collection), not where they were handed a feed.
+	//
+	// Turning it ON restores the pre-#921 feed exactly, placeholders and
+	// #913's "Request access" button included.
+	ShowRestricted bool `json:"show_restricted,omitempty"`
 }
 
 // EmailCadences maps an EventType → cadence ("immediate" | "hourly" |
@@ -83,14 +138,81 @@ type NotificationChannels map[string][]string
 // DefaultViews captures the per-user view selections that the
 // frontend would otherwise have to guess from cookies or first-visit
 // heuristics. Empty string = fall back to per-route default. The set
-// of valid values for each field is enforced by the frontend and
-// pinned by the openapi schema, NOT by a DB CHECK constraint — the
-// list will grow (e.g. new browse layouts in 1.18) and the DB
-// shouldn't have to migrate every time the UI ships a new option.
+// of valid values for each field is enforced HERE and pinned by the
+// openapi schema, NOT by a DB CHECK constraint — the list will grow
+// (e.g. new browse layouts in 1.18) and the DB shouldn't have to
+// migrate every time the UI ships a new option.
+//
+// Every member of every set below names a state the app can actually
+// reach. That is the whole lesson of #736: the vocabulary shipped with
+// `trending` and `for_you` on HomeTab and `popular`/`trending` on
+// BrowseSort, none of which had a query behind them, so choosing one
+// stored a durable preference for a screen that does not exist and
+// the user silently got the default. A value belongs here only once
+// something serves it.
 type DefaultViews struct {
-	HomeTab      string `json:"home_tab,omitempty"`      // "" | "following" | "latest" | "trending" | "for_you"
-	BrowseLayout string `json:"browse_layout,omitempty"` // "" | "grid" | "masonry" | "thumbnail" | "list"
-	BrowseSort   string `json:"browse_sort,omitempty"`   // "" | "newest" | "oldest" | "popular" | "trending"
+	HomeTab      string `json:"home_tab,omitempty"`      // "" | "latest" | "following"
+	BrowseLayout string `json:"browse_layout,omitempty"` // "" | "grid" | "masonry" | "thumbnail" | "list" | "feed"
+	BrowseSort   string `json:"browse_sort,omitempty"`   // "" | "newest" | "oldest"
+}
+
+// The closed value sets for the three view knobs. Each mirrors a
+// vocabulary that already exists somewhere concrete:
+//
+//	KnownHomeTabs       ← the `feed` enum on GET /posts
+//	                      (app/api/openapi.yaml, /posts:)
+//	KnownBrowseLayouts  ← ViewMode in web/src/lib/stores/browseView.svelte.ts
+//	KnownBrowseSorts    ← the two orderings the client can produce
+//
+// `feed` is in KnownBrowseLayouts and was never in the pref
+// vocabulary, which is the mirror-image defect to the phantom tabs: a
+// mode a phone lands on by default but no user could ask for.
+//
+// KnownBrowseSorts stops at two on purpose. GET /posts takes no
+// ordering parameter of any kind, so `newest` / `oldest` are the
+// client reversing what it holds; `popular` and `trending` would need
+// a ranking model chosen first, and a guessed one is worse than none.
+var (
+	KnownHomeTabs      = []string{"latest", "following"}
+	KnownBrowseLayouts = []string{"grid", "masonry", "thumbnail", "list", "feed"}
+	KnownBrowseSorts   = []string{"newest", "oldest"}
+)
+
+func inSet(v string, set []string) bool {
+	for _, s := range set {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// Sanitized drops any selection this build no longer serves, leaving
+// the field empty so the caller falls back to its built-in default.
+//
+// This is the READ-side counterpart to the write-side rejection in
+// ValidatePreferences, and it is what makes shrinking a vocabulary
+// safe. A row saved before #706/#736 may hold `trending`, `for_you`
+// or `popular`; GET /account/preferences must return something the
+// preferences page can render and the browse store can act on, and
+// "no selection" is the only honest answer for a value nothing can
+// serve. It must never be an error — a stale string in a JSONB blob
+// is not a reason to 500 a preferences read, and a user locked out of
+// the page that would let them fix the value has no way out.
+//
+// Same shape as readFilter() in browseView.svelte.ts, for the same
+// reason and against the same removed values.
+func (v DefaultViews) Sanitized() DefaultViews {
+	if !inSet(v.HomeTab, KnownHomeTabs) {
+		v.HomeTab = ""
+	}
+	if !inSet(v.BrowseLayout, KnownBrowseLayouts) {
+		v.BrowseLayout = ""
+	}
+	if !inSet(v.BrowseSort, KnownBrowseSorts) {
+		v.BrowseSort = ""
+	}
+	return v
 }
 
 // EventType enumerates the notification trigger events the UI lets
@@ -117,6 +239,9 @@ const (
 	// Phase 1.17.I — DMs.
 	EventDirectMessageReceived = "direct_message_received"
 	EventBroadcastReceived     = "broadcast_received"
+
+	// #875 — someone granted you access to one of their posts.
+	EventPostSharedWithMe = "post_shared_with_me"
 
 	// Phase 1.17.L — resource access requests.
 	EventResourceRequestApproved = "resource_request_approved"
@@ -154,6 +279,7 @@ var KnownEventTypes = []string{
 	EventFollowedPosts,
 	EventDirectMessageReceived,
 	EventBroadcastReceived,
+	EventPostSharedWithMe,
 	EventResourceRequestReceived,
 	EventResourceRequestApproved,
 	EventResourceRequestDenied,
@@ -204,10 +330,26 @@ func (p *Preferences) ChannelsFor(event string) []string {
 
 // ValidatePreferences rejects values the client shouldn't be able
 // to persist: unknown event types in the channels map, unknown
-// channel names, and known events with channel lists containing the
-// same channel twice. Returns the first violation found — callers
-// surface it to the user verbatim.
+// channel names, known events with channel lists containing the same
+// channel twice, and default-view selections outside the closed sets
+// above. Returns the first violation found — callers surface it to
+// the user verbatim.
+//
+// The view knobs are validated on WRITE and sanitized on READ, not
+// one or the other. Rejecting on write is what stops a new phantom
+// value entering the store; sanitizing on read is what keeps the rows
+// already holding one readable. Only doing the first would 500 every
+// preferences GET for a user who set `trending` before #736.
 func ValidatePreferences(p Preferences) error {
+	if v := p.DefaultViews.HomeTab; v != "" && !inSet(v, KnownHomeTabs) {
+		return fmt.Errorf("unknown home_tab %q", v)
+	}
+	if v := p.DefaultViews.BrowseLayout; v != "" && !inSet(v, KnownBrowseLayouts) {
+		return fmt.Errorf("unknown browse_layout %q", v)
+	}
+	if v := p.DefaultViews.BrowseSort; v != "" && !inSet(v, KnownBrowseSorts) {
+		return fmt.Errorf("unknown browse_sort %q", v)
+	}
 	known := make(map[string]bool, len(KnownEventTypes))
 	for _, e := range KnownEventTypes {
 		known[e] = true
@@ -270,11 +412,22 @@ func MarshalEmailCadence(c EmailCadences) ([]byte, error) {
 	return json.Marshal(c)
 }
 
-// UnmarshalPreferencesRow parses a DB row's three JSONB columns back
+// MarshalFeedFilters produces the feed_filters JSONB payload. Every
+// field is `omitempty`, so "every key at its zero value" persists as
+// `{}` — the same bytes the column defaults to, which keeps a
+// saved-but-untouched preference indistinguishable from a never-saved
+// one. Since #921 that zero value is "the build's default feed" rather
+// than "no filtering"; see FeedFilters for why the keys are named so
+// those stay the same thing.
+func MarshalFeedFilters(f FeedFilters) ([]byte, error) {
+	return json.Marshal(f)
+}
+
+// UnmarshalPreferencesRow parses a DB row's four JSONB columns back
 // into the typed struct. A malformed column (only possible via direct
 // DB tampering) surfaces as a loud error rather than a silently-zeroed
 // value.
-func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Preferences, error) {
+func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON []byte) (Preferences, error) {
 	var p Preferences
 	if len(channelsJSON) > 0 {
 		if err := json.Unmarshal(channelsJSON, &p.NotificationChannels); err != nil {
@@ -288,6 +441,10 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Prefe
 		if err := json.Unmarshal(viewsJSON, &p.DefaultViews); err != nil {
 			return Preferences{}, fmt.Errorf("default_views: %w", err)
 		}
+		// Every read goes through here, so this is the one place a
+		// value removed from a vocabulary can be neutralised. See
+		// DefaultViews.Sanitized.
+		p.DefaultViews = p.DefaultViews.Sanitized()
 	}
 	if len(cadenceJSON) > 0 {
 		if err := json.Unmarshal(cadenceJSON, &p.EmailCadence); err != nil {
@@ -296,6 +453,11 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Prefe
 	}
 	if p.EmailCadence == nil {
 		p.EmailCadence = EmailCadences{}
+	}
+	if len(filtersJSON) > 0 {
+		if err := json.Unmarshal(filtersJSON, &p.FeedFilters); err != nil {
+			return Preferences{}, fmt.Errorf("feed_filters: %w", err)
+		}
 	}
 	return p, nil
 }

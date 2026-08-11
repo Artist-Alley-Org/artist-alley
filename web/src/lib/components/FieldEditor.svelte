@@ -32,6 +32,15 @@
   was loaded with as `if_unchanged_since` and surfaces a 409 rather
   than silently retrying, because a silent retry is the clobber this
   guard exists to prevent.
+
+  #854 moved this editor out of a table cell and onto
+  /admin/fields/{code}, and gave it the long tail the index used to
+  print read-only: description, display group / order and applies-to,
+  behind a collapsed Advanced disclosure. They live HERE rather than in
+  a second form on the page for one reason — every write to a field
+  definition carries the same `if_unchanged_since` baseline, so two
+  forms saving independently would each invalidate the other's baseline
+  and manufacture conflicts out of the operator's own edits.
 -->
 <script lang="ts">
   import { api } from '$api/client';
@@ -57,18 +66,45 @@
     fieldId,
     fieldType,
     initialLabel,
+    initialDescription = '',
     initialRequired,
     initialOptions,
     initialOpenVocabulary = false,
+    initialShowOnCard = false,
+    initialReadCapability = null,
+    initialWriteCapability = null,
+    initialDisplayGroup = '',
+    initialDisplayOrder = 0,
+    initialAppliesTo = [],
+    subjectKind = 'asset',
+    assetTypes = [],
     initialUpdatedAt,
     onSaved = () => {},
   }: {
     fieldId: string;
     fieldType: string;
     initialLabel: string;
+    initialDescription?: string;
     initialRequired: boolean;
     initialOptions: Record<string, unknown> | undefined;
     initialOpenVocabulary?: boolean;
+    initialShowOnCard?: boolean;
+    /** Present only so the editor can explain WHY the card toggle is
+     *  unavailable. The server refuses the combination either way. */
+    initialReadCapability?: string | null;
+    /** Shown, never edited — see the capabilities note in the markup. */
+    initialWriteCapability?: string | null;
+    initialDisplayGroup?: string;
+    initialDisplayOrder?: number;
+    initialAppliesTo?: number[];
+    /** `applies_to` is meaningless on a collection field — the server
+     *  ignores it — so the control is not offered there rather than
+     *  offered and silently discarded. */
+    subjectKind?: 'asset' | 'collection';
+    /** Named types for the applies-to picker. A ref with no name still
+     *  renders (as its ref), because a field scoped to a type this
+     *  instance has since removed must stay legible. */
+    assetTypes?: { ref: number; name?: string | null }[];
     initialUpdatedAt: string;
     onSaved?: () => void;
   } = $props();
@@ -99,8 +135,32 @@
   const canOpenVocabulary = fieldType === 'multi_select';
 
   let label = $state(initialLabel);
+  let description = $state(initialDescription);
   let required = $state(initialRequired);
   let openVocab = $state(initialOpenVocabulary);
+  let showOnCard = $state(initialShowOnCard);
+
+  // The long tail (#854). Collapsed by default: an operator opening a
+  // field to relabel it or curate its vocabulary should not have to
+  // scroll past grouping and scoping to reach the save button.
+  let advancedOpen = $state(false);
+  let displayGroup = $state(initialDisplayGroup);
+  let displayOrder = $state(initialDisplayOrder);
+  let appliesTo = $state<number[]>([...initialAppliesTo]);
+  const appliesToAll = $derived(appliesTo.length === 0);
+  const showAppliesTo = $derived(subjectKind === 'asset');
+
+  function toggleAppliesTo(ref: number, on: boolean) {
+    appliesTo = on ? [...appliesTo, ref].sort((a, b) => a - b) : appliesTo.filter((r) => r !== ref);
+  }
+
+  // A gated field cannot be an at-a-glance field (#552): a card renders on
+  // browse, for a page of assets, where the server has evaluated no
+  // per-field capability. The server refuses the combination with a 400, so
+  // the control is REPLACED by the reason rather than shown disabled — a
+  // disabled checkbox advertises a setting the operator can never reach
+  // here, which is the same complaint the open_vocabulary note above makes.
+  const cardGated = $derived(!!(initialReadCapability ?? '').trim());
   let opts = $state<FieldOption[]>(normalizeOptions(initialOptions));
   // Baseline for the optimistic-concurrency guard. Re-based (not
   // reset) after a save so consecutive edits keep working.
@@ -123,13 +183,23 @@
 
   let snapshot = $state(JSON.stringify(serializeOptions(normalizeOptions(initialOptions))));
   let labelSnapshot = $state(initialLabel);
+  let descriptionSnapshot = $state(initialDescription);
   let requiredSnapshot = $state(initialRequired);
   let openVocabSnapshot = $state(initialOpenVocabulary);
+  let showOnCardSnapshot = $state(initialShowOnCard);
+  let displayGroupSnapshot = $state(initialDisplayGroup);
+  let displayOrderSnapshot = $state(initialDisplayOrder);
+  let appliesToSnapshot = $state(JSON.stringify([...initialAppliesTo]));
   const dirty = $derived(
     JSON.stringify(serializeOptions(opts)) !== snapshot ||
       label !== labelSnapshot ||
+      description !== descriptionSnapshot ||
       required !== requiredSnapshot ||
-      openVocab !== openVocabSnapshot,
+      openVocab !== openVocabSnapshot ||
+      showOnCard !== showOnCardSnapshot ||
+      displayGroup !== displayGroupSnapshot ||
+      displayOrder !== displayOrderSnapshot ||
+      JSON.stringify(appliesTo) !== appliesToSnapshot,
   );
 
   // Only active terms make sense as a successor — pointing a
@@ -272,27 +342,59 @@
   // the operator is never shown a destination that does not work.
   const moveOptions = $derived(moving ? moveDestinations(opts, moving) : []);
 
+  /** The subset of a stored field definition this form owns. */
+  interface FieldRow {
+    updated_at: string;
+    label: string;
+    description?: string;
+    required: boolean;
+    open_vocabulary?: boolean;
+    show_on_card?: boolean;
+    display_group?: string;
+    display_order?: number;
+    applies_to?: number[];
+    options?: Record<string, unknown>;
+  }
+
+  /**
+   * Take a server row as the new truth: form values AND the snapshots
+   * the dirty check + the concurrency baseline are measured against.
+   *
+   * One function for both the post-save re-base and the conflict
+   * reload, deliberately. When those were two copies, every property
+   * added to the form had to be remembered in both, and forgetting one
+   * leaves a control that reads "unsaved" forever or — worse — a
+   * baseline that moves without the value it belongs to.
+   */
+  function adopt(cur: FieldRow) {
+    opts = normalizeOptions(cur.options);
+    label = cur.label;
+    description = cur.description ?? '';
+    required = cur.required;
+    openVocab = cur.open_vocabulary === true;
+    showOnCard = cur.show_on_card === true;
+    displayGroup = cur.display_group ?? '';
+    displayOrder = cur.display_order ?? 0;
+    appliesTo = [...(cur.applies_to ?? [])];
+    baseline = cur.updated_at;
+    snapshot = JSON.stringify(serializeOptions(opts));
+    labelSnapshot = label;
+    descriptionSnapshot = description;
+    requiredSnapshot = required;
+    openVocabSnapshot = openVocab;
+    showOnCardSnapshot = showOnCard;
+    displayGroupSnapshot = displayGroup;
+    displayOrderSnapshot = displayOrder;
+    appliesToSnapshot = JSON.stringify(appliesTo);
+  }
+
   // Discard the local edits and adopt the server's current state.
   // Offered on a conflict as the alternative to overwriting.
   async function reloadFromServer() {
     const { data } = await api.GET('/fields/{id}', { params: { path: { id: fieldId } } });
     if (!data) return;
-    const cur = data as {
-      updated_at: string;
-      label: string;
-      required: boolean;
-      open_vocabulary?: boolean;
-      options?: Record<string, unknown>;
-    };
-    opts = normalizeOptions(cur.options);
-    label = cur.label;
-    required = cur.required;
-    openVocab = cur.open_vocabulary === true;
-    baseline = cur.updated_at;
-    snapshot = JSON.stringify(serializeOptions(opts));
-    labelSnapshot = cur.label;
-    requiredSnapshot = cur.required;
-    openVocabSnapshot = openVocab;
+    const cur = data as FieldRow;
+    adopt(cur);
     conflict = false;
     error = '';
     savedMsg = '';
@@ -311,8 +413,16 @@
       const body: Record<string, unknown> = {
         if_unchanged_since: baseline,
         label: label.trim(),
+        description: description.trim(),
         required,
+        display_group: displayGroup.trim(),
+        display_order: Number.isFinite(displayOrder) ? Math.trunc(displayOrder) : 0,
       };
+      // Scoping is an ASSET-side idea. `applies_to` names resource-type
+      // refs and the server ignores it for a collection field, so
+      // sending one from a surface that never rendered the control
+      // would be this form asserting a value nobody chose.
+      if (showAppliesTo) body.applies_to = appliesTo;
       // Only vocabulary types carry a values document; sending one for
       // a number field would overwrite its min/max constraints.
       if (hasVocabulary) body.options = { values: serializeOptions(opts) };
@@ -320,6 +430,11 @@
       // omitting the key on a `text` field leaves the column alone
       // rather than writing a false the operator never chose.
       if (canOpenVocabulary) body.open_vocabulary = openVocab;
+      // Sent only where the operator could have changed it. On a gated
+      // field the control is not rendered, so sending a value would be
+      // this editor asserting a setting nobody chose — and the server
+      // would answer 400 for a change the operator never made.
+      if (!cardGated) body.show_on_card = showOnCard;
       const { data, error: apiErr, response } = await api.PATCH('/fields/{id}', {
         params: { path: { id: fieldId } },
         body: body as never,
@@ -342,22 +457,7 @@
         error = (apiErr as { error?: string } | undefined)?.error ?? t('admin.fields.options_save_error');
         return;
       }
-      const saved = data as {
-        updated_at: string;
-        label: string;
-        required: boolean;
-        open_vocabulary?: boolean;
-        options?: Record<string, unknown>;
-      };
-      baseline = saved.updated_at;
-      opts = normalizeOptions(saved.options);
-      label = saved.label;
-      required = saved.required;
-      openVocab = saved.open_vocabulary === true;
-      snapshot = JSON.stringify(serializeOptions(opts));
-      labelSnapshot = saved.label;
-      requiredSnapshot = saved.required;
-      openVocabSnapshot = openVocab;
+      adopt(data as FieldRow);
       savedMsg = t('admin.fields.options_saved');
       cancelAdd();
       moving = null;
@@ -605,10 +705,9 @@
   </div>
 {/snippet}
 
-<div
-  class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3 text-sm"
-  data-testid="field-editor"
->
+<div class="min-w-0 space-y-4 text-sm" data-testid="field-editor">
+  <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3">
+    <h3 class="text-sm font-semibold">{t('admin.fields.section_basics')}</h3>
   <div class="flex flex-wrap items-end gap-3">
     <label class="w-full min-w-0 sm:flex-1">
       <span class="block text-xs text-fg-muted">{t('admin.fields.label')}</span>
@@ -630,6 +729,36 @@
     </label>
   </div>
 
+  <label class="block">
+    <span class="block text-xs text-fg-muted">{t('admin.fields.description')}</span>
+    <textarea
+      bind:value={description}
+      rows="2"
+      data-testid="field-edit-description"
+      class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+    ></textarea>
+    <span class="mt-0.5 block text-xs text-fg-muted">{t('admin.fields.description_help')}</span>
+  </label>
+
+  {#if cardGated}
+    <p class="text-xs text-fg-muted" data-testid="field-edit-show-on-card-gated">
+      {t('admin.fields.show_on_card_gated')}
+    </p>
+  {:else}
+    <label class="flex min-h-11 items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        bind:checked={showOnCard}
+        data-testid="field-edit-show-on-card"
+        class="mt-0.5 h-4 w-4 rounded border-border-strong"
+      />
+      <span class="min-w-0">
+        <span class="block">{t('admin.fields.show_on_card')}</span>
+        <span class="block text-xs text-fg-muted">{t('admin.fields.show_on_card_help')}</span>
+      </span>
+    </label>
+  {/if}
+
   {#if canOpenVocabulary}
     <label class="flex min-h-11 items-start gap-2 text-sm">
       <input
@@ -644,7 +773,10 @@
       </span>
     </label>
   {/if}
+  </section>
 
+  <section class="min-w-0 space-y-3 rounded border border-border bg-bg-soft p-3">
+    <h3 class="text-sm font-semibold">{t('admin.fields.section_vocabulary')}</h3>
   {#if hasVocabulary}
     <p class="text-xs text-fg-muted">{t('admin.fields.options_help')}</p>
     {#if isTree}
@@ -698,6 +830,100 @@
     {t('admin.fields.options_type_note', { type: fieldType })}
   </p>
   {/if}
+  </section>
+
+  <!--
+    The long tail (#854). A <details> rather than a bespoke toggle: it
+    is keyboard- and screen-reader-addressable for free, and it stays
+    OPEN across a save because nothing here re-mounts the editor.
+  -->
+  <details
+    bind:open={advancedOpen}
+    class="min-w-0 rounded border border-border bg-bg-soft"
+    data-testid="field-edit-advanced"
+  >
+    <summary
+      class="flex min-h-11 cursor-pointer items-center px-3 py-2 text-sm font-semibold"
+      data-testid="field-edit-advanced-toggle"
+    >{t('admin.fields.section_advanced')}</summary>
+    <div class="space-y-3 border-t border-border px-3 pb-3 pt-3">
+      <p class="text-xs text-fg-muted">{t('admin.fields.advanced_help')}</p>
+
+      <div class="flex flex-wrap items-end gap-3">
+        <label class="w-full min-w-0 sm:flex-1">
+          <span class="block text-xs text-fg-muted">{t('admin.fields.group')}</span>
+          <input
+            type="text"
+            bind:value={displayGroup}
+            placeholder={t('admin.fields.group_placeholder')}
+            data-testid="field-edit-display-group"
+            class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          />
+        </label>
+        <label class="w-full min-w-0 sm:w-40">
+          <span class="block text-xs text-fg-muted">{t('admin.fields.display_order')}</span>
+          <input
+            type="number"
+            step="1"
+            bind:value={displayOrder}
+            data-testid="field-edit-display-order"
+            class="mt-0.5 w-full rounded border border-border-strong bg-surface px-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          />
+        </label>
+      </div>
+      <p class="text-xs text-fg-muted">{t('admin.fields.display_help')}</p>
+
+      {#if showAppliesTo}
+        <fieldset data-testid="field-edit-applies-to">
+          <legend class="text-xs text-fg-muted">{t('admin.fields.applies_to')}</legend>
+          <p class="mt-1 text-xs text-fg-muted">
+            {appliesToAll ? t('admin.fields.applies_to_all') : t('admin.fields.applies_to_help')}
+          </p>
+          {#if assetTypes.length === 0}
+            <p class="mt-1 text-xs text-fg-muted" data-testid="field-edit-applies-to-empty">
+              {t('admin.fields.applies_to_none')}
+            </p>
+          {:else}
+            <div class="mt-2 flex flex-col gap-1">
+              {#each assetTypes as ty (ty.ref)}
+                <label class="flex min-h-11 items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={appliesTo.includes(ty.ref)}
+                    onchange={(e) => toggleAppliesTo(ty.ref, (e.currentTarget as HTMLInputElement).checked)}
+                    data-testid="field-edit-applies-to-{ty.ref}"
+                    class="h-4 w-4 rounded border-border-strong"
+                  />
+                  <span class="min-w-0">{ty.name ?? `#${ty.ref}`}</span>
+                </label>
+              {/each}
+            </div>
+          {/if}
+        </fieldset>
+      {/if}
+
+      <!--
+        Capabilities are SHOWN and not edited here (#854). Two reasons,
+        and neither is difficulty: a read capability decides who can see
+        a field's values, so retyping one is an authorisation change
+        that belongs with the access work rather than inside a layout
+        sprint; and this form already refuses to send `show_on_card`
+        when a read capability is present, a rule that would have to be
+        re-derived live if the capability could change under it.
+      -->
+      <dl class="grid gap-1 text-xs sm:grid-cols-[10rem_1fr]" data-testid="field-edit-capabilities">
+        <dt class="text-fg-muted">{t('admin.fields.read_capability')}</dt>
+        <dd class="font-mono break-all" data-testid="field-edit-read-capability">
+          {(initialReadCapability ?? '').trim() || t('admin.fields.capability_none')}
+        </dd>
+        <dt class="text-fg-muted">{t('admin.fields.write_capability')}</dt>
+        <dd class="font-mono break-all" data-testid="field-edit-write-capability">
+          {(initialWriteCapability ?? '').trim() || t('admin.fields.capability_none')}
+        </dd>
+      </dl>
+      <p class="text-xs text-fg-muted">{t('admin.fields.capability_readonly_help')}</p>
+    </div>
+  </details>
 
   {#if conflict}
     <div

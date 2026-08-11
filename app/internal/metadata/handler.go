@@ -454,7 +454,39 @@ func (h *Handler) UpdateField(
 		DisplayGroup:            in.DisplayGroup,
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
 		OpenVocabulary:          in.OpenVocabulary,
+		ShowOnCard:              in.ShowOnCard,
 		UpdatedByUserRef:        &id.UserRef,
+	}
+	// A carded field may not be a GATED field (#552). The card renders on
+	// browse, for a page of assets, where no per-field capability has been
+	// evaluated — so the combination is refused rather than silently
+	// stripped at render time, which would be a setting that does nothing
+	// with no error anywhere.
+	//
+	// Checked against the state this request LANDS ON, not the state it
+	// starts from, which is the same reading the default-vs-options check
+	// below makes: an operator who removes the capability and cards the
+	// field in one PATCH must succeed, and one who cards a field while
+	// giving it a capability must fail. The CHECK constraint enforces the
+	// invariant either way; this is what turns it into a 400 with a
+	// sentence instead of a 500.
+	carded := cur.ShowOnCard
+	if in.ShowOnCard != nil {
+		carded = *in.ShowOnCard
+	}
+	gate := ""
+	if cur.ReadCapability != nil {
+		gate = *cur.ReadCapability
+	}
+	if in.ReadCapability != nil {
+		gate = *in.ReadCapability
+	}
+	if carded && gate != "" {
+		return openapi.UpdateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "a field with a read capability cannot be shown on cards: the card renders on browse, where no per-field capability has been checked",
+			},
+		}, nil
 	}
 	if in.Status != nil {
 		s := string(*in.Status)
@@ -677,13 +709,29 @@ func (h *Handler) GetAssetFields(
 		}, nil
 	}
 	q := New(h.Pool)
-	rows, err := q.ListAssetFieldValues(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
+	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	rows, err := q.ListAssetFieldValues(ctx, pgAsset)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: list values: %w", err)
 	}
-	out := make([]openapi.AssetFieldValue, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, listAssetValueRowToAPI(r))
+	// A MIRRORED field (#822) has no row in asset_field_value and never
+	// will — migration 00044's guard trigger refuses it one — so its value
+	// is projected from the column it declares and merged into the same
+	// order. Without this half, a client that wrote `title` through the
+	// field API would read nothing back, which is worse than the
+	// divergence this arc removed.
+	mirrored, err := q.ListAssetMirroredValues(ctx, pgAsset)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list mirrored values: %w", err)
+	}
+	merged := mergeFieldValues(rows, mirrored)
+	out := make([]openapi.AssetFieldValue, 0, len(merged))
+	for _, e := range merged {
+		if e.stored != nil {
+			out = append(out, listAssetValueRowToAPI(*e.stored))
+			continue
+		}
+		out = append(out, mirroredValueToAPI(*e.mirrored))
 	}
 	return openapi.GetAssetFields200JSONResponse(out), nil
 }
@@ -741,6 +789,18 @@ func (h *Handler) SetAssetFieldValue(
 		return openapi.SetAssetFieldValue400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: valErr.Error()},
 		}, nil
+	}
+
+	// MIRRORED fields (#822) branch here, after validation and after the
+	// field's own write_capability, and before anything touches
+	// asset_field_value. The two gates COMPOSE: a field that declares a
+	// write_capability still demands it, and the column's own mutation
+	// rule is checked on top. Reaching the upsert below with a mirrored
+	// field is not a bug that writes a divergent copy — migration 00044's
+	// trigger refuses the row — it is a 500. This branch is what turns
+	// that impossibility into a working write.
+	if col, ok := MirrorColumnOf(fieldRow); ok {
+		return h.setMirroredFieldValue(ctx, id, pgAsset, fieldRow, col, upsert)
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -890,6 +950,89 @@ func (h *Handler) SetAssetFieldValue(
 }
 
 // ---------------------------------------------------------------------------
+// SetAssetFieldValue — the MIRRORED branch (#822)
+// ---------------------------------------------------------------------------
+
+// setMirroredFieldValue writes a mirrored field by writing the column it
+// declares. There is no transaction here and nothing to make atomic: the
+// whole write is ONE UPDATE of one row, which is exactly what "the field is
+// a view onto the column" buys.
+//
+// No history row is appended, and that is a decision rather than an omission.
+// A mirrored field can hold no asset_field_value_history row — the same guard
+// trigger refuses those too — because a per-field audit trail that exists only
+// when the value happened to be changed through THIS endpoint, and not when
+// the same column was changed through `PATCH /assets/{id}`, is a trail that
+// lies by omission. Auditing `assets` column changes is a real gap; it is the
+// asset plane's gap, not something to half-build here.
+func (h *Handler) setMirroredFieldValue(
+	ctx context.Context,
+	id *auth.Identity,
+	pgAsset pgtype.UUID,
+	fieldRow FieldDefinition,
+	col string,
+	upsert UpsertAssetFieldValueParams,
+) (openapi.SetAssetFieldValueResponseObject, error) {
+	// The mirrorable columns are text, and the CHECK constraint keeps them
+	// that way, so a value that did not land in value_text names a type the
+	// column cannot hold.
+	if upsert.ValueText == nil {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: fmt.Sprintf("%s mirrors assets.%s and takes a text value", fieldRow.Code, col),
+			},
+		}, nil
+	}
+	value := *upsert.ValueText
+
+	// `required` is the field definition's own rule, obtained rather than
+	// restated. It is also what keeps the two planes agreeing: UpdateAsset
+	// refuses an empty title, and a mirrored write that accepted one would
+	// let the field plane put the row into a state the asset plane forbids.
+	if fieldRow.Required && strings.TrimSpace(value) == "" {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: fieldRow.Code + " is required and cannot be empty",
+			},
+		}, nil
+	}
+
+	refusal, err := mirroredWriteRefusal(ctx, h.Pool, id, pgAsset)
+	if errors.Is(err, ErrMirroredAssetGone) {
+		return openapi.SetAssetFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("metadata: mirrored write gate: %w", err)
+	}
+	if refusal != "" {
+		return openapi.SetAssetFieldValue403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: refusal},
+		}, nil
+	}
+
+	stored, at, err := mirrorWrite(ctx, h.Pool, pgAsset, col, value)
+	if errors.Is(err, ErrMirroredAssetGone) {
+		return openapi.SetAssetFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("metadata: mirrored write: %w", err)
+	}
+
+	// `stored` is what the column now holds, read back out of the UPDATE's
+	// RETURNING — not the string the caller sent. An echo would make this
+	// response pass on a build where the write went nowhere.
+	return openapi.SetAssetFieldValue200JSONResponse(
+		buildAssetValue(fieldRow.ID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
+			&stored, nil, pgtype.Timestamptz{}, nil, pgtype.UUID{},
+			SetByMirror, at, nil, fieldRow.Options, resolvedRef{}),
+	), nil
+}
+
+// ---------------------------------------------------------------------------
 // ClearAssetFieldValue
 // ---------------------------------------------------------------------------
 
@@ -905,6 +1048,20 @@ func (h *Handler) ClearAssetFieldValue(
 	}
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
+
+	// MIRRORED fields (#822): clearing a view means emptying the column it
+	// declares, under the column's own gate — the DELETE below would find
+	// nothing to remove and answer 204 while the title stayed put, which is
+	// a lie the caller has no way to detect. A `required` mirrored field
+	// cannot be cleared at all, for the same reason SetAssetFieldValue
+	// refuses to blank one.
+	if fieldRow, err := h.getFieldByIDCached(ctx, pgField); err == nil {
+		if col, ok := MirrorColumnOf(fieldRow); ok {
+			return h.clearMirroredFieldValue(ctx, id, pgAsset, fieldRow, col)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("metadata: load field: %w", err)
+	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -944,6 +1101,51 @@ func (h *Handler) ClearAssetFieldValue(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("metadata: commit: %w", err)
+	}
+	return openapi.ClearAssetFieldValue204Response{}, nil
+}
+
+// clearMirroredFieldValue empties the column a mirrored field declares.
+//
+// A `required` mirrored field refuses: `title` is required, `PATCH
+// /assets/{id}` refuses to blank it, and a DELETE that blanked it anyway
+// would be the field plane reaching a state the asset plane forbids —
+// through a verb an operator would not think of as an edit to the asset.
+func (h *Handler) clearMirroredFieldValue(
+	ctx context.Context,
+	id *auth.Identity,
+	pgAsset pgtype.UUID,
+	fieldRow FieldDefinition,
+	col string,
+) (openapi.ClearAssetFieldValueResponseObject, error) {
+	if fieldRow.Required {
+		return openapi.ClearAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: fieldRow.Code + " is required and cannot be cleared",
+			},
+		}, nil
+	}
+	refusal, err := mirroredWriteRefusal(ctx, h.Pool, id, pgAsset)
+	if errors.Is(err, ErrMirroredAssetGone) {
+		return openapi.ClearAssetFieldValue404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("metadata: mirrored clear gate: %w", err)
+	}
+	if refusal != "" {
+		return openapi.ClearAssetFieldValue403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: refusal},
+		}, nil
+	}
+	if _, _, err := mirrorWrite(ctx, h.Pool, pgAsset, col, ""); err != nil {
+		if errors.Is(err, ErrMirroredAssetGone) {
+			return openapi.ClearAssetFieldValue404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("metadata: mirrored clear: %w", err)
 	}
 	return openapi.ClearAssetFieldValue204Response{}, nil
 }
@@ -1186,6 +1388,14 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		ExtractionSource: &r.ExtractionSource,
 		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
 		OpenVocabulary:   &r.OpenVocabulary,
+		ShowOnCard:       &r.ShowOnCard,
+		// Read-only on the wire (#822). A client needs it to know that
+		// writing this field writes the ASSET — different gate, and a
+		// surface that already renders the column natively should skip the
+		// field rather than offer a second editor for one value. Nothing
+		// in the update schema accepts it: which columns are mirrorable is
+		// a schema decision behind a CHECK constraint.
+		MirrorsColumn: r.MirrorsColumn,
 	}
 	if r.DeprecatedReplacementID.Valid {
 		v := openapi_types.UUID(r.DeprecatedReplacementID.Bytes)
@@ -1212,6 +1422,25 @@ func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
 		r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
 		r.SetBy, r.SetAt, r.SetByUserRef, r.Options,
 		resolvedRef{ID: r.RefAssetID, Title: r.RefAssetTitle},
+	)
+}
+
+// mirroredValueToAPI builds the API shape for a MIRRORED field (#822) —
+// a value projected from the `assets` column the definition declares,
+// never from a stored row.
+//
+// It goes through buildAssetValue like every other value, deliberately:
+// a client must not be able to tell a mirrored field from a stored one
+// by the shape of the response. The only observable difference is
+// `set_by: mirror`, which is a statement about where the value LIVES,
+// not a different contract.
+func mirroredValueToAPI(r ListAssetMirroredValuesRow) openapi.AssetFieldValue {
+	text := r.ValueText
+	return buildAssetValue(
+		r.FieldID, r.Code, r.Label, r.Type,
+		&text, nil, pgtype.Timestamptz{}, nil, pgtype.UUID{},
+		SetByMirror, r.SetAt, nil, r.Options,
+		resolvedRef{},
 	)
 }
 

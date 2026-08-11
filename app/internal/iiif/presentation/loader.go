@@ -194,17 +194,30 @@ func (l *Loader) LoadCollection(ctx context.Context, id uuid.UUID, caller visibi
 // LoadCollectionMembers returns member EntityRefs in the canonical
 // (sort_order ASC, added_at ASC) order per pre-audit Q2.
 //
-// #661 — the member rows now carry the EntityAsset predicate, so this
-// LIST agrees with the single-item read of the same asset. It did not
-// before: `a.deleted_at IS NULL` plus a Go-side sensitivity filter let a
-// DRAFT public-sensitivity member be listed in an anonymous manifest
-// while `/iiif/3/asset/{that id}/manifest.json` refuses it — a list path
-// wider than the item path, which is the invariant epic #665 names. The
-// inline soft-delete conjunct is gone because the predicate asserts it
-// (#429/#438 precedent). The builder's per-member sensitivity filter
-// stays: it is the content plane, and for an AUTHENTICATED caller the
-// predicate is soft-delete only, so that filter is not redundant there.
-func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, caller visibility.Caller, limit int) ([]EntityRef, error) {
+// #661 — the member rows carry the EntityAsset predicate, so this LIST
+// agrees with the single-item read of the same asset. It did not before:
+// `a.deleted_at IS NULL` plus a Go-side sensitivity filter let a DRAFT
+// public-sensitivity member be listed in an anonymous manifest while
+// `/iiif/3/asset/{that id}/manifest.json` refuses it — a list path wider
+// than the item path, which is the invariant epic #665 names. The inline
+// soft-delete conjunct is gone because the predicate asserts it
+// (#429/#438 precedent).
+//
+// #883 — each row also carries MemberReadable, decided by the SAME
+// visibility.FieldsReadable the post and collection APIs use, so the
+// three surfaces cannot drift on what "the caller may not see this
+// member" means. The predicate splice STAYS here (unlike the JSON API's
+// contents query, which dropped it so it could emit placeholders):
+// visibility.FieldsReadable is strictly tighter than the fragment, so keeping both
+// changes no answer, and the fragment is what makes the anonymous
+// row-plane conjuncts a SQL filter rather than a Go one on this path.
+//
+// caps may be nil (anonymous, or a caller with no capability checker) —
+// visibility.FieldsReadable handles that.
+//
+// `mut` is the caller's resolved `assets.admin` scope (#939); the zero
+// value denies, which is the pre-#939 behaviour.
+func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UUID, caller visibility.Caller, caps visibility.CapabilityChecker, mut visibility.AssetMutationCaps, limit int) ([]EntityRef, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -212,14 +225,18 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-	// Two placeholders bound ($1 collection id, $2 limit) before the
-	// fragment renders. LIMIT binds first even though it reads last —
-	// the invariant is an index bound, not textual order.
-	frag, predArgs := pred.ToSQL("a", 2)
+	// Three placeholders bound ($1 collection id, $2 limit, $3 caller
+	// ref) before the fragment renders. LIMIT binds first even though it
+	// reads last — the invariant is an index bound, not textual order.
+	frag, predArgs := pred.ToSQL("a", 3)
 	rows, err := l.Pool.Query(ctx, `
-		SELECT a.id, a.title, a.sensitivity, a.owner_user_ref,
-		       a.origin_server_id, a.file_extension,
-		       a.created_at, a.updated_at
+		SELECT a.id, a.title, a.sensitivity, a.status, a.processing_status,
+		       a.owner_user_ref, a.origin_server_id, a.file_extension,
+		       a.created_at, a.updated_at,
+		       (a.team_id IS NOT NULL AND EXISTS (
+		            SELECT 1 FROM team_memberships tm
+		             WHERE tm.team_id = a.team_id AND tm.user_ref = $3::BIGINT)) AS is_team_member,
+		       a.team_id
 		  FROM collection_resources cr
 		  JOIN assets a ON a.id = cr.asset_id
 		 WHERE cr.collection_id = $1
@@ -227,7 +244,7 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		   AND (cr.expires_at IS NULL OR cr.expires_at > NOW())`+frag+`
 		 ORDER BY cr.sort_order ASC, cr.added_at ASC
 		 LIMIT $2`,
-		append([]any{collectionID, limit}, predArgs...)...)
+		append([]any{collectionID, limit, caller.UserRef}, predArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -235,14 +252,18 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 	out := make([]EntityRef, 0, limit)
 	for rows.Next() {
 		var (
-			ref    EntityRef
-			sens   string
-			owner  *int64
-			origin *uuid.UUID
-			ext    *string
+			ref       EntityRef
+			sens      string
+			status    string
+			procState string
+			owner     *int64
+			origin    *uuid.UUID
+			ext       *string
+			isTeam    bool
+			teamID    *uuid.UUID
 		)
-		if err := rows.Scan(&ref.ID, &ref.Title, &sens, &owner,
-			&origin, &ext, &ref.CreatedAt, &ref.UpdatedAt); err != nil {
+		if err := rows.Scan(&ref.ID, &ref.Title, &sens, &status, &procState, &owner,
+			&origin, &ext, &ref.CreatedAt, &ref.UpdatedAt, &isTeam, &teamID); err != nil {
 			return nil, err
 		}
 		ref.Kind = EntityAsset
@@ -252,9 +273,22 @@ func (l *Loader) LoadCollectionMembers(ctx context.Context, collectionID uuid.UU
 		if ext != nil {
 			ref.FileExtension = *ext
 		}
-		if caller.IsAnonymous && (ref.Sensitivity == SensitivityRestricted || ref.Sensitivity == SensitivityTeam) {
-			continue
+		// #939 — the FIELD plane, which is all a IIIF collection member
+		// carries: an id and a label. There is no picture here to split
+		// off (the tiles live behind visibility.CanReadContent in
+		// iiif/http.go, and a restricted asset's manifest is a stub), so
+		// a scoped `assets.admin` holder sees the titles of the members
+		// they administer and still gets no pixels.
+		fr := visibility.FieldsRow{
+			Sensitivity:      sens,
+			Status:           status,
+			ProcessingStatus: procState,
+			OwnerUserRef:     owner,
+			IsTeamMember:     isTeam,
+			TeamID:           teamID,
 		}
+		fr.ApplyMutationCaps(mut)
+		ref.MemberReadable = visibility.FieldsReadable(fr, caller, caps)
 		out = append(out, ref)
 	}
 	return out, rows.Err()

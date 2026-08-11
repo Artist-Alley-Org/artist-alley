@@ -112,7 +112,7 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason
+          deleted_at, deleted_reason, deleted_by_user_ref
 `
 
 type CreateCollectionParams struct {
@@ -165,19 +165,21 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.SmartQuery,
 		&i.DeletedAt,
 		&i.DeletedReason,
+		&i.DeletedByUserRef,
 	)
 	return i, err
 }
 
 const deleteCollection = `-- name: DeleteCollection :exec
 UPDATE collections
-SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, deleted_by_user_ref = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type DeleteCollectionParams struct {
-	ID            pgtype.UUID
-	DeletedReason *string
+	ID               pgtype.UUID
+	DeletedReason    *string
+	DeletedByUserRef *int64
 }
 
 // Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
@@ -185,8 +187,11 @@ type DeleteCollectionParams struct {
 // coordinator hard-deletes past sysconfig.CollectionRetentionDays,
 // at which point collection_resources / collection_posts /
 // collection_acls cascade via their existing FK ON DELETE CASCADE.
+//
+// deleted_by_user_ref: see the note on assets.SoftDeleteAsset. The
+// restore gate reads it, so every soft-delete path has to write it.
 func (q *Queries) DeleteCollection(ctx context.Context, arg DeleteCollectionParams) error {
-	_, err := q.db.Exec(ctx, deleteCollection, arg.ID, arg.DeletedReason)
+	_, err := q.db.Exec(ctx, deleteCollection, arg.ID, arg.DeletedReason, arg.DeletedByUserRef)
 	return err
 }
 
@@ -194,7 +199,7 @@ const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason
+       deleted_at, deleted_reason, deleted_by_user_ref
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -220,15 +225,31 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.SmartQuery,
 		&i.DeletedAt,
 		&i.DeletedReason,
+		&i.DeletedByUserRef,
 	)
 	return i, err
+}
+
+const getCollectionDeletedBy = `-- name: GetCollectionDeletedBy :one
+SELECT deleted_by_user_ref
+  FROM collections
+ WHERE id = $1 AND deleted_at IS NOT NULL
+`
+
+// Who soft-deleted this collection. pgx.ErrNoRows when the row is live
+// or absent — the two cases the restore path already conflates.
+func (q *Queries) GetCollectionDeletedBy(ctx context.Context, id pgtype.UUID) (*int64, error) {
+	row := q.db.QueryRow(ctx, getCollectionDeletedBy, id)
+	var deleted_by_user_ref *int64
+	err := row.Scan(&deleted_by_user_ref)
+	return deleted_by_user_ref, err
 }
 
 const getCollectionIncludingDeleted = `-- name: GetCollectionIncludingDeleted :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason
+       deleted_at, deleted_reason, deleted_by_user_ref
 FROM collections
 WHERE id = $1
 `
@@ -255,6 +276,7 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.SmartQuery,
 		&i.DeletedAt,
 		&i.DeletedReason,
+		&i.DeletedByUserRef,
 	)
 	return i, err
 }
@@ -403,7 +425,7 @@ const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason
+       deleted_at, deleted_reason, deleted_by_user_ref
 FROM collections c
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
@@ -501,6 +523,7 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.SmartQuery,
 			&i.DeletedAt,
 			&i.DeletedReason,
+			&i.DeletedByUserRef,
 		); err != nil {
 			return nil, err
 		}
@@ -567,7 +590,7 @@ WHERE id = $7
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason
+          deleted_at, deleted_reason, deleted_by_user_ref
 `
 
 type UpdateCollectionParams struct {
@@ -608,6 +631,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.SmartQuery,
 		&i.DeletedAt,
 		&i.DeletedReason,
+		&i.DeletedByUserRef,
 	)
 	return i, err
 }

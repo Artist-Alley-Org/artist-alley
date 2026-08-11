@@ -58,8 +58,18 @@ type Suggestion struct {
 
 // Request drives one Suggest call.
 type Request struct {
-	Prefix    string
-	Caller    visibility.Caller
+	Prefix string
+	Caller visibility.Caller
+	// Caps is the caller's content-plane capabilities (#899). A
+	// completion is an asset TITLE, so this surface answers the
+	// same question the asset payload does and needs the same
+	// short-circuits. Zero value = none, correct for anonymous.
+	Caps visibility.ContentCaps
+	// PostCaps is the caller's post-plane capabilities (#873). A post
+	// title completes iff the caller may read the post, which is the
+	// full read rule and not the `public OR author` this surface used
+	// to compose. Zero value = none.
+	PostCaps  visibility.PostCaps
 	Threshold float64
 	Limit     int
 }
@@ -119,13 +129,13 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	}
 	all = append(all, cols...)
 
-	postTitles, err := s.postTitles(ctx, prefix, threshold, req.Caller)
+	postTitles, err := s.postTitles(ctx, prefix, threshold, req.Caller, req.PostCaps)
 	if err != nil {
 		return Response{}, err
 	}
 	all = append(all, postTitles...)
 
-	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller)
+	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps)
 	if err != nil {
 		return Response{}, err
 	}
@@ -191,8 +201,19 @@ func (s *Service) collections(ctx context.Context, prefix string, threshold floa
 	return s.scanSuggestionsWith(ctx, KindCollection, sql, queryArgs)
 }
 
-func (s *Service) postTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller) ([]Suggestion, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller)
+// postTitles completes on post titles.
+//
+// #873 — it composes the full post read rule, the same one the feed
+// runs. It used to compose `public OR author`, so a post you could open
+// from your feed would not complete: type its first six letters and the
+// dropdown stayed empty, with nothing to distinguish that from "no such
+// post". This is the widening direction, and it is the opposite of the
+// asset rule below — a post you may READ may be completed; what a
+// findable post does NOT do is make its restricted members' fields
+// readable, which FieldsReadable still governs (#899).
+func (s *Service) postTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.PostCaps) ([]Suggestion, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(caps))
 	if err != nil {
 		return nil, err
 	}
@@ -207,12 +228,28 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 	return s.scanSuggestionsWith(ctx, KindPostTitle, sql, queryArgs)
 }
 
-func (s *Service) assetTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller) ([]Suggestion, error) {
+// assetTitles completes on asset titles.
+//
+// #899 — a completion IS the title, so there is no placeholder shape
+// available here: an unreadable asset must not contribute a row at all,
+// and this is the one asset surface where dropping rather than
+// withholding is the correct answer. The content plane is therefore a
+// SQL conjunct rather than a per-row Go decision, because a suggestion
+// has no id to hang a marker on.
+//
+// This surface was the sharpest of the #899 leaks in practice: it takes
+// a PREFIX, so it let any signed-in caller reconstruct a restricted
+// asset's title letter by letter, without ever touching /assets/{id}.
+func (s *Service) assetTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.ContentCaps) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, err
 	}
 	frag, args := pred.ToSQL("", 2)
+	// Caller ref inlined as a literal, same reasoning as the facet
+	// aggregators: it is an int64 this package produced, never
+	// caller-supplied text.
+	frag += visibility.ContentReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caps)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM assets

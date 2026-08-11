@@ -6,20 +6,34 @@
   import { theme } from '$stores/theme.svelte';
   import { lang, t } from '$stores/lang.svelte';
   import { api } from '$api/client';
+  import { auth } from '$stores/auth.svelte';
+  import { browseView, type ViewMode } from '$stores/browseView.svelte';
+  import type { components } from '$api/schema';
 
   // Local types mirror the openapi UserPreferencesResponse shape.
   // We don't pull from schema.d.ts directly because the openapi-fetch
   // client returns loosely-typed Records on the maps, and the UI is
   // easier to write against narrow shapes.
-  interface ViewSelections {
-    home_tab?: string;
-    browse_layout?: string;
-    browse_sort?: string;
-  }
+  //
+  // The view selections are the exception: they ARE pulled from the
+  // schema, because they are now closed enums and a hand-written
+  // `string` here would let a value the server rejects typecheck all
+  // the way to the PATCH (which is how `trending` survived so long —
+  // #736). Widening them means widening openapi.yaml first.
+  type ViewSelections = NonNullable<
+    components['schemas']['UserPreferencesRequest']['default_views']
+  >;
+  // Same reasoning as ViewSelections: typed from the schema so a key
+  // this build's server does not know about cannot typecheck its way
+  // into a PATCH.
+  type FeedFilters = NonNullable<
+    components['schemas']['UserPreferencesRequest']['feed_filters']
+  >;
   interface PrefsResponse {
     notification_channels: Record<string, string[]>;
     email_cadence?: Record<string, string>;
     default_views: ViewSelections;
+    feed_filters: FeedFilters;
     known_event_types: string[];
     known_channels: string[];
     default_channels_by_event: Record<string, string[]>;
@@ -29,13 +43,44 @@
   // drops the email channel; the other four are real cadence values.
   const CADENCE_OPTIONS = ['off', 'immediate', 'hourly', 'daily', 'weekly'] as const;
 
-  // The select-options for the three view knobs. The valid value sets
-  // are pinned here client-side; the server also accepts arbitrary
-  // strings (it doesn't enforce the enum) so adding a new layout in
-  // a later phase is a one-line change here without a migration.
-  const HOME_TAB_OPTIONS = ['', 'latest', 'following', 'trending', 'for_you'];
-  const BROWSE_LAYOUT_OPTIONS = ['', 'grid', 'masonry', 'thumbnail', 'list'];
-  const BROWSE_SORT_OPTIONS = ['', 'newest', 'oldest', 'popular', 'trending'];
+  // The select-options for the three view knobs. These mirror the
+  // enums on UserPreferencesViews in openapi.yaml, which the server
+  // now enforces on write and sanitizes on read (userprefs/prefs.go) —
+  // so this list is no longer the only thing standing between a typo
+  // and a persisted value.
+  //
+  // Every option here is a state the app can reach. Four were removed
+  // because they were not: `trending` + `for_you` on the home tab
+  // (#736) named feed segments that `GET /posts` has never accepted,
+  // and `popular` + `trending` on the sort (#706) named orderings that
+  // no endpoint can produce. Picking one saved a durable preference,
+  // showed a confirmation, and changed nothing. `feed` was added for
+  // the opposite reason: it is a real layout — the one phones land on
+  // — that no user could ask for.
+  //
+  // Adding an option means first shipping the thing it names.
+  //
+  // Typed from the schema rather than left as `string[]` so a member
+  // that openapi.yaml does not declare fails the build here instead of
+  // rendering an option nobody can honour.
+  const HOME_TAB_OPTIONS: NonNullable<ViewSelections['home_tab']>[] =
+    ['', 'latest', 'following'];
+  const BROWSE_LAYOUT_OPTIONS: NonNullable<ViewSelections['browse_layout']>[] =
+    ['', 'grid', 'masonry', 'thumbnail', 'list', 'feed'];
+
+  // ...and then narrowed to what THIS install offers (#709). An
+  // operator can disable a layout instance-wide, and offering it here
+  // would be the same "picking it changes nothing" bug the comment
+  // above describes, arriving from the operator's side instead of from
+  // a missing endpoint: the preference would save, and every resolve
+  // would filter it straight back out.
+  //
+  // `''` (use default) always survives — it names no layout, so there
+  // is nothing for the operator to have disabled.
+  const offeredLayoutOptions = $derived(
+    BROWSE_LAYOUT_OPTIONS.filter((o) => o === '' || browseView.isEnabled(o as ViewMode)));
+  const BROWSE_SORT_OPTIONS: NonNullable<ViewSelections['browse_sort']>[] =
+    ['', 'newest', 'oldest'];
 
   let saved = $state(false);
   let savingPrefs = $state(false);
@@ -128,6 +173,15 @@
     });
   }
 
+  // Feed-filter toggle (#891). Same shape as setView — send the whole
+  // filter object with one key flipped.
+  async function setFeedFilter(key: keyof FeedFilters, value: boolean): Promise<void> {
+    if (!prefs) return;
+    await savePrefs({
+      feed_filters: { ...prefs.feed_filters, [key]: value },
+    });
+  }
+
   async function savePrefs(patch: Partial<PrefsResponse>): Promise<void> {
     if (!prefs || savingPrefs) return;
     savingPrefs = true;
@@ -136,10 +190,17 @@
         notification_channels: patch.notification_channels ?? prefs.notification_channels,
         email_cadence: patch.email_cadence ?? prefs.email_cadence ?? {},
         default_views: patch.default_views ?? prefs.default_views,
+        feed_filters: patch.feed_filters ?? prefs.feed_filters,
       };
       const r = await api.PATCH('/account/preferences', { body });
       if (r.data) {
         prefs = r.data as unknown as PrefsResponse;
+        // The feed filter also rides the SESSION (#891), because browse
+        // reads it on first paint to explain a shorter feed. Re-pull
+        // /auth/me so the banner agrees with the toggle without a
+        // reload — the same refresh the theme + language pickers get
+        // for free by writing through their own stores.
+        void auth.refresh();
         flashSaved();
       } else if (r.error) {
         loadError = (r.error as { error?: string } | undefined)?.error ?? t('account.preferences.notif_save_error');
@@ -334,7 +395,7 @@
             onchange={(e) => setView('browse_layout', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
           >
-            {#each BROWSE_LAYOUT_OPTIONS as opt (opt)}
+            {#each offeredLayoutOptions as opt (opt)}
               <option value={opt}>{opt === '' ? t('account.preferences.views_use_default') : t(`account.preferences.views_browse_layout_${opt}`)}</option>
             {/each}
           </select>
@@ -353,6 +414,28 @@
             {/each}
           </select>
         </label>
+      </div>
+
+      <!-- #891 — a separate block from the view knobs above, because
+           they rearrange the same set of posts and this changes which
+           posts are in it. The help text spells out the consequence the
+           issue flagged: hiding the placeholder also hides #913's
+           "Request access" button on the browse grid, so the trade is
+           stated up front rather than discovered. -->
+      <div class="mt-4 border-t border-border pt-4">
+        <h4 class="mb-2 text-sm font-medium text-fg">{t('account.preferences.filters_title')}</h4>
+        <label class="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 shrink-0"
+            data-testid="pref-show-restricted"
+            checked={prefs.feed_filters?.show_restricted ?? false}
+            onchange={(e) => setFeedFilter('show_restricted', (e.target as HTMLInputElement).checked)}
+            disabled={savingPrefs}
+          />
+          <span class="font-medium text-fg">{t('account.preferences.filters_show_restricted')}</span>
+        </label>
+        <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.filters_show_restricted_help')}</p>
       </div>
     {/if}
   </section>

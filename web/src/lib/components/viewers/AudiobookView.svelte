@@ -86,7 +86,9 @@
   }
   interface SiblingWire {
     asset_id: string;
-    asset: { id: string; title?: string };
+    /** ABSENT on a member the viewer may not see (#883). */
+    asset?: { id: string; title?: string };
+    restricted?: boolean;
     sort_order?: number;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -279,7 +281,15 @@
       // asset_type but the post member shape doesn't carry it
       // reliably; the audio kind filter that gated AudiobookView's
       // mount is good enough.
-      const sorted = [...members].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      // #883 — a restricted member is DROPPED from the play queue rather
+      // than shown as a locked track. This queue exists to autoplay
+      // through the post; a position that can never play would stall it
+      // on every pass, and there is no track title to name it by anyway.
+      // The tile/filmstrip surfaces still show the placeholder, so the
+      // restriction is visible where a person can act on it.
+      const sorted = [...members]
+        .filter((m) => !m.restricted)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
       if (sorted.length < 2) return;
       session.siblings = sorted.map((m, i) => ({
         assetId: m.asset?.id ?? m.asset_id,

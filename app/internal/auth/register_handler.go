@@ -195,15 +195,38 @@ func (h *Handler) Register(
 		if err != nil {
 			return nil, err
 		}
+		current := openapi.CurrentUser{
+			Ref:        row.Ref,
+			Username:   derefOr(row.Username, username),
+			Email:      row.Email,
+			AuthMethod: openapi.CurrentUserAuthMethod("session"),
+		}
+		// Registration issues a session and drops the user straight onto
+		// browse, so it is a sign-in path and gets the same treatment.
+		//
+		// An account created microseconds ago has no stored preferences,
+		// so that half was provably a no-op here — which was the point
+		// of doing it anyway. "Every CurrentUser goes through
+		// hydrateSessionUser" is a rule that survives someone later
+		// seeding a profile at registration (an Accept-Language default
+		// is the obvious candidate); "every CurrentUser except the ones
+		// where it cannot matter yet" is a rule that has to be
+		// re-derived, and getting that derivation wrong is what shipped
+		// the /auth/login hole in the first place.
+		//
+		// The capability half is NOT a no-op: the default role was
+		// assigned a few lines above, so a self-registered user's caps
+		// exist by the time we get here (#871). Today's register page
+		// happens to re-read /auth/me straight after rather than adopt
+		// this body, which is exactly why the field is filled in here
+		// anyway — an endpoint that returns CurrentUser returns the
+		// whole of it, regardless of which fields the one caller we
+		// currently ship bothers to look at.
+		h.hydrateSessionUser(ctx, row.Ref, &current)
 		return registerSetCookieResponse{
 			token:       token,
 			sessionDays: h.SessionDays,
-			body: openapi.CurrentUser{
-				Ref:        row.Ref,
-				Username:   derefOr(row.Username, username),
-				Email:      row.Email,
-				AuthMethod: openapi.CurrentUserAuthMethod("session"),
-			},
+			body:        current,
 		}, nil
 	}
 

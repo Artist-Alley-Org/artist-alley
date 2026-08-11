@@ -68,6 +68,31 @@ export interface ViewAsset {
   /** Asset-level JSONB. Per-kind view bodies read their own
       namespaced keys (audio, pdf, font, video, etc). */
   metadata?: Record<string, unknown> | null;
+  /** #899 — true when the server withheld this asset's columns
+   *  because the caller cannot open it. The payload then carries
+   *  nothing but `id`, `restricted` and `owner_display_name`, so every
+   *  field above is undefined and no byte-serving affordance should be
+   *  offered: `/file`, `/download` and `/variants/*` all 404 for this
+   *  caller, and a button that 404s is a button that should not have
+   *  been drawn. */
+  restricted?: boolean;
+  /** #899 — the asset owner's display name, carried only alongside
+   *  `restricted` so a placeholder can say whose work it is and #881
+   *  can address the request. */
+  owner_display_name?: string | null;
+  /** The owner's user ref, present on a READABLE asset only (a
+   *  withheld payload deliberately carries the name and not the ref —
+   *  see the Asset schema).
+   *
+   *  #981 needs it because "may I delete this?" is a question about
+   *  the ASSET's owner, and the hosts that surround a viewer answer a
+   *  different one: PostHost knows who authored the post, which is not
+   *  necessarily who owns each member. Gating the delete item on post
+   *  authorship would both hide it from an owner whose asset someone
+   *  else posted and show it to a post author over a member they do
+   *  not own. Nullable in the schema — an unowned asset matches
+   *  nobody. */
+  owner_user_ref?: number | null;
 }
 
 // Per-kind review tools the shell renders in its right pane. Each

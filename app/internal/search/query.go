@@ -5,7 +5,6 @@ package search
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -16,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -38,11 +38,35 @@ const TotalCountCap = 10000
 // prepared Query and get back a QueryResult.
 type Engine struct {
 	Pool *pgxpool.Pool
+
+	// previewLadder reports the operator's CONFIGURED preview variant
+	// keys (#591), read per query from the cached sysconfig reader.
+	// Installed by boot via SetPreviewLadder; nil in tests and in any
+	// boot wire that predates the #850 card payload.
+	//
+	// Nil means "unknown", which LadderSatisfiedSQL resolves to false,
+	// so a card falls back to the single `col` rung — the direction
+	// that costs a responsive srcset rather than a wall of 404s.
+	previewLadder sysconfig.PreviewLadderReader
 }
 
 // NewEngine constructs an Engine bound to the shared pool.
 func NewEngine(pool *pgxpool.Pool) *Engine {
 	return &Engine{Pool: pool}
+}
+
+// SetPreviewLadder installs the cached configured-ladder reader (#591).
+// Same post-construction setter the assets / posts / collections /
+// featured handlers take, wired from the ONE reader built at boot so all
+// five agree on what the ladder is.
+func (e *Engine) SetPreviewLadder(r sysconfig.PreviewLadderReader) { e.previewLadder = r }
+
+// ladder returns the configured preview variant keys, or nil.
+func (e *Engine) ladder(ctx context.Context) []string {
+	if e.previewLadder == nil {
+		return nil
+	}
+	return e.previewLadder(ctx)
 }
 
 // Run executes the query. Emits per-entity queries in parallel,
@@ -268,7 +292,7 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 	// Enrich vector-only hits with their asset row projection so
 	// the response body carries titles + timestamps.
 	if len(newRows) > 0 {
-		if err := e.enrichAssetHits(ctx, newRows); err != nil {
+		if err := e.enrichAssetHits(ctx, q, newRows); err != nil {
 			return err
 		}
 		*hits = append(*hits, newRows...)
@@ -306,7 +330,7 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 // asset hits that arrived via the vector path (no BM25 row scan).
 // One IN-clause query keeps the round-trip bounded regardless of
 // how many vector-only hits arrived.
-func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
+func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error {
 	if len(hits) == 0 {
 		return nil
 	}
@@ -314,13 +338,24 @@ func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
 	for _, h := range hits {
 		ids = append(ids, h.ID)
 	}
+	// The readability columns ride along in the same pass (#899). This
+	// query has no visibility predicate of its own — it trusts
+	// vector.Query to have pre-filtered the ids — so before #899 there
+	// was NOTHING here between the assets table and the caller's JSON.
+	// That was sound only as long as no future caller handed it
+	// unfiltered ids; the per-row decision below no longer depends on
+	// that promise.
+	caller, caps := callerOf(q)
+	mut := mutCapsOf(q)
 	rows, err := e.Pool.Query(ctx, `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
-		       thumbhash, created_at, updated_at
+		       thumbhash, created_at, updated_at,
+		       `+visibility.FieldsColumnsSQL("assets", "$2")+`,
+		       `+assetCardColumnsSQL("assets", "$3")+`
 		  FROM assets
 		 WHERE id = ANY($1::UUID[])
 		   AND deleted_at IS NULL
-	`, ids)
+	`, ids, callerRefOf(q), e.ladder(ctx))
 	if err != nil {
 		return err
 	}
@@ -328,19 +363,40 @@ func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
 	byID := make(map[[16]byte]Hit, len(hits))
 	for rows.Next() {
 		var (
-			id      uuid.UUID
-			title   string
-			descr   string
-			owner   *int64
-			origin  *uuid.UUID
-			thumb   []byte
-			created time.Time
-			updated time.Time
+			id        uuid.UUID
+			title     string
+			descr     string
+			owner     *int64
+			origin    *uuid.UUID
+			thumb     []byte
+			created   time.Time
+			updated   time.Time
+			fr        visibility.FieldsRow
+			ownerName string
+			card      assetCardRow
 		)
-		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated); err != nil {
+		dest := append([]any{
+			&id, &title, &descr, &owner, &origin, &thumb, &created, &updated,
+			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
+		}, card.scanDest()...)
+		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
-		extra, _ := json.Marshal(map[string]any{"thumbhash_b64": encodeB64(thumb)})
+		fr.ApplyMutationCaps(mut)
+		if !visibility.FieldsReadable(fr, caller, caps) {
+			// The projection carries nothing but the marker and the
+			// owner's name — note the thumbhash in particular is a
+			// blurred picture of the content, not a neutral hint. The
+			// #850 card payload is on the other branch for the same
+			// reason.
+			byID[id] = Hit{Restricted: true, OwnerDisplayName: ownerName}
+			continue
+		}
+		// PreviewReadable, not `true` (#939): a mutation holder reaches
+		// this branch on the field plane and must still get no blur and
+		// no availability flags.
+		extra := assetCardExtra(card, thumb, visibility.PreviewReadable(fr, caller, caps))
 		byID[id] = Hit{
 			Title:          title,
 			Summary:        truncate(descr, 240),
@@ -355,15 +411,24 @@ func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
 		return err
 	}
 	for i, h := range hits {
-		if enriched, ok := byID[h.ID]; ok {
-			hits[i].Title = enriched.Title
-			hits[i].Summary = enriched.Summary
-			hits[i].OwnerUserRef = enriched.OwnerUserRef
-			hits[i].OriginServerID = enriched.OriginServerID
-			hits[i].CreatedAt = enriched.CreatedAt
-			hits[i].UpdatedAt = enriched.UpdatedAt
-			hits[i].ExtraJSON = enriched.ExtraJSON
+		enriched, ok := byID[h.ID]
+		if !ok {
+			continue
 		}
+		if enriched.Restricted {
+			// Replace the WHOLE hit rather than copying the readable
+			// fields across — the scores are carried over explicitly by
+			// withheldHit and nothing else is.
+			hits[i] = withheldHit(hits[i], enriched.OwnerDisplayName)
+			continue
+		}
+		hits[i].Title = enriched.Title
+		hits[i].Summary = enriched.Summary
+		hits[i].OwnerUserRef = enriched.OwnerUserRef
+		hits[i].OriginServerID = enriched.OriginServerID
+		hits[i].CreatedAt = enriched.CreatedAt
+		hits[i].UpdatedAt = enriched.UpdatedAt
+		hits[i].ExtraJSON = enriched.ExtraJSON
 	}
 	return nil
 }
@@ -428,16 +493,22 @@ var ErrEmptyQuery = errors.New("search: query text is required")
 // The base search_text @@ predicate stays inline; the visibility
 // AND clause is appended by the shared helper.
 func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityAsset, visibility.NewCaller(q.CallerUserRef))
+	caller, caps := callerOf(q)
+	mut := mutCapsOf(q)
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, 0, err
 	}
-	visFrag, visArgs := pred.ToSQL("", 2) // $1=query, next placeholder = $3
+	// $1=query, $2=limit, $3=caller ref, $4=configured ladder,
+	// predicate args start at $5.
+	visFrag, visArgs := pred.ToSQL("", 4)
 
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
-		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
+		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score,
+		       ` + visibility.FieldsColumnsSQL("assets", "$3") + `,
+		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
 		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
 		 ORDER BY score DESC, id DESC
@@ -446,13 +517,34 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM assets
-			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 WHERE search_text @@ plainto_tsquery('english', $1)
+			   -- $3 is the caller ref and $4 the configured preview
+			   -- ladder, read only by the hits query's readability and
+			   -- card columns. Both are REFERENCED here (as tautologies)
+			   -- rather than dropped, because pgx rejects a statement
+			   -- bound with more args than it names and the alternative —
+			   -- renumbering the shared predicate fragment per statement —
+			   -- is exactly the off-by-one ADR 0063's placeholder
+			   -- discipline exists to avoid.
+			   AND ($3::BIGINT IS NULL OR TRUE)
+			   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + `
 			 LIMIT $2
 		) x
 	`
-	// Compose args: $1=query text, $2=limit, then visibility args.
-	hitsArgs := append([]any{q.Text, limit}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	// Compose args: $1=query text, $2=limit, $3=caller ref, then
+	// visibility args. The COUNT does not read $3 but still binds it, so
+	// the shared predicate fragment's placeholder indexes line up in
+	// both statements (ADR 0063 placeholder discipline).
+	//
+	// total_count deliberately counts rows the caller cannot open. ADR
+	// 0064 keeps those rows in the result set as placeholders, so a
+	// total that excluded them would disagree with the array beside it
+	// and would make the count itself a readability oracle — "the total
+	// dropped by one, so that row is restricted". Existence is already
+	// disclosed by decision 1; the count discloses nothing further.
+	ladder := e.ladder(ctx)
+	hitsArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, visArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q), ladder}, visArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -461,22 +553,45 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	hits := make([]Hit, 0, limit)
 	for rows.Next() {
 		var (
-			id      uuid.UUID
-			title   string
-			descr   string
-			owner   *int64
-			origin  *uuid.UUID
-			thumb   []byte
-			created time.Time
-			updated time.Time
-			score   float64
+			id        uuid.UUID
+			title     string
+			descr     string
+			owner     *int64
+			origin    *uuid.UUID
+			thumb     []byte
+			created   time.Time
+			updated   time.Time
+			score     float64
+			fr        visibility.FieldsRow
+			ownerName string
+			card      assetCardRow
 		)
-		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated, &score); err != nil {
+		dest := append([]any{
+			&id, &title, &descr, &owner, &origin, &thumb, &created, &updated, &score,
+			&fr.Sensitivity, &fr.Status, &fr.ProcessingStatus, &fr.OwnerUserRef,
+			&fr.TeamID, &fr.IsTeamMember, &ownerName,
+		}, card.scanDest()...)
+		if err := rows.Scan(dest...); err != nil {
 			return nil, 0, err
 		}
-		extra, _ := json.Marshal(map[string]any{
-			"thumbhash_b64": encodeB64(thumb),
-		})
+		fr.ApplyMutationCaps(mut)
+		// #899 — the row STAYS (ADR 0064 gates content, not rows), but
+		// an asset the caller cannot open hands over none of its
+		// columns. The predicate above decided whether the row is
+		// listed; this decides what the listing says.
+		//
+		// #850 widened what a readable hit carries. It changed nothing
+		// here on purpose: the card payload is built on the far side of
+		// this branch, so a wider `extra` cannot reach a caller who
+		// fails the gate.
+		if !visibility.FieldsReadable(fr, caller, caps) {
+			hits = append(hits, withheldHit(Hit{
+				Type: HitTypeAsset, ID: id, RawScore: score,
+			}, ownerName))
+			continue
+		}
+		// PreviewReadable, not `true` (#939) — see enrichAssetHits.
+		extra := assetCardExtra(card, thumb, visibility.PreviewReadable(fr, caller, caps))
 		hits = append(hits, Hit{
 			Type:           HitTypeAsset,
 			ID:             id,
@@ -532,7 +647,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
-		       c.created_at, c.updated_at,
+		       c.created_at, c.updated_at, c.visibility,
 		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
 		  FROM collections c
 		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
@@ -563,9 +678,10 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			origin  *uuid.UUID
 			created time.Time
 			updated time.Time
+			vis     string
 			score   float64
 		)
-		if err := rows.Scan(&id, &name, &descr, &owner, &origin, &created, &updated, &score); err != nil {
+		if err := rows.Scan(&id, &name, &descr, &owner, &origin, &created, &updated, &vis, &score); err != nil {
 			return nil, 0, err
 		}
 		hits = append(hits, Hit{
@@ -578,7 +694,11 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			CreatedAt:      created,
 			UpdatedAt:      updated,
 			RawScore:       score,
-			// No extras: nil marshals to `{}` in MarshalHitJSON.
+			// #850 — the one field CollectionCard reads that the hit did
+			// not already carry. Safe to ship unconditionally: the
+			// predicate above already decided this caller may see the
+			// collection, and its visibility tier is the reason why.
+			ExtraJSON: collectionCardExtra(vis),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -593,16 +713,42 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 
 // runPosts queries posts. Visibility gate composed via
 // visibility.Predicate — see the shared package (Phase 1.16.B-2).
+//
+// #873 — WithPostCaps is what makes this the same rule the browse feed
+// runs. Without it the predicate renders its `private` disjunct as
+// FALSE, and a moderator searching for a private post they can open from
+// the feed gets nothing back.
 func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityPost, visibility.NewCaller(q.CallerUserRef))
+	pred, err := visibility.Filter(ctx, visibility.EntityPost,
+		visibility.NewCaller(q.CallerUserRef), visibility.WithPostCaps(q.PostCaps))
 	if err != nil {
 		return nil, 0, err
 	}
 	visFrag, visArgs := pred.ToSQL("", 2)
 
+	// #850 — the card fields. `cover_asset_id` alone was never enough to
+	// render a tile: a post with no explicit cover shows its FIRST member,
+	// which is the same resolution order PostCard applies client-side and
+	// posts.enrichPreview applies server-side. Resolved here so the
+	// frontend never has to ask a second endpoint what a hit looks like.
+	//
+	// member_count is the true size of the set (what the multi-asset badge
+	// counts), not the length of the one-member array the payload ships.
+	// Soft-deleted members are excluded from both, matching
+	// ListPostAssets.
+	const coverAssetExpr = `COALESCE(posts.cover_asset_id, (
+		    SELECT pa.asset_id FROM post_assets pa
+		      JOIN assets pm ON pm.id = pa.asset_id AND pm.deleted_at IS NULL
+		     WHERE pa.post_id = posts.id
+		     ORDER BY pa.sort_order ASC, pa.added_at ASC
+		     LIMIT 1))`
 	sqlHits := `
 		SELECT id, title, description, author_user_ref, origin_server_id,
-		       cover_asset_id, created_at, updated_at,
+		       ` + coverAssetExpr + ` AS cover_asset_id, created_at, updated_at,
+		       like_count, comment_count,
+		       (SELECT COUNT(*) FROM post_assets pa
+		          JOIN assets pm ON pm.id = pa.asset_id AND pm.deleted_at IS NULL
+		         WHERE pa.post_id = posts.id) AS member_count,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM posts
 		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
@@ -624,26 +770,31 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	}
 	defer rows.Close()
 	hits := make([]Hit, 0, limit)
+	// Collected across the page so the cover assets resolve in ONE round
+	// trip, not one per hit.
+	covers := make([]*uuid.UUID, 0, limit)
+	counts := make([][3]int64, 0, limit)
 	for rows.Next() {
 		var (
-			id      uuid.UUID
-			title   string
-			descr   string
-			author  *int64
-			origin  *uuid.UUID
-			cover   *uuid.UUID
-			created time.Time
-			updated time.Time
-			score   float64
+			id       uuid.UUID
+			title    string
+			descr    string
+			author   *int64
+			origin   *uuid.UUID
+			cover    *uuid.UUID
+			created  time.Time
+			updated  time.Time
+			likes    int64
+			comments int64
+			members  int64
+			score    float64
 		)
-		if err := rows.Scan(&id, &title, &descr, &author, &origin, &cover, &created, &updated, &score); err != nil {
+		if err := rows.Scan(&id, &title, &descr, &author, &origin, &cover, &created, &updated,
+			&likes, &comments, &members, &score); err != nil {
 			return nil, 0, err
 		}
-		var coverStr any
-		if cover != nil {
-			coverStr = cover.String()
-		}
-		extra, _ := json.Marshal(map[string]any{"cover_asset_id": coverStr})
+		covers = append(covers, cover)
+		counts = append(counts, [3]int64{likes, comments, members})
 		hits = append(hits, Hit{
 			Type:           HitTypePost,
 			ID:             id,
@@ -654,11 +805,45 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 			CreatedAt:      created,
 			UpdatedAt:      updated,
 			RawScore:       score,
-			ExtraJSON:      extra,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
+	}
+	// The cover assets, per caller (#850). A post the caller may read can
+	// still bundle an asset they may not — the cover then arrives as the
+	// #883 placeholder and PostCard states the restriction rather than
+	// degrading to a generic no-preview plate.
+	coverIDs := make([]uuid.UUID, 0, len(covers))
+	seen := make(map[uuid.UUID]struct{}, len(covers))
+	for _, c := range covers {
+		if c == nil {
+			continue
+		}
+		if _, dup := seen[*c]; dup {
+			continue
+		}
+		seen[*c] = struct{}{}
+		coverIDs = append(coverIDs, *c)
+	}
+	coverCards, err := e.loadPostCovers(ctx, q, coverIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range hits {
+		var member *postCardMember
+		if covers[i] != nil {
+			// Fail CLOSED on a cover whose asset row did not come back
+			// (deleted between the two queries): a member with no
+			// readability answer is a member the caller does not get.
+			if m, ok := coverCards[*covers[i]]; ok {
+				member = m
+			} else {
+				member = &postCardMember{AssetID: *covers[i], Readable: false}
+			}
+		}
+		hits[i].ExtraJSON = postCardExtra(covers[i], member,
+			counts[i][0], counts[i][1], counts[i][2])
 	}
 	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {

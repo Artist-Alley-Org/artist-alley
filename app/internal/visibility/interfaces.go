@@ -69,6 +69,11 @@ type Predicate struct {
 	// includeSoftDeleted omits the soft-delete conjunct, and ONLY that
 	// conjunct — see [IncludeSoftDeleted].
 	includeSoftDeleted bool
+	// postCaps is the caller's resolved post capabilities, read by the
+	// EntityPost branch alone — see [WithPostCaps]. Zero value admits
+	// nothing, which is the correct default for anonymous and the safe
+	// default for a caller that forgets to pass it.
+	postCaps PostCaps
 }
 
 // Option customises a Predicate at construction.

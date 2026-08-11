@@ -65,16 +65,31 @@ func newPendingCountCache(registry *cache.Registry, logger *slog.Logger) *pendin
 }
 
 // InvalidatePendingCountAll broadcasts an eviction for the
-// global pending-count cache key. Cross-package entry point —
-// used by the auth.CapabilitySweeper when a request-cascade
-// reaps a granted request (so peer instances' badge caches
-// drop their stale entries).
+// global pending-count cache key. It is the broadcast-only path
+// for callers outside this package, which do not hold the local
+// cache reference; the Handler's own writes use h.invalidateCount,
+// which evicts locally AND broadcasts in one call.
 //
 // Implementation: emit a NOTIFY on the same channel the cache
-// listens on. The LOCAL cache eviction is the Handler's
-// responsibility (h.counts.c.Invalidate handles both local +
-// broadcast); this helper is the broadcast-only path for
-// external callers that don't hold the local cache reference.
+// listens on.
+//
+// # ZERO CALLERS, and that is correct (#935)
+//
+// This doc used to assert that "the auth.CapabilitySweeper" called
+// this "when a request-cascade reaps a granted request". It does
+// not, and it should not:
+//
+//   - the sweeper's cascade is SetRequestCascade →
+//     requests.Handler.MarkExpired, which moves a request from
+//     granted to expired;
+//   - the cached number counts PENDING rows. granted→expired is not
+//     a pending-count transition, so there is nothing stale to
+//     evict.
+//
+// Every transition that DOES change the count (submit, decide) runs
+// inside this package and already calls h.invalidateCount. So the
+// absence of an external caller is the design working, not a wiring
+// gap — do not "fix" it by inventing one.
 func InvalidatePendingCountAll(ctx context.Context, registry *cache.Registry) {
 	if registry == nil {
 		return
@@ -82,14 +97,33 @@ func InvalidatePendingCountAll(ctx context.Context, registry *cache.Registry) {
 	_ = registry.Emit(ctx, CacheDomainPendingRequestCount, countCacheKey)
 }
 
-// InvalidatePendingCountFor — reserved for per-approver
-// filtering follow-up. At MVP all approvers share the global
-// key, so this delegates to InvalidatePendingCountAll.
+// InvalidatePendingCountFor — RESERVED. Zero callers, deliberately,
+// and #935 swept it once already. Read this before flagging it again.
 //
-// approverRef is kept on the signature so call sites can
-// pre-emptively pass the deciding admin's ref; when per-
-// approver filtering ships, this routes to that specific
-// key without churning the call sites.
+// What it is for: per-approver capability filtering (the Phase-D note
+// at the top of this file). Today every approver shares countCacheKey,
+// so this can only delegate to InvalidatePendingCountAll; when the
+// filter ships, the key becomes per-approver and this routes to it.
+//
+// # The honest counter-argument, so the next sweep does not
+// # have to reconstruct it
+//
+// The stated rationale — "keep the ref on the signature so call sites
+// don't churn later" — protects nothing, because there are no call
+// sites to protect. It is a forward-compatible signature for a
+// function nobody invokes, delegating to another function nobody
+// invokes. On that reading it is dead code, not reserved code, and the
+// argument for deleting both is a good one.
+//
+// It is kept because deleting a documented seam is a scope decision,
+// not a sweep decision, and because the per-approver follow-up is
+// still on the board. If that follow-up is dropped, delete this and
+// InvalidatePendingCountAll together — they stand or fall as a pair.
+//
+// What it must NOT be is wired to a caller for the sake of having one.
+// A call from a path that does not change a pending count is not
+// wiring; it is a cache eviction that fires for no reason and a false
+// precedent for the next reader.
 func InvalidatePendingCountFor(ctx context.Context, registry *cache.Registry, approverRef int64) {
 	_ = approverRef
 	InvalidatePendingCountAll(ctx, registry)

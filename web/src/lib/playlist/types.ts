@@ -43,6 +43,16 @@ export interface PlaylistItem {
   /** Asset shape the AssetViewer accepts. Pre-resolved so cursor
       changes don't pay an HTTP round-trip per nav. */
   asset: ViewAsset;
+  /** The viewer may not see this member (#883). The server sent a
+      placeholder — no title, no file hash, no metadata — so `asset`
+      carries only the id, and the shell shows the restricted plate
+      instead of mounting a view body. The item stays in the playlist on
+      purpose: dropping it would renumber every later position and hide
+      that a restriction exists at all. */
+  restricted?: boolean;
+  /** The owner's display name, the only asset-derived value a restricted
+      placeholder carries. Null when the server could not resolve one. */
+  ownerDisplayName?: string | null;
 }
 
 /** Reactive source the AssetPlaylist shell binds to.
@@ -89,6 +99,23 @@ export interface PlaylistSource {
       navigation can spill into the next page without the user
       hitting an artificial wall. */
   loadMore?: () => Promise<void>;
+  /** Drop one item, in place, and leave `cursor` pointing at something
+      real. Returns how many items are left, because the shell's very
+      next decision is whether there is anything to keep showing.
+
+      A METHOD RATHER THAN THE SHELL SPLICING (#991). The shell used to
+      reach in and `source.items.splice(...)` after a delete. It worked,
+      and it made Svelte log `ownership_invalid_mutation` on every
+      delete: `source` is a prop, the state behind it belongs to the
+      host that built it, and a child writing a parent's arrays is
+      exactly what that warning is for. Handing the operation to the
+      source puts the write back where the state lives, and the two
+      implementations stay identical because the shell can only ask.
+
+      Optional: a source whose items cannot be deleted (a fixed review
+      set, a search page) simply omits it, and the shell reloads
+      instead. */
+  removeItem?: (itemId: string) => number;
 }
 
 /** Props the host wraps around the AssetPlaylist shell.

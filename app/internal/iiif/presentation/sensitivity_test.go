@@ -34,6 +34,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 func testBuilder() *Builder {
@@ -116,18 +118,38 @@ func TestAssetManifest_Authenticated_SeesRestricted(t *testing.T) {
 	}
 }
 
+// memberRefFor builds a member EntityRef the way LoadCollectionMembers
+// does — including the MemberReadable flag, decided by
+// visibility.FieldsReadable rather than restated here (#883). The
+// builder consults ONLY that flag now, so a hand-built ref that skips it
+// is dropped; that fail-closed default is deliberate and this helper is
+// what keeps the unit tests honest about it.
+func memberRefFor(s Sensitivity, caller visibility.Caller) EntityRef {
+	r := assetRef(s)
+	// A per-tier title, because assetRef gives every ref the same one and
+	// a leak assertion cannot tell a legitimately-published public label
+	// from a withheld restricted one when they are identical.
+	r.Title = "title-of-" + string(s)
+	r.MemberReadable = visibility.FieldsReadable(visibility.FieldsRow{
+		Sensitivity:      string(s),
+		Status:           "active",
+		ProcessingStatus: "ready",
+	}, caller, nil)
+	return r
+}
+
 // TestCollectionManifest_AnonymousDropsRestrictedMembers pins the
-// per-member filter — the sole gate keeping a restricted member out of
-// an anonymous collection manifest, since LoadCollectionMembers applies
-// no predicate.
+// per-member filter — the gate keeping a restricted member out of an
+// anonymous collection manifest.
 func TestCollectionManifest_AnonymousDropsRestrictedMembers(t *testing.T) {
 	b := testBuilder()
+	anon := visibility.NewCaller(nil)
 	parent := EntityRef{ID: uuid.New(), Kind: EntityCollection, Title: "coll", Sensitivity: SensitivityPublic}
 	members := []EntityRef{
-		assetRef(SensitivityPublic),
-		assetRef(SensitivityRestricted),
-		assetRef(SensitivityTeam),
-		assetRef(SensitivityPublic),
+		memberRefFor(SensitivityPublic, anon),
+		memberRefFor(SensitivityRestricted, anon),
+		memberRefFor(SensitivityTeam, anon),
+		memberRefFor(SensitivityPublic, anon),
 	}
 	cm, err := b.BuildCollectionManifest(parent, members, true)
 	if err != nil {
@@ -136,5 +158,57 @@ func TestCollectionManifest_AnonymousDropsRestrictedMembers(t *testing.T) {
 	if len(cm.Items) != 2 {
 		t.Errorf("anonymous collection listed %d members; want 2 (the public ones) — "+
 			"restricted/team members must be dropped", len(cm.Items))
+	}
+}
+
+// TestCollectionManifest_AuthenticatedDropsRestrictedMembers is the case
+// the check above never covered (#883). Until this issue the per-member
+// filter ran only `if isAnonymous`, so a signed-in caller received the
+// restricted member's TITLE as its label. The parallel structure is the
+// point: same members, same expectation, different caller.
+func TestCollectionManifest_AuthenticatedDropsRestrictedMembers(t *testing.T) {
+	b := testBuilder()
+	ref := int64(8835001)
+	stranger := visibility.NewCaller(&ref)
+	parent := EntityRef{ID: uuid.New(), Kind: EntityCollection, Title: "coll", Sensitivity: SensitivityPublic}
+	members := []EntityRef{
+		memberRefFor(SensitivityPublic, stranger),
+		memberRefFor(SensitivityRestricted, stranger),
+		memberRefFor(SensitivityTeam, stranger),
+		memberRefFor(SensitivityPublic, stranger),
+	}
+	cm, err := b.BuildCollectionManifest(parent, members, false)
+	if err != nil {
+		t.Fatalf("authenticated collection: unexpected err %v", err)
+	}
+	if len(cm.Items) != 2 {
+		t.Errorf("signed-in stranger's collection listed %d members; want 2 — a restricted "+
+			"member's title used to ship as its label to any authenticated caller", len(cm.Items))
+	}
+	for _, it := range cm.Items {
+		for _, lang := range it.Label {
+			for _, v := range lang {
+				if v == "title-of-restricted" || v == "title-of-team" {
+					t.Errorf("a gated member's title leaked as a manifest label: %v", it)
+				}
+			}
+		}
+	}
+}
+
+// TestCollectionManifest_UnflaggedMemberIsDropped pins the fail-closed
+// default directly: a member ref that never went through the loader has
+// MemberReadable false and must not be published, however public its
+// tier looks.
+func TestCollectionManifest_UnflaggedMemberIsDropped(t *testing.T) {
+	b := testBuilder()
+	parent := EntityRef{ID: uuid.New(), Kind: EntityCollection, Title: "coll", Sensitivity: SensitivityPublic}
+	cm, err := b.BuildCollectionManifest(parent, []EntityRef{assetRef(SensitivityPublic)}, false)
+	if err != nil {
+		t.Fatalf("unexpected err %v", err)
+	}
+	if len(cm.Items) != 0 {
+		t.Error("a member that never passed through LoadCollectionMembers was published — " +
+			"the gate must fail closed on the zero value")
 	}
 }

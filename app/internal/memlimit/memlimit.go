@@ -24,8 +24,9 @@
 //
 // # Why derive it instead of baking it in
 //
-// The ceiling lives in compose and differs per environment (4g under the
-// CI resource override, unset in the base/production stack). A static
+// The ceiling lives in compose and differs per environment (8g on the
+// base stack, 10g under the CI resource override, whatever an operator
+// sets via AA_APP_MEM_LIMIT in production). A static
 // ENV GOMEMLIMIT in the Dockerfile would be correct for exactly one
 // environment and silently wrong in every other, with no signal that the
 // two had drifted apart. Reading the cgroup means the runtime's ceiling
@@ -54,11 +55,23 @@ const (
 	v1Path = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 
 	// DefaultRatio leaves headroom between the Go heap ceiling and the
-	// cgroup ceiling for everything GOMEMLIMIT does NOT cover: thread
-	// stacks, the binary's own text/data, and any memory the runtime
-	// has not yet returned to the OS. 90% matches the de-facto default
-	// used by the ecosystem (automemlimit).
-	DefaultRatio = 0.9
+	// cgroup ceiling for everything GOMEMLIMIT does NOT cover.
+	//
+	// 80%, not the ecosystem's usual 90% (automemlimit), because this
+	// process is not a pure Go process. Preview rendering shells out to
+	// ffmpeg, ghostscript, pdftoppm, unar, ImageMagick and a
+	// node+headless-chromium three.js worker; every one of those runs in
+	// the app container's OWN cgroup, so their resident memory is
+	// charged against the same ceiling while being invisible to
+	// GOMEMLIMIT. A CI-profile render storm measured 1.0 GB of non-Go
+	// anonymous RSS at peak (#887) — more than the 10% a 6g ceiling
+	// would have reserved. 20% is sized from that measurement.
+	//
+	// This is a REserve, not a throttle: at the measured peak the Go
+	// runtime sat at 76% of its derived limit, so the ratio has never
+	// been what bounds the heap. Shrink it further only against a new
+	// measurement of non-Go RSS, never on taste.
+	DefaultRatio = 0.8
 
 	// unlimitedThreshold — cgroup v1 spells "no limit" as a sentinel
 	// near PAGE_COUNTER_MAX rather than a word, and the exact value
@@ -128,6 +141,32 @@ func parseLimit(s string) (int64, error) {
 	return n, nil
 }
 
+// Kind classifies which of the mutually exclusive paths produced the
+// runtime's effective GOMEMLIMIT. The string is logged at boot, so an
+// operator reading a log — or a failed CI run six weeks later — can
+// answer "is the derivation taking effect?" without inspecting the
+// container. That question went unanswerable through the whole #886 /
+// #887 investigation, which is why it is now a machine-readable field
+// rather than prose inside Source.
+const (
+	// KindEnv — an explicit GOMEMLIMIT in the environment won. The
+	// derivation deliberately stood down.
+	KindEnv = "explicit_env"
+	// KindDerived — the ceiling was read from the cgroup and the ratio
+	// applied. The intended production path.
+	KindDerived = "derived_from_cgroup"
+	// KindDisabled — AA_GOMEMLIMIT_RATIO <= 0 switched the derivation
+	// off on purpose.
+	KindDisabled = "disabled_by_ratio"
+	// KindNoCgroupLimit — the process is not under a cgroup memory
+	// ceiling (bare metal, dev host, unconstrained container). Normal,
+	// not a failure — but it means nothing bounds the heap.
+	KindNoCgroupLimit = "no_cgroup_limit"
+	// KindInvalid — a cgroup limit was found but the derived value was
+	// not usable. Should not happen; logged rather than swallowed.
+	KindInvalid = "derived_invalid"
+)
+
 // Result describes what Apply did, for the caller to log.
 type Result struct {
 	// Applied is false when the runtime was deliberately left alone.
@@ -138,10 +177,23 @@ type Result struct {
 	Limit int64
 	// Ratio actually used.
 	Ratio float64
+	// Kind is one of the Kind* constants above.
+	Kind string
 	// Source is the cgroup file read, or a reason string when the
 	// runtime was left alone.
 	Source string
+	// Effective is the runtime's GOMEMLIMIT as the RUNTIME reports it
+	// after Apply returns — read back rather than assumed, because
+	// "what we intended to set" and "what is in force" are exactly the
+	// two things #888 needed distinguished. math.MaxInt64 means no
+	// limit is in force.
+	Effective int64
 }
+
+// Effective returns the runtime's current GOMEMLIMIT without changing
+// it. A negative argument to debug.SetMemoryLimit is documented as a
+// pure read.
+func Effective() int64 { return debug.SetMemoryLimit(-1) }
 
 // Apply derives a soft heap ceiling from the cgroup limit and installs it
 // via debug.SetMemoryLimit. It is a no-op — reporting Applied false — in
@@ -156,10 +208,19 @@ type Result struct {
 //     RAM; an unconstrained process keeps the runtime default.
 func Apply(ratio float64) Result {
 	if v := strings.TrimSpace(os.Getenv("GOMEMLIMIT")); v != "" {
-		return Result{Source: "GOMEMLIMIT set in environment; runtime value left as-is"}
+		return Result{
+			Kind:      KindEnv,
+			Source:    "GOMEMLIMIT set in environment; runtime value left as-is",
+			Effective: Effective(),
+		}
 	}
 	if ratio <= 0 {
-		return Result{Ratio: ratio, Source: "ratio <= 0; disabled by configuration"}
+		return Result{
+			Ratio:     ratio,
+			Kind:      KindDisabled,
+			Source:    "ratio <= 0; disabled by configuration",
+			Effective: Effective(),
+		}
 	}
 	if ratio > 1 {
 		// Above the cgroup ceiling the limit cannot help — the kernel
@@ -170,12 +231,23 @@ func Apply(ratio float64) Result {
 
 	cgLimit, source, err := Detect()
 	if err != nil {
-		return Result{Ratio: ratio, Source: "no cgroup memory limit; runtime default left in place"}
+		return Result{
+			Ratio:     ratio,
+			Kind:      KindNoCgroupLimit,
+			Source:    "no cgroup memory limit; runtime default left in place",
+			Effective: Effective(),
+		}
 	}
 
 	limit := int64(math.Floor(float64(cgLimit) * ratio))
 	if limit <= 0 {
-		return Result{CgroupLimit: cgLimit, Ratio: ratio, Source: "derived limit <= 0; runtime default left in place"}
+		return Result{
+			CgroupLimit: cgLimit,
+			Ratio:       ratio,
+			Kind:        KindInvalid,
+			Source:      "derived limit <= 0; runtime default left in place",
+			Effective:   Effective(),
+		}
 	}
 	debug.SetMemoryLimit(limit)
 	return Result{
@@ -183,6 +255,8 @@ func Apply(ratio float64) Result {
 		CgroupLimit: cgLimit,
 		Limit:       limit,
 		Ratio:       ratio,
+		Kind:        KindDerived,
 		Source:      source,
+		Effective:   Effective(),
 	}
 }

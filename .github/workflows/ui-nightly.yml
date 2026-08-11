@@ -263,14 +263,16 @@ jobs:
 
       - name: Seed diagnostic on failure
         if: failure()
-        run: |
-          for svc in postgres postgres-b; do
-            echo "=== $svc ==="
-            docker compose exec -T "$svc" psql -U artist_alley -d artist_alley -tAc \
-              "SELECT 'users', count(*) FROM \"user\"
-               UNION ALL SELECT 'assets', count(*) FROM assets
-               UNION ALL SELECT 'posts', count(*) FROM posts;" 2>&1 || echo "($svc unreachable)"
-          done
+        # Row counts alone left #886 unanswerable: postgres dies mid-seed
+        # (`unexpected EOF`, then WAL replay on the next connection) and a
+        # re-run on the same commit passes, so the evidence has to come off
+        # the failing run. The shared action adds container state, cgroup
+        # oom counters and the postmaster's own crash lines around the
+        # counts. --profile dogfood so postgres-b is visible at all.
+        uses: ./.github/actions/seed-forensics
+        with:
+          services: postgres postgres-b
+          profiles: --profile dogfood
 
       - name: Pair studio-a + studio-b
         # Pair waits for both health endpoints + sets site.base_url
@@ -329,6 +331,27 @@ jobs:
           STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/run-ui.sh all
 
+      # ⚠️ include-hidden-files + if-no-files-found are BOTH load-bearing
+      # here; #956 is the run where getting either wrong cost four
+      # triage passes.
+      #
+      # `include-hidden-files` defaults to FALSE in upload-artifact@v4,
+      # and every path below is dot-prefixed. The exclusion is applied
+      # while globbing, so a hidden ROOT matches nothing at all — the
+      # step then reports "No files were found with the provided path"
+      # and, under `if-no-files-found: ignore`, exits 0 in one second.
+      # On run 31160803362 that is exactly what happened: run-ui.sh had
+      # just printed `HTML report: …/scripts/dogfood/ui/.pw-report/
+      # index.html`, so the report demonstrably existed on disk, and
+      # `GET /actions/runs/31160803362/artifacts` still returned
+      # total_count: 0 for a 209-test run that failed.
+      #
+      # `if-no-files-found: error` is the half that keeps it from
+      # happening again silently. A green "uploaded nothing" is not a
+      # neutral outcome on a nightly — it is the evidence for the next
+      # failure, quietly not collected, and it reads as coverage in the
+      # steps list. If these paths are ever empty again the step says so
+      # in the run that produced them, not three passes into triage.
       - name: Upload Playwright report
         # Always upload on a nightly run so the report is browsable
         # even on green — we want the operator to be able to glance
@@ -337,25 +360,56 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pw-report-federation-${{ github.run_id }}
+          # `apply-state-*.json` is gone: nothing writes it. Playwright's
+          # storageState goes to .pw-results/admin-state.json
+          # (helpers/auth.ts ADMIN_STATE_PATH), so the glob has always
+          # matched zero files. Harmless under `ignore`; under `error` a
+          # pattern that can never match is a booby trap for the next
+          # reader.
+          #
+          # admin-state.json is Playwright's storageState — it holds the
+          # suite's live admin session cookie. It has no diagnostic
+          # value and it is not going in a 30-day artifact that anyone
+          # with repo read can download. The stack it authenticates
+          # against is a per-run container that no longer exists by the
+          # time the artifact does, so this is hygiene rather than an
+          # incident; it is excluded because the upload only started
+          # working in this commit, and shipping a credential is not a
+          # thing to start doing.
           path: |
             scripts/dogfood/ui/.pw-report/
             scripts/dogfood/ui/.pw-results/
-            apply-state-*.json
+            !scripts/dogfood/ui/.pw-results/admin-state.json
+          include-hidden-files: true
           retention-days: 30
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Upload shell-scenario reports
+        # run-all.sh mkdir -p's scripts/dogfood/.dogfood-runs/<ts>/ before
+        # it runs a single scenario, so on any run that reached the shell
+        # suite this is populated. `error` therefore only fires when the
+        # job died BEFORE the suite — in which case "there are no
+        # scenario reports" is itself the thing worth saying out loud.
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: shell-scenario-reports-${{ github.run_id }}
           path: scripts/dogfood/.dogfood-runs/
+          include-hidden-files: true
           retention-days: 30
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Container logs on failure
         if: failure()
-        run: docker compose logs --tail=300
+        # --profile dogfood: without it a bare `docker compose logs`
+        # cannot see the profile-gated studio-b half, and on run
+        # 31160803362 it dumped app / nginx / postgres and ZERO lines
+        # from app-b / nginx-b / postgres-b — on a workflow whose entire
+        # subject is the pair of them.
+        uses: ./.github/actions/container-logs
+        with:
+          profiles: --profile dogfood
+          tail: "300"
 
       - name: Detach runner from the compose network
         if: always()

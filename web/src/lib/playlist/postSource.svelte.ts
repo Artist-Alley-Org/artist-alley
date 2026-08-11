@@ -36,7 +36,12 @@ export interface PostForPlaylist {
   members: Array<{
     asset_id: string;
     sort_order: number;
-    asset: {
+    /** #883 — true when the viewer may not see this member. `asset` is
+     *  then ABSENT (hence optional below) and `owner_display_name` is the
+     *  only asset-derived value present. */
+    restricted?: boolean;
+    owner_display_name?: string;
+    asset?: {
       id: string;
       title?: string;
       file_hash?: string | null;
@@ -44,6 +49,9 @@ export interface PostForPlaylist {
       asset_type?: number | null;
       metadata?: Record<string, unknown> | null;
       preview_available?: boolean;
+      /** #981 — the ASSET's owner, which is not the post's author.
+       *  Absent on a withheld member (the whole `asset` object is). */
+      owner_user_ref?: number | null;
     };
   }>;
   team_id?: string | null;
@@ -76,6 +84,7 @@ export function createPostPlaylistSource(postId: string) {
     cursor: 0,
     loading: true,
     error: null,
+    removeItem,
   });
 
   // Side-state the host (PostHost.svelte) needs for its sidebar but
@@ -86,6 +95,26 @@ export function createPostPlaylistSource(postId: string) {
   }>({
     post: null,
   });
+
+  /** PlaylistSource.removeItem — see types.ts for why the source owns
+   *  this instead of the shell splicing the array itself.
+   *
+   *  Drops the member locally rather than re-fetching the post. A
+   *  reload would work and would reset the cursor to the first item,
+   *  so deleting member 7 of 9 would silently jump the user back to
+   *  member 1. The 204 is authority enough that the row is gone. */
+  function removeItem(itemId: string): number {
+    const idx = state.items.findIndex((i) => i.id === itemId);
+    if (idx >= 0) {
+      state.items.splice(idx, 1);
+      // Clamp: dropping the item under the cursor would otherwise leave
+      // it one past the end, and the shell would render nothing at all.
+      if (state.cursor > state.items.length - 1) {
+        state.cursor = Math.max(0, state.items.length - 1);
+      }
+    }
+    return state.items.length;
+  }
 
   // Generation counter for stale-fetch protection. When the user
   // navigates between posts faster than the network resolves (←/→
@@ -126,9 +155,17 @@ export function createPostPlaylistSource(postId: string) {
       aux.post = post;
       state.id = post.id;
       state.title = post.title || t('common.untitled');
+      // #883 — a member the viewer may not see arrives WITHOUT its
+      // `asset` object. The `?? ''` / `?? null` defaults below already
+      // survive that, but silently: the item would render as an ordinary
+      // untitled asset with no preview, indistinguishable from one whose
+      // derivatives simply have not finished. The flag is what makes the
+      // shell state the restriction instead of guessing.
       state.items = (post.members ?? []).map(
         (m): PlaylistItem => ({
           id: m.asset_id,
+          restricted: !!m.restricted,
+          ownerDisplayName: m.owner_display_name ?? null,
           asset: {
             id: m.asset_id,
             title: m.asset?.title ?? '',
@@ -137,6 +174,10 @@ export function createPostPlaylistSource(postId: string) {
             asset_type: m.asset?.asset_type ?? null,
             metadata: m.asset?.metadata ?? null,
             preview_available: m.asset?.preview_available ?? false,
+            // #981 — the delete affordance asks about the ASSET's
+            // owner, not the post's author. Undefined on a withheld
+            // member, which is correct: no owner, no ownership claim.
+            owner_user_ref: m.asset?.owner_user_ref ?? null,
           },
         }),
       );
@@ -161,7 +202,29 @@ export function createPostPlaylistSource(postId: string) {
    *  viewer, so menu bar / dialog chrome stay static. Used by hosts
    *  that swap posts in-place (browse-feed sibling navigation). */
   function setPostId(nextPostId: string) {
-    if (nextPostId === currentPostId && state.items.length > 0) return;
+    // The guard reads ONLY the id. It used to be
+    // `nextPostId === currentPostId && state.items.length > 0`, and the
+    // second half was an infinite loop waiting for a post with no
+    // members (#918).
+    //
+    // Two things combine. `state.items` is `$state`, so reading its
+    // length inside a function PostHost calls from an `$effect` makes
+    // that effect depend on it — and `load()` writes `state.items`
+    // every time. On any post with at least one member the write lands
+    // a non-empty array, the guard returns early on the next pass and
+    // it settles. On a post with NO members the array is empty after
+    // every load, so the guard never returns, the effect re-runs, and
+    // `load()` fires again — forever, re-requesting the post as fast as
+    // the network allows. `load()` also sets `loading = true` whenever
+    // items is empty, so the shell sits on its skeleton and the post
+    // never renders at all: no empty state, no chrome, no ⋮ menu.
+    //
+    // A memberless post is not exotic — its last member gets
+    // soft-deleted, or it never had one (an article, ADR 0073).
+    //
+    // Re-fetching the SAME post is `reload()`'s job, which is what an
+    // error path should call; it was never this function's.
+    if (nextPostId === currentPostId) return;
     currentPostId = nextPostId;
     void load();
   }

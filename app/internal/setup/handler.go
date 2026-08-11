@@ -349,9 +349,23 @@ func (h *Handler) CompleteSetup(
 		slog.Bool("smtp_configured", smtp.Host != ""),
 	)
 
+	// `unavailable`, and it is the honest answer rather than a
+	// placeholder (#956). This handler lives outside package auth and
+	// deliberately does not resolve capabilities (see
+	// auth.Handler.hydrateCapabilities' doc for why), so this response
+	// cannot say what the new admin holds — even though the transaction
+	// above has already committed the role that grants it.
+	//
+	// Saying so out loud is what makes the documented hazard safe. The
+	// setup page discards this body and calls auth.refresh() on the next
+	// line, so nothing reads it today; if anything ever does, it now
+	// gets "I cannot tell you" — a retry — instead of the empty
+	// capability set that reads as "you have no permission" at the
+	// /admin gate.
 	resp := openapi.CurrentUser{
-		Ref:        userRow.Ref,
-		AuthMethod: "session",
+		Ref:                userRow.Ref,
+		AuthMethod:         "session",
+		CapabilitiesStatus: openapi.Unavailable,
 	}
 	if userRow.Username != nil {
 		resp.Username = *userRow.Username

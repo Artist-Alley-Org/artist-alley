@@ -29,6 +29,14 @@ export interface AssetForPlaylist {
   asset_type?: number | null;
   metadata?: Record<string, unknown> | null;
   preview_available?: boolean;
+  /** #899 — set when the caller may not see this asset's columns.
+   *  Every field above is then absent from the payload. */
+  restricted?: boolean;
+  owner_display_name?: string | null;
+  /** #981 — the owner's ref, present on a readable payload only. See
+   *  ViewAsset.owner_user_ref: it is what the delete affordance is
+   *  gated on, and it is deliberately absent from a withheld one. */
+  owner_user_ref?: number | null;
 }
 
 function toItem(a: AssetForPlaylist): PlaylistItem {
@@ -40,8 +48,23 @@ function toItem(a: AssetForPlaylist): PlaylistItem {
     asset_type: a.asset_type ?? null,
     metadata: a.metadata ?? null,
     preview_available: a.preview_available ?? false,
+    restricted: !!a.restricted,
+    owner_display_name: a.owner_display_name ?? null,
+    // #981 — carried so a viewer host can decide whether to offer the
+    // delete affordance. Null on a withheld payload by construction:
+    // the placeholder's allow-list is the owner's NAME, not their ref.
+    owner_user_ref: a.owner_user_ref ?? null,
   };
-  return { id: a.id, asset };
+  // #899 — the standalone route reaches the SAME restricted plate the
+  // post route has shown since #883. Threading these two through here is
+  // what stops /assets/{id} being the surface where a withheld asset
+  // renders as a broken viewer instead of a placeholder.
+  return {
+    id: a.id,
+    asset,
+    restricted: !!a.restricted,
+    ownerDisplayName: a.owner_display_name ?? null,
+  };
 }
 
 /** Reactive single-asset playlist source. Same factory-over-a-$state
@@ -56,11 +79,32 @@ export function createAssetPlaylistSource(assetId: string, seed?: AssetForPlayli
     cursor: 0,
     loading: !seed,
     error: null,
+    removeItem,
   });
 
   const aux = $state<{ asset: AssetForPlaylist | null }>({
     asset: seed ?? null,
   });
+
+  /** PlaylistSource.removeItem — see types.ts for why the source owns
+   *  this instead of the shell splicing the array itself.
+   *
+   *  For a playlist of 1 this always empties the list, and the shell
+   *  reads the 0 and closes. Written generically anyway: the value of
+   *  the contract is that both sources answer the same question the
+   *  same way, and a special case here is a place for them to diverge. */
+  function removeItem(itemId: string): number {
+    const idx = state.items.findIndex((i) => i.id === itemId);
+    if (idx >= 0) {
+      state.items.splice(idx, 1);
+      // Clamp: dropping the item under the cursor would otherwise leave
+      // it one past the end, and the shell would render nothing at all.
+      if (state.cursor > state.items.length - 1) {
+        state.cursor = Math.max(0, state.items.length - 1);
+      }
+    }
+    return state.items.length;
+  }
 
   let generation = 0;
   let currentAssetId = assetId;

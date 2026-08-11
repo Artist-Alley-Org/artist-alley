@@ -1,8 +1,13 @@
 # PR + branch validation. Runs on every push to a long-lived branch
-# (main, dev) and on every PR targeting main or dev. PRs use
-# `ubuntu-latest` so fork PRs can't run code on the self-hosted
-# runner. Branch pushes are routed to the self-hosted runner for
-# speed + Docker layer cache reuse.
+# (main, dev) and on every PR targeting main or dev.
+#
+# Every job here is self-hosted `[self-hosted, artist-alley]`, on both
+# pushes and PRs. This paragraph used to say "PRs use `ubuntu-latest`
+# so fork PRs can't run code on the self-hosted runner" — that stopped
+# being true when the runner rebalance made frontend-check and test
+# unconditional, and #942 moved the last hosted job (codegen-drift)
+# over too. Fork PRs get no CI here until a maintainer approves the
+# run; see the note over codegen-drift for why we accepted that.
 #
 # This is the merge-gate. Edge/release workflows assume CI was green.
 #
@@ -161,11 +166,57 @@ jobs:
   # openapi-typescript against the in-tree specs and `git diff`s the
   # result. Catches the common footgun of editing openapi.yaml or a
   # queries.sql file without committing the regenerated output.
+  #
+  # Self-hosted since #942. It was the last `ubuntu-latest` job in this
+  # file, and during the 2026-08-06 Actions incident that made it the
+  # only red X on an otherwise-green `dev`: `Set up job` — GitHub's own
+  # provisioning, before a line of our code runs — went 2s -> 175s ->
+  # 293s (failed there, zero of our steps ran) -> never started at all.
+  # Our own steps took 13-22s throughout; the check was never broken.
+  # A gate that cannot run is a lost signal, and a red X that is never
+  # our fault trains us to ignore red.
+  #
+  # What we knowingly gave up, accepted rather than overlooked:
+  #
+  #   1. Fork PRs get no gate here. Forks cannot use self-hosted
+  #      runners, so this check simply will not run on one. The repo is
+  #      public with zero forks to date, and a fork PR gets manual
+  #      review regardless. Owner's explicit call.
+  #   2. The portability gate. `ubuntu-latest` was a vanilla box, so a
+  #      green run also proved codegen reproduces off our own machines.
+  #      Exposure is small — the job installs its own Go 1.26, its own
+  #      Node 22, and a version-pinned oapi-codegen read out of
+  #      scripts/generate.sh — but it is not zero. Nothing now proves
+  #      the regen is independent of what is baked into the runner
+  #      image; if that ever matters, restore a hosted twin rather than
+  #      assuming this job still covers it.
   codegen-drift:
     name: Codegen drift check
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: [self-hosted, artist-alley]
+    # 20, not the 10 it carried while hosted. The job's own work is
+    # ~20 seconds and always has been; the budget is for the wait in
+    # front of it. This file has no `needs:`, so a push to dev now
+    # wants four CI slots plus edge.yml's against a pool that has been
+    # measured making Integration queue eight minutes behind the image
+    # build. 10 minutes of headroom over a 20-second job was generous
+    # on a fresh hosted VM and is tight on a contended pool. Still far
+    # short of the 30 the integration job needs, so a genuinely wedged
+    # codegen run is still caught quickly.
+    timeout-minutes: 20
     steps:
+      # See infra/runner/README.md (#350) — the self-hosted workspace
+      # persists across jobs, so a run killed mid-fetch can leave
+      # .git/*.lock behind and break the NEXT job's checkout.
+      - name: Clear stale git locks (persistent self-hosted workspace)
+        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+
+      # clean: true (the default) is load-bearing now that the
+      # workspace is reused: checkout runs `git clean -ffdx` +
+      # `git reset --hard HEAD` before fetching, so a generated file
+      # left dirty by an earlier job cannot survive into the
+      # `git status --porcelain` check at the bottom of this job and
+      # be mistaken for either drift or the absence of it. Do not set
+      # `clean: false` here.
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
@@ -316,9 +367,17 @@ jobs:
     #
     # Fork-PR caveat: fork PRs won't run this on the self-hosted
     # runner; GitHub gates that via the "Approve first-time
-    # contributors" setting. The codegen-drift job stays on
-    # ubuntu-latest so a fork PR still gets at least the
-    # portability + drift smoke gate.
+    # contributors" setting.
+    #
+    # This comment used to end "...the codegen-drift job stays on
+    # ubuntu-latest so a fork PR still gets at least the portability +
+    # drift smoke gate." That is no longer true — #942 moved
+    # codegen-drift to this same pool, so as of that change EVERY job
+    # in this file is self-hosted and a fork PR gets no CI at all until
+    # a maintainer approves it. Accepted deliberately: the repo has
+    # zero forks and a fork PR is hand-reviewed anyway. The full
+    # trade-off, including the portability coverage we gave up, is
+    # written out over codegen-drift above.
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 30
     # No compose-stack concurrency group any more (#331). Each run gets
@@ -337,10 +396,14 @@ jobs:
       # calls bare `docker compose`) both inherit this. It drops host
       # ports and caps per-service memory.
       COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
-      # Cap Go build + test parallelism so three stacks at once stay
-      # within ~30 cores / ~24 GiB on the shared runner. Flows into the
-      # app image build (via the override's build args) and into
-      # test.sh's golang containers (forwarded with -e).
+      # Cap Go build + test parallelism so three stacks at once leave
+      # CPU for everything else the shared runner hosts. The runner has
+      # 125 GiB of RAM (~40 GiB free with its other workloads up), so
+      # this is about cores, not memory — an earlier revision of this
+      # comment claimed a "~24 GiB" budget, which was wrong by 5x and
+      # was reasoned from during #886 (#887). Flows into the app image
+      # build (via the override's build args) and into test.sh's golang
+      # containers (forwarded with -e).
       GOFLAGS: -p=10
       GOMAXPROCS: 10
 
@@ -467,7 +530,11 @@ jobs:
 
       - name: Container logs on failure
         if: failure()
-        run: docker compose logs --tail=200
+        # Shared action (#956) so "captured nothing" reds the step
+        # instead of passing silently.
+        uses: ./.github/actions/container-logs
+        with:
+          tail: "200"
 
       - name: Stop the stack
         # always(): a red run leaks exactly as much as a green one — both
