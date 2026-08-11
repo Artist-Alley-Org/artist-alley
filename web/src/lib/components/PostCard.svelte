@@ -362,6 +362,7 @@
          the cover asset. -->
     <CardMenu
       assetId={coverAssetId}
+      postId={post.id}
       detailPath="/posts/{post.id}"
       manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
     />

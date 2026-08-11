@@ -5,11 +5,9 @@ package posts
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
@@ -105,18 +103,36 @@ func readRuleSQL(
 //
 // Soft-deleted rows are excluded — a deleted post is not readable
 // content on either path.
+//
+// The probe itself MOVED to visibility.PostReadable (#882). It used to
+// be spelled out here, which was fine while `posts` was the only
+// package that could ask the question; the collection ADD path needs
+// the identical answer and could not reach an unexported helper. This
+// is now the posts-side adapter — *auth.Identity → (Caller, PostCaps) —
+// and nothing else, which is the same division of labour the rest of
+// this file already documents. Behaviour is unchanged: the shared
+// helper builds `deleted_at IS NULL AND (rule)` through
+// Predicate.ToSQL, which is what the two hand-written halves here
+// concatenated to.
 func (h *Handler) postReadable(ctx context.Context, id *auth.Identity, postID uuid.UUID) (bool, error) {
-	frag, args, err := readRuleSQL(ctx, id, "", 1)
-	if err != nil {
-		return false, err
+	caller, caps := postRuleInputs(id)
+	return visibility.PostReadable(ctx, h.Pool, caller, caps, postID)
+}
+
+// postRuleInputs translates an identity into the two values the shared
+// post read rule takes. Anonymous (nil identity included) resolves to
+// the anonymous caller with no capabilities — the narrower answer, so a
+// caller that loses its identity is refused rather than widened.
+//
+// readRuleSQL above does the same translation inline. It stays there
+// rather than calling this: that path also has to build a Predicate and
+// render a fragment, and folding four lines out of it would obscure
+// which of the two is the SQL-splice form and which is the probe form.
+func postRuleInputs(id *auth.Identity) (visibility.Caller, visibility.PostCaps) {
+	if id == nil || id.IsAnonymous() {
+		return visibility.NewCaller(nil), visibility.PostCaps{}
 	}
-	sql := "SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NULL" + frag + ")"
-	var ok bool
-	if err := h.Pool.QueryRow(ctx, sql, append([]any{postID}, args...)...).Scan(&ok); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("posts: read gate: %w", err)
-	}
-	return ok, nil
+	ref := id.UserRef
+	return visibility.NewCaller(&ref),
+		visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
 }

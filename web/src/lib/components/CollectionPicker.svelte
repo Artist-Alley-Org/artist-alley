@@ -2,21 +2,35 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // CollectionPicker — modal to pick (or create) a collection to add
-  // one-or-many assets into.
+  // one-or-many items into.
   //
   // Used by:
   //   - AssetViewer Edit menu ("Add to collection…") for the current
   //     asset
   //   - AssetPlaylist toolbarActions ("Add all to collection") for the
   //     whole playlist
+  //   - CardMenu on a post card, and PostHost's post menu, for the POST
+  //     itself (#882)
+  //
+  // TWO kinds of member, one picker (#882). A collection holds assets
+  // (`collection_resources`) and posts (`collection_posts`), which are
+  // separate tables behind separate endpoints, but from where the user
+  // is standing it is one action — "put this in a collection" — and the
+  // list of collections to choose from is the same list. So the picker
+  // takes both sets and posts each to its own endpoint; it does not
+  // grow a second component, and neither does the user grow a second
+  // mental model.
+  //
+  // The two are not exclusive: nothing prevents a caller passing both,
+  // and the confirm loop reports one combined count.
   //
   // Behaviour:
   //   - Lists the caller's writable collections (tab=mine).
   //     Free-text search filters server-side via `q=`.
   //   - "+ New collection" inline form creates one and selects it.
-  //   - On confirm: POSTs each asset to /collections/{id}/resources
-  //     in parallel (small enough that we don't bother with batching
-  //     for now — 10 assets × 1 round-trip each is fine).
+  //   - On confirm: POSTs each asset to /collections/{id}/resources and
+  //     each post to /collections/{id}/posts, sequentially (small
+  //     enough that we don't bother with batching for now).
   //   - Toast-style banner with success / partial-failure summary.
   //   - Closes on ESC, backdrop click, ×, and on successful add.
 
@@ -27,7 +41,11 @@
   interface Props {
     /** Asset ids to add. One element for the single-asset case, many
         for the bulk-from-playlist case. */
-    assetIds: string[];
+    assetIds?: string[];
+    /** Post ids to add as REFERENCES (#882) — the post keeps its
+        author and its lifecycle; the collection holds a pointer, and
+        the author deleting the post removes it from here too. */
+    postIds?: string[];
     /** Called when the user closes the modal (× / ESC / backdrop /
         successful add). */
     onClose: () => void;
@@ -37,7 +55,11 @@
     onAdded?: (collectionId: string, addedCount: number) => void;
   }
 
-  let { assetIds, onClose, onAdded }: Props = $props();
+  let { assetIds = [], postIds = [], onClose, onAdded }: Props = $props();
+
+  // The header count and the all-failed test both work off the total,
+  // so neither has to know which table an item lands in.
+  const itemCount = $derived(assetIds.length + postIds.length);
 
   interface CollectionRow {
     id: string;
@@ -111,10 +133,10 @@
     busy = true;
     addError = null;
     let added = 0;
-    const failures: string[] = [];
-    // Sequential adds — keeps the failure mode legible. assetIds is
-    // small (1 for per-asset, 1–dozens for bulk-from-playlist); for a
-    // future 1000-asset bulk we'd switch to a server-side batch endpoint.
+    let failed = 0;
+    // Sequential adds — keeps the failure mode legible. The working set
+    // is small (1 for per-item, 1–dozens for bulk-from-playlist); for a
+    // future 1000-item bulk we'd switch to a server-side batch endpoint.
     for (const assetId of assetIds) {
       const { error } = await api.POST('/collections/{id}/resources', {
         params: { path: { id: col.id } },
@@ -127,24 +149,43 @@
         },
       });
       if (error) {
-        failures.push(assetId);
+        failed += 1;
+      } else {
+        added += 1;
+      }
+    }
+    // Posts go to their own endpoint — a different table, the same
+    // membership columns (#882). A post the caller may not read comes
+    // back 404, indistinguishable from one that does not exist, so
+    // there is nothing to report beyond "this one did not go in".
+    for (const postId of postIds) {
+      const { error } = await api.POST('/collections/{id}/posts', {
+        params: { path: { id: col.id } },
+        body: {
+          post_id: postId,
+          sort_order: 0,
+          pinned: true,
+        },
+      });
+      if (error) {
+        failed += 1;
       } else {
         added += 1;
       }
     }
     busy = false;
-    if (failures.length === assetIds.length) {
+    if (failed === itemCount) {
       addError = t('collection_picker.add_failed_all');
       return;
     }
     onAdded?.(col.id, added);
-    if (failures.length > 0) {
+    if (failed > 0) {
       // Partial success — keep the modal open so the user sees the
       // count and can retry / pick a different collection. The host
       // refreshes via onAdded above.
       addError = t('collection_picker.add_failed_partial', {
         added: String(added),
-        total: String(assetIds.length),
+        total: String(itemCount),
       });
       return;
     }
@@ -208,15 +249,16 @@
   aria-labelledby="collection-picker-title"
 >
   <div
+    data-testid="collection-picker"
     class="relative mx-auto my-auto flex max-h-[80vh] w-[28rem] max-w-[90vw] flex-col overflow-hidden rounded-lg border border-border bg-surface text-fg shadow-2xl"
     role="presentation"
     style="margin-top: 10vh"
   >
     <header class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
       <h2 id="collection-picker-title" class="text-sm font-medium">
-        {assetIds.length === 1
+        {itemCount === 1
           ? t('collection_picker.title_single')
-          : t('collection_picker.title_bulk', { n: String(assetIds.length) })}
+          : t('collection_picker.title_bulk', { n: String(itemCount) })}
       </h2>
       <button
         type="button"
@@ -288,6 +330,7 @@
       <form onsubmit={submitCreate} class="flex gap-2">
         <input
           bind:value={newName}
+          data-testid="collection-picker-new-name"
           type="text"
           placeholder={t('collection_picker.new_placeholder')}
           maxlength="200"
@@ -296,6 +339,7 @@
         />
         <button
           type="submit"
+          data-testid="collection-picker-create"
           disabled={!newName.trim() || creating || busy}
           class="rounded bg-accent px-3 py-1.5 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50"
         >

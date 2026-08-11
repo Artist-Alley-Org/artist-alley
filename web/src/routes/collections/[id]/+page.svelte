@@ -5,9 +5,18 @@
   //
   // Top section is the header bar — breadcrumbs + name + visibility
   // badge + owner. Below it sits an action toolbar (Upload here,
-  // Share, Edit, More menu). The body is the member grid: for now
-  // the asset-level membership table (`collection_resources`) since
-  // post-level membership lands in a follow-up commit.
+  // Share, Edit, More menu). The body is the membership, which is TWO
+  // tables: posts (`collection_posts`, #882) and assets
+  // (`collection_resources`).
+  //
+  // Two sections rather than one merged grid, deliberately. They are
+  // different entities with different cards, different detail routes
+  // and independent curator orderings — `sort_order` is per-table, so
+  // there is no single sequence to interleave them into that the
+  // curator ever arranged. A merged wall would have to invent one.
+  //
+  // Neither section renders when it is empty, so a collection of only
+  // assets looks exactly as it did before #882.
   //
   // The member grid renders through the shared ContentGrid + the
   // floating ViewControls bar (#582), the same chrome browse and the
@@ -30,7 +39,8 @@
   import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import AssetCard from '$components/AssetCard.svelte';
-  import type { CardAsset } from '$components/cardAsset';
+  import PostCard from '$components/PostCard.svelte';
+  import type { CardAsset, CardCoverAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import Menu from '$components/Menu.svelte';
@@ -91,10 +101,46 @@
     pixel_height?: number | null;
   }
 
+  // #882 — a post pinned in this collection. The API returns the FULL
+  // `Post` schema (the same objects `GET /posts` returns), so this page
+  // renders the same PostCard as browse instead of a second, narrower
+  // post shape that would drift from it.
+  //
+  // The member's `asset` is the SHARED card feed contract (#595), same
+  // as browse declares — not a re-spelled inline shape. That type is
+  // what makes file_extension / thumbhash / the three availability
+  // flags impossible to drop silently, and this page is the surface
+  // #595 was written about.
+  //
+  // A post the viewer may not read is simply ABSENT from this list, not
+  // a placeholder: membership never widens a post (#883), and unlike an
+  // asset member there is no request-access flow for a placeholder to
+  // lead to. `restricted` still appears on a MEMBER, though — a post
+  // you may read can carry a cover you may not.
+  interface PostMemberRow {
+    asset_id: string;
+    sort_order: number;
+    asset?: CardCoverAsset;
+    restricted?: boolean;
+    owner_display_name?: string;
+  }
+  interface PostRow {
+    id: string;
+    title: string;
+    author_user_ref: number;
+    cover_asset_id?: string | null;
+    created_at: string;
+    like_count: number;
+    comment_count: number;
+    members: PostMemberRow[];
+  }
+
   let collection = $state<Collection | null>(null);
   let members = $state<MemberRow[]>([]);
+  let posts = $state<PostRow[]>([]);
   let loading = $state(true);
   let membersLoading = $state(true);
+  let postsLoading = $state(true);
   let error = $state<string | null>(null);
   // Separate from `error` on purpose: one is "we could not load this",
   // the other is "this is not yours to see", and they should not look
@@ -221,6 +267,7 @@
       loading = false;
     }
     void loadMembers();
+    void loadPosts();
   }
 
   async function loadMembers() {
@@ -232,6 +279,20 @@
       members = ((data?.items ?? []) as MemberRow[]);
     } finally {
       membersLoading = false;
+    }
+  }
+
+  // Fired alongside loadMembers rather than after it — the two are
+  // independent tables and neither section blocks the other's paint.
+  async function loadPosts() {
+    postsLoading = true;
+    try {
+      const { data } = await api.GET('/collections/{id}/posts', {
+        params: { path: { id }, query: { limit: 200 } },
+      });
+      posts = (data?.items ?? []) as unknown as PostRow[];
+    } finally {
+      postsLoading = false;
     }
   }
 
@@ -403,18 +464,15 @@
 
     <!-- Action toolbar -->
     <div class="mb-6 flex flex-wrap items-center gap-2 border-b border-border pb-3">
-      <button
-        type="button"
-        disabled
-        title={t('collections.add_posts_soon')}
-        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted opacity-60"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-        {t('collections.add_posts')}
-      </button>
+      <!-- The disabled "Add posts" button that used to sit here is gone
+           (#882). Post membership exists now, and it is reached from the
+           thing being saved — a post's ⋮ menu, "Save to collection…" —
+           which is where the picker already lives for assets. A second,
+           reverse-direction picker (choose posts FROM here) is a
+           different modal and a different sprint; leaving a permanently
+           disabled control standing in for it advertised a feature that
+           had shipped somewhere else. The empty state below says where
+           to go instead. -->
 
       {#if collection?.deleted_at && auth.can('system.admin')}
         <div class="flex-1 rounded-md border border-warning/40 bg-warning-container/50 px-3 py-1.5 text-xs">
@@ -571,16 +629,17 @@
       {/if}
     </div>
 
-    <!-- Member grid -->
-    {#if membersLoading}
+    <!-- Membership -->
+    {#if membersLoading || postsLoading}
       <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
         {#each { length: 10 } as _, i (i)}
           <div class="aspect-square animate-pulse rounded-lg bg-surface-elevated"></div>
         {/each}
       </div>
-    {:else if members.length === 0}
+    {:else if members.length === 0 && posts.length === 0}
       <section class="rounded-lg border border-dashed border-border bg-surface-elevated/50 px-6 py-12 text-center">
         <p class="text-sm text-fg-muted">{t('collections.detail_empty')}</p>
+        <p class="mt-1 text-xs text-fg-muted">{t('collections.detail_empty_hint')}</p>
         {#if isOwner}
           <button
             type="button"
@@ -592,14 +651,41 @@
         {/if}
       </section>
     {:else}
-      <!-- Shared grid (#511/#582), so mode + tile size + sort match
-           browse. Assets carry no list table, so `list` falls back to the
-           grid here exactly as it does in UserProfile's asset section. -->
-      <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
-        {#snippet card(item, mode)}
-          <AssetCard asset={item} {mode} tileSizes={browseView.tileSizes} />
-        {/snippet}
-      </ContentGrid>
+      <!-- Posts first (#882). A collection that holds someone else's
+           work holds it as a POST — that is the unit the author framed
+           and the unit the reader saved — so it leads.
+
+           Headings render only when BOTH sections have content: with one
+           kind of member the labels are noise, and a collection of only
+           assets must look exactly as it did before this landed. -->
+      {#if posts.length > 0}
+        {#if members.length > 0}
+          <h2 class="mb-2 text-sm font-medium text-fg-muted">{t('collections.posts_heading')}</h2>
+        {/if}
+        <div data-testid="collection-posts">
+          <ContentGrid mode={browseView.mode} items={posts} tileMin={browseView.tileMin}>
+            {#snippet card(item, mode)}
+              <PostCard post={item as PostRow} {mode} tileSizes={browseView.tileSizes} />
+            {/snippet}
+          </ContentGrid>
+        </div>
+      {/if}
+
+      {#if members.length > 0}
+        {#if posts.length > 0}
+          <h2 class="mb-2 mt-6 text-sm font-medium text-fg-muted">{t('collections.assets_heading')}</h2>
+        {/if}
+        <!-- Shared grid (#511/#582), so mode + tile size + sort match
+             browse. Assets carry no list table, so `list` falls back to the
+             grid here exactly as it does in UserProfile's asset section. -->
+        <div data-testid="collection-assets">
+          <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
+            {#snippet card(item, mode)}
+              <AssetCard asset={item} {mode} tileSizes={browseView.tileSizes} />
+            {/snippet}
+          </ContentGrid>
+        </div>
+      {/if}
     {/if}
   {/if}
 </div>
