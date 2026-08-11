@@ -50,10 +50,110 @@
 
   $effect(() => chromeScroll.attach());
 
+  // --- Bottom-edge reveal (#1020) -------------------------------------
+  //
+  // The bar hides on the way down and used to come back only on the way
+  // UP, so reaching for a control meant scrolling in a direction you
+  // didn't want to go. Approaching the bottom edge with the pointer now
+  // brings it back too.
+  //
+  // WHY NOT chromeScroll.reveal(). It exists and looks like exactly the
+  // right call, and it is the wrong one: `chromeScroll.hidden` is SHARED
+  // with the header (+layout.svelte derives `chromeHidden` from the same
+  // field — that's why the store is ref-counted). Mutating it here would
+  // slide the TOP navbar back down whenever the pointer neared the
+  // BOTTOM of the window. So this is local state composed into the same
+  // `hidden` expression `expanded` already uses — footer only, navbar
+  // untouched.
+  //
+  // Reduced motion needs no branch here: the store pins `hidden` false
+  // under `prefers-reduced-motion`, so the bar never hides and every
+  // term below is moot.
+
+  /** The bar sits `bottom-4` — 1rem — off the viewport floor. */
+  const BAR_OFFSET = 16;
+  /** Extra room above the bar so this catches an APPROACH rather than a
+   *  hairline at the very edge. */
+  const HOVER_MARGIN = 32;
+  /** Floor for the measured height, used only before first measurement
+   *  (and on the server, where there is no box) — one 44px control row. */
+  const MIN_BAR_H = 44;
+
+  /** Measured height of the bar, `bind:clientHeight` below. The zone is
+   *  derived from the bar's OWN box rather than a hardcoded pixel count
+   *  so it cannot drift when the contents change — expanding the
+   *  switcher adds a row and the zone grows with it. clientHeight is a
+   *  layout number, so the off-screen transform doesn't perturb it. */
+  let barH = $state(0);
+  /** The bar's own element, so focusout can tell "left the bar" from
+   *  "moved to the next control inside it". */
+  let root = $state<HTMLDivElement | null>(null);
+  /** Pointer is inside the reveal zone. */
+  let pointerNear = $state(false);
+  /** Keyboard focus is inside the bar — tabbing to a control that stays
+   *  off-screen is reaching for something you cannot see. Set from
+   *  `:focus-visible`, so a mouse click doesn't pin the bar; see
+   *  onFocusIn. */
+  let focusInside = $state(false);
+  /** Escape dismissed the pointer reveal (WCAG 2.2 §1.4.13,
+   *  Dismissible). Cleared when the pointer leaves the zone, so the next
+   *  approach reveals normally. */
+  let hoverDismissed = $state(false);
+
+  const revealZone = $derived(Math.max(barH, MIN_BAR_H) + BAR_OFFSET + HOVER_MARGIN);
+
   const scrolled = $derived(chromeScroll.scrolled);
   // Keep the cluster on screen while the switcher is expanded — yanking
-  // it away mid-interaction would be hostile.
-  const hidden = $derived(chromeScroll.hidden && !expanded);
+  // it away mid-interaction would be hostile. Pointer proximity and
+  // focus are the same kind of term: each one holds the bar, none of
+  // them touches the shared store.
+  const hidden = $derived(
+    chromeScroll.hidden && !expanded && !focusInside && !(pointerNear && !hoverDismissed),
+  );
+
+  // A `pointermove` test against clientY, NOT an element occupying the
+  // region: the bar is deliberately `pointer-events-none` with only its
+  // controls re-enabling it, and a full-width strip across the bottom
+  // would swallow clicks on the content underneath it — on a phone,
+  // exactly where thumbs rest.
+  //
+  // Fine pointers only, same reasoning as browseView's coarse default:
+  // input modality, not pixels. A touch device has no hover to trigger
+  // this with, so on one it simply never installs.
+  $effect(() => {
+    if (!window.matchMedia?.('(pointer: fine)').matches) return;
+
+    // Reads of `revealZone` / `pointerNear` happen when the event
+    // fires, outside the effect's tracking frame, so they don't make
+    // this effect depend on them — it installs once and stays.
+    function onMove(e: PointerEvent) {
+      // A hybrid device (touchscreen laptop) reports a fine PRIMARY
+      // pointer while still delivering touch pointermove. Only the
+      // hovering kind counts.
+      if (e.pointerType === 'touch') return;
+      const near = e.clientY >= window.innerHeight - revealZone;
+      if (near === pointerNear) return;
+      pointerNear = near;
+      // Leaving the zone hands control straight back to the scroll
+      // logic — this must not pin the bar visible.
+      if (!near) hoverDismissed = false;
+    }
+    // Pointer left the window entirely (out the bottom edge, or the
+    // window lost it): no further pointermove is coming, so the flag
+    // would otherwise stay stuck true and pin the bar.
+    function onOut(e: PointerEvent) {
+      if (e.relatedTarget) return;
+      pointerNear = false;
+      hoverDismissed = false;
+    }
+
+    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerout', onOut, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerout', onOut);
+    };
+  });
 
   // Only the layouts the operator offers (#709). Filtered rather than
   // disabled-and-greyed: a button that cannot be pressed is worse than
@@ -107,22 +207,71 @@
 
   // Escape collapses the expanded switcher so keyboard users can dismiss
   // without picking. Click-outside is handled by the floating wrapper.
+  //
+  // With nothing expanded, Escape instead dismisses a pointer reveal:
+  // WCAG 2.2 §1.4.13 wants hover-revealed content that overlays other
+  // content to be dismissible WITHOUT moving the pointer, and this bar
+  // floats over the bottom of the feed. The other two halves of that
+  // criterion fall out of the geometry: the bar lives inside its own
+  // reveal zone, so the pointer can move onto the controls without it
+  // vanishing (hoverable), and nothing times it out (persistent).
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && expanded) expanded = false;
+    if (e.key !== 'Escape') return;
+    if (expanded) {
+      expanded = false;
+      return;
+    }
+    if (pointerNear) hoverDismissed = true;
   }
+
   $effect(() => {
-    if (!expanded) return;
+    if (!expanded && !pointerNear) return;
     window.addEventListener('keydown', onWindowKey);
     return () => window.removeEventListener('keydown', onWindowKey);
   });
+
+  /** Keyboard parity — `:focus-visible`, not `:focus-within`.
+   *
+   *  focus-within is the cheap version and it's wrong here: a MOUSE
+   *  click also focuses the button it lands on, so the bar would stay
+   *  pinned on screen after using the sort toggle and never hide again
+   *  on the next scroll-down until the user clicked something else.
+   *  `:focus-visible` is exactly the "arrived here by keyboard"
+   *  distinction this needs, and it's what the controls already draw
+   *  their focus ring from.
+   *
+   *  The try/catch is for engines without the selector — falling back to
+   *  "treat it as keyboard focus" keeps the bar reachable, which is the
+   *  failure worth having. */
+  function onFocusIn(e: FocusEvent) {
+    const el = e.target;
+    if (!(el instanceof Element)) return;
+    try {
+      focusInside = el.matches(':focus-visible');
+    } catch {
+      focusInside = true;
+    }
+  }
+
+  /** focusout's relatedTarget is where focus went, so a move BETWEEN two
+   *  controls in the bar doesn't drop the flag. */
+  function onFocusOut(e: FocusEvent) {
+    const to = e.relatedTarget;
+    if (to instanceof Node && root?.contains(to)) return;
+    focusInside = false;
+  }
 </script>
 
 <div
+  bind:this={root}
+  bind:clientHeight={barH}
   data-testid="view-controls"
   class="chrome-slide pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3 transition-transform duration-200 ease-out"
   class:chrome-hidden-bottom={hidden}
   style="padding-bottom: env(safe-area-inset-bottom, 0px)"
   aria-label={t('browse.footer.label')}
+  onfocusin={onFocusIn}
+  onfocusout={onFocusOut}
 >
   <!-- LEFT cluster: view switcher + back-to-top -->
   <div class="flex items-end gap-3">
