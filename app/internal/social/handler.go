@@ -22,6 +22,14 @@
 //
 // All counter maintenance happens in DB triggers; this handler never
 // touches posts.like_count or posts.comment_count directly.
+//
+// ⚠️ It does have to INVALIDATE for them. The triggers move
+// posts.like_count / posts.comment_count on the posts row, and `posts`
+// serves that row from a by-id LRU that nothing here was telling. A
+// like therefore incremented the database and left every reader on the
+// old number until an unrelated post write evicted the entry — visible
+// as a heart that fills but a count that does not move (#557). Every
+// mutation below that a trigger follows calls invalidatePostCache.
 package social
 
 import (
@@ -292,6 +300,9 @@ func (h *Handler) LikePost(
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
 	}
+	// The trigger just moved posts.like_count; the post cache does not
+	// know that (#557).
+	h.invalidatePostCache(ctx, uuid.UUID(pgID.Bytes).String())
 	return openapi.LikePost204Response{}, nil
 }
 
@@ -390,6 +401,7 @@ func (h *Handler) UnlikePost(
 	if err != nil {
 		return nil, err
 	}
+	h.invalidatePostCache(ctx, postIDStr)
 	return openapi.UnlikePost204Response{}, nil
 }
 
@@ -632,6 +644,8 @@ func (h *Handler) CreatePostComment(
 		})
 	}
 
+	// The trigger just moved posts.comment_count (#557).
+	h.invalidatePostCache(ctx, uuid.UUID(pgPostID.Bytes).String())
 	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(savedRow)), nil
 }
 
@@ -701,6 +715,7 @@ func (h *Handler) DeleteComment(
 	if err != nil {
 		return nil, err
 	}
+	h.invalidatePostCache(ctx, postIDStr)
 	return openapi.DeleteComment204Response{}, nil
 }
 
@@ -1178,3 +1193,34 @@ var _ interface {
 	ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error)
 	CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error)
 } = (*Handler)(nil)
+
+// invalidatePostCache drops the `posts` by-id cache entry for one post,
+// locally and on every peer instance, after a mutation whose DB trigger
+// moved a counter on the posts row.
+//
+// Why it lives here and not in `posts`: `posts` imports `social`, so
+// `social` cannot import `posts` back. The registry takes a plain
+// domain string, and that string is cache.DomainPostByID — a shared
+// constant precisely so the two packages cannot drift apart on it. See
+// its doc comment.
+//
+// InvalidateNow, not Emit: the reader's next request can be the very
+// next one — a feed reload immediately after clicking the heart is the
+// normal case — so the local LRU has to be dropped synchronously rather
+// than via a NOTIFY round trip.
+//
+// Best-effort and nil-safe, the same discipline posts.cacheInvalidate
+// applies: a cache invalidation that fails must not turn a completed
+// like into a 500. It logs and returns.
+func (h *Handler) invalidatePostCache(ctx context.Context, postID string) {
+	if h.registry == nil || postID == "" {
+		return
+	}
+	if err := h.registry.InvalidateNow(ctx, cache.DomainPostByID, postID); err != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "social.post_cache.invalidate.error",
+			slog.String("domain", cache.DomainPostByID),
+			slog.String("key", postID),
+			slog.String("err", err.Error()),
+		)
+	}
+}

@@ -119,6 +119,30 @@
      *  (#556). Both are correct as squares. See `tileRatio` below for
      *  where the ratio comes from. */
     variableAspect?: boolean;
+    /** A floor on the variable-aspect ratio — the TALLEST the tile may
+     *  get, expressed as width/height (#557). Only read when
+     *  `variableAspect` is on.
+     *
+     *  Masonry passes nothing and wants nothing: a column is ~270px, so
+     *  even a 1:4 portrait lands about a thousand pixels tall and that
+     *  is what a masonry is for. The FEED card is the case that needs
+     *  it — one column at a 46rem measure, where the same 1:4 image is
+     *  nearly 3000px and the reader scrolls past a single post for
+     *  three screens. Every social feed worth copying caps portrait at
+     *  4:5 for exactly this reason.
+     *
+     *  It LETTERBOXES rather than crops, which is slice 1's rule
+     *  everywhere `fill` is off: the art stays whole on the matte. The
+     *  alternative — clipping to the cap — is what Instagram does and
+     *  what this codebase deliberately does not, outside grid's contact
+     *  sheet.
+     *
+     *  ⚠️ Not for a caller whose ratio is PREDICTED elsewhere.
+     *  MasonryColumns buckets by `cardTileRatio` one layer up, and a
+     *  floor applied only in CSS would desynchronise the columns (#651
+     *  / #652). The feed is one column and predicts nothing, so it is
+     *  safe there and would not be in masonry. */
+    ratioFloor?: number | null;
     /** The tile may be only as tall as the control floor (#652) — set
      *  in masonry, where a 5.33:1 waveform lands at ~60px. Strips the
      *  chrome that cannot survive at that size to leave exactly the two
@@ -181,6 +205,7 @@
     framed = true,
     fill = false,
     variableAspect = false,
+    ratioFloor = null,
     compact = false,
     pixelWidth = null,
     pixelHeight = null,
@@ -329,7 +354,17 @@
       : null,
   );
   const measuredRatio = $derived(loadedRatio === null ? null : clampRatio(loadedRatio));
-  const tileRatio = $derived(variableAspect ? (declaredRatio ?? measuredRatio) : null);
+  // `ratioFloor` caps how TALL the tile may get (see the prop). Applied
+  // after the ratio resolves rather than inside clampRatio, because
+  // clampRatio's bounds are a guard against corrupt metadata and this is
+  // a per-caller layout decision — a 1:4 portrait is not bad data, it is
+  // just too tall for one 46rem column.
+  const tileRatio = $derived.by(() => {
+    if (!variableAspect) return null;
+    const r = declaredRatio ?? measuredRatio;
+    if (r === null) return null;
+    return ratioFloor && ratioFloor > 0 ? Math.max(r, ratioFloor) : r;
+  });
 
   // The tile floor (#652). Applied to every variable-aspect tile, not
   // only the ones currently under it: the ratio can change under us

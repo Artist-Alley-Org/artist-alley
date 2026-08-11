@@ -151,13 +151,14 @@ func (h *Handler) ListCollectionPosts(
 		items = append(items, *full)
 	}
 
-	// preview_available (#471) is per-caller — derive it from the
-	// request identity, same as ListPosts and GetPostsByAsset.
+	// preview_available (#471) and the author (#557) are per-caller —
+	// derive them from the request identity, same as ListPosts and
+	// GetPostsByAsset.
 	ptrs := make([]*openapi.Post, len(items))
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	if err := h.enrichPreview(ctx, ptrs...); err != nil {
+	if err := h.enrichForCaller(ctx, ptrs...); err != nil {
 		return nil, err
 	}
 
