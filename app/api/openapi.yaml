@@ -9606,6 +9606,80 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/browse-views:
+    get:
+      operationId: getBrowseViews
+      summary: Read which browse layouts this install offers
+      description: |
+        The browse layouts (`grid`, `masonry`, `thumbnail`, `list`,
+        `feed`) enabled for every user on this install, in the
+        switcher's canonical order.
+
+        An install that has never configured this reads back all five —
+        the shipped default is the ABSENCE of a stored value, not a
+        seeded row, so an install upgraded into this feature keeps
+        exactly the behaviour it already had.
+
+        This is the admin read. The public counterpart every client
+        actually renders from is `GET /browse-views`.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The enabled layouts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateBrowseViews
+      summary: Choose which browse layouts this install offers
+      description: |
+        Replaces the enabled set. Requires the `system.config.write`
+        capability. The change takes effect on the next request without
+        a restart, and is recorded as an
+        `admin.system.browse_views_updated` audit event.
+
+        AT LEAST ONE LAYOUT MUST STAY ENABLED. An empty array is
+        refused with a 400 and nothing is persisted — the same shape as
+        the last-admin invariant, and for the same reason: an install
+        with no enabled layout has an unreachable browse page and no
+        recovery path short of a database shell. Unknown layout names
+        are refused too, rather than filtered out, so a typo cannot
+        quietly save a smaller set than the operator chose.
+
+        Disabling a layout somebody is already using is safe. Every
+        rung that can name a mode — this device's stored choice, the
+        account default, the coarse-pointer default — is filtered
+        through the enabled set at resolve time, so those users land on
+        an enabled layout instead of an empty page.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
+      responses:
+        "200":
+          description: The updated enabled layouts, in canonical order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /site-text:
     get:
       operationId: getSiteText
@@ -9992,6 +10066,58 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PreviewLadder" }
+
+  /browse-views:
+    get:
+      operationId: getPublicBrowseViews
+      summary: Read the browse layouts this install offers
+      description: |
+        The layouts the operator has enabled, in the switcher's
+        canonical order. The frontend fetches this once at boot and
+        renders only these buttons — and, more importantly, filters
+        every rung that can name a layout through this set: the
+        device's stored choice, the signed-in account's default, and
+        the coarse-pointer default. A user whose browser still
+        remembers a layout the operator has since disabled therefore
+        lands on one that is offered rather than on an empty page.
+
+        Read separately from the admin `GET /admin/system/browse-views`
+        rather than folded into it because the caller is every visitor,
+        not the operator: this one carries no capability check and is
+        cached as a single install-wide entry.
+
+        An install that has never configured this returns all five. The
+        set is never empty — the write endpoint refuses that, and this
+        endpoint falls back to all five if it somehow reads one anyway,
+        because an empty answer here would mean a browse page with no
+        way to look at anything.
+
+        GOVERNED BY PUBLIC MODE (#445), like `/previews`: anonymous on a
+        public install, **401 on a private one**. It is deliberately NOT
+        excused the way `/appearance` and `/site-text` are — those two
+        render the login card, so an install that refused them
+        anonymously could not draw its own sign-in page, whereas the
+        first consumer of this is the browse switcher, which on a
+        private install is already behind auth. A logged-out visitor
+        browses only where anonymous browse exists, and that is exactly
+        where this answers. The registration and the full reasoning live
+        in `auth.PublicSurfaceRoutes` — that table, not this
+        description, is what the gate actually reads.
+
+        What it exposes on a public install is which layout buttons the
+        install draws: no asset, no user, no access decision, and
+        nothing a caller could not read off the rendered switcher.
+      tags: [system]
+      # Governed by public mode, exactly like /previews above.
+      # Documentary only — auth.PublicSurfaceRoutes enforces the gate,
+      # not this block. Do not read `security: []` here as "ungated".
+      security: []
+      responses:
+        "200":
+          description: The enabled layouts, in canonical order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowseViewsConfig" }
 
   /brush-packs:
     get:
@@ -11273,6 +11399,31 @@ components:
             the default, and the state of any install that has never
             set it — those routes return 401 to anonymous callers.
           example: false
+    BrowseViewsConfig:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: array
+          description: |
+            The browse layouts this install offers, in the switcher's
+            canonical order. The server reorders whatever it is sent
+            into that order and drops duplicates, so layout order stays
+            a frontend decision and only availability is the operator's.
+
+            MUST NOT BE EMPTY. A write enabling nothing is refused with
+            a 400 and nothing is persisted — an install offering no
+            layout has an unreachable browse page, and the recovery path
+            would be a database shell.
+
+            An install that has never configured this reads back all
+            five. That is the shipped default expressed as the absence
+            of a stored value, not as a seeded row.
+          minItems: 1
+          items:
+            type: string
+            enum: [grid, masonry, thumbnail, list, feed]
+          example: [grid, list, feed]
     SMTPConfig:
       type: object
       required: [host, port, encryption, from_address]

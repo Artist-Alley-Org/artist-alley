@@ -55,8 +55,25 @@
   // it away mid-interaction would be hostile.
   const hidden = $derived(chromeScroll.hidden && !expanded);
 
-  const activeView = $derived(VIEWS.find((v) => v.id === browseView.mode) ?? VIEWS[0]);
-  const otherViews = $derived(VIEWS.filter((v) => v.id !== browseView.mode));
+  // Only the layouts the operator offers (#709). Filtered rather than
+  // disabled-and-greyed: a button that cannot be pressed is worse than
+  // one that is not there, and #706 already settled that we do not
+  // offer what we cannot serve.
+  //
+  // The fallback keeps the switcher renderable if the enabled set ever
+  // arrives empty — the store refuses that, so this is belt-and-braces
+  // against a component rendering before the store resolves.
+  const offeredViews = $derived.by(() => {
+    const shown = VIEWS.filter((v) => browseView.isEnabled(v.id));
+    return shown.length > 0 ? shown : VIEWS;
+  });
+
+  const activeView = $derived(
+    offeredViews.find((v) => v.id === browseView.mode) ?? offeredViews[0]);
+  const otherViews = $derived(offeredViews.filter((v) => v.id !== browseView.mode));
+  // One offered layout means nothing to switch to: the toggle would
+  // open a menu containing only the button you are already on.
+  const canSwitch = $derived(offeredViews.length > 1);
 
   function pick(mode: ViewMode) {
     browseView.setMode(mode);
@@ -76,6 +93,9 @@
     browseView.incSize();
   }
   function toggle() {
+    // Nothing to expand into when the operator offers a single layout
+    // (#709) — the menu would hold only the button already showing.
+    if (!canSwitch) return;
     expanded = !expanded;
   }
   function backToTop() {
@@ -182,10 +202,11 @@
       <button
         type="button"
         onclick={toggle}
+        disabled={!canSwitch}
         title={t('browse.footer.toggle')}
         aria-label={t('browse.footer.toggle')}
         aria-expanded={expanded}
-        class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-accent text-on-accent shadow-lg transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-accent text-on-accent shadow-lg transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60"
       >
         {#if activeView.icon === 'grid'}
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

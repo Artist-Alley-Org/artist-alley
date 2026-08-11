@@ -610,6 +610,16 @@ func (*PanicShim) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequ
 	panic("PanicShim: UpdateAuthConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetBrowseViews panics by default; test shims override.
+func (*PanicShim) GetBrowseViews(context.Context, openapi.GetBrowseViewsRequestObject) (openapi.GetBrowseViewsResponseObject, error) {
+	panic("PanicShim: GetBrowseViews called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdateBrowseViews panics by default; test shims override.
+func (*PanicShim) UpdateBrowseViews(context.Context, openapi.UpdateBrowseViewsRequestObject) (openapi.UpdateBrowseViewsResponseObject, error) {
+	panic("PanicShim: UpdateBrowseViews called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetPublicMode panics by default; test shims override.
 func (*PanicShim) GetPublicMode(context.Context, openapi.GetPublicModeRequestObject) (openapi.GetPublicModeResponseObject, error) {
 	panic("PanicShim: GetPublicMode called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1008,6 +1018,11 @@ func (*PanicShim) SetUserRole(context.Context, openapi.SetUserRoleRequestObject)
 // VerifyEmail panics by default; test shims override.
 func (*PanicShim) VerifyEmail(context.Context, openapi.VerifyEmailRequestObject) (openapi.VerifyEmailResponseObject, error) {
 	panic("PanicShim: VerifyEmail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetPublicBrowseViews panics by default; test shims override.
+func (*PanicShim) GetPublicBrowseViews(context.Context, openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
+	panic("PanicShim: GetPublicBrowseViews called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListBrushPacks panics by default; test shims override.

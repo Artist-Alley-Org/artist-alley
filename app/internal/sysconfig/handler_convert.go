@@ -836,3 +836,66 @@ func publicModeUpdateDenial(err error401or403) openapi.UpdatePublicModeResponseO
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// Browse views (#709)
+// ---------------------------------------------------------------------------
+
+// browseViewsToAPI projects the stored config onto the wire shape,
+// always through Resolved() so every response carries a non-empty set
+// in canonical order — including the unconfigured case, where the
+// stored value is nil and the answer is all five.
+func browseViewsToAPI(cfg BrowseViewsConfig) openapi.BrowseViewsConfig {
+	modes := cfg.Resolved()
+	out := openapi.BrowseViewsConfig{
+		Enabled: make([]openapi.BrowseViewsConfigEnabled, 0, len(modes)),
+	}
+	for _, m := range modes {
+		out.Enabled = append(out.Enabled, openapi.BrowseViewsConfigEnabled(m))
+	}
+	return out
+}
+
+// browseViewsFromAPI converts the request body WITHOUT repairing it.
+//
+// Deliberately no filtering here: an unknown mode has to survive as far
+// as SetBrowseViews so that validator can refuse the write. Dropping it
+// on the way in would turn a typo into a silently smaller enabled set,
+// and a body of nothing but typos into an empty one that then fails
+// open to all five — accepted, inert, and disagreeing with what the
+// operator saved.
+func browseViewsFromAPI(in openapi.BrowseViewsConfig) BrowseViewsConfig {
+	out := BrowseViewsConfig{Enabled: make([]BrowseViewMode, 0, len(in.Enabled))}
+	for _, m := range in.Enabled {
+		out.Enabled = append(out.Enabled, BrowseViewMode(m))
+	}
+	return out
+}
+
+func browseViewsDenial(err error401or403) openapi.GetBrowseViewsResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.GetBrowseViews401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.GetBrowseViews403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
+func browseViewsUpdateDenial(err error401or403) openapi.UpdateBrowseViewsResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.UpdateBrowseViews401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.UpdateBrowseViews403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
