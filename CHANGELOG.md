@@ -344,6 +344,20 @@ where applicable, otherwise note "no-spec-impact."
   view and the tooltip. They use the same card and the same layout as local work, because
   federated content is not second-class; but you can always tell whose it is.
 
+- **Every metadata field now has its own settings page.** Editing a field meant expanding a row
+  inside a nine-column table, with the form, the options list and the tree editor all competing
+  for the same cramped space (#854).
+
+  Each field now opens its own full-width page, which you can link to and bookmark. The list
+  becomes a list again — five columns, three on a phone — and everything that used to be
+  squeezed into a cell has room: the vocabulary editor, the extraction settings, the upload
+  default.
+
+  Several settings that had no screen at all are editable for the first time, tucked into an
+  Advanced section so the everyday ones stay uncluttered. And a field that mirrors a file's own
+  title or description now says so plainly, explaining why it behaves differently instead of
+  leaving you guessing.
+
 - **A file's title and description can no longer disagree with themselves.** Title and
   description existed twice over: once as the file's own fields, and once as entries in the
   configurable metadata list. Nothing connected them, so the moment anything wrote to the
