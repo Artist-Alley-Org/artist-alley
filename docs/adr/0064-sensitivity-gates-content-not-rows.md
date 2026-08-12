@@ -272,6 +272,18 @@ Three things worth recording, because each is easy to get backwards:
   when #210 / Phase 1.28 tightens the row plane; until then, do not describe the placeholder as
   making a title unreachable.
 
+  ⚠️ *Amended 2026-08-12 (#907, PR #1055) — **"the row stays listed" is now conditional, and a
+  reader of this section must know where.*** Search grew facet **filtering**, and under an
+  **active filter** an asset the caller cannot open is **excluded** from the result set rather
+  than listed as a placeholder. Unfiltered search, `GET /assets/{id}`, browse and collection
+  contents are all unchanged — the guarantee above holds everywhere a caller asks an open
+  question. A *filter* is not an open question: `extension:png` asks about a specific withheld
+  field, and answering it would return exactly what this ADR removes from the payload. The
+  exclusion is **value-independent** (gated on whether any filter is present, never on which),
+  so a withheld row answers nothing for every value and its absence is not an oracle. The full
+  argument — and its cost, a team-scoped `assets.admin` holder being narrower under a filter than
+  unfiltered, tracked as **#1056** — is in **ADR 0056 §4b**.
+
 Two deliberate divergences:
 
 - **Soft-delete is not in `MemberReadable`.** A deleted member is not restricted, it is gone;

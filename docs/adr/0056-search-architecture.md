@@ -60,6 +60,46 @@ The 1.16.B search architecture is:
 - Aggregators run in parallel via `errgroup` capped at 8 concurrent (matches seeded facet count). Per-aggregator 500ms timeout (sysconfig `search.facet_aggregator_timeout_ms`). Slow facet → empty bucket + warn log; other facets still return.
 - **Visibility floor: every facet query passes through `visibility.Filter(EntityType)` BEFORE `GROUP BY`.** A restricted asset with tag `unique_marker_restricted` MUST NOT contribute to `unique_marker_restricted` bucket count for any caller who can't see the asset. This is the highest-severity failure mode of the arc.
 
+### 3b. Facets FILTER, not merely count — amendment 2026-08-12 (#907, PR #1055)
+
+As accepted, this ADR specified the aggregators and the `Filters` struct but never joined them:
+the DSL compiled `tag:foo` into `Filters` and **the Engine ignored it** (`Query.Advanced` was a
+placeholder documented as ignored; `http.go` said the compiled query was "informational"). Every
+facet bucket therefore showed a true count and did nothing, for two releases. `dsl/doc.go`
+meanwhile *claimed* the Engine applied Filters "via ordinary WHERE clauses" — a comment asserting
+a structural guarantee that was false, which is how it survived.
+
+What now exists:
+
+1. **One typed predicate set — `facet.Selection` — rendered by BOTH the aggregators and the
+   Engine.** This is the load-bearing property, not the checkbox. A bucket's count and the filter
+   that bucket labels are the same value applied to the same population, so **they cannot drift by
+   being written twice.** Any future dimension must be added to the shared renderer, never to one
+   side.
+2. **Wire shape: repeated `filter=<dimension>:<value>`**, on `/search` and `/search/facets` alike —
+   the facet endpoint takes the selection too, because a count computed without the active filter
+   is the same defect one level up. Unknown dimensions are a `400`, never a silent drop.
+   Rejected: `dsl=` (it replaces the free-text query and would force callers to hand-quote values)
+   and per-dimension parameters (which make each new dimension a new parameter, handler and piece
+   of frontend state).
+3. **Extensibility is the acceptance test for the shape.** #910 (search inside a collection) must
+   be **one `FacetType` const plus one case in `facet.dimensionSQL`**. Prior art drove this: a
+   mature photo DAM exposes container membership as an ordinary filter predicate (with the
+   negation free), while a mature media DAM spends a bespoke `!collection<id>` parser to reach the
+   same place. **We take the predicate. No `!bang` special syntax** — this project already has a
+   typed `field:value` grammar with a parse-time whitelist, and a second vocabulary would be a
+   second code path to keep honest.
+
+⚠️ **Five pre-existing defects surfaced only when Filters became live**, all fixed in the same PR;
+they are recorded because each was invisible while the Engine ignored the struct: the `tag`
+aggregator counted `post_tags` **only** (ignoring ~2/3 of the corpus's tags, which made the
+count-equals-results acceptance unsatisfiable for that dimension); `Filters.Owner` used
+`fmt.Sscanf("%d")`, so `owner:alice` produced **no** filter and `owner:12abc` produced owner 12;
+save-as-collection resolved no capabilities; the saved-search executor dropped `compiled.Filters`
+(it would have emailed owners hits their own search does not return); and the vector path
+re-admitted rows the filter had just excluded. **A struct nothing consumes accumulates bugs
+silently — "unused" is not "correct".**
+
 ### 4. Shared `visibility` package — load-bearing floor (B-2)
 
 - New `app/internal/visibility/` package with `Filter(ctx, EntityType) → Predicate → Predicate.ToSQL(alias)` interface.
@@ -70,6 +110,34 @@ The 1.16.B search architecture is:
   - **`POST /search/by-image` coarse floor** (`app/internal/search/by_image.go:filterVisibleAssetIDs`) filters anonymous callers to `sensitivity = 'public'` — a column `visibility.Filter(EntityAsset)` does not currently touch. Unifying would silently change search Engine behaviour for anonymous text queries (currently permissive). Deferred (issue #210).
   - **Base list handlers** (`/assets`, `/collections`, `/posts`) use sqlc-static queries with hardcoded WHERE fragments. They do not call `visibility.Filter` today. Retrofitting means abandoning sqlc for those queries — bigger scope with real observable-behaviour risk. Deferred (issue #212).
 - Snapshot-test discipline preserved: the retrofit's compliance signal is the byte-for-byte error-response suite in `app/internal/search/feedback/snapshot_test.go` (Phase 1.16.B-followup). Every HTTP error path (401 / 400 / 403 / 404) is compared verbatim against captured golden bodies.
+
+#### 4b. An ACTIVE FILTER narrows to what the caller can open — amendment 2026-08-12 (#907)
+
+**Unfiltered search is unchanged and this amendment does not touch it.** ADR 0064 keeps a
+restricted asset **listed** as a placeholder, and `total_count` deliberately counts rows the
+caller cannot open, so that the number and the array agree and neither becomes a readability
+oracle. That stands.
+
+**Under an active facet filter, those rows are excluded** (`visibility.ContentReadableSQL`, the
+same clause the aggregators use). The reasoning, because this looks at first like the narrowing
+the `total_count` rule forbids:
+
+- **A filter asks a question about a field.** `extension:png` means *"which of these is a png"*,
+  and answering it about a row whose columns are withheld hands over the exact field #899 removed
+  from that row's payload. With a narrow enough selection, **the filter is the item**.
+- **The exclusion is VALUE-INDEPENDENT, which is what stops it being an oracle.** The conjunct is
+  gated on the *presence* of a filter (`if !q.Filters.Empty()`), never on which filter. A withheld
+  row therefore returns nothing for **every** value of **every** dimension, so its absence
+  discloses nothing the caller did not already learn from seeing the placeholder in the
+  unfiltered result.
+- **It must match the aggregators' clause exactly**, or the rail's count stops equalling the
+  result set that ticking it returns — which is the defect #907 existed to remove.
+
+⚠️ The exactness has a known cost, recorded rather than hidden: `ContentReadableSQL` carries no
+mutation disjunct, so a team-scoped `assets.admin` holder — owed the *fields* of assets they
+administer (#939) — is slightly **narrower** under a filter than unfiltered. Widening only the
+Engine would break the count/filter equality; both clauses must widen together. **#1056** tracks
+it. The current behaviour errs narrow, which is the safe direction.
 
 ### 5. Autocomplete via `pg_trgm` (B-2)
 
@@ -90,8 +158,17 @@ The 1.16.B search architecture is:
 
 ### 7. Saved searches — delta detection (B-4)
 
-- `saved_search` table (migration 00023) stores DSL string + `types_filter` + `facets_filter` + hybrid tuple + `email_frequency ∈ {off, immediate, hourly, daily, weekly}` + `last_result_hash` + `last_result_ids UUID[]` + `last_check_at` + `last_notified_at` + `last_error`.
+- `saved_search` table (migration 00023) stores DSL string + `types_filter` + ~~`facets_filter`~~ + hybrid tuple + `email_frequency ∈ {off, immediate, hourly, daily, weekly}` + `last_result_hash` + `last_result_ids UUID[]` + `last_check_at` + `last_notified_at` + `last_error`.
 - Delta via hash-of-sorted-ID-set + linear-merge diff — deterministic, replayable.
+
+  ⛔ *Corrected 2026-08-12 (#907, PR #1055) — **`facets_filter` was never built.*** It is in no
+  migration and in no sqlc model; the table carries `Dsl` and the types filter, and nothing else
+  that resembles a stored facet selection. This section has asserted the column's existence since
+  the ADR was accepted, and #907 went looking for it on that basis. Struck rather than deleted,
+  because the *intent* is still right: now that a facet selection is a first-class typed value
+  (`facet.Selection`, see §5 amendment), persisting one with a saved search is a small, obvious
+  addition — it simply has not happened. **An accepted ADR describing a column that does not
+  exist is worse than silence, because the next person plans against it.**
 - Coordinator job self-re-enqueues via `ScheduledFor`; per-frequency batching; per-user coalescing (one digest email per user per digest window regardless of saved-search count).
 - **Visibility at execution time**: notify job runs Engine.Query with `context.WithValue(ctx, ActorUserRef, owner_user_ref)` so `visibility.Filter` returns the OWNER's current predicate. Access lost between save + notify = hits silently absent from email.
 - Email substrate reuse: template `notification_saved_search_digest.{subject,txt,html}.tmpl` registered via `templateForVerb` auto-resolution against 1.19.A-1's `email.RegisterTemplate` (agent-side improvement over the brief's direct-register call).

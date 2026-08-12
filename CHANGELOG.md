@@ -7,6 +7,27 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Added
+
+- **Search filters actually filter.** Every facet beside a search — tag, file type, owner,
+  sensitivity, extension — showed a real count and did nothing when you clicked it. They are
+  controls now: tick one and the results narrow, and the number on the bucket is exactly how many
+  results you get. That equivalence is guaranteed by construction rather than by care — the count
+  and the filter are the same value applied to the same set, so they cannot drift apart (#907).
+
+  Fixing it turned up five older problems that were invisible while the filters were inert: the
+  tag list counted tags on posts but not on files, hiding roughly two thirds of everything tagged;
+  searching by owner silently did nothing for a username and quietly matched the wrong person for
+  a malformed one; "save as collection" saved a fraction of what the page showed; saved-search
+  emails would have contained results the search itself doesn't return; and similarity search
+  ignored the filter you had just set.
+
+  One deliberate behaviour worth knowing: **while a filter is active, files you aren't allowed to
+  open are left out of the results** rather than shown as locked placeholders. Without a filter
+  they still appear, as before. The reason is that a filter asks a question *about* a file's
+  details — "which of these are PNGs" — and answering that about a file whose details are withheld
+  would give away the very thing being withheld.
+
 ### Changed
 
 - **Dependency updates.** `@playwright/test` 1.60.0 → 1.62.1 (#1034), `three` 0.169.0 → 0.185.1 in
