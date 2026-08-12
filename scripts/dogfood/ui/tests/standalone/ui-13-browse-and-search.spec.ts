@@ -80,7 +80,31 @@ test.describe('UI-13 browse + search', () => {
     const term = (title.match(/[A-Za-z]{5,}/g) ?? [])[0] ?? '';
     expect(term, `no searchable word in the first post's title: "${title}"`).toBeTruthy();
 
+    // Typing into the nav search box arms a 250ms debounce inside
+    // SearchBar; when it settles it calls the layout's handleSearch,
+    // which NAVIGATES. Clicking the search-surface link inside that
+    // window starts a second navigation that the debounce then
+    // overtakes: the click lands on /search?q=…, ~130ms later the timer
+    // fires, handleSearch sees a pathname that is no longer `/` and
+    // goto()s the browse page instead — leaving the URL at /?q=<term>,
+    // which is precisely the string #1024's CI failure reported.
+    //
+    // So wait for the commit to have HAPPENED before clicking. On
+    // browse it is directly observable: handleSearch rewrites this
+    // page's own URL to /?q=<term>. Once that lands, SearchBar's
+    // lastCommitted equals what is in the box and no timer is left
+    // armed to yank the page out from under the click. This is a wait
+    // on an observed state change, not a sleep.
     await page.locator(tid('nav-search')).fill(term);
+    await expect(page).toHaveURL(new RegExp(`/\\?.*q=${term}`, 'i'));
+    // The link's href is computed reactively from what was typed
+    // (+layout.svelte). Assert it is carrying the query before clicking
+    // it — the ui-07 pattern; `toHaveAttribute` retries, a click does
+    // not.
+    await expect(page.locator(tid('nav-search-page'))).toHaveAttribute(
+      'href',
+      `/search?q=${encodeURIComponent(term)}`,
+    );
     await page.locator(tid('nav-search-page')).click();
     await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${term}`, 'i'));
     await expectPageRendersCleanly(page);
