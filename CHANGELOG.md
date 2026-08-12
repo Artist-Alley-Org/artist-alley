@@ -7,6 +7,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency updates.** `@playwright/test` 1.60.0 → 1.62.1 (#1034), `three` 0.169.0 → 0.185.1 in
+  the 3D preview worker (#1035), and a group of four minor/patch bumps in the frontend (#1037).
+
+  The `three` bump is the notable one: the preview worker had been sixteen minor versions behind
+  the web app, and since both now import the *same* model-loading module, they were running one
+  piece of code under two different versions of the library — the exact mismatch that makes a
+  thumbnail disagree with what you see when you open the asset. They are aligned again. The full
+  3D render chain was re-verified against every supported format, textures included.
+
 ### Fixed
 
 - **CI can reach a verdict on dependency and release PRs.** Two separate faults had been making

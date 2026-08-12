@@ -204,6 +204,25 @@ What this changes concretely:
    disk. The Blender pin-drift gate (#470) is likewise re-pointed at
    the renderer that replaced it rather than deleted.
 
+   ⚠️ *Amended 2026-08-12 (#1049) — **this section names the smoke test
+   as the enforcement mechanism but never says when it runs, and its
+   coverage is narrower than a reader will assume.*** The test lives in
+   `ci.yml`'s `docker-build` job, which carries
+   `if: github.event_name != 'pull_request'` — so it runs on **no pull
+   request at all**. That is deliberate (a full production image build
+   per PR is expensive), and #751 recorded it, prescribing "verify
+   locally with an image build" as the compensating control. What broke
+   on 2026-08-12 is the other half: a PR merged by the Dependabot
+   automerge workflow is merged with `GITHUB_TOKEN`, and GitHub does not
+   trigger workflows on such pushes — so **no push run follows the merge
+   either**. Three dependency PRs, one of them raising the worker's
+   `three` by sixteen minor versions, reached `dev` with this gate having
+   run **nowhere**. The renderer was verified by hand (smoke 10/10 on a
+   freshly built image at `217766f2`) and is fine, but the guarantee this
+   section promises was unenforced for that window. **Do not read "the
+   smoke test survives" as "every change to the render chain is gated."**
+   #1049 tracks closing it.
+
 `scripts/blender/turntable.py` and `ab_engine_test.py` are deleted with
 this change. They are recoverable from git history, but the plugin
 (#499) should be written against the Blender and worker contracts
