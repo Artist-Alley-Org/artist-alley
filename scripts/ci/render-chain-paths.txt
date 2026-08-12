@@ -73,6 +73,5 @@ web/package-lock.json
 # merged on a green CI that never exercised it (#1012: an ADR gate that
 # shipped having never once fired, because it subscribed to the wrong
 # event).
-
-# SCRATCH: ci.yml + this file temporarily removed from the list so the
-# detector sees no match for this PR's own diff (proving the skip branch).
+.github/workflows/ci.yml
+scripts/ci/render-chain-paths.txt
