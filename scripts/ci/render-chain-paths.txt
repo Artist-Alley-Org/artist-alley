@@ -1,0 +1,77 @@
+# Paths that put the 3D preview render chain at risk (#1049).
+#
+# THE SINGLE SOURCE OF TRUTH for "does this PR need the three.js smoke
+# gate?". Two workflows read this file over the contents API rather than
+# each carrying its own list, because two lists is how one of them goes
+# stale and the gate quietly stops covering something:
+#
+#   .github/workflows/ci.yml       job `render-chain`  -> decides whether
+#       the expensive `docker-build` job (which owns the smoke step) runs
+#       on a pull request at all. Reads this file at the PR's HEAD sha.
+#   .github/workflows/dependabot-automerge.yml  job `automerge` -> refuses
+#       to auto-merge a matching PR unless the smoke gate actually
+#       concluded `success` on that head sha. Reads this file at the PR's
+#       BASE branch on purpose: the automerge job runs with a write token,
+#       so it must never take its own policy from the branch it is about
+#       to merge.
+#
+# Format: one shell glob per line, matched against a repo-relative path
+# with `case`. `*` crosses `/`, so `scripts/threejs/*` covers nested
+# files. Blank lines and `#` comments are ignored. Both readers fail
+# CLOSED (error out) if this file cannot be read or parses to nothing.
+#
+# What belongs here: anything that can change what
+# `scripts/threejs/smoke.mjs` executes or what the release image contains
+# when it executes. The chain is: node -> puppeteer -> Chromium/SwiftShader
+# -> render.html -> the /shared/ modules -> PNG frames on disk. Every one
+# of those fails at RENDER time, where a green `docker build` proves
+# nothing (ADR 0069 §5).
+
+# The worker itself: worker.mjs, render.html, smoke.mjs, and the lockfile
+# that pins the `three` + `puppeteer` the worker actually runs. #1035
+# moved that `three` sixteen minor versions with this gate running
+# nowhere; it is the reason this file exists.
+scripts/threejs/*
+
+# The `/shared/` modules. render.html does NOT own its loader — it imports
+# web/src/lib/3d/modelLoader.js + defaultLighting.js, the same modules
+# ModelView.svelte imports, which is what makes ADR 0069's WYSIWYG claim
+# true. #689 is the case where this seam was broken and every OBJ rendered
+# untextured. The Dockerfiles copy exactly those two files, but the glob
+# is the whole directory: over-triggering costs one image build, and
+# under-triggering costs a silent regression.
+web/src/lib/3d/*
+
+# The release Dockerfile — the one `docker-build` actually builds
+# (`file: Dockerfile`). Its runtime stage is where the node binary, the
+# node_modules copy, the Chromium install and the /shared/ copy live.
+Dockerfile
+
+# The compose/dev Dockerfile. Nothing here can make the smoke step fail —
+# `docker-build` never builds this file. It is listed because these two
+# runtime stages diverging IS the #470 bug (prod shipped with no working
+# renderer while local compose worked), and a change to one without the
+# other is exactly the moment a human should see the release image still
+# smoke-tested green.
+infra/docker/app/Dockerfile
+
+# The web app's lockfile — one step removed, listed conservatively.
+# Honest accounting: a bump here does NOT change what the smoke executes.
+# render.html's importmap resolves `three` to scripts/threejs/node_modules,
+# so the smoke always runs the WORKER's three against the shared modules
+# no matter what web pins. What a web-side bump does mean is that the two
+# pinned `three` versions may now differ, and the shared modules are
+# authored against web's. As of 2026-08-12 both sit at 0.185.1.
+#   -> The cheaper, sharper signal is a version-parity check between
+#      web/package-lock.json and scripts/threejs/package-lock.json, which
+#      would catch the divergence without a 15-minute image build. That is
+#      deliberately NOT in #1049; if it lands, drop this line.
+web/package-lock.json
+
+# The gate's own wiring. Changing the detector, the `if:`, or the smoke
+# step must re-run the gate — otherwise a PR can weaken the gate and be
+# merged on a green CI that never exercised it (#1012: an ADR gate that
+# shipped having never once fired, because it subscribed to the wrong
+# event).
+.github/workflows/ci.yml
+scripts/ci/render-chain-paths.txt
