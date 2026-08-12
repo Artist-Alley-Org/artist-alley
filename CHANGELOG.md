@@ -7,6 +7,54 @@ where applicable, otherwise note "no-spec-impact."
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI can reach a verdict on dependency and release PRs.** Two separate faults had been making
+  the checks lie, and both mailed the owner about failures that were not failures.
+
+  A release PR could not merge because of a *cancelled* run rather than a failing one. The
+  workflow's concurrency key named only the branch, so pushing to `dev` and opening the
+  `dev → main` promotion PR landed in the same group and cancelled each other; whichever one
+  lost left a cancelled result on the required check, and the PR stayed blocked with every real
+  test green. The key now includes the target branch, so a push and its promotion PR are
+  separate. Superseded runs of the same kind are still collapsed, which is what that setting was
+  added for. The manual workaround people reach for — re-running the cancelled half — makes it
+  worse, because the re-run rejoins the group and kills the survivor instead (#1043).
+
+  The browser-based UI check could never pass on a dependency PR at all. It needs a path to the
+  seed dataset, that path comes from a repository secret, and GitHub deliberately withholds
+  secrets from dependency-bot runs — so the job died on an unrelated-looking Docker error every
+  time. It now checks for the dataset up front and **skips** cleanly when it isn't reachable,
+  and the error it raises otherwise names the secret and where to set it (#1040).
+
+### Changed
+
+- **The npm version is pinned.** Nothing said which npm to use, so contributors and the build
+  container disagreed — and an older npm silently drops fields a newer one writes, quietly
+  rewriting the lockfile every time anyone touched it. The project now declares npm 11, and CI
+  runs its npm steps in a container built to match (#948).
+
+- **Dependency updates now cover the two Python sidecar tools.** They were unwatched, because the
+  updater does not search subdirectories on its own and each tool needed to be listed. Both are
+  now checked monthly. They deliberately keep no lockfile: their images install from
+  `pyproject.toml`, so a lockfile nothing reads would only drift from what actually ships (#928).
+
+## [v0.9.1] — 2026-08-11
+
+### Security
+
+- **`js-yaml` 4.3.0 → 4.3.1** in both lockfiles, closing two open high-severity advisories
+  (quadratic CPU consumption when resolving `!!omap`). Neither was covered by an open dependency
+  PR: `js-yaml` arrives transitively via `cosmiconfig`, and the patch was already inside the
+  declared range — so this was a stale lockfile resolution rather than a missing bump, the same
+  shape as `nanoid` in #1001. Refreshed under npm 11 so no `libc` entries were stripped (#1038).
+
+### Changed
+
+- Self-reported version bumped to 0.9.1 in `web/package.json` and `openapi.yaml` (#1041).
+
+No-spec-impact.
+
 ## [v0.9.0] — 2026-08-11 — Permissions made one rule, deletion made reversible, and the surfaces that were only half there
 
 ### Added
