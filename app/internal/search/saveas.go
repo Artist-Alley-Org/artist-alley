@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // SaveAsCollectionMaxHits caps the number of search hits a single
@@ -43,6 +45,16 @@ type saveAsCollectionRequest struct {
 	Q           string   `json:"q"`
 	DSL         string   `json:"dsl"`
 	Types       []string `json:"types"`
+	// Filters is the active facet selection in the same
+	// `dimension:value` wire form the GET endpoints take (#907).
+	//
+	// It exists because this button sits ON the filtered page. Without
+	// it, "Save as collection" under `tag: lowpoly` would silently save
+	// the 222 unfiltered hits instead of the 198 on screen — the same
+	// class of defect as a facet that counts but does not filter, on the
+	// one surface where the result is PERSISTED and nobody would notice
+	// until they opened the collection.
+	Filters []string `json:"filters"`
 }
 
 // saveAsCollectionResponse carries the newly created collection ID
@@ -59,7 +71,8 @@ type saveAsCollectionResponse struct {
 //
 //	POST /search/save-as-collection
 //	Content-Type: application/json
-//	{"name": "My Cat Photos", "q": "cat", "types": ["asset"]}
+//	{"name": "My Cat Photos", "q": "cat", "types": ["asset"],
+//	 "filters": ["tag:sketch"]}
 //
 // Response:
 //
@@ -98,11 +111,30 @@ func (h *SaveAsCollectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	// collection_resources) even if the caller passed a mixed list
 	// — matches RS behaviour + the collection semantics.
 	types, _ := ParseTypes("asset")
+	selection, err := facet.ParseSelection(req.Filters)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_filter"})
+		return
+	}
 	q := Query{
 		Text:          req.Q,
 		Types:         types,
 		Limit:         SaveAsCollectionMaxHits,
 		CallerUserRef: &id.UserRef,
+		Filters:       selection,
+		// #907 — the caller's capabilities, resolved at this edge the way
+		// /search resolves them at its own. They were missing here, which
+		// only ever cost a slightly-too-withheld projection while nothing
+		// read them; it stops being cosmetic the moment a FILTER consults
+		// them, because a `content.read.all` holder would otherwise save a
+		// narrower collection through this button than the identical
+		// selection returns on the page they clicked it from.
+		Caps:     visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) }),
+		PostCaps: visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) }),
+		MutationCaps: visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		),
 	}
 	// Force a fresh, cache-bypassing execution so the operator sees
 	// current-truth hits (the /search cache serves 25-hit pages by

@@ -144,6 +144,24 @@ func keyForQuery(q Query) string {
 	// see AssetMutationCaps.CacheKey for the full argument.
 	sb.WriteString(q.MutationCaps.CacheKey())
 	sb.WriteByte('|')
+	// #907 — and the FACET SELECTION, which is a different kind of
+	// argument from the three above it and worth saying so.
+	//
+	// Those three are revoke-direction arguments: the same query from
+	// the same caller, and a capability change makes the cached bytes
+	// wrong in one direction. This one is plain correctness and it fails
+	// in BOTH directions. Two selections on the same `q` from the same
+	// caller are two different result sets; leaving the selection out of
+	// the key would have `filter=extension:png` and
+	// `filter=extension:jpg` collide on one entry and serve each other's
+	// hits — and the unfiltered page serve a filtered one — for the rest
+	// of the TTL.
+	//
+	// Filters were absent from this key only because the engine ignored
+	// them. The moment they are real they belong here, and that is the
+	// whole rule: every input the Engine READS is a component of the key.
+	sb.WriteString(q.Filters.CacheKey())
+	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')
 	// Phase 1.16.B-3 — vector-hint identifier folds into the key

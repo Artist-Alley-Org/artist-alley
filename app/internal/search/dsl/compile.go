@@ -60,26 +60,41 @@ type CompiledQuery struct {
 
 // Filters is the typed post-tsvector filter set. Empty fields
 // contribute no WHERE clause.
+//
+// #907 converts this into a facet.Selection at the HTTP edge, which is
+// what the Engine actually renders — so `tag:foo` typed in the DSL and
+// `filter=tag:foo` ticked on the rail become the same predicate set and
+// cannot mean two different things.
+//
+// Every field is a STRING (or a slice of them), including the ones that
+// name a numeric row. The bucket a caller ticks carries an opaque
+// value — `asset_type` is a ref, `owner` is a user ref — and a human
+// typing the same filter writes the NAME. One renderer accepts either
+// (see facet.dimensionSQL), so nothing here has to guess which it got.
 type Filters struct {
 	// Tags requires the entity carry EVERY tag in the slice (AND).
 	// Empty slice = no tag filter.
 	Tags []string
-	// Owner requires the entity's owner_user_ref match the exact
-	// value. nil = no owner filter.
-	Owner *int64
+	// Owner is the owner's numeric user_ref or their username. Empty =
+	// no owner filter.
+	//
+	// It used to be a *int64 parsed with fmt.Sscanf("%d"), which meant
+	// `owner:alice` silently produced NO filter (the username was
+	// stashed in an unexported field nothing outside this package could
+	// read) and `owner:12abc` silently produced owner 12 — Sscanf stops
+	// at the first non-digit and reports success. Neither mattered while
+	// the Engine ignored Filters entirely; both are wrong the moment it
+	// does not.
+	Owner string
 	// Sensitivity is the sensitivity enum value (public / team /
 	// restricted / embargo). Empty = no filter.
 	Sensitivity string
 	// AssetType is the asset_type name or numeric ref. Empty = no
-	// filter. Engine handles the name→ref lookup.
+	// filter.
 	AssetType string
 	// Extension is the file extension WITHOUT leading dot. Empty =
 	// no filter.
 	Extension string
-	// Negations lists the terms to exclude from the match. The
-	// Engine renders these as `NOT search_text @@ plainto_tsquery`
-	// sub-clauses.
-	Negations []string
 
 	// Below are compiler-internal buckets consumed by the Engine's
 	// SQL renderer. Kept exported-lowercase so tests in this
@@ -87,7 +102,6 @@ type Filters struct {
 	// API surface.
 	titleMatches       []string
 	descriptionMatches []string
-	ownerUsername      string
 }
 
 // Compile walks the AST + produces a CompiledQuery. Returns typed
@@ -257,14 +271,10 @@ func (c *compiler) walkFieldMatch(m FieldMatchNode) (string, error) {
 		c.filters.Tags = append(c.filters.Tags, m.Value)
 		return "", nil
 	case FieldOwner:
-		// owner:N — parse as int64 if numeric; else store as
-		// username for the Engine to look up.
-		var uid int64
-		_, err := fmt.Sscanf(m.Value, "%d", &uid)
-		if err == nil {
-			c.filters.Owner = &uid
-		}
-		c.filters.ownerUsername = m.Value
+		// owner:<ref-or-username>, verbatim. The renderer accepts both
+		// forms in one expression, so there is nothing to classify here
+		// and no half-parsed number to get wrong.
+		c.filters.Owner = m.Value
 		return "", nil
 	case FieldSensitivity:
 		c.filters.Sensitivity = m.Value

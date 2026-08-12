@@ -24,7 +24,7 @@ type FacetHandler struct {
 //
 // Wire shape:
 //
-//	GET /search/facets?q=cat&facets=asset_type,tag,owner
+//	GET /search/facets?q=cat&facets=asset_type,tag,owner&filter=tag:sketch
 //
 // Response:
 //
@@ -61,6 +61,17 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// #907 — the ACTIVE selection, in the same wire shape /search takes,
+	// so the client sends one list to both endpoints. Counts that ignore
+	// the filter are the same defect as facets that cannot filter, one
+	// level up: the rail would describe a corpus the grid beside it is
+	// no longer showing.
+	selection, err := facet.ParseSelection(r.URL.Query()["filter"])
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_filter"})
+		return
+	}
+
 	var callerRef *int64
 	var caps visibility.ContentCaps
 	var postCaps visibility.PostCaps
@@ -76,6 +87,7 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req := facet.Request{
 		QueryText: q,
 		Facets:    types,
+		Selection: selection,
 		Caller:    visibility.NewCaller(callerRef),
 		Caps:      caps,
 		PostCaps:  postCaps,

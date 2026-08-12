@@ -81,6 +81,18 @@ type Request struct {
 	// Facets is the subset to compute. Empty = all seeded types.
 	Facets []FacetType
 
+	// Selection is the caller's ACTIVE facet filter (#907). Every
+	// aggregator narrows its population by [Selection.ForFacet] of its
+	// own type before grouping, so the counts describe the result set
+	// the caller is actually looking at.
+	//
+	// A count that ignores the active filter is the same defect as a
+	// facet that cannot filter, one level up: the rail would keep
+	// reporting the unfiltered corpus while the grid showed a subset,
+	// and every number on it would be a lie about the page it sits
+	// beside.
+	Selection Selection
+
 	// Caller drives visibility.Filter. Anonymous callers see facet
 	// counts from the public subset only (via the same shared
 	// helper the Engine uses).

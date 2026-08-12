@@ -97,7 +97,9 @@
     },
     "page_title": "Search",
     "idle": "Search the library — artwork, posts and collections in one place.",
-    "facets_intro": "What is in these results. Counts reflect what you can open.",
+    "facets_intro": "Tick a value to narrow these results. Counts reflect what you can open.",
+    "facets_empty": "Nothing left to narrow by. Clear a filter to see more.",
+    "filters_clear": "Clear filters",
     "kind": {
       "all": "Everything",
       "assets": "Artwork",

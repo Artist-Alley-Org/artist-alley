@@ -408,7 +408,7 @@ func TestSuggest_RestrictedTitleNeverCompletes(t *testing.T) {
 func TestFacets_CountOnlyWhatTheCallerCanOpen(t *testing.T) {
 	pool := coPool(t)
 	hwSeedOwner(t, pool)
-	hwSeedAsset(t, pool, hwPhrase+" unreleased boss theme", "restricted")
+	restrictedID := hwSeedAsset(t, pool, hwPhrase+" unreleased boss theme", "restricted")
 	hwSeedAsset(t, pool, hwPhrase+" public splash art", "public")
 
 	d := facet.NewDispatcher(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -458,5 +458,101 @@ func TestFacets_CountOnlyWhatTheCallerCanOpen(t *testing.T) {
 	capGot := ask(&stranger, visibility.ContentCaps{ContentReadAll: true})
 	if n := capGot["sensitivity"]["restricted"]; n != 1 {
 		t.Errorf("content.read.all lost the restricted bucket (got %d, want 1)", n)
+	}
+
+	// ── #907: the same floor, now that a count can be TICKED ──────────
+	//
+	// The reasoning above was about a count. The moment a bucket became
+	// a control, the identical question arrives on the result set:
+	// `extension: ogg` asks which of these rows is an ogg, and answering
+	// it about a row whose columns are withheld hands over the field
+	// #899 removed from that row's payload. The count and the filter
+	// must therefore make the SAME decision — and, separately, the two
+	// numbers must agree, which is the whole of #907.
+	//
+	// Driven as a POSITIVE CONTROL: one facet value, two callers,
+	// opposite verdicts. A test where both callers get the same answer
+	// proves only that the query ran.
+	engine := NewEngine(pool)
+	sel := facet.Selection{}.With(facet.FacetExtension, "ogg")
+	run := func(ref *int64, caps visibility.ContentCaps, filters facet.Selection) QueryResult {
+		t.Helper()
+		res, err := engine.Run(context.Background(), Query{
+			Text:          hwPhrase,
+			Types:         []HitType{HitTypeAsset},
+			Limit:         50,
+			CallerUserRef: ref,
+			Caps:          caps,
+			Filters:       filters,
+		})
+		if err != nil {
+			t.Fatalf("engine: %v", err)
+		}
+		return res
+	}
+	has := func(res QueryResult, id uuid.UUID) bool {
+		for _, h := range res.Hits {
+			if h.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	// The control that makes the assertion below mean something: the
+	// stranger's UNFILTERED search DOES list the restricted row, as the
+	// ADR 0064 placeholder. So its absence under the filter is the
+	// filter's doing, not the row predicate's.
+	if !has(run(&stranger, visibility.ContentCaps{}, facet.Selection{}), restrictedID) {
+		t.Fatalf("the unfiltered search dropped the restricted row — ADR 0064 keeps it " +
+			"LISTED, and without it listed the filtered assertion below proves nothing")
+	}
+
+	strangerFiltered := run(&stranger, visibility.ContentCaps{}, sel)
+	if has(strangerFiltered, restrictedID) {
+		t.Errorf("filtering by `extension: ogg` returned the restricted asset to a caller " +
+			"who cannot open it — the selection just told them its file type, which is " +
+			"exactly the field the facet COUNT withholds from the same caller")
+	}
+	if n := len(strangerFiltered.Hits); n != 1 {
+		t.Errorf("stranger got %d hits under extension:ogg, want 1 (the public row)", n)
+	}
+	// The opposite verdict, same value: the owner keeps their own row.
+	ownerFiltered := run(&owner, visibility.ContentCaps{}, sel)
+	if !has(ownerFiltered, restrictedID) {
+		t.Errorf("filtering by `extension: ogg` LOST the owner's own restricted asset — " +
+			"the narrowing is by facet value, never by readability for rows the caller " +
+			"can read")
+	}
+	if n := len(ownerFiltered.Hits); n != 2 {
+		t.Errorf("owner got %d hits under extension:ogg, want 2", n)
+	}
+	// And a content.read.all holder is on the owner's side of the line.
+	capFiltered := run(&stranger, visibility.ContentCaps{ContentReadAll: true}, sel)
+	if !has(capFiltered, restrictedID) {
+		t.Errorf("content.read.all lost the restricted asset under a filter")
+	}
+
+	// THE INVARIANT #907 EXISTS FOR: the number on the rail is the
+	// number of results ticking it returns. Asserted directly against
+	// both callers' own counts — a per-caller equality, because the two
+	// callers legitimately see different numbers and an assertion that
+	// held for only one of them would hide the leak above.
+	for _, c := range []struct {
+		name  string
+		ref   *int64
+		caps  visibility.ContentCaps
+		count int64
+		total int
+	}{
+		{"stranger", &stranger, visibility.ContentCaps{}, got["extension"]["ogg"], strangerFiltered.TotalCount},
+		{"owner", &owner, visibility.ContentCaps{}, ownerGot["extension"]["ogg"], ownerFiltered.TotalCount},
+		{"content.read.all", &stranger, visibility.ContentCaps{ContentReadAll: true}, capGot["extension"]["ogg"], capFiltered.TotalCount},
+	} {
+		if int(c.count) != c.total {
+			t.Errorf("%s: the `extension: ogg` bucket says %d but ticking it returns %d — "+
+				"a facet count that disagrees with the filter beside it is the whole of "+
+				"#907, one level up", c.name, c.count, c.total)
+		}
 	}
 }
