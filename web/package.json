@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "artist-alley frontend (SvelteKit + Tailwind, embedded into the Go binary at build time).",
+  "packageManager": "npm@11.19.0",
   "overrides": {
     "js-yaml": "^4.2.0",
     "cookie": "^0.7.0"
