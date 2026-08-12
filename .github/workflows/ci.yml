@@ -72,8 +72,51 @@ on:
 # push. So a push to dev (head_ref empty -> ref_name=dev) and the PR
 # from dev (head_ref=dev) share one group, while a push to dev and an
 # unrelated feat->dev PR stay distinct (dev vs the feature branch).
+#
+# ...and the TARGET branch is in the key too (#1043), which exempts
+# exactly the case above from the collapse. #491 was right that two runs
+# on one tip is waste; what it could not see is what the cancellation
+# LEAVES BEHIND. Both events attach their check runs to the same commit,
+# so the cancelled half puts a CANCELLED beside the SUCCESS under the
+# required context (`Integration tests (full compose stack)`). GitHub
+# does not resolve that to "latest wins", so mergeStateStatus goes
+# BLOCKED and `gh pr merge` refuses a suite that genuinely passed. It
+# cost ~14 min on the v0.9.0 promotion PR and again on v0.9.1 — and the
+# two failed DIFFERENTLY, which is the tell:
+#
+#   v0.9.0 (b7df9f0d):    push run cancelled, PR run success.
+#   v0.9.1 (af68039c):    BOTH first attempts cancelled — re-running the
+#                         cancelled one re-enters the group and cancels
+#                         the survivor.
+#
+# So no fix may assume a direction. Two candidates were rejected:
+#   - `cancel-in-progress: ${{ github.base_ref != 'main' }}` is
+#     direction-dependent by construction. cancel-in-progress is read
+#     off the INCOMING run, so it stops the PR run cancelling the push
+#     run and does nothing about the reverse — the v0.9.1 shape.
+#   - dropping the `push: [dev]` trigger (what ui-pr.yml did for
+#     feat/**) removes the second event entirely, but it also moves
+#     when `dev` gets validated: a direct push to dev (doc/roadmap/ADR
+#     pushes go straight there — see dependabot-automerge.yml on why dev
+#     has no PR requirement) would then get no CI until the next
+#     promotion PR. Trading a merge-gate hole for a merge-queue nuisance
+#     is the wrong direction.
+#
+# Keying on base_ref costs one duplicate run per RELEASE and nothing
+# else: the collapse #491 bought only ever engages when a promotion PR
+# is open on the dev tip, and a plain push to dev with no PR has nothing
+# to collapse with. Two SUCCESS check runs under one required context
+# pass cleanly whether GitHub takes the latest or requires them all, so
+# this fix holds under either model of the blocking behaviour.
+#
+# On a push, base_ref is empty -> the literal 'push'. So:
+#   push to dev        -> ci-CI-dev-push
+#   dev -> main PR     -> ci-CI-dev-main     (distinct: both survive)
+#   feat/x -> dev PR   -> ci-CI-feat/x-dev   (unchanged; feat/** has no
+#                                             push trigger to collide
+#                                             with in the first place)
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}-${{ github.base_ref || 'push' }}
   cancel-in-progress: true
 
 permissions:

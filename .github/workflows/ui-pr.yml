@@ -38,6 +38,18 @@
 # Fork-PR caveat: fork PRs won't run this workflow because trusted
 # runners aren't available to them. The status reports as
 # "workflow skipped" — explicit, not silent.
+#
+# Seed-secret caveat (#1040): the whole suite depends on the site_a
+# dataset, whose HOST path comes from the `SEED_SITE_A_PATH` secret.
+# GitHub withholds *repository* secrets from Dependabot-triggered
+# workflow runs, so on a Dependabot PR the variable resolved empty and
+# `-v ":/seed/site:ro"` made docker bail with `invalid spec: empty
+# section between colons` — a red X that describes a symptom, names
+# nothing, and could never go green no matter what the bump contained.
+# The `seed-preflight` job below turns that into an explicit SKIP.
+# Populating the same value in the *Dependabot* secret store
+# (Settings → Secrets and variables → Dependabot) makes these runs
+# execute for real instead of skipping.
 
 name: UI dogfood (standalone)
 
@@ -73,17 +85,70 @@ on:
 # dev has head_ref=dev -> same group. A push to dev and an unrelated
 # feat->dev PR still differ (dev vs the feature branch), so they don't
 # cancel each other. cancel-in-progress stays on.
+#
+# The TARGET branch is part of the key too (#1043) — see ci.yml's
+# concurrency block for the full reasoning. Short version: on a
+# dev -> main promotion PR the collapse above cancels one of the two
+# runs, and the cancelled run leaves a CANCELLED check run beside the
+# SUCCESS on the very same commit. Keeping main-targeting PRs in their
+# own group costs one extra run per release and buys a clean verdict.
 concurrency:
-  group: ui-pr-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ui-pr-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}-${{ github.base_ref || 'push' }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # ── Can this run see the seed dataset at all? (#1040)
+  #
+  # ~30 of the 133 standalone tests walk seeded rows, and the seed step
+  # mounts a HOST path that only exists in the `SEED_SITE_A_PATH`
+  # secret. Runs that GitHub withholds secrets from — Dependabot-
+  # triggered runs, and forks if they ever get a trusted runner — can
+  # never satisfy that, so the honest verdict for them is "skipped",
+  # not "failed".
+  #
+  # This has to be its own job: the `secrets` context is available to a
+  # step's `if`/`env` but NOT to `jobs.<id>.if`, so the only way to make
+  # a whole job conditional on a secret being present is to have another
+  # job read it and publish a plain output. Gating the ~20 steps of
+  # ui-standalone individually would be the alternative, and it would
+  # end with a GREEN check that ran no tests — strictly worse than a
+  # skip, because green is a claim.
+  #
+  # Skipped jobs report success to branch protection and count as
+  # "skipping" (not failing) to `gh pr checks`, so the dependabot
+  # auto-merge gate treats this correctly without changes.
+  seed-preflight:
+    name: Seed dataset preflight
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 5
+    outputs:
+      available: ${{ steps.probe.outputs.available }}
+    steps:
+      - name: Probe for the seed dataset path
+        id: probe
+        env:
+          # Empty on any run GitHub withholds repository secrets from.
+          # Never echoed — only its emptiness is published.
+          SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
+        run: |
+          if [ -n "${SITE_A_PATH}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "SEED_SITE_A_PATH is set for this run — the UI suite will run."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=UI suite skipped::SEED_SITE_A_PATH is empty for this run, so the site_a dataset cannot be mounted and the standalone suite would assert against an empty database. GitHub withholds repository secrets from Dependabot-triggered runs and from forks; add the same value under Settings -> Secrets and variables -> Dependabot to make these runs execute for real."
+          fi
+
   ui-standalone:
     name: Playwright standalone
     runs-on: [self-hosted, artist-alley]
+    needs: seed-preflight
+    # Skip rather than fail when the dataset is unreachable — see the
+    # seed-preflight job above.
+    if: needs.seed-preflight.outputs.available == 'true'
     timeout-minutes: 20
     # No compose-stack concurrency group (#342, extending #337): each
     # run gets its own COMPOSE_PROJECT_NAME + the resources override
@@ -251,6 +316,15 @@ jobs:
           # bind-mounted at an identical host path.)
           SITE_A_PATH: ${{ secrets.SEED_SITE_A_PATH }}
         run: |
+          # Unreachable while seed-preflight gates this job, and kept
+          # anyway: an empty path used to reach docker as
+          # `-v ":/seed/site:ro"` and come back as `invalid spec: empty
+          # section between colons`, which names neither the variable
+          # nor the secret behind it and cost real time to trace (#1040).
+          if [ -z "${SITE_A_PATH}" ]; then
+            echo "::error title=Seed dataset path missing::SITE_A_PATH is empty — it comes from the SEED_SITE_A_PATH secret, which GitHub withholds from Dependabot-triggered runs and forks. Set it under Settings -> Secrets and variables -> Actions (and -> Dependabot for dependency PRs)."
+            exit 1
+          fi
           docker compose run --rm --no-deps \
             -v "$SITE_A_PATH:/seed/site:ro" \
             -v "$PWD/seed/profiles:/seed/profiles:ro" \
