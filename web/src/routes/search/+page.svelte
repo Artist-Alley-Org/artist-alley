@@ -33,9 +33,21 @@
   //
   // FACETS. The rail is gone (#901). Counts live in a slide-over; the
   // KIND filter (artwork / posts / collections) lives as chips over the
-  // grid, because that is the one dimension GET /search can actually
-  // filter on (`?types=`). See the comment on `kindOptions` for why the
-  // facet buckets themselves are counts and not controls.
+  // grid because it is a different KIND of question — what am I looking
+  // at, rather than which of these.
+  //
+  // The buckets in that slide-over are now CONTROLS (#907). They were
+  // counts-only for five releases because GET /search took no facet
+  // filter parameter: the DSL compiled a Filters struct and the engine
+  // ignored it, so a checkbox beside a bucket would have been an
+  // affordance that could not do anything. It had been exactly that
+  // once — the old sidebar's checkboxes set a local Set and re-queried
+  // nothing — and removing it was the honest half of keeping the counts.
+  //
+  // The engine plumbing landed with this change, so the checkboxes are
+  // back and real. A tick appends `filter=<dimension>:<value>` to both
+  // /search and /search/facets, which is why the counts re-narrow as you
+  // pick: the rail describes the page beside it rather than the corpus.
 
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
@@ -86,6 +98,13 @@
   // The kind filter. Empty = everything, which is what /search does when
   // `types=` is absent.
   let kinds = $state<HitType[]>([]);
+  // The FACET filter (#907), as the canonical `dimension:value` tokens
+  // the API takes — not a nested map. The wire form IS the state: it is
+  // what goes in the URL, what both fetches send, and what a bucket's
+  // checkbox tests membership against, so there is nothing to serialise
+  // and nothing that can be serialised two ways.
+  let filters = $state<string[]>([]);
+  const filterToken = (type: string, value: string) => `${type}:${value}`;
   let facetsOpen = $state(false);
   let advancedOpen = $state(false);
   // Save-as-collection modal state.
@@ -114,19 +133,10 @@
   let dslMode = $state(false);
 
   // The kind chips. THREE of them and no more, because these are the
-  // three things a hit can be and `?types=` is the only filter the
-  // search API accepts today.
-  //
-  // The facet buckets (tag / asset type / sensitivity / owner /
-  // extension) are deliberately NOT controls. GET /search takes no facet
-  // filter parameters — the DSL compiler produces Filters but the engine
-  // has no plumbing for them — so a checkbox beside a bucket would be an
-  // affordance that cannot do anything. It WAS one: the old sidebar's
-  // checkboxes set a local Set and re-queried nothing, with a comment
-  // saying so. Removing the control rather than restyling it is the
-  // honest half of "keep the facet counts": the counts are real and
-  // useful, the filtering was never there. Making them real is a change
-  // to the Engine's Query, not to this page.
+  // three things a hit can be. They stay separate from the facet
+  // buckets: `?types=` asks what KIND of row you want, the buckets ask
+  // which rows, and a user who unticks "Posts" has not filtered by a
+  // property of anything.
   const kindOptions: Array<{ id: HitType; labelKey: string }> = [
     { id: 'asset', labelKey: 'search.kind.assets' },
     { id: 'post', labelKey: 'search.kind.posts' },
@@ -152,6 +162,22 @@
     const k = FACET_LABELS[key];
     return k ? t(k) : key;
   }
+
+  /** The active filters, resolved back to the human labels the buckets
+   *  displayed. A bucket's VALUE is often opaque — an asset_type ref, a
+   *  user ref — so a chip printing the raw token would say
+   *  `owner:12`. Falls back to the raw value when the bucket is no
+   *  longer in the response (a filter narrow enough to remove its own
+   *  bucket from another dimension's list). */
+  const activeFilters = $derived(
+    filters.map((token) => {
+      const idx = token.indexOf(':');
+      const type = token.slice(0, idx);
+      const value = token.slice(idx + 1);
+      const bucket = facets[type]?.buckets?.find((b) => b.value === value);
+      return { token, type, value, label: bucket?.label ?? value };
+    }),
+  );
 
   // Hits mapped to card rows ONCE per result set rather than per render.
   // ContentGrid keys on `id`, and the mapped row carries the hit beside
@@ -200,11 +226,18 @@
       if (dslMode) params.set('dsl', query); else params.set('q', query);
       if (kinds.length > 0) params.set('types', kinds.join(','));
       if (opts.append && cursor) params.set('cursor', cursor);
+      // #907 — repeated, one per tick. Appended to BOTH requests: the
+      // counts have to be computed against the same population as the
+      // results, or the rail goes back to describing a page nobody is
+      // looking at.
+      for (const f of filters) params.append('filter', f);
+      const facetParams = new URLSearchParams({ q: query });
+      for (const f of filters) facetParams.append('filter', f);
       const [searchResp, facetsResp] = await Promise.all([
         fetch(`/api/v1/search?${params.toString()}`, { credentials: 'include' }),
         opts.append || dslMode
           ? Promise.resolve(null)
-          : fetch(`/api/v1/search/facets?q=${encodeURIComponent(query)}`, { credentials: 'include' }),
+          : fetch(`/api/v1/search/facets?${facetParams.toString()}`, { credentials: 'include' }),
       ]);
       if (gen !== searchGen) return;
       if (!searchResp.ok) {
@@ -248,6 +281,10 @@
     url.searchParams.set(dsl ? 'dsl' : 'q', query);
     if (kinds.length > 0) url.searchParams.set('types', kinds.join(','));
     else url.searchParams.delete('types');
+    // The facet selection is part of "what am I looking at" too, so a
+    // filtered result page is a shareable address like an unfiltered one.
+    url.searchParams.delete('filter');
+    for (const f of filters) url.searchParams.append('filter', f);
     url.searchParams.delete('advanced');
     void goto(url.pathname + url.search, { replaceState: false, noScroll: true });
   }
@@ -262,6 +299,29 @@
   function clearKinds() {
     if (kinds.length === 0) return;
     kinds = [];
+    if (!q) return;
+    pushQueryToURL(q, dslMode);
+    void runSearch(q);
+  }
+
+  /** Tick or untick one bucket. Re-queries immediately rather than
+   *  waiting for an "apply" button: the counts beside every other bucket
+   *  are only true for the current selection, so leaving them stale
+   *  while a pending tick sat unapplied would put the rail right back to
+   *  describing a page nobody is looking at. */
+  function toggleFilter(type: string, value: string) {
+    const token = filterToken(type, value);
+    filters = filters.includes(token)
+      ? filters.filter((f) => f !== token)
+      : [...filters, token];
+    if (!q) return;
+    pushQueryToURL(q, dslMode);
+    void runSearch(q);
+  }
+
+  function clearFilters() {
+    if (filters.length === 0) return;
+    filters = [];
     if (!q) return;
     pushQueryToURL(q, dslMode);
     void runSearch(q);
@@ -282,6 +342,7 @@
     const urlDSL = page.url.searchParams.get('dsl');
     const urlQ = page.url.searchParams.get('q');
     const urlTypes = page.url.searchParams.get('types');
+    filters = page.url.searchParams.getAll('filter');
     if (urlTypes) {
       kinds = urlTypes
         .split(',')
@@ -310,6 +371,7 @@
     q: string;
     dsl: boolean;
     kinds: HitType[];
+    filters: string[];
     hits: SearchHit[];
     cursor: string;
     totalCount: number;
@@ -321,6 +383,7 @@
       q,
       dsl: dslMode,
       kinds,
+      filters,
       hits,
       cursor,
       totalCount,
@@ -333,6 +396,7 @@
       q = saved.q;
       dslMode = saved.dsl;
       kinds = saved.kinds ?? [];
+      filters = saved.filters ?? [];
       hits = saved.hits;
       cursor = saved.cursor;
       totalCount = saved.totalCount;
@@ -361,7 +425,10 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name: saveName.trim(), q, types: ['asset'] }),
+        // The filters travel with the query (#907): this button is ON
+        // the filtered page, so saving the unfiltered set would persist
+        // a collection nobody asked for.
+        body: JSON.stringify({ name: saveName.trim(), q, types: ['asset'], filters }),
       });
       if (!resp.ok) {
         const err = await resp.text();
@@ -484,10 +551,41 @@
 
     <span class="mx-1 hidden h-6 w-px bg-border sm:inline-block" aria-hidden="true"></span>
 
+    <!-- Active facet filters, as removable chips (#907). They live OUT
+         here rather than only in the panel because the panel is a
+         slide-over: a filter you cannot see from the results is a filter
+         you forget you set, and then the empty state reads as a broken
+         search. Same pill shape as the kind chips, so "what is narrowing
+         this page" is one row. -->
+    {#each activeFilters as f (f.token)}
+      <button
+        type="button"
+        onclick={() => toggleFilter(f.type, f.value)}
+        class="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-accent bg-accent
+               px-3 py-1.5 text-sm text-on-accent"
+        data-testid="filter-chip-{f.token}"
+      >
+        <span class="text-xs uppercase tracking-wide opacity-80">{facetLabel(f.type)}</span>
+        <span class="max-w-[10rem] truncate">{f.label}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    {/each}
+    {#if filters.length > 1}
+      <button
+        type="button"
+        onclick={clearFilters}
+        class="inline-flex min-h-11 items-center rounded-full border border-border bg-surface px-3 py-1.5
+               text-sm text-fg-muted hover:border-border-strong hover:text-fg"
+        data-testid="clear-filters"
+      >{t('search.filters_clear')}</button>
+    {/if}
+
     <button
       type="button"
       onclick={() => (facetsOpen = true)}
-      disabled={facetTotal === 0}
+      disabled={facetTotal === 0 && filters.length === 0}
       class="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5
              text-sm text-fg-muted hover:border-border-strong hover:text-fg disabled:opacity-40"
       data-testid="open-facets"
@@ -634,16 +732,49 @@
           <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">{facetLabel(type)}</div>
           <ul class="space-y-1 text-sm">
             {#each res.buckets.slice(0, 10) as b (b.value)}
-              <li class="flex items-center gap-2">
-                <span class="min-w-0 flex-1 truncate">{b.label ?? b.value}</span>
-                <span class="shrink-0 tabular-nums text-xs text-fg-muted">{b.count}</span>
+              {@const token = filterToken(type, b.value)}
+              <!-- A LABEL wrapping a real checkbox, not a styled div with
+                   a click handler: the whole row is the hit target (44px
+                   at a coarse pointer), the control is keyboard-
+                   reachable and announces its checked state, and the
+                   count stays legible beside it. -->
+              <li>
+                <label
+                  class="flex min-h-11 cursor-pointer items-center gap-2 rounded px-1 hover:bg-state-hover"
+                  data-testid="facet-option-{token}"
+                >
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 shrink-0 accent-accent"
+                    checked={filters.includes(token)}
+                    onchange={() => toggleFilter(type, b.value)}
+                  />
+                  <span class="min-w-0 flex-1 truncate">{b.label ?? b.value}</span>
+                  <span class="shrink-0 tabular-nums text-xs text-fg-muted">{b.count}</span>
+                </label>
               </li>
             {/each}
           </ul>
         </div>
       {/if}
     {/each}
+    {#if facetTotal === 0}
+      <!-- Reachable now that the panel opens with filters active: a
+           narrow enough selection empties every bucket, and a blank
+           panel with no way back would be a dead end. -->
+      <p class="text-sm text-fg-muted">{t('search.facets_empty')}</p>
+    {/if}
   </div>
+  {#snippet footer()}
+    <button
+      type="button"
+      onclick={clearFilters}
+      disabled={filters.length === 0}
+      class="min-h-11 w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm
+             hover:border-border-strong disabled:opacity-40"
+      data-testid="facets-clear-all"
+    >{t('search.filters_clear')}</button>
+  {/snippet}
 </SearchSlideOver>
 
 <!-- The advanced builder — a panel composing the same query, hidden

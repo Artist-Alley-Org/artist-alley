@@ -14,6 +14,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -31,6 +32,7 @@ type Handler struct {
 // Wire shape:
 //
 //	GET /search?q=cat&types=asset,collection,post&limit=25&cursor=eyJ...
+//	         &filter=tag:sketch&filter=extension:png
 //
 // Response:
 //
@@ -72,12 +74,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_cursor"})
 		return
 	}
+	// #907 — the facet selection. Repeated `filter=<dimension>:<value>`;
+	// see facet.ParseSelection for why that shape and not another. A
+	// malformed or unknown dimension is a 400 rather than a silent drop:
+	// serving an unfiltered page that LOOKS filtered is the defect this
+	// endpoint is being fixed for.
+	selection, err := facet.ParseSelection(r.URL.Query()["filter"])
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_filter"})
+		return
+	}
 
 	query := Query{
-		Text:   q,
-		Types:  types,
-		Limit:  limit,
-		Cursor: cursor,
+		Text:    q,
+		Types:   types,
+		Limit:   limit,
+		Cursor:  cursor,
+		Filters: selection,
 	}
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
@@ -169,6 +182,39 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // Service's embedding fetcher). Returns dsl.DSLError for parse
 // failures, vector.ErrNotEmbedded when similar_to references an
 // asset without a stored embedding.
+// SelectionFromDSL folds the compiler's typed [dsl.Filters] into a
+// facet.Selection, on top of whatever the `filter=` parameter already
+// contributed.
+//
+// ONE conversion, in one place, so the typed query and the rail cannot
+// drift into meaning different things — and so that adding a dimension
+// (#910's `collection:`) means a line here beside a line in the DSL
+// whitelist and a case in facet.dimensionSQL, and nothing else.
+//
+// Exported for the SAVED-SEARCH executor (search/saved), which compiles
+// the same DSL on a timer and has to reach the same predicate set. It
+// did not before #907 because nothing did; leaving it out now would mean
+// `tag:foo` narrowed the page a user saved and silently did not narrow
+// the digest they get emailed from it.
+func SelectionFromDSL(f dsl.Filters, into facet.Selection) facet.Selection {
+	for _, tag := range f.Tags {
+		into = into.With(facet.FacetTag, tag)
+	}
+	if f.Owner != "" {
+		into = into.With(facet.FacetOwner, f.Owner)
+	}
+	if f.Sensitivity != "" {
+		into = into.With(facet.FacetSensitivity, f.Sensitivity)
+	}
+	if f.AssetType != "" {
+		into = into.With(facet.FacetAssetType, f.AssetType)
+	}
+	if f.Extension != "" {
+		into = into.With(facet.FacetExtension, f.Extension)
+	}
+	return into
+}
+
 func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	parsed, err := dsl.Parse(input)
 	if err != nil {
@@ -178,12 +224,24 @@ func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	if err != nil {
 		return err
 	}
+	// #907 — the compiled field:value constraints, folded into the SAME
+	// selection the `filter=` parameter produced. The two compose: a
+	// caller can type `dsl=cat AND tag:sketch` and tick `extension: png`
+	// on the rail, and both narrow the page.
+	//
+	// This is what the comment that used to sit here said did not exist —
+	// "we don't have a Filters plumbing at Engine layer today, so the
+	// compiled TSQuery is currently informational". It was accurate; the
+	// plumbing is below.
+	query.Filters = SelectionFromDSL(compiled.Filters, query.Filters)
+
 	// Fold DSL free-text back into query.Text if the caller only
-	// supplied `dsl=` — the Engine's BM25 path still consumes Text.
-	// (Advanced DSL like tag:foo returns an empty tsQuery + Filters;
-	// we don't have a Filters plumbing at Engine layer today, so
-	// the compiled TSQuery is currently informational — feature
-	// flag for a later revision.)
+	// supplied `dsl=` — the Engine's BM25 path still consumes Text. A
+	// pure-filter DSL (`tag:foo` alone) compiles to an EMPTY TSQuery, so
+	// Text stays empty and the query is rejected as text-less upstream
+	// unless a `q=` accompanied it. That is unchanged and deliberate:
+	// /search is a search endpoint, and a bare facet selection with no
+	// query is browse, which has its own filtered surfaces.
 	if query.Text == "" && compiled.TSQuery != "" {
 		// A synthetic reconstruction of the free-text intent so
 		// the Engine's plainto_tsquery path still works. For

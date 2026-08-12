@@ -291,11 +291,19 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 
 	// Enrich vector-only hits with their asset row projection so
 	// the response body carries titles + timestamps.
+	//
+	// #907 — this is also where the facet selection reaches the vector
+	// path. A kNN pass is ranked by embedding proximity and knows
+	// nothing about tags or extensions, so without the filter on the
+	// enrich query a `similar_to:` search would quietly re-admit every
+	// row the caller had just filtered out. The BM25 half needs no such
+	// care: those rows came back from runAssets, already filtered.
 	if len(newRows) > 0 {
-		if err := e.enrichAssetHits(ctx, q, newRows); err != nil {
+		kept, err := e.enrichAssetHits(ctx, q, newRows)
+		if err != nil {
 			return err
 		}
-		*hits = append(*hits, newRows...)
+		*hits = append(*hits, kept...)
 	}
 
 	// For BM25-hits WITHOUT vector match (VectorScore=0), rescale
@@ -330,13 +338,29 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 // asset hits that arrived via the vector path (no BM25 row scan).
 // One IN-clause query keeps the round-trip bounded regardless of
 // how many vector-only hits arrived.
-func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error {
+//
+// Returns the SURVIVING hits: a row the projection query did not hand
+// back is dropped rather than emitted half-filled. Before #907 that
+// could only happen when an asset was deleted between the two queries
+// (and produced a blank card); now it is also how the facet selection
+// removes a vector candidate, so the drop is load-bearing.
+func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) ([]Hit, error) {
 	if len(hits) == 0 {
-		return nil
+		return nil, nil
 	}
 	ids := make([][16]byte, 0, len(hits))
 	for _, h := range hits {
 		ids = append(ids, h.ID)
+	}
+	// $1=ids, $2=caller ref, $3=ladder; the selection continues at $4.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityAsset, "assets", 3)
+	if !satisfiable {
+		return nil, nil
+	}
+	if !q.Filters.Empty() {
+		// The same readability conjunct runAssets applies under a
+		// filter, for the same reason — see the long comment there.
+		selFrag += visibility.ContentReadableSQL("assets", "$2", q.Caps)
 	}
 	// The readability columns ride along in the same pass (#899). This
 	// query has no visibility predicate of its own — it trusts
@@ -354,10 +378,10 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 		       `+assetCardColumnsSQL("assets", "$3")+`
 		  FROM assets
 		 WHERE id = ANY($1::UUID[])
-		   AND deleted_at IS NULL
-	`, ids, callerRefOf(q), e.ladder(ctx))
+		   AND deleted_at IS NULL`+selFrag+`
+	`, append([]any{ids, callerRefOf(q), e.ladder(ctx)}, selArgs...)...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 	byID := make(map[[16]byte]Hit, len(hits))
@@ -381,7 +405,7 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		}, card.scanDest()...)
 		if err := rows.Scan(dest...); err != nil {
-			return err
+			return nil, err
 		}
 		fr.ApplyMutationCaps(mut)
 		if !visibility.FieldsReadable(fr, caller, caps) {
@@ -408,18 +432,22 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
+	kept := make([]Hit, 0, len(hits))
 	for i, h := range hits {
 		enriched, ok := byID[h.ID]
 		if !ok {
+			// Not in the projection: soft-deleted between the two
+			// queries, or excluded by the facet selection above. Either
+			// way this hit has no row behind it.
 			continue
 		}
 		if enriched.Restricted {
 			// Replace the WHOLE hit rather than copying the readable
 			// fields across — the scores are carried over explicitly by
 			// withheldHit and nothing else is.
-			hits[i] = withheldHit(hits[i], enriched.OwnerDisplayName)
+			kept = append(kept, withheldHit(hits[i], enriched.OwnerDisplayName))
 			continue
 		}
 		hits[i].Title = enriched.Title
@@ -429,8 +457,9 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 		hits[i].CreatedAt = enriched.CreatedAt
 		hits[i].UpdatedAt = enriched.UpdatedAt
 		hits[i].ExtraJSON = enriched.ExtraJSON
+		kept = append(kept, hits[i])
 	}
-	return nil
+	return kept, nil
 }
 
 // DefaultHybridWeight is the fallback when the caller doesn't
@@ -500,8 +529,45 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		return nil, 0, err
 	}
 	// $1=query, $2=limit, $3=caller ref, $4=configured ladder,
-	// predicate args start at $5.
+	// predicate args start at $5, and the facet selection's args
+	// continue after those.
 	visFrag, visArgs := pred.ToSQL("", 4)
+	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityAsset, "assets", 4+len(visArgs))
+	if !satisfiable {
+		return nil, 0, nil
+	}
+	// #907 — THE READABILITY CONJUNCT, and it applies ONLY under an
+	// active filter.
+	//
+	// Unfiltered, this query deliberately returns rows the caller cannot
+	// open: ADR 0064 keeps a restricted asset LISTED as a placeholder,
+	// and total_count counts it, so that the number and the array agree
+	// and neither becomes a readability oracle. None of that changes.
+	//
+	// A FILTER is a different question. `extension:png` asks "which of
+	// these is a png", and answering it about a row whose columns are
+	// withheld hands over the very field #899 removed from that row's
+	// payload — with a narrow enough selection, the filter IS the item.
+	// It is the same judgement the facet counts already make one level
+	// up (see facet.buildAssetVisibilityAppendedSQL), and it must be the
+	// same one, or the count on the rail would stop equalling the result
+	// set that ticking it returns.
+	//
+	// It does not narrow by readability in the sense trap 3 forbids: an
+	// unfiltered search still lists the placeholder, and a caller asking
+	// a question about a field they cannot see gets the same answer —
+	// nothing — for EVERY value of that field, so the absence tells them
+	// nothing they did not already know.
+	//
+	// ContentCaps only, matching the aggregators' clause exactly. A
+	// team-scoped `assets.admin` holder is owed the FIELDS of assets
+	// they administer (#939) and is therefore narrower here than they
+	// could be; widening both sides together needs MutationCaps on
+	// facet.Request and a SQL twin of the mutation disjunct, which is a
+	// follow-up, not a silent divergence between the two clauses.
+	if !q.Filters.Empty() {
+		selFrag += visibility.ContentReadableSQL("assets", "$3", q.Caps)
+	}
 
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
@@ -510,7 +576,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		       ` + visibility.FieldsColumnsSQL("assets", "$3") + `,
 		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
-		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + selFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
@@ -527,7 +593,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 			   -- is exactly the off-by-one ADR 0063's placeholder
 			   -- discipline exists to avoid.
 			   AND ($3::BIGINT IS NULL OR TRUE)
-			   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + `
+			   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`
@@ -542,9 +608,17 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	// and would make the count itself a readability oracle — "the total
 	// dropped by one, so that row is restricted". Existence is already
 	// disclosed by decision 1; the count discloses nothing further.
+	//
+	// #907 — the selection's args ride on the END of both lists, after
+	// the predicate's, because selFrag numbered its placeholders from
+	// 4+len(visArgs). Both statements splice the SAME two fragments in
+	// the SAME order, which is what keeps the indexes aligned across
+	// them; the tautologies above are load-bearing for exactly that
+	// reason and must not be "cleaned up".
 	ladder := e.ladder(ctx)
-	hitsArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q), ladder}, visArgs...)
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	hitsArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, predArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q), ladder}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -643,6 +717,22 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	if err != nil {
 		return nil, 0, err
 	}
+	// #907 — a collection carries none of the five facet dimensions: no
+	// file extension, no asset type, no sensitivity tier, and its tags
+	// live on the assets inside it rather than on the row. So ANY active
+	// selection makes this entity unsatisfiable and it drops out of the
+	// page entirely — zero hits AND zero count, never "no constraint".
+	//
+	// This is the seam #910 (search inside a collection) opens: that
+	// feature is a `collection` DIMENSION on the asset and post
+	// branches, not a special case here. Immich models exactly that —
+	// `albumIds` is an ordinary filter predicate beside the rest —
+	// while ResourceSpace writes a `!collection<id>` parser special to
+	// reach the same place. One FacetType const and one case in
+	// facet.dimensionSQL, and nothing in this function moves.
+	if _, _, ok := q.Filters.SQL(visibility.EntityCollection, "c", 0); !ok {
+		return nil, 0, nil
+	}
 	visFrag, visArgs := pred.ToSQL("c", 2) // $1=query, $2=limit index reserved for hits query
 
 	sqlHits := `
@@ -725,6 +815,15 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		return nil, 0, err
 	}
 	visFrag, visArgs := pred.ToSQL("", 2)
+	// #907 — a post satisfies exactly one facet dimension, `tag`, via
+	// post_tags. Any selection naming another one drops posts from the
+	// page. No content-plane conjunct here: the post read rule the
+	// predicate above composes IS the post plane, and unlike an asset a
+	// post has no separate field-withholding tier for its tags.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityPost, "posts", 2+len(visArgs))
+	if !satisfiable {
+		return nil, 0, nil
+	}
 
 	// #850 — the card fields. `cover_asset_id` alone was never enough to
 	// render a tile: a post with no explicit cover shows its FIRST member,
@@ -751,19 +850,20 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		         WHERE pa.post_id = posts.id) AS member_count,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM posts
-		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + selFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM posts
-			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`
-	hitsArgs := append([]any{q.Text, limit}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	hitsArgs := append([]any{q.Text, limit}, predArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
