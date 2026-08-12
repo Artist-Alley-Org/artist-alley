@@ -20,6 +20,29 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The check that proves 3D previews actually work now runs when it matters.** Generating a
+  preview for a 3D model is a chain — a headless browser renders the model and saves the picture —
+  and every part of it fails at *render* time, where a successful build proves nothing. The check
+  that exercises it end to end was, by an accident of two separate rules, running nowhere at all
+  for dependency updates: it was switched off for pull requests deliberately (it is expensive),
+  and the automatic merge of an approved update produced no follow-up run either. Three dependency
+  updates reached the mainline that way, one of them moving the 3D library sixteen versions.
+
+  A change that can affect 3D rendering now runs that check on the pull request, and an automatic
+  merge is refused unless it passed. Everything else — a documentation edit, an unrelated fix —
+  still skips the expensive build. Before merging, the check was deliberately broken to confirm it
+  actually fails when the renderer is broken, which the previous arrangement had never
+  demonstrated (#1049).
+
+- **A search test that failed at random, and mailed a failure notice each time.** Typing in the
+  site-wide search box starts a short timer before it acts. The test clicked through to the search
+  page inside that window, the timer then fired and moved the page somewhere else, and the test
+  reported a failure that had nothing wrong behind it. It now waits for the typing to have taken
+  effect before clicking (#1024).
+
+  The behaviour underneath it is a genuine annoyance in its own right and is filed separately:
+  adjusting your search while already on the search page throws you back to browse (#1053).
+
 - **CI can reach a verdict on dependency and release PRs.** Two separate faults had been making
   the checks lie, and both mailed the owner about failures that were not failures.
 
