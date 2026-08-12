@@ -6,7 +6,7 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "puppeteer": "^23.11.1",
+    "puppeteer": "^25.5.0",
     "three": "^0.185.1"
   }
 }
