@@ -29,6 +29,35 @@
 #      the branch. If other checks are still pending, it no-ops; the next
 #      workflow to finish re-fires it, so the last-to-finish check drives
 #      the merge.
+#
+# Where the 3D render chain gets validated on an auto-merged PR (#1049):
+#   ON THE PR ITSELF, before this workflow merges anything — nowhere
+#   after. This matters because the obvious assumption is wrong: the
+#   merge below uses GITHUB_TOKEN, and GitHub does not trigger workflows
+#   for pushes made with GITHUB_TOKEN (the recursion guard). So an
+#   auto-merged PR produces NO push run on dev. Anything not verified on
+#   the PR is not verified at all. #1035 (`three` 0.169 -> 0.185 in the
+#   render worker) landed on dev in exactly that shape, with
+#   scripts/threejs/smoke.mjs having run nowhere.
+#
+#   The fix is in ci.yml: its `render-chain` job makes the `docker-build`
+#   job — which owns the smoke step — run on PRs that touch the chain,
+#   using the path list in scripts/ci/render-chain-paths.txt. Because the
+#   gate below already requires every check green, that is enough on its
+#   own. The explicit assertion in the merge step is defence in depth
+#   against the one thing "all green" cannot see: a check that was
+#   SKIPPED. See the block in the automerge job.
+#
+#   Alternatives considered and rejected — see the #1049 PR body:
+#   merging with a PAT (restores the push trigger, but hands a long-lived
+#   broad-scope token write access on a repo whose dev branch has no
+#   required checks — a large blast radius bought for a post-hoc signal),
+#   and workflow_dispatch-ing the image build after merging (this one
+#   does work — workflow_dispatch and repository_dispatch are the
+#   documented exceptions to the GITHUB_TOKEN recursion guard — but it
+#   only tells you dev is broken AFTER the bad commit is on dev, and it
+#   burns a full CI run per bump to do it). Verifying before the merge
+#   beats reporting after it.
 
 name: Dependabot auto-merge
 
@@ -156,6 +185,63 @@ jobs:
           if ! gh pr checks "$pr" --repo "$REPO"; then
             echo "PR #${pr} still has pending or failing checks; deferring."
             exit 0
+          fi
+
+          # ── The 3D smoke gate must have RUN, not merely not-failed (#1049).
+          #
+          # `gh pr checks` above treats a SKIPPED check as passing, which
+          # is right in general and wrong here: ci.yml's `docker-build`
+          # job owns scripts/threejs/smoke.mjs, the one check that proves
+          # 3D previews actually render, and it skips on any PR that
+          # ci.yml's `render-chain` detector says is unrelated. If that
+          # detector is ever wrong, the failure mode is silent — green
+          # CI, auto-merge, no render validation anywhere. ADR 0068:
+          # "a green CI that skipped a layer is not covered".
+          #
+          # So this re-derives the verdict independently, from the SAME
+          # pattern file (scripts/ci/render-chain-paths.txt — one source
+          # of truth, two readers) and asserts the check concluded
+          # `success` when the PR touches the chain.
+          #
+          # Read from the BASE branch, never the PR head. This job holds
+          # `contents: write`; taking its own merge policy from the branch
+          # it is about to merge would let a PR exempt itself. (This is
+          # also why nothing here checks out or executes PR code.)
+          base=$(gh pr view "$pr" --repo "$REPO" --json baseRefName --jq '.baseRefName')
+          patterns=$(gh api \
+            "/repos/${REPO}/contents/scripts/ci/render-chain-paths.txt?ref=${base}" \
+            --jq '.content' | base64 -d | sed 's/#.*//' | tr -d '\r' \
+            | grep -v '^[[:space:]]*$' || true)
+          if [ -z "$patterns" ]; then
+            echo "::error title=Render-chain gate failed closed::scripts/ci/render-chain-paths.txt is unreadable on ${base}. Refusing to auto-merge PR #${pr}; merge it by hand after checking the 3D smoke."
+            exit 1
+          fi
+
+          files=$(gh api "/repos/${REPO}/pulls/${pr}/files" --paginate --jq '.[].filename')
+          touched=false
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            while IFS= read -r p; do
+              [ -n "$p" ] || continue
+              # Unquoted on purpose — $p is a glob from the pattern file.
+              # shellcheck disable=SC2254
+              case "$f" in
+                $p) touched=true; echo "  render chain: ${f}  <-  ${p}" ;;
+              esac
+            done <<< "$patterns"
+          done <<< "$files"
+
+          if [ "$touched" = "true" ]; then
+            smoke=$(gh api "/repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.name == "Verify production image build")]
+                    | sort_by(.started_at) | last | .conclusion // "missing"')
+            if [ "$smoke" != "success" ]; then
+              echo "::error title=3D smoke gate did not run::PR #${pr} touches the three.js render chain but 'Verify production image build' concluded '${smoke}' on ${HEAD_SHA}. Not auto-merging. Either ci.yml's render-chain detector disagrees with scripts/ci/render-chain-paths.txt, or the job was skipped — fix the wiring, or merge by hand after running the smoke against a locally built image."
+              exit 1
+            fi
+            echo "3D smoke gate: success on ${HEAD_SHA}."
+          else
+            echo "PR #${pr} touches no render-chain path; 3D smoke not required."
           fi
 
           echo "All checks green — squash-merging PR #${pr}."

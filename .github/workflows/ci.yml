@@ -621,13 +621,136 @@ jobs:
         if: always()
         uses: ./.github/actions/compose-cleanup
 
+  # ── Does this PR touch the 3D render chain? (#1049)
+  #
+  # `docker-build` below carries `if: github.event_name != 'pull_request'`
+  # and always has — a full production image build per PR is expensive and
+  # skipping it is a deliberate cost control (#751). The compensating
+  # control #751 wrote down was "it first runs on the push to dev after
+  # merge". On 2026-08-12 that sentence stopped being true and nothing
+  # announced it: the Dependabot automerge workflow merges with
+  # GITHUB_TOKEN, GitHub does not trigger workflows for pushes made with
+  # GITHUB_TOKEN (the standard recursion guard), so an auto-merged PR
+  # produces NO push run either. #1035 raised the render worker's `three`
+  # by sixteen minor versions and the one check that proves 3D previews
+  # actually render ran nowhere at all.
+  #
+  # This job is the narrow reopening: a PR that touches the render chain
+  # gets the image build (and therefore the smoke step); every other PR
+  # still skips it, so the cost control survives intact. The path list is
+  # scripts/ci/render-chain-paths.txt — see that file for why each entry
+  # is there and which ones are load-bearing vs conservative.
+  #
+  # Why a JOB and not a workflow-level `paths:` filter: `paths:` is a
+  # trigger-level key only — it cannot be applied to a single job — and
+  # this workflow's `on:` block already carries `paths-ignore`, which is
+  # mutually exclusive with `paths` on the same trigger. A filter there
+  # would also gate the WHOLE of CI, not just the image build. The shape
+  # here copies ui-pr.yml's `seed-preflight` (#1040/#1044): a cheap job
+  # publishes a plain string via `outputs`, and the expensive job gates on
+  # `needs:` + `if:`.
+  #
+  # No checkout: this reads the pattern file over the contents API
+  # instead. A `sparse-checkout` would leave the persistent self-hosted
+  # workspace sparse for whatever job lands in it next, and a full
+  # checkout is 20 s of nothing for a 5 s decision.
+  #
+  # Fails CLOSED. If the pattern file cannot be read or parses to nothing,
+  # this job errors rather than emitting `false` — an unreadable policy
+  # file must not silently turn the gate off. `docker-build` then does not
+  # run, and the automerge gate in dependabot-automerge.yml refuses the
+  # merge, which is the correct direction for both.
+  render-chain:
+    name: Render-chain path detector
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 5
+    permissions:
+      contents: read         # read scripts/ci/render-chain-paths.txt
+      pull-requests: read    # list the PR's changed files
+    outputs:
+      touched: ${{ steps.detect.outputs.touched }}
+    steps:
+      - name: Does this PR touch the 3D render chain?
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          # Head first, base as the fallback. Head so a PR that ADDS a
+          # path to the list is judged by the list it ships — which is how
+          # THIS job's own introducing PR (#1049) armed the gate on itself,
+          # since the file does not exist on the base. Base as a fallback
+          # covers the two ways a head read can come back empty: a fork
+          # head the contents API will not serve, and a PR that DELETES
+          # the file. Neither may quietly turn the gate off.
+          # (The automerge gate in dependabot-automerge.yml reads the base
+          # only, never the head — it holds a write token, so it must not
+          # take policy from the branch it is about to merge. This job's
+          # token is read-only on a PR, so head-first is safe here.)
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            # push / workflow_dispatch: docker-build's own `if:` already
+            # says yes unconditionally, so this output is never consulted.
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_EVENT_NAME} is not a pull request — docker-build runs regardless."
+            exit 0
+          fi
+
+          read_patterns() {
+            gh api "/repos/${REPO}/contents/scripts/ci/render-chain-paths.txt?ref=$1" \
+              --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
+              | sed 's/#.*//' | tr -d '\r' | grep -v '^[[:space:]]*$' || true
+          }
+          patterns=$(read_patterns "${HEAD_SHA}")
+          if [ -z "$patterns" ]; then
+            echo "No readable pattern file at ${HEAD_SHA}; falling back to the base ${BASE_SHA}."
+            patterns=$(read_patterns "${BASE_SHA}")
+          fi
+          if [ -z "$patterns" ]; then
+            echo "::error title=Render-chain gate failed closed::scripts/ci/render-chain-paths.txt could not be read at ${HEAD_SHA} or ${BASE_SHA}, or contains no patterns. Refusing to decide."
+            exit 1
+          fi
+
+          files=$(gh api "/repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename')
+
+          touched=false
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            while IFS= read -r p; do
+              [ -n "$p" ] || continue
+              # Unquoted on purpose — $p is a glob from the pattern file.
+              # shellcheck disable=SC2254
+              case "$f" in
+                $p) touched=true; echo "  match: ${f}  <-  ${p}" ;;
+              esac
+            done <<< "$patterns"
+          done <<< "$files"
+
+          echo "touched=${touched}" >> "$GITHUB_OUTPUT"
+          if [ "$touched" = "true" ]; then
+            echo "::notice title=3D smoke gate armed::This PR touches the three.js render chain, so the production image build + scripts/threejs/smoke.mjs will run on it."
+          else
+            echo "::notice title=Image build skipped::No file in this PR matches scripts/ci/render-chain-paths.txt, so the production image build is skipped (deliberate cost control, #751). A human merge to dev triggers it on the push; an auto-merged Dependabot PR does not, which is why the path list has to be right rather than merely close (#1049)."
+          fi
+
   # ── Build the production image to confirm the multi-stage Dockerfile
   # still produces a clean amd64 artifact. Doesn't push anything —
   # publishing lives in edge.yml + release.yml. Self-hosted-only
   # because Docker buildx wants the daemon and the cache mounts.
+  #
+  # Runs on every push/dispatch, and on a PR only when render-chain says
+  # the PR touches the 3D chain (#1049 — see that job's comment). The
+  # `needs:` costs every push a ~5 s wait on a job that immediately
+  # short-circuits; that is the price of having the output exist at all,
+  # since a job's `if:` cannot read another job's output without `needs:`.
   docker-build:
     name: Verify production image build
-    if: github.event_name != 'pull_request'
+    needs: render-chain
+    if: github.event_name != 'pull_request' || needs.render-chain.outputs.touched == 'true'
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 20
 
