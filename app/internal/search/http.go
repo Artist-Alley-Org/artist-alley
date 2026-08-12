@@ -182,7 +182,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // Service's embedding fetcher). Returns dsl.DSLError for parse
 // failures, vector.ErrNotEmbedded when similar_to references an
 // asset without a stored embedding.
-// selectionFromDSL folds the compiler's typed [dsl.Filters] into a
+// SelectionFromDSL folds the compiler's typed [dsl.Filters] into a
 // facet.Selection, on top of whatever the `filter=` parameter already
 // contributed.
 //
@@ -190,7 +190,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // drift into meaning different things — and so that adding a dimension
 // (#910's `collection:`) means a line here beside a line in the DSL
 // whitelist and a case in facet.dimensionSQL, and nothing else.
-func selectionFromDSL(f dsl.Filters, into facet.Selection) facet.Selection {
+//
+// Exported for the SAVED-SEARCH executor (search/saved), which compiles
+// the same DSL on a timer and has to reach the same predicate set. It
+// did not before #907 because nothing did; leaving it out now would mean
+// `tag:foo` narrowed the page a user saved and silently did not narrow
+// the digest they get emailed from it.
+func SelectionFromDSL(f dsl.Filters, into facet.Selection) facet.Selection {
 	for _, tag := range f.Tags {
 		into = into.With(facet.FacetTag, tag)
 	}
@@ -227,7 +233,7 @@ func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	// "we don't have a Filters plumbing at Engine layer today, so the
 	// compiled TSQuery is currently informational". It was accurate; the
 	// plumbing is below.
-	query.Filters = selectionFromDSL(compiled.Filters, query.Filters)
+	query.Filters = SelectionFromDSL(compiled.Filters, query.Filters)
 
 	// Fold DSL free-text back into query.Text if the caller only
 	// supplied `dsl=` — the Engine's BM25 path still consumes Text. A

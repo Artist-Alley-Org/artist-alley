@@ -16,6 +16,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -78,6 +79,12 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 		Types:         []search.HitType{search.HitTypeAsset},
 		Limit:         limit,
 		CallerUserRef: &owner,
+		// #907 — the compiled field:value constraints, through the SAME
+		// conversion the interactive handler uses. Without it a saved
+		// `tag:foo` would run WIDER than the /search?dsl=tag:foo it was
+		// saved from, and the owner would be emailed hits their own
+		// search does not return.
+		Filters: search.SelectionFromDSL(compiled.Filters, facet.Selection{}),
 	}
 	if compiled.TSQuery == "" {
 		// Pure similar_to or all-filter DSL — nothing for the
