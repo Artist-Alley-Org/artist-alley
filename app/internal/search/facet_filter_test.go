@@ -160,7 +160,7 @@ func TestSelectionFromDSL_MatchesTheRail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	fromDSL := selectionFromDSL(compiled.Filters, facet.Selection{})
+	fromDSL := SelectionFromDSL(compiled.Filters, facet.Selection{})
 	fromRail, err := facet.ParseSelection([]string{
 		"tag:sketch", "owner:alice", "asset_type:Image", "sensitivity:public", "extension:png",
 	})
