@@ -130,10 +130,15 @@ type ListAssetsPageGatedRow struct {
 }
 
 // ListAssetsPageGated runs the browse query for one caller. `caps` is
-// the caller's capability checker (nil for anonymous), consulted only to
-// short-circuit preview_available for SystemAdmin / content.read.all —
-// it does NOT affect which rows are returned (that stays the predicate's
-// job).
+// the caller's capability checker (nil for anonymous).
+//
+// `caps` short-circuits preview_available for SystemAdmin /
+// content.read.all, and — since #902 — it also reaches the `?q=` text
+// match, which is readability-gated. That is the one way capabilities
+// affect WHICH ROWS come back, and it is confined to the `?q=` branch:
+// with no query text the predicate is still the whole row rule, so an
+// unfiltered browse lists exactly what it always did, placeholders
+// included. See the qMatch fragment below.
 func ListAssetsPageGated(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -174,6 +179,30 @@ func ListAssetsPageGated(
 	visFrag, visArgs := pred.ToSQL("", len(args))
 	args = append(args, visArgs...) // predicate args LAST
 
+	// #902 — the `?q=` text match is READABILITY-GATED, and it is gated
+	// by the same visibility.AssetSearchMatchSQL /search composes, not by
+	// a second conjunct written here.
+	//
+	// This is the surface a search-only fix misses. `@@` decides in SQL
+	// whether the row comes back, so before this a caller could type a
+	// phrase from a restricted asset's withheld title into browse and
+	// watch the page go from empty to one placeholder — then recover the
+	// rest of the title token by token, through the field plane #899
+	// closed on the payload.
+	//
+	// It gates ONLY the `?q=` branch, deliberately: with no query text
+	// the conjunct short-circuits at `$4 IS NULL` and every row the
+	// predicate returned is still listed, placeholder and all, which is
+	// what ADR 0064 requires of browse.
+	//
+	// MutationCaps rides along because a team-scoped assets.admin holder
+	// is owed the FIELDS of the assets they administer (#939) — the same
+	// caps this function already hands the per-row FieldsReadable below,
+	// so the rows that match and the rows that render agree.
+	qMatch := visibility.AssetSearchMatchSQL(
+		"assets", `plainto_tsquery('english', $4::TEXT)`, "$8",
+		caller, visibility.ResolveContentCaps(caps), p.MutationCaps)
+
 	// The deleted_at decision now lives entirely in the predicate —
 	// there is deliberately no inline soft-delete clause here, so the
 	// rule has exactly one expression on this path.
@@ -204,7 +233,7 @@ FROM assets
 WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
   AND ($3::TEXT IS NULL OR status = $3::TEXT)
-  AND ($4::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $4::TEXT))
+  AND ($4::TEXT IS NULL OR ` + qMatch + `)
   AND ($10::TEXT IS NULL
        OR EXISTS (SELECT 1 FROM asset_tag t
                    WHERE t.asset_id = assets.id AND t.tag = $10::TEXT))

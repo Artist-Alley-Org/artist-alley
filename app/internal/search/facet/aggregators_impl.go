@@ -44,6 +44,29 @@ import (
 // than or equal to the result total. An owner still sees `restricted N`
 // for their own work, which is the case that made "just drop the
 // sensitivity facet" wrong.
+//
+// # Why the aggregators do NOT compose visibility.AssetSearchMatchSQL
+//
+// #902 gated every asset full-text match on readability, in one shared
+// fragment, because `a.search_text @@ …` is a disclosure channel: a row
+// that matches is a row whose withheld words the caller just guessed.
+// The four asset aggregators and the tag aggregator's asset half all
+// contain that operator and are deliberately NOT routed through the
+// shared fragment — they are the one family of asset text-match sites
+// that was already closed, and closed by THIS clause.
+//
+// The reason is the order of the conjuncts, not luck. The `@@` here is
+// ANDed with the content plane below over the same row, so a row the
+// caller cannot open contributes to no bucket whatever the query text
+// says; the count cannot move, so there is nothing to probe. Adding the
+// shared fragment on top would render a second, overlapping OR-tree per
+// row for an answer this clause has already decided.
+//
+// That safety is a DEPENDENCY, and it is the only one of its kind left:
+// if the ContentReadableSQL call below is ever narrowed away or made
+// conditional the way /search's filter conjunct is, these five matches
+// become #902 again. Gate the match through visibility, not the
+// population, if that ever happens.
 func buildAssetVisibilityAppendedSQL(ctx context.Context, caller visibility.Caller, caps visibility.ContentCaps, offset int) (string, []any, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {

@@ -556,38 +556,55 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	if !satisfiable {
 		return nil, 0, nil
 	}
-	// #907 — THE READABILITY CONJUNCT, and it applies ONLY under an
-	// active filter.
+	// #907 — THE FILTER READABILITY CONJUNCT, and it applies ONLY under
+	// an active filter.
 	//
-	// Unfiltered, this query deliberately returns rows the caller cannot
-	// open: ADR 0064 keeps a restricted asset LISTED as a placeholder,
-	// and total_count counts it, so that the number and the array agree
-	// and neither becomes a readability oracle. None of that changes.
-	//
-	// A FILTER is a different question. `extension:png` asks "which of
-	// these is a png", and answering it about a row whose columns are
-	// withheld hands over the very field #899 removed from that row's
-	// payload — with a narrow enough selection, the filter IS the item.
-	// It is the same judgement the facet counts already make one level
-	// up (see facet.buildAssetVisibilityAppendedSQL), and it must be the
-	// same one, or the count on the rail would stop equalling the result
-	// set that ticking it returns.
-	//
-	// It does not narrow by readability in the sense trap 3 forbids: an
-	// unfiltered search still lists the placeholder, and a caller asking
-	// a question about a field they cannot see gets the same answer —
-	// nothing — for EVERY value of that field, so the absence tells them
-	// nothing they did not already know.
+	// A FILTER asks a question about a COLUMN. `extension:png` asks
+	// "which of these is a png", and answering it about a row whose
+	// columns are withheld hands over the very field #899 removed from
+	// that row's payload — with a narrow enough selection, the filter IS
+	// the item. It is the same judgement the facet counts already make
+	// one level up (see facet.buildAssetVisibilityAppendedSQL), and it
+	// must be the same one, or the count on the rail would stop equalling
+	// the result set that ticking it returns.
 	//
 	// ContentCaps only, matching the aggregators' clause exactly. A
 	// team-scoped `assets.admin` holder is owed the FIELDS of assets
 	// they administer (#939) and is therefore narrower here than they
 	// could be; widening both sides together needs MutationCaps on
-	// facet.Request and a SQL twin of the mutation disjunct, which is a
-	// follow-up, not a silent divergence between the two clauses.
+	// facet.Request, which is a follow-up, not a silent divergence
+	// between the two clauses. (The MATCH conjunct below DOES carry the
+	// mutation disjunct, because unlike facet.Request the Query already
+	// carries MutationCaps and its cache key already folds them in.)
 	if !q.Filters.Empty() {
 		selFrag += visibility.ContentReadableSQL("assets", "$3", q.Caps)
 	}
+
+	// #902 — THE MATCH CONJUNCT, and it applies ALWAYS.
+	//
+	// The text match is itself a disclosure channel: `@@` decides in SQL
+	// whether the row comes back, so a caller who searches a phrase that
+	// occurs only in a restricted asset's title watches total_count move
+	// 0→1 and has recovered a word #899 withheld — then walks the rest of
+	// the title one token at a time. Withholding the payload after the
+	// fact cannot close that; only the match can. visibility's
+	// AssetSearchMatchSQL is the single place the rule lives, and browse
+	// (`/assets?q=`) composes its `?q=` from the SAME fragment, because a
+	// fix confined to this package would leave the identical recovery
+	// available one endpoint over.
+	//
+	// What does NOT change: ADR 0064 keeps the restricted row LISTED, and
+	// an unfiltered browse still renders it as a placeholder with its
+	// owner's name. total_count keeps its policy of counting every row
+	// the query MATCHED, whether or not the caller can open it — it is
+	// what "matched" means that narrowed, and it narrowed identically for
+	// the hits and the count, so the number and the array still agree.
+	// The absence is not a fresh oracle: a row the caller cannot read
+	// matches no query, for EVERY query equally, which is the same
+	// value-independence argument the filter conjunct above rests on.
+	matchFrag := visibility.AssetSearchMatchSQL(
+		"assets", `plainto_tsquery('english', $1)`, "$3",
+		caller, q.Caps, mut)
 
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
@@ -596,38 +613,43 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		       ` + visibility.FieldsColumnsSQL("assets", "$3") + `,
 		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
-		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + selFrag + `
+		 WHERE ` + matchFrag + visFrag + selFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM assets
-			 WHERE search_text @@ plainto_tsquery('english', $1)
+			 WHERE ` + matchFrag + `
 			   -- $3 is the caller ref and $4 the configured preview
-			   -- ladder, read only by the hits query's readability and
-			   -- card columns. Both are REFERENCED here (as tautologies)
-			   -- rather than dropped, because pgx rejects a statement
-			   -- bound with more args than it names and the alternative —
-			   -- renumbering the shared predicate fragment per statement —
-			   -- is exactly the off-by-one ADR 0063's placeholder
-			   -- discipline exists to avoid.
+			   -- ladder. $4 is read only by the hits query's card
+			   -- columns; $3 is read by the match fragment above — but
+			   -- ONLY when that fragment renders a readability conjunct
+			   -- at all, and it renders NOTHING for a system.admin /
+			   -- content.read.all / global assets.admin caller (#902).
+			   -- So both are REFERENCED here as tautologies rather than
+			   -- dropped, because pgx rejects a statement bound with more
+			   -- args than it names and the alternative — renumbering the
+			   -- shared predicate fragment per statement — is exactly the
+			   -- off-by-one ADR 0063's placeholder discipline exists to
+			   -- avoid. Do not "clean these up": for the caps-holding
+			   -- caller they are the only mention $3 gets.
 			   AND ($3::BIGINT IS NULL OR TRUE)
 			   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`
 	// Compose args: $1=query text, $2=limit, $3=caller ref, then
-	// visibility args. The COUNT does not read $3 but still binds it, so
-	// the shared predicate fragment's placeholder indexes line up in
-	// both statements (ADR 0063 placeholder discipline).
+	// visibility args. Both statements bind $3 whether or not they name
+	// it, so the shared predicate fragment's placeholder indexes line up
+	// in both (ADR 0063 placeholder discipline).
 	//
-	// total_count deliberately counts rows the caller cannot open. ADR
-	// 0064 keeps those rows in the result set as placeholders, so a
-	// total that excluded them would disagree with the array beside it
-	// and would make the count itself a readability oracle — "the total
-	// dropped by one, so that row is restricted". Existence is already
-	// disclosed by decision 1; the count discloses nothing further.
+	// total_count counts every row the query MATCHED, readable or not —
+	// it does not second-guess the match. That is the same policy it has
+	// always had; what #902 changed is the definition of "matched", and
+	// it changed it in the SAME fragment for the hits and the count, so
+	// the number and the array still agree and the count still cannot
+	// become an oracle the array is not already.
 	//
 	// #907 — the selection's args ride on the END of both lists, after
 	// the predicate's, because selFrag numbered its placeholders from

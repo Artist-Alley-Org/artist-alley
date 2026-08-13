@@ -24,6 +24,17 @@
 //     placeholder shape for it);
 //   - a FACET counts only what the caller can open.
 //
+// #902 AMENDED THE FIRST OF THOSE, and this file was rewritten for it.
+// A hit still degrades to a placeholder wherever an unreadable row can
+// reach the projection — which, since the text match itself became
+// readability-gated, is the vector/hybrid path only. On the BM25 path
+// the row no longer MATCHES, because matching it was the leak: it
+// answered "does this asset's withheld title contain this word" one
+// token at a time. So the placeholder assertion here is a unit test on
+// withheldHit, and the row's absence from a text search has its own
+// suite in search_text_oracle_test.go. ADR 0064's placeholder is
+// unaffected on browse, which lists the row with no query text at all.
+//
 // Skips without AA_DB_PASSWORD.
 
 package search
@@ -36,6 +47,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -109,8 +121,11 @@ func hwSeedAsset(t *testing.T, pool *pgxpool.Pool, title, sensitivity string) uu
 	return id
 }
 
-// hwHit runs the engine and returns the serialized hit for one asset.
-func hwHit(t *testing.T, e *Engine, ref *int64, caps visibility.ContentCaps, id uuid.UUID) map[string]json.RawMessage {
+// hwFind runs the engine and returns the serialized hit for one asset,
+// plus whether the result set contained it at all.
+func hwFind(
+	t *testing.T, e *Engine, ref *int64, caps visibility.ContentCaps, id uuid.UUID,
+) (map[string]json.RawMessage, bool) {
 	t.Helper()
 	res, err := e.Run(context.Background(), Query{
 		Text:          hwPhrase,
@@ -130,24 +145,58 @@ func hwHit(t *testing.T, e *Engine, ref *int64, caps visibility.ContentCaps, id 
 		if err := json.Unmarshal(MarshalHitJSON(h), &m); err != nil {
 			t.Fatalf("unmarshal hit: %v", err)
 		}
-		return m
+		return m, true
 	}
-	t.Fatalf("asset %v is not in the result set — ADR 0064 keeps a restricted row LISTED; "+
-		"only its columns are withheld, so dropping it here would be the wrong fix", id)
-	return nil
+	return nil, false
 }
 
-// TestSearchHit_RestrictedIsAllowListed is the core assertion, and it
-// fails on today's dev, where the hit carried title, summary and the
-// thumbhash (a blurred picture of the content).
-func TestSearchHit_RestrictedIsAllowListed(t *testing.T) {
-	pool := coPool(t)
-	display := hwSeedOwner(t, pool)
-	restricted := hwSeedAsset(t, pool, hwPhrase+" unreleased boss theme", "restricted")
-	public := hwSeedAsset(t, pool, hwPhrase+" public splash art", "public")
+// hwHit is hwFind for the cases that REQUIRE the row — a readable one.
+func hwHit(t *testing.T, e *Engine, ref *int64, caps visibility.ContentCaps, id uuid.UUID) map[string]json.RawMessage {
+	t.Helper()
+	m, ok := hwFind(t, e, ref, caps, id)
+	if !ok {
+		t.Fatalf("asset %v is not in the result set, and this caller may READ it — "+
+			"the #902 match gate has become too wide", id)
+	}
+	return m
+}
 
-	stranger := hwStranger
-	m := hwHit(t, NewEngine(pool), &stranger, visibility.ContentCaps{}, restricted)
+// TestWithheldHit_IsAllowListed is the #899 + #850 payload assertion,
+// and it is a UNIT test on the projection rather than an engine run.
+//
+// It used to drive the engine with a restricted asset and a stranger.
+// #902 closed the channel that made that possible: an asset whose
+// columns a caller may not read no longer MATCHES that caller's text
+// query, so the BM25 path can no longer produce a withheld hit to
+// inspect. withheldHit is still reached — the vector/hybrid path
+// projects rows it did not text-match (see enrichAssetHits) — so the
+// guarantee is still live and still needs pinning; what changed is that
+// the cheapest way to reach it is directly.
+//
+// Starting from a FULLY POPULATED Hit is what makes this a real test: a
+// projection that forgot to withhold would carry every one of those
+// fields straight through.
+func TestWithheldHit_IsAllowListed(t *testing.T) {
+	const display = "Sam O'Brien"
+	full := Hit{
+		Type:             HitTypeAsset,
+		ID:               uuid.New(),
+		Title:            hwPhrase + " unreleased boss theme",
+		Summary:          "UNRELEASED — do not distribute",
+		OwnerUserRef:     func() *int64 { r := hwOwner; return &r }(),
+		OriginServerID:   func() *uuid.UUID { u := uuid.New(); return &u }(),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		RawScore:         0.42,
+		NormalisedScore:  0.9,
+		ExtraJSON:        []byte(`{"file_extension":"ogg","thumbhash":"3q2+7w=="}`),
+		Restricted:       false,
+		OwnerDisplayName: "",
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(MarshalHitJSON(withheldHit(full, display)), &m); err != nil {
+		t.Fatalf("unmarshal hit: %v", err)
+	}
 	for k := range m {
 		if !hwHitAllowList[k] {
 			t.Errorf("withheld hit carried key %q, which is not on the allow-list", k)
@@ -166,9 +215,26 @@ func TestSearchHit_RestrictedIsAllowListed(t *testing.T) {
 	if err := json.Unmarshal(m["owner_display_name"], &name); err != nil || name != display {
 		t.Errorf("owner_display_name = %q, want %q", name, display)
 	}
+	// The fields by name, so a failure says WHICH one got out rather
+	// than only that the key set grew (#850's card payload rides in
+	// `extra`, so its mere presence would be the leak).
+	raw := string(mustMarshal(t, m))
+	for _, k := range hwCardKeys {
+		if strings.Contains(raw, `"`+k+`"`) {
+			t.Errorf("withheld hit serialises %q — that is an asset column #899 withholds", k)
+		}
+	}
+}
 
-	// The counterweight, in the same test: a withhold-everything
-	// implementation passes everything above.
+// TestSearchHit_PublicRowIsUntouched is the counterweight a
+// withhold-everything implementation must fail: the readable row still
+// arrives with its columns.
+func TestSearchHit_PublicRowIsUntouched(t *testing.T) {
+	pool := coPool(t)
+	hwSeedOwner(t, pool)
+	public := hwSeedAsset(t, pool, hwPhrase+" public splash art", "public")
+
+	stranger := hwStranger
 	pubHit := hwHit(t, NewEngine(pool), &stranger, visibility.ContentCaps{}, public)
 	for _, want := range []string{"title", "summary", "extra", "created_at"} {
 		if _, ok := pubHit[want]; !ok {
@@ -186,42 +252,6 @@ var hwCardKeys = []string{
 	"asset_type", "file_hash", "file_extension", "thumbhash",
 	"preview_available", "ladder_available", "scrub_available",
 	"pixel_width", "pixel_height",
-}
-
-// TestSearchHit_CardPayloadNeverReachesARestrictedRow is the #850 half of
-// the invariant, and it is written as a SUBSET check on the serialized
-// response rather than on a rendered card: the JSON is the leak.
-//
-// Run red-first against a build whose runAssets emits the card extras
-// unconditionally and it fails on the first key — which is the shape the
-// obvious implementation of "search returns card-shaped rows" has.
-func TestSearchHit_CardPayloadNeverReachesARestrictedRow(t *testing.T) {
-	pool := coPool(t)
-	hwSeedOwner(t, pool)
-	restricted := hwSeedAsset(t, pool, hwPhrase+" unreleased boss theme", "restricted")
-
-	stranger := hwStranger
-	m := hwHit(t, NewEngine(pool), &stranger, visibility.ContentCaps{}, restricted)
-
-	// The allow-list is unchanged by the widening. That is the assertion:
-	// a richer readable payload must not have grown the restricted one.
-	for k := range m {
-		if !hwHitAllowList[k] {
-			t.Errorf("withheld hit carried key %q — #850 widened the payload past the #899 gate", k)
-		}
-	}
-	if _, present := m["extra"]; present {
-		t.Fatal("withheld hit ships an `extra` bag at all; the card payload rides in it, " +
-			"so its mere presence is the leak")
-	}
-	// And the fields by name, so a failure says WHICH one got out rather
-	// than only that the key set grew.
-	raw := string(mustMarshal(t, m))
-	for _, k := range hwCardKeys {
-		if strings.Contains(raw, `"`+k+`"`) {
-			t.Errorf("withheld hit serialises %q — that is an asset column #899 withholds", k)
-		}
-	}
 }
 
 // TestSearchHit_ReadableRowCarriesTheCardPayload is the counterweight,
@@ -499,13 +529,24 @@ func TestFacets_CountOnlyWhatTheCallerCanOpen(t *testing.T) {
 		return false
 	}
 
-	// The control that makes the assertion below mean something: the
-	// stranger's UNFILTERED search DOES list the restricted row, as the
-	// ADR 0064 placeholder. So its absence under the filter is the
-	// filter's doing, not the row predicate's.
-	if !has(run(&stranger, visibility.ContentCaps{}, facet.Selection{}), restrictedID) {
-		t.Fatalf("the unfiltered search dropped the restricted row — ADR 0064 keeps it " +
-			"LISTED, and without it listed the filtered assertion below proves nothing")
+	// The control used to be "the stranger's UNFILTERED search DOES list
+	// the restricted row, as the ADR 0064 placeholder", so its absence
+	// under the filter was the filter's doing. #902 retired that: a text
+	// match against a row whose fields the caller may not read IS the
+	// disclosure, so the stranger no longer matches it filtered OR
+	// unfiltered, and the assertion below is now closed twice over. It
+	// stays, because it is the property /search owes.
+	//
+	// The control moved to the OWNER, where it still discriminates
+	// between "the filter is correctly narrow" and "the filter returns
+	// nothing to anybody".
+	if !has(run(&owner, visibility.ContentCaps{}, facet.Selection{}), restrictedID) {
+		t.Fatalf("the owner's unfiltered search dropped their own restricted row, so the " +
+			"filtered assertions below prove nothing")
+	}
+	if has(run(&stranger, visibility.ContentCaps{}, facet.Selection{}), restrictedID) {
+		t.Errorf("the stranger's UNFILTERED text search still matches the restricted " +
+			"row — that is the #902 oracle")
 	}
 
 	strangerFiltered := run(&stranger, visibility.ContentCaps{}, sel)
