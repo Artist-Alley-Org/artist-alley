@@ -56,6 +56,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **A vulnerable package is out of the published image.** The 3D preview renderer's browser
+  driver pulled in an archive-unpacking library with a known flaw and no fixed release. It was
+  never actually reachable here — the image uses the system browser and skips the download step
+  that would have used it — but dead vulnerable code is still code somebody has to keep
+  explaining, so it is gone. Updating the browser driver dropped it along with 74 other packages
+  it no longer needs (#1070).
+
 - **"Find similar" ranked files you aren't allowed to open.** Visual similarity search — the
   "more like this" panel, search-by-image, and the `similar to` search term — considered every
   file on the instance, including ones whose picture you're refused. It never showed them, but the
