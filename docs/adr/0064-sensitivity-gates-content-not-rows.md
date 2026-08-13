@@ -541,6 +541,43 @@ check that the disjunct landed on the right plane — had it gone into `ContentR
 `TestContentReadableSQL_MatchesGo` green would have required transcribing it into the SQL twin, and
 the bytes would have moved.
 
+##### Amendment 2026-08-13 (#1026, PR #1069) — the PICTURE plane gained a SQL twin, by extraction rather than transcription
+
+The table above gave the picture plane a Go form only. #1026's collection cover mosaic is the
+first surface that cannot use it: the mosaic shows the first four members that produce a picture,
+and **a member the caller may not see must be skipped rather than occupy a slot**. That makes the
+readability decision determine *which rows the query returns at all*, so deciding it in Go would
+mean fetching an unbounded prefix of the membership per collection and filtering it down, on a hub
+page that renders fifty. In SQL it is a `ROW_NUMBER` over the already-filtered set with `LIMIT 4` —
+exact, with no candidate cap to be wrong about.
+
+So `visibility.PreviewReadableSQL` now joins `ContentReadableSQL`, `FieldsReadableSQL`,
+`AssetSearchMatchSQL` and `OwnerDisplayNameSQL` in the twin family, held to its Go form by
+`TestPreviewReadableSQL_MatchesGo`.
+
+⭐ **What makes it a twin rather than a fifth expression of the rule: it was EXTRACTED, not
+written.** `FieldsReadableSQL` already rendered the picture-plane fragment inline as its first
+disjunct; that fragment is now a named `previewReadableExpr` that **both** call. With an empty
+mutation scope the two fragments are textually identical, and a test asserts exactly that — the
+cheapest available proof that this is the same plane and not a parallel one.
+
+⛔ **Do not reach for `FieldsReadableSQL` with a zero `AssetMutationCaps` to get this.** It renders
+the same text *today*. The day a non-mutation disjunct is added there, the cover mosaic would
+silently begin handing out pictures this ADR withholds. `mut` is deliberately absent from
+`PreviewReadableSQL`'s signature rather than ignored: §"a mutation capability confers the FIELD
+plane, never the BYTES" means there is no value a caller could pass that should change this answer,
+and a parameter would invite one.
+
+**One implementation note, because it cost a crash.** The fragment short-circuits to the empty
+string for `system.admin` / `content.read.all` — the callers who see everything — which means the
+caller-ref placeholder it would otherwise have named goes unbound, and Postgres fails the whole
+statement with `42P18` for exactly the two capabilities meant to be unrestricted. The composer
+renders the ref as an `int64` literal instead. (A bound tautology is the other way out and is what
+`search`'s COUNT does; here it would cost a placeholder that means nothing plus a comment on both
+halves explaining why deleting either breaks the other.) **The general shape is worth remembering:
+a gate that compiles to nothing for privileged callers puts those callers on a code path no
+ordinary test exercises.**
+
 **The capability is resolved in Go, not re-derived in SQL.** Computing "does this caller hold
 `assets.admin` over this row's team" as an `EXISTS` against `user_capability_grants` in the SELECT
 list looks cheaper and is wrong: `auth.EffectiveScopedCapabilitiesForUser` resolves a scoped

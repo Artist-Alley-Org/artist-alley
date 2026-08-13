@@ -90,6 +90,23 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A collection of saved posts had no picture on it.** A collection's thumbnail is built from
+  what's inside it, and the builder only ever looked at *files* — so a collection made of saved
+  posts, which became an ordinary thing to have once you could save someone else's post, showed
+  as an empty folder. Posts now contribute too, using the same picture the post shows on a feed
+  card, and the tiles run in the order you added things regardless of which kind they are (#1026).
+
+  Two things improved on the way past. A locked item used to take up one of the four tiles and
+  render as a blank square, so a collection whose first few items were locked came out mostly
+  empty even when there were perfectly good pictures further down — locked items are now skipped
+  rather than reserved a space, and the tiles fill from whatever you can actually see. And the
+  same picture reaching a collection by two routes — pinned directly *and* as a saved post's
+  cover — no longer appears twice.
+
+  The thumbnail is also built on the server now rather than each tile asking separately, so a page
+  of collections is one request instead of one per card, and searched collections show their
+  pictures for the first time.
+
 - **The back button shows the results the address asks for.** Changing a search and pressing Back
   returned you to the previous address with the *newer* results still on screen — so the page and
   the address disagreed, and only a reload fixed it. Back and Forward now render what the address
