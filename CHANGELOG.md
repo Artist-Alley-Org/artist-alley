@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Choose the picture on a collection.** A collection's thumbnail was built from whatever was
+  inside it. Now a curator can pick the image that represents it — the one that reads well small,
+  or the one that isn't a spoiler — from "Set cover" on the collection menu, or the cover section
+  when editing it. Leave it unset and the built-from-members mosaic carries on as before; clear it
+  later and the mosaic comes straight back.
+
+  It points at a picture rather than being a separate upload, so anything already in the archive
+  can be a cover — including an image you add for exactly that purpose. If the picture is one a
+  particular viewer isn't allowed to see, they get the mosaic instead of an empty space, and if
+  the picture is deleted the collection quietly goes back to the mosaic (#1027).
+
 - **Search inside a collection.** You could find a collection and then the trail went cold. A
   collection page now has "Search in this collection", and the search page shows which collection
   you're inside with a way to step back out. It combines with everything else — a text query, a
