@@ -142,20 +142,41 @@ func ContentReadableSQL(alias, callerArg string, caps ContentCaps) string {
 	if caps.SystemAdmin || caps.ContentReadAll {
 		return ""
 	}
-	p := ""
-	if alias != "" {
-		p = alias + "."
+	return ` AND (` + contentReadableCoreSQL(columnPrefix(alias), callerArg) + `)`
+}
+
+// columnPrefix turns a table alias into the column-reference prefix the
+// SQL builders in this package emit ("" for no alias, "a." for "a").
+// One helper rather than the same three lines in each builder.
+func columnPrefix(alias string) string {
+	if alias == "" {
+		return ""
 	}
-	// Mirrors ContentReadable clause for clause:
-	//   owner match (never for the anonymous sentinel — an anonymous
-	//   caller carries ref 0, and the NULLIF makes ref 0 match nothing);
-	//   public admits everyone; team admits this asset's team; every
-	//   other tier, including unrecognised ones, denies.
-	return ` AND (` + p + `owner_user_ref = NULLIF(` + callerArg + `::BIGINT, 0)
+	return alias + "."
+}
+
+// contentReadableCoreSQL is the BODY of [ContentReadableSQL] — the bare
+// disjunction, with no leading " AND " and no outer parentheses, so it
+// can be composed into a wider expression.
+//
+// It is factored out because [FieldsReadableSQL] is [ContentReadableSQL]
+// plus two more disjuncts, and transcribing the tier rule a second time
+// inside it would put THREE expressions of the content plane in one
+// package — the defect ADR 0063 exists to prevent, made worse by the
+// fact that only one of the three has a TestXxxSQL_MatchesGo twin.
+//
+// Mirrors ContentReadable clause for clause:
+//
+//	owner match (never for the anonymous sentinel — an anonymous caller
+//	carries ref 0, and the NULLIF makes ref 0 match nothing); public
+//	admits everyone; team admits this asset's team; every other tier,
+//	including unrecognised ones, denies.
+func contentReadableCoreSQL(p, callerArg string) string {
+	return p + `owner_user_ref = NULLIF(` + callerArg + `::BIGINT, 0)
 	       OR ` + p + `sensitivity = 'public'
 	       OR (` + p + `sensitivity = 'team' AND ` + p + `team_id IS NOT NULL AND EXISTS (
 	            SELECT 1 FROM team_memberships tm
-	             WHERE tm.team_id = ` + p + `team_id AND tm.user_ref = NULLIF(` + callerArg + `::BIGINT, 0))))`
+	             WHERE tm.team_id = ` + p + `team_id AND tm.user_ref = NULLIF(` + callerArg + `::BIGINT, 0)))`
 }
 
 // CanReadContent reports whether a caller may receive the BYTES of an

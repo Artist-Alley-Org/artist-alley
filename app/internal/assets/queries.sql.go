@@ -1009,6 +1009,17 @@ type ListAssetsPageRow struct {
 // by the assets_search_text_gin index. Phase 1.12 will replace this
 // with the proper search DSL (ADR 0010), but for the browse page MVP
 // a plain tsquery match is enough.
+//
+// #902 deliberately did NOT gate this `q` clause on readability, and it
+// is the one asset text match left ungated. It is not reachable: this
+// query has NO caller and NO production caller — it exists only as the
+// oracle TestListAssetsPage_AuthenticatedParity compares the hand-built
+// browse query against, and a static sqlc statement cannot splice a
+// runtime visibility fragment (which is why the browse query stopped
+// being sqlc in the first place, see list_page.go). Gating it would also
+// destroy its value as an oracle, because an oracle that applies the
+// rule under test cannot detect the rule being wrong. Do NOT promote
+// this to handler code: it has no visibility rule of any kind.
 func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]ListAssetsPageRow, error) {
 	rows, err := q.db.Query(ctx, listAssetsPage,
 		arg.IncludeDeleted,

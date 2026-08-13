@@ -424,11 +424,20 @@ func mustSelection(t *testing.T, raw ...string) facet.Selection {
 // buys the member nothing, and the collection-contents page renders it
 // as a placeholder carrying only its owner's name (#883/#892/#894).
 //
-// The stranger CAN see the row unfiltered: the authenticated asset
-// predicate is soft-delete only (ADR 0064), so a restricted asset is
-// listed as a placeholder and counted. That is what makes the filtered
-// verdict meaningful rather than an artefact of the row being invisible
-// everywhere.
+// The control on the stranger's verdict used to be "the stranger CAN
+// see the row unfiltered", because the authenticated asset predicate is
+// soft-delete only (ADR 0064) so a restricted asset was listed as a
+// placeholder and counted. #902 changed that for TEXT SEARCH
+// specifically: matching a restricted asset's document was itself the
+// disclosure, so a caller who fails the field plane no longer matches
+// it, filtered or not. The stranger arm below is therefore now closed
+// TWICE — by the match gate and by the collection filter — and it is
+// kept because it is the property the endpoint owes, not because only
+// one mechanism enforces it.
+//
+// The control moved to the OWNER, where it still discriminates: if the
+// collection filter over-narrowed, the owner would lose their own row
+// and the stranger's absence would prove nothing.
 func TestCollectionFilter_MembershipNeverWidensVisibility(t *testing.T) {
 	pool := coPool(t)
 	f := cfSeed(t, pool)
@@ -436,9 +445,13 @@ func TestCollectionFilter_MembershipNeverWidensVisibility(t *testing.T) {
 	owner, stranger := cfOwner, cfStranger
 	scope := "collection:" + f.publicCollection.String()
 
-	if !cfHas(cfRun(t, e, &stranger), f.memberRestricted) {
-		t.Fatalf("the stranger cannot see the restricted member even UNFILTERED, so the " +
+	if !cfHas(cfRun(t, e, &owner), f.memberRestricted) {
+		t.Fatalf("the OWNER cannot see their own restricted member even UNFILTERED, so the " +
 			"assertion below would pass on a build with no filter at all")
+	}
+	if cfHas(cfRun(t, e, &stranger), f.memberRestricted) {
+		t.Errorf("the stranger's UNFILTERED text search still matches the restricted " +
+			"member — that is #902, one endpoint over")
 	}
 
 	ownerScoped := cfRun(t, e, &owner, scope)

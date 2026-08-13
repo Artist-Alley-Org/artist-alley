@@ -6,6 +6,7 @@ package visibility
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -110,12 +111,23 @@ func (r *FieldsRow) ApplyMutationCaps(m AssetMutationCaps) {
 //
 // # What is deliberately NOT closed
 //
-// EXISTENCE is still disclosed, by design — decision 1 of #899. So is
-// the fact that a restricted asset's indexed text MATCHES a given
-// search query, because the row is still returned by search. A
-// determined caller can probe that oracle word by word. Closing it
-// means dropping restricted rows from results, which contradicts the
-// placeholder decision; it is a product call, not a bug to fix here.
+// EXISTENCE is still disclosed, by design — decision 1 of #899. A
+// caller who can list an asset still learns that it is there, who owns
+// it, and that they may not open it.
+//
+// What used to be open beside it, and is NOT any more (#902): this doc
+// recorded that "a restricted asset's indexed text MATCHES a given
+// search query, because the row is still returned by search — a
+// determined caller can probe that oracle word by word", and called it a
+// product call rather than a bug. It was a bug: every word this function
+// removes from the payload came straight back through the `@@` channel,
+// one token at a time. [FieldsReadableSQL] is the SQL twin that closes
+// it and [AssetSearchMatchSQL] is the single fragment every full-text
+// asset surface matches through. Note what did NOT change: the row is
+// still LISTED by an unfiltered browse, still carrying its owner's name,
+// so ADR 0064's placeholder stands. Only a TEXT QUERY stops matching it
+// — and it stops matching EVERY text query equally, which is why the
+// absence is not itself an oracle.
 //
 // # Fails closed
 //
@@ -215,6 +227,129 @@ func PreviewReadable(row FieldsRow, caller Caller, caps CapabilityChecker) bool 
 	}
 	// The CONTENT plane.
 	return ContentReadable(row.Sensitivity, row.OwnerUserRef, caller, caps, row.IsTeamMember)
+}
+
+// FieldsReadableSQL is the SQL transcription of [FieldsReadable], as a
+// WHERE-clause conjunct (it starts with " AND ", like
+// [ContentReadableSQL], so a splice site concatenates it with no
+// pre-processing). `alias` is the assets table alias ("" for none) and
+// `callerArg` is the placeholder holding the caller's user_ref.
+//
+// # Why a SQL twin is sanctioned here (#902)
+//
+// [ContentReadableSQL]'s doc states the exception it was created under:
+// a twin exists for the surfaces "which reduce many rows to one number
+// or one string and so have no per-row Go step to decide readability
+// in", and every other surface should keep calling the Go form. A
+// FULL-TEXT MATCH is squarely that case, and more so than an aggregate:
+// the `@@` operator decides in SQL whether the row is returned AT ALL,
+// so a Go step downstream of it never sees the rows it needed to judge.
+// Withholding the columns after the fact — which is all #899 could do —
+// leaves the MATCH itself as a channel, and a matched-or-not answer is
+// one bit of the withheld title per query.
+//
+// It is held to the Go form by TestFieldsReadableSQL_MatchesGo, the
+// exhaustive twin of TestContentReadableSQL_MatchesGo. If you edit
+// [FieldsReadable] or [PreviewReadable] and that test goes red, edit
+// this — that is what it is for.
+//
+// # The three disjuncts, in the order [FieldsReadable] evaluates them
+//
+//  1. The capability short-circuit. system.admin / content.read.all
+//     (from PreviewReadable) and a GLOBAL assets.admin (from the
+//     mutation disjunct) all fold to an empty fragment rather than a
+//     bound TRUE: the caller already resolved them, and a missing
+//     conjunct lets Postgres plan as though the gate were not there.
+//  2. The PREVIEW plane — the content tier, plus the anonymous-only
+//     status conjuncts. The owner branch is not repeated separately:
+//     ContentReadable's own first clause is the same comparison with
+//     the same anonymous-sentinel guard, and stating it twice is how
+//     the NULLIF trap gets fixed in one place and not the other. For an
+//     ANONYMOUS caller the status conjuncts wrap the whole plane, which
+//     matches PreviewReadable's early return — an anonymous caller can
+//     never reach the owner branch there either, because of the
+//     !IsAnonymous guard.
+//  3. The MUTATION disjunct (#939, ADR 0064) — a team-scoped
+//     assets.admin holder is owed the FIELDS of the assets they
+//     administer, so they must keep matching them. The team set is
+//     rendered as UUID LITERALS, not a bound array: these UUIDs came
+//     from the auth resolver inside this process, never from caller
+//     text, and threading an extra placeholder through six splice
+//     sites' arg lists is where an off-by-one lives (the same call the
+//     facet aggregators made for the caller ref). uuid.Nil entries are
+//     DROPPED, mirroring [AssetMutationCaps.MayMutate], which refuses a
+//     nil team scope rather than treating it as "no scope required".
+//
+// A row whose team_id IS NULL makes disjunct 3 evaluate to NULL rather
+// than false; in a WHERE clause NULL and false are indistinguishable, so
+// the SQL still agrees with the Go form's `teamID == nil → false`.
+func FieldsReadableSQL(alias, callerArg string, caller Caller, caps ContentCaps, mut AssetMutationCaps) string {
+	if caps.SystemAdmin || caps.ContentReadAll || mut.Global {
+		return ""
+	}
+	p := columnPrefix(alias)
+
+	preview := `(` + contentReadableCoreSQL(p, callerArg) + `)`
+	if caller.IsAnonymous {
+		preview = `(` + p + `status = 'active' AND ` + p + `processing_status = 'ready'
+	       AND ` + preview + `)`
+	}
+	disjuncts := []string{preview}
+
+	teams := make([]string, 0, len(mut.Teams))
+	for _, t := range mut.Teams {
+		if t == uuid.Nil {
+			continue
+		}
+		teams = append(teams, `'`+t.String()+`'::UUID`)
+	}
+	if len(teams) > 0 {
+		disjuncts = append(disjuncts, p+`team_id IN (`+strings.Join(teams, ", ")+`)`)
+	}
+	return ` AND (` + strings.Join(disjuncts, `
+	       OR `) + `)`
+}
+
+// AssetSearchMatchSQL is the ONE expression of "this asset's indexed
+// text matches this caller's query", and every full-text surface over
+// `assets` composes its WHERE clause from it (#902).
+//
+// `tsqueryExpr` is the already-built right-hand side of the `@@`
+// operator — `plainto_tsquery('english', $1)`, placeholder and all.
+// Every remaining parameter is what [FieldsReadableSQL] needs.
+//
+// # Why this exists rather than six hand-written conjuncts
+//
+// Because there are six of them. `search_text @@ …` appears in the
+// search hits query, the search COUNT, the browse page's `?q=`, and the
+// facet aggregators, and #902 is precisely what happens when a security
+// rule is spliced into a text match at one of those and not the others:
+// a fix confined to /search leaves the identical word-by-word recovery
+// available through /assets?q=. Six independently-edited copies of one
+// rule is six chances for it to drift, which is ADR 0063's whole
+// argument, so the column choice is made HERE and the splice sites only
+// name their alias and their tsquery.
+//
+// # What the readable-side document is, and why the withheld side is
+// empty
+//
+// The gate is a conjunct on the existing `search_text`, not a second
+// reduced tsvector column, because the reduced document would be EMPTY.
+// `rebuild_asset_search_text` builds the document out of exactly three
+// things — title (weight A), description (B) and the `searchable`
+// active field values (D) — and [FieldsReadable] withholds all three
+// from a caller who fails it. There is no fourth ingredient that
+// survives withholding, so a second column would be an all-empty
+// tsvector, a second GIN index over nothing, and a fourth thing the two
+// rebuild triggers have to keep in sync. `@@ AND readable` and
+// `@@ reduced-document` return the identical row set; only the first
+// costs nothing. If a genuinely public ingredient is ever added to the
+// document (the owner's display name is the obvious candidate, since the
+// placeholder already carries it), it belongs in that reduced column and
+// this is the one function that has to learn about it.
+func AssetSearchMatchSQL(alias, tsqueryExpr, callerArg string, caller Caller, caps ContentCaps, mut AssetMutationCaps) string {
+	return `(` + columnPrefix(alias) + `search_text @@ ` + tsqueryExpr +
+		FieldsReadableSQL(alias, callerArg, caller, caps, mut) + `)`
 }
 
 // FieldsColumnsSQL is the SELECT-list fragment carrying exactly the
