@@ -139,6 +139,46 @@ silently — "unused" is not "correct".**
   - **Base list handlers** (`/assets`, `/collections`, `/posts`) use sqlc-static queries with hardcoded WHERE fragments. They do not call `visibility.Filter` today. Retrofitting means abandoning sqlc for those queries — bigger scope with real observable-behaviour risk. Deferred (issue #212).
 - Snapshot-test discipline preserved: the retrofit's compliance signal is the byte-for-byte error-response suite in `app/internal/search/feedback/snapshot_test.go` (Phase 1.16.B-followup). Every HTTP error path (401 / 400 / 403 / 404) is compared verbatim against captured golden bodies.
 
+#### 3c. THE ADDRESS OWNS THE FETCH — amendment 2026-08-13 (#1060, PR #1062)
+
+The search page had **two** things that could start a query: its own controls (a kind chip, a
+facet tick, a submit) called `runSearch` directly, *and* — after #1053 — the URL adoption did too.
+Two writers of one result set, with no defined order between them.
+
+That is what made #1060 possible. SvelteKit captures a history entry's snapshot **inside the
+navigation commit, for the entry being left**
+(`@sveltejs/kit/src/runtime/client/client.js:1862-1863`, `update_scroll_positions` then
+`capture_snapshot(previous_navigation_index)`). A control that applied its state and fetched
+*before* navigating therefore caused the **departing** entry's snapshot to record the **arriving**
+entry's results. Back then faithfully restored a snapshot that was already wrong when taken —
+the defect is in the capture, not the restore.
+
+**The rule now:**
+
+1. **A control writes the address and stops.** It does not fetch. Six direct `runSearch` calls were
+   removed from the controls to establish this.
+2. **The URL adoption performs the single fetch.** One writer, one order.
+3. **A snapshot carries the signature of the results INSIDE it** — taken from what the current hits
+   were actually fetched for, never from the live controls, which may already have moved.
+4. **A restore whose signature does not match the address is REFUSED**, together with its scroll
+   offset: that offset was measured against hits that are not coming back, so restoring it alone
+   would land the reader mid-way down a list that no longer exists.
+5. **A back/forward adoption holds its fetch until `navigating` clears** — SvelteKit does that
+   immediately after running restores, so by then a restore has either happened or never will.
+
+⭐ **#584 is strengthened by this, not merely preserved.** It restored a snapshot without ever
+checking that the snapshot belonged to the address being restored to; that verification did not
+previously exist.
+
+⚠️ **One deliberate consequence, accepted 2026-08-13:** re-submitting an **unchanged** query is now
+a no-op rather than a refetch — the same query is the same address, so there is nothing to adopt.
+Forcing a refetch on submit was considered and rejected: it would give submit a side effect the URL
+does not express, which is precisely the second fetch path this amendment removes. If an in-app
+refresh is wanted, it belongs as an **explicit Refresh control** — a distinct intent — not as a
+hidden behaviour of the search box.
+
+**For anyone adding a control to this page: write the address. Do not fetch.**
+
 #### 4b. An ACTIVE FILTER narrows to what the caller can open — amendment 2026-08-12 (#907)
 
 **Unfiltered search is unchanged and this amendment does not touch it.** ADR 0064 keeps a

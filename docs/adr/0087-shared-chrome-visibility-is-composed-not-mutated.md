@@ -76,6 +76,39 @@ the triggering interaction is about:
   every other consumer. Hovering the bottom edge, holding focus inside the bar, keeping the
   switcher open mid-interaction. → a local term.
 
+## Amendment 2026-08-13 (#1061) — the auto-hiding layer is a hazard for AUTOMATION, and the naive signals lie
+
+This ADR settles *who decides* the chrome is visible. It says nothing about **interacting** with
+it, and a UI test that clicks something inside the layer hit two traps that cost a full CI failure
+and two rejected candidate fixes.
+
+1. ⭐ **Scroll events COALESCE.** A test (or any code) that issues two `scrollTo` calls in quick
+   succession may produce **one** scroll event carrying only the final offset. The store sees a
+   single downward move past its threshold, hides the chrome, and **never sees the upward move
+   that would bring it back.** The chrome then stays hidden indefinitely — the observed CI failure
+   was `element is outside of the viewport`, retried 55 times to timeout, not a transient.
+   Each scroll must wait for **its own** scroll event before the next is issued.
+
+2. ⛔ **The target element's own bounding rectangle is the WRONG readiness signal**, and it fails
+   in two different directions: it lies *before* the scroll event has dispatched (the store has not
+   reacted yet) and again *during* the 200ms `transition-transform` (the layer is mid-slide). Two
+   candidate fixes built on it failed 8-in-10 and 9-in-10. **Read the layer's own rendered state
+   instead.**
+
+3. **`reveal()` is not the tool for this**, and the test in the Decision above is what says so:
+   nothing in an automated scroll is *a user acting on the chrome*. Reaching for `reveal()` to make
+   a test pass would assert global user intent that did not occur, which is exactly the misuse this
+   ADR was written to prevent.
+
+**The generalisable point:** an auto-hiding layer driven by a *derived, event-timed* signal is not
+addressable the way a static element is. Anything that must interact with it — a test, a
+programmatic focus, a scroll-into-view — has to wait on the **signal**, not on the element.
+
+⚠️ Note that Playwright's own click implementation scrolls an element into view first, so
+**clicking an element inside a scroll-driven layer can perturb the very state that decides its
+visibility.** That interaction is the reason this deserves a place in the ADR rather than a comment
+in one spec.
+
 Stated as a rule: **`reveal()` answers "the user just did something that should bring the chrome
 back." A local term answers "this component in particular should not be hidden right now."**
 If the answer names one component, it is not a store call.

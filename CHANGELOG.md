@@ -56,6 +56,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The back button shows the results the address asks for.** Changing a search and pressing Back
+  returned you to the previous address with the *newer* results still on screen — so the page and
+  the address disagreed, and only a reload fixed it. Back and Forward now render what the address
+  describes, and they do it **without re-running the search**, so the position you had scrolled to
+  is still the position you get. Reloading the same address was always correct and still is (#1060).
+
+  ⚠️ **One deliberate change worth knowing:** submitting the *same* query again no longer re-runs
+  it. The address hasn't changed, so nothing is refetched. To pull in results that have appeared
+  since, reload the page. If a dedicated Refresh button would be useful, that's worth asking for —
+  it would be a clearer way to say "get me newer results" than retyping what you already searched.
+
+- **A test that failed at random and mailed a failure notice each time.** The browser check for the
+  search box occasionally clicked it while the top bar had slid out of view, then timed out. It now
+  waits for the bar to actually be back before reaching for it (#1061).
+
 - **You can refine a search on the search page again.** Adjusting your query while already on the
   search page threw you back to browse, losing your place and your filters — so the one screen
   built for refining a search was the one screen you couldn't refine one on. It now updates in
