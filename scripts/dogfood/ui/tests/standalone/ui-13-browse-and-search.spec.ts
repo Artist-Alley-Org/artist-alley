@@ -121,6 +121,194 @@ test.describe('UI-13 browse + search', () => {
     await expect(page.locator('main')).not.toContainText(/score \d\.\d{3}/);
   });
 
+  // ─────────────────────────────────────────────────────────────────
+  // #1053 — /search is a RESULT SURFACE, so it is refined in place
+  // ─────────────────────────────────────────────────────────────────
+  //
+  // The nav search box used to bounce you off /search: handleSearch
+  // asked `pathname === '/'`, /search is not '/', so ~250ms after the
+  // last keystroke it goto()'d the browse page — taking the focus and
+  // the scroll position with it. The one surface built for refining a
+  // search was the one surface you could not refine a search on.
+  //
+  // Nothing here clicks anything after typing (#1024): every step waits
+  // on an observable commit — the URL, the page's own input, the tiles.
+
+  /** Two DIFFERENT words, each taken from a real post's title, so
+   *  neither search can land on the empty state and make the assertions
+   *  below vacuous — the same reasoning as the tiles test above, which
+   *  is why neither of these queries is a hardcoded string.
+   *
+   *  Scans the feed until it has two distinct words rather than taking
+   *  posts 0 and 1 and skipping when they collide: a skipped test is
+   *  not a passing one, and this is the spec for #1053 itself. */
+  async function seededTerms(page: import('@playwright/test').Page) {
+    const links = page.locator('a[href^="/posts/"]');
+    await expect(links.first()).toBeVisible();
+    const n = Math.min(await links.count(), 12);
+    const terms: string[] = [];
+    for (let i = 0; i < n && terms.length < 2; i++) {
+      const label = (await links.nth(i).getAttribute('aria-label')) ?? '';
+      const word = (label.match(/[A-Za-z]{5,}/g) ?? [])[0];
+      if (word && !terms.includes(word)) terms.push(word);
+    }
+    expect(terms.length, `no two distinct searchable words in the first ${n} post titles`).toBe(2);
+    return terms as [string, string];
+  }
+
+  test('nav search refines /search IN PLACE and never bounces to browse', async ({ page }) => {
+    // Short viewport so the result grid overflows and the scroll
+    // assertion below has something to measure. Even a single-hit page
+    // is taller than 400px, so this does not depend on how much the
+    // install happens to have seeded.
+    await page.setViewportSize({ width: 1280, height: 400 });
+    await page.goto('/');
+    const [first, second] = await seededTerms(page);
+
+    await page.goto(`/search?q=${encodeURIComponent(first)}`);
+    const tiles = page.locator(
+      'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
+    );
+    await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
+
+    // Scroll the results, so "the fix keeps your place" is measured and
+    // not assumed. <main> is the scroller (the chrome-hide store owns
+    // its listener), not the window.
+    //
+    // Down THEN up, and not because a user would: past 96px of downward
+    // scroll the navbar auto-hides (chromeScroll), so a single jump
+    // leaves the search box translated off-screen and unclickable. An
+    // upward scroll brings the chrome back while leaving the page
+    // scrolled — which is also exactly the state someone is in when
+    // they reach for the search box after reading a page of results.
+    await page.locator('main').evaluate((el) => el.scrollTo(0, 260));
+    await page.locator('main').evaluate((el) => el.scrollTo(0, 120));
+    const before = await page.locator('main').evaluate((el) => el.scrollTop);
+    expect(before, 'the results did not scroll, so this test would prove nothing').toBeGreaterThan(
+      0,
+    );
+
+    const nav = page.locator(tid('nav-search'));
+    await nav.click();
+    await nav.fill(second);
+
+    // THE BUG: this used to become /?q=<second> about 250-450ms after
+    // the keystroke. The negative assertion is separate from the
+    // positive one so a failure says which half broke.
+    await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${second}`, 'i'));
+    expect(new URL(page.url()).pathname).toBe('/search');
+
+    // The page ADOPTED the new query rather than just letting the URL
+    // change underneath a stale result set — a same-route navigation
+    // does not remount the component, so this is the half that a
+    // layout-only fix would have left broken.
+    await expect(page.locator(tid('search-input'))).toHaveValue(second);
+    await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
+
+    // Focus and scroll survive, as they do on browse.
+    await expect(nav).toBeFocused();
+    expect(await page.locator('main').evaluate((el) => el.scrollTop)).toBe(before);
+  });
+
+  test('refining the query keeps the kind chips and the facet filter', async ({ page }) => {
+    await page.goto('/');
+    const [first, second] = await seededTerms(page);
+
+    await page.goto(`/search?q=${encodeURIComponent(first)}`);
+    await expect(page.locator(tid('kind-chip-all'))).toBeVisible();
+
+    // A kind chip: `?types=`. Wait for the URL it writes before
+    // touching anything else — the chip re-queries as it navigates.
+    await page.locator(tid('kind-chip-post')).click();
+    await expect(page).toHaveURL(/types=post/);
+
+    // A facet bucket: `?filter=<dimension>:<value>` (#907). Read the
+    // token out of the URL rather than predicting it, so this does not
+    // depend on which dimension the seed happens to produce.
+    await page.locator(tid('open-facets')).click();
+    await expect(page.locator(tid('search-slideover'))).toBeVisible();
+    const bucket = page.locator('[data-testid^="facet-option-"]').first();
+    await expect(bucket).toBeVisible({ timeout: 15_000 });
+    await bucket.click();
+    await expect(page).toHaveURL(/filter=/);
+    const token = new URL(page.url()).searchParams.get('filter')!;
+    await page.locator(tid('search-slideover-close')).click();
+
+    const nav = page.locator(tid('nav-search'));
+    await nav.click();
+    await nav.fill(second);
+    await expect(page.locator(tid('search-input'))).toHaveValue(second);
+
+    // Both survive. A refinement that silently dropped either would
+    // hand back a wider result set than the one on screen.
+    const after = new URL(page.url());
+    expect(after.pathname).toBe('/search');
+    expect(after.searchParams.get('types')).toBe('post');
+    expect(after.searchParams.getAll('filter')).toContain(token);
+  });
+
+  // The cost of adopting the URL in an effect is that EVERY URL change
+  // now passes through it, so this counts the requests it causes.
+  //
+  // Two failure modes, one test, because they are opposite mistakes:
+  //   - opening a post over the grid changes the URL (`?post=`) and must
+  //     re-query NOTHING — the results underneath the overlay are the
+  //     page you came back to;
+  //   - a kind chip must re-query exactly ONCE. It applies its change
+  //     and then navigates, so an adopter that treated the page's own
+  //     write as an external one would fetch the same results twice.
+  test('the URL watcher does not re-query for a modal, and only once for a chip', async ({
+    page,
+  }) => {
+    const searches: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/api/v1/search?')) searches.push(r.url());
+    });
+
+    await page.goto('/');
+    const [term] = await seededTerms(page);
+    await page.goto(`/search?q=${encodeURIComponent(term)}`);
+    const postTiles = page.locator('main a[href^="/posts/"]');
+    await expect(postTiles.first()).toBeVisible({ timeout: 15_000 });
+    const afterLoad = searches.length;
+    expect(afterLoad, 'the initial adoption should have run exactly one search').toBe(1);
+
+    await postTiles.first().click();
+    await expect(page).toHaveURL(/post=/);
+    await expect(page.locator(tid('search-input'))).toHaveValue(term);
+    expect(searches.length, 'opening a post re-ran the search underneath it').toBe(afterLoad);
+
+    await page.goBack();
+    await expect(page).not.toHaveURL(/post=/);
+    expect(searches.length, 'closing the post re-ran the search').toBe(afterLoad);
+
+    await page.locator(tid('kind-chip-post')).click();
+    await expect(page).toHaveURL(/types=post/);
+    await expect(page.locator(tid('search-input'))).toHaveValue(term);
+    expect(
+      searches.length - afterLoad,
+      `a kind chip fired ${searches.length - afterLoad} searches, want exactly 1`,
+    ).toBe(1);
+  });
+
+  // The other half of the same predicate, asserted so this fix cannot
+  // quietly delete it: a page that does NOT consume `q` still sends you
+  // to browse with the query, which is the whole reason the search box
+  // is in the navbar on /account and /admin at all.
+  test('nav search from a non-result surface still lands on browse', async ({ page }) => {
+    await page.goto('/');
+    const [term] = await seededTerms(page);
+
+    await page.goto('/account');
+    const nav = page.locator(tid('nav-search'));
+    await nav.click();
+    await nav.fill(term);
+
+    await expect(page).toHaveURL(new RegExp(`^[^?]*/\\?.*q=${term}`, 'i'));
+    expect(new URL(page.url()).pathname).toBe('/');
+    await expectPageRendersCleanly(page);
+  });
+
   test('feed filter tabs are reachable', async ({ page }) => {
     await page.goto('/');
     // Two tabs, not four. `Team` and `Trending` were removed in #691/#705:

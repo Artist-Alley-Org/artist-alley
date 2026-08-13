@@ -5542,9 +5542,15 @@ paths:
           description: |
             Pre-baked feed selector. When set, applies
             a viewer-anchored filter on top of the other query params.
-            - `following` — restrict to authors the caller follows
-              (browse-page "Following" tab). Returns an empty page for
-              callers who don't follow anyone yet.
+            - `following` — restrict to what the caller follows
+              (browse-page "Following" tab): posts by an author they
+              follow, OR posts belonging to a team they follow. One
+              filter over both follow graphs, because the page offers
+              one control and its rail lists the teams you follow.
+              Still NARROWING — the read rule is ANDed on after it and
+              consults neither follow table, so following a studio
+              reveals nothing of its work you could not already see.
+              Returns an empty page for callers who follow nothing.
             - `latest` (default) — no extra filter; same shape as
               omitting the param.
           schema:
