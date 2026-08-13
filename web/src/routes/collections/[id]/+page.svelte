@@ -60,6 +60,11 @@
     updated_at: string;
     deleted_at?: string | null;
     deleted_reason?: string | null;
+    // #1027 — the curator's chosen cover. Carried on this page's own
+    // Collection so the edit modal opens with the current choice
+    // already selected rather than reading "use mosaic" and clearing it
+    // on the next unrelated save.
+    cover_asset_id?: string | null;
   }
 
   // #883 — every asset-derived field is OPTIONAL because a member the
@@ -146,6 +151,11 @@
   // the same to a visitor.
   let notFound = $state(false);
   let editOpen = $state(false);
+  // #1027 — which part of the edit modal to land on. Reset on close
+  // rather than on open, so "Edit details" after "Set cover" starts at
+  // the top of the form again instead of inheriting the last entry
+  // point.
+  let editFocusCover = $state(false);
   let shareOpen = $state(false);
   let copyFeedback = $state(false);
 
@@ -617,12 +627,22 @@
             >
               {t('collections.manage_members')}
             </button>
+            <!-- #1027 — live as of the cover picker. This entry was a
+                 disabled "coming soon" stub placed here in anticipation;
+                 leaving it disabled in the same release that ships the
+                 picker would tell a curator the feature does not exist
+                 while the working control sat behind "Edit details".
+                 It opens the SAME modal, focused on the cover section,
+                 so there is one edit surface and one save path. -->
             <button
               type="button"
               role="menuitem"
-              disabled
-              class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-              title={t('collections.set_cover_soon')}
+              onclick={() => {
+                editFocusCover = true;
+                editOpen = true;
+              }}
+              data-testid="collection-detail-set-cover-menuitem"
+              class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
             >
               {t('collections.set_cover')}
             </button>
@@ -723,7 +743,11 @@
   <EditCollectionModal
     open={editOpen}
     collection={collection}
-    onclose={() => (editOpen = false)}
+    focusCover={editFocusCover}
+    onclose={() => {
+      editOpen = false;
+      editFocusCover = false;
+    }}
     onsaved={handleSaved}
   />
   <ShareEntityModal

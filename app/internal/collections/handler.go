@@ -495,6 +495,52 @@ func (h *Handler) UpdateCollection(
 		memPtr = &s
 	}
 
+	// #1027 — the chosen cover. Mutually exclusive with its clear flag,
+	// refused rather than resolved: if a client sends both it has two
+	// intentions and the server has no basis for preferring either, and
+	// silently discarding one is how a "clear" that never happened gets
+	// shipped. Same shape as metadata's default_value / clear_default.
+	clearCover := in.ClearCover != nil && *in.ClearCover
+	if clearCover && in.CoverAssetId != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either cover_asset_id or clear_cover, not both",
+			},
+		}, nil
+	}
+	var coverPtr *uuid.UUID
+	if in.CoverAssetId != nil {
+		want := uuid.UUID(*in.CoverAssetId)
+		// The PICTURE plane, not the field plane: a cover IS a picture,
+		// and ADR 0064 hands a scoped `assets.admin` holder an asset's
+		// fields while explicitly withholding its image. Gating on
+		// readability instead would let such a holder pin a picture they
+		// are not allowed to look at onto a collection other people read.
+		//
+		// The caller triple comes from the same helper the read path
+		// uses, so "may point at" and "may see painted" are one rule
+		// evaluated twice rather than two rules.
+		cCaller, cCaps, _ := CoverCallerFromContext(ctx)
+		mayPicture, err := CallerMayPictureAsset(ctx, h.Pool, cCaller, cCaps, want)
+		if err != nil {
+			return nil, err
+		}
+		if !mayPicture {
+			// ONE response for "no such asset" and "not yours to look
+			// at". Distinguishing them turns this endpoint into an
+			// existence oracle: a curator could enumerate asset ids and
+			// read the difference between 400-missing and 403-forbidden
+			// as "this id exists and is hidden from me", which is the
+			// fact the picture plane withholds in the first place.
+			return openapi.UpdateCollection400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "cover_asset_id is not an asset you can use as a cover",
+				},
+			}, nil
+		}
+		coverPtr = &want
+	}
+
 	// expires_at is a tri-state: omitted = keep; non-nil = set;
 	// explicit null = clear. The generated CollectionUpdate struct
 	// uses `omitempty` so we can't distinguish "absent" from "null"
@@ -514,6 +560,11 @@ func (h *Handler) UpdateCollection(
 			Membership:  memPtr,
 			Purpose:     in.Purpose,
 			ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
+			// The CASE in the query reads ClearCover first, so these two
+			// cannot both take effect; the 400 above is what makes the
+			// combination unreachable rather than merely ordered.
+			ClearCover:   clearCover,
+			CoverAssetID: pgUUIDFromPtr(coverPtr),
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
@@ -1457,6 +1508,21 @@ func rowToAPI(r Collection) openapi.Collection {
 		v := openapi_types.UUID(r.OriginServerID.Bytes)
 		c.OriginServerId = &v
 	}
+	// #1027 — the curator's SETTING, shipped unconditionally. It is not
+	// the render answer and carries no picture: `covers` is what a client
+	// paints, and ComposeCovers re-runs the viewer's picture plane over
+	// this id before it appears there. What this exposes is that a cover
+	// was chosen and which asset id it is, to a caller who has already
+	// passed the collection's own read gate — the same class of fact as
+	// the member ids /collections/{id}/resources hands that caller, where
+	// a member they may not picture is returned as a VISIBLE placeholder
+	// precisely so #881's "request access" has something to attach to.
+	// Withholding it here would instead break the edit form, which needs
+	// it to show the curator what is currently set.
+	if r.CoverAssetID.Valid {
+		v := openapi_types.UUID(r.CoverAssetID.Bytes)
+		c.CoverAssetId = &v
+	}
 	return c
 }
 
@@ -1635,6 +1701,16 @@ func pgTimestamptzFromPtr(t *time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// pgUUIDFromPtr is pgTimestamptzFromPtr for a UUID: nil becomes the
+// invalid (SQL NULL) value, which every COALESCE partial update in
+// queries.sql reads as "leave this column alone".
+func pgUUIDFromPtr(u *uuid.UUID) pgtype.UUID {
+	if u == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *u, Valid: true}
 }
 
 // ---------------------------------------------------------------------------

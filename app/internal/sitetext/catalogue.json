@@ -234,7 +234,6 @@
     },
     "origin_from": "from {peer}",
     "origin_label": "This item is hosted by another server",
-
     "multi": {
       "badge_label": "{count} assets in this post"
     },
@@ -2773,7 +2772,6 @@
     "manage_members": "Manage members",
     "manage_members_soon": "Drag-reorder + bulk remove coming soon.",
     "set_cover": "Set cover",
-    "set_cover_soon": "Custom cover picker coming soon.",
     "delete": "Delete collection",
     "error_load": "Couldn't load collections.",
     "error_create": "Couldn't create the collection.",
@@ -2794,7 +2792,14 @@
     "detail_empty_hint": "Open a post or an asset and choose \"Save to collection\" to add it here.",
     "posts_heading": "Posts",
     "assets_heading": "Assets",
-    "posts_loading": "Loading posts…"
+    "posts_loading": "Loading posts…",
+    "cover": "Cover picture",
+    "cover_hint": "Pick a member to use as this collection's cover. Without one, the card shows a mosaic built from the newest members.",
+    "cover_derived": "Use mosaic",
+    "cover_derived_hint": "No chosen cover",
+    "cover_none": "Add some members first — there is nothing to choose from yet.",
+    "cover_current_external": "Current cover (not a member of this collection)",
+    "cover_loading": "Loading members…"
   },
   "errors": {
     "save_failed": "Couldn't save changes."

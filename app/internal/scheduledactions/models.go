@@ -285,6 +285,8 @@ type Collection struct {
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	DeletedReason    *string            `json:"deleted_reason"`
 	DeletedByUserRef *int64             `json:"deleted_by_user_ref"`
+	// Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer's picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083's exclusion criterion, applied by analogy).
+	CoverAssetID pgtype.UUID `json:"cover_asset_id"`
 }
 
 type CollectionAcl struct {
