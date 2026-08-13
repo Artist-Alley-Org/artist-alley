@@ -13298,6 +13298,60 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+        covers:
+          type: array
+          items: { $ref: "#/components/schemas/CollectionCover" }
+          description: |
+            Up to four members whose picture this caller may render —
+            the tile's mosaic cover (#1026). A collection stores no
+            cover; this set is composed at read time from its members.
+
+            BOTH MEMBER KINDS CONTRIBUTE. `collection_resources` supply
+            their asset directly, and `collection_posts` supply
+            `cover_thumbnail_asset_id ?? cover_asset_id` — the same
+            preference a feed card uses. #882 made a post-only
+            collection an ordinary thing to own ("save someone else's
+            post"), and until #1026 such a collection had no cover
+            source at all and rendered as an empty folder.
+
+            ORDER is the curator's, `added_at` ascending, INTERLEAVED
+            across both kinds: the arrangement is the curation, and the
+            two membership tables are one shelf.
+
+            EACH ASSET APPEARS AT MOST ONCE, at its earliest position.
+            One asset can be reached by several routes — pinned
+            directly AND carried as a post's cover, or shared as the
+            cover of two posts — and the same picture twice summarises
+            nothing. Clients may therefore key a list on `asset_id`.
+
+            WITHHELD MEMBERS ARE SKIPPED, NOT SLOTTED. Only members
+            passing the caller's picture plane (ADR 0064) and having a
+            `col` rendition appear, so a restricted member never
+            occupies a slot a renderable one behind it could fill.
+            That is deliberately NOT the placeholder shape
+            `GET /collections/{id}/resources` uses: a placeholder there
+            exists so the reader can see a restriction and ask for
+            access (#881/#883), whereas a blank quarter of a mosaic
+            says nothing and costs a picture.
+
+            ABSENT means "not composed on this surface", never "no
+            members" — an empty array is the honest "nothing to show".
+    CollectionCover:
+      type: object
+      description: |
+        One tile of a collection's composed mosaic cover (#1026). An
+        entry exists only if this caller may render the asset, so
+        clients paint every entry unconditionally — there is no
+        `preview_available` to branch on and no placeholder rung.
+      required: [asset_id]
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+          description: |
+            Fetch the picture from
+            `/assets/{asset_id}/variants/col`. Guaranteed to have that
+            rendition — an asset without one is not a cover candidate.
     CollectionCreate:
       type: object
       required: [name]

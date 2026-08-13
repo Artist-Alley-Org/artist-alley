@@ -36,7 +36,6 @@
   import { upload } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
-  import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import AssetCard from '$components/AssetCard.svelte';
   import PostCard from '$components/PostCard.svelte';
@@ -337,7 +336,6 @@
 
   function handleSaved(updated: Collection) {
     collection = updated;
-    invalidateCovers(updated.id);
   }
 
   // ── Delete (#981) ─────────────────────────────────────────────────
@@ -370,9 +368,6 @@
     }
     const deletedId = collection.id;
     deleteOpen = false;
-    // The cover cache keys on the collection id and is now stale — the
-    // same invalidation `handleSaved` does after an edit.
-    invalidateCovers(deletedId);
     toasts.push({
       message: t('delete_confirm.deleted_collection'),
       href: '/account/trash',
@@ -397,7 +392,6 @@
       });
       return;
     }
-    invalidateCovers(collectionId);
     toasts.push({ message: t('delete_confirm.undone'), href: `/collections/${collectionId}` });
   }
 

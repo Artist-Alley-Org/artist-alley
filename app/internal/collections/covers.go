@@ -1,0 +1,323 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
+package collections
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
+	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
+)
+
+// ---------------------------------------------------------------------------
+// The composed cover mosaic — /collections and /collections/{id}
+// ---------------------------------------------------------------------------
+//
+// #1026: a collection holding two posts and one asset rendered as an
+// empty folder. A collection stores no cover of its own; the tile
+// composes one from its members at render time, and the composer only
+// ever knew about `collection_resources`. #882 gave collections POSTS —
+// "save someone else's post" — and nothing taught the cover composer
+// about them, so a post-only collection had no cover source at all.
+//
+// # Why this is composed on the SERVER
+//
+// It used to be a per-card fetch of /collections/{id}/resources from a
+// client-side store (web/src/lib/stores/collectionCovers.svelte.ts,
+// deleted with this change). Three reasons, and only the third is about
+// request count:
+//
+//  1. ORDERING across two member lists cannot be done correctly on the
+//     client without fetching BOTH in full. Interleaving by `added_at`
+//     needs every candidate, not the first page of one table.
+//  2. The CROWDING fix needs to know which members are renderable, and
+//     the read predicate lives here. The old card slotted a restricted
+//     member as a blank tile: four restricted members at the head of a
+//     collection produced four blank quarters and every renderable
+//     member behind them never got a chance.
+//  3. It removes one HTTP request per card. Real, but a consequence.
+//
+// # The withholding shape, and what it is NOT
+//
+// A member this caller may not picture is ABSENT — it does not occupy a
+// slot. That is deliberately different from
+// /collections/{id}/resources, which returns a restricted asset as a
+// VISIBLE placeholder so the reader can see a restriction exists and
+// #881's "request access" has something to attach to. A blank quarter of
+// a mosaic attaches to nothing; it just costs a picture. The posts
+// listing already answers with absence for the same kind of reason
+// ("absence is the honest answer here").
+//
+// Note that the old client store did NOT leak restricted pictures — it
+// crowded them out. This change must keep that true while fixing the
+// crowding, which is what
+// TestCollectionCovers_WithheldMemberContributesNothing pins.
+
+// coverCount is how many tiles a mosaic holds. CollectionCard lays out
+// 1 / 2 / 3 / 4 members and ignores anything past the fourth, so asking
+// for more would be rows nobody paints.
+const coverCount = 4
+
+// ComposeCovers returns, for each requested collection, the first
+// `coverCount` members whose picture this caller may render — in the
+// curator's order, interleaved across both membership kinds.
+//
+// Each asset appears AT MOST ONCE per collection, at its earliest
+// position — one asset is reachable by several routes (pinned directly
+// and carried as a post's cover, or shared by two posts) and the same
+// picture twice is not a summary. See the DISTINCT ON below.
+//
+// Collections with no renderable member are ABSENT from the map rather
+// than mapped to an empty slice; callers emit whatever their surface's
+// "no cover" is. A nil/empty `ids` is not an error and does no query.
+//
+// # Why the whole decision is in SQL
+//
+// Because the decision determines which rows come back at all. "The
+// first four that render" cannot be answered by fetching a prefix and
+// filtering in Go without guessing how long the prefix must be — and
+// the guess is exactly the crowding bug in a new costume, just with a
+// higher threshold. A ROW_NUMBER over the already-filtered set answers
+// it exactly, with LIMIT applied after the gate, for every collection on
+// a hub page in ONE round trip.
+//
+// That is the exception [visibility.PreviewReadableSQL] was created
+// under, and it is held to [visibility.PreviewReadable] by
+// TestPreviewReadableSQL_MatchesGo. Nothing here re-expresses a
+// visibility rule: the asset half is that fragment, the post half is
+// [visibility.Filter] over EntityPost — the same predicate
+// GET /posts/{id}, the browse feed and /collections/{id}/posts all run.
+//
+// # The caller triple
+//
+// `caller` and `caps` decide the PICTURE plane over assets; `postCaps`
+// decides which post ROWS exist. They are passed in resolved rather than
+// read off the context because /search reaches this from an engine that
+// holds no *auth.Identity — it resolved the same three at the HTTP edge
+// and folds them into its cache key. [CoverCallerFromContext] is the
+// adapter for handlers that DO have an identity.
+//
+// Asset MUTATION scope is deliberately not a parameter. ADR 0064 gives a
+// team-scoped `assets.admin` holder the FIELDS of the assets they
+// administer and explicitly not the picture, and a mosaic is nothing but
+// pictures.
+func ComposeCovers(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	caller visibility.Caller,
+	caps visibility.ContentCaps,
+	postCaps visibility.PostCaps,
+	ids []uuid.UUID,
+) (map[uuid.UUID][]openapi.CollectionCover, error) {
+	if len(ids) == 0 {
+		return map[uuid.UUID][]openapi.CollectionCover{}, nil
+	}
+
+	// $1 = collection ids, $2 = tiles wanted. The post predicate's args
+	// are appended LAST and its fragment binds from $3 up (ADR 0063
+	// placeholder discipline). It renders textually ABOVE $2 inside the
+	// CTE, which is fine — the invariant is an index bound, not textual
+	// order.
+	args := []any{ids, coverCount}
+
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(postCaps))
+	if err != nil {
+		return nil, fmt.Errorf("collections: covers: post read rule: %w", err)
+	}
+	// EntityPost's ToSQL renders `deleted_at IS NULL AND (rule)` — the
+	// shape visibility.PostReadable runs, IncludeSoftDeleted
+	// deliberately NOT passed. A soft-deleted post is not a cover.
+	postFrag, postArgs := pred.ToSQL("p", len(args))
+	args = append(args, postArgs...)
+
+	// The caller's ref goes in as a LITERAL, not a placeholder, and that
+	// is load-bearing rather than a shortcut.
+	//
+	// PreviewReadableSQL is EMPTY for a system.admin / content.read.all
+	// caller — that is its documented short-circuit. A `$n` naming the
+	// ref would then be bound and never referenced, and Postgres refuses
+	// the statement outright ("could not determine data type of
+	// parameter"). So the mosaic would 500 for exactly the two
+	// capabilities that are supposed to see everything, on a path no
+	// ordinary test caller takes. (Found by deleting this fragment and
+	// watching every cover test fail with 42P18 rather than the one
+	// assertion under test.)
+	//
+	// A bound tautology is the other way out — query.go's search COUNT
+	// does exactly that — but it costs a placeholder that means nothing
+	// and a comment on both halves explaining why deleting either breaks
+	// the other. An int64 the auth resolver produced inside this process
+	// is not caller text and cannot carry an injection, which is the
+	// same argument FieldsReadableSQL makes for rendering the mutation
+	// team set as UUID literals.
+	previewFrag := visibility.PreviewReadableSQL("a",
+		strconv.FormatInt(caller.UserRef, 10), caller, caps)
+
+	sql := `
+WITH members AS (
+    -- The asset half. No EntityAsset predicate spliced, matching
+    -- ListCollectionResourcesPageGated: the picture plane below is
+    -- strictly tighter than that predicate's asset branch. Soft-delete
+    -- is the one conjunct it does not carry, so it stays inline.
+    SELECT cr.collection_id, cr.added_at, cr.sort_order, cr.asset_id
+      FROM collection_resources cr
+     WHERE cr.collection_id = ANY($1::UUID[])
+       AND cr.pinned = TRUE
+       AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
+    UNION ALL
+    -- The post half. A post contributes its FEED COVER, and
+    -- cover_thumbnail_asset_id wins over cover_asset_id because that is
+    -- what the Post schema already specifies for a feed card — the tile
+    -- and the card should show the same picture. NULL when a post has
+    -- neither; the JOIN below drops it.
+    SELECT cp.collection_id, cp.added_at, cp.sort_order,
+           COALESCE(p.cover_thumbnail_asset_id, p.cover_asset_id)
+      FROM collection_posts cp
+      JOIN posts p ON p.id = cp.post_id
+     WHERE cp.collection_id = ANY($1::UUID[])
+       AND cp.pinned = TRUE
+       AND (cp.expires_at IS NULL OR cp.expires_at > NOW())` + postFrag + `
+),
+renderable AS (
+    -- DISTINCT ON collapses one asset reached by several routes to a
+    -- single tile, at its EARLIEST position. A collection may pin an
+    -- asset directly and also hold a post whose cover is that same
+    -- asset, and two posts may share a cover; the mosaic is a visual
+    -- summary and the same picture twice summarises nothing. It has to
+    -- happen HERE, before the rank, or a duplicate would eat a slot and
+    -- the mosaic would come back short.
+    SELECT DISTINCT ON (m.collection_id, m.asset_id)
+           m.collection_id, m.asset_id, m.added_at, m.sort_order
+      FROM members m
+      JOIN assets a ON a.id = m.asset_id
+     WHERE a.deleted_at IS NULL
+       -- Caller-INDEPENDENT: an asset with no 'col' rendition cannot
+       -- paint a tile for anyone, so it is not a candidate. Pushing it
+       -- down here is what keeps the LIMIT below exact.
+       AND a.file_hash IS NOT NULL
+       AND EXISTS (SELECT 1 FROM storage_variants sv
+                    WHERE sv.object_hash = a.file_hash
+                      AND sv.variant_key = 'col')` + previewFrag + `
+     ORDER BY m.collection_id, m.asset_id, m.added_at ASC, m.sort_order ASC
+),
+ranked AS (
+    SELECT r.collection_id, r.asset_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY r.collection_id
+               -- added_at first: it is the ONE axis comparable across
+               -- the two membership tables, and it is the order the
+               -- curator built. sort_order breaks ties within a kind;
+               -- asset_id makes the result stable.
+               ORDER BY r.added_at ASC, r.sort_order ASC, r.asset_id ASC
+           ) AS rn
+      FROM renderable r
+)
+SELECT collection_id, asset_id
+  FROM ranked
+ WHERE rn <= $2::INTEGER
+ ORDER BY collection_id, rn`
+
+	rows, err := pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("collections: covers: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[uuid.UUID][]openapi.CollectionCover, len(ids))
+	for rows.Next() {
+		var collectionID, assetID uuid.UUID
+		if err := rows.Scan(&collectionID, &assetID); err != nil {
+			return nil, fmt.Errorf("collections: covers scan: %w", err)
+		}
+		out[collectionID] = append(out[collectionID], openapi.CollectionCover{
+			AssetId: openapi_types.UUID(assetID),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("collections: covers rows: %w", err)
+	}
+	return out, nil
+}
+
+// CoverCallerFromContext resolves the three caller-side inputs
+// [ComposeCovers] takes from a request context.
+//
+// The POST caller maps a nil-or-anonymous identity to the anonymous
+// caller, which is what posts.postRuleInputs does and is NARROWER than
+// [collectionCaller], which binds the identity's ref. The two agree in
+// practice — no user holds ref 0, so the authenticated post predicate's
+// author and grant disjuncts cannot match for it — and the narrower one
+// is the direction to be wrong in. See the note on
+// posts.ListCollectionPosts, which made the same choice for the same
+// reason.
+func CoverCallerFromContext(ctx context.Context) (visibility.Caller, visibility.ContentCaps, visibility.PostCaps) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil || id.IsAnonymous() {
+		return visibility.NewCaller(nil), visibility.ContentCaps{}, visibility.PostCaps{}
+	}
+	can := func(code string) bool { return id.Can(code) }
+	ref := id.UserRef
+	return visibility.NewCaller(&ref),
+		visibility.ResolveContentCaps(can),
+		visibility.ResolvePostCaps(can)
+}
+
+// attachCovers stamps the composed mosaic onto a page of collections,
+// in ONE query for the whole page.
+//
+// Per-caller by definition — a member may be withheld from one reader
+// and not the next — so it runs AFTER the by-id cache read and never
+// touches the cached Collection. That is ADR 0013's 2026-08-11
+// amendment verbatim: "if a value depends on who is asking, it is
+// computed after the cache, not stored in it. A shared entry may hold
+// only what every caller may see." Baking a cover set into the cached
+// row would mean the first reader to warm an entry decides what every
+// later reader sees — intermittent, ordering-dependent, and invisible to
+// any test that warms the cache from the caller it asserts with.
+//
+// The pointers are into the caller's own []openapi.Collection, built by
+// copying each cached row by value, so assigning `Covers` writes to that
+// copy. `Covers` is RESET to nil first: the rows come off a cache that
+// must never have carried one, and clearing makes "the query decides"
+// true rather than merely expected.
+func (h *Handler) attachCovers(ctx context.Context, cs ...*openapi.Collection) error {
+	ids := make([]uuid.UUID, 0, len(cs))
+	for _, c := range cs {
+		if c == nil {
+			continue
+		}
+		c.Covers = nil
+		ids = append(ids, uuid.UUID(c.Id))
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	caller, caps, postCaps := CoverCallerFromContext(ctx)
+	byID, err := ComposeCovers(ctx, h.Pool, caller, caps, postCaps, ids)
+	if err != nil {
+		return err
+	}
+	for _, c := range cs {
+		if c == nil {
+			continue
+		}
+		covers := byID[uuid.UUID(c.Id)]
+		if covers == nil {
+			// An empty array, not an absent key: "nothing to show" is
+			// an answer, and the schema reserves ABSENT for surfaces
+			// that did not compose covers at all.
+			covers = []openapi.CollectionCover{}
+		}
+		c.Covers = &covers
+	}
+	return nil
+}
