@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
@@ -809,6 +810,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	}
 	defer rows.Close()
 	hits := make([]Hit, 0, limit)
+	visByID := make(map[uuid.UUID]string, limit)
 	for rows.Next() {
 		var (
 			id      uuid.UUID
@@ -834,15 +836,39 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			CreatedAt:      created,
 			UpdatedAt:      updated,
 			RawScore:       score,
-			// #850 — the one field CollectionCard reads that the hit did
-			// not already carry. Safe to ship unconditionally: the
-			// predicate above already decided this caller may see the
-			// collection, and its visibility tier is the reason why.
-			ExtraJSON: collectionCardExtra(vis),
+			// The `extra` bag is built AFTER this loop, once the whole
+			// page's ids are known — its covers half is one query for
+			// the page (#1026) and cannot be answered per row. The
+			// visibility tier this hit contributes to it is parked in
+			// visByID below.
+			ExtraJSON: nil,
 		})
+		visByID[id] = vis
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
+	}
+	// The mosaic covers for the whole page in ONE query (#1026), after
+	// the row loop rather than inside it: composing per hit would be a
+	// round trip per card on a surface that already runs five entity
+	// queries in parallel. Same caller triple the predicate above used,
+	// and every part of it is already in the result cache key.
+	if len(hits) > 0 {
+		ids := make([]uuid.UUID, 0, len(hits))
+		for _, h := range hits {
+			ids = append(ids, h.ID)
+		}
+		covers, err := collections.ComposeCovers(ctx, e.Pool,
+			visibility.NewCaller(q.CallerUserRef), q.Caps, q.PostCaps, ids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for i := range hits {
+			// #850's visibility tier is safe to ship unconditionally:
+			// the predicate above already decided this caller may see
+			// the collection, and its tier is the reason why.
+			hits[i].ExtraJSON = collectionCardExtra(visByID[hits[i].ID], covers[hits[i].ID])
+		}
 	}
 	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {

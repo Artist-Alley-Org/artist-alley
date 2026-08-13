@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/asset/pixeldims"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -152,15 +153,34 @@ func encodeThumbhash(b []byte) any {
 
 // collectionCardExtra is the `extra` bag for a collection hit.
 //
-// One field, because CollectionCard reads exactly one thing off the row
-// that the hit did not already carry: the visibility label it badges. The
-// mosaic covers it paints come from its own /collections/{id}/resources
-// fetch, so they are not this payload's business.
+// TWO fields: the visibility label CollectionCard badges, and the
+// composed mosaic `covers` (#1026), named and shaped EXACTLY as
+// GET /collections names them so the frontend maps a hit onto a card row
+// without translating.
+//
+// The covers used to be the card's own business — it fetched
+// /collections/{id}/resources per tile from a client-side store. That
+// store is gone (it could not see post members at all, and it slotted
+// withheld members as blank tiles), so a hit that did not carry covers
+// would render every searched collection as an empty folder. They are
+// composed by collections.ComposeCovers against the SAME caller triple
+// this engine's row predicate used, and every component of that triple
+// is already part of the result cache key — so one caller's mosaic can
+// never be served to another.
 //
 // #650's decision stands: no `featured` flag. Featuring is a scoped
 // placement in featured_items (ADR 0065), not a boolean on the row.
-func collectionCardExtra(visibilityLabel string) []byte {
-	b, _ := json.Marshal(map[string]any{"visibility": visibilityLabel})
+func collectionCardExtra(visibilityLabel string, covers []openapi.CollectionCover) []byte {
+	if covers == nil {
+		// An empty array rather than null: "nothing to show" is an
+		// answer, and the card's `covers?.length` reads the same either
+		// way only by accident.
+		covers = []openapi.CollectionCover{}
+	}
+	b, _ := json.Marshal(map[string]any{
+		"visibility": visibilityLabel,
+		"covers":     covers,
+	})
 	return b
 }
 

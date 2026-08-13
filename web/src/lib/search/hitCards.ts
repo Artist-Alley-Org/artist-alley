@@ -83,6 +83,7 @@ export interface SearchCollectionRow {
   visibility: string;
   owner_user_ref: number;
   created_at: string;
+  covers: Array<{ asset_id: string }>;
 }
 
 /** Reads one key out of a hit's `extra` bag with a typed default. */
@@ -212,5 +213,19 @@ export function hitAsCollection(h: SearchHit): SearchCollectionRow {
     visibility: str(e.visibility) ?? 'private',
     owner_user_ref: h.owner_user_ref ?? 0,
     created_at: h.created_at ?? new Date(0).toISOString(),
+    // #1026 — the mosaic composed server-side, named exactly as
+    // GET /collections names it, so no translation happens here. Before
+    // this the card fetched its own covers; a hit that carried none
+    // would now render every searched collection as an empty folder.
+    covers: coverList(e.covers),
   };
+}
+
+/** The `covers` array off a hit's extra bag, defensively narrowed. */
+function coverList(v: unknown): Array<{ asset_id: string }> {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((c) => (c && typeof c === 'object' ? str((c as Record<string, unknown>).asset_id) : null))
+    .filter((id): id is string => id !== null)
+    .map((asset_id) => ({ asset_id }));
 }

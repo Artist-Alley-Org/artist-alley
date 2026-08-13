@@ -388,7 +388,11 @@ func (h *Handler) GetCollection(
 			// to them.
 			if id != nil && id.Can(auth.SuperAdminCapability) {
 				if adminRow, adminErr := New(h.Pool).GetCollectionIncludingDeleted(ctx, pgID); adminErr == nil {
-					return openapi.GetCollection200JSONResponse(rowToAPI(adminRow)), nil
+					out := rowToAPI(adminRow)
+					if err := h.attachCovers(ctx, &out); err != nil {
+						return nil, err
+					}
+					return openapi.GetCollection200JSONResponse(out), nil
 				}
 			}
 			return openapi.GetCollection404JSONResponse{
@@ -397,7 +401,16 @@ func (h *Handler) GetCollection(
 		}
 		return nil, err
 	}
-	return openapi.GetCollection200JSONResponse(rowToAPI(row)), nil
+	// The mosaic cover (#1026) is an ENRICHMENT PASS after the cache
+	// read, never a field inside the cached Collection: which members a
+	// caller may picture depends on who is asking, and ADR 0013's
+	// 2026-08-11 amendment is exact about where such a value may live.
+	// See attachCovers.
+	out := rowToAPI(row)
+	if err := h.attachCovers(ctx, &out); err != nil {
+		return nil, err
+	}
+	return openapi.GetCollection200JSONResponse(out), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +828,18 @@ func (h *Handler) ListCollections(
 		items = append(items, c)
 		lastCreatedAt = r.CreatedAt.Time
 		lastID = uuid.UUID(r.ID.Bytes)
+	}
+	// The mosaic covers for the whole page in ONE query (#1026). The
+	// hub renders up to 200 of these cards; a per-card composition
+	// would be the N+1 the deleted client-side store existed to soften.
+	// Pointers INTO `items`, taken after the slice is fully built so no
+	// append can move the backing array under them.
+	ptrs := make([]*openapi.Collection, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.attachCovers(ctx, ptrs...); err != nil {
+		return nil, err
 	}
 	resp := openapi.CollectionList{Items: items}
 	if len(rows) > int(limit) {

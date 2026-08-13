@@ -125,19 +125,22 @@ func frAsk(
 	return ok
 }
 
-func TestFieldsReadableSQL_MatchesGo(t *testing.T) {
-	pool := contentPool(t)
+// frFixture is one seeded asset plus the name the failure message uses.
+type frFixture struct {
+	name string
+	id   uuid.UUID
+}
 
-	callerTeam := seedTeamWithMember(t, pool, frMember)
-	otherTeam := seedTeamWithMember(t, pool, frStranger)
-
-	type fixture struct {
-		name string
-		id   uuid.UUID
-	}
-	var fixtures []fixture
+// frFixtures plants the asset matrix both SQL-twin tests drive. Shared
+// rather than written out twice: the picture plane is the field plane
+// minus one disjunct, so a row that distinguishes the two forms of ONE
+// of them is exactly the row the other needs, and a fixture added to a
+// private copy would only ever protect half the surface.
+func frFixtures(t *testing.T, pool *pgxpool.Pool, callerTeam, otherTeam uuid.UUID) []frFixture {
+	t.Helper()
+	var fixtures []frFixture
 	add := func(name, sens, status, proc string, team *uuid.UUID, ownerless bool) {
-		fixtures = append(fixtures, fixture{
+		fixtures = append(fixtures, frFixture{
 			name: name,
 			id:   frSeedAsset(t, pool, sens, status, proc, team, ownerless),
 		})
@@ -169,9 +172,16 @@ func TestFieldsReadableSQL_MatchesGo(t *testing.T) {
 	add("restricted draft on caller's team", "restricted", "draft", "ready", &callerTeam, false)
 	add("restricted ready on caller's team", "restricted", "active", "ready", &callerTeam, false)
 	add("restricted on another team", "restricted", "active", "ready", &otherTeam, false)
+	return fixtures
+}
 
+// frCallers is the caller spread both twin tests drive.
+func frCallers() []struct {
+	name   string
+	caller Caller
+} {
 	owner, stranger, member := frOwner, frStranger, frMember
-	callers := []struct {
+	return []struct {
 		name   string
 		caller Caller
 	}{
@@ -180,6 +190,16 @@ func TestFieldsReadableSQL_MatchesGo(t *testing.T) {
 		{"stranger", NewCaller(&stranger)},
 		{"team member", NewCaller(&member)},
 	}
+}
+
+func TestFieldsReadableSQL_MatchesGo(t *testing.T) {
+	pool := contentPool(t)
+
+	callerTeam := seedTeamWithMember(t, pool, frMember)
+	otherTeam := seedTeamWithMember(t, pool, frStranger)
+
+	fixtures := frFixtures(t, pool, callerTeam, otherTeam)
+	callers := frCallers()
 	capsCases := []struct {
 		name string
 		caps ContentCaps
@@ -222,6 +242,94 @@ func TestFieldsReadableSQL_MatchesGo(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// prAsk runs PreviewReadableSQL for one asset, one caller and one
+// capability state.
+func prAsk(t *testing.T, pool *pgxpool.Pool, caller Caller, caps ContentCaps, id uuid.UUID) bool {
+	t.Helper()
+	sql := `SELECT EXISTS (SELECT 1 FROM assets a WHERE a.id = $1` +
+		PreviewReadableSQL("a", strconv.FormatInt(caller.UserRef, 10), caller, caps) + `)`
+	var ok bool
+	if err := pool.QueryRow(context.Background(), sql, id).Scan(&ok); err != nil {
+		t.Fatalf("PreviewReadableSQL: %v\nSQL: %s", err, sql)
+	}
+	return ok
+}
+
+// TestPreviewReadableSQL_MatchesGo — #1026. The collection cover mosaic
+// decides "can this member render" in SQL, so PreviewReadableSQL must
+// agree with PreviewReadable on every row, exactly as its FIELD-plane
+// sibling above does.
+//
+// The mutation axis is deliberately absent from the matrix rather than
+// pinned to the zero value: PreviewReadableSQL takes no
+// AssetMutationCaps, because ADR 0064 gives a mutation holder the fields
+// and not the picture. The rows that WOULD be rescued by a mutation
+// scope are still in the fixture set (they are the "on caller's team"
+// arms), and here they must come back DENIED for a non-member — which is
+// the assertion that would fail if someone re-expressed this fragment
+// via FieldsReadableSQL.
+func TestPreviewReadableSQL_MatchesGo(t *testing.T) {
+	pool := contentPool(t)
+
+	callerTeam := seedTeamWithMember(t, pool, frMember)
+	otherTeam := seedTeamWithMember(t, pool, frStranger)
+
+	fixtures := frFixtures(t, pool, callerTeam, otherTeam)
+	capsCases := []struct {
+		name string
+		caps ContentCaps
+	}{
+		{"no caps", ContentCaps{}},
+		{"content.read.all", ContentCaps{ContentReadAll: true}},
+		{"system.admin", ContentCaps{SystemAdmin: true}},
+	}
+
+	for _, f := range fixtures {
+		for _, c := range frCallers() {
+			for _, cc := range capsCases {
+				row := frRow(t, pool, c.caller, f.id)
+				// NOT ApplyMutationCaps: the picture plane never
+				// consults CallerMayMutate, and leaving it zero here is
+				// what makes the Go side answer the same question the
+				// SQL side can even be asked.
+				want := PreviewReadable(row, c.caller, cc.caps.Checker())
+				got := prAsk(t, pool, c.caller, cc.caps, f.id)
+				if got != want {
+					t.Errorf("%s / %s / %s: SQL says %v, Go says %v — the two "+
+						"expressions of the PICTURE plane have drifted "+
+						"(sensitivity=%q status=%q processing=%q owner=%v team=%v member=%v)",
+						f.name, c.name, cc.name, got, want,
+						row.Sensitivity, row.Status, row.ProcessingStatus,
+						row.OwnerUserRef, row.TeamID, row.IsTeamMember)
+				}
+			}
+		}
+	}
+}
+
+// TestPreviewReadableSQL_IgnoresMutationScope pins the ADR 0064 boundary
+// structurally: a GLOBAL assets.admin empties FieldsReadableSQL, and must
+// NOT empty this one. If a later edit routes the picture plane through
+// the field fragment, this is the test that catches it before the cover
+// mosaic starts painting restricted assets.
+func TestPreviewReadableSQL_IgnoresMutationScope(t *testing.T) {
+	anon := NewCaller(nil)
+	if got := FieldsReadableSQL("a", "$2", anon, ContentCaps{}, AssetMutationCaps{Global: true}); got != "" {
+		t.Fatalf("premise changed: a global assets.admin no longer empties the FIELD fragment (%q)", got)
+	}
+	if got := PreviewReadableSQL("a", "$2", anon, ContentCaps{}); got == "" {
+		t.Error("a global assets.admin emptied the PICTURE fragment — ADR 0064 says the " +
+			"mutation plane never confers the binary plane")
+	}
+	// The two agree exactly when there is no mutation scope to differ
+	// over — the property that makes previewReadableExpr shared rather
+	// than copied.
+	field := FieldsReadableSQL("a", "$2", anon, ContentCaps{}, AssetMutationCaps{})
+	if pic := PreviewReadableSQL("a", "$2", anon, ContentCaps{}); field != pic {
+		t.Errorf("with no mutation scope the two fragments should be identical:\nfield: %s\npic:   %s", field, pic)
 	}
 }
 

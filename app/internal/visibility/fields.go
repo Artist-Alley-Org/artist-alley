@@ -289,12 +289,7 @@ func FieldsReadableSQL(alias, callerArg string, caller Caller, caps ContentCaps,
 	}
 	p := columnPrefix(alias)
 
-	preview := `(` + contentReadableCoreSQL(p, callerArg) + `)`
-	if caller.IsAnonymous {
-		preview = `(` + p + `status = 'active' AND ` + p + `processing_status = 'ready'
-	       AND ` + preview + `)`
-	}
-	disjuncts := []string{preview}
+	disjuncts := []string{previewReadableExpr(p, callerArg, caller)}
 
 	teams := make([]string, 0, len(mut.Teams))
 	for _, t := range mut.Teams {
@@ -308,6 +303,81 @@ func FieldsReadableSQL(alias, callerArg string, caller Caller, caps ContentCaps,
 	}
 	return ` AND (` + strings.Join(disjuncts, `
 	       OR `) + `)`
+}
+
+// previewReadableExpr is disjunct 2 of [FieldsReadableSQL] — the SQL
+// body of [PreviewReadable], with no leading " AND " and already
+// parenthesised, so both splice sites use it verbatim. `p` is the
+// already-suffixed column prefix ([columnPrefix]).
+//
+// It is a named function rather than an inline expression because
+// [PreviewReadableSQL] needs exactly this and nothing else; writing it
+// out there too would be a second expression of the picture plane, and
+// the two would drift the first time the anonymous conjuncts changed.
+func previewReadableExpr(p, callerArg string, caller Caller) string {
+	e := `(` + contentReadableCoreSQL(p, callerArg) + `)`
+	if caller.IsAnonymous {
+		e = `(` + p + `status = 'active' AND ` + p + `processing_status = 'ready'
+	       AND ` + e + `)`
+	}
+	return e
+}
+
+// PreviewReadableSQL is the SQL twin of [PreviewReadable] — the PICTURE
+// plane as a WHERE-fragment, beginning with " AND (…)" so callers
+// concatenate it into an existing WHERE clause with no pre-processing.
+// It binds NO placeholders: `callerArg` names one the caller already
+// bound, exactly as [FieldsReadableSQL] and [ContentReadableSQL] do.
+//
+// # Why a twin exists here too (#1026)
+//
+// Same exception the other two were created under, restated for this
+// plane: a surface that has to decide "which of this collection's
+// members can actually RENDER" cannot make that decision in Go, because
+// the decision determines which rows the query returns at all.
+//
+// The collection cover mosaic is that surface. It shows the first four
+// members that produce a picture, and a member the caller may not see
+// must be SKIPPED rather than occupy a slot — otherwise four restricted
+// members at the head of a collection crowd out every renderable one
+// behind them (that was the visible half of #1026). Deciding in Go would
+// mean fetching an unbounded prefix of the membership and filtering it
+// down, per collection, on a hub page that renders fifty of them. In SQL
+// it is a ROW_NUMBER over the already-filtered set with LIMIT 4 — exact,
+// with no candidate cap to be wrong about.
+//
+// # It is the FIELD plane MINUS the mutation disjunct
+//
+// Which is precisely what [PreviewReadable] is to [FieldsReadable], and
+// it is obtained the same way: both fragments render
+// [previewReadableExpr], so there is one expression of the picture plane
+// and [FieldsReadableSQL] adds the mutation disjunct on top of it. Do
+// NOT reach for FieldsReadableSQL with a zero AssetMutationCaps to get
+// this — it happens to render the same text today, and the day a
+// non-mutation disjunct is added there the cover mosaic would silently
+// start handing out pictures ADR 0064 withholds.
+//
+// `mut` is deliberately absent from the signature rather than ignored:
+// ADR 0064 confers the field plane on a mutation holder and explicitly
+// not the binary plane, so there is no value a caller could pass that
+// should change this answer, and a parameter would invite one.
+//
+// Held to the Go form by TestPreviewReadableSQL_MatchesGo.
+func PreviewReadableSQL(alias, callerArg string, caller Caller, caps ContentCaps) string {
+	// The same short-circuit [FieldsReadableSQL] opens with, minus the
+	// mutation half: system.admin and content.read.all admit the picture
+	// (see [PreviewReadable]), and an empty fragment lets Postgres plan
+	// as though the gate were not there.
+	if caps.SystemAdmin || caps.ContentReadAll {
+		return ""
+	}
+	// The outer parentheses mirror [FieldsReadableSQL]'s disjunction
+	// wrapper exactly, so with no mutation scope the two fragments are
+	// TEXTUALLY identical — an equality
+	// TestPreviewReadableSQL_IgnoresMutationScope asserts, and the
+	// cheapest possible proof that this is the same plane and not a
+	// second one.
+	return ` AND (` + previewReadableExpr(columnPrefix(alias), callerArg, caller) + `)`
 }
 
 // AssetSearchMatchSQL is the ONE expression of "this asset's indexed
