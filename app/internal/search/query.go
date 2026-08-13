@@ -91,6 +91,26 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 		types = AllHitTypes()
 	}
 
+	// #910 — the PARENT gate for a container-scoped search.
+	//
+	// `collection:<id>` names an entity with its own read rule, unlike
+	// the five dimensions that describe the row. Checked here rather than
+	// at the handler edge because this is the single door every execution
+	// goes through — /search, save-as-collection and the saved-search
+	// notifier all land on Run — and a grant that lapsed between saving a
+	// search and running it must stop the scoped query the same way it
+	// stops a direct read. See [facet.Selection.Authorize] for why the
+	// answer is an empty page rather than a 403, and why an unscoped
+	// search pays nothing for this.
+	allowed, err := q.Filters.Authorize(ctx, e.Pool,
+		visibility.NewCaller(q.CallerUserRef), q.Caps.Checker())
+	if err != nil {
+		return QueryResult{}, fmt.Errorf("search: authorize filters: %w", err)
+	}
+	if !allowed {
+		return QueryResult{Hits: []Hit{}, TypesMatched: types}, nil
+	}
+
 	// The per-entity queries each pull `limit * some multiplier`
 	// so the cross-entity merge has enough headroom to sort. A 3x
 	// multiplier keeps a single entity from monopolising the page

@@ -4,10 +4,13 @@
 package facet
 
 import (
+	"context"
 	"errors"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -36,6 +39,28 @@ import (
 //  3. optionally one [Aggregator] if it should also carry counts.
 //
 // No new wire parameter, no new handler branch, no `!bang` syntax.
+//
+// #910 SHIPPED AND THE CLAIM MOSTLY HELD — with two exceptions, recorded
+// here because the next dimension will hit whichever of them applies to
+// it, and a prediction is only useful if its misses are written down:
+//
+//   - A dimension whose value is a TYPE needs validating. Steps 1-3 all
+//     assume the value is opaque text, which is true for a tag and an
+//     extension and false for a UUID: an unparseable one reaches a
+//     `::UUID` cast and raises a Postgres error mid-query. See
+//     [FacetType.canonicalValue] — one function, same file, no new
+//     concept on the wire.
+//   - A dimension whose value NAMES ANOTHER ENTITY needs authorizing,
+//     and the renderer cannot do it. dimensionSQL is caller-blind by
+//     design (it takes an entity, a dimension, an alias and one
+//     placeholder index) and every term renders exactly one placeholder,
+//     so there is nowhere to put the caller's identity without changing
+//     the arity for every dimension. It is therefore a separate step at
+//     the two execution chokepoints — see [Selection.Authorize].
+//
+// Both are properties of the VALUE's type rather than of the mechanism,
+// and neither needed a second query path, a bespoke parameter, or a
+// change to the wire vocabulary.
 type Selection struct {
 	// terms is kept in insertion order and deduplicated by
 	// (Type, Value). Small by construction — a rail with more than a
@@ -95,6 +120,10 @@ func ParseSelection(raw []string) (Selection, error) {
 			return Selection{}, ErrBadFilter
 		}
 		ft, ok := ParseFacetType(strings.TrimSpace(strings.ToLower(dim)))
+		if !ok {
+			return Selection{}, ErrBadFilter
+		}
+		value, ok = ft.canonicalValue(value)
 		if !ok {
 			return Selection{}, ErrBadFilter
 		}
@@ -176,6 +205,38 @@ func (s Selection) CacheKey() string {
 // and the typed query say the same thing.
 func (t FacetType) conjunctive() bool { return t == FacetTag }
 
+// canonicalValue validates a value for dimension t and returns the form
+// the rest of the pipeline should carry.
+//
+// FIVE OF THE SIX DIMENSIONS HAVE NO USE FOR THIS, and that is worth
+// saying plainly: `extension:!!!` is a well-formed filter that matches
+// nothing, because the expression it renders is a TEXT comparison and
+// every string is a legal input to it. #910's `collection` is the first
+// dimension whose value is a TYPE — a UUID, spliced into a `::UUID`
+// cast — so a malformed one is not "matches nothing", it is a Postgres
+// 22P02 raised mid-query, i.e. a 500 on a caller mistake.
+//
+// So the rule that made unknown DIMENSIONS a 400 now extends one level
+// down to values, for the dimensions that have a value grammar at all.
+// The reason is the same one [ParseSelection] gives: the alternative is
+// a filter that looks applied and is not.
+//
+// Canonicalising (rather than merely accepting) matters because
+// google/uuid takes several spellings — braced, hyphenless, urn: — and
+// Postgres takes a different subset of them. Normalising here means one
+// spelling reaches the SQL, and `{X}` and `X` share a [CacheKey] instead
+// of paying for the same query twice.
+func (t FacetType) canonicalValue(v string) (string, bool) {
+	if t != FacetCollection {
+		return v, true
+	}
+	id, err := uuid.Parse(v)
+	if err != nil {
+		return "", false
+	}
+	return id.String(), true
+}
+
 // ForFacet returns the subset of the selection that should be applied
 // when COUNTING dimension t.
 //
@@ -207,6 +268,85 @@ func (s Selection) ForFacet(t FacetType) Selection {
 		out.terms = append(out.terms, term)
 	}
 	return out
+}
+
+// Authorize checks the dimensions whose value NAMES ANOTHER ENTITY
+// against that entity's own read rule. Returns false when the caller may
+// not see one of them; the caller then returns an EMPTY result set.
+//
+// # Why a filter needs an authorization step at all (#910)
+//
+// The other five dimensions describe the ROW: `extension:png` is a
+// property of the asset, and the asset's own predicate is the whole
+// access-control story. `collection:<id>` is not — it names a
+// collection, which has an owner, a visibility tier and an ACL table of
+// its own. Scoping a search to a collection is a read of that
+// collection's membership by another door, and the contents endpoint
+// this borrows its membership condition from is explicit that the door
+// needs two locks: "The parent gate and the member gate answer
+// different questions and both are required"
+// (collections/resources_page.go). Without this, a caller holding the
+// id of a collection they cannot open — a revoked share, a link that
+// outlived its grant — could still enumerate which of the assets they
+// can read are curated into it. The member gate would not catch it,
+// because every disclosed row IS one they may read; the leak is the
+// MEMBERSHIP, which is exactly the thing ADR 0009 §3 keeps separate
+// from readability in both directions.
+//
+// # Why an empty result set and not a 403 or a 404
+//
+// Because an error would be the oracle the rest of the arc removes: it
+// would separate "this collection exists and you may not see it" from
+// "no such collection", on an id the caller supplied. An empty page is
+// indistinguishable from a real collection the caller may see that
+// happens to contain nothing matching, and it is the same fail-closed
+// direction [Selection.SQL] takes for an unsatisfiable dimension.
+//
+// # The one capability that passes
+//
+// `caps` mirrors GetCollection (collections/handler.go), which lets a
+// `system.admin` holder through when CanSee refuses — the collection
+// read rule has no admin disjunct, so the endpoint applies the bypass
+// outside it. Without the same bypass here an instance admin would open
+// a collection page perfectly well and get an empty page from the
+// "Search in this collection" button on it, which reads as a broken
+// feature rather than a policy. It discloses nothing: the same holder
+// can already open the collection and list its contents. Nil (or any
+// other caller) denies.
+//
+// # Cost
+//
+// One EXISTS per collection term, and NONE at all for a selection that
+// names no collection — the loop body never runs, so an ordinary
+// faceted search pays nothing for this.
+func (s Selection) Authorize(
+	ctx context.Context,
+	pool visibility.Pool,
+	caller visibility.Caller,
+	caps visibility.CapabilityChecker,
+) (bool, error) {
+	for _, t := range s.terms {
+		if t.Type != FacetCollection {
+			continue
+		}
+		if caps != nil && caps(visibility.SystemAdmin) {
+			continue
+		}
+		id, err := uuid.Parse(t.Value)
+		if err != nil {
+			// Cannot arrive via ParseSelection; fail closed for the same
+			// reason SQL() does.
+			return false, nil
+		}
+		ok, err := visibility.CanSee(ctx, pool, visibility.EntityCollection, caller, id)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // SQL renders the selection as a WHERE-clause suffix for entity e.
@@ -251,6 +391,16 @@ func (s Selection) SQL(e visibility.EntityType, alias string, argOffset int) (fr
 		}
 		parts := make([]string, 0, len(values))
 		for _, v := range values {
+			// Second gate on the value grammar. ParseSelection already
+			// rejected a malformed one with a 400, but [Selection.With]
+			// is exported and takes no error, so a programmatic caller
+			// (SelectionFromDSL, a future saved query) can put anything
+			// in. Fail CLOSED here rather than letting a bad UUID reach
+			// a ::UUID cast: "this entity matches nothing" is a wrong
+			// answer a caller can act on, a 22P02 is a 500.
+			if _, ok := dim.canonicalValue(v); !ok {
+				return "", nil, false
+			}
 			idx++
 			expr, ok := dimensionSQL(e, dim, a, idx)
 			if !ok {
@@ -311,6 +461,48 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 	case FacetExtension:
 		if e == visibility.EntityAsset {
 			return `LOWER(` + a + `file_extension) = LOWER(` + p + `::TEXT)`, true
+		}
+	case FacetCollection:
+		// #910 — "search inside this collection", as an ordinary
+		// predicate rather than a second query path.
+		//
+		// The membership condition is COPIED, not invented: it is the
+		// one the collection-contents page already runs
+		// (collections/resources_page.go, and the sqlc query beside it)
+		// — pinned rows whose membership has not expired. An asset the
+		// contents page stopped listing an hour ago must not still be
+		// reachable by searching inside the collection, and the only way
+		// to guarantee that is for both to ask the same question.
+		//
+		// `pinned` is DEFAULT TRUE on both tables, so this is not a
+		// narrowing in practice; it is there because the contents query
+		// has it and a divergence between the two would be silent.
+		//
+		// The placeholder is cast to UUID, not TEXT: `collection_id` is
+		// the leading column of each table's primary key and casting the
+		// COLUMN instead would give up that index for a sequential scan
+		// of every membership row in the install. See
+		// [FacetType.canonicalValue] for why the cast is safe.
+		//
+		// Collections themselves are absent on purpose. A collection has
+		// no membership in another collection, so EntityCollection falls
+		// through to ok=false and drops out of a scoped search entirely
+		// — which is the right answer: "inside collection X" is a
+		// question about items, and returning X itself (or its
+		// siblings) beside its own contents would be noise.
+		switch e {
+		case visibility.EntityAsset:
+			return `EXISTS (SELECT 1 FROM collection_resources fcr
+			                 WHERE fcr.asset_id = ` + a + `id
+			                   AND fcr.collection_id = ` + p + `::UUID
+			                   AND fcr.pinned = TRUE
+			                   AND (fcr.expires_at IS NULL OR fcr.expires_at > NOW()))`, true
+		case visibility.EntityPost:
+			return `EXISTS (SELECT 1 FROM collection_posts fcp
+			                 WHERE fcp.post_id = ` + a + `id
+			                   AND fcp.collection_id = ` + p + `::UUID
+			                   AND fcp.pinned = TRUE
+			                   AND (fcp.expires_at IS NULL OR fcp.expires_at > NOW()))`, true
 		}
 	}
 	return "", false

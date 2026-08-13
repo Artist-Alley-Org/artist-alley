@@ -157,6 +157,7 @@
     sensitivity: 'search.facet.sensitivity',
     owner: 'search.facet.owner',
     extension: 'search.facet.extension',
+    collection: 'search.facet.collection',
   };
   function facetLabel(key: string): string {
     const k = FACET_LABELS[key];
@@ -175,9 +176,60 @@
       const type = token.slice(0, idx);
       const value = token.slice(idx + 1);
       const bucket = facets[type]?.buckets?.find((b) => b.value === value);
-      return { token, type, value, label: bucket?.label ?? value };
+      return {
+        token,
+        type,
+        value,
+        label: collectionNames[value] ?? bucket?.label ?? value,
+      };
     }),
   );
+
+  /** Collection scope names (#910).
+   *
+   *  Every other dimension gets its human label from the BUCKET the
+   *  caller ticked — the counts endpoint hands back `{value, label}`
+   *  together. `collection` is filter-only and has no aggregator by
+   *  design (a bucket list would enumerate every collection beside every
+   *  search), so nothing hands this page a name and the chip would
+   *  otherwise read `IN COLLECTION 3f2b…`, which tells a user nothing
+   *  about what is narrowing their results.
+   *
+   *  Driven off `filters` rather than from the places that SET filters,
+   *  which since #1053 are four (URL adoption, a bucket tick, clear-all,
+   *  snapshot restore) and would each have to remember. The effect below
+   *  reads `filters` and nothing else: the lookup's own read of
+   *  `collectionNames` — which is also its write target, and would
+   *  therefore be a loop — happens inside [untrack], the same discipline
+   *  the URL watcher uses for the same reason.
+   *
+   *  A collection that 404s (deleted, or no longer visible to this
+   *  caller) simply keeps the raw id in the chip. That is deliberate as
+   *  well as convenient: the server has already decided what such a
+   *  scope returns, and printing a name for a collection the caller
+   *  cannot open would be a leak this page has no business inventing. */
+  let collectionNames = $state<Record<string, string>>({});
+  async function resolveCollectionNames(ids: string[]) {
+    for (const cid of ids) {
+      if (cid in collectionNames) continue;
+      try {
+        const resp = await fetch(`/api/v1/collections/${cid}`, { credentials: 'include' });
+        if (!resp.ok) continue;
+        const body = (await resp.json()) as { name?: string };
+        if (body?.name) collectionNames = { ...collectionNames, [cid]: body.name };
+      } catch {
+        // Same as a 404: the chip keeps the raw id.
+      }
+    }
+  }
+  $effect(() => {
+    const ids = filters
+      .filter((tk) => tk.startsWith('collection:'))
+      .map((tk) => tk.slice('collection:'.length))
+      .filter(Boolean);
+    if (ids.length === 0) return;
+    untrack(() => void resolveCollectionNames(ids));
+  });
 
   // Hits mapped to card rows ONCE per result set rather than per render.
   // ContentGrid keys on `id`, and the mapped row carries the hit beside
