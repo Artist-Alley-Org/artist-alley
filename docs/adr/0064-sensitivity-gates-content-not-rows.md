@@ -469,6 +469,28 @@ a `restricted` asset. That removes the absurdity — nobody deletes a thing they
 avoided.
 
 Note the thumbnail lands on the **binary** side: the thumbhash is withheld precisely because
+⭐ *Amended 2026-08-13 (#1066, PR #1068) — **the same reasoning reaches the EMBEDDING, and it took
+until now to apply it.*** If a thumbhash is withheld because it is a low-fidelity copy of the image,
+then a **768-dimension CLIP embedding is the same kind of thing** — lossier, but content-bearing,
+and a similarity *score* exposes it a little at a time. Until #1066 the vector path gated on
+`visibility.Filter(EntityAsset)`, which for an authenticated caller is **soft-delete only**, so
+similarity search ranked restricted assets: supply a candidate image, watch one rank, and learn
+that an asset whose picture you are refused resembles it. All three entry points
+(`POST /search/by-image`, the `similar_to:` hybrid path, and `GET /assets/{id}/similar`) now gate
+on `ContentReadableSQL` — the picture plane, deliberately stricter than #902's field plane, because
+an embedding derives from the image and not the metadata.
+
+⚠️ **And the gate has to run in BOTH directions.** Every one of those surfaces also leaked on the
+**anchor** side — you could anchor on an asset you cannot read and harvest its neighbourhood. All
+four anchor gates already carried a comment claiming to prevent exactly that; the row predicate
+could not deliver it. **When gating a derived copy, gate what the query returns AND what it may be
+anchored on.** Refusals are `404`, indistinguishable from "not embedded".
+
+**The full list of derived copies is now closed:** `search_text` (#902), the facet buckets, the
+`thumbhash` (this ADR), and the embedding (#1066). A fifth would be new work; the general rule —
+*a withheld value has derived copies, and every copy must be withheld* — is recorded in ADR 0020's
+three-channels amendment.
+
 *"a thumbhash IS a blur"* (see the amendment above). So the result is a **richer placeholder** —
 real fields, no picture — rather than a blank card. That also discharges the UI obligation the
 orthogonal option would have carried, because the interface stops looking broken on its own.

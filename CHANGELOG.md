@@ -56,6 +56,25 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **"Find similar" ranked files you aren't allowed to open.** Visual similarity search — the
+  "more like this" panel, search-by-image, and the `similar to` search term — considered every
+  file on the instance, including ones whose picture you're refused. It never showed them, but the
+  *ranking itself* told you something: supply a picture, watch a locked file come back near the
+  top, and you've learned it looks like yours without ever being shown it.
+
+  It also worked in reverse — you could start *from* a file you can't open and harvest everything
+  that resembles it. Both directions are now closed, on all three places this was reachable
+  (#1066).
+
+- **A name could still escape after its owner asked it not to be shown.** Someone who opts out of
+  appearing to logged-out visitors was still named as the owner of files inside a **public
+  collection or post** — the one route by which a logged-out visitor meets a restricted file at
+  all. The name is now simply absent there, as it already was elsewhere.
+
+  Behind this, the rule for "what do we call this person" had been hand-copied into three separate
+  database queries, each missing the opt-out. There is one copy now, checked against the original
+  by a test (#1023).
+
 - **A restricted file's title could be reconstructed a word at a time through search.** Files you
   aren't cleared to open are deliberately still *listed* — you can see something is there and ask
   for access — but their titles and descriptions are hidden. The search index did not know that.
