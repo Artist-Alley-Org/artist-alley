@@ -2137,11 +2137,20 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// a.status + a.processing_status feed visibility.FieldsReadable's
 	// row-plane conjuncts, and the owner display name is the ONE
 	// asset-derived value a #883 placeholder carries. Both ride this
-	// query rather than a second round-trip — the LEFT JOINs mirror
-	// users/queries.sql's projection.
+	// query rather than a second round-trip.
+	//
+	// #1023 — the name comes from visibility.OwnerDisplayNameSQL, not
+	// from a pair of LEFT JOINs written here. The joins that used to sit
+	// in this FROM clause resolved
+	// `COALESCE(NULLIF(up.display_name,''), u.username, '')`, a copy of
+	// the display-name ladder that never consulted
+	// `hide_from_anonymous` — so THIS query is where an owner who took
+	// ADR 0024's opt-out had their username handed to an anonymous
+	// caller, on any public post carrying one of their restricted
+	// assets. It is also the only reason those joins existed.
 	rows, err := h.Pool.Query(ctx, `
 		SELECT a.id, a.sensitivity, a.status, a.processing_status, a.owner_user_ref,
-		       COALESCE(NULLIF(up.display_name, ''), u.username, '') AS owner_display_name,
+		       `+visibility.OwnerDisplayNameSQL("a.owner_user_ref", caller.IsAnonymous)+` AS owner_display_name,
 		       (a.file_hash IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
@@ -2156,8 +2165,6 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       a.thumbhash,
 		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
-		LEFT JOIN "user" u         ON u.ref = a.owner_user_ref
-		LEFT JOIN user_profiles up ON up.user_ref = a.owner_user_ref
 		WHERE a.id = ANY($1::uuid[])`,
 		ids, caller.UserRef, ladder)
 	if err != nil {

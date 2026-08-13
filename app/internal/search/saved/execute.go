@@ -162,19 +162,43 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 	}, nil
 }
 
-// anchorVisibleToOwner runs the shared visibility.Predicate
-// against the anchor asset ID with the owner as caller. Returns
-// (visible, err).
+// anchorVisibleToOwner asks whether the saved search's owner may still
+// use this asset as a similarity anchor. Returns (visible, err).
+//
+// Both planes, the same pair and for the same reason as the interactive
+// `?dsl=similar_to:` handler (#1066): the row predicate alone is
+// soft-delete for any authenticated caller, so the "owner has since lost
+// access to the anchor" case this function was written for could not
+// actually be detected. visibility.ContentReadableSQL is what detects
+// it, because losing access to an asset means losing its bytes and its
+// derived copies, and an embedding is a derived copy.
+//
+// Capabilities are the ZERO value here, deliberately: a saved search
+// runs on a timer with no request identity to resolve them from, and the
+// zero value grants nothing. That fails closed — a system.admin's saved
+// `similar_to:` on someone else's restricted asset stops returning hits
+// rather than keeping them — which is the direction a background job
+// should err in.
 func (e *Executor) anchorVisibleToOwner(ctx context.Context, assetID uuid.UUID, ownerRef int64) (bool, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityAsset, visibility.Caller{UserRef: ownerRef, IsAnonymous: false})
+	caller := visibility.Caller{UserRef: ownerRef, IsAnonymous: false}
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return false, err
 	}
-	frag, args := pred.ToSQL("", 1)
+	// $1 is the asset id, $2 the caller ref. The readability fragment is
+	// non-empty for every zero-capability caller, so $2 is always named
+	// here — but the offset is still computed rather than assumed, so
+	// this does not break if the caps ever start being resolved.
+	args := []any{assetID}
+	readFrag := visibility.ContentReadableSQL("", "$2", visibility.ContentCaps{})
+	if readFrag != "" {
+		args = append(args, caller.UserRef)
+	}
+	frag, predArgs := pred.ToSQL("", len(args))
+	args = append(args, predArgs...)
 	var exists bool
-	sql := "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1" + frag + ")"
-	err = e.Pool.QueryRow(ctx, sql, append([]any{assetID}, args...)...).Scan(&exists)
-	if err != nil {
+	sql := "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1" + readFrag + frag + ")"
+	if err := e.Pool.QueryRow(ctx, sql, args...).Scan(&exists); err != nil {
 		return false, err
 	}
 	return exists, nil

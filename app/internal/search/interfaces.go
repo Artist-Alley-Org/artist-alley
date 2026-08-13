@@ -229,11 +229,12 @@ type Hit struct {
 	// to be wrong.
 	Restricted bool
 
-	// OwnerDisplayName is the asset owner's display name, carried
-	// ONLY on a restricted hit so the placeholder card can say
-	// whose work it is and #881 can address the request. Empty
-	// when unresolvable, and then omitted from the wire rather
-	// than sent empty.
+	// OwnerDisplayName is the asset owner's display name per
+	// visibility.OwnerDisplayNameSQL, carried ONLY on a restricted
+	// hit so the placeholder card can say whose work it is and #881
+	// can address the request. Empty when unresolvable and when the
+	// owner opted out of anonymous exposure (#1023), and then
+	// omitted from the wire rather than sent empty.
 	OwnerDisplayName string
 
 	// OriginServerID is set for federated rows so the frontend

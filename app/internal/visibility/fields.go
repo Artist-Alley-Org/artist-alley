@@ -352,11 +352,83 @@ func AssetSearchMatchSQL(alias, tsqueryExpr, callerArg string, caller Caller, ca
 		FieldsReadableSQL(alias, callerArg, caller, caps, mut) + `)`
 }
 
+// OwnerDisplayNameSQL is the SQL transcription of
+// [users.PlaceholderOwnerName], as a scalar SELECT-list expression that
+// resolves the owner's name for a WITHHELD-asset placeholder.
+// `ownerRefExpr` is whatever names the owning ref in the surrounding
+// query (`assets.owner_user_ref`, `a.owner_user_ref`), and `anonymous`
+// is the caller's [Caller.IsAnonymous].
+//
+// It always yields TEXT, never NULL: "" is the single "no name" answer,
+// covering an ownerless asset, an owner row with nothing to render, and
+// an owner who opted out of anonymous exposure alike. Every placeholder
+// builder turns "" into an ABSENT key, so those three cases are
+// indistinguishable on the wire — which is the point, since a client
+// that could tell "withheld" from "empty" could read the opt-out off the
+// difference.
+//
+// # Why a SQL twin is sanctioned here (#1023)
+//
+// Same exception [ContentReadableSQL] and [FieldsReadableSQL] were
+// created under, for a different reason: the name is not a decision, it
+// is a JOIN. Every surface that emits a placeholder is already reading
+// the asset row, and the owner's name is the one asset-derived value the
+// placeholder carries — so resolving it in Go afterwards means a second
+// round trip per page on exactly the pages that have restricted rows,
+// which is the N+1 [users.LookupAuthors] exists to avoid.
+//
+// Before #1023 there were THREE hand-written copies of this ladder — one
+// here, one in posts' preview enrich, one in collections' resources page
+// — and all three had the same two defects, because they were the same
+// text pasted three times:
+//
+//   - they never consulted `hide_from_anonymous`, so an owner who took
+//     ADR 0024's opt-out had their USERNAME rendered to an anonymous
+//     caller on any public post or collection holding one of their
+//     restricted assets. That is the opt-out defeated by a JOIN, which
+//     is the exact wording of the rule in users/author.go; and
+//   - they skipped the `fullname` rung ADR 0070 §3 gives an
+//     AUTHENTICATED caller, so a signed-in caller saw a different name on
+//     a placeholder than on the same user's post header.
+//
+// #557 created [users.ResolveDisplayName] because this rule had been
+// transcribed once before and the copy dropped a rung. This is that
+// again, so the copies are gone and the one that remains is held to the
+// Go form by TestOwnerDisplayNameSQL_MatchesGo, which drives every rung
+// through both. If you edit [users.PlaceholderOwnerName] and that test
+// goes red, edit this.
+//
+// The subquery aliases are deliberately ugly (`odn_u`, `odn_p`): this
+// fragment is spliced into queries that have their own `u` / `up` joins,
+// and an alias collision here would resolve silently to the OUTER row.
+func OwnerDisplayNameSQL(ownerRefExpr string, anonymous bool) string {
+	// Rungs 1–3 of the ladder. `fullname` is rung 2 and is
+	// AUTHENTICATED-ONLY (ADR 0070 §3) — an anonymous caller's ladder
+	// skips straight from display_name to username, which is what stops
+	// this leaking the real name of every user who never set a display
+	// name. NULLIF on each rung so a row storing '' rather than NULL
+	// falls through, matching the Go form's `!= ""` tests.
+	name := `COALESCE(NULLIF(odn_p.display_name, ''), NULLIF(odn_u.fullname, ''), NULLIF(odn_u.username, ''))`
+	if anonymous {
+		// The ADR 0024 opt-out, and the missing rung 2. NULL, not '',
+		// so the outer COALESCE produces the same "" an unresolvable
+		// owner produces.
+		name = `CASE WHEN COALESCE(odn_p.hide_from_anonymous, FALSE) THEN NULL
+	                    ELSE COALESCE(NULLIF(odn_p.display_name, ''), NULLIF(odn_u.username, '')) END`
+	}
+	return `COALESCE((SELECT ` + name + `
+	                   FROM "user" odn_u
+	                   LEFT JOIN user_profiles odn_p ON odn_p.user_ref = odn_u.ref
+	                  WHERE odn_u.ref = ` + ownerRefExpr + `), '')`
+}
+
 // FieldsColumnsSQL is the SELECT-list fragment carrying exactly the
 // columns [FieldsRow] needs, plus the owner's display name for the
-// placeholder. `alias` is the assets table alias ("" for none), and
+// placeholder. `alias` is the assets table alias ("" for none),
 // `callerArg` is the placeholder holding the caller's user_ref for the
-// team-membership EXISTS.
+// team-membership EXISTS, and `caller` is the caller itself — the owner
+// name is resolved differently for an anonymous one, see
+// [OwnerDisplayNameSQL].
 //
 // One fragment rather than five hand-copied column lists: a surface
 // that selects four of the five silently decides the fifth, and the
@@ -374,7 +446,12 @@ func AssetSearchMatchSQL(alias, tsqueryExpr, callerArg string, caller Caller, ca
 // resolver computed at request time from role inheritance, grants,
 // revokes and `team_closure` together. Re-deriving that here would be a
 // second, narrower expression of the capability resolver.
-func FieldsColumnsSQL(alias, callerArg string) string {
+//
+// `caller` is a whole [Caller] and not a bare `anonymous bool` so that a
+// splice site cannot pass the wrong one: every one of them already holds
+// the Caller it hands to [FieldsReadable] on the way back out, and the
+// two answers must be about the same caller.
+func FieldsColumnsSQL(alias, callerArg string, caller Caller) string {
 	p := ""
 	if alias != "" {
 		p = alias + "."
@@ -384,10 +461,7 @@ func FieldsColumnsSQL(alias, callerArg string) string {
 	       (` + p + `team_id IS NOT NULL AND EXISTS (
 	            SELECT 1 FROM team_memberships tm
 	             WHERE tm.team_id = ` + p + `team_id AND tm.user_ref = ` + callerArg + `::BIGINT)) AS is_team_member,
-	       COALESCE((SELECT COALESCE(NULLIF(up.display_name, ''), u.username)
-	                   FROM "user" u
-	                   LEFT JOIN user_profiles up ON up.user_ref = u.ref
-	                  WHERE u.ref = ` + p + `owner_user_ref), '') AS owner_display_name`
+	       ` + OwnerDisplayNameSQL(p+`owner_user_ref`, caller.IsAnonymous) + ` AS owner_display_name`
 }
 
 // FieldsPool is the subset of pgxpool.Pool LoadFieldsRow uses.
@@ -423,7 +497,7 @@ func LoadFieldsRow(
 		ownerName string
 	)
 	err := pool.QueryRow(ctx,
-		`SELECT `+FieldsColumnsSQL("assets", "$2")+` FROM assets WHERE id = $1`,
+		`SELECT `+FieldsColumnsSQL("assets", "$2", caller)+` FROM assets WHERE id = $1`,
 		assetID, caller.UserRef,
 	).Scan(&row.Sensitivity, &row.Status, &row.ProcessingStatus,
 		&row.OwnerUserRef, &row.TeamID, &row.IsTeamMember, &ownerName)

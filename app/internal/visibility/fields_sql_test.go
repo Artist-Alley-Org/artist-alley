@@ -95,7 +95,7 @@ func frRow(t *testing.T, pool *pgxpool.Pool, caller Caller, id uuid.UUID) Fields
 		ownerName string
 	)
 	err := pool.QueryRow(context.Background(),
-		`SELECT `+FieldsColumnsSQL("assets", "$2")+` FROM assets WHERE id = $1`,
+		`SELECT `+FieldsColumnsSQL("assets", "$2", caller)+` FROM assets WHERE id = $1`,
 		id, caller.UserRef,
 	).Scan(&row.Sensitivity, &row.Status, &row.ProcessingStatus,
 		&row.OwnerUserRef, &row.TeamID, &row.IsTeamMember, &ownerName)
