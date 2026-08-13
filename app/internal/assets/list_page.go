@@ -123,9 +123,12 @@ type ListAssetsPageGatedRow struct {
 	// on a restricted asset. False means the handler must replace every
 	// asset column with the placeholder.
 	Readable bool
-	// OwnerDisplayName is the asset owner's display name (or username),
-	// empty when unresolvable. The only asset-derived value the
-	// placeholder is permitted to carry.
+	// OwnerDisplayName is the asset owner's display name per
+	// visibility.OwnerDisplayNameSQL — the SQL twin of
+	// users.PlaceholderOwnerName (#1023). Empty when unresolvable AND
+	// when the owner opted out of anonymous exposure, deliberately
+	// indistinguishable. The only asset-derived value the placeholder is
+	// permitted to carry.
 	OwnerDisplayName string
 }
 
@@ -220,7 +223,7 @@ func ListAssetsPageGated(
 	// Readability is then decided in-Go per row
 	// (visibility.FieldsReadable) from those columns + caps.
 	b.WriteString(`SELECT ` + listAssetsPageColumns + `,
-       ` + visibility.FieldsColumnsSQL("assets", "$8") + `,
+       ` + visibility.FieldsColumnsSQL("assets", "$8", caller) + `,
        ` + pixeldims.SelectColumnsSQL("assets.id") + `,
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv

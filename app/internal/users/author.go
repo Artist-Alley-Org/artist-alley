@@ -60,6 +60,28 @@ func ResolveDisplayName(
 	ref int64,
 	anonymous bool,
 ) string {
+	if n := displayNameRungs(profileDisplayName, fullname, username, anonymous); n != "" {
+		return n
+	}
+	return fmt.Sprintf("user %d", ref)
+}
+
+// displayNameRungs is rungs 1–3 of [ResolveDisplayName] — the part that
+// reads the row — and returns "" when the row carries no usable name at
+// all. Rung 4 (the `user {ref}` last resort) is deliberately NOT here,
+// because it is the one rung that invents a value rather than reading
+// one, and the placeholder surfaces must not emit it.
+//
+// It is unexported and has exactly two callers, both in this file:
+// [ResolveDisplayName], which adds rung 4, and [PlaceholderOwnerName],
+// which adds the anonymous opt-out instead. Factored out for #1023 so
+// those two are one ladder with two endings rather than two ladders.
+func displayNameRungs(
+	profileDisplayName string,
+	fullname *string,
+	username *string,
+	anonymous bool,
+) string {
 	if profileDisplayName != "" {
 		return profileDisplayName
 	}
@@ -69,7 +91,51 @@ func ResolveDisplayName(
 	if username != nil && *username != "" {
 		return *username
 	}
-	return fmt.Sprintf("user %d", ref)
+	return ""
+}
+
+// PlaceholderOwnerName is THE owner-name rule for the WITHHELD-ASSET
+// PLACEHOLDER — the `owner_display_name` that rides ADR 0064's
+// restricted row, #883's post member, the collection resource and the
+// search hit (#1023).
+//
+// It is [ResolveDisplayName] with two deliberate differences, and both
+// are properties of the placeholder rather than preferences:
+//
+//  1. The ADR 0024 opt-out APPLIES. An owner who set
+//     `hide_from_anonymous` is not disclosed to an anonymous caller at
+//     all, exactly as in [LookupAuthors] — and, as there, WITHHOLDING IS
+//     AN ABSENCE ("") rather than a "[hidden]" sentinel or an
+//     "Anonymous" label, so nothing on the wire can be mistaken for a
+//     present identity. Before #1023 the placeholder resolved the name
+//     in hand-written SQL that never consulted the column, so an owner
+//     who had opted out had their USERNAME rendered to an anonymous
+//     caller on any public post or collection carrying one of their
+//     restricted assets.
+//
+//  2. Rung 4 does NOT apply. `user {ref}` would put the owner's REF on
+//     a payload that deliberately omits `owner_user_ref` — see
+//     assets.withheldAsset, where the ref is called out as "a second way
+//     to ask". A row with no resolvable name yields "", which every
+//     placeholder builder renders as an ABSENT key, which is also what a
+//     withheld name yields: a client cannot tell the opt-out from an
+//     ownerless asset, and there is nothing to read off the difference.
+//
+// [visibility.OwnerDisplayNameSQL] is the SQL transcription of THIS
+// function — the placeholder is resolved in the same pass that reads the
+// asset row, so no page pays a round trip per restricted item — and
+// TestOwnerDisplayNameSQL_MatchesGo holds the two together.
+func PlaceholderOwnerName(
+	profileDisplayName string,
+	fullname *string,
+	username *string,
+	hideFromAnonymous bool,
+	anonymous bool,
+) string {
+	if anonymous && hideFromAnonymous {
+		return ""
+	}
+	return displayNameRungs(profileDisplayName, fullname, username, anonymous)
 }
 
 // LookupAuthors resolves a SET of user refs into the renderable author

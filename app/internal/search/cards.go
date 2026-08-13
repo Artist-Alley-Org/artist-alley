@@ -262,7 +262,7 @@ func (e *Engine) loadPostCovers(ctx context.Context, q Query, ids []uuid.UUID) (
 	mut := mutCapsOf(q)
 	rows, err := e.Pool.Query(ctx, `
 		SELECT assets.id, assets.thumbhash,
-		       `+visibility.FieldsColumnsSQL("assets", "$2")+`,
+		       `+visibility.FieldsColumnsSQL("assets", "$2", caller)+`,
 		       `+assetCardColumnsSQL("assets", "$3")+`
 		  FROM assets
 		 WHERE assets.id = ANY($1::UUID[])

@@ -260,18 +260,43 @@ func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	if h.Service == nil || h.Service.Vector() == nil {
 		return errors.New("search: vector fetcher not wired")
 	}
-	// Visibility gate: the target asset itself must be visible
-	// to the caller. Otherwise a restricted asset's ID would leak
-	// its neighbourhood to callers who can't see the source.
-	pred, err := visibility.Filter(r.Context(), visibility.EntityAsset, visibility.NewCaller(query.CallerUserRef))
+	// Visibility gate: the target asset itself must be READABLE to the
+	// caller. Otherwise a restricted asset's ID would leak its
+	// neighbourhood to callers who can't see the source.
+	//
+	// #1066 — that was the stated intent from the start, and until now
+	// the check could not deliver it: it composed the ROW predicate,
+	// which for an ANY authenticated caller is soft-delete and nothing
+	// more, so a signed-in stranger could anchor on a restricted asset
+	// and get precisely the neighbourhood this comment says it prevents.
+	// visibility.ContentReadableSQL is the missing conjunct, and it is
+	// the right plane because the anchor's embedding IS the anchor's
+	// picture, in derived form — using it as a query is reading it.
+	//
+	// The failure is deliberately vector.ErrNotEmbedded, i.e. the same
+	// 404 an asset with no embedding produces: refusing distinguishably
+	// would turn this into an oracle for "that id exists and is
+	// restricted".
+	caller := visibility.NewCaller(query.CallerUserRef)
+	pred, err := visibility.Filter(r.Context(), visibility.EntityAsset, caller)
 	if err != nil {
 		return err
 	}
-	frag, args := pred.ToSQL("", 1)
+	// $1 is the asset id; $2 is the caller ref and is bound only when
+	// the readability fragment names it (pgx rejects an unreferenced
+	// bound arg, and the fragment folds to empty for a system.admin /
+	// content.read.all caller).
+	args := []any{assetID}
+	readFrag := visibility.ContentReadableSQL("", "$2", query.Caps)
+	if readFrag != "" {
+		args = append(args, caller.UserRef)
+	}
+	frag, predArgs := pred.ToSQL("", len(args))
+	args = append(args, predArgs...)
 	var visible bool
 	if err := h.Service.Pool().QueryRow(r.Context(), `
-		SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1`+frag+`)
-	`, append([]any{assetID}, args...)...).Scan(&visible); err != nil {
+		SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1`+readFrag+frag+`)
+	`, args...).Scan(&visible); err != nil {
 		return err
 	}
 	if !visible {

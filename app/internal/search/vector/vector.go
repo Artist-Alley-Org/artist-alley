@@ -147,10 +147,49 @@ func EncodeFloat32Slice(vec []float32) string {
 // different models embed into incompatible spaces and cross-model
 // similarity is meaningless.
 //
+// # Two gates, not one (#1066)
+//
+// The ROW predicate decides which assets are LISTED, and for an
+// authenticated caller it is soft-delete and nothing more — ADR 0064
+// keeps a restricted asset listed as a placeholder. That is right for a
+// list and wrong for a RANKING, so this query also composes
+// [visibility.ContentReadableSQL], the picture/binary plane:
+//
+// an embedding is a DERIVED COPY of the asset's image. ADR 0064 puts the
+// thumbhash on the binary side because "a thumbhash IS a blur" — a
+// low-fidelity copy of the picture, so handing it to someone refused the
+// original hands them the original at lower resolution. A 768-dimension
+// embedding is lossier still, but the SIMILARITY SCORE reads it out a
+// little at a time: rank a candidate image against the catalogue, watch
+// a restricted asset come back at 0.94, and you have learned what an
+// asset you may not open looks like without ever being shown it. The
+// withheld value has derived copies and every copy has to be withheld —
+// `search_text` (#902), the facet buckets, the thumbhash (ADR 0064), and
+// this.
+//
+// It is the CONTENT plane deliberately, not the field plane #902 chose
+// for the text channel: a title is a field, an embedding derives from
+// the image. The difference is visible for a team-scoped `assets.admin`
+// holder, who is owed the FIELDS of the assets they administer and is
+// never owed the binary plane — so they keep matching a restricted
+// asset's title and stop matching its picture.
+//
+// The row predicate is still applied on top: it is the narrower answer
+// for an anonymous caller (status, processing_status), and dropping it
+// would widen this query for everyone who is not signed in.
+//
 // Cursor pagination is NOT implemented here — the search Engine's
 // hybrid path merges vector hits with BM25 hits in memory and
 // emits a unified cursor. This function is the raw kNN primitive.
-func Query(ctx context.Context, pool *pgxpool.Pool, anchor Anchor, caller visibility.Caller, threshold float64, limit int) ([]Hit, error) {
+func Query(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	anchor Anchor,
+	caller visibility.Caller,
+	caps visibility.ContentCaps,
+	threshold float64,
+	limit int,
+) ([]Hit, error) {
 	if anchor.Raw == "" {
 		return nil, ErrEmptyAnchor
 	}
@@ -171,7 +210,22 @@ func Query(ctx context.Context, pool *pgxpool.Pool, anchor Anchor, caller visibi
 	if err != nil {
 		return nil, err
 	}
-	visFrag, visArgs := pred.ToSQL("a", 6)
+
+	args := []any{anchor.Raw, anchor.Provider, anchor.Model, anchor.Modality, threshold, limit}
+	// $7 is the caller's ref, and it is BOUND ONLY WHEN THE FRAGMENT
+	// NAMES IT. ContentReadableSQL folds to an empty string for a
+	// system.admin / content.read.all caller — they resolved the answer
+	// already, and a missing conjunct lets Postgres plan as though the
+	// gate were not there — and pgx rejects a statement bound with more
+	// args than it names. So the predicate's own offset moves with it
+	// rather than a tautology being spliced in to keep $7 referenced.
+	readFrag := visibility.ContentReadableSQL("a", "$7", caps)
+	argOffset := len(args)
+	if readFrag != "" {
+		args = append(args, caller.UserRef)
+		argOffset = len(args)
+	}
+	visFrag, visArgs := pred.ToSQL("a", argOffset)
 
 	sql := `
 		SELECT ae.asset_id,
@@ -181,11 +235,10 @@ func Query(ctx context.Context, pool *pgxpool.Pool, anchor Anchor, caller visibi
 		 WHERE ae.provider = $2
 		   AND ae.model    = $3
 		   AND ae.modality = $4
-		   AND 1 - (ae.embedding <=> $1::vector) >= $5` + visFrag + `
+		   AND 1 - (ae.embedding <=> $1::vector) >= $5` + readFrag + visFrag + `
 		 ORDER BY ae.embedding <=> $1::vector ASC
 		 LIMIT $6
 	`
-	args := []any{anchor.Raw, anchor.Provider, anchor.Model, anchor.Modality, threshold, limit}
 	args = append(args, visArgs...)
 
 	rows, err := pool.Query(ctx, sql, args...)

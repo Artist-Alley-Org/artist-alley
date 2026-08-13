@@ -84,10 +84,13 @@ type ListCollectionResourcesPageGatedRow struct {
 	// serialises such a row as a placeholder: no asset column at all,
 	// only the collection_resources columns plus OwnerDisplayName.
 	Restricted bool
-	// OwnerDisplayName is the asset owner's display name, the ONE
-	// asset-derived value a placeholder is permitted to carry. Empty when
-	// the asset is unowned or the owner has no resolvable name — the
-	// handler then omits the field rather than sending "".
+	// OwnerDisplayName is the asset owner's display name per
+	// visibility.OwnerDisplayNameSQL, the ONE asset-derived value a
+	// placeholder is permitted to carry. Empty when the asset is
+	// unowned, when the owner has no resolvable name, and when the owner
+	// opted out of anonymous exposure and this caller is anonymous
+	// (#1023) — the handler then omits the field rather than sending "",
+	// so those three cases are one answer on the wire.
 	OwnerDisplayName string
 }
 
@@ -115,18 +118,25 @@ func ListCollectionResourcesPageGated(
 	// row (visibility.FieldsReadable) from a.sensitivity + a.status +
 	// a.processing_status + a.owner + membership + caps.
 	//
-	// The owner's display name is resolved in this pass too, from the
-	// same LEFT JOINs the users package uses (users/queries.sql). It is
-	// the one asset-derived value a placeholder carries, so fetching it
+	// The owner's display name is resolved in this pass too. It is the
+	// one asset-derived value a placeholder carries, so fetching it
 	// per-restricted-row afterwards would be an N+1 on exactly the path
 	// that needs it most.
+	//
+	// #1023 — it comes from visibility.OwnerDisplayNameSQL rather than
+	// from LEFT JOINs written here. What used to sit here was
+	// `COALESCE(NULLIF(up.display_name,''), u.username, '')` — the same
+	// text as posts' preview enrich, and with the same defect: it never
+	// consulted `hide_from_anonymous`, so a public collection holding a
+	// restricted asset disclosed the username of an owner who had taken
+	// ADR 0024's opt-out to an anonymous caller.
 	sql := `SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
        a.title, a.asset_type, a.status, a.file_hash,
        a.file_extension, a.thumbhash,
        a.created_at AS asset_created_at,
        a.sensitivity, a.processing_status, a.owner_user_ref,
-       COALESCE(NULLIF(up.display_name, ''), u.username, '') AS owner_display_name,
+       ` + visibility.OwnerDisplayNameSQL("a.owner_user_ref", caller.IsAnonymous) + ` AS owner_display_name,
        ` + pixeldims.SelectColumnsSQL("a.id") + `,
        (a.file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
@@ -141,8 +151,6 @@ func ListCollectionResourcesPageGated(
        a.team_id
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
-LEFT JOIN "user" u          ON u.ref = a.owner_user_ref
-LEFT JOIN user_profiles up  ON up.user_ref = a.owner_user_ref
 WHERE cr.collection_id = $1
   AND cr.pinned = TRUE
   AND a.deleted_at IS NULL

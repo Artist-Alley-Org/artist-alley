@@ -278,7 +278,15 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 		Model:    q.SimilarityHintModel,
 		Modality: q.SimilarityHintModality,
 	}
-	vecHits, err := vector.Query(ctx, e.Pool, anchor, visibility.NewCaller(q.CallerUserRef), threshold, limit*VectorOverfetchMultiplier)
+	// #1066 — q.Caps, not just the ref. The kNN is gated at the CONTENT
+	// plane as well as the row plane, so a content.read.all holder still
+	// gets a ranked catalogue and a stranger stops ranking assets whose
+	// picture they may not read. Caps travel on the Query for the same
+	// reason the other two capability sets do: the result cache keys on
+	// the Query value alone, and a capability the key cannot see is a
+	// stale unredacted page after a revoke (cache.go).
+	vecHits, err := vector.Query(ctx, e.Pool, anchor,
+		visibility.NewCaller(q.CallerUserRef), q.Caps, threshold, limit*VectorOverfetchMultiplier)
 	if err != nil {
 		return err
 	}
@@ -394,7 +402,7 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) ([]Hi
 	rows, err := e.Pool.Query(ctx, `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
-		       `+visibility.FieldsColumnsSQL("assets", "$2")+`,
+		       `+visibility.FieldsColumnsSQL("assets", "$2", caller)+`,
 		       `+assetCardColumnsSQL("assets", "$3")+`
 		  FROM assets
 		 WHERE id = ANY($1::UUID[])
@@ -610,7 +618,7 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score,
-		       ` + visibility.FieldsColumnsSQL("assets", "$3") + `,
+		       ` + visibility.FieldsColumnsSQL("assets", "$3", caller) + `,
 		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
 		 WHERE ` + matchFrag + visFrag + selFrag + `
