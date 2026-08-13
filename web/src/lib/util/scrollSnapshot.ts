@@ -181,9 +181,19 @@ export interface ScrollSnapshot {
  * — SvelteKit doesn't promise an order — so a route that fetches on
  * mount must be idempotent about it. See the browse feed's
  * `loadedKey` guard for the pattern.
+ *
+ * A `restore` that returns `false` is REFUSING the payload — it looked
+ * at what was captured and decided it does not describe this history
+ * entry (/search checks the captured results against the address it is
+ * going back to, #1060). The scroll offset is then skipped too, and
+ * deliberately: an offset is only meaningful beside the list it was
+ * measured against, so re-applying it over whatever the route fetches
+ * instead is the "middle of a shorter list" landing this exists to
+ * prevent. Returning nothing means "restored", which is what every
+ * caller that has no opinion does by default.
  */
 export function createScrollSnapshot<T = undefined>(
-  opts: { capture?: () => T; restore?: (data: T) => void } = {},
+  opts: { capture?: () => T; restore?: (data: T) => boolean | void } = {},
 ): ScrollSnapshot {
   return {
     capture(): StoredSnapshot {
@@ -194,7 +204,7 @@ export function createScrollSnapshot<T = undefined>(
     restore(value: StoredSnapshot): void {
       if (!value) return;
       if (opts.restore && value.token !== undefined && store.has(value.token)) {
-        opts.restore(store.get(value.token) as T);
+        if (opts.restore(store.get(value.token) as T) === false) return;
       }
       applyScroll(value.y ?? 0);
     },

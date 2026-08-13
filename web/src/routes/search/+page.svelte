@@ -51,7 +51,7 @@
 
   import { onMount, untrack } from 'svelte';
   import { site } from '$stores/site.svelte';
-  import { page } from '$app/state';
+  import { page, navigating } from '$app/state';
   import { goto } from '$app/navigation';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
@@ -252,9 +252,31 @@
 
   /** Bumped by every runSearch and by snapshot restoration, so a
    *  result set that has been superseded can't land on top of a newer
-   *  one. Restoring a back-navigation is exactly that race: the mount
-   *  fetch and `snapshot.restore` have no defined order. */
+   *  one.
+   *
+   *  The ordering this used to arbitrate — mount fetch versus
+   *  `snapshot.restore` — is decided rather than raced now: a
+   *  back/forward adoption defers its fetch until the navigation has
+   *  finished, which is after SvelteKit has run the restore (see the URL
+   *  watcher below). What is left is the genuine race: hitting Back
+   *  while a search started BEFORE the navigation is still in flight.
+   *  That response must not land on top of what was just restored. */
   let searchGen = 0;
+
+  /** The parameters the result set ON SCREEN was fetched with.
+   *
+   *  Deliberately not the live `q` / `kinds` / `filters`, which run
+   *  AHEAD of the results: a kind chip flips `kinds` the instant it is
+   *  clicked, and the page's own search box writes `q` on every
+   *  keystroke. The snapshot captured for a history entry has to
+   *  describe one coherent result set — the entry's own — and this is
+   *  the only record of which one that is (#1060). */
+  let resultParams: { q: string; dsl: boolean; kinds: HitType[]; filters: string[] } = {
+    q: '',
+    dsl: false,
+    kinds: [],
+    filters: [],
+  };
 
   async function runSearch(query: string, opts: { append?: boolean } = {}) {
     const gen = ++searchGen;
@@ -265,6 +287,7 @@
       cursor = '';
       error = '';
       facets = {};
+      resultParams = { q: '', dsl: dslMode, kinds: [...kinds], filters: [...filters] };
       return;
     }
     if (opts.append) {
@@ -302,6 +325,10 @@
       totalCount = data.total_count;
       totalCountCapped = data.total_count_capped;
       hits = opts.append ? [...hits, ...data.hits] : data.hits;
+      // Recorded beside the hits it describes, never before them: an
+      // aborted or superseded fetch (both return above) must leave the
+      // previous result set and its parameters matching each other.
+      resultParams = { q: query, dsl: dslMode, kinds: [...kinds], filters: [...filters] };
       if (facetsResp && facetsResp.ok) {
         const fd = (await facetsResp.json()) as FacetsResponse;
         facets = fd.facets ?? {};
@@ -320,12 +347,27 @@
     e.preventDefault();
     dslMode = false;
     pushQueryToURL(q, false);
-    void runSearch(q);
   }
 
   /** Mirror the current query into the URL so a result page is a
    *  shareable, back-navigable address — including the kind filter,
-   *  which is part of "what am I looking at". */
+   *  which is part of "what am I looking at".
+   *
+   *  This is ALL a control does. It writes the address and stops; the
+   *  URL watcher below adopts it and runs the one search, the same way
+   *  it does for a query typed into the global nav box.
+   *
+   *  It used to also mark the address as adopted and fire the fetch
+   *  itself, which put the new result set on screen BEFORE the
+   *  navigation committed — and SvelteKit captures the snapshot for the
+   *  entry you are LEAVING part-way through that navigation. The entry
+   *  for the old address ended up holding the new address's results, so
+   *  going Back restored them (#1060). Nothing here may touch the result
+   *  set until the address it belongs to exists.
+   *
+   *  Consequence worth knowing: submitting a query identical to the one
+   *  in the address is now a no-op rather than a refetch. The address
+   *  did not change, so neither did what it describes. */
   function pushQueryToURL(query: string, dsl: boolean) {
     const url = new URL(page.url);
     url.searchParams.delete('q');
@@ -338,19 +380,19 @@
     url.searchParams.delete('filter');
     for (const f of filters) url.searchParams.append('filter', f);
     url.searchParams.delete('advanced');
-    // This page's own controls have already applied what they are about
-    // to write, so mark the address as adopted before the navigation
-    // lands. Without it the URL watcher below would see its own write
-    // as an external change and re-run the search a second time.
-    appliedSignature = querySignature(url);
     void goto(url.pathname + url.search, { replaceState: false, noScroll: true });
   }
+
+  // The chips and buckets below still set their own state before
+  // navigating, so the control the user just clicked responds
+  // immediately rather than a navigation later. That is presentation
+  // only — the URL watcher sets the same values back a moment later, and
+  // the RESULTS are left alone until it does.
 
   function toggleKind(kind: HitType) {
     kinds = kinds.includes(kind) ? kinds.filter((k) => k !== kind) : [...kinds, kind];
     if (!q) return;
     pushQueryToURL(q, dslMode);
-    void runSearch(q);
   }
 
   function clearKinds() {
@@ -358,7 +400,6 @@
     kinds = [];
     if (!q) return;
     pushQueryToURL(q, dslMode);
-    void runSearch(q);
   }
 
   /** Tick or untick one bucket. Re-queries immediately rather than
@@ -373,7 +414,6 @@
       : [...filters, token];
     if (!q) return;
     pushQueryToURL(q, dslMode);
-    void runSearch(q);
   }
 
   function clearFilters() {
@@ -381,7 +421,6 @@
     filters = [];
     if (!q) return;
     pushQueryToURL(q, dslMode);
-    void runSearch(q);
   }
 
   function runAdvanced(dsl: string) {
@@ -389,7 +428,6 @@
     dslMode = true;
     q = dsl;
     pushQueryToURL(dsl, true);
-    void runSearch(dsl);
   }
 
   onMount(() => {
@@ -417,22 +455,46 @@
   // So the adoption is an effect over the URL, and onMount keeps only
   // what is genuinely once-per-mount.
 
+  /** One string for one result set, from its four parameters. Filters
+   *  are sorted, so the same selection arriving in a different order is
+   *  recognised as the same page rather than as a change worth
+   *  re-querying.
+   *
+   *  Two things produce one of these — an address and a fetched result
+   *  set — and comparing the two is how this page decides both what to
+   *  query and what a snapshot is worth. */
+  function signature(dsl: string, q: string, types: string, filters: string[]): string {
+    return JSON.stringify([dsl, q, types, [...filters].sort()]);
+  }
+
   /** The parameters this page's RESULT SET is a function of: the query
    *  itself, the kind chips, and the facet filter tokens (#907).
    *
    *  `post` (the card overlay) and `advanced` (a panel) are deliberately
    *  NOT in it — opening a post over the grid must not re-run the search
-   *  underneath it. Filters are sorted, so the same selection arriving
-   *  in a different order is recognised as the same page rather than as
-   *  a change worth re-querying. */
+   *  underneath it. */
   function querySignature(url: URL): string {
     const p = url.searchParams;
-    return JSON.stringify([
+    return signature(
       p.get('dsl') ?? '',
       p.get('q') ?? '',
       p.get('types') ?? '',
-      [...p.getAll('filter')].sort(),
-    ]);
+      p.getAll('filter'),
+    );
+  }
+
+  /** The same signature, computed from a fetched result set's own
+   *  parameters instead of from an address (#1060).
+   *
+   *  This is what makes a snapshot checkable. A captured payload carries
+   *  the signature of the results INSIDE it, so restoring can ask the
+   *  only question that matters — "are these the results for the address
+   *  I am going back to?" — instead of inferring it from the order the
+   *  restore and the URL watcher happened to run in. Mismatched payloads
+   *  exist: a captured entry is only as good as what was on screen at
+   *  the moment the navigation away from it committed. */
+  function paramSignature(p: typeof resultParams): string {
+    return signature(p.dsl ? p.q : '', p.dsl ? '' : p.q, p.kinds.join(','), p.filters);
   }
 
   /** The address this page has already applied. Plain `let`, not
@@ -449,12 +511,10 @@
    *  themselves type. The rule is the same on a reload, so the address
    *  still reproduces one result set.
    *
-   *  `first` is the mount adoption, and it yields to a snapshot restore
-   *  that got here ahead of it: results are paged behind a manual "load
-   *  more", so re-querying would throw away the pages back-navigation
-   *  just put back. A LATER adoption is a real URL change and must
-   *  query — that is the whole point of this. */
-  function adoptURL(url: URL, first: boolean) {
+   *  Mirrors ONLY. Whether the address it just mirrored also needs a
+   *  fetch is the watcher's call below, because that answer depends on
+   *  how the address arrived. */
+  function adoptURL(url: URL) {
     const urlDSL = url.searchParams.get('dsl');
     const urlQ = url.searchParams.get('q');
     const urlTypes = url.searchParams.get('types');
@@ -470,19 +530,54 @@
       dslMode = false;
       q = urlQ ?? '';
     }
-    if (first && hits.length > 0) return;
-    void runSearch(q);
   }
+
+  /** Set when an adoption has mirrored an address but is holding its
+   *  fetch back, waiting to see whether a snapshot restore hands it the
+   *  results instead. Plain `let`, like `appliedSignature` and for the
+   *  same reason. */
+  let pendingQuery = false;
 
   $effect(() => {
     const sig = querySignature(page.url);
     if (sig === appliedSignature) return;
-    const first = appliedSignature === null;
     appliedSignature = sig;
     // untrack: adoptURL writes — and runSearch reads — half the state on
     // this page, and effect dependency collection is call-frame deep.
-    // The URL is the only thing this effect watches.
-    untrack(() => adoptURL(page.url, first));
+    // The URL is the only thing this effect watches, `navigating`
+    // included: it is read for what KIND of navigation this is, not to
+    // be woken by it.
+    untrack(() => {
+      // Back or forward, and only then, SvelteKit may still restore a
+      // snapshot for this entry — it does that at the END of the
+      // navigation, after page state has updated and after this effect
+      // has run. Results are paged behind a manual "load more", so a
+      // fetch fired here would be a fetch whose only achievement is
+      // throwing away pages the restore is about to put back (#584).
+      //
+      // So hold it, and let one of two things release it: a restore that
+      // matches this address (which cancels it), or the navigation
+      // finishing without one (which runs it). Both are observed. The
+      // previous rule — "the first adoption yields, a later one queries"
+      // — could not tell a genuine URL change from a back-navigation,
+      // because after #1053 both are later adoptions (#1060).
+      const restorable = navigating.type === 'popstate';
+      adoptURL(page.url);
+      if (restorable) pendingQuery = true;
+      else void runSearch(q);
+    });
+  });
+
+  // The release. `navigating` clears once the navigation is complete,
+  // which SvelteKit does immediately after running snapshot restores —
+  // so by the time this runs, a restore either happened or never will.
+  $effect(() => {
+    if (navigating.type !== null) return;
+    untrack(() => {
+      if (!pendingQuery) return;
+      pendingQuery = false;
+      void runSearch(q);
+    });
   });
 
   // Back-navigation restoration (#584). Results are paged behind a
@@ -490,6 +585,9 @@
   // hits it was measured against — restoring one without the other
   // would land the user in the middle of a shorter list.
   interface SearchSnapshot {
+    /** Signature of the query these hits answer — the check that decides
+     *  whether this payload belongs to the address being restored. */
+    sig: string;
     q: string;
     dsl: boolean;
     kinds: HitType[];
@@ -501,11 +599,15 @@
     facets: Record<string, FacetResult>;
   }
   export const snapshot = createScrollSnapshot<SearchSnapshot>({
+    // Captured from `resultParams`, not from the live controls: this is
+    // one result set and the parameters it answers, never a mixture of
+    // an old result set and the controls that are about to replace it.
     capture: () => ({
-      q,
-      dsl: dslMode,
-      kinds,
-      filters,
+      sig: paramSignature(resultParams),
+      q: resultParams.q,
+      dsl: resultParams.dsl,
+      kinds: [...resultParams.kinds],
+      filters: [...resultParams.filters],
       hits,
       cursor,
       totalCount,
@@ -513,14 +615,24 @@
       facets,
     }),
     restore: (saved) => {
-      if (!saved || saved.hits.length === 0) return;
+      if (!saved || saved.hits.length === 0) return false;
+      // The one question: are these the results for the address being
+      // restored? A payload is captured while the navigation AWAY from
+      // its entry is in flight, so a page whose results moved on before
+      // that moment leaves one behind that describes the wrong query. It
+      // is refused rather than shown, and the adoption's held-back fetch
+      // is left to run — which is why refusing also declines the scroll
+      // offset: the offset was measured against hits that are not coming
+      // back, and the list about to arrive is a first page (#1060).
+      if (saved.sig !== querySignature(page.url)) return false;
+      // A search that was already in flight when Back was pressed must
+      // not land on top of this.
       searchGen++;
-      // Local state now matches the address being restored, so the URL
-      // watcher must not treat it as a change and re-query. Set even
-      // though the watcher may already have run (their order is
-      // undefined, which is what searchGen above is for): whichever
-      // lands last, the page ends up describing this address once.
+      // Both halves of the adoption are now satisfied: the page state
+      // matches this address, so the watcher must not re-run it, and the
+      // fetch it was holding back is no longer needed.
       appliedSignature = querySignature(page.url);
+      pendingQuery = false;
       q = saved.q;
       dslMode = saved.dsl;
       kinds = saved.kinds ?? [];
@@ -530,8 +642,15 @@
       totalCount = saved.totalCount;
       totalCountCapped = saved.totalCountCapped;
       facets = saved.facets;
+      resultParams = {
+        q: saved.q,
+        dsl: saved.dsl,
+        kinds: [...(saved.kinds ?? [])],
+        filters: [...(saved.filters ?? [])],
+      };
       loading = false;
       loadingMore = false;
+      return true;
     },
   });
 

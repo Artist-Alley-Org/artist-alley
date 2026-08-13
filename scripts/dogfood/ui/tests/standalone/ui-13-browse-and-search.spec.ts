@@ -156,6 +156,78 @@ test.describe('UI-13 browse + search', () => {
     return terms as [string, string];
   }
 
+  /** Scroll the result list down past the navbar's auto-hide threshold
+   *  and then back up until the navbar is on screen again. Returns the
+   *  offset the page ends at, which is what the caller asserts against.
+   *
+   *  Down THEN up, and not because a user would: past 96px of downward
+   *  scroll the navbar auto-hides (`chromeScroll`), which translates the
+   *  search box off the top of the viewport. Playwright then reports
+   *  `element is outside of the viewport` and retries the click until the
+   *  test times out — the #1061 failure, which cost three full 30s
+   *  attempts per run and mailed the owner every time it landed on dev.
+   *
+   *  Why the whole dance runs inside ONE `evaluate`, and why each jump
+   *  waits for its own `scroll` event:
+   *
+   *    - Scroll events are COALESCED per frame. Two `scrollTo` calls
+   *      issued from two CDP round-trips normally straddle a frame
+   *      boundary and arrive as two events (down, then up — the chrome
+   *      hides, then returns). When the renderer is busy — a grid still
+   *      decoding a page of tiles, or a loaded CI runner — both land in
+   *      one frame and arrive as ONE event carrying only the final
+   *      offset. `120` with no `260` before it reads as a single
+   *      downward scroll, so the chrome hides and never comes back.
+   *      That is load-dependent, which is exactly why it presented as a
+   *      flake. Measured here: 2 failures in 5 cold runs, unthrottled.
+   *
+   *    - The up-jump is RELATIVE to where the page actually landed, so a
+   *      result set too short to reach 260px does not turn the second
+   *      jump into a no-op (no movement, no event, chrome stays hidden).
+   *
+   *    - The "is it back?" test reads the chrome layer's own hidden
+   *      class — `chromeScroll.hidden`, rendered — and not the box's
+   *      rectangle. The rectangle is the wrong signal twice over: it is
+   *      unchanged until the pending scroll event is dispatched, and it
+   *      is mid-flight for the 200ms of the transition. Both read as
+   *      "already fine" and both were tried before this.
+   *
+   *  Waits on observed events and rendered state throughout; no sleeps,
+   *  and no `force: true` — a forced click would land somewhere a user
+   *  could not reach, which is the class of bug this suite exists for. */
+  async function scrollResultsAndKeepChrome(page: import('@playwright/test').Page) {
+    return page.locator('main').evaluate(async (el) => {
+      const raf = () => new Promise((r) => requestAnimationFrame(r));
+      const layer = document.querySelector('[data-testid="chrome-layer"]')!;
+      const hidden = () => layer.classList.contains('chrome-hidden-top');
+      // Resolves once the app's own scroll listener has seen this jump.
+      // Listeners fire in registration order and the store attached
+      // first, so its handler has already run by the time this resolves;
+      // the extra frame lets the class it sets reach the DOM. A jump the
+      // scroller cannot make fires no event at all, so the reachable
+      // target is computed rather than waited for.
+      const jump = (to: number) =>
+        new Promise<void>((resolve) => {
+          const max = Math.max(0, el.scrollHeight - el.clientHeight);
+          const target = Math.min(Math.max(0, to), max);
+          if (el.scrollTop === target) return resolve();
+          el.addEventListener('scroll', () => resolve(), { once: true });
+          el.scrollTo(0, target);
+        });
+
+      await jump(260);
+      await raf();
+      // Nudge back up until the chrome is back. One nudge is enough
+      // whenever the down-jump was seen on its own; the loop is what
+      // makes a coalesced pair recoverable instead of terminal.
+      for (let i = 0; i < 30 && hidden(); i++) {
+        await jump(el.scrollTop - 20);
+        await raf();
+      }
+      return el.scrollTop;
+    });
+  }
+
   test('nav search refines /search IN PLACE and never bounces to browse', async ({ page }) => {
     // Short viewport so the result grid overflows and the scroll
     // assertion below has something to measure. Even a single-hit page
@@ -172,18 +244,9 @@ test.describe('UI-13 browse + search', () => {
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
 
     // Scroll the results, so "the fix keeps your place" is measured and
-    // not assumed. <main> is the scroller (the chrome-hide store owns
-    // its listener), not the window.
-    //
-    // Down THEN up, and not because a user would: past 96px of downward
-    // scroll the navbar auto-hides (chromeScroll), so a single jump
-    // leaves the search box translated off-screen and unclickable. An
-    // upward scroll brings the chrome back while leaving the page
-    // scrolled — which is also exactly the state someone is in when
-    // they reach for the search box after reading a page of results.
-    await page.locator('main').evaluate((el) => el.scrollTo(0, 260));
-    await page.locator('main').evaluate((el) => el.scrollTo(0, 120));
-    const before = await page.locator('main').evaluate((el) => el.scrollTop);
+    // not assumed, and leave the page in the state a real reader is in
+    // when they reach for the search box: scrolled down, chrome back.
+    const before = await scrollResultsAndKeepChrome(page);
     expect(before, 'the results did not scroll, so this test would prove nothing').toBeGreaterThan(
       0,
     );
@@ -254,9 +317,9 @@ test.describe('UI-13 browse + search', () => {
   //   - opening a post over the grid changes the URL (`?post=`) and must
   //     re-query NOTHING — the results underneath the overlay are the
   //     page you came back to;
-  //   - a kind chip must re-query exactly ONCE. It applies its change
-  //     and then navigates, so an adopter that treated the page's own
-  //     write as an external one would fetch the same results twice.
+  //   - a kind chip must re-query exactly ONCE. It writes the address
+  //     and the adoption fetches; a chip that also fetched for itself
+  //     would fetch the same results twice.
   test('the URL watcher does not re-query for a modal, and only once for a chip', async ({
     page,
   }) => {
@@ -289,6 +352,184 @@ test.describe('UI-13 browse + search', () => {
       searches.length - afterLoad,
       `a kind chip fired ${searches.length - afterLoad} searches, want exactly 1`,
     ).toBe(1);
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // #1060 — after Back, the address and the results must agree
+  // ─────────────────────────────────────────────────────────────────
+  //
+  // They did not. The address went back, the page re-queried it
+  // correctly, and then a snapshot captured mid-navigation put the NEWER
+  // results back on screen underneath the older address — because
+  // SvelteKit captures the entry you are leaving part-way through the
+  // navigation away from it, and this page had already replaced its
+  // results by then.
+
+  /** The hrefs the grid is showing, in order — an identity for the
+   *  result set on screen.
+   *
+   *  Neither "there are tiles" nor the count line can stand in for this.
+   *  Two different queries routinely return the same NUMBER of hits (on
+   *  this seed the two terms below return three each), and every result
+   *  set fills the same grid, so both weaker checks pass while the wrong
+   *  results are displayed — which is the bug. */
+  async function resultFingerprint(page: import('@playwright/test').Page) {
+    return page.evaluate(() =>
+      [
+        ...document.querySelectorAll(
+          'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
+        ),
+      ]
+        .map((a) => a.getAttribute('href'))
+        .join(' '),
+    );
+  }
+
+  test('Back and Forward render the address, not the newer results', async ({ page }) => {
+    const searches: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/api/v1/search?')) searches.push(r.url());
+    });
+
+    await page.goto('/');
+    const [first, second] = await seededTerms(page);
+    const input = page.locator(tid('search-input'));
+    const tiles = page.locator(
+      'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
+    );
+
+    await page.goto(`/search?q=${encodeURIComponent(first)}`);
+    await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
+    const firstResults = await resultFingerprint(page);
+
+    const nav = page.locator(tid('nav-search'));
+    await nav.fill(second);
+    await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${second}`, 'i'));
+    await expect(input).toHaveValue(second);
+    await expect.poll(() => resultFingerprint(page)).not.toBe(firstResults);
+    const secondResults = await resultFingerprint(page);
+    const afterRefine = searches.length;
+
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${first}`, 'i'));
+    // The results and the box both describe the address.
+    await expect.poll(() => resultFingerprint(page)).toBe(firstResults);
+    await expect(input).toHaveValue(first);
+    // …and it is the snapshot that put them there. A fix that simply
+    // re-queried everything would satisfy the three assertions above and
+    // silently undo #584, which is why this counts requests instead of
+    // trusting the screen.
+    expect(searches.length, 'going Back re-queried a result set it already had').toBe(afterRefine);
+
+    await page.goForward();
+    await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${second}`, 'i'));
+    await expect.poll(() => resultFingerprint(page)).toBe(secondResults);
+    await expect(input).toHaveValue(second);
+    expect(searches.length, 'going Forward re-queried a result set it already had').toBe(
+      afterRefine,
+    );
+  });
+
+  // The same failure through a chip rather than through the query text,
+  // because the two arrive by different routes: the chip is this page's
+  // own control, so it is the one that used to leave its new result set
+  // in the OLD entry's snapshot.
+  test('Back out of a kind chip restores the unscoped result set', async ({ page }) => {
+    await page.goto('/');
+    const [term] = await seededTerms(page);
+    const tiles = page.locator(
+      'main a[href^="/assets/"], main a[href^="/posts/"], main a[href^="/collections/"]',
+    );
+
+    await page.goto(`/search?q=${encodeURIComponent(term)}`);
+    await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
+    const unscoped = await resultFingerprint(page);
+
+    const chip = page.locator(tid('kind-chip-post'));
+    await chip.click();
+    await expect(page).toHaveURL(/types=post/);
+    await expect(chip).toHaveAttribute('aria-pressed', 'true');
+    // If the scoped set is identical to the unscoped one there is
+    // nothing here to get wrong, and asserting it would pass either way.
+    await expect
+      .poll(() => resultFingerprint(page), {
+        message: 'the kind chip changed nothing, so this test would prove nothing',
+      })
+      .not.toBe(unscoped);
+
+    await page.goBack();
+    await expect(page).not.toHaveURL(/types=post/);
+    await expect.poll(() => resultFingerprint(page)).toBe(unscoped);
+    await expect(chip).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  // #584, asserted on requests rather than on appearance. This is the
+  // navigation that unmounts the page — /assets/{id} is its own route —
+  // so coming back rebuilds the component, and the accumulated "load
+  // more" pages exist only in the snapshot. Re-querying would hand back
+  // a first page under a scroll offset measured against four.
+  test('Back from an asset restores the loaded pages without re-querying', async ({ page }) => {
+    const searches: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/api/v1/search?')) searches.push(r.url());
+    });
+
+    // Short viewport, for the same reason the refine test uses one: it
+    // makes the result page overflow whatever the seed happens to hold,
+    // so the offset half of this is measured rather than skipped.
+    await page.setViewportSize({ width: 1280, height: 400 });
+    await page.goto('/');
+    const [term] = await seededTerms(page);
+    // Scoped to assets, because /assets/{id} is a route that UNMOUNTS
+    // this page — the case #584 exists for, and the only one where the
+    // loaded pages live nowhere but the snapshot. A post card opens
+    // `?post=` OVER the grid and tears nothing down (covered above).
+    await page.goto(`/search?q=${encodeURIComponent(term)}&types=asset`);
+    const tiles = page.locator('main a[href^="/assets/"]');
+    await expect(tiles.first(), `the seeded term "${term}" matched no asset`).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // A second page if the seed has one; the test is about restoring
+    // whatever was loaded, so a single-page result set still exercises it.
+    const more = page.getByRole('button', { name: /load more/i });
+    if (await more.count()) {
+      await more.click();
+      await expect(more).toBeHidden({ timeout: 15_000 }).catch(() => {});
+    }
+    const loaded = await tiles.count();
+    const before = searches.length;
+
+    // Leave on a tile that is ALREADY fully on screen. Playwright scrolls
+    // a click target into view first, which would move the very offset
+    // being asserted — so the offset is whatever holds a whole tile.
+    const target = await page.locator('main').evaluate((el) => {
+      const links = [...document.querySelectorAll('main a[href^="/assets/"]')];
+      for (const y of [240, 160, 100, 40]) {
+        el.scrollTo(0, y);
+        if (el.scrollTop === 0) continue;
+        const seen = links.find((a) => {
+          const r = a.getBoundingClientRect();
+          return r.top >= 0 && r.bottom <= window.innerHeight;
+        });
+        if (seen) return { y: el.scrollTop, href: seen.getAttribute('href') };
+      }
+      return null;
+    });
+    expect(target, 'no scrolled position showed a whole tile, so nothing here is measured')
+      .not.toBeNull();
+    await page.locator(`main a[href="${target!.href}"]`).first().click();
+    await expect(page).toHaveURL(/\/assets\//);
+
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${term}`, 'i'));
+    await expect(tiles).toHaveCount(loaded);
+    await expect
+      .poll(async () => page.locator('main').evaluate((el) => el.scrollTop), { timeout: 10_000 })
+      .toBe(target!.y);
+    expect(searches.length, 'the restored page re-queried what the snapshot already held').toBe(
+      before,
+    );
   });
 
   // The other half of the same predicate, asserted so this fix cannot

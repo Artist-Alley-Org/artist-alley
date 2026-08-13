@@ -234,9 +234,15 @@
       two rows on a phone and one from md up, and the banners come and
       go. A constant would be wrong in at least three states.
     -->
+    <!-- data-testid, on a layer that renders nothing itself: the
+         auto-hide is a TRANSFORM, so a test that needs to know whether
+         the chrome is up or down has nothing else to read. The box's own
+         rectangle is not that signal — it lags the state by a pending
+         scroll event and again by the 200ms transition (#1061). -->
     <div
       class="chrome-slide absolute inset-x-0 top-0 z-30 transition-transform duration-200 ease-out"
       class:chrome-hidden-top={chromeHidden}
+      data-testid="chrome-layer"
       bind:clientHeight={chromeH}
     >
     <!-- Persistent impersonation banner — only renders when the
