@@ -272,6 +272,28 @@ Three things worth recording, because each is easy to get backwards:
   when #210 / Phase 1.28 tightens the row plane; until then, do not describe the placeholder as
   making a title unreachable.
 
+  ✅ *Amended 2026-08-13 (#902, PR #1063) — **the sentence above was written as a limitation and is
+  now, for the MATCH channel, closed.*** It said an authenticated non-owner *"can still read that
+  same title from `GET /assets/{id}` and from browse"*, and treated the placeholder as
+  anti-widening rather than secrecy. #902 was the sharper form of that limitation: the title was
+  recoverable **word by word** through search, because `search_text` still contained it and `@@`
+  still matched it — query a phrase only that title holds and the total moves 0→1, then walk the
+  rest of it token by token.
+
+  **Every full-text surface over `assets` now ANDs the field-plane rule onto the match**
+  (`visibility.AssetSearchMatchSQL`, composed by `/search` hits, the `/search` COUNT and browse's
+  `?q=`). A caller who fails `FieldsReadable` matches **none** of that asset's words.
+
+  ⭐ **What this does NOT change, and the distinction matters:** an **unfiltered** browse still
+  lists the row as a placeholder, exactly as this ADR requires. The row did not become invisible —
+  it stopped **answering questions about text it does not expose.** The absence is
+  value-independent (it matches no query, for every query equally), which is the same reasoning
+  ADR 0056 §4b uses and the reason this is not a new oracle.
+
+  So "the row stays listed" now carries two qualifications, and both are deliberate: a filtered
+  search excludes it (§4b), and a text query no longer matches it (this amendment). Neither
+  removes it from the unfiltered listing that "request access" (#881) attaches to.
+
   ⚠️ *Amended 2026-08-12 (#907, PR #1055) — **"the row stays listed" is now conditional, and a
   reader of this section must know where.*** Search grew facet **filtering**, and under an
   **active filter** an asset the caller cannot open is **excluded** from the result set rather

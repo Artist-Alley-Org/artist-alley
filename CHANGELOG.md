@@ -54,6 +54,21 @@ where applicable, otherwise note "no-spec-impact."
   thumbnail disagree with what you see when you open the asset. They are aligned again. The full
   3D render chain was re-verified against every supported format, textures included.
 
+### Security
+
+- **A restricted file's title could be reconstructed a word at a time through search.** Files you
+  aren't cleared to open are deliberately still *listed* — you can see something is there and ask
+  for access — but their titles and descriptions are hidden. The search index did not know that.
+  Anyone could type a phrase that appears only in a hidden title, watch the result count go from
+  zero to one, and confirm it — then repeat, word by word, until they had reconstructed the whole
+  thing without ever being shown it.
+
+  Search now only matches text you're allowed to read, everywhere it can be searched — the search
+  page, the result count, and browse's search box. The file still appears in an ordinary browse
+  with its blurred thumbnail and lock icon; it simply no longer answers questions about words it
+  doesn't show you. Its owner, and anyone with the right permission, search it exactly as before
+  (#902).
+
 ### Fixed
 
 - **The back button shows the results the address asks for.** Changing a search and pressing Back

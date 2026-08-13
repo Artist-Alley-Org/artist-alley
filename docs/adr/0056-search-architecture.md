@@ -179,6 +179,46 @@ hidden behaviour of the search box.
 
 **For anyone adding a control to this page: write the address. Do not fetch.**
 
+#### 4c. THE MATCH ITSELF IS GATED — amendment 2026-08-13 (#902, PR #1063)
+
+§4b gates a *filtered* search. This gates the **match**, and it closes the leak that made #902 the
+milestone's security item: a `restricted` asset's `search_text` contains its own withheld title,
+so any caller could query a phrase only that title held, watch the total move 0→1, and walk the
+title token by token — recovering, one word at a time, exactly what #899 removed from the payload.
+
+**`visibility.AssetSearchMatchSQL` is now the ONE expression of "this asset's indexed text matches
+this caller's query"**, and every full-text surface over `assets` composes its WHERE clause from it
+— `/search` hits, the `/search` COUNT, and browse's `?q=`. It ANDs `FieldsReadableSQL` (the SQL
+twin of `FieldsReadable`, carrying the ownership and team-scoped `assets.admin` disjuncts) onto the
+`@@`.
+
+⭐ **Why a conjunct rather than a second, reduced `tsvector` column** — the design this arc first
+proposed, and why it was rejected on the merits rather than on cost:
+
+1. **The reduced document would be empty.** `rebuild_asset_search_text` composes from exactly three
+   ingredients — title (A), description (B), `searchable`+`active` field values (D) — and
+   `FieldsReadable` withholds all three. `@@ AND readable` and `@@ reduced-document` therefore
+   return the **identical row set** for every caller and every query.
+2. ⭐ **A column MATERIALISES a security decision; a conjunct EVALUATES it live.** If
+   `FieldsReadable`'s rule changed, every row's column would keep enforcing the old rule until
+   rebuilt. The conjunct cannot go stale.
+
+A mature search engine's remedy for this class is *"split documents by index"*, and that is right
+**for that engine** — index separation is forced there by corpus-wide IDF and aggregation APIs.
+Postgres `ts_rank_cd` ranks from the row's own `tsvector` and the query alone, with no corpus-wide
+statistics, so the channel that forces index separation elsewhere **does not exist here**. Importing
+the remedy without its reason is what produced the column design; do not re-import it.
+
+**If a genuinely public ingredient is ever added to the document** — the owner's display name is the
+obvious candidate, since the placeholder already carries it — it belongs in a reduced column, and
+`AssetSearchMatchSQL` is the single function that has to learn about it.
+
+⚠️ **The facet aggregators deliberately do NOT compose this**, and their safety is load-bearing
+rather than incidental: all five asset aggregators AND `ContentReadableSQL` over the same row, so a
+row the caller cannot open contributes to no bucket whatever the query text says. **If that clause
+is ever narrowed or made conditional, all five become #902 again** — the exclusion is documented at
+the site.
+
 #### 4b. An ACTIVE FILTER narrows to what the caller can open — amendment 2026-08-12 (#907)
 
 **Unfiltered search is unchanged and this amendment does not touch it.** ADR 0064 keeps a
