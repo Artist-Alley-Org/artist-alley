@@ -38,11 +38,26 @@ type ListPostsPageParams struct {
 	// IncludeDeleted is superadmin-only and enforced as such by the
 	// handler. It waives the soft-delete conjunct and nothing else; the
 	// read rule still applies in full.
-	IncludeDeleted  *bool
-	AuthorUserRef   *int64
-	Visibility      *string
-	Q               *string
-	Tag             *string
+	IncludeDeleted *bool
+	AuthorUserRef  *int64
+	Visibility     *string
+	Q              *string
+	Tag            *string
+	// FeedFollowerRef is ?feed=following, and "following" is the UNION
+	// of the two follow graphs (#1048): posts by an author this ref
+	// follows, OR posts belonging to a team it follows. It had only the
+	// author arm, which made the filter return nothing at all for the
+	// very common account that follows studios and no people — and made
+	// it structurally unreachable for a read-only account, since
+	// following a *user* is a write such an account is refused while
+	// following a team is not.
+	//
+	// The union is what the page's own vocabulary promises: the rail
+	// above the grid lists the teams you follow and the only filter
+	// offered says "Following". It is still one NARROWING conjunct —
+	// see the header note above — so widening it from one graph to two
+	// widens the SELECTION, never the read rule, which is ANDed on
+	// after it and consults neither table.
 	FeedFollowerRef *int64
 	// TeamID scopes the page to one team's posts (#684). NARROWING ONLY:
 	// it is a plain conjunct beside the read rule, never a disjunct with
@@ -152,8 +167,9 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //   - visibility: narrow to one tier WITHIN what the caller may read
 //   - q: plain-text TSVECTOR search across post search_text
 //   - tag: single-tag filter (intersects with q if both given)
-//   - feed_follower_ref: restrict to authors the given ref follows
-//     (?feed=following). EXISTS hits the user_follows PK.
+//   - feed_follower_ref: restrict to what the given ref follows
+//     (?feed=following) — authors OR teams. Two EXISTS, hitting the
+//     user_follows PK and the team_follows PK respectively.
 //   - team_id: restrict to one team's posts (#684)
 //
 // Every one of those NARROWS. The read rule is ANDed onto the result,
@@ -202,7 +218,10 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($6::BIGINT IS NULL
        OR EXISTS (SELECT 1 FROM user_follows ff
                     WHERE ff.follower_user_ref = $6::BIGINT
-                      AND ff.followee_user_ref = posts.author_user_ref))
+                      AND ff.followee_user_ref = posts.author_user_ref)
+       OR EXISTS (SELECT 1 FROM team_follows tf
+                    WHERE tf.user_ref = $6::BIGINT
+                      AND tf.team_id = posts.team_id))
   AND ($10::UUID IS NULL OR team_id = $10::UUID)
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(ruleFrag)

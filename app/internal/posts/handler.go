@@ -1035,12 +1035,20 @@ func (h *Handler) ListPosts(
 		teamID = pgtype.UUID{Bytes: *req.Params.TeamId, Valid: true}
 	}
 
-	// feed=following (Phase 1.17.G2) restricts the page to authors
-	// the caller follows. Anonymous callers can never satisfy this
-	// (the 401 path above returns first); for authenticated callers
-	// who don't follow anyone, the EXISTS subquery yields an empty
-	// page rather than a 4xx — matches every social platform's
-	// "your following tab is empty" UX.
+	// feed=following (Phase 1.17.G2) restricts the page to what the
+	// caller follows — authors AND teams, as one union (#1048).
+	// Anonymous callers can never satisfy this (the 401 path above
+	// returns first); for authenticated callers who follow nothing, the
+	// EXISTS subqueries yield an empty page rather than a 4xx — matches
+	// every social platform's "your following tab is empty" UX.
+	//
+	// Both graphs, because there is one control. The rail above the grid
+	// lists the teams the caller follows and the filter beside it says
+	// "Following", so an account that follows four studios and no people
+	// clicking it got an empty feed while the studios' posts sat one tab
+	// away. Splitting the control in two (People / Studios) was
+	// considered and rejected: it doubles a control that already competes
+	// for room, to expose a distinction nobody asked for.
 	var followerPtr *int64
 	if req.Params.Feed != nil && *req.Params.Feed == openapi.Following {
 		ref := caller.UserRef

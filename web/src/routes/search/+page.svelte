@@ -49,7 +49,7 @@
   // /search and /search/facets, which is why the counts re-narrow as you
   // pick: the rail describes the page beside it rather than the corpus.
 
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -286,6 +286,11 @@
     url.searchParams.delete('filter');
     for (const f of filters) url.searchParams.append('filter', f);
     url.searchParams.delete('advanced');
+    // This page's own controls have already applied what they are about
+    // to write, so mark the address as adopted before the navigation
+    // lands. Without it the URL watcher below would see its own write
+    // as an external change and re-run the search a second time.
+    appliedSignature = querySignature(url);
     void goto(url.pathname + url.search, { replaceState: false, noScroll: true });
   }
 
@@ -339,28 +344,93 @@
     // The grids read tile size + mode from the same store browse does,
     // so a user's chosen view follows them into search.
     browseView.init();
-    const urlDSL = page.url.searchParams.get('dsl');
-    const urlQ = page.url.searchParams.get('q');
-    const urlTypes = page.url.searchParams.get('types');
-    filters = page.url.searchParams.getAll('filter');
-    if (urlTypes) {
-      kinds = urlTypes
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s): s is HitType => s === 'asset' || s === 'post' || s === 'collection');
-    }
+    // A panel, not a query: it is opened by the address that asked for
+    // it and closed by the user, and it never re-opens on a later URL
+    // change (pushQueryToURL strips it).
     if (page.url.searchParams.get('advanced')) advancedOpen = true;
-    if (urlDSL) {
+  });
+
+  // ---------------------------------------------------------------------
+  // The URL is this page's input (#1053)
+  // ---------------------------------------------------------------------
+  //
+  // Adopting the URL used to happen in onMount, which was enough for as
+  // long as a query could only arrive with a fresh page component: a
+  // link, a reload, or a navigation FROM somewhere else. Typing into the
+  // GLOBAL nav search box is neither — since #1053 it writes `q` onto
+  // the result surface you are already on rather than bouncing you to
+  // browse, and a same-route navigation does not remount the page. The
+  // address would have changed with the results underneath it unmoved.
+  //
+  // So the adoption is an effect over the URL, and onMount keeps only
+  // what is genuinely once-per-mount.
+
+  /** The parameters this page's RESULT SET is a function of: the query
+   *  itself, the kind chips, and the facet filter tokens (#907).
+   *
+   *  `post` (the card overlay) and `advanced` (a panel) are deliberately
+   *  NOT in it — opening a post over the grid must not re-run the search
+   *  underneath it. Filters are sorted, so the same selection arriving
+   *  in a different order is recognised as the same page rather than as
+   *  a change worth re-querying. */
+  function querySignature(url: URL): string {
+    const p = url.searchParams;
+    return JSON.stringify([
+      p.get('dsl') ?? '',
+      p.get('q') ?? '',
+      p.get('types') ?? '',
+      [...p.getAll('filter')].sort(),
+    ]);
+  }
+
+  /** The address this page has already applied. Plain `let`, not
+   *  `$state`: it is bookkeeping FOR the effect below, and a reactive
+   *  cell written from inside its own reader is a loop. */
+  let appliedSignature: string | null = null;
+
+  /** Mirror `url` into local state and run the search it describes.
+   *
+   *  `q` wins over `dsl` when the address carries both. This page never
+   *  emits that combination (pushQueryToURL deletes the other one), so
+   *  it can only mean the global search box typed a plain query over a
+   *  DSL result — the newer input, and the one the user is watching
+   *  themselves type. The rule is the same on a reload, so the address
+   *  still reproduces one result set.
+   *
+   *  `first` is the mount adoption, and it yields to a snapshot restore
+   *  that got here ahead of it: results are paged behind a manual "load
+   *  more", so re-querying would throw away the pages back-navigation
+   *  just put back. A LATER adoption is a real URL change and must
+   *  query — that is the whole point of this. */
+  function adoptURL(url: URL, first: boolean) {
+    const urlDSL = url.searchParams.get('dsl');
+    const urlQ = url.searchParams.get('q');
+    const urlTypes = url.searchParams.get('types');
+    filters = url.searchParams.getAll('filter');
+    kinds = (urlTypes ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s): s is HitType => s === 'asset' || s === 'post' || s === 'collection');
+    if (urlDSL !== null && urlQ === null) {
       dslMode = true;
       q = urlDSL;
     } else {
       dslMode = false;
       q = urlQ ?? '';
     }
-    // `hits` already populated means snapshot.restore got here first
-    // (back-navigation) — re-running the search would throw away the
-    // "load more" pages the user had accumulated.
-    if (q && hits.length === 0) void runSearch(q);
+    if (first && hits.length > 0) return;
+    void runSearch(q);
+  }
+
+  $effect(() => {
+    const sig = querySignature(page.url);
+    if (sig === appliedSignature) return;
+    const first = appliedSignature === null;
+    appliedSignature = sig;
+    // untrack: adoptURL writes — and runSearch reads — half the state on
+    // this page, and effect dependency collection is call-frame deep.
+    // The URL is the only thing this effect watches.
+    untrack(() => adoptURL(page.url, first));
   });
 
   // Back-navigation restoration (#584). Results are paged behind a
@@ -393,6 +463,12 @@
     restore: (saved) => {
       if (!saved || saved.hits.length === 0) return;
       searchGen++;
+      // Local state now matches the address being restored, so the URL
+      // watcher must not treat it as a change and re-query. Set even
+      // though the watcher may already have run (their order is
+      // undefined, which is what searchGen above is for): whichever
+      // lands last, the page ends up describing this address once.
+      appliedSignature = querySignature(page.url);
       q = saved.q;
       dslMode = saved.dsl;
       kinds = saved.kinds ?? [];
