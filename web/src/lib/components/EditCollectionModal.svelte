@@ -43,9 +43,25 @@
     collection: Collection;
     onclose: () => void;
     onsaved?: (c: Collection) => void;
+    /**
+     * Open with the cover picker scrolled to and focused (#1027).
+     *
+     * The More-actions menu has a "Set cover" entry, which is where a
+     * curator looks first; it opens this same modal rather than a
+     * second one, so there is ONE edit surface and one save path. The
+     * flag only decides where the modal starts, never what it can do —
+     * every field stays editable either way.
+     */
+    focusCover?: boolean;
   }
 
-  let { open, collection, onclose, onsaved }: Props = $props();
+  let { open, collection, onclose, onsaved, focusCover = false }: Props = $props();
+
+  // The scroll target for `focusCover`. Focus moves to the section, not
+  // to the first swatch: a collection can hold hundreds of choices, and
+  // landing keyboard focus on an arbitrary one of them would strand the
+  // caret mid-grid with no indication of where it is.
+  let coverSection = $state<HTMLFieldSetElement | null>(null);
 
   let name = $state('');
   let description = $state('');
@@ -76,6 +92,18 @@
       error = null;
       conflict = null;
       void loadCoverChoices(collection.id);
+    }
+  });
+
+  // Scrolling is deferred to after the choices have loaded, not fired
+  // on open: the cover section is the LAST thing in the form, so before
+  // the grid paints it sits at a scroll offset that stops existing the
+  // moment the pictures arrive. Keyed on `coverLoading` going false so
+  // it runs once the layout is final.
+  $effect(() => {
+    if (open && focusCover && !coverLoading && coverSection) {
+      coverSection.scrollIntoView({ block: 'center' });
+      coverSection.focus();
     }
   });
 
@@ -219,7 +247,11 @@
         {/each}
       </div>
     </fieldset>
-    <fieldset>
+    <!-- tabindex="-1" so `focusCover` has something to move focus to.
+         It is NOT in the tab order: a fieldset is not a control, and
+         adding a stop here would make every keyboard user tab through
+         a wrapper on the way to the swatches. -->
+    <fieldset bind:this={coverSection} tabindex="-1" data-testid="collection-cover-section">
       <legend class="mb-1 block text-xs font-medium text-fg-muted">{t('collections.cover')}</legend>
       <p class="mb-2 text-xs text-fg-muted">{t('collections.cover_hint')}</p>
       {#if coverLoading}
