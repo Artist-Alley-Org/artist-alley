@@ -90,6 +90,34 @@ What now exists:
    typed `field:value` grammar with a parse-time whitelist, and a second vocabulary would be a
    second code path to keep honest.
 
+   ✅ *Measured 2026-08-13 (#910, PR #1058) — **the prediction was close but not exact, and the
+   difference is worth more than the prediction was.*** Actual cost: **5 files beyond the const
+   and the case, 3 of them backend.** The extensibility claim holds — no second query path, no
+   bespoke parameter, no change to the wire vocabulary — so `filter=` stands as the single query
+   representation, and #911 and advanced search may be planned on it.
+
+   **Both misses were properties of the VALUE'S TYPE, not of the mechanism**, and they generalise:
+
+   1. **A typed value needs validating at the edge.** The five original dimensions render TEXT
+      comparisons and are total over any string. A UUID reaches a `::UUID` cast, so a malformed
+      one is a Postgres `22P02` raised mid-query — **a 500 on a caller's typo.** Any dimension
+      whose value is not free text owes a parse step before it reaches SQL.
+   2. **A value that names another ENTITY needs authorizing, and `dimensionSQL` cannot do it.**
+      That renderer is caller-blind and emits exactly one placeholder per term; there is nowhere
+      to put the caller's identity without changing the arity for *every* dimension. An
+      entity-naming dimension therefore needs a gate at the execution chokepoints — see the
+      ADR 0009 §3 amendment for the parent gate this produced.
+
+   ⭐ **The rule for the next dimension:** ask what the value *is* before estimating. A property
+   of the row (`extension`, `tag`, `sensitivity`) really is one const and one case. A value that
+   is *typed* costs validation; a value that *names something carrying its own access control*
+   costs a gate. Neither costs a new code path — which is the part of the original claim that
+   mattered.
+
+   Amended rather than left standing, because an unamended prediction in an accepted ADR is
+   indistinguishable from a statement of fact — which is exactly how §7's `facets_filter` column,
+   described here and never built, sent #907 looking for it.
+
 ⚠️ **Five pre-existing defects surfaced only when Filters became live**, all fixed in the same PR;
 they are recorded because each was invisible while the Engine ignored the struct: the `tag`
 aggregator counted `post_tags` **only** (ignoring ~2/3 of the corpus's tags, which made the

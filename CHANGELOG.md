@@ -9,6 +9,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Search inside a collection.** You could find a collection and then the trail went cold. A
+  collection page now has "Search in this collection", and the search page shows which collection
+  you're inside with a way to step back out. It combines with everything else — a text query, a
+  file type — so "PNGs in the Environment collection mentioning *wall*" is one search.
+
+  A collection you aren't allowed to open returns nothing, even if you know its address, and it
+  returns *nothing* rather than an error — an error would tell you the collection exists. That
+  matters because the items inside might each be things you're allowed to see; what's private is
+  the fact that someone gathered *those particular ones* together (#910).
+
+- **Following means studios too.** The Following tab only ever considered people you follow, so
+  an account that follows studios and no individuals saw an empty feed — with the studios it
+  follows listed directly above it. It now means both (#1048).
+
+
 - **Search filters actually filter.** Every facet beside a search — tag, file type, owner,
   sensitivity, extension — showed a real count and did nothing when you clicked it. They are
   controls now: tick one and the results narrow, and the number on the bucket is exactly how many
@@ -40,6 +55,13 @@ where applicable, otherwise note "no-spec-impact."
   3D render chain was re-verified against every supported format, textures included.
 
 ### Fixed
+
+- **You can refine a search on the search page again.** Adjusting your query while already on the
+  search page threw you back to browse, losing your place and your filters — so the one screen
+  built for refining a search was the one screen you couldn't refine one on. It now updates in
+  place, keeping focus and scroll position. Searching from anywhere else still takes you to the
+  results, as before (#1053).
+
 
 - **The check that proves 3D previews actually work now runs when it matters.** Generating a
   preview for a 3D model is a chain — a headless browser renders the model and saves the picture —

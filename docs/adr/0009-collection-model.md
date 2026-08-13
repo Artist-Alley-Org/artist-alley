@@ -87,6 +87,47 @@ modes or narrow the CHECK. Tracked as **#911**, which also carries the decisions
 (read-time vs materialised, per-caller evaluation, and what a query-backed collection means when
 it federates).
 
+**3b. AMENDMENT 2026-08-13 (#910, PR #1058) — and membership must not leak FROM a hidden
+container either. The rule is symmetric.**
+
+Section 3 records that membership never *widens* an item: a foreign restricted member of a
+collection you can see renders as a placeholder. #910 (search scoped to a collection) surfaced
+the mirror case, which the same rule requires and which nothing had needed until a collection
+became addressable as a query term:
+
+> A caller holding the id of a collection they **cannot open** — a revoked share, a link that
+> outlived its grant — must not be able to enumerate which of the assets they *can* read are
+> curated into it.
+
+**The member gate cannot catch this.** Every row such a query would disclose is one the caller is
+individually entitled to read; nothing leaks about any asset. **What leaks is the membership** —
+the curatorial fact that *these* items are the ones in that collection. `resources_page.go`
+already states the general form: *"The parent gate and the member gate answer different questions
+and both are required."* Section 3 had only ever needed the member half.
+
+**Shape of the answer**, for anyone adding a second entity-scoped query term:
+
+- The gate runs at the **execution chokepoints** (`search.Engine.Run`, `facet.Dispatcher.Run`),
+  not in the SQL renderer — `dimensionSQL` is caller-blind and emits one placeholder per term, so
+  there is no room for caller identity without changing the arity of every dimension.
+- It returns an **empty result set, never a 403 or a 404.** An error would separate "this
+  collection exists and you may not see it" from "no such collection", on an id the caller
+  supplied — the readability oracle the search arc removes elsewhere (ADR 0056 §4b). An empty page
+  is indistinguishable from a visible collection that happens to contain nothing matching.
+- It costs **one EXISTS per collection term and nothing at all** for a selection naming no
+  collection.
+- ⚠️ One capability passes: `system.admin`, mirroring `GetCollection`. That bypass lives
+  **outside** the read rule because `visibility.Filter(EntityCollection)` has no admin disjunct —
+  now in two hand-copied places, tracked as **#1059**. It discloses nothing *here* (the same
+  holder can already open the collection and list its contents), but that argument is per-caller
+  and does not travel: copying those lines onto a path where the admin plane is not already
+  established would be widening a read with no such justification.
+
+**Why this is recorded as policy rather than as an implementation note:** the leak is created by
+making a container addressable, so every future feature that lets a caller *name* a collection —
+smart collections (#911), advanced search, a shared query link — inherits the requirement. The
+gate is not a property of search.
+
 **3. DELIBERATE DIVERGENCE — container membership does not grant access, and we are the outlier.**
 One product surveyed cascades permissions from container to contents **by default**
 (`DisableInheritance` maps to "Apply to Contained Assets" and defaults to on). We chose the
