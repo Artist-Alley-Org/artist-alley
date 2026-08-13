@@ -13298,13 +13298,47 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The curator's CHOSEN cover picture (#1027), or null to
+            compose the derived mosaic from members instead.
+
+            ANY asset the curator could picture when they set it — not
+            necessarily a member of this collection. That is what makes
+            it survive the member being removed, which is the failure a
+            member-only pointer has. "Upload a dedicated banner" is
+            still available: upload it as an ordinary asset, then pick
+            it. One extra step, no separate upload machinery, and one
+            representation for a cover instead of two.
+
+            THIS IS THE CURATOR'S SETTING, NOT THE RENDER ANSWER. Read
+            `covers` to know what to paint; read this to populate the
+            edit form's picker. They disagree on purpose whenever the
+            reader may not picture the chosen asset — see `covers`.
+
+            It does NOT federate. A local asset id names something that
+            exists only on this server, which is ADR 0083's exclusion
+            criterion; a peer composes its own mosaic from the members
+            it holds.
         covers:
           type: array
           items: { $ref: "#/components/schemas/CollectionCover" }
           description: |
-            Up to four members whose picture this caller may render —
-            the tile's mosaic cover (#1026). A collection stores no
-            cover; this set is composed at read time from its members.
+            What to PAINT for this collection's tile — the curator's
+            chosen cover if there is a renderable one (#1027), else up
+            to four members whose picture this caller may render, the
+            derived mosaic (#1026).
+
+            A COVER THIS READER MAY NOT PICTURE FALLS BACK TO THE
+            MOSAIC; it never yields a blank tile, and it never leaks the
+            withheld picture either. The choice is the curator's, but
+            whether it renders is still decided per reader, so two
+            readers of the same collection can correctly get different
+            answers here. A client cannot tell an overridden cover from
+            a one-member mosaic, and does not need to.
 
             BOTH MEMBER KINDS CONTRIBUTE. `collection_resources` supply
             their asset directly, and `collection_posts` supply
@@ -13417,6 +13451,37 @@ components:
         purpose:
           type: string
           nullable: true
+        cover_asset_id:
+          type: string
+          format: uuid
+          description: |
+            Choose this collection's cover picture (#1027). Any asset
+            you may PICTURE — it does not have to be a member of this
+            collection.
+
+            The server refuses an asset you may not picture, with the
+            same 400 it gives for an id that does not exist: telling the
+            two apart would make this endpoint an existence oracle for
+            assets you cannot see.
+
+            Send `clear_cover: true` to go back to the derived mosaic —
+            a partial update cannot express "remove" by sending null,
+            because null is already "leave alone" for every other
+            property here. Same reasoning, and the same shape, as
+            `clear_default` on FieldDefinitionUpdate.
+
+            EDIT-ONLY, deliberately absent from CollectionCreate. #914
+            took a question off the new-collection dialog because the
+            API already had a sensible default; a cover is a curation
+            act performed on a collection that already has members, not
+            a decision anyone can make while naming an empty one.
+        clear_cover:
+          type: boolean
+          description: |
+            Remove the chosen cover, reverting this collection to the
+            derived mosaic composed from its members. Mutually exclusive
+            with `cover_asset_id` — sending both is a 400, rather than
+            the server picking one and silently discarding the other.
         if_unchanged_since:
           type: string
           format: date-time

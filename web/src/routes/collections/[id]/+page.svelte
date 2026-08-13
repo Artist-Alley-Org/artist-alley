@@ -60,6 +60,11 @@
     updated_at: string;
     deleted_at?: string | null;
     deleted_reason?: string | null;
+    // #1027 — the curator's chosen cover. Carried on this page's own
+    // Collection so the edit modal opens with the current choice
+    // already selected rather than reading "use mosaic" and clearing it
+    // on the next unrelated save.
+    cover_asset_id?: string | null;
   }
 
   // #883 — every asset-derived field is OPTIONAL because a member the

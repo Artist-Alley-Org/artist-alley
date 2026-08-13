@@ -563,3 +563,341 @@ func TestCollectionCovers_OnTheListPath(t *testing.T) {
 	}
 	t.Fatalf("collection %s not in its owner's `mine` listing", colID)
 }
+
+// ---------------------------------------------------------------------------
+// #1027 — the curator's CHOSEN cover
+// ---------------------------------------------------------------------------
+//
+// The override is a pointer at any asset the curator may PICTURE, stored
+// on the collection, and it replaces the derived mosaic above.
+//
+// The case that would silently not work is
+// TestCollectionCover_WithheldOverrideFallsBackToMosaic. An
+// implementation that returns the chosen asset unconditionally LEAKS a
+// picture; one that returns "the override, gated" without a fallback
+// renders a BLANK tile, which is the crowding defect #1026 just fixed
+// arriving through a new door. Both are wrong and only the second is
+// invisible to a leak test, so the assertion below pins the served
+// payload on BOTH counts: the withheld id is absent AND the mosaic is
+// what came back instead.
+
+// ccSetCover points a collection at an asset and fails on any non-200,
+// so a test asserting on covers cannot pass because the write quietly
+// 400'd and left the collection as it was.
+func ccSetCover(t *testing.T, r chi.Router, colID, assetID string) {
+	t.Helper()
+	rr := patchJSON(t, r, "/collections/"+colID, map[string]any{"cover_asset_id": assetID})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set cover %s on %s: status=%d body=%s", assetID, colID, rr.Code, rr.Body.String())
+	}
+}
+
+// TestCollectionCover_OverrideIsTheSoleEntry — a chosen cover wins over
+// the mosaic and is the ONLY tile, on the detail path AND the list path.
+// The list is a different code path (a query, not the by-id cache), and
+// #1026 already found the two can disagree.
+//
+// The collection is given three renderable members the caller may
+// picture, so a composer that ignored the override entirely would return
+// three covers and a composer that merely PREPENDED it would return
+// four. Only replacement returns one.
+func TestCollectionCover_OverrideIsTheSoleEntry(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_sole", "visibility": "private"})
+
+	base := time.Now().Add(-time.Hour)
+	m1 := ccRenderableAsset(t, pool, ccOwner, "ct_sole_m1", "public")
+	m2 := ccRenderableAsset(t, pool, ccOwner, "ct_sole_m2", "public")
+	m3 := ccRenderableAsset(t, pool, ccOwner, "ct_sole_m3", "public")
+	ccPinAsset(t, pool, colID, m1, base)
+	ccPinAsset(t, pool, colID, m2, base.Add(time.Minute))
+	ccPinAsset(t, pool, colID, m3, base.Add(2*time.Minute))
+
+	// NOT a member — the whole point of the free pointer is that it need
+	// not be one, and a test using a member could not tell the two
+	// designs apart.
+	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_sole_chosen", "public")
+	ccSetCover(t, router, colID, chosen)
+
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != chosen {
+		t.Errorf("detail covers = %v, want [%s] — the chosen cover REPLACES the mosaic "+
+			"rather than joining it", got, chosen)
+	}
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/collections?tab=mine&limit=50", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /collections: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var list openapi.CollectionList
+	mustDecode(t, rr.Body.Bytes(), &list)
+	for _, c := range list.Items {
+		if c.Id.String() != colID {
+			continue
+		}
+		if c.Covers == nil || len(*c.Covers) != 1 || (*c.Covers)[0].AssetId.String() != chosen {
+			t.Errorf("list covers = %v, want [%s] — the list path composes covers "+
+				"separately from the detail path and must honour the override too",
+				c.Covers, chosen)
+		}
+		// The curator's SETTING travels beside the render answer, because
+		// the edit form needs it to show what is currently chosen.
+		if c.CoverAssetId == nil || c.CoverAssetId.String() != chosen {
+			t.Errorf("cover_asset_id = %v, want %s — the edit UI populates its picker "+
+				"from this field, not from `covers`", c.CoverAssetId, chosen)
+		}
+		return
+	}
+	t.Fatalf("collection %s not in its owner's `mine` listing", colID)
+}
+
+// TestCollectionCover_ClearRevertsToMosaic — `clear_cover: true` removes
+// the choice and the derived mosaic comes back.
+//
+// It is a companion BOOLEAN rather than `cover_asset_id: null` because a
+// partial update cannot express "remove" by sending null: null is
+// already "leave alone" for every other property on CollectionUpdate,
+// and the generated struct decodes absent and null to the same nil. This
+// is the shape metadata's `clear_default` already settled. Sending the
+// two together is refused rather than resolved — asserted below, because
+// a server that silently preferred one would ship a "clear" that never
+// happened.
+func TestCollectionCover_ClearRevertsToMosaic(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_clear", "visibility": "private"})
+
+	member := ccRenderableAsset(t, pool, ccOwner, "ct_clear_member", "public")
+	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_clear_chosen", "public")
+
+	ccSetCover(t, router, colID, chosen)
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != chosen {
+		t.Fatalf("precondition: covers = %v, want [%s]", got, chosen)
+	}
+
+	if rr := patchJSON(t, router, "/collections/"+colID,
+		map[string]any{"clear_cover": true}); rr.Code != http.StatusOK {
+		t.Fatalf("clear_cover: %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != member {
+		t.Errorf("after clear_cover covers = %v, want the derived mosaic [%s]", got, member)
+	}
+	var stored *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT cover_asset_id::TEXT FROM collections WHERE id = $1`, colID).Scan(&stored); err != nil {
+		t.Fatalf("read back cover_asset_id: %v", err)
+	}
+	// Asserting the PERSISTED value, not the response body: the handler
+	// echoes the row it just wrote, so a body assertion would pass on an
+	// implementation whose CASE never fired.
+	if stored != nil {
+		t.Errorf("cover_asset_id persisted as %q after clear_cover, want NULL", *stored)
+	}
+
+	if rr := patchJSON(t, router, "/collections/"+colID, map[string]any{
+		"cover_asset_id": chosen, "clear_cover": true,
+	}); rr.Code != http.StatusBadRequest {
+		t.Errorf("cover_asset_id + clear_cover together: status=%d, want 400 — two "+
+			"intentions in one body, and picking either silently discards the other",
+			rr.Code)
+	}
+}
+
+// TestCollectionCover_WithheldOverrideFallsBackToMosaic is THE case.
+//
+// The curator may picture a restricted asset they own and pins it as the
+// cover. A stranger reading the same public collection may not picture
+// it. The stranger must get the DERIVED MOSAIC — not the withheld asset
+// (a leak) and not an empty array (a blank tile, #1026's defect through
+// a new door).
+//
+// The owner leg is not decoration: without it, an implementation that
+// dropped every override on the floor would pass the stranger leg
+// outright.
+func TestCollectionCover_WithheldOverrideFallsBackToMosaic(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	strangerRouter, _ := makeRouter(t, pool, ccStranger /*admin=*/, false)
+
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_cover_withheld", "visibility": "public",
+	})
+
+	// A member EVERYONE may picture, so "the mosaic" is a non-empty
+	// answer and "fell back" is distinguishable from "returned nothing".
+	open := ccRenderableAsset(t, pool, ccOwner, "ct_wo_open", "public")
+	ccPinAsset(t, pool, colID, open, time.Now().Add(-time.Hour))
+
+	// Restricted and owned by the curator: they may picture it (owner
+	// branch of the picture plane), the stranger may not.
+	secret := ccRenderableAsset(t, pool, ccOwner, "ct_wo_secret", "restricted")
+	ccSetCover(t, ownerRouter, colID, secret)
+
+	if got := ccCovers(t, ownerRouter, colID); len(got) != 1 || got[0] != secret {
+		t.Fatalf("the curator's own view = %v, want their chosen cover [%s]", got, secret)
+	}
+
+	got := ccCovers(t, strangerRouter, colID)
+	for _, g := range got {
+		if g == secret {
+			t.Fatalf("the chosen cover %s reached a caller who may not picture it (covers=%v) "+
+				"— an override must not be a second, weaker door to an asset", secret, got)
+		}
+	}
+	if len(got) != 1 || got[0] != open {
+		t.Errorf("stranger covers = %v, want the derived mosaic [%s]. An empty array here "+
+			"is a BLANK TILE, which is exactly the crowding defect #1026 fixed; a "+
+			"withheld cover must FALL BACK, never render nothing", got, open)
+	}
+}
+
+// TestCollectionCover_WriteRefusesAnAssetTheCuratorCannotPicture — the
+// write gate is the PICTURE plane, matching the read path.
+//
+// Both legs return the SAME 400. Distinguishing "no such asset" from
+// "not yours to look at" would make this endpoint an existence oracle:
+// a curator could enumerate ids and read the difference as "this one
+// exists and is hidden from me". So the second leg asserts the status
+// codes are equal rather than merely both being 4xx.
+func TestCollectionCover_WriteRefusesAnAssetTheCuratorCannotPicture(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_cover_refuse", "visibility": "private",
+	})
+
+	secret := ccRenderableAsset(t, pool, ccStranger, "ct_refuse_secret", "restricted")
+	rrHidden := patchJSON(t, ownerRouter, "/collections/"+colID,
+		map[string]any{"cover_asset_id": secret})
+	if rrHidden.Code != http.StatusBadRequest {
+		t.Errorf("pointing at an asset the curator cannot picture: status=%d, want 400 "+
+			"(body=%s)", rrHidden.Code, rrHidden.Body.String())
+	}
+
+	rrMissing := patchJSON(t, ownerRouter, "/collections/"+colID,
+		map[string]any{"cover_asset_id": uuid.New().String()})
+	if rrMissing.Code != rrHidden.Code {
+		t.Errorf("a nonexistent asset gave %d and a withheld one gave %d — the two must be "+
+			"indistinguishable, or the difference tells the caller the hidden id exists",
+			rrMissing.Code, rrHidden.Code)
+	}
+
+	// Nothing was written by either refusal.
+	var stored *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT cover_asset_id::TEXT FROM collections WHERE id = $1`, colID).Scan(&stored); err != nil {
+		t.Fatalf("read back cover_asset_id: %v", err)
+	}
+	if stored != nil {
+		t.Errorf("cover_asset_id persisted as %q after a refused write, want NULL", *stored)
+	}
+}
+
+// TestCollectionCover_DeletedAssetRevertsToMosaic drives the FK's
+// ON DELETE SET NULL. Hard-deleting the chosen asset must leave the
+// collection on its derived mosaic rather than pointing at a row that
+// is gone.
+//
+// RESTRICT would instead make one collection's curation choice block an
+// unrelated asset's deletion, which is why the constraint is worth a
+// test of its own rather than being assumed from the DDL.
+func TestCollectionCover_DeletedAssetRevertsToMosaic(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_fk", "visibility": "private"})
+
+	member := ccRenderableAsset(t, pool, ccOwner, "ct_fk_member", "public")
+	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_fk_chosen", "public")
+	ccSetCover(t, router, colID, chosen)
+
+	if _, err := pool.Exec(context.Background(),
+		`DELETE FROM assets WHERE id = $1`, chosen); err != nil {
+		t.Fatalf("hard-delete the chosen cover asset: %v — ON DELETE SET NULL should "+
+			"allow this; RESTRICT would fail here", err)
+	}
+	var stored *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT cover_asset_id::TEXT FROM collections WHERE id = $1`, colID).Scan(&stored); err != nil {
+		t.Fatalf("read back cover_asset_id: %v", err)
+	}
+	if stored != nil {
+		t.Errorf("cover_asset_id = %q after its asset was deleted, want NULL", *stored)
+	}
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != member {
+		t.Errorf("covers = %v after the chosen asset was deleted, want the derived "+
+			"mosaic [%s]", got, member)
+	}
+}
+
+// TestCollectionCover_SoftDeletedOverrideFallsBackButKeepsThePointer —
+// the other deletion. A SOFT-deleted asset is dropped by the read path's
+// `deleted_at IS NULL` conjunct, so the mosaic answers; but the pointer
+// itself stays put, so restoring the asset restores the cover.
+//
+// The FK cannot express this (soft-delete is an UPDATE), which is
+// exactly why it is worth pinning: the two deletions take different
+// doors to the same fallback.
+func TestCollectionCover_SoftDeletedOverrideFallsBackButKeepsThePointer(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_soft", "visibility": "private"})
+
+	member := ccRenderableAsset(t, pool, ccOwner, "ct_soft_member", "public")
+	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+	chosen := ccRenderableAsset(t, pool, ccOwner, "ct_soft_chosen", "public")
+	ccSetCover(t, router, colID, chosen)
+
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET deleted_at = NOW() WHERE id = $1`, chosen); err != nil {
+		t.Fatalf("soft-delete: %v", err)
+	}
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != member {
+		t.Errorf("covers = %v while the chosen cover is soft-deleted, want the mosaic [%s]",
+			got, member)
+	}
+
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET deleted_at = NULL WHERE id = $1`, chosen); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != chosen {
+		t.Errorf("covers = %v after restoring the chosen asset, want [%s] — the pointer "+
+			"survives a soft delete, so the cover must come back", got, chosen)
+	}
+}
+
+// TestCollectionCover_OverrideWithoutAColRenditionFallsBack — the write
+// gate deliberately does NOT require a `col` variant, because renditions
+// are produced asynchronously and refusing a just-uploaded asset would
+// be an error the curator cannot act on. The read path carries that
+// slack: until the rendition exists, the mosaic answers.
+//
+// Without this, "accepted at write, invisible at read" would be an
+// accepted-but-inert setting with nothing asserting the interim
+// behaviour is a usable tile rather than a blank one.
+func TestCollectionCover_OverrideWithoutAColRenditionFallsBack(t *testing.T) {
+	pool := ccSetup(t)
+	router, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, router, map[string]any{"name": "ct_cover_norend", "visibility": "private"})
+
+	member := ccRenderableAsset(t, pool, ccOwner, "ct_norend_member", "public")
+	ccPinAsset(t, pool, colID, member, time.Now().Add(-time.Hour))
+
+	pending := ccRenderableAsset(t, pool, ccOwner, "ct_norend_pending", "public")
+	if _, err := pool.Exec(context.Background(),
+		`DELETE FROM storage_variants WHERE variant_key = 'col' AND object_hash =
+		     (SELECT file_hash FROM assets WHERE id = $1)`, pending); err != nil {
+		t.Fatalf("drop the col variant: %v", err)
+	}
+
+	// Accepted: the picture plane says yes, and the missing rendition is
+	// a fact about right now, not about this caller's rights.
+	ccSetCover(t, router, colID, pending)
+	if got := ccCovers(t, router, colID); len(got) != 1 || got[0] != member {
+		t.Errorf("covers = %v with a cover that has no `col` rendition yet, want the "+
+			"mosaic [%s] — CollectionCover promises the rendition exists", got, member)
+	}
+}

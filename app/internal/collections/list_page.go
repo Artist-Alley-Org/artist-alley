@@ -81,7 +81,7 @@ type ListCollectionsPageGatedParams struct {
 const listCollectionsPageColumns = `c.id, c.owner_user_ref, c.name, c.description, c.visibility, c.membership,
        c.expires_at, c.purpose, c.origin_server_id,
        c.created_at, c.updated_at, c.search_text, c.smart_query,
-       c.deleted_at, c.deleted_reason, c.deleted_by_user_ref`
+       c.deleted_at, c.deleted_reason, c.deleted_by_user_ref, c.cover_asset_id`
 
 // ListCollectionsPageGated runs the browse query for one caller.
 func ListCollectionsPageGated(
@@ -156,7 +156,7 @@ LIMIT $9::INTEGER`)
 			&i.ID, &i.OwnerUserRef, &i.Name, &i.Description, &i.Visibility, &i.Membership,
 			&i.ExpiresAt, &i.Purpose, &i.OriginServerID,
 			&i.CreatedAt, &i.UpdatedAt, &i.SearchText, &i.SmartQuery,
-			&i.DeletedAt, &i.DeletedReason, &i.DeletedByUserRef,
+			&i.DeletedAt, &i.DeletedReason, &i.DeletedByUserRef, &i.CoverAssetID,
 		); err != nil {
 			return nil, fmt.Errorf("collections: list page scan: %w", err)
 		}

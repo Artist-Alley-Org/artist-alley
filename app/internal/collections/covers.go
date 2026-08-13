@@ -66,9 +66,26 @@ import (
 // for more would be rows nobody paints.
 const coverCount = 4
 
-// ComposeCovers returns, for each requested collection, the first
-// `coverCount` members whose picture this caller may render — in the
-// curator's order, interleaved across both membership kinds.
+// ComposeCovers returns, for each requested collection, either the
+// curator's CHOSEN cover as the sole entry (#1027) or — when there is
+// none, or this caller may not picture it — the first `coverCount`
+// members whose picture this caller may render, in the curator's order,
+// interleaved across both membership kinds.
+//
+// # Why the override lives HERE and not in the callers
+//
+// Because there are two callers — [Handler.attachCovers], serving both
+// the list and the detail, and search's collection hit — and a rule
+// expressed twice will eventually disagree with itself. #1023 shipped a
+// display-name ladder transcribed four times, three of them wrong. The
+// callers ask "what do I paint"; only this function decides.
+//
+// The fallback is the reason it cannot be a caller's job in the first
+// place: choosing between the override and the mosaic needs the mosaic
+// already computed under the same predicate, in the same round trip,
+// because "the override did not render" is only knowable after running
+// the gate. A caller could not do it without a second query and a
+// second copy of the rule.
 //
 // Each asset appears AT MOST ONCE per collection, at its earliest
 // position — one asset is reachable by several routes (pinned directly
@@ -162,8 +179,49 @@ func ComposeCovers(
 	previewFrag := visibility.PreviewReadableSQL("a",
 		strconv.FormatInt(caller.UserRef, 10), caller, caps)
 
+	// previewFrag is spliced TWICE below — once for the curator's chosen
+	// cover, once for the derived mosaic's members. That is safe because
+	// it contains no `$n`: its caller ref is a literal (above) and
+	// FieldsReadableSQL renders the mutation team set as UUID literals
+	// for the same reason. A fragment carrying placeholders could not be
+	// reused without renumbering, and the reuse is the point — the
+	// override and the mosaic must gate the picture identically or the
+	// override becomes a second, weaker door to the same asset.
 	sql := `
-WITH members AS (
+WITH override AS (
+    -- #1027: the curator CHOSE a cover. It wins over the composed
+    -- mosaic, and it is the sole tile — a chosen cover is a statement
+    -- about what this collection looks like, not a first among four.
+    --
+    -- It is gated by the SAME picture plane as a member, against the
+    -- SAME asset conditions, and that is the whole security argument:
+    -- pointing a collection at an asset cannot show anyone a picture
+    -- they could not already see. The pointer may name any asset the
+    -- CURATOR could picture, so the curator's plane and the viewer's
+    -- routinely differ; the viewer's is the one that decides here.
+    --
+    -- When this CTE comes back EMPTY for a collection — withheld from
+    -- this viewer, soft-deleted, or still missing its 'col' rendition —
+    -- the mosaic below answers instead. Falling back rather than
+    -- yielding nothing is load-bearing: an empty tile is exactly the
+    -- crowding defect #1026 fixed, and shipping it back through a new
+    -- door would be the same bug with a new cause. It also means the
+    -- absence of a cover is indistinguishable from never having set
+    -- one, so the tile cannot be read as "something is hidden here".
+    --
+    -- A hard-deleted asset never reaches this join at all: the FK is
+    -- ON DELETE SET NULL, so the pointer is already gone.
+    SELECT c.id AS collection_id, c.cover_asset_id AS asset_id
+      FROM collections c
+      JOIN assets a ON a.id = c.cover_asset_id
+     WHERE c.id = ANY($1::UUID[])
+       AND a.deleted_at IS NULL
+       AND a.file_hash IS NOT NULL
+       AND EXISTS (SELECT 1 FROM storage_variants sv
+                    WHERE sv.object_hash = a.file_hash
+                      AND sv.variant_key = 'col')` + previewFrag + `
+),
+members AS (
     -- The asset half. No EntityAsset predicate spliced, matching
     -- ListCollectionResourcesPageGated: the picture plane below is
     -- strictly tighter than that predicate's asset branch. Soft-delete
@@ -221,9 +279,27 @@ ranked AS (
            ) AS rn
       FROM renderable r
 )
+-- The override replaces the mosaic rather than joining it, so a
+-- collection contributes rows from exactly one of the two branches.
+-- NOT EXISTS rather than a LEFT JOIN ... IS NULL because the mosaic
+-- branch must contribute NOTHING when an override rendered, not four
+-- rows that a later step filters: the override is the answer, and the
+-- mosaic is what the answer falls back to.
+--
+-- rn 0 for the override keeps ONE ordering expression for both
+-- branches; it is never compared against $2 because a single row
+-- cannot overflow a four-tile budget.
 SELECT collection_id, asset_id
-  FROM ranked
- WHERE rn <= $2::INTEGER
+  FROM (
+      SELECT o.collection_id, o.asset_id, 0 AS rn
+        FROM override o
+      UNION ALL
+      SELECT r.collection_id, r.asset_id, r.rn
+        FROM ranked r
+       WHERE r.rn <= $2::INTEGER
+         AND NOT EXISTS (SELECT 1 FROM override o
+                          WHERE o.collection_id = r.collection_id)
+  ) final
  ORDER BY collection_id, rn`
 
 	rows, err := pool.Query(ctx, sql, args...)
@@ -246,6 +322,56 @@ SELECT collection_id, asset_id
 		return nil, fmt.Errorf("collections: covers rows: %w", err)
 	}
 	return out, nil
+}
+
+// CallerMayPictureAsset answers whether this caller may see the given
+// asset's PICTURE — the gate the write path runs before storing a
+// collection's chosen cover (#1027).
+//
+// It lives beside [ComposeCovers] and splices the same
+// [visibility.PreviewReadableSQL] because it is deliberately the SAME
+// question at the other end of the feature: the curator may only point
+// at what they could already look at. Writing it as a second expression
+// — "readable, roughly" — is how a write gate drifts loose from the read
+// gate it is supposed to mirror, and a looser write gate here would let
+// a curator name an asset id they cannot see and learn from the response
+// whether it exists.
+//
+// # Why it does NOT require the 'col' rendition
+//
+// [ComposeCovers] additionally requires a `col` variant, because an
+// asset without one cannot paint a tile. This does not, and the
+// difference is intentional: renditions are produced asynchronously, so
+// an asset uploaded a moment ago has no `col` yet and would be refused
+// for a reason that stops being true by itself a minute later. The read
+// path already falls back to the mosaic in the meantime, so the cost of
+// accepting it is a collection that keeps its old tile briefly, while
+// the cost of refusing it is an error the curator cannot act on.
+//
+// Mutation scope is not a parameter, for the reason on [ComposeCovers]:
+// ADR 0064 gives an `assets.admin` holder the FIELDS and explicitly not
+// the picture, and a cover is nothing but a picture.
+func CallerMayPictureAsset(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	caller visibility.Caller,
+	caps visibility.ContentCaps,
+	assetID uuid.UUID,
+) (bool, error) {
+	// Soft-delete is inline for the same reason it is in ComposeCovers:
+	// PreviewReadableSQL does not carry it (a deleted asset is gone, not
+	// withheld) and every caller's own query drops those rows.
+	previewFrag := visibility.PreviewReadableSQL("a",
+		strconv.FormatInt(caller.UserRef, 10), caller, caps)
+	sql := `SELECT EXISTS (
+    SELECT 1 FROM assets a
+     WHERE a.id = $1
+       AND a.deleted_at IS NULL` + previewFrag + `)`
+	var ok bool
+	if err := pool.QueryRow(ctx, sql, assetID).Scan(&ok); err != nil {
+		return false, fmt.Errorf("collections: cover picture gate: %w", err)
+	}
+	return ok, nil
 }
 
 // CoverCallerFromContext resolves the three caller-side inputs

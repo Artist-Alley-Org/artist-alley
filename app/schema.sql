@@ -1264,6 +1264,7 @@ CREATE TABLE public.collections (
     deleted_at timestamp with time zone,
     deleted_reason text,
     deleted_by_user_ref bigint,
+    cover_asset_id uuid,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -1274,6 +1275,13 @@ CREATE TABLE public.collections (
 --
 
 COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.';
+
+
+--
+-- Name: COLUMN collections.cover_asset_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_asset_id IS 'Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer''s picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
 
 
 --
@@ -3987,6 +3995,13 @@ CREATE INDEX collections_deleted_at_idx ON public.collections USING btree (delet
 
 
 --
+-- Name: collections_cover_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_cover_asset_id_idx ON public.collections USING btree (cover_asset_id) WHERE (cover_asset_id IS NOT NULL);
+
+
+--
 -- Name: collections_expires_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5637,6 +5652,14 @@ ALTER TABLE ONLY public.collection_resources
 
 ALTER TABLE ONLY public.collection_resources
     ADD CONSTRAINT collection_resources_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES public.collections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: collections collections_cover_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collections
+    ADD CONSTRAINT collections_cover_asset_id_fkey FOREIGN KEY (cover_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
 
 
 --

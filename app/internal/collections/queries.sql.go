@@ -112,7 +112,7 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 `
 
 type CreateCollectionParams struct {
@@ -166,6 +166,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.DeletedAt,
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
+		&i.CoverAssetID,
 	)
 	return i, err
 }
@@ -199,7 +200,7 @@ const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -226,6 +227,7 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.DeletedAt,
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
+		&i.CoverAssetID,
 	)
 	return i, err
 }
@@ -249,7 +251,7 @@ const getCollectionIncludingDeleted = `-- name: GetCollectionIncludingDeleted :o
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections
 WHERE id = $1
 `
@@ -277,6 +279,7 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.DeletedAt,
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
+		&i.CoverAssetID,
 	)
 	return i, err
 }
@@ -425,7 +428,7 @@ const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections c
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
@@ -524,6 +527,7 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.DeletedAt,
 			&i.DeletedReason,
 			&i.DeletedByUserRef,
+			&i.CoverAssetID,
 		); err != nil {
 			return nil, err
 		}
@@ -585,25 +589,38 @@ UPDATE collections SET
     membership  = COALESCE($4,  membership),
     purpose     = COALESCE($5,     purpose),
     expires_at  = COALESCE($6,  expires_at),
+    cover_asset_id = CASE WHEN $7::BOOLEAN THEN NULL
+                          ELSE COALESCE($8, cover_asset_id) END,
     updated_at  = NOW()
-WHERE id = $7
+WHERE id = $9
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 `
 
 type UpdateCollectionParams struct {
-	Name        *string
-	Description *string
-	Visibility  *string
-	Membership  *string
-	Purpose     *string
-	ExpiresAt   pgtype.Timestamptz
-	ID          pgtype.UUID
+	Name         *string
+	Description  *string
+	Visibility   *string
+	Membership   *string
+	Purpose      *string
+	ExpiresAt    pgtype.Timestamptz
+	ClearCover   bool
+	CoverAssetID pgtype.UUID
+	ID           pgtype.UUID
 }
 
 // Partial update via COALESCE — NULL args keep current values.
+//
+// cover_asset_id (#1027) needs a THIRD state the other columns do not:
+// "remove the chosen cover and go back to the derived mosaic". COALESCE
+// cannot express it, because NULL already means "leave alone" for every
+// column above — the same wall ClearCollectionExpiresAt below hit. The
+// way out is metadata's UpdateFieldDefinition `clear_default`: a
+// companion BOOLEAN and a CASE, in THIS statement rather than a second
+// one, so the write stays inside the single activity-emitting
+// transaction and `updated_at` advances exactly once.
 func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, updateCollection,
 		arg.Name,
@@ -612,6 +629,8 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.Membership,
 		arg.Purpose,
 		arg.ExpiresAt,
+		arg.ClearCover,
+		arg.CoverAssetID,
 		arg.ID,
 	)
 	var i Collection
@@ -632,6 +651,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.DeletedAt,
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
+		&i.CoverAssetID,
 	)
 	return i, err
 }

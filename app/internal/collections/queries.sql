@@ -19,7 +19,7 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref;
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
@@ -27,7 +27,7 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -38,12 +38,21 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections
 WHERE id = $1;
 
 -- name: UpdateCollection :one
 -- Partial update via COALESCE — NULL args keep current values.
+--
+-- cover_asset_id (#1027) needs a THIRD state the other columns do not:
+-- "remove the chosen cover and go back to the derived mosaic". COALESCE
+-- cannot express it, because NULL already means "leave alone" for every
+-- column above — the same wall ClearCollectionExpiresAt below hit. The
+-- way out is metadata's UpdateFieldDefinition `clear_default`: a
+-- companion BOOLEAN and a CASE, in THIS statement rather than a second
+-- one, so the write stays inside the single activity-emitting
+-- transaction and `updated_at` advances exactly once.
 UPDATE collections SET
     name        = COALESCE(sqlc.narg('name'),        name),
     description = COALESCE(sqlc.narg('description'), description),
@@ -51,12 +60,14 @@ UPDATE collections SET
     membership  = COALESCE(sqlc.narg('membership'),  membership),
     purpose     = COALESCE(sqlc.narg('purpose'),     purpose),
     expires_at  = COALESCE(sqlc.narg('expires_at'),  expires_at),
+    cover_asset_id = CASE WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('cover_asset_id'), cover_asset_id) END,
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref;
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
 
 -- name: ClearCollectionExpiresAt :exec
 -- Separate query because COALESCE can't express "explicitly set to NULL".
@@ -108,7 +119,7 @@ SELECT deleted_by_user_ref
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
