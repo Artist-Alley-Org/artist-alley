@@ -111,7 +111,8 @@
       "tag": "Tags",
       "sensitivity": "Sensitivity",
       "owner": "Owner",
-      "extension": "File type"
+      "extension": "File type",
+      "collection": "In collection"
     }
   },
   "blogs": {
@@ -2752,6 +2753,7 @@
     "creating": "Creating…",
     "saving": "Saving…",
     "search_placeholder": "Search collections…",
+    "search_within": "Search in this collection",
     "tab_mine": "Mine",
     "tab_featured": "Featured",
     "tab_public": "Public",

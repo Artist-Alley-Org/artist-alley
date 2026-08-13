@@ -544,6 +544,31 @@
         </button>
       {/if}
 
+      <!-- #910 — the end of the dead end. You could find a collection and
+           then there was nowhere to go: no way to search within it.
+           Ungated for the same reason Copy link is — anyone who can read
+           this page can search inside it, and the server re-checks both
+           the collection AND every member anyway.
+
+           An <a>, not a fetch: the destination is a real, shareable
+           address (`/search?filter=collection:<id>`), the scope is one
+           more term in the same `filter=` vocabulary the facet chips
+           use, and search has no new parameter to learn. It lands with
+           the scope chip already showing and the query box empty, which
+           is the honest state — a collection scope is not itself a
+           query. -->
+      <a
+        href="/search?filter=collection:{collection.id}"
+        data-testid="collection-detail-search-within"
+        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        {t('collections.search_within')}
+      </a>
+
       <button
         type="button"
         onclick={copyLink}
