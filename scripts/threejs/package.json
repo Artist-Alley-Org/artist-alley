@@ -5,8 +5,9 @@
   "description": "Headless three.js preview renderer for artist-alley preview.model (#498, ADR 0069)",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "packageManager": "npm@11.19.0",
   "dependencies": {
-    "puppeteer": "^23.11.1",
+    "puppeteer": "^25.5.0",
     "three": "^0.185.1"
   }
 }
