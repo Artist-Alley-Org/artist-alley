@@ -67,6 +67,12 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **Type-ahead suggested tags from posts you cannot see.** The search box's tag completions were
+  drawn from every post on the instance — including private ones and drafts — so typing a few
+  letters could reveal that a tag exists inside content you have no access to, and repeating it
+  with different letters could recover the tag word by word. Completions now come only from posts
+  you are allowed to read (#1075).
+
 - **A vulnerable package is out of the published image.** The 3D preview renderer's browser
   driver pulled in an archive-unpacking library with a known flaw and no fixed release. It was
   never actually reachable here — the image uses the system browser and skips the download step
@@ -107,6 +113,11 @@ where applicable, otherwise note "no-spec-impact."
   (#902).
 
 ### Fixed
+
+- **Someone allowed to manage a file could not find it while typing, or filter to it.** A person
+  given rights over a colleague's files can read those files' titles — but the search box offered
+  no completions for them, and ticking a filter on the results page quietly dropped them. Both now
+  match what search itself already did (#1064, #1056).
 
 - **A collection of saved posts had no picture on it.** A collection's thumbnail is built from
   what's inside it, and the builder only ever looked at *files* — so a collection made of saved

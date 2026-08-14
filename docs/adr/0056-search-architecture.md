@@ -251,6 +251,13 @@ it. The current behaviour errs narrow, which is the safe direction.
 
 - Extension `pg_trgm` added in migration 00022.
 - Suggestion corpus: tag names (currently applied) + collection names + post titles + asset titles + owner display names (public only), all filtered through `visibility.Filter`.
+  - ⛔ *Corrected 2026-08-13 (#1064/#1075, PR #1076) — **this line describes the INTENDED corpus and has been
+    read as the built one.** Suggest has **four** sources, not five: `tags`, `collections`, `postTitles`,
+    `assetTitles`. **There is no owner-display-name source** — `visibility.OwnerDisplayNameSQL` is used by
+    `posts/handler.go`, `collections/resources_page.go` and `assets/list_page.go`, never by `search/suggest/`.
+    The planning agent relayed this line into a brief as current code state and the coding agent had to correct
+    it. Also false as written: "all filtered through `visibility.Filter`" — the tag source was filtered by
+    NOTHING until #1075, which is the leak that issue records.*
 - `similarity(prefix, candidate) > threshold` (default 0.3; sysconfig `search.suggest_similarity_threshold`); order by similarity DESC; LIMIT 10.
 - Rate-limited 120 req/min per user (chatty typeahead).
 
