@@ -997,6 +997,8 @@ type Team struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	// The team's chosen hero picture (#982): a pointer at an ordinary asset, NULL means fall back to the derived initials tile. Admissible only if the asset is sensitivity='public' AND its team_id is this team — validated at SELECTION by the write endpoint and RE-CHECKED AT RENDER, because an asset that qualifies today can be set to 'restricted' tomorrow and must then drop out of the rail rather than linger. This narrows ADR 0088: a team hero is NOT gated per viewer, because a navigation strip that shows some teams' pictures and not others depending on who is looking is noise rather than security. ON DELETE SET NULL so a hard-deleted asset reverts the team to its initials rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083's exclusion criterion, applied by analogy).
+	HeroAssetID pgtype.UUID `json:"hero_asset_id"`
 }
 
 type TeamClosure struct {

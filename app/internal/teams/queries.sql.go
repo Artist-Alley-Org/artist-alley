@@ -51,7 +51,7 @@ const createTeam = `-- name: CreateTeam :one
 
 INSERT INTO teams (slug, name, description)
 VALUES ($1, $2, $3)
-RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
+RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
 `
 
 type CreateTeamParams struct {
@@ -74,6 +74,7 @@ func (q *Queries) CreateTeam(ctx context.Context, arg CreateTeamParams) (Team, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.HeroAssetID,
 	)
 	return i, err
 }
@@ -108,7 +109,7 @@ func (q *Queries) FollowTeam(ctx context.Context, arg FollowTeamParams) error {
 }
 
 const getTeam = `-- name: GetTeam :one
-SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
+SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
 FROM teams
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -125,6 +126,7 @@ func (q *Queries) GetTeam(ctx context.Context, id pgtype.UUID) (Team, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.HeroAssetID,
 	)
 	return i, err
 }
@@ -149,7 +151,7 @@ func (q *Queries) IsTeamLive(ctx context.Context, id pgtype.UUID) (bool, error) 
 
 const listFollowedTeams = `-- name: ListFollowedTeams :many
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_follows tf
 JOIN teams t ON t.id = tf.team_id
 WHERE tf.user_ref = $1 AND t.deleted_at IS NULL
@@ -183,6 +185,7 @@ func (q *Queries) ListFollowedTeams(ctx context.Context, userRef int64) ([]Team,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.HeroAssetID,
 		); err != nil {
 			return nil, err
 		}
@@ -259,7 +262,7 @@ func (q *Queries) ListTeamMembers(ctx context.Context, teamID pgtype.UUID) ([]Li
 
 const listTeamParents = `-- name: ListTeamParents :many
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_parents tp
 JOIN teams t ON t.id = tp.parent_id
 WHERE tp.child_id = $1 AND t.deleted_at IS NULL
@@ -285,6 +288,7 @@ func (q *Queries) ListTeamParents(ctx context.Context, childID pgtype.UUID) ([]T
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.HeroAssetID,
 		); err != nil {
 			return nil, err
 		}
@@ -297,7 +301,7 @@ func (q *Queries) ListTeamParents(ctx context.Context, childID pgtype.UUID) ([]T
 }
 
 const listTeams = `-- name: ListTeams :many
-SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
+SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
 FROM teams
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR (name, id) > ($1::text, $2::uuid))
@@ -331,6 +335,7 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.HeroAssetID,
 		); err != nil {
 			return nil, err
 		}
@@ -344,7 +349,7 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 
 const listTeamsUnderAncestor = `-- name: ListTeamsUnderAncestor :many
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_closure c
 JOIN teams t ON t.id = c.descendant_id
 WHERE c.ancestor_id = $1
@@ -379,6 +384,7 @@ func (q *Queries) ListTeamsUnderAncestor(ctx context.Context, arg ListTeamsUnder
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.HeroAssetID,
 		); err != nil {
 			return nil, err
 		}
@@ -392,7 +398,7 @@ func (q *Queries) ListTeamsUnderAncestor(ctx context.Context, arg ListTeamsUnder
 
 const listUserTeams = `-- name: ListUserTeams :many
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_memberships tm
 JOIN teams t ON t.id = tm.team_id
 WHERE tm.user_ref = $1 AND t.deleted_at IS NULL
@@ -419,6 +425,7 @@ func (q *Queries) ListUserTeams(ctx context.Context, userRef int64) ([]Team, err
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.HeroAssetID,
 		); err != nil {
 			return nil, err
 		}
@@ -464,6 +471,58 @@ func (q *Queries) RemoveTeamParent(ctx context.Context, arg RemoveTeamParentPara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setTeamHero = `-- name: SetTeamHero :one
+
+UPDATE teams
+   SET hero_asset_id = CASE WHEN $1::BOOLEAN THEN NULL
+                            ELSE COALESCE($2, hero_asset_id) END,
+       updated_at    = NOW()
+ WHERE id = $3 AND deleted_at IS NULL
+ RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
+`
+
+type SetTeamHeroParams struct {
+	ClearHero   bool
+	HeroAssetID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// ---------------------------------------------------------------------
+// The team hero picture (#982). See migration 00047 for the full rule.
+// ---------------------------------------------------------------------
+// Choose or clear the team's hero picture.
+//
+// `clear_hero` is a flag rather than a null because a partial update
+// cannot express "remove" by sending null: the Go field is a pointer
+// with `omitempty`, so absent and null collapse into the same value long
+// before the handler sees them, and the clear silently never happens.
+// That was #1073; this is the third instance of the pattern, after
+// `clear_cover` and `clear_expires_at`.
+//
+// One statement, not two. A separate clear-statement is how the working
+// one ends up being the one nobody wires — also #1073.
+//
+// This does NOT validate the asset. Admissibility (public + owned by
+// this team) is the handler's TeamHeroCandidate check below, because a
+// refusal has to reach the caller as a 400 rather than as a silently
+// skipped UPDATE.
+func (q *Queries) SetTeamHero(ctx context.Context, arg SetTeamHeroParams) (Team, error) {
+	row := q.db.QueryRow(ctx, setTeamHero, arg.ClearHero, arg.HeroAssetID, arg.ID)
+	var i Team
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.HeroAssetID,
+	)
+	return i, err
 }
 
 const softDeleteTeam = `-- name: SoftDeleteTeam :execrows
@@ -541,6 +600,100 @@ func (q *Queries) TeamDirectoryStats(ctx context.Context, teamIds []pgtype.UUID)
 	return items, nil
 }
 
+const teamHeroCandidate = `-- name: TeamHeroCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM assets a
+     WHERE a.id = $1
+       AND a.team_id = $2
+       AND a.sensitivity = 'public'
+       AND a.deleted_at IS NULL
+) AS admissible
+`
+
+type TeamHeroCandidateParams struct {
+	AssetID pgtype.UUID
+	TeamID  pgtype.UUID
+}
+
+// SELECTION-time admissibility: may this asset be this team's hero?
+//
+// The rule narrowed out of ADR 0088 in migration 00047, stated once:
+// the asset is PUBLIC and it BELONGS TO THIS TEAM. Both halves are load
+// bearing — see the migration for why either alone is wrong.
+//
+// Deliberately does NOT require a stored object or a `col` rendition,
+// though the render-time re-check does. Renditions are produced
+// asynchronously, so refusing a just-uploaded asset would hand the admin
+// an error they cannot act on; the read path's fallback to the initials
+// tile carries that slack until the rendition lands. Same asymmetry, and
+// the same reason, as collections.CallerMayPictureAsset vs ComposeCovers.
+//
+// One boolean for "no such asset" and "not admissible" together: telling
+// them apart would make the endpoint an existence oracle for asset ids.
+func (q *Queries) TeamHeroCandidate(ctx context.Context, arg TeamHeroCandidateParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teamHeroCandidate, arg.AssetID, arg.TeamID)
+	var admissible bool
+	err := row.Scan(&admissible)
+	return admissible, err
+}
+
+const teamHeroes = `-- name: TeamHeroes :many
+SELECT t.id AS team_id, a.id AS hero_asset_id
+  FROM teams t
+  JOIN assets a ON a.id = t.hero_asset_id
+ WHERE t.id = ANY($1::UUID[])
+   AND a.team_id = t.id
+   AND a.sensitivity = 'public'
+   AND a.deleted_at IS NULL
+   AND a.file_hash IS NOT NULL
+   AND EXISTS (SELECT 1 FROM storage_variants sv
+                WHERE sv.object_hash = a.file_hash
+                  AND sv.variant_key = 'col')
+`
+
+type TeamHeroesRow struct {
+	TeamID      pgtype.UUID
+	HeroAssetID pgtype.UUID
+}
+
+// RENDER-time re-check, batched over one page of teams.
+//
+// THIS IS THE HALF THAT GETS FORGOTTEN, so it is worth being blunt about
+// why it exists. SetTeamHero validated the asset when it was chosen. That
+// says nothing about now: an asset that is public today can be set to
+// 'restricted' tomorrow, or moved to another team, or soft-deleted, and
+// none of those touch the teams row. Re-deriving the answer on every read
+// is what makes the hero DROP OUT and fall back to the initials tile
+// instead of lingering in a strip that anonymous readers can see.
+//
+// A team whose hero no longer qualifies simply returns no row, which the
+// caller reads as "no hero" — the same outcome as never having set one.
+// The pointer itself is left alone, so restoring the asset's sensitivity
+// brings the picture back without the admin re-picking it.
+//
+// The two extra conditions the write side does not impose — a stored
+// object and a `col` rendition — are renderability rather than
+// permission: without them the client would paint a broken image.
+func (q *Queries) TeamHeroes(ctx context.Context, teamIds []pgtype.UUID) ([]TeamHeroesRow, error) {
+	rows, err := q.db.Query(ctx, teamHeroes, teamIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TeamHeroesRow
+	for rows.Next() {
+		var i TeamHeroesRow
+		if err := rows.Scan(&i.TeamID, &i.HeroAssetID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const unfollowTeam = `-- name: UnfollowTeam :execrows
 DELETE FROM team_follows
 WHERE user_ref = $1 AND team_id = $2
@@ -573,7 +726,7 @@ UPDATE teams
        description = COALESCE($2, description),
        updated_at  = NOW()
  WHERE id = $3 AND deleted_at IS NULL
- RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
+ RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
 `
 
 type UpdateTeamParams struct {
@@ -596,6 +749,7 @@ func (q *Queries) UpdateTeam(ctx context.Context, arg UpdateTeamParams) (Team, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.HeroAssetID,
 	)
 	return i, err
 }

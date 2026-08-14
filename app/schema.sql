@@ -2466,8 +2466,16 @@ CREATE TABLE public.teams (
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    hero_asset_id uuid
 );
+
+
+--
+-- Name: COLUMN teams.hero_asset_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.teams.hero_asset_id IS 'The team''s chosen hero picture (#982): a pointer at an ordinary asset, NULL means fall back to the derived initials tile. Admissible only if the asset is sensitivity=''public'' AND its team_id is this team — validated at SELECTION by the write endpoint and RE-CHECKED AT RENDER, because an asset that qualifies today can be set to ''restricted'' tomorrow and must then drop out of the rail rather than linger. This narrows ADR 0088: a team hero is NOT gated per viewer, because a navigation strip that shows some teams'' pictures and not others depending on who is looking is noise rather than security. ON DELETE SET NULL so a hard-deleted asset reverts the team to its initials rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
 
 
 --
@@ -5052,6 +5060,13 @@ CREATE INDEX teams_active_idx ON public.teams USING btree (id) WHERE (deleted_at
 
 
 --
+-- Name: teams_hero_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX teams_hero_asset_id_idx ON public.teams USING btree (hero_asset_id) WHERE (hero_asset_id IS NOT NULL);
+
+
+--
 -- Name: teams_origin_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6132,6 +6147,14 @@ ALTER TABLE ONLY public.team_parents
 
 ALTER TABLE ONLY public.team_parents
     ADD CONSTRAINT team_parents_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: teams teams_hero_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.teams
+    ADD CONSTRAINT teams_hero_asset_id_fkey FOREIGN KEY (hero_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
 
 
 --

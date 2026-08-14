@@ -335,6 +335,140 @@ func (h *Handler) UpdateTeam(
 }
 
 // ---------------------------------------------------------------------------
+// SetTeamHero (#982)
+// ---------------------------------------------------------------------------
+
+// SetTeamHero points a team at the asset it should use as its picture,
+// or clears the pointer so the team falls back to its initials tile.
+//
+// # The gate is team-scoped, and that is the whole reason this is not
+// # part of UpdateTeam
+//
+// Renaming a team is a global act; choosing its picture is one a team's
+// OWN admin should be able to do. So this asks for `teams.admin` IN THIS
+// TEAM, which a global holder also satisfies (auth.Can treats a global
+// grant as covering any scope) while a team-scoped holder satisfies only
+// for their own team.
+//
+// It is `teams.admin`, NOT membership. Being in a team says you are one
+// of its people; it does not say you speak for it, and a team's picture
+// is the most public thing about it. Gating on membership would let any
+// member repoint the studio's branding.
+//
+// # What "admissible" means, and why it is checked again later
+//
+// public AND owned by this team — see migration 00047. Checked here so a
+// refusal reaches the caller as a 400 rather than as a silently ignored
+// write, and checked AGAIN on every read (attachHeroes) because this
+// answer expires the moment somebody edits the asset.
+func (h *Handler) SetTeamHero(
+	ctx context.Context,
+	req openapi.SetTeamHeroRequestObject,
+) (openapi.SetTeamHeroResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SetTeamHero401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	teamID := uuid.UUID(req.Id)
+	if !caller.Can(CapTeamsAdmin, auth.InTeam(teamID)) && !caller.Can(CapSystemAdmin) {
+		return openapi.SetTeamHero403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "teams.admin capability required for this team",
+			},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.SetTeamHero400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+
+	// Mutually exclusive, refused rather than resolved: a body carrying
+	// both has two intentions and the server has no basis for preferring
+	// either. Silently discarding one is how a "clear" that never
+	// happened gets shipped. Same shape as collections' clear_cover.
+	clearHero := req.Body.ClearHero != nil && *req.Body.ClearHero
+	if clearHero && req.Body.AssetId != nil {
+		return openapi.SetTeamHero400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either asset_id or clear_hero, not both",
+			},
+		}, nil
+	}
+	if !clearHero && req.Body.AssetId == nil {
+		return openapi.SetTeamHero400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either asset_id or clear_hero",
+			},
+		}, nil
+	}
+
+	pgID := pgtype.UUID{Bytes: teamID, Valid: true}
+	q := New(h.Pool)
+
+	// Liveness before admissibility, so a missing team answers 404
+	// rather than the 400 it would otherwise collect from the asset
+	// check (no asset carries a nonexistent team's id, so every
+	// candidate would look inadmissible for the wrong reason).
+	live, err := q.IsTeamLive(ctx, pgID)
+	if err != nil {
+		return nil, fmt.Errorf("teams: hero liveness: %w", err)
+	}
+	if !live {
+		return openapi.SetTeamHero404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+		}, nil
+	}
+
+	var heroPtr pgtype.UUID
+	if req.Body.AssetId != nil {
+		want := uuid.UUID(*req.Body.AssetId)
+		ok, err := q.TeamHeroCandidate(ctx, TeamHeroCandidateParams{
+			AssetID: pgtype.UUID{Bytes: want, Valid: true},
+			TeamID:  pgID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("teams: hero candidate: %w", err)
+		}
+		if !ok {
+			// ONE response for "no such asset", "not public" and "not
+			// this team's". Distinguishing them turns this endpoint
+			// into an existence oracle: an admin could enumerate asset
+			// ids and read the difference as "this id exists and is
+			// hidden from me", which is the fact the sensitivity plane
+			// withholds in the first place.
+			return openapi.SetTeamHero400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "asset_id must be a public asset belonging to this team",
+				},
+			}, nil
+		}
+		heroPtr = pgtype.UUID{Bytes: want, Valid: true}
+	}
+
+	if _, err := q.SetTeamHero(ctx, SetTeamHeroParams{
+		ID:          pgID,
+		ClearHero:   clearHero,
+		HeroAssetID: heroPtr,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.SetTeamHero404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("teams: set hero: %w", err)
+	}
+	h.invalidateTeam(ctx, pgID)
+	full, err := h.fetchTeam(ctx, pgID)
+	if err != nil {
+		return nil, err
+	}
+	return openapi.SetTeamHero200JSONResponse(*full), nil
+}
+
+// ---------------------------------------------------------------------------
 // DeleteTeam
 // ---------------------------------------------------------------------------
 
@@ -617,12 +751,21 @@ func (h *Handler) GetMyTeams(
 // fetchTeam reads the team row + its direct parent links, returning
 // the API shape. Reads through byID cache when present; on miss
 // queries the two SQLs and populates the cache.
+//
+// The hero picture (#982) is stamped on the way OUT, on both the hit and
+// the miss branch, and is never what goes into the cache — see
+// attachHeroes for why an entry that carried one would go stale without
+// anything being able to invalidate it.
 func (h *Handler) fetchTeam(ctx context.Context, id pgtype.UUID) (*openapi.Team, error) {
 	key := uuidString(id)
 	if h.byID != nil {
 		if v, ok := h.byID.Get(key); ok {
 			out := v
-			return &out, nil
+			one := []openapi.Team{out}
+			if err := h.attachHeroes(ctx, one); err != nil {
+				return nil, err
+			}
+			return &one[0], nil
 		}
 	}
 	q := New(h.Pool)
@@ -644,10 +787,17 @@ func (h *Handler) fetchTeam(ctx context.Context, id pgtype.UUID) (*openapi.Team,
 		})
 	}
 	out.Parents = &parentLinks
+	// Cached WITHOUT the hero, then enriched below: teamRowToAPI never
+	// sets HeroAssetId, so what lands in the LRU is hero-free by
+	// construction rather than by remembering to strip it.
 	if h.byID != nil {
 		h.byID.Add(key, out)
 	}
-	return &out, nil
+	one := []openapi.Team{out}
+	if err := h.attachHeroes(ctx, one); err != nil {
+		return nil, err
+	}
+	return &one[0], nil
 }
 
 // invalidateTeam drops the local entry and broadcasts. Called by
@@ -706,10 +856,17 @@ func (h *Handler) attachDirectoryStats(ctx context.Context, items []openapi.Team
 	return nil
 }
 
-func (h *Handler) teamsToAPI(_ context.Context, rows []Team) ([]openapi.Team, error) {
+// teamsToAPI converts a page of rows and stamps each one's hero picture
+// (#982). Every LIST path funnels through here, which is the point: the
+// hero is a re-derived value, and a surface that forgot to ask for it
+// would silently render initials for teams that have a picture.
+func (h *Handler) teamsToAPI(ctx context.Context, rows []Team) ([]openapi.Team, error) {
 	out := make([]openapi.Team, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, teamRowToAPI(r))
+	}
+	if err := h.attachHeroes(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -727,7 +884,69 @@ func teamRowToAPI(t Team) openapi.Team {
 		v := openapi_types.UUID(t.OriginServerID.Bytes)
 		out.OriginServerId = &v
 	}
+	// t.HeroAssetID is DELIBERATELY not mapped here. That is the stored
+	// pointer, and it is only as true as the moment it was written: the
+	// asset behind it can be set to 'restricted', moved to another team
+	// or soft-deleted without anything touching this row. Shipping it
+	// would put a picture on the wire that the rule no longer admits.
+	// attachHeroes re-derives the admissible answer instead, and it is
+	// the only writer of out.HeroAssetId.
 	return out
+}
+
+// attachHeroes stamps each team's hero picture after re-checking that it
+// still qualifies (#982). See the TeamHeroes query and migration 00047.
+//
+// # Why this is an enrichment pass rather than a column on the read
+//
+// Two reasons, and the second is the one that bites.
+//
+// The stored pointer is not the answer. "Is this asset still public, and
+// still this team's?" is a question about the ASSETS table that nothing
+// in the teams row can answer, so it has to be asked at read time or not
+// at all. A gate that runs only when the admin picks the picture is not a
+// gate; it is a note about the past.
+//
+// And it must run AFTER the cache. fetchTeam reads through the byID LRU,
+// which is invalidated by the team-row and parent-edge endpoints only —
+// nothing about an asset's sensitivity touches it, and nothing sensibly
+// could, since the asset does not know which teams point at it. A hero
+// baked into that entry would go on rendering after the asset stopped
+// qualifying, for as long as the entry lived. Same rule ADR 0013 states
+// for viewer-dependent values, reached from the other direction: this one
+// is the same for every viewer, but it goes stale, so it is computed
+// after the cache rather than stored in it.
+//
+// Best-effort is NOT good enough: an error here would silently paint
+// initials for every team, which is indistinguishable from "no team has a
+// picture". So the error propagates.
+func (h *Handler) attachHeroes(ctx context.Context, items []openapi.Team) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(items))
+	for _, it := range items {
+		ids = append(ids, pgtype.UUID{Bytes: it.Id, Valid: true})
+	}
+	rows, err := New(h.Pool).TeamHeroes(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("teams: hero re-check: %w", err)
+	}
+	byTeam := make(map[uuid.UUID]uuid.UUID, len(rows))
+	for _, r := range rows {
+		byTeam[uuid.UUID(r.TeamID.Bytes)] = uuid.UUID(r.HeroAssetID.Bytes)
+	}
+	for i := range items {
+		// Cleared first rather than only set on a hit, so "the query
+		// decides" is true rather than merely expected — an item that
+		// arrived carrying a hero from anywhere else loses it here.
+		items[i].HeroAssetId = nil
+		if a, ok := byTeam[uuid.UUID(items[i].Id)]; ok {
+			v := openapi_types.UUID(a)
+			items[i].HeroAssetId = &v
+		}
+	}
+	return nil
 }
 
 // Cursor format: "name|uuid" base64-url encoded. Same shape as posts.

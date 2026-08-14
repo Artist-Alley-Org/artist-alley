@@ -3169,6 +3169,9 @@ func (s *apiServer) UpdateTeam(ctx context.Context, req openapi.UpdateTeamReques
 func (s *apiServer) DeleteTeam(ctx context.Context, req openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
 	return s.teams.DeleteTeam(ctx, req)
 }
+func (s *apiServer) SetTeamHero(ctx context.Context, req openapi.SetTeamHeroRequestObject) (openapi.SetTeamHeroResponseObject, error) {
+	return s.teams.SetTeamHero(ctx, req)
+}
 func (s *apiServer) ListTeamParents(ctx context.Context, req openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
 	return s.teams.ListTeamParents(ctx, req)
 }

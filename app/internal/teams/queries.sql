@@ -4,10 +4,10 @@
 -- name: CreateTeam :one
 INSERT INTO teams (slug, name, description)
 VALUES ($1, $2, $3)
-RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at;
+RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id;
 
 -- name: GetTeam :one
-SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
+SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
 FROM teams
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -19,7 +19,7 @@ UPDATE teams
        description = COALESCE(sqlc.narg('description'), description),
        updated_at  = NOW()
  WHERE id = sqlc.arg('id') AND deleted_at IS NULL
- RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at;
+ RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id;
 
 -- name: SoftDeleteTeam :execrows
 UPDATE teams
@@ -29,7 +29,7 @@ UPDATE teams
 -- name: ListTeams :many
 -- Paginated by (name ASC, id ASC). When cursor_name/cursor_id are
 -- supplied, returns rows strictly after the cursor.
-SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at
+SELECT id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id
 FROM teams
 WHERE deleted_at IS NULL
   AND (sqlc.narg('cursor_name')::text IS NULL OR (name, id) > (sqlc.narg('cursor_name')::text, sqlc.narg('cursor_id')::uuid))
@@ -41,7 +41,7 @@ LIMIT sqlc.arg('row_limit')::int;
 -- itself via the depth-0 self-row). Used by the upload-modal team
 -- picker when scoping to "anywhere under team X".
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_closure c
 JOIN teams t ON t.id = c.descendant_id
 WHERE c.ancestor_id = $1
@@ -52,7 +52,7 @@ LIMIT $2;
 -- name: ListTeamParents :many
 -- Direct parents of a team (single hop, no closure walk).
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_parents tp
 JOIN teams t ON t.id = tp.parent_id
 WHERE tp.child_id = $1 AND t.deleted_at IS NULL
@@ -109,7 +109,7 @@ WHERE team_id = $1 AND user_ref = $2;
 -- Direct team memberships for the caller's user_ref. Used by
 -- /auth/me/teams to render the upload modal's team picker.
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_memberships tm
 JOIN teams t ON t.id = tm.team_id
 WHERE tm.user_ref = $1 AND t.deleted_at IS NULL
@@ -156,7 +156,7 @@ WHERE user_ref = $1 AND team_id = $2;
 -- that is tombstoned simply leaves the rail and comes back if it is
 -- ever restored.
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
-       t.created_at, t.updated_at, t.deleted_at
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
 FROM team_follows tf
 JOIN teams t ON t.id = tf.team_id
 WHERE tf.user_ref = $1 AND t.deleted_at IS NULL
@@ -205,3 +205,86 @@ SELECT t.id AS team_id,
          WHERE a.team_id = t.id AND a.deleted_at IS NULL) AS asset_count
 FROM teams t
 WHERE t.id = ANY(sqlc.arg('team_ids')::uuid[]);
+
+-- ---------------------------------------------------------------------
+-- The team hero picture (#982). See migration 00047 for the full rule.
+-- ---------------------------------------------------------------------
+
+-- name: SetTeamHero :one
+-- Choose or clear the team's hero picture.
+--
+-- `clear_hero` is a flag rather than a null because a partial update
+-- cannot express "remove" by sending null: the Go field is a pointer
+-- with `omitempty`, so absent and null collapse into the same value long
+-- before the handler sees them, and the clear silently never happens.
+-- That was #1073; this is the third instance of the pattern, after
+-- `clear_cover` and `clear_expires_at`.
+--
+-- One statement, not two. A separate clear-statement is how the working
+-- one ends up being the one nobody wires — also #1073.
+--
+-- This does NOT validate the asset. Admissibility (public + owned by
+-- this team) is the handler's TeamHeroCandidate check below, because a
+-- refusal has to reach the caller as a 400 rather than as a silently
+-- skipped UPDATE.
+UPDATE teams
+   SET hero_asset_id = CASE WHEN sqlc.arg('clear_hero')::BOOLEAN THEN NULL
+                            ELSE COALESCE(sqlc.narg('hero_asset_id'), hero_asset_id) END,
+       updated_at    = NOW()
+ WHERE id = sqlc.arg('id') AND deleted_at IS NULL
+ RETURNING id, slug, name, description, origin_server_id, created_at, updated_at, deleted_at, hero_asset_id;
+
+-- name: TeamHeroCandidate :one
+-- SELECTION-time admissibility: may this asset be this team's hero?
+--
+-- The rule narrowed out of ADR 0088 in migration 00047, stated once:
+-- the asset is PUBLIC and it BELONGS TO THIS TEAM. Both halves are load
+-- bearing — see the migration for why either alone is wrong.
+--
+-- Deliberately does NOT require a stored object or a `col` rendition,
+-- though the render-time re-check does. Renditions are produced
+-- asynchronously, so refusing a just-uploaded asset would hand the admin
+-- an error they cannot act on; the read path's fallback to the initials
+-- tile carries that slack until the rendition lands. Same asymmetry, and
+-- the same reason, as collections.CallerMayPictureAsset vs ComposeCovers.
+--
+-- One boolean for "no such asset" and "not admissible" together: telling
+-- them apart would make the endpoint an existence oracle for asset ids.
+SELECT EXISTS (
+    SELECT 1 FROM assets a
+     WHERE a.id = sqlc.arg('asset_id')
+       AND a.team_id = sqlc.arg('team_id')
+       AND a.sensitivity = 'public'
+       AND a.deleted_at IS NULL
+) AS admissible;
+
+-- name: TeamHeroes :many
+-- RENDER-time re-check, batched over one page of teams.
+--
+-- THIS IS THE HALF THAT GETS FORGOTTEN, so it is worth being blunt about
+-- why it exists. SetTeamHero validated the asset when it was chosen. That
+-- says nothing about now: an asset that is public today can be set to
+-- 'restricted' tomorrow, or moved to another team, or soft-deleted, and
+-- none of those touch the teams row. Re-deriving the answer on every read
+-- is what makes the hero DROP OUT and fall back to the initials tile
+-- instead of lingering in a strip that anonymous readers can see.
+--
+-- A team whose hero no longer qualifies simply returns no row, which the
+-- caller reads as "no hero" — the same outcome as never having set one.
+-- The pointer itself is left alone, so restoring the asset's sensitivity
+-- brings the picture back without the admin re-picking it.
+--
+-- The two extra conditions the write side does not impose — a stored
+-- object and a `col` rendition — are renderability rather than
+-- permission: without them the client would paint a broken image.
+SELECT t.id AS team_id, a.id AS hero_asset_id
+  FROM teams t
+  JOIN assets a ON a.id = t.hero_asset_id
+ WHERE t.id = ANY(sqlc.arg('team_ids')::UUID[])
+   AND a.team_id = t.id
+   AND a.sensitivity = 'public'
+   AND a.deleted_at IS NULL
+   AND a.file_hash IS NOT NULL
+   AND EXISTS (SELECT 1 FROM storage_variants sv
+                WHERE sv.object_hash = a.file_hash
+                  AND sv.variant_key = 'col');

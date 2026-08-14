@@ -7272,6 +7272,76 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/hero:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setTeamHero
+      summary: Choose or clear the team's hero picture
+      description: |
+        Points the team at an ordinary asset to use as its picture
+        (#982), or clears the pointer so the team falls back to its
+        initials tile.
+
+        # Why this is not part of `updateTeam`
+
+        The gate is different. Renaming a team is a global `teams.admin`
+        act; choosing its picture is one a team's OWN admin should be
+        able to do, so this endpoint accepts `teams.admin` scoped to
+        this team. Folding it into the PATCH would mean one operation
+        answering to two different authorisation rules depending on
+        which field the body happened to carry, which is how a gate ends
+        up being widened by accident.
+
+        # What the server will accept
+
+        The asset must be `sensitivity: public` AND carry this team's
+        `team_id`. Both halves are required: `public` alone would let a
+        team pin any public asset in the install onto itself, and
+        ownership alone would paint a `team`- or `restricted`-
+        sensitivity picture into a strip anonymous readers can see.
+
+        An asset that fails either half is refused with the same 400
+        given for an id that does not exist — telling the two apart
+        would make this an existence oracle for assets the caller
+        cannot see.
+
+        A just-uploaded asset is accepted before its `col` rendition
+        exists; the team simply keeps painting initials until the
+        rendition lands. Refusing it would be an error the admin cannot
+        act on.
+
+        Passing the check is not a promise the picture keeps rendering.
+        The read path re-checks the same rule on every read, so an asset
+        later set to `restricted` drops out of the payload and the team
+        reverts to initials.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamHeroUpdate" }
+      responses:
+        "200":
+          description: The team, carrying its new hero (or none)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/parents:
     parameters:
       - name: id
@@ -14986,6 +15056,36 @@ components:
           description: |
             Set on rows mirroring a federated team. NULL = locally
             owned.
+        hero_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The team's picture (#982) — fetch it from
+            `/assets/{hero_asset_id}/variants/col`. NULL means the
+            client falls back to the team's initials tile.
+
+            THIS IS THE RENDER ANSWER, NOT THE STORED SETTING. The
+            server re-derives it on every read, and it is absent
+            whenever the chosen asset no longer qualifies: set to
+            `restricted`, moved to another team, soft-deleted, or still
+            missing its `col` rendition. The stored pointer survives all
+            of those, so restoring the asset brings the picture back
+            without an admin re-picking it — but until then the wire
+            says "no hero" and the client paints initials.
+
+            One field rather than the setting/render pair `Collection`
+            carries, because the two cannot disagree PER READER here.
+            ADR 0088 gates a representative image per viewer; #982
+            narrows that for a team, because the followed-teams rail is
+            a navigation strip and a strip that shows some teams'
+            pictures and not others depending on who is looking is noise
+            rather than security. A team hero is admissible only if it
+            is `public` AND owned by that team — visible to everyone or
+            to no one — so a single field cannot be misread.
+
+            It does NOT federate: a local asset id names something that
+            exists only on this server.
         parents:
           type: array
           description: |
@@ -15073,6 +15173,38 @@ components:
         description:
           type: string
           maxLength: 500
+
+    TeamHeroUpdate:
+      type: object
+      description: |
+        Choose or clear a team's hero picture (#982). Exactly one of the
+        two properties must be present — an empty body is a 400 rather
+        than a no-op, because a request that says nothing about a
+        single-valued endpoint is a client bug, not an instruction.
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+          description: |
+            The asset to use as this team's picture. Must be
+            `sensitivity: public` AND carry this team's `team_id`; any
+            other asset — including one that does not exist — is
+            refused with the same 400.
+
+            Not `nullable`: sending null to mean "remove" is exactly the
+            shape that stops working the moment the Go field is a
+            pointer with `omitempty`, because absent and null collapse
+            before the handler sees them. Removal is `clear_hero`.
+        clear_hero:
+          type: boolean
+          description: |
+            Remove the chosen picture, reverting the team to its
+            initials tile. Mutually exclusive with `asset_id` — sending
+            both is a 400, rather than the server picking one and
+            silently discarding the other.
+
+            Same shape, and the same reasoning, as `clear_cover` on
+            `CollectionUpdate` and `clear_expires_at` before it.
 
     TeamList:
       type: object

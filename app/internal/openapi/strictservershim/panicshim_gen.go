@@ -1425,6 +1425,11 @@ func (*PanicShim) FollowTeam(context.Context, openapi.FollowTeamRequestObject) (
 	panic("PanicShim: FollowTeam called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SetTeamHero panics by default; test shims override.
+func (*PanicShim) SetTeamHero(context.Context, openapi.SetTeamHeroRequestObject) (openapi.SetTeamHeroResponseObject, error) {
+	panic("PanicShim: SetTeamHero called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListTeamMembers panics by default; test shims override.
 func (*PanicShim) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
 	panic("PanicShim: ListTeamMembers called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

@@ -43,6 +43,7 @@
   import { teamFollows } from '$stores/teamFollows.svelte';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
+  import TeamAvatar from '$components/TeamAvatar.svelte';
 
   onMount(() => {
     if (auth.user) void teamFollows.load();
@@ -59,13 +60,6 @@
     }
   });
 
-  /** Two initials, the same fallback the profile header uses for a
-   *  user with no avatar. Teams carry no image on the wire yet
-   *  (out of scope this sprint), so every chip uses it. */
-  function initials(name: string): string {
-    const parts = name.trim().split(/\s+/).slice(0, 2);
-    return parts.map((p) => p.slice(0, 1).toUpperCase()).join('') || '?';
-  }
 </script>
 
 {#if auth.user && teamFollows.loaded}
@@ -107,11 +101,7 @@
                      text-sm text-fg transition-colors hover:border-border-strong hover:bg-state-hover"
               title={team.description || team.name}
             >
-              <span
-                class="flex h-7 w-7 items-center justify-center rounded-full bg-state-hover text-[0.65rem]
-                       font-semibold text-fg-muted"
-                aria-hidden="true">{initials(team.name)}</span
-              >
+              <TeamAvatar {team} />
               <span class="max-w-[12rem] truncate font-medium">{team.name}</span>
             </a>
           </li>
