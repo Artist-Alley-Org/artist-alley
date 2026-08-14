@@ -134,6 +134,20 @@ type Request struct {
 	// tier. Zero value = none.
 	PostCaps visibility.PostCaps
 
+	// MutationCaps is the caller's asset-mutation scope (#1056, ADR
+	// 0064). The asset aggregators count on the FIELD plane, and a
+	// team-scoped `assets.admin` holder is owed the fields of the
+	// assets they administer — so they must be COUNTED for them too.
+	//
+	// This field is the reason #1056 existed: without it the
+	// aggregators could only compose the content plane, and the
+	// Engine's filter conjunct was pinned to the content plane to
+	// match them (see runAssets). Both widened together, because
+	// widening either alone makes the rail's number disagree with the
+	// result set ticking it returns — #907's defect in a subtler form.
+	// Zero value = none, correct for anonymous.
+	MutationCaps visibility.AssetMutationCaps
+
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
 	Timeout time.Duration

@@ -63,21 +63,49 @@ import (
 // row for an answer this clause has already decided.
 //
 // That safety is a DEPENDENCY, and it is the only one of its kind left:
-// if the ContentReadableSQL call below is ever narrowed away or made
+// if the FieldsReadableSQL call below is ever narrowed away or made
 // conditional the way /search's filter conjunct is, these five matches
 // become #902 again. Gate the match through visibility, not the
 // population, if that ever happens.
-func buildAssetVisibilityAppendedSQL(ctx context.Context, caller visibility.Caller, caps visibility.ContentCaps, offset int) (string, []any, error) {
+//
+// # The plane is the FIELD plane (#1056)
+//
+// This composed ContentReadableSQL until #1056 — the BYTES plane — so a
+// team-scoped `assets.admin` holder was counted out of the rail for
+// assets whose fields ADR 0064 says they may read. Every dimension the
+// rail reports (extension, sensitivity, asset_type, owner, tag) is one
+// of those fields, so the holder was owed the count.
+//
+// It moved together with the Engine's filter conjunct (search.runAssets)
+// in one change, and that is the whole point rather than tidiness: the
+// count on the rail must equal the size of the result set that ticking
+// it returns. Widening only one side leaves `png 7` beside a filter that
+// returns 8 — #907's defect restored in a form no obvious test catches,
+// because both numbers still look plausible.
+//
+// Nothing here reaches the binary plane. FieldsReadableSQL is
+// PreviewReadable OR the mutation disjunct; the picture stays on
+// PreviewReadable, and a facet count is not a picture.
+func buildAssetVisibilityAppendedSQL(
+	ctx context.Context,
+	caller visibility.Caller,
+	caps visibility.ContentCaps,
+	mut visibility.AssetMutationCaps,
+	offset int,
+) (string, []any, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return "", nil, err
 	}
 	frag, args := pred.ToSQL("a", offset)
-	// The content plane binds no new placeholder: the caller ref is
+	// The field plane binds no new placeholder: the caller ref is
 	// inlined as a literal because it is an int64 this package produced,
 	// never caller-supplied text, and threading another placeholder
 	// through four aggregators' arg lists is where an off-by-one lives.
-	frag += visibility.ContentReadableSQL("a", strconv.FormatInt(caller.UserRef, 10), caps)
+	// The mutation disjunct's team scope is inlined as UUID literals by
+	// FieldsReadableSQL for the same reason, so the selection's args
+	// still number from offset+len(args) exactly as before (ADR 0063).
+	frag += visibility.FieldsReadableSQL("a", strconv.FormatInt(caller.UserRef, 10), caller, caps, mut)
 	return frag, args, nil
 }
 
@@ -100,7 +128,7 @@ func buildAssetPopulationSQL(
 	own FacetType,
 	offset int,
 ) (string, []any, bool, error) {
-	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, offset)
+	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, req.MutationCaps, offset)
 	if err != nil {
 		return "", nil, false, err
 	}

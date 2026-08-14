@@ -6,10 +6,10 @@
 //
 // Uses pg_trgm's similarity() function against a corpus of:
 //
-//   - post_tags.tag (any live tag application)
-//   - collections.name (visibility-gated)
-//   - posts.title (visibility-gated)
-//   - assets.title (visibility-gated)
+//   - post_tags.tag (gated by the POST read rule — #1075)
+//   - collections.name (gated by the collection rule)
+//   - posts.title (gated by the POST read rule)
+//   - assets.title (gated by the asset FIELD plane — #1064)
 //
 // Similarity threshold default 0.3 (sysconfig
 // search.suggest_similarity_threshold); ordered by similarity DESC;
@@ -69,9 +69,20 @@ type Request struct {
 	// title completes iff the caller may read the post, which is the
 	// full read rule and not the `public OR author` this surface used
 	// to compose. Zero value = none.
-	PostCaps  visibility.PostCaps
-	Threshold float64
-	Limit     int
+	//
+	// #1075 — it governs the TAG source too, which used to run
+	// ungated. See [Service.tags].
+	PostCaps visibility.PostCaps
+	// MutationCaps is the caller's asset-mutation scope (#1064, ADR
+	// 0064). A completion is an asset TITLE and a title is a FIELD, so
+	// this surface answers on the field plane: a team-scoped
+	// `assets.admin` holder may already read that title on the asset
+	// page, and /search matches it for them since #902, so refusing to
+	// complete it was the one place the three surfaces disagreed.
+	// Zero value = none, correct for anonymous.
+	MutationCaps visibility.AssetMutationCaps
+	Threshold    float64
+	Limit        int
 }
 
 // Response is the ordered result set.
@@ -117,7 +128,7 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	// Assemble all four sub-queries + assemble in-memory.
 	all := make([]Suggestion, 0, limit*4)
 
-	tags, err := s.tags(ctx, prefix, threshold)
+	tags, err := s.tags(ctx, prefix, threshold, req.Caller, req.PostCaps)
 	if err != nil {
 		return Response{}, err
 	}
@@ -135,7 +146,7 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	}
 	all = append(all, postTitles...)
 
-	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps)
+	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps, req.MutationCaps)
 	if err != nil {
 		return Response{}, err
 	}
@@ -168,21 +179,69 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	return Response{Suggestions: deduped}, nil
 }
 
-// tags queries post_tags via similarity against pg_trgm-indexed tag
-// column. Not visibility-gated on the tag itself — tags are
-// publicly meaningful even when the posts they appear on aren't;
-// the JOIN restricts to posts the caller can see.
-func (s *Service) tags(ctx context.Context, prefix string, threshold float64) ([]Suggestion, error) {
+// tags completes on the tags applied to posts, gated by the POST read
+// rule — the same predicate [Service.postTitles] composes.
+//
+// # What this used to be (#1075)
+//
+// It ran with no caller at all. Its doc claimed the gate was structural
+// — *"tags are publicly meaningful even when the posts they appear on
+// aren't; the JOIN restricts to posts the caller can see"* — and the
+// second half of that sentence was simply false: `JOIN posts p ON p.id =
+// pt.post_id` requires the post to EXIST, not to be readable. There was
+// no predicate on `p` whatsoever, and the function had no `caller`
+// parameter to build one from, while all three of its siblings did.
+//
+// So the tag source drew from every post on the instance — private,
+// draft, and tiers the caller cannot read — and the endpoint takes a
+// PREFIX. That is the #899 asset-title recovery in the shape #902 closed
+// for `@@`: walk the alphabet and read back the tag vocabulary of
+// content you cannot see. Anonymous callers reach /search/suggest on a
+// public install, so it did not even need an account.
+//
+// # Why the post read rule and not something narrower
+//
+// A tag is a FIELD of the post carrying it, which is the same reason the
+// tag facet counts through the post rule (facet.tagAgg) and the same
+// reason [Service.postTitles] widened in #873. Composing anything else
+// here would put a third answer on a question two surfaces already
+// agree on.
+//
+// The alternative — a curated public tag vocabulary, where the corpus is
+// an owned list rather than a projection of live applications — is a
+// defensible product, and it is NOT what the old comment described
+// either: a vocabulary is authored, not leaked. Out of scope for #1075.
+//
+// Note the ASYMMETRY with facet.tagAgg that remains: that aggregator
+// counts `asset_tag` as well as `post_tags`, and this source still does
+// not complete asset tags at all. That is a pre-existing gap in the
+// CORPUS, not in the gate, and widening it is a product change.
+func (s *Service) tags(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.PostCaps,
+) ([]Suggestion, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(caps))
+	if err != nil {
+		return nil, err
+	}
+	// $1=prefix, $2=threshold, the predicate's args continue from $3.
+	// The LIMIT is INLINED rather than bound: it used to be `$3`, which
+	// is the first placeholder the spliced fragment now claims, and
+	// leaving it there would have bound the row limit to the caller ref
+	// (ADR 0063 — a fragment numbers from $N up and the caller does not
+	// renumber it). The siblings all inline it for the same reason.
+	frag, args := pred.ToSQL("p", 2)
 	sql := `
 		SELECT pt.tag AS value, similarity(pt.tag, $1) AS sim
 		  FROM post_tags pt
 		  JOIN posts p ON p.id = pt.post_id
-		 WHERE similarity(pt.tag, $1) > $2
+		 WHERE similarity(pt.tag, $1) > $2` + frag + `
 		 GROUP BY pt.tag
 		 ORDER BY sim DESC
-		 LIMIT $3
-	`
-	return s.scanSuggestions(ctx, KindTag, sql, prefix, threshold, MaxResults)
+		 LIMIT ` + itoa(MaxResults)
+	queryArgs := append([]any{prefix, threshold}, args...)
+	return s.scanSuggestionsWith(ctx, KindTag, sql, queryArgs)
 }
 
 func (s *Service) collections(ctx context.Context, prefix string, threshold float64, caller visibility.Caller) ([]Suggestion, error) {
@@ -240,7 +299,31 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 // This surface was the sharpest of the #899 leaks in practice: it takes
 // a PREFIX, so it let any signed-in caller reconstruct a restricted
 // asset's title letter by letter, without ever touching /assets/{id}.
-func (s *Service) assetTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.ContentCaps) ([]Suggestion, error) {
+//
+// # The plane: FIELD, not content (#1064)
+//
+// This composed [visibility.ContentReadableSQL] until #1064 — the plane
+// that governs the BYTES. A title is not bytes; it is a FIELD, and ADR
+// 0064 confers the field plane on a mutation-capability holder. So a
+// team-scoped `assets.admin` holder could open the asset page and read
+// the very title this endpoint refused to complete for them.
+//
+// The decision was not really open. #902 made /search match asset text
+// through [visibility.AssetSearchMatchSQL], which is `search_text @@ q
+// AND FieldsReadableSQL` — the field plane. A completion that used a
+// narrower plane than the search it feeds means typing six letters
+// offers nothing and pressing Enter returns the row, which is the
+// disagreement #1064 was filed about. One plane, both surfaces.
+//
+// The direction is a WIDENING and it stays inside 0064: the holder gets
+// the field they may already read, and nothing here touches the binary
+// plane — [visibility.PreviewReadable] still decides the picture, and
+// this endpoint returns no picture at all.
+func (s *Service) assetTitles(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.ContentCaps,
+	mut visibility.AssetMutationCaps,
+) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, err
@@ -248,8 +331,10 @@ func (s *Service) assetTitles(ctx context.Context, prefix string, threshold floa
 	frag, args := pred.ToSQL("", 2)
 	// Caller ref inlined as a literal, same reasoning as the facet
 	// aggregators: it is an int64 this package produced, never
-	// caller-supplied text.
-	frag += visibility.ContentReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caps)
+	// caller-supplied text. FieldsReadableSQL likewise renders the team
+	// scope as UUID literals, so neither adds a placeholder and the
+	// predicate's numbering above is untouched (ADR 0063).
+	frag += visibility.FieldsReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caller, caps, mut)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM assets

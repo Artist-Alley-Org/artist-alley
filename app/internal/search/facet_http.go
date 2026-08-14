@@ -75,6 +75,7 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var callerRef *int64
 	var caps visibility.ContentCaps
 	var postCaps visibility.PostCaps
+	var mutCaps visibility.AssetMutationCaps
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		callerRef = &ref
@@ -82,15 +83,26 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// #873 — the tag facet counts through posts, so it needs the
 		// capability that opens the post read rule's `private` tier.
 		postCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
+		// #1056 — the asset-mutation scope. This handler resolved the
+		// other two and stopped, so the aggregators had no way to express
+		// the ADR 0064 field-plane disjunct and were pinned to the
+		// content plane; the Engine's filter conjunct was pinned with
+		// them to keep the two agreeing. Resolved at the SAME edge as the
+		// other two, exactly as the Engine's handler does.
+		mutCaps = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 	}
 
 	req := facet.Request{
-		QueryText: q,
-		Facets:    types,
-		Selection: selection,
-		Caller:    visibility.NewCaller(callerRef),
-		Caps:      caps,
-		PostCaps:  postCaps,
+		QueryText:    q,
+		Facets:       types,
+		Selection:    selection,
+		Caller:       visibility.NewCaller(callerRef),
+		Caps:         caps,
+		PostCaps:     postCaps,
+		MutationCaps: mutCaps,
 	}
 	resp := h.Dispatcher.Run(r.Context(), req)
 	writeJSON(w, http.StatusOK, resp)
