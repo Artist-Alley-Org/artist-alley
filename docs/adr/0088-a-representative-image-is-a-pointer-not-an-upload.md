@@ -1,7 +1,30 @@
+---
+id: "0088"
+title: A representative image is a pointer at an asset, not a bespoke upload
+status: accepted
+date: 2026-08-13
+area: architecture
+phases: []
+supersedes: []
+related:
+  - "0063"
+  - "0064"
+  - "0071"
+  - "0083"
+tags:
+  - collections
+  - assets
+  - api
+excerpt: >-
+  Surfaces that need "the image representing this thing" — a collection cover, a team hero —
+  store a nullable pointer at an ordinary asset, gated per-viewer, falling back to a derived
+  default. Not a bespoke upload. The instance-logo endpoint is the precedent that argues against
+  itself: its content-type sniffing, size bounds, storage pin and MRU history all exist because a
+  logo has no asset to point at. The deciding argument is one representation, not cost.
+---
+
 # 0088 — A representative image is a POINTER at an asset, not a bespoke upload
 
-- **Status:** Accepted
-- **Date:** 2026-08-13
 - **Deciders:** planning agent, with the operator's standing "only the most robust fix" instruction
 - **Context:** #1027 (collection cover override), PR #1072. Builds on #1026 / PR #1069.
 - **Related:** ADR 0063 (one expression of a rule), ADR 0064 (the picture plane), ADR 0083
