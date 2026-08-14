@@ -2,18 +2,51 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // /admin/content/featured — admin-curated featured list (GitHub
-  // #341). Lists current featured assets/collections with remove +
+  // #341). Lists current featured assets/collections/teams with remove +
   // reorder, and an add control (kind + subject UUID). Cap-gating is
   // server-side (system.admin); a 403 surfaces as a friendly error.
+  //
+  // TEAM subjects arrived with #1084, and this page had to move with the
+  // migration rather than after it. Every kind-dependent line here was
+  // written as a BINARY — `=== 'asset' ? A : B` — so a third kind did
+  // not fail loudly, it silently rendered a team as a Collection with a
+  // link to /collections/<team-id>, which 404s. That is worse than not
+  // shipping: this page is where an operator goes to REMOVE a placement,
+  // and it was describing the row wrongly. The ternaries below are now
+  // exhaustive lookups, so the next kind breaks the type check instead
+  // of the UI.
 
   import { onMount } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
+  type SubjectKind = 'asset' | 'collection' | 'team';
+
+  /** The route each kind's title links to, and the letter its
+   *  no-thumbnail placeholder shows. A record rather than a chain of
+   *  ternaries: adding a kind to `SubjectKind` without adding it here is
+   *  a type error, which is the only reason this survives the next
+   *  subject kind. */
+  const SUBJECT_ROUTE: Record<SubjectKind, string> = {
+    asset: '/assets',
+    collection: '/collections',
+    team: '/teams',
+  };
+  const SUBJECT_LETTER: Record<SubjectKind, string> = {
+    asset: 'A',
+    collection: 'C',
+    team: 'T',
+  };
+  const SUBJECT_LABEL: Record<SubjectKind, string> = {
+    asset: 'admin.featured.kind_asset',
+    collection: 'admin.featured.kind_collection',
+    team: 'admin.featured.kind_team',
+  };
+
   interface FeaturedItem {
     id: string;
-    subject_kind: 'asset' | 'collection';
+    subject_kind: SubjectKind;
     subject_id: string;
     position: number;
     title: string;
@@ -39,7 +72,7 @@
   let error = $state<string | null>(null);
 
   // Add form.
-  let addKind = $state<'asset' | 'collection'>('asset');
+  let addKind = $state<SubjectKind>('asset');
   let addId = $state('');
   let adding = $state(false);
 
@@ -138,9 +171,7 @@
   }
 
   function subjectHref(it: FeaturedItem): string {
-    return it.subject_kind === 'asset'
-      ? `/assets/${it.subject_id}`
-      : `/collections/${it.subject_id}`;
+    return `${SUBJECT_ROUTE[it.subject_kind]}/${it.subject_id}`;
   }
 </script>
 
@@ -166,6 +197,10 @@
       <select bind:value={addKind} class="rounded border border-border-strong bg-surface px-2 py-1 text-sm" data-testid="featured-add-kind">
         <option value="asset">{t('admin.featured.kind_asset')}</option>
         <option value="collection">{t('admin.featured.kind_collection')}</option>
+        <!-- #1084. The endpoint accepts a team, so the only surface that
+             can curate one has to offer it; without this the feature
+             would be reachable by curl alone. -->
+        <option value="team">{t('admin.featured.kind_team')}</option>
       </select>
     </label>
     <label class="block flex-1 text-xs">
@@ -203,14 +238,14 @@
             <img src={thumbUrl(it)} alt="" class="h-12 w-12 shrink-0 rounded object-cover" loading="lazy" />
           {:else}
             <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-surface text-xs text-fg-muted">
-              {it.subject_kind === 'asset' ? 'A' : 'C'}
+              {SUBJECT_LETTER[it.subject_kind]}
             </div>
           {/if}
 
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="rounded bg-surface px-1.5 py-0.5 text-xs uppercase text-fg-muted">
-                {it.subject_kind === 'asset' ? t('admin.featured.kind_asset') : t('admin.featured.kind_collection')}
+                {t(SUBJECT_LABEL[it.subject_kind])}
               </span>
               <a href={subjectHref(it)} class="truncate text-sm font-medium text-accent hover:underline">
                 {it.title || t('admin.featured.untitled')}

@@ -3203,6 +3203,13 @@ func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsReques
 	return s.teams.GetMyTeams(ctx, req)
 }
 
+// The featured-team slot in the teams rail (#1084). Pathed under
+// /featured but handled here: it returns TEAMS, and a team is only
+// correct once teams.attachHeroes has re-derived its picture.
+func (s *apiServer) ListFeaturedTeams(ctx context.Context, req openapi.ListFeaturedTeamsRequestObject) (openapi.ListFeaturedTeamsResponseObject, error) {
+	return s.teams.ListFeaturedTeams(ctx, req)
+}
+
 // --- users -----------------------------------------------------------------
 
 func (s *apiServer) GetUserPublicByRef(ctx context.Context, req openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {

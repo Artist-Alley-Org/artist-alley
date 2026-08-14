@@ -79,7 +79,7 @@ const listFeaturedItems = `-- name: ListFeaturedItems :many
 
 SELECT f.id, f.subject_kind, f.subject_id, f.position,
        f.created_at, f.created_by_user_ref,
-       COALESCE(a.title, c.name, '')::text AS title,
+       COALESCE(a.title, c.name, tm.name, '')::text AS title,
        -- The asset whose col variant renders the tile (#625): the
        -- subject itself for an asset, the hero-card fallback for a
        -- collection. NULL when nothing is servable — the client keys on
@@ -125,6 +125,8 @@ LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id
 LEFT JOIN collections c
        ON f.subject_kind = 'collection' AND c.id = f.subject_id
+LEFT JOIN teams tm
+       ON f.subject_kind = 'team' AND tm.id = f.subject_id
 LEFT JOIN LATERAL (
        SELECT ca.id, ca.file_hash
          FROM collection_posts cp
@@ -163,6 +165,25 @@ type ListFeaturedItemsRow struct {
 // per-row lookup. A dangling reference (subject hard-deleted) yields
 // an empty title rather than dropping the row — the operator prunes
 // stale entries by hand.
+// Team subjects (#1084). Found by adding one and looking at the result:
+// without this join the curation list answered with a row whose title
+// was ” — an operator staring at an unnamed entry they cannot identify
+// and therefore cannot safely remove. Widening subject_kind is not
+// finished until every surface that resolves a subject knows the new
+// kind, and this list is one of them.
+//
+// Deliberately title-only, with no tile: a team's picture is admissible
+// only through the render-time TeamHeroes re-check (#982, migration
+// 00047), and resolving it here would mean a SECOND copy of that rule
+// inside a query whose whole design note is that its gates are weaker
+// than the rail's. The operator gets the name, which is what identifies
+// the row; nothing here can leak a picture because nothing here
+// resolves one.
+//
+// No deleted_at filter, matching the assets/collections joins above and
+// for the same stated reason: a dangling or tombstoned subject yields a
+// row the operator can see and prune, rather than a placement that
+// vanishes from the only surface that could remove it.
 // Hero-card fallback for collection subjects (#625), ported from the
 // public rail's lateral (#559 / ADR 0027): the cover of the most recent
 // eligible post in the collection.

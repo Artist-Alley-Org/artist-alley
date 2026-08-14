@@ -1170,6 +1170,11 @@ func (*PanicShim) GetPublicFeaturedRail(context.Context, openapi.GetPublicFeatur
 	panic("PanicShim: GetPublicFeaturedRail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListFeaturedTeams panics by default; test shims override.
+func (*PanicShim) ListFeaturedTeams(context.Context, openapi.ListFeaturedTeamsRequestObject) (openapi.ListFeaturedTeamsResponseObject, error) {
+	panic("PanicShim: ListFeaturedTeams called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetFederationInstance panics by default; test shims override.
 func (*PanicShim) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
 	panic("PanicShim: GetFederationInstance called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

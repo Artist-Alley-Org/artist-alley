@@ -96,10 +96,33 @@ func (h *HTTPHandler) AddFeaturedItem(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
+	// ADDING A SUBJECT KIND TOUCHES SIX PLACES, not two. #1084 was
+	// scoped as four and the last two were found by adding a `team` and
+	// looking at the result:
+	//
+	//   1. featured_items_subject_kind_check   (migration 00048)
+	//   2. this check
+	//   3. this check's error string
+	//   4. FeaturedItemInput.subject_kind enum — the REQUEST schema
+	//   5. FeaturedItem.subject_kind enum — the RESPONSE schema, a
+	//      separate object. Miss it and the server keeps serialising the
+	//      new kind while the generated client's type narrows it away.
+	//   6. ListFeaturedItems' title resolution + the /admin/content/
+	//      featured page, both of which switch on the kind. Miss those
+	//      and the operator's own curation list shows the new kind as an
+	//      untitled Collection with a dead link — on the very page they
+	//      would use to remove it.
+	//
+	// This check is not redundant with the database's. Without it an
+	// unknown kind reaches Postgres, raises 23514 and surfaces as a 500 —
+	// the database covering for the handler rather than the two agreeing.
+	// The constraint is the backstop; this is the contract.
 	kind := string(req.Body.SubjectKind)
-	if kind != "asset" && kind != "collection" {
+	if kind != "asset" && kind != "collection" && kind != "team" {
 		return openapi.AddFeaturedItem400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "subject_kind must be asset or collection"},
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "subject_kind must be asset, collection or team",
+			},
 		}, nil
 	}
 	in := AddInput{

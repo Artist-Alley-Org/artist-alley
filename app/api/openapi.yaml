@@ -10021,6 +10021,50 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/FeaturedItem" }
 
+  /featured/teams:
+    get:
+      operationId: listFeaturedTeams
+      summary: Operator-curated teams for the teams rail (GitHub #1084)
+      description: |
+        The `featured_items` placements with `subject_kind = 'team'` at
+        `scope = 'org'`, in curation order — the slot that runs first in
+        the teams rail.
+
+        `org` rather than `public` is deliberate and it is what the write
+        endpoint already produces: `POST /admin/featured` writes
+        `scope = 'org'`, and ADR 0065 defines `org` as the internal,
+        signed-in audience — which is exactly this rail's audience, since
+        it renders only for a signed-in reader holding `teams.read`. A
+        `public` placement is a separate audience with a separate surface
+        (`GET /featured`) and is not read here.
+
+        **A placement is not a grant.** Featuring a team makes nothing
+        visible that was not already: the join drops any team that is not
+        live, the endpoint holds the same `teams.read` gate as the rest
+        of the teams rail, and each team's picture goes through the
+        render-time hero re-check (#982) rather than the stored pointer,
+        so a hero whose asset stopped being public falls back to initials
+        here exactly as it does everywhere else.
+
+        Sits under `/featured` rather than `/teams/featured` so the path
+        cannot be confused with `/teams/{id}` by a router or a reader.
+      tags: [featured, teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Featured teams the caller may see, in curation order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /appearance:
     get:
       operationId: getPublicAppearance
@@ -14086,10 +14130,15 @@ components:
       type: object
       description: |
         GitHub #341 — one admin-curated featured entry pointing at an
-        asset or collection, with an explicit ordering position and
-        the resolved subject title. Both subject kinds carry thumbnail
-        hints so a tile can render a cover: assets from themselves,
-        collections via ADR 0027's hero-card fallback (#559).
+        asset, a collection or a team, with an explicit ordering
+        position and the resolved subject title. Assets and collections
+        carry thumbnail hints so a tile can render a cover: assets from
+        themselves, collections via ADR 0027's hero-card fallback
+        (#559). A `team` subject (#1084) resolves its NAME only and
+        carries no hints — a team's picture is admissible solely through
+        the render-time hero re-check (#982), and resolving it here
+        would be a second copy of that rule inside a query whose gates
+        are deliberately weaker than the public rail's.
       required: [id, subject_kind, subject_id, position, title, preview_available, created_at, ladder_available]
       properties:
         id:
@@ -14098,7 +14147,15 @@ components:
           description: The featured_items row id (used for remove/reorder).
         subject_kind:
           type: string
-          enum: [asset, collection]
+          description: |
+            Must list every value `FeaturedItemInput.subject_kind`
+            accepts. It is a separate schema and was the place this was
+            nearly missed in #1084: the server would have gone on
+            serialising `team` (Go emits the string it holds), while the
+            generated client's type narrowed it away and a strict
+            response validator rejected the row — a placement the
+            operator could see in the database and not in the UI.
+          enum: [asset, collection, team]
         subject_id:
           type: string
           format: uuid
@@ -14160,12 +14217,21 @@ components:
 
     FeaturedItemInput:
       type: object
-      description: GitHub #341 — payload to feature an asset or collection.
+      description: |
+        GitHub #341 — payload to feature an asset, a collection or a
+        team.
       required: [subject_kind, subject_id]
       properties:
         subject_kind:
           type: string
-          enum: [asset, collection]
+          description: |
+            `team` was added by #1084. The admissible list is restated in
+            the handler's validation and in the
+            `featured_items_subject_kind_check` database constraint
+            (migration 00048); all three move together, because a value
+            missing here is one the generated client will not send at
+            all.
+          enum: [asset, collection, team]
         subject_id:
           type: string
           format: uuid

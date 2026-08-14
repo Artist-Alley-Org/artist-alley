@@ -149,6 +149,91 @@ func (q *Queries) IsTeamLive(ctx context.Context, id pgtype.UUID) (bool, error) 
 	return live, err
 }
 
+const listFeaturedTeams = `-- name: ListFeaturedTeams :many
+SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
+       t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id
+FROM featured_items f
+JOIN teams t
+  ON t.id = f.subject_id
+ AND t.deleted_at IS NULL
+WHERE f.subject_kind = 'team'
+  AND f.scope = 'org'
+ORDER BY f.position ASC, f.created_at ASC
+LIMIT 24
+`
+
+// The operator-curated slot that runs first in the teams rail (#1084).
+//
+// # Same projection, on purpose
+//
+// Identical column list to ListFollowedTeams and ListUserTeams, so all
+// three feed teamsToAPI and therefore all three get the render-time hero
+// re-check. A bespoke projection here would have been the quiet way to
+// end up reading teams.hero_asset_id directly and painting a picture the
+// asset's current sensitivity no longer admits.
+//
+// # scope = 'org' is the write endpoint's own answer
+//
+// POST /admin/featured inserts with the table default, 'org', and ADR
+// 0065 defines 'org' as the internal signed-in audience. This rail is
+// signed-in-only and teams.read-gated, so 'org' IS its audience.
+// Reading 'public' here instead would have produced a slot that the
+// product's only write path could never fill.
+//
+// # Where the placement-is-not-a-grant rule is enforced
+//
+// In the JOIN, structurally, rather than by restating a rule:
+//
+//   - `t.deleted_at IS NULL` — a tombstoned team is the one state a team
+//     can be in that hides it from every reader, and a placement must not
+//     resurrect it. An INNER JOIN, so a placement pointing at a
+//     hard-deleted or nonexistent team contributes no row at all rather
+//     than a blank tile. (subject_id has no FK — the subject is
+//     polymorphic — so a dangling pointer is a state that really occurs.)
+//   - the caller's right to see teams at all is the handler's teams.read
+//     gate, which is the same gate the rest of this rail holds.
+//
+// Note for whoever adds per-team visibility later: teams currently have
+// NO visibility predicate — there is no visibility.EntityTeam and no
+// private-team column, so `deleted_at` plus the capability is the entire
+// readability rule for a team today. When that changes, this JOIN is one
+// of the places that must gain the predicate, and it must gain it in the
+// JOIN condition rather than the WHERE for the reason featured/rail.go
+// documents at length.
+//
+// The limit is a literal because this is a hand-curated list an operator
+// types in one at a time; 24 is far above any real curation and exists
+// only so a runaway seed cannot hand the rail an unbounded page.
+func (q *Queries) ListFeaturedTeams(ctx context.Context) ([]Team, error) {
+	rows, err := q.db.Query(ctx, listFeaturedTeams)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Team
+	for rows.Next() {
+		var i Team
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.HeroAssetID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFollowedTeams = `-- name: ListFollowedTeams :many
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
        t.created_at, t.updated_at, t.deleted_at, t.hero_asset_id

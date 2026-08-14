@@ -59,6 +59,22 @@ export interface TeamSummary {
 class TeamFollows {
   /** Teams the caller follows, ordered by name (the server's order). */
   items = $state<TeamSummary[]>([]);
+  /**
+   * The operator-curated slot that renders first in the rail (#1084), in
+   * curation order.
+   *
+   * DELIBERATELY NOT MERGED INTO `items`, and this is the whole reason
+   * it is a second array rather than a prepend. `items` is the FOLLOW
+   * SET: `isFollowing` reads it, and three surfaces render their
+   * follow/unfollow button from that answer. Prepending a featured team
+   * the caller does not follow would make the team page and the
+   * directory card both claim it is followed, and the first
+   * unfollow-click would fire a DELETE for a row that never existed.
+   *
+   * A featured team the caller DOES follow appears in both arrays; the
+   * rail dedupes at render so it is not drawn twice.
+   */
+  featured = $state<TeamSummary[]>([]);
   /** True once a load has completed — lets the rail tell "empty" from
    *  "not asked yet" and skip rendering an empty state during boot. */
   loaded = $state(false);
@@ -79,13 +95,20 @@ class TeamFollows {
    *  out, or no teams.read) empties the rail rather than erroring:
    *  there is nothing for a guest to be told here. */
   async load(): Promise<void> {
-    const { data, error } = await api.GET('/auth/me/followed-teams', {});
-    if (error || !data) {
-      this.items = [];
-      this.loaded = true;
-      return;
-    }
-    this.items = data as TeamSummary[];
+    // Both halves of the rail in one await, and `loaded` flips ONCE at
+    // the end. Two independent loads with two flags would let the rail
+    // paint the follow set and then jolt as the featured slot arrived —
+    // a layout shift on every page load, which is the exact failure the
+    // single `loaded` gate was introduced to avoid.
+    const [follows, featured] = await Promise.all([
+      api.GET('/auth/me/followed-teams', {}),
+      api.GET('/featured/teams', {}),
+    ]);
+    // Each half fails independently: a 403 on the curated slot must not
+    // empty the reader's own follows, and vice versa. Neither is an
+    // error state worth showing — the rail simply renders what it has.
+    this.items = follows.error || !follows.data ? [] : (follows.data as TeamSummary[]);
+    this.featured = featured.error || !featured.data ? [] : (featured.data as TeamSummary[]);
     this.loaded = true;
   }
 
@@ -136,6 +159,7 @@ class TeamFollows {
    *  inherit the previous one's rail. */
   reset(): void {
     this.items = [];
+    this.featured = [];
     this.loaded = false;
     this.pending = new Set();
   }

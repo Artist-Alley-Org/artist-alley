@@ -422,7 +422,8 @@ type ExtractionFailure struct {
 }
 
 type FeaturedItem struct {
-	ID               pgtype.UUID
+	ID pgtype.UUID
+	// What kind of thing this placement points at: 'asset', 'collection' or 'team' (#1084). There is deliberately no foreign key — the subject is polymorphic — so the read path resolves the subject by joining the matching table and DROPS the placement when that join finds nothing the caller may see. Adding a kind here is never sufficient on its own: the same enumeration is restated in SIX places (enumerated in featured/http.go's AddFeaturedItem) — this CHECK, that handler's validation, its error string, the OpenAPI FeaturedItemInput enum, the FeaturedItem RESPONSE enum, and the admin curation list's title resolution plus the page that renders it. Miss any one and the failure is asymmetric: a 500 instead of a 400, a client that refuses to send the value, or an operator staring at an untitled row with a dead link.
 	SubjectKind      string
 	SubjectID        pgtype.UUID
 	Position         int32
