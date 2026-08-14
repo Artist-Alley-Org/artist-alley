@@ -36,7 +36,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import { site } from '$stores/site.svelte';
-  import { channels } from '$stores/channels.svelte';
+  import { teamFollows } from '$stores/teamFollows.svelte';
   import { t } from '$stores/lang.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
 
@@ -92,10 +92,10 @@
   onMount(() => {
     void fetchPage(null);
     // The follow buttons on these cards read their state from the
-    // channels store, so it has to be warm before they render — a
+    // teamFollows store, so it has to be warm before they render — a
     // directory that shows "Follow" on a team you already follow is
     // worse than one that shows nothing.
-    if (auth.user) void channels.load();
+    if (auth.user) void teamFollows.load();
   });
 
   const showEmpty = $derived(initialLoaded && items.length === 0 && !error && !guest);
@@ -128,19 +128,19 @@
 </script>
 
 <svelte:head>
-  <title>{t('channels.directory_title')} — {site.name}</title>
+  <title>{t('teams.directory_title')} — {site.name}</title>
 </svelte:head>
 
 <div class="w-full px-4 py-8 sm:px-6">
   <header class="mb-6">
-    <h1 class="text-2xl font-bold text-fg">{t('channels.directory_title')}</h1>
-    <p class="mt-1 max-w-2xl text-sm text-fg-muted">{t('channels.directory_blurb')}</p>
+    <h1 class="text-2xl font-bold text-fg">{t('teams.directory_title')}</h1>
+    <p class="mt-1 max-w-2xl text-sm text-fg-muted">{t('teams.directory_blurb')}</p>
   </header>
 
   {#if guest}
     <div class="rounded-xl border border-dashed border-border p-12 text-center" data-testid="teams-guest">
-      <p class="text-base font-medium text-fg">{t('channels.guest_title')}</p>
-      <p class="mx-auto mt-1 max-w-md text-sm text-fg-muted">{t('channels.guest_hint')}</p>
+      <p class="text-base font-medium text-fg">{t('teams.guest_title')}</p>
+      <p class="mx-auto mt-1 max-w-md text-sm text-fg-muted">{t('teams.guest_hint')}</p>
       <a
         href="/login"
         class="mt-4 inline-flex items-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent"
@@ -154,8 +154,8 @@
     </div>
   {:else if showEmpty}
     <div class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-      <p class="font-medium text-fg">{t('channels.directory_empty')}</p>
-      <p class="mt-1 text-sm">{t('channels.directory_empty_hint')}</p>
+      <p class="font-medium text-fg">{t('teams.directory_empty')}</p>
+      <p class="mt-1 text-sm">{t('teams.directory_empty_hint')}</p>
     </div>
   {:else}
     <ul
@@ -189,15 +189,15 @@
             {#if team.member_count != null}
               <span>
                 {team.member_count === 1
-                  ? t('channels.member_count_one')
-                  : t('channels.member_count', { count: team.member_count })}
+                  ? t('teams.member_count_one')
+                  : t('teams.member_count', { count: team.member_count })}
               </span>
             {/if}
             {#if team.content_count != null}
               <span>
                 {team.content_count === 1
-                  ? t('channels.content_count_one')
-                  : t('channels.content_count', { count: team.content_count })}
+                  ? t('teams.content_count_one')
+                  : t('teams.content_count', { count: team.content_count })}
               </span>
             {/if}
           </p>
@@ -213,7 +213,7 @@
           onclick={() => void fetchPage(nextCursor)}
           disabled={loading}
         >
-          {loading ? t('common.loading') : t('channels.load_more')}
+          {loading ? t('common.loading') : t('teams.load_more')}
         </button>
       </div>
     {/if}

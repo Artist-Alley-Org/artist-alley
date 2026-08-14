@@ -2,7 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   /**
-   * The channels rail (#577) — the teams you follow, above the browse
+   * The teams rail (#577) — the teams you follow, above the browse
    * feed.
    *
    * # Why it is a rail and not a sidebar
@@ -11,8 +11,18 @@
    * (FeaturedRail), the page is full-viewport-width by design, and a
    * new left sidebar would be a second navigation system competing
    * with the navbar for the same job. So this is the pattern that is
-   * already here: a heading, a horizontally-scrolling row of chips, no
-   * new chrome.
+   * already here: a horizontally-scrolling row of chips, no new chrome.
+   *
+   * # No visible heading (#1030)
+   *
+   * A row of team chips is self-evidently a row of teams, and browse
+   * stacked three labelled sections before the reader reached a single
+   * piece of work. The heading is gone VISUALLY only: the `<section>`
+   * carries the same string as `aria-label`, so it is still a named
+   * region a screen reader can jump to. Deleting the `<h2>` without
+   * that would have left `aria-labelledby` pointing at a dead id and
+   * turned a named landmark into an anonymous `<div>` — an
+   * accessibility regression dressed as a cleanup.
    *
    * # Signed-in only, and quiet when there is nothing to say
    *
@@ -30,12 +40,12 @@
    * single page load for anyone who follows anything.
    */
   import { onMount } from 'svelte';
-  import { channels } from '$stores/channels.svelte';
+  import { teamFollows } from '$stores/teamFollows.svelte';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
 
   onMount(() => {
-    if (auth.user) void channels.load();
+    if (auth.user) void teamFollows.load();
   });
 
   // Re-load when the session changes — signing in mid-visit must fill
@@ -43,9 +53,9 @@
   // previous user's studios on screen.
   $effect(() => {
     if (auth.user) {
-      void channels.load();
+      void teamFollows.load();
     } else {
-      channels.reset();
+      teamFollows.reset();
     }
   });
 
@@ -58,33 +68,38 @@
   }
 </script>
 
-{#if auth.user && channels.loaded}
-  <section aria-labelledby="channels-rail-heading" data-testid="channels-rail">
-    <div class="mb-2 flex items-baseline justify-between gap-3">
-      <h2 id="channels-rail-heading" class="text-sm font-semibold text-fg">
-        {t('channels.rail_title')}
-      </h2>
+{#if auth.user && teamFollows.loaded}
+  <!-- `aria-label` rather than `aria-labelledby`: the heading it used to
+       point at is gone (#1030). The string is the same one, so the
+       region's name in the accessibility tree is unchanged — only its
+       visual rendering went away. -->
+  <section aria-label={t('teams.rail_title')} data-testid="teams-rail">
+    <!-- The directory link keeps its own row rather than joining the
+         chips. #982 replaces this row with a header CHIP that opens the
+         same directory, and moving the link into the strip now would
+         mean moving it back then. -->
+    <div class="mb-2 flex justify-end">
       <a href="/teams" class="shrink-0 text-xs font-medium text-accent hover:underline">
-        {t('channels.browse_all')}
+        {t('teams.browse_all')}
       </a>
     </div>
 
-    {#if channels.items.length === 0}
+    {#if teamFollows.items.length === 0}
       <!-- Actionable, not decorative: the whole point of the empty
            state is the link to the directory. -->
       <p
         class="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-fg-muted"
-        data-testid="channels-rail-empty"
+        data-testid="teams-rail-empty"
       >
-        {t('channels.empty')}
-        <a href="/teams" class="font-medium text-accent hover:underline">{t('channels.empty_cta')}</a>
+        {t('teams.empty')}
+        <a href="/teams" class="font-medium text-accent hover:underline">{t('teams.empty_cta')}</a>
       </p>
     {:else}
       <!-- Horizontal scroll rather than wrap: the rail must stay one
            row tall whether the user follows two studios or forty, or it
            starts pushing the feed off the fold. -->
       <ul class="flex gap-2 overflow-x-auto pb-1">
-        {#each channels.items as team (team.id)}
+        {#each teamFollows.items as team (team.id)}
           <li class="shrink-0">
             <a
               href={`/teams/${team.id}`}
