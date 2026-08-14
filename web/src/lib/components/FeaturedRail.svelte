@@ -15,13 +15,29 @@
    * be a second expression of a rule that already has one home, which
    * is the defect class ADR 0063 exists to prevent.
    *
-   * An empty rail renders NOTHING — no heading, no empty-state box. On
-   * an install whose operator has curated nothing, a "no featured
-   * items" panel is noise on the front page; the caller decides what
-   * to show instead.
+   * An empty rail renders NOTHING — no empty-state box. On an install
+   * whose operator has curated nothing, a "no featured items" panel is
+   * noise on the front page; the caller decides what to show instead.
+   *
+   * # No visible heading (#1030)
+   *
+   * The "Featured" `<h2>` is gone: a row of curated cards is
+   * self-evidently curated, and the cards carry their own kicker
+   * labels, which is where labelling belongs — on the item, not over
+   * the row. The string survives as the section's `aria-label`, so the
+   * region still has a name in the accessibility tree; a `<section>`
+   * with no accessible name is not a landmark at all, so deleting the
+   * heading outright would have removed a navigation target rather
+   * than just some pixels.
+   *
+   * # The tiles follow the browse tile-size control (#909)
+   *
+   * See `tileWidth` below.
    */
   import { onMount } from 'svelte';
   import { api } from '$api/client';
+  import { browseView } from '$stores/browseView.svelte';
+  import { previewLadder } from '$stores/previewLadder.svelte';
   import { t } from '$stores/lang.svelte';
 
   interface FeaturedItem {
@@ -36,6 +52,11 @@
     cover_asset_id?: string | null;
     asset_file_hash?: string | null;
     preview_available?: boolean;
+    /** Every rung of the operator's CONFIGURED ladder exists for this
+     *  tile's cover asset AND the caller passes the content plane
+     *  (#610). Required on the wire since #591; the rail simply never
+     *  read it while its tiles were a fixed 160px. */
+    ladder_available?: boolean;
   }
 
   let items = $state<FeaturedItem[]>([]);
@@ -43,6 +64,9 @@
 
   onMount(() => {
     void load();
+    // Shared, once per page load — the grid's cards call this too and
+    // every caller awaits the same flight.
+    previewLadder.init();
   });
 
   async function load() {
@@ -107,23 +131,108 @@
   function href(it: FeaturedItem): string | null {
     return it.subject_kind === 'collection' ? `/collections/${it.subject_id}` : null;
   }
+
+  /** The rail tile's width — the SAME CSS length the grid below uses as
+   *  its column minimum (#909).
+   *
+   *  Before this, the tiles were `w-40 sm:w-48` and the browse tile-size
+   *  control moved the post grid underneath while the curated strip
+   *  above sat still: one page, two card sizes.
+   *
+   *  # What "larger tiles" means for a horizontal strip
+   *
+   *  A rail is not a grid, so `auto-fill` has nothing to say here — the
+   *  tile width is chosen, not derived from a column count. The closest
+   *  a fixed-width strip can get to the grid it sits over is
+   *  `browseView.tileMin` itself: the grid's painted column is
+   *  `tileMin + remainder/n`, so the two agree to within one row's
+   *  leftover, and they step together on every rung.
+   *
+   *  The three-zone clamp transfers UNCHANGED, and it is load-bearing
+   *  rather than inherited. A bare rung would be 22rem at the default —
+   *  352px, which at 390px is one tile filling the viewport with no hint
+   *  that the row scrolls sideways. The clamp's floor (0.4·R) puts about
+   *  two and a half tiles in view on a phone, which is what says
+   *  "scroller". So the same formula that gives the grid its column
+   *  count gives the rail its peek.
+   *
+   *  Reading the store's GETTER, not the raw rung, is deliberate: it
+   *  already carries thumbnail mode's +1 rung offset, so the rail
+   *  matches whatever the grid is painting right now rather than what
+   *  the stepper last stored. In `list` and `feed` the stepper is inert
+   *  by definition, so nothing moves in either place.
+   *
+   *  `min(…, 100%)` for the same overflow reason TileGrid has it — the
+   *  top rung's floor is 22.8rem, which is wider than a 390px viewport's
+   *  content box.
+   *
+   *  `tileSizes` comes along as the matched other half — see `srcset`
+   *  below for why the tile now HAS a source set to steer. */
+  const tileWidth = $derived(`min(${browseView.tileMin}, 100%)`);
+
+  /** Responsive source set for the tile (#502/#610's pattern, reused).
+   *
+   *  A resizable tile needs a resizable source. `col` is `fit: cover,
+   *  max_dim: 320` — fine when this rail was a fixed `w-40 sm:w-48`,
+   *  and a 2.6x upscale the moment the size control can take the tile
+   *  to 38rem. Making the tiles follow the grid without this would have
+   *  fixed "two card sizes" by shipping "two card qualities".
+   *
+   *  Gated on `ladder_available` exactly as CardThumb is: that flag is
+   *  the server confirming every CONFIGURED rung exists for THIS asset
+   *  and this caller, and without it requesting anything but `col` is
+   *  the 404 class #471 removed. The rung keys come from GET /previews,
+   *  never hardcoded (#610's trap). No ladder → `srcset` is empty and
+   *  the tile renders from `col`, exactly as it did before.
+   *
+   *  The contain rungs are not square, and that is fine here in a way
+   *  it is NOT in the grid's `fill` mode: this tile is an
+   *  `aspect-square` box with `object-cover`, so CSS takes the same
+   *  centre crop `col` was baked with. The rail stays a wall of
+   *  squares; only the pixel count changes.
+   *
+   *  `sizes` ships with it and never without it — they are one hint.
+   *  `browseView.tileSizes` is the same three-zone clamp `tileWidth`
+   *  resolves, restated in the `sizes` grammar, so the width the
+   *  browser budgets for is the width the tile actually gets. Its
+   *  leading `auto` depends on the `<img>` being `loading="lazy"`,
+   *  which it is; making it eager would silently turn the hint into
+   *  100vw. */
+  function srcsetFor(it: FeaturedItem): string {
+    if (!it.ladder_available || !it.cover_asset_id) return '';
+    return previewLadder.srcsetFor(it.cover_asset_id) ?? '';
+  }
+
+  /** The `src` a browser that ignores `srcset` loads, and the candidate
+   *  the loader starts from. The smallest CONTAIN rung when the set is
+   *  live — mixing `col`'s server crop in as the fallback would fetch a
+   *  second, differently-produced image for the same slot. */
+  function srcFor(it: FeaturedItem, set: string): string | null {
+    if (!set) return thumbUrl(it);
+    const smallest = previewLadder.smallestKey();
+    return smallest ? `/api/v1/assets/${it.cover_asset_id}/variants/${smallest}` : thumbUrl(it);
+  }
 </script>
 
 {#if loaded && items.length > 0}
-  <section class="mb-8" data-testid="featured-rail">
-    <h2 class="mb-3 text-lg font-semibold text-fg">{t('collections.rail_title')}</h2>
+  <!-- `aria-label` carries the name the deleted `<h2>` used to give
+       this region (#1030). Without it the element is a nameless
+       `<section>`, which is not exposed as a landmark at all. -->
+  <section class="mb-8" aria-label={t('collections.rail_title')} data-testid="featured-rail">
     <!-- Horizontal scroll rather than a wrapping grid: a rail is an
          ordered, curated sequence, and wrapping it into rows loses the
          operator's ordering as the primary read. overflow-x is scoped
          to this container so the page body never scrolls sideways. -->
     <div class="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2">
       {#each items as it (it.id)}
-        {@const thumb = thumbUrl(it)}
+        {@const set = srcsetFor(it)}
+        {@const thumb = srcFor(it, set)}
         {@const to = href(it)}
         <svelte:element
           this={to ? 'a' : 'div'}
           href={to}
-          class="group w-40 shrink-0 sm:w-48"
+          class="group shrink-0"
+          style="width: {tileWidth}"
           data-testid="featured-rail-item"
         >
           <div
@@ -132,6 +241,8 @@
             {#if showThumb(it)}
               <img
                 src={thumb}
+                srcset={set || undefined}
+                sizes={set ? browseView.tileSizes : undefined}
                 alt=""
                 loading="lazy"
                 class="h-full w-full object-cover transition group-hover:scale-[1.02]"

@@ -2524,16 +2524,16 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
-  "channels": {
+  "teams": {
     "follow": "Follow",
     "following": "Following",
     "unfollow": "Unfollow",
-    "rail_title": "Your channels",
+    "rail_title": "Your teams",
     "browse_all": "All teams",
     "empty": "You aren't following any teams yet.",
     "empty_cta": "Find some",
     "directory_title": "Teams",
-    "directory_blurb": "Studios and groups on this instance. Follow one to keep it in your channels.",
+    "directory_blurb": "Studios and groups on this instance. Follow one to keep it in your teams.",
     "directory_empty": "No teams yet",
     "directory_empty_hint": "Teams appear here once an administrator creates them.",
     "guest_title": "Teams are for members",

@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// The channels rail's state: which teams the signed-in user follows
+// The teams rail's state: which teams the signed-in user follows
 // (#577).
+//
+// Named for what it holds — the caller's team FOLLOWS — not for the
+// competitor's word this shipped under (#1029). `teams` alone would
+// have been the wrong rename: this is not every team on the instance,
+// it is the subset one reader bookmarked, and the directory page
+// fetches the full list separately.
 //
 // # Why a shared store and not per-component fetches
 //
@@ -32,21 +38,22 @@
 //
 // # No counts, no unread
 //
-// Deliberately absent. Channels are not notifications (#520 owns that
-// arc), and there is no follower count on the wire to cache.
+// Deliberately absent. A followed team is not a notification feed
+// (#520 owns that arc), and there is no follower count on the wire to
+// cache.
 
 import { api } from '$api/client';
 
-export interface Channel {
+export interface TeamSummary {
   id: string;
   slug: string;
   name: string;
   description: string;
 }
 
-class Channels {
+class TeamFollows {
   /** Teams the caller follows, ordered by name (the server's order). */
-  items = $state<Channel[]>([]);
+  items = $state<TeamSummary[]>([]);
   /** True once a load has completed — lets the rail tell "empty" from
    *  "not asked yet" and skip rendering an empty state during boot. */
   loaded = $state(false);
@@ -73,7 +80,7 @@ class Channels {
       this.loaded = true;
       return;
     }
-    this.items = data as Channel[];
+    this.items = data as TeamSummary[];
     this.loaded = true;
   }
 
@@ -87,7 +94,7 @@ class Channels {
    *
    * Returns the resulting state, or the unchanged state on failure.
    */
-  async toggle(team: Channel): Promise<boolean> {
+  async toggle(team: TeamSummary): Promise<boolean> {
     if (this.pending.has(team.id)) return this.isFollowing(team.id);
     const wasFollowing = this.isFollowing(team.id);
     const before = this.items;
@@ -129,4 +136,4 @@ class Channels {
   }
 }
 
-export const channels = new Channels();
+export const teamFollows = new TeamFollows();
