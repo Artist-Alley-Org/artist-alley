@@ -49,6 +49,7 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var callerRef *int64
 	var caps visibility.ContentCaps
 	var postCaps visibility.PostCaps
+	var mutCaps visibility.AssetMutationCaps
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		callerRef = &ref
@@ -59,16 +60,27 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// can fully read.
 		caps = visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
 		// #873 — and the post plane, which decides which post TITLES
-		// exist to complete at all.
+		// exist to complete at all. #1075 — and which TAGS, too: the tag
+		// source ran with no caller at all until then.
 		postCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
+		// #1064 — the asset-mutation scope, resolved at the SAME edge as
+		// the other two, exactly as the Engine's handler does. A title is
+		// a FIELD, so the completion answers on the field plane and a
+		// team-scoped assets.admin holder completes what /search already
+		// matches for them.
+		mutCaps = visibility.ResolveAssetMutationCaps(
+			func(code string) bool { return id.Can(code) },
+			id.ScopedTeams(visibility.AssetsAdmin),
+		)
 	}
 
 	req := suggest.Request{
-		Prefix:   prefix,
-		Caller:   visibility.NewCaller(callerRef),
-		Caps:     caps,
-		PostCaps: postCaps,
-		Limit:    limit,
+		Prefix:       prefix,
+		Caller:       visibility.NewCaller(callerRef),
+		Caps:         caps,
+		PostCaps:     postCaps,
+		MutationCaps: mutCaps,
+		Limit:        limit,
 	}
 	resp, err := h.Service.Suggest(r.Context(), req)
 	if err != nil {

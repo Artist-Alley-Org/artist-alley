@@ -389,7 +389,15 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) ([]Hi
 	if !q.Filters.Empty() {
 		// The same readability conjunct runAssets applies under a
 		// filter, for the same reason — see the long comment there.
-		selFrag += visibility.ContentReadableSQL("assets", "$2", q.Caps)
+		//
+		// #1056 — and on the same PLANE as it, which is why this moved in
+		// the same change. The vector/hybrid path reaches the projection
+		// with rows the BM25 path never text-matched, so a narrower
+		// conjunct here would drop a filtered hit for the one caller the
+		// facet rail had just counted: the team-scoped assets.admin
+		// holder. Three clauses, one plane.
+		selFrag += visibility.FieldsReadableSQL("assets", "$2",
+			visibility.NewCaller(q.CallerUserRef), q.Caps, mutCapsOf(q))
 	}
 	// The readability columns ride along in the same pass (#899). This
 	// query has no visibility predicate of its own — it trusts
@@ -577,16 +585,24 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	// must be the same one, or the count on the rail would stop equalling
 	// the result set that ticking it returns.
 	//
-	// ContentCaps only, matching the aggregators' clause exactly. A
-	// team-scoped `assets.admin` holder is owed the FIELDS of assets
-	// they administer (#939) and is therefore narrower here than they
-	// could be; widening both sides together needs MutationCaps on
-	// facet.Request, which is a follow-up, not a silent divergence
-	// between the two clauses. (The MATCH conjunct below DOES carry the
-	// mutation disjunct, because unlike facet.Request the Query already
-	// carries MutationCaps and its cache key already folds them in.)
+	// The FIELD plane, matching the aggregators' clause exactly (#1056).
+	//
+	// It was ContentCaps only until then, and the note here recorded why:
+	// a team-scoped `assets.admin` holder is owed the FIELDS of assets
+	// they administer (#939, ADR 0064), so the conjunct was narrower than
+	// the holder's actual rights — deliberately, because widening it
+	// alone would have made this clause disagree with the facet counts,
+	// and the rail's number must equal the size of the set that ticking
+	// it returns. #1056 put MutationCaps on facet.Request and moved BOTH
+	// clauses to FieldsReadableSQL in one change. They must keep moving
+	// together: a filter that admits a row the count excluded shows
+	// `png 7` and returns 8.
+	//
+	// The MATCH conjunct below has carried the mutation disjunct since
+	// #902, so this brings the filter into line with it too — all three
+	// asset clauses on one plane.
 	if !q.Filters.Empty() {
-		selFrag += visibility.ContentReadableSQL("assets", "$3", q.Caps)
+		selFrag += visibility.FieldsReadableSQL("assets", "$3", caller, q.Caps, mut)
 	}
 
 	// #902 — THE MATCH CONJUNCT, and it applies ALWAYS.
