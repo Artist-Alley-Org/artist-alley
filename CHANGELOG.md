@@ -114,6 +114,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The card-size control now resizes the whole page.** Making cards bigger or smaller changed the
+  main grid while the featured strip above it stayed fixed, so one page showed two card sizes. The
+  strip follows the control now — and because its pictures were capped at a small crop, they were
+  also swapped for properly sized ones, so a large tile is a large picture rather than a stretched
+  thumbnail (#909).
+
+- **The followed-teams strip says "teams".** It called them "channels", which is not our word
+  (#1029). The two strips also lost their small headings — the page already says what you are
+  looking at — while keeping their names for screen readers (#1030).
+
 - **An expiry date on a collection could be set but never removed.** Clearing it appeared to work
   — the request succeeded — and the date stayed. Removing it is now an explicit "clear expiry"
   action rather than sending an empty value, and the API documentation says so plainly instead of
