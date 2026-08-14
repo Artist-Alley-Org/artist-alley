@@ -302,23 +302,25 @@ func (s Selection) ForFacet(t FacetType) Selection {
 // happens to contain nothing matching, and it is the same fail-closed
 // direction [Selection.SQL] takes for an unsatisfiable dimension.
 //
-// # The one capability that passes
+// # Which rule, and where it lives
 //
-// `caps` mirrors GetCollection (collections/handler.go), which lets a
-// `system.admin` holder through when CanSee refuses — the collection
-// read rule has no admin disjunct, so the endpoint applies the bypass
-// outside it. Without the same bypass here an instance admin would open
-// a collection page perfectly well and get an empty page from the
-// "Search in this collection" button on it, which reads as a broken
-// feature rather than a policy. It discloses nothing: the same holder
-// can already open the collection and list its contents. Nil (or any
-// other caller) denies.
+// [visibility.CanReadCollection] — the whole read rule, row plane OR
+// system.admin, carrying the reasoning for the admin disjunct and for
+// what that disjunct assumes about its callers. #910 open-coded the
+// disjunct here because GetCollection had open-coded it there; #1059
+// moved the one rule beside the plane it composes, so this endpoint and
+// the collection page it is rendered on cannot drift into giving an
+// admin opposite answers about the same collection.
+//
+// `caps` is that admin arm. Nil (or any other caller) gets the row
+// plane alone.
 //
 // # Cost
 //
-// One EXISTS per collection term, and NONE at all for a selection that
-// names no collection — the loop body never runs, so an ordinary
-// faceted search pays nothing for this.
+// One EXISTS per collection term, NONE at all for a selection that
+// names no collection (the loop body never runs, so an ordinary faceted
+// search pays nothing for this), and none for a system.admin either —
+// CanReadCollection checks the capability before it queries.
 func (s Selection) Authorize(
 	ctx context.Context,
 	pool visibility.Pool,
@@ -329,16 +331,13 @@ func (s Selection) Authorize(
 		if t.Type != FacetCollection {
 			continue
 		}
-		if caps != nil && caps(visibility.SystemAdmin) {
-			continue
-		}
 		id, err := uuid.Parse(t.Value)
 		if err != nil {
 			// Cannot arrive via ParseSelection; fail closed for the same
 			// reason SQL() does.
 			return false, nil
 		}
-		ok, err := visibility.CanSee(ctx, pool, visibility.EntityCollection, caller, id)
+		ok, err := visibility.CanReadCollection(ctx, pool, caller, caps, id)
 		if err != nil {
 			return false, err
 		}

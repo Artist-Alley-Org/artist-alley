@@ -6536,9 +6536,10 @@ paths:
       operationId: updateCollection
       summary: Partial update of a collection
       description: |
-        Only fields present in the body are touched. Pass
-        `expires_at: null` to remove the TTL; omit the field to keep
-        the current value.
+        Only fields present in the body are touched; omit a field to
+        keep its current value. Send `clear_expires_at: true` to remove
+        the TTL — sending `expires_at: null` does NOT, because null is
+        already "leave alone" for every property here.
 
         Optimistic concurrency: pass the collection's
         last-known `updated_at` as `if_unchanged_since`; 409 if
@@ -13433,8 +13434,9 @@ components:
     CollectionUpdate:
       type: object
       description: |
-        Partial update; only present fields are touched. Pass
-        `expires_at: null` to clear the TTL.
+        Partial update; only present fields are touched. A null is
+        "leave alone", not "clear" — removing a value that is already
+        set is an explicit flag (`clear_expires_at`, `clear_cover`).
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
@@ -13448,6 +13450,18 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: |
+            Set this collection's expiry. Send `clear_expires_at: true`
+            to remove an existing TTL — sending `null` here does not
+            clear it, for the same reason it does not for
+            `cover_asset_id`: null already means "leave alone".
+        clear_expires_at:
+          type: boolean
+          description: |
+            Remove this collection's TTL, so it no longer expires (#1073).
+            Mutually exclusive with `expires_at` — sending both is a 400,
+            rather than the server picking one and silently discarding
+            the other.
         purpose:
           type: string
           nullable: true

@@ -77,17 +77,6 @@ func (q *Queries) AddCollectionResource(ctx context.Context, arg AddCollectionRe
 	return err
 }
 
-const clearCollectionExpiresAt = `-- name: ClearCollectionExpiresAt :exec
-UPDATE collections SET expires_at = NULL, updated_at = NOW() WHERE id = $1
-`
-
-// Separate query because COALESCE can't express "explicitly set to NULL".
-// Callers use this when the admin removes a TTL.
-func (q *Queries) ClearCollectionExpiresAt(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, clearCollectionExpiresAt, id)
-	return err
-}
-
 const countCollectionResources = `-- name: CountCollectionResources :one
 SELECT COUNT(*)::BIGINT AS value
 FROM collection_resources
@@ -588,11 +577,12 @@ UPDATE collections SET
     visibility  = COALESCE($3,  visibility),
     membership  = COALESCE($4,  membership),
     purpose     = COALESCE($5,     purpose),
-    expires_at  = COALESCE($6,  expires_at),
-    cover_asset_id = CASE WHEN $7::BOOLEAN THEN NULL
-                          ELSE COALESCE($8, cover_asset_id) END,
+    expires_at  = CASE WHEN $6::BOOLEAN THEN NULL
+                       ELSE COALESCE($7, expires_at) END,
+    cover_asset_id = CASE WHEN $8::BOOLEAN THEN NULL
+                          ELSE COALESCE($9, cover_asset_id) END,
     updated_at  = NOW()
-WHERE id = $9
+WHERE id = $10
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
@@ -600,27 +590,33 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 `
 
 type UpdateCollectionParams struct {
-	Name         *string
-	Description  *string
-	Visibility   *string
-	Membership   *string
-	Purpose      *string
-	ExpiresAt    pgtype.Timestamptz
-	ClearCover   bool
-	CoverAssetID pgtype.UUID
-	ID           pgtype.UUID
+	Name           *string
+	Description    *string
+	Visibility     *string
+	Membership     *string
+	Purpose        *string
+	ClearExpiresAt bool
+	ExpiresAt      pgtype.Timestamptz
+	ClearCover     bool
+	CoverAssetID   pgtype.UUID
+	ID             pgtype.UUID
 }
 
 // Partial update via COALESCE — NULL args keep current values.
 //
-// cover_asset_id (#1027) needs a THIRD state the other columns do not:
-// "remove the chosen cover and go back to the derived mosaic". COALESCE
+// cover_asset_id (#1027) and expires_at (#1073) each need a THIRD state
+// the other columns do not: "remove the value that is there". COALESCE
 // cannot express it, because NULL already means "leave alone" for every
-// column above — the same wall ClearCollectionExpiresAt below hit. The
-// way out is metadata's UpdateFieldDefinition `clear_default`: a
-// companion BOOLEAN and a CASE, in THIS statement rather than a second
-// one, so the write stays inside the single activity-emitting
-// transaction and `updated_at` advances exactly once.
+// column above. The way out is metadata's UpdateFieldDefinition
+// `clear_default`: a companion BOOLEAN and a CASE, in THIS statement
+// rather than a second one, so the write stays inside the single
+// activity-emitting transaction and `updated_at` advances exactly once.
+//
+// expires_at wore the COALESCE for three releases and so silently kept
+// the TTL a caller asked to remove; the dedicated ClearCollectionExpiresAt
+// statement that was supposed to cover it was never called by anything
+// and is now gone. Two mechanisms for one job is how the working one
+// ends up being the one nobody wired.
 func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, updateCollection,
 		arg.Name,
@@ -628,6 +624,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.Visibility,
 		arg.Membership,
 		arg.Purpose,
+		arg.ClearExpiresAt,
 		arg.ExpiresAt,
 		arg.ClearCover,
 		arg.CoverAssetID,
