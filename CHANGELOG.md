@@ -9,6 +9,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **A team can be spotlighted in the teams strip.** Operators could already hand-pick assets and
+  collections for a home surface; teams are now spotlightable the same way, and a spotlighted team
+  leads the strip. The "All teams" link moved into the strip itself rather than sitting on a row
+  of its own (#1084).
+
+  A spotlighted team shows the same picture it shows everywhere else, and if that picture is later
+  made private it falls back to the team's initials rather than breaking.
+
 - **Teams can have a picture.** The followed-teams strip showed nothing but initials and a name.
   A team's managers can now choose an image to represent it, and it appears in the strip, the
   team directory, and the team's own page. Teams without one keep the initials tile.
