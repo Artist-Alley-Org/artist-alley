@@ -187,6 +187,14 @@ LEFT JOIN LATERAL (
         LIMIT 1
 ) cover ON true
 WHERE f.scope = 'public'
+  -- A 'team' placement (#1084) resolves neither join and is therefore
+  -- dropped here, which is the correct outcome and is stated so nobody
+  -- reads it as an oversight: this rail is the ANONYMOUS landing strip,
+  -- and a team tile belongs to the signed-in teams rail
+  -- (GET /featured/teams, scope 'org'). Adding team subjects to this
+  -- query would put studio names on a surface that has never shown them
+  -- to logged-out readers — a visibility decision, not a rendering one,
+  -- and not one this change makes.
   AND (a.id IS NOT NULL OR c.id IS NOT NULL)
 ORDER BY f.position ASC, f.created_at ASC
 LIMIT $1::INTEGER`
