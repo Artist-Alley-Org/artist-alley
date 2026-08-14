@@ -357,6 +357,17 @@ func collectionCaller(ctx context.Context) visibility.Caller {
 	return visibility.NewCaller(nil)
 }
 
+// collectionCaps adapts an auth.Identity to the capability half of the
+// visibility helpers' caller pair. Nil identity yields a nil checker,
+// which every helper reads as "holds nothing" — an anonymous caller
+// must not be handed a checker that could accidentally answer true.
+func collectionCaps(id *auth.Identity) visibility.CapabilityChecker {
+	if id == nil {
+		return nil
+	}
+	return func(code string) bool { return id.Can(code) }
+}
+
 func (h *Handler) GetCollection(
 	ctx context.Context,
 	req openapi.GetCollectionRequestObject,
@@ -365,18 +376,25 @@ func (h *Handler) GetCollection(
 	// a real check. Before this, ANY authenticated caller could fetch ANY
 	// collection by id; the only gate was "is there an identity".
 	id := auth.IdentityFromContext(ctx)
-	visible, visErr := visibility.CanSee(ctx, h.Pool, visibility.EntityCollection,
-		collectionCaller(ctx), uuid.UUID(req.Id))
-	if visErr != nil || !visible {
-		// Fail closed. The superadmin soft-deleted branch below is
-		// reached via the ErrNoRows path, so it stays intact for admins,
-		// who CanSee admits.
-		if id == nil || !id.Can(auth.SuperAdminCapability) {
-			return openapi.GetCollection404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
+	// #1059 — the read rule is visibility.CanReadCollection, which is
+	// the row plane OR system.admin. That admin disjunct used to be
+	// spelled out right here, and again in facet.Selection.Authorize for
+	// the "Search in this collection" button on the very page this
+	// endpoint renders; two copies of one rule is how an admin ends up
+	// able to open a collection and unable to search inside it.
+	readable, readErr := visibility.CanReadCollection(ctx, h.Pool,
+		collectionCaller(ctx), collectionCaps(id), uuid.UUID(req.Id))
+	if readErr != nil || !readable {
+		// Fail closed, including on error — a 500 here would be
+		// distinguishable from a 404 and so would answer "does this id
+		// exist" for a collection the caller may not read.
+		return openapi.GetCollection404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+		}, nil
 	}
+	// An admin passes the line above without the row plane agreeing, so
+	// the soft-deleted branch below is still reached via ErrNoRows and
+	// the Restore button still has something to render.
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	row, err := h.getByIDCached(ctx, pgID)
 	if err != nil {
@@ -434,8 +452,14 @@ func (h *Handler) UpdateCollection(
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 
-	// Load current row first to enforce ownership and to give
-	// ClearCollectionExpiresAt the right id.
+	// Load current row first to enforce ownership (canMutateCollection
+	// reads owner_user_ref) and to answer the if_unchanged_since check
+	// below against a real updated_at.
+	//
+	// #1073: this used to claim it also fed "ClearCollectionExpiresAt
+	// the right id". No such call was ever made from here — the comment
+	// asserted a guarantee the code did not provide, and it is why a
+	// TTL that could not be cleared survived three releases of review.
 	q := New(h.Pool)
 	cur, err := q.GetCollection(ctx, pgID)
 	if err != nil {
@@ -541,12 +565,23 @@ func (h *Handler) UpdateCollection(
 		coverPtr = &want
 	}
 
-	// expires_at is a tri-state: omitted = keep; non-nil = set;
-	// explicit null = clear. The generated CollectionUpdate struct
-	// uses `omitempty` so we can't distinguish "absent" from "null"
-	// via the Go struct alone — the convention here is that a
-	// non-nil pointer means "set to this", and clearing the TTL
-	// goes through the dedicated query.
+	// #1073 — expires_at is a tri-state, and the third state needs a
+	// flag. `CollectionUpdate.ExpiresAt` is a *time.Time with
+	// `omitempty`, so by the time a body reaches here "absent" and
+	// "explicit null" are the SAME value: a nil pointer. The old
+	// COALESCE read that nil as "keep", which meant a caller who sent
+	// `{"expires_at": null}` to remove a TTL got a 200 and an unchanged
+	// column — the clear silently did not happen. Same wall, same fix,
+	// and the same 400, as clear_cover directly above.
+	clearExpiresAt := in.ClearExpiresAt != nil && *in.ClearExpiresAt
+	if clearExpiresAt && in.ExpiresAt != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either expires_at or clear_expires_at, not both",
+			},
+		}, nil
+	}
+
 	// Gold-standard path: UpdateCollection + Update activity in
 	// the same tx. WithEmissionFn so the post-write row drives
 	// the activity payload. 1.22.B-cleanup made activities required.
@@ -559,12 +594,14 @@ func (h *Handler) UpdateCollection(
 			Visibility:  visPtr,
 			Membership:  memPtr,
 			Purpose:     in.Purpose,
-			ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
-			// The CASE in the query reads ClearCover first, so these two
-			// cannot both take effect; the 400 above is what makes the
-			// combination unreachable rather than merely ordered.
-			ClearCover:   clearCover,
-			CoverAssetID: pgUUIDFromPtr(coverPtr),
+			// Each CASE in the query reads its clear flag first, so a
+			// value and its clear flag cannot both take effect; the two
+			// 400s above are what make those combinations unreachable
+			// rather than merely ordered.
+			ExpiresAt:      pgTimestamptzFromPtr(in.ExpiresAt),
+			ClearExpiresAt: clearExpiresAt,
+			ClearCover:     clearCover,
+			CoverAssetID:   pgUUIDFromPtr(coverPtr),
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)

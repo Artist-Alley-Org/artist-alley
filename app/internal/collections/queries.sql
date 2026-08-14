@@ -45,21 +45,27 @@ WHERE id = $1;
 -- name: UpdateCollection :one
 -- Partial update via COALESCE — NULL args keep current values.
 --
--- cover_asset_id (#1027) needs a THIRD state the other columns do not:
--- "remove the chosen cover and go back to the derived mosaic". COALESCE
+-- cover_asset_id (#1027) and expires_at (#1073) each need a THIRD state
+-- the other columns do not: "remove the value that is there". COALESCE
 -- cannot express it, because NULL already means "leave alone" for every
--- column above — the same wall ClearCollectionExpiresAt below hit. The
--- way out is metadata's UpdateFieldDefinition `clear_default`: a
--- companion BOOLEAN and a CASE, in THIS statement rather than a second
--- one, so the write stays inside the single activity-emitting
--- transaction and `updated_at` advances exactly once.
+-- column above. The way out is metadata's UpdateFieldDefinition
+-- `clear_default`: a companion BOOLEAN and a CASE, in THIS statement
+-- rather than a second one, so the write stays inside the single
+-- activity-emitting transaction and `updated_at` advances exactly once.
+--
+-- expires_at wore the COALESCE for three releases and so silently kept
+-- the TTL a caller asked to remove; the dedicated ClearCollectionExpiresAt
+-- statement that was supposed to cover it was never called by anything
+-- and is now gone. Two mechanisms for one job is how the working one
+-- ends up being the one nobody wired.
 UPDATE collections SET
     name        = COALESCE(sqlc.narg('name'),        name),
     description = COALESCE(sqlc.narg('description'), description),
     visibility  = COALESCE(sqlc.narg('visibility'),  visibility),
     membership  = COALESCE(sqlc.narg('membership'),  membership),
     purpose     = COALESCE(sqlc.narg('purpose'),     purpose),
-    expires_at  = COALESCE(sqlc.narg('expires_at'),  expires_at),
+    expires_at  = CASE WHEN sqlc.arg('clear_expires_at')::BOOLEAN THEN NULL
+                       ELSE COALESCE(sqlc.narg('expires_at'), expires_at) END,
     cover_asset_id = CASE WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
                           ELSE COALESCE(sqlc.narg('cover_asset_id'), cover_asset_id) END,
     updated_at  = NOW()
@@ -68,11 +74,6 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
-
--- name: ClearCollectionExpiresAt :exec
--- Separate query because COALESCE can't express "explicitly set to NULL".
--- Callers use this when the admin removes a TTL.
-UPDATE collections SET expires_at = NULL, updated_at = NOW() WHERE id = $1;
 
 -- name: DeleteCollection :exec
 -- Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
