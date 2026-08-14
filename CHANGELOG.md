@@ -114,6 +114,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **An expiry date on a collection could be set but never removed.** Clearing it appeared to work
+  — the request succeeded — and the date stayed. Removing it is now an explicit "clear expiry"
+  action rather than sending an empty value, and the API documentation says so plainly instead of
+  promising something that never worked (#1073).
+
+- **Instance admins saw a collection they could open but could not search inside.** Opening
+  someone else's private collection worked, while "Search in this collection" on that same page
+  came back empty. The two now answer the same question, because they finally ask it in the same
+  place (#1059).
+
 - **Someone allowed to manage a file could not find it while typing, or filter to it.** A person
   given rights over a colleague's files can read those files' titles — but the search box offered
   no completions for them, and ticking a filter on the results page quietly dropped them. Both now
