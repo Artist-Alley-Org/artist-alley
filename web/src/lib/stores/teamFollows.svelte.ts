@@ -49,6 +49,11 @@ export interface TeamSummary {
   slug: string;
   name: string;
   description: string;
+  /** The team's picture (#982), or absent for the initials tile. This is
+   *  the server's RENDER ANSWER, re-derived per read — it goes away on
+   *  its own when the chosen asset stops being public, so the client
+   *  never has to decide whether a hero is still allowed. */
+  hero_asset_id?: string | null;
 }
 
 class TeamFollows {

@@ -54,12 +54,16 @@
   import AssetCard from '$components/AssetCard.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
+  import TeamAvatar from '$components/TeamAvatar.svelte';
 
   interface Team {
     id: string;
     slug: string;
     name: string;
     description: string;
+    /** #982 — the server's re-derived render answer; absent means the
+     *  header falls back to the initials tile. */
+    hero_asset_id?: string | null;
   }
   interface Member {
     user_ref: number;
@@ -243,15 +247,24 @@
        page reads as one grid system rather than a narrower island. -->
   <div class="w-full px-4 py-8 sm:px-6" data-testid="team-page">
     <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div class="min-w-0">
-        <p class="text-xs text-fg-muted">
-          <a href="/teams" class="hover:underline">{t('teams.directory_title')}</a>
-        </p>
-        <h1 class="mt-1 truncate text-2xl font-bold text-fg" data-testid="team-name">{team.name}</h1>
-        <p class="text-sm text-fg-muted">@{team.slug}</p>
-        {#if team.description}
-          <p class="mt-2 max-w-2xl whitespace-pre-line text-sm text-fg">{team.description}</p>
-        {/if}
+      <!-- The picture leads the header (#982). It is the same
+           TeamAvatar the rail and the directory use, just larger, so a
+           team that has no hero shows the same initials tile here that
+           the reader followed in from. -->
+      <div class="flex min-w-0 gap-4">
+        <TeamAvatar {team} class="h-16 w-16 rounded-xl sm:h-20 sm:w-20" textClass="text-xl" />
+        <div class="min-w-0">
+          <p class="text-xs text-fg-muted">
+            <a href="/teams" class="hover:underline">{t('teams.directory_title')}</a>
+          </p>
+          <h1 class="mt-1 truncate text-2xl font-bold text-fg" data-testid="team-name">
+            {team.name}
+          </h1>
+          <p class="text-sm text-fg-muted">@{team.slug}</p>
+          {#if team.description}
+            <p class="mt-2 max-w-2xl whitespace-pre-line text-sm text-fg">{team.description}</p>
+          {/if}
+        </div>
       </div>
       <div class="shrink-0">
         <TeamFollowButton {team} />
