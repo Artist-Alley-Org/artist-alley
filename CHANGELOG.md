@@ -9,6 +9,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Teams can have a picture.** The followed-teams strip showed nothing but initials and a name.
+  A team's managers can now choose an image to represent it, and it appears in the strip, the
+  team directory, and the team's own page. Teams without one keep the initials tile.
+
+  The picture has to be a public file belonging to that team, and that is re-checked every time
+  it is shown — so if the file is later made private, the picture quietly disappears and the
+  initials come back rather than a stale image lingering. Make it public again and the picture
+  returns on its own; nobody has to re-pick it (#982).
+
 - **Choose the picture on a collection.** A collection's thumbnail was built from whatever was
   inside it. Now a curator can pick the image that represents it — the one that reads well small,
   or the one that isn't a spoiler — from "Set cover" on the collection menu, or the cover section

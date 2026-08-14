@@ -110,6 +110,61 @@ ADR 0083 excludes anything that *"names something that exists only on the sender
 `ON DELETE SET NULL` is the behaviour, not the cheap option: RESTRICT would let one collection's
 curation decision block an unrelated asset's deletion, and CASCADE would delete the collection.
 
+## Amendment 2026-08-14 (#982, PR #1085) — the first consumer NARROWS §4, and finds a cache §4 could not have anticipated
+
+#982 (team hero images) is this ADR's first real consumer. Two things came back that change it.
+
+### 1. In a NAVIGATION STRIP, the gate is not per-viewer — it is public-only
+
+§4 says the question "may this caller see this image" is the picture plane, gated per viewer, with
+a mandatory fallback. **That does not transfer to a nav strip.** A rail showing some teams'
+pictures and not others depending on who is looking is noise, not security — the viewer cannot act
+on it and cannot tell it from a bug.
+
+So for a team hero the rule tightens:
+
+> **The asset must be `sensitivity='public'` AND its `team_id` must be that team.** Same answer for
+> every viewer. Validated at SELECTION and RE-CHECKED AT RENDER.
+
+⭐ **This is a NARROWING, not an exception.** §4's obligations both survive — a write-side check and
+a mandatory fallback — but the read-side predicate stops being caller-dependent. **The test for
+which form applies: does the surface let a viewer act on the difference?** An asset page can show
+one caller a placeholder and another the picture, because the placeholder is addressed *to that
+caller* and #881 gives them a request-access route. A nav strip addresses nobody in particular.
+
+**As implemented, with a deliberate asymmetry between the two checks:**
+
+| condition | selection | render |
+|---|---|---|
+| `sensitivity='public'`, `team_id` matches, `deleted_at IS NULL` | ✅ | ✅ |
+| stored object + `col` rendition | ⛔ **not checked** | ✅ |
+
+The write side omits renderability because **renditions are async** — refusing a just-uploaded
+asset is an error the admin cannot act on. The read side's fallback carries the slack.
+
+⭐ **And the stored pointer is left INTACT when a hero stops qualifying.** Restoring the asset's
+sensitivity brings the picture back with no admin action. A withdrawn hero is a *suppressed* answer,
+not a *deleted* choice — worth copying to any future consumer.
+
+### 2. ⛔ The re-check must run AFTER the cache, for a reason §4 does not state
+
+`fetchTeam` reads through a by-id LRU, and **nothing about an asset's `sensitivity` can invalidate
+it**: the team row does not change when the asset does, and the asset does not know which teams
+point at it. Mapping the hero inside the row-to-API converter would have passed a naive
+flip-to-restricted test and then **served a withdrawn picture for the life of the cache entry**.
+
+ADR 0013's amendment already forbids caller-dependent data in a shared entry. **This is a second,
+distinct reason to compute after the cache: CROSS-ENTITY INVALIDATION.** The value is not
+caller-dependent at all here — it is *another table's* mutable state, and the cached entity has no
+way to learn it changed.
+
+> **Rule: a derived value re-checked against a DIFFERENT entity's mutable state is computed after
+> the cache, whether or not it is caller-dependent.**
+
+The implementation stamps the hero on both the hit and miss branches, never maps the raw column in
+the converter, and carries a **cached-path twin** of the flip test — which an implementation that
+re-checks only on cache-miss fails.
+
 ## Consequences
 
 - New "representative image" surfaces (#982's team hero images, any future profile banner) have a
