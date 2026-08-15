@@ -4,13 +4,14 @@
   // Spreadsheet-style list view for the browse feed.
   //
   // Renders posts as rows in a CSS grid (grid-template-columns from
-  // each column's `width`). Sort runs client-side against the loaded
+  // each column's track). Sort runs client-side against the loaded
   // items — server-side sort lands when /posts grows a `sort` param.
-  // Column visibility is owned by the browseView store.
+  // Column visibility and column WIDTHS are both owned by the
+  // browseView store; this component owns the drag gesture only.
 
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { browseView, type ListColumnDef } from '$stores/browseView.svelte';
+  import { browseView, columnMinPx, type ListColumnDef } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
   import ColumnPicker from '$components/ColumnPicker.svelte';
 
@@ -82,8 +83,97 @@
 
   const visibleColumns = $derived(browseView.visibleColumns);
 
-  // Build the CSS grid-template-columns value from each col's width.
-  const gridTemplate = $derived(visibleColumns.map((c) => c.width ?? '1fr').join(' '));
+  // Build the CSS grid-template-columns value. Each track is the user's
+  // dragged width if they have set one, otherwise the registry default
+  // — the store resolves that, so hiding and re-showing a column keeps
+  // whatever width its owner left it at (#1100).
+  const gridTemplate = $derived(visibleColumns.map((c) => browseView.columnTrack(c)).join(' '));
+
+  // ── Column resizing (#1100) ────────────────────────────────────────
+  //
+  // The handle is a SIBLING of the header cell's button, not a child.
+  // Nesting a focusable separator inside the sort <button> would be
+  // invalid (interactive content inside a button), and worse, every
+  // press on the handle would also fire the sort. So each header cell
+  // is a positioned wrapper carrying `role="columnheader"`, with the
+  // sort control and the handle side by side inside it.
+  //
+  // The gesture uses POINTER CAPTURE rather than window listeners: the
+  // handle keeps receiving move/up events even when the pointer leaves
+  // it, which is the entire point of a drag, and there is no global
+  // state to leak if the component unmounts mid-drag.
+
+  /** How far one arrow press moves an edge. 16px is a visible step
+   *  without making the keyboard path take fifty presses to cross a
+   *  column; Shift multiplies it for coarse adjustment. */
+  const KEY_STEP_PX = 16;
+  const KEY_STEP_LARGE_PX = 64;
+
+  let drag = $state<{ id: string; startX: number; startW: number } | null>(null);
+
+  /** The rendered width of the cell this handle belongs to. Measured
+   *  from the DOM rather than read from the store, because a column
+   *  nobody has dragged yet has no stored width at all — its track is
+   *  an `fr` or a rem, and the number the drag has to start from is
+   *  what the browser actually painted. */
+  function cellWidth(handle: HTMLElement): number | null {
+    const cell = handle.parentElement;
+    return cell ? cell.getBoundingClientRect().width : null;
+  }
+
+  function startResize(e: PointerEvent, col: ListColumnDef) {
+    const handle = e.currentTarget as HTMLElement;
+    const w = cellWidth(handle);
+    if (w === null) return;
+    // Stop the press from reaching the header (text selection, and the
+    // sort control next door) — but only the press. Nothing about the
+    // rest of the page is prevented.
+    e.preventDefault();
+    e.stopPropagation();
+    drag = { id: col.id, startX: e.clientX, startW: w };
+    handle.setPointerCapture(e.pointerId);
+  }
+
+  function moveResize(e: PointerEvent) {
+    if (!drag) return;
+    browseView.setColumnWidth(drag.id, drag.startW + (e.clientX - drag.startX));
+  }
+
+  function endResize(e: PointerEvent) {
+    if (!drag) return;
+    const handle = e.currentTarget as HTMLElement;
+    if (handle.hasPointerCapture?.(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+    drag = null;
+  }
+
+  /** Keyboard parity for the drag.
+   *
+   *  Arrows move the edge; `Home` takes the column to its floor, which
+   *  is the splitter convention. `Enter` RESETS to the registry
+   *  default — the keyboard twin of double-clicking the handle, and the
+   *  closest thing the splitter pattern has to a defined key for
+   *  "return to the position you started from". Without it the double
+   *  click is a mouse-only escape hatch and a keyboard user who drags a
+   *  column to 80px has no way back. */
+  function onHandleKey(e: KeyboardEvent, col: ListColumnDef) {
+    const handle = e.currentTarget as HTMLElement;
+    const w = cellWidth(handle);
+    if (w === null) return;
+    const step = e.shiftKey ? KEY_STEP_LARGE_PX : KEY_STEP_PX;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      browseView.setColumnWidth(col.id, w - step);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      browseView.setColumnWidth(col.id, w + step);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      browseView.setColumnWidth(col.id, columnMinPx(col.id));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      browseView.resetColumnWidth(col.id);
+    }
+  }
 
   function alignClass(c: ListColumnDef): string {
     return c.align === 'right' ? 'text-right justify-end' : c.align === 'center' ? 'text-center justify-center' : 'text-left justify-start';
@@ -150,35 +240,97 @@
         style="grid-template-columns: {gridTemplate}"
         role="row"
       >
-        {#each visibleColumns as col (col.id)}
-          {#if col.sortable}
-            {@const active = browseView.sort.col === col.id}
-            <button
-              type="button"
-              onclick={() => browseView.cycleSort(col.id)}
-              class={`flex items-center gap-1 border-r border-border-subtle px-3 py-2.5 ${alignClass(col)} ${active ? 'text-fg' : 'hover:text-fg'}`}
-              role="columnheader"
-              aria-sort={active ? (browseView.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-            >
-              <span>{t(col.labelKey)}</span>
-              {#if active}
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                  {#if browseView.sort.dir === 'asc'}
-                    <polyline points="6 15 12 9 18 15" />
-                  {:else}
-                    <polyline points="6 9 12 15 18 9" />
-                  {/if}
-                </svg>
-              {/if}
-            </button>
-          {:else}
-            <div
-              class={`flex items-center border-r border-border-subtle px-3 py-2.5 ${alignClass(col)}`}
-              role="columnheader"
-            >
-              {t(col.labelKey)}
-            </div>
-          {/if}
+        {#each visibleColumns as col, i (col.id)}
+          {@const active = browseView.sort.col === col.id}
+          <!-- The grid item is a positioned WRAPPER, and the
+               `columnheader` role rides it rather than the control
+               inside — see the resize comments in the script block for
+               why the handle cannot live inside the sort button. -->
+          <div
+            class="relative flex min-w-0 border-r border-border-subtle"
+            role="columnheader"
+            aria-sort={!col.sortable
+              ? undefined
+              : active
+                ? browseView.sort.dir === 'asc'
+                  ? 'ascending'
+                  : 'descending'
+                : 'none'}
+          >
+            {#if col.sortable}
+              <button
+                type="button"
+                onclick={() => browseView.cycleSort(col.id)}
+                class={`flex min-w-0 flex-1 items-center gap-1 px-3 py-2.5 ${alignClass(col)} ${active ? 'text-fg' : 'hover:text-fg'}`}
+              >
+                <span class="truncate">{t(col.labelKey)}</span>
+                {#if active}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    {#if browseView.sort.dir === 'asc'}
+                      <polyline points="6 15 12 9 18 15" />
+                    {:else}
+                      <polyline points="6 9 12 15 18 9" />
+                    {/if}
+                  </svg>
+                {/if}
+              </button>
+            {:else}
+              <div class={`flex min-w-0 flex-1 items-center px-3 py-2.5 ${alignClass(col)}`}>
+                <span class="truncate">{t(col.labelKey)}</span>
+              </div>
+            {/if}
+
+            <!-- Resize handle on this column's trailing edge. Not on the
+                 LAST visible column: there is no boundary there, only
+                 the table's own edge, and a handle that drags the table
+                 wider than its container is a scroll bar with extra
+                 steps.
+
+                 ⛔ HIDDEN UNDER A COARSE POINTER, deliberately. A 8px
+                 drag target on a touch screen is not a control, it is a
+                 trap laid across the header of a table whose columns
+                 are already reduced at that width — and its two
+                 neighbours are the sort control and the next column's
+                 sort control, so every miss does something. `display:
+                 none` also takes it out of the tab order, so the
+                 keyboard path disappears with it rather than leaving a
+                 focusable target nobody can see. The list view is
+                 readable on a phone and configured on a desktop.
+
+                 `-right-1` centres the grab zone ON the border rather
+                 than beside it, which is where the pointer aims. -->
+            {#if i < visibleColumns.length - 1}
+              <!-- The two suppressions are the ARIA "window splitter"
+                   pattern, which svelte-check does not model: a
+                   `separator` is non-interactive UNTIL it is focusable,
+                   at which point it is a widget and takes both a
+                   tabindex and key handlers. AssetPlaylist's strip
+                   resizer is the same role with the same first
+                   suppression — it simply never became focusable, so it
+                   is mouse-only. This one is not. -->
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t('browse.resize_column')}
+                aria-valuenow={browseView.columnWidths[col.id]}
+                aria-valuemin={columnMinPx(col.id)}
+                tabindex="0"
+                class="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none
+                       hover:bg-accent/50 focus-visible:bg-accent focus-visible:outline-none
+                       [@media(pointer:coarse)]:hidden"
+                class:bg-accent={drag?.id === col.id}
+                data-testid={`list-col-resize-${col.id}`}
+                onpointerdown={(e) => startResize(e, col)}
+                onpointermove={moveResize}
+                onpointerup={endResize}
+                onpointercancel={endResize}
+                ondblclick={() => browseView.resetColumnWidth(col.id)}
+                onkeydown={(e) => onHandleKey(e, col)}
+              ></div>
+            {/if}
+          </div>
         {/each}
       </div>
 

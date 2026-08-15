@@ -152,6 +152,7 @@
     },
     "columns": "Columns",
     "reset_columns": "Reset to default columns",
+    "resize_column": "Resize column",
     "list": {
       "post_singular": "post",
       "post_plural": "posts",

@@ -20,7 +20,12 @@
 // one precisely so the precedence logic is reachable without a session.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { browseView } from './browseView.svelte';
+import {
+  browseView,
+  COLUMN_MIN_PX,
+  LIST_COLUMNS,
+  columnMinPx,
+} from './browseView.svelte';
 
 /** The store hydrates once per page load; tests need many. */
 function rehydrate(defaults?: Parameters<typeof browseView.init>[0]) {
@@ -286,5 +291,100 @@ describe('a stale local value is not a local choice', () => {
 
     expect(browseView.filter).toBe('following');
     expect(localStorage.getItem('aa_browse_filter')).toBeNull();
+  });
+});
+
+// ── Column widths (#1100) ───────────────────────────────────────────
+//
+// The contract worth pinning is not "a number round-trips". It is that
+// WIDTH and VISIBILITY are two records, so hiding a column through the
+// picker is not a way to lose the width you dragged it to — which is
+// the bug the obvious implementation (one richer list) produces, and
+// the one a user would meet within a minute of using both controls.
+
+describe('list-view column widths', () => {
+  const titleDef = LIST_COLUMNS.find((c) => c.id === 'title')!;
+
+  it('persists a dragged width and reads it back on the next hydration', () => {
+    rehydrate(null);
+    browseView.setColumnWidth('title', 420);
+
+    expect(browseView.columnTrack(titleDef)).toBe('420px');
+    rehydrate(null);
+    expect(browseView.columnWidths.title).toBe(420);
+  });
+
+  it('clamps to the column floor rather than refusing the drag', () => {
+    // Parking at the minimum keeps the gesture alive: the pointer can
+    // travel back out and the column follows. Refusing would freeze the
+    // handle at the moment the user overshoots.
+    rehydrate(null);
+    browseView.setColumnWidth('title', 4);
+
+    expect(browseView.columnWidths.title).toBe(COLUMN_MIN_PX);
+  });
+
+  it('honours a per-column floor below the global one', () => {
+    // `thumbnail` draws a 32px square and nothing else, so the global
+    // 80px floor would make the table's narrowest column the one that
+    // cannot be narrowed.
+    rehydrate(null);
+    expect(columnMinPx('thumbnail')).toBeLessThan(COLUMN_MIN_PX);
+
+    browseView.setColumnWidth('thumbnail', 10);
+    expect(browseView.columnWidths.thumbnail).toBe(columnMinPx('thumbnail'));
+  });
+
+  it('falls back to the registry default when nothing is stored', () => {
+    rehydrate(null);
+    expect(browseView.columnTrack(titleDef)).toBe(titleDef.width);
+  });
+
+  it('keeps a dragged width across hide + re-show through the picker', () => {
+    rehydrate(null);
+    browseView.setColumnWidth('title', 500);
+
+    browseView.toggleColumn('title');
+    expect(browseView.listColumns).not.toContain('title');
+    browseView.toggleColumn('title');
+
+    expect(browseView.listColumns).toContain('title');
+    expect(browseView.columnTrack(titleDef)).toBe('500px');
+  });
+
+  it('double-click reset drops the width back to the default', () => {
+    rehydrate(null);
+    browseView.setColumnWidth('title', 500);
+    browseView.resetColumnWidth('title');
+
+    expect(browseView.columnWidths.title).toBeUndefined();
+    expect(browseView.columnTrack(titleDef)).toBe(titleDef.width);
+  });
+
+  it('"reset columns" resets BOTH halves', () => {
+    // The default column set at whatever widths the last drag left is a
+    // state the user cannot get out of except by dragging each column
+    // back by hand.
+    rehydrate(null);
+    browseView.setColumnWidth('title', 500);
+    browseView.toggleColumn('visibility');
+
+    browseView.resetColumns();
+
+    expect(browseView.columnWidths).toEqual({});
+    expect(browseView.listColumns).not.toContain('visibility');
+  });
+
+  it('drops stored widths that cannot be honoured instead of repairing them', () => {
+    // An unknown id, a sub-floor number and a non-number are all "not a
+    // preference". Clamping the sub-floor one UP would put a width on
+    // screen that nobody chose.
+    localStorage.setItem(
+      'aa_browse_list_col_widths',
+      JSON.stringify({ title: 400, gone: 300, author: 4, tags: 'wide' }),
+    );
+    rehydrate(null);
+
+    expect(browseView.columnWidths).toEqual({ title: 400 });
   });
 });

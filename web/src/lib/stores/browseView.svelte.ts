@@ -61,6 +61,7 @@ const STORAGE_MODE = 'aa_browse_mode';
 const STORAGE_SIZE_LEGACY = 'aa_browse_size';
 const STORAGE_TILE = 'aa_browse_tile_min';
 const STORAGE_COLS = 'aa_browse_list_cols';
+const STORAGE_COL_WIDTHS = 'aa_browse_list_col_widths';
 const STORAGE_SORT = 'aa_browse_list_sort';
 const STORAGE_FILTER = 'aa_browse_filter';
 const STORAGE_FEED_DIR = 'aa_browse_feed_dir';
@@ -275,23 +276,45 @@ export interface ListColumnDef {
   defaultVisible: boolean;
   sortable: boolean;
   align?: 'left' | 'right' | 'center';
-  /** CSS width for the <col>. Concrete widths give the table a
-   *  predictable rhythm without enabling drag-to-resize yet. */
+  /** CSS width for the column's grid track — the DEFAULT the table
+   *  starts from and the value double-clicking a resize handle returns
+   *  to (#1100). A user's dragged width overrides it per column; see
+   *  `columnWidths`. */
   width?: string;
+  /** Floor for a dragged width, in px. Below this the column stops
+   *  being a column: its header label clips to nothing and the cell
+   *  content underneath has no room to ellipsize into.
+   *
+   *  Per-column rather than one global number because the columns are
+   *  not the same kind of thing. `thumbnail` renders a 32px square and
+   *  nothing else, so 48px is a legitimate size for it and a global
+   *  floor of 80 would make the narrowest column in the table the one
+   *  you cannot narrow. Defaults to COLUMN_MIN_PX. */
+  minPx?: number;
 }
 
+/** The floor a column may be dragged to when its def names no other.
+ *  Roughly a header label plus its padding — narrower and the column
+ *  reads as a rendering fault rather than a choice. */
+export const COLUMN_MIN_PX = 80;
+
 export const LIST_COLUMNS: ListColumnDef[] = [
-  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem' },
+  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem', minPx: 48 },
   { id: 'title',        labelKey: 'browse.col.title',     defaultVisible: true,  sortable: true,  align: 'left',  width: 'minmax(16rem, 2fr)' },
   { id: 'author',       labelKey: 'browse.col.author',    defaultVisible: true,  sortable: true,  align: 'left',  width: '10rem' },
   { id: 'visibility',   labelKey: 'browse.col.visibility',defaultVisible: false, sortable: true,  align: 'left',  width: '7rem' },
   { id: 'tags',         labelKey: 'browse.col.tags',      defaultVisible: true,  sortable: false, align: 'left',  width: 'minmax(10rem, 1fr)' },
-  { id: 'members',      labelKey: 'browse.col.members',   defaultVisible: true,  sortable: true,  align: 'right', width: '5rem' },
-  { id: 'likes',        labelKey: 'browse.col.likes',     defaultVisible: true,  sortable: true,  align: 'right', width: '5rem' },
-  { id: 'comments',     labelKey: 'browse.col.comments',  defaultVisible: false, sortable: true,  align: 'right', width: '5rem' },
+  { id: 'members',      labelKey: 'browse.col.members',   defaultVisible: true,  sortable: true,  align: 'right', width: '5rem',  minPx: 64 },
+  { id: 'likes',        labelKey: 'browse.col.likes',     defaultVisible: true,  sortable: true,  align: 'right', width: '5rem',  minPx: 64 },
+  { id: 'comments',     labelKey: 'browse.col.comments',  defaultVisible: false, sortable: true,  align: 'right', width: '5rem',  minPx: 64 },
   { id: 'posted_at',    labelKey: 'browse.col.posted_at', defaultVisible: true,  sortable: true,  align: 'right', width: '9rem' },
   { id: 'description',  labelKey: 'browse.col.description', defaultVisible: false, sortable: false, align: 'left', width: 'minmax(12rem, 2fr)' },
 ];
+
+/** The floor for one column, resolved. */
+export function columnMinPx(id: string): number {
+  return LIST_COLUMNS.find((c) => c.id === id)?.minPx ?? COLUMN_MIN_PX;
+}
 
 const DEFAULT_VISIBLE_COLS = LIST_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.id);
 
@@ -312,6 +335,45 @@ function readColumns(): string[] {
 function writeColumns(ids: string[]): void {
   if (!browser) return;
   try { localStorage.setItem(STORAGE_COLS, JSON.stringify(ids)); } catch { /* */ }
+}
+
+/** Dragged column widths in px, keyed by column id (#1100).
+ *
+ *  A SEPARATE key from the visible-column list, not a richer value in
+ *  it, and that split is deliberate: visibility and width are set by
+ *  different controls and answer different questions, and a column
+ *  hidden through the picker has to come back at the width its owner
+ *  left it at. Two records means "hide, re-show" is not a reset. It
+ *  also means a width for a column this build no longer has is inert
+ *  rather than corrupting the visible set.
+ *
+ *  Unknown ids and non-finite / sub-floor numbers are dropped on read
+ *  rather than repaired. A width that cannot be honoured is not a
+ *  preference, and the alternative — clamping it up to the floor — puts
+ *  a value on screen that nobody chose. */
+function readColumnWidths(): Record<string, number> {
+  if (!browser) return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_COL_WIDTHS);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const known = new Set(LIST_COLUMNS.map((c) => c.id));
+    const out: Record<string, number> = {};
+    for (const [id, px] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!known.has(id)) continue;
+      if (typeof px !== 'number' || !Number.isFinite(px)) continue;
+      if (px < columnMinPx(id)) continue;
+      out[id] = Math.round(px);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeColumnWidths(w: Record<string, number>): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_COL_WIDTHS, JSON.stringify(w)); } catch { /* */ }
 }
 
 /** The stored list-view sort, or null when this device has never set
@@ -434,6 +496,9 @@ class BrowseViewState {
   tileIdx = $state<number>(DEFAULT_TILE_IDX);
   /** Visible list-view columns, in the order they appear. */
   listColumns = $state<string[]>(DEFAULT_VISIBLE_COLS);
+  /** Dragged list-view column widths in px, keyed by column id (#1100).
+   *  A column absent from here is on its registry default. */
+  columnWidths = $state<Record<string, number>>({});
   /** Sort key + direction for the list view. */
   sort = $state<{ col: string; dir: SortDir }>({ col: 'posted_at', dir: 'desc' });
   /** Which feed segment is active (latest / following). */
@@ -587,6 +652,7 @@ class BrowseViewState {
     if (this.hydrated) return;
     this.tileIdx = readTileIdx();
     this.listColumns = readColumns();
+    this.columnWidths = readColumnWidths();
     this.applyAccountDefaults(defaults);
     this.hydrated = true;
   }
@@ -734,9 +800,53 @@ class BrowseViewState {
     writeColumns(this.listColumns);
   }
 
+  /** The grid track for one column: the user's dragged width if there
+   *  is one, otherwise the registry default (#1100).
+   *
+   *  A dragged width is a FIXED `px` track, and it replaces a flexible
+   *  default (`minmax(16rem, 2fr)`) rather than being clamped inside
+   *  it. That is what dragging means: the moment a column is given a
+   *  size by hand, it stops taking a share of the leftover. Columns
+   *  nobody has touched keep their `fr` and absorb the remainder, so
+   *  the table still fills its container. */
+  columnTrack(c: ListColumnDef): string {
+    const px = this.columnWidths[c.id];
+    return px ? `${px}px` : (c.width ?? '1fr');
+  }
+
+  /** Set one column's width, clamped up to its floor. Clamping rather
+   *  than refusing: a drag past the floor should PARK the column at the
+   *  minimum and keep tracking the pointer back out, not freeze the
+   *  handle and lose the gesture. */
+  setColumnWidth(id: string, px: number): void {
+    if (!Number.isFinite(px)) return;
+    const next = Math.max(columnMinPx(id), Math.round(px));
+    if (this.columnWidths[id] === next) return;
+    this.columnWidths = { ...this.columnWidths, [id]: next };
+    writeColumnWidths(this.columnWidths);
+  }
+
+  /** Drop one column's width so it falls back to the registry default. */
+  resetColumnWidth(id: string): void {
+    if (!(id in this.columnWidths)) return;
+    const next = { ...this.columnWidths };
+    delete next[id];
+    this.columnWidths = next;
+    writeColumnWidths(this.columnWidths);
+  }
+
+  /** Put the table back the way it shipped — which is BOTH halves.
+   *
+   *  Widths go too, deliberately. "Reset columns" that restored the
+   *  default set of columns at whatever widths the last drag left them
+   *  is a half reset, and the state it produces — the default columns,
+   *  none of them the default size — is one the user cannot get out of
+   *  except by dragging each one back by hand. */
   resetColumns(): void {
     this.listColumns = DEFAULT_VISIBLE_COLS;
     writeColumns(this.listColumns);
+    this.columnWidths = {};
+    writeColumnWidths(this.columnWidths);
   }
 
   /** Cycle the sort for a column: asc → desc → keep desc. Clicking a
