@@ -245,21 +245,36 @@ describe('ViewControls — bottom-edge reveal (#1020)', () => {
   });
 });
 
-// ── Light dismiss for the view switcher (#1096) ──────────────────────
+// ── Light dismiss for the view switcher (#1096, #1105) ───────────────
 //
 // The panel used to close only by re-pressing the toggle that opened it,
 // so it followed the user around the page. It now closes on a press
 // anywhere outside — WITHOUT eating that press, which is the part worth
 // a test: dismissal that costs a throwaway click is the thing users
 // complain about in the menus that do it.
-describe('ViewControls — light dismiss (#1096)', () => {
+//
+// #1096 hung that on `pointerdown` and #1105 is the bill. Collapsing the
+// panel narrows the left cluster by about 50px, so every sibling
+// anchored to it — Back to top, and the centred feed-filter tabs — slid
+// out from under the pointer BETWEEN pointerdown and pointerup and the
+// click was never generated. It passed review because a press on the
+// FEED is unaffected: tiles do not move when the panel collapses.
+//
+// So the timing is now part of the contract, and `does not collapse
+// until the press completes` is the assertion that tells the two
+// implementations apart — a jsdom-shaped DOM has no reflow to observe,
+// but it can observe WHEN the panel closes, which is the property the
+// reflow was racing.
+describe('ViewControls — light dismiss (#1096, #1105)', () => {
   beforeEach(() => {
     realMatchMedia = window.matchMedia;
     chromeScroll.hidden = false;
+    chromeScroll.scrolled = false;
   });
   afterEach(() => {
     window.matchMedia = realMatchMedia;
     chromeScroll.hidden = false;
+    chromeScroll.scrolled = false;
   });
 
   function pointerDownOn(target: EventTarget): Event {
@@ -267,6 +282,15 @@ describe('ViewControls — light dismiss (#1096)', () => {
     const ev = Ctor
       ? new Ctor('pointerdown', { bubbles: true, cancelable: true })
       : new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+    target.dispatchEvent(ev);
+    return ev;
+  }
+
+  /** A whole press: the pointerdown, then the click it produces. Both,
+   *  because the dismissal reads one and acts on the other. */
+  function pressOn(target: HTMLElement): Event {
+    pointerDownOn(target);
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
     target.dispatchEvent(ev);
     return ev;
   }
@@ -280,8 +304,26 @@ describe('ViewControls — light dismiss (#1096)', () => {
   }
   const isOpen = () => toggle().getAttribute('aria-expanded') === 'true';
 
-  async function open() {
+  /** Back to top — the sibling #1105 was reported on. It sits in the
+   *  same left cluster as the switcher but OUTSIDE it, which is exactly
+   *  why the collapse moves it and why it counts as "outside". */
+  function backToTop(): HTMLButtonElement {
+    const el = [...bar().querySelectorAll('button')].find(
+      (b) => b !== toggle() && !switcher().contains(b),
+    );
+    if (!el) throw new Error('no back-to-top button');
+    return el as HTMLButtonElement;
+  }
+  /** The switcher cluster — the element "outside" is measured against. */
+  function switcher(): HTMLElement {
+    const el = toggle().closest('.pointer-events-auto');
+    if (!el) throw new Error('no switcher cluster');
+    return el as HTMLElement;
+  }
+
+  async function open({ scrolled = false } = {}) {
     usePointer('fine');
+    chromeScroll.scrolled = scrolled;
     render(ViewControls);
     await tick();
     toggle().click();
@@ -295,30 +337,85 @@ describe('ViewControls — light dismiss (#1096)', () => {
     // Something else on the page — a tile in the feed.
     const tile = document.createElement('button');
     document.body.appendChild(tile);
-    const ev = pointerDownOn(tile);
+    const ev = pressOn(tile);
     await tick();
 
     expect(isOpen()).toBe(false);
     // THE POINT: the press that dismissed the panel is still a press on
     // the tile. Nothing was prevented and nothing was stopped, so the
-    // click that follows it opens the tile.
+    // click opens the tile.
     expect(ev.defaultPrevented).toBe(false);
     expect(ev.cancelBubble).toBe(false);
     tile.remove();
   });
 
-  it('stays open for a press on its own controls', async () => {
+  // #1105. The panel must still be open when the press begins, because
+  // collapsing it re-flows the footer cluster and drags the aimed
+  // sibling out from under the pointer — the click then never happens.
+  it('does not collapse until the press completes', async () => {
+    await open({ scrolled: true });
+    const sibling = backToTop();
+
+    pointerDownOn(sibling);
+    await tick();
+    expect(isOpen(), 'still open at pointerdown — the footer must not reflow yet').toBe(true);
+
+    sibling.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await tick();
+    expect(isOpen()).toBe(false);
+  });
+
+  // The whole complaint, end to end: the control does its job AND the
+  // panel goes away, on one press.
+  it('lets Back to top scroll while dismissing the panel', async () => {
+    await open({ scrolled: true });
+    const main = document.createElement('main');
+    const scrolls: unknown[] = [];
+    main.scrollTo = ((opts: unknown) => {
+      scrolls.push(opts);
+    }) as typeof main.scrollTo;
+    document.body.appendChild(main);
+    try {
+      pressOn(backToTop());
+      await tick();
+      expect(scrolls.length, 'Back to top ran').toBe(1);
+      expect(isOpen(), 'and the panel closed').toBe(false);
+    } finally {
+      main.remove();
+    }
+  });
+
+  // The panel itself, not one of its buttons: picking a view collapses
+  // the switcher on purpose (`pick`), so a view button cannot tell the
+  // dismissal apart from its own handler. The gap between the controls
+  // can.
+  it('stays open for a press inside the panel', async () => {
     await open();
-    const views = [...bar().querySelectorAll('button')].filter((b) => b !== toggle());
-    expect(views.length).toBeGreaterThan(0);
-    pointerDownOn(views[0]);
+    expect(switcher().querySelectorAll('button').length).toBeGreaterThan(1);
+    pressOn(switcher());
+    await tick();
+    expect(isOpen()).toBe(true);
+  });
+
+  // A drag is not a dismissal. This is what #1096 chose `pointerdown`
+  // for, and moving to `click` has to pay for it rather than drop it: a
+  // click's own target is the common ancestor of the down and up
+  // targets, so a press that STARTED inside the panel would otherwise
+  // read as a press outside it.
+  it('ignores a drag that started inside the panel', async () => {
+    await open();
+    const inside = [...switcher().querySelectorAll('button')].find((b) => b !== toggle());
+    expect(inside).toBeTruthy();
+    pointerDownOn(inside as HTMLElement);
+    // Released elsewhere, so the click lands on the common ancestor.
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await tick();
     expect(isOpen()).toBe(true);
   });
 
   // The regression this shape invites: dismissing on the toggle's OWN
-  // pointerdown closes the panel a beat before its click reopens it, and
-  // the toggle stops working.
+  // press closes the panel a beat before its click reopens it, and the
+  // toggle stops working.
   it('leaves the toggle toggling', async () => {
     await open();
     pointerDownOn(toggle());
@@ -338,37 +435,38 @@ describe('ViewControls — light dismiss (#1096)', () => {
     expect(document.activeElement).toBe(toggle());
   });
 
-  // The listener is only installed while the panel is open — the shape
+  // The listeners are only installed while the panel is open — the shape
   // BrowseFooter's Escape handler already uses. A window listener that
   // outlives the thing it serves is how a component starts reacting to
   // presses on pages it is no longer part of.
-  it('holds a window listener only while it is open', async () => {
+  it('holds its window listeners only while it is open', async () => {
     usePointer('fine');
     const added: string[] = [];
     const removed: string[] = [];
     const realAdd = window.addEventListener;
     const realRemove = window.removeEventListener;
+    const WATCHED = ['pointerdown', 'click'];
     /* eslint-disable @typescript-eslint/no-explicit-any */
     window.addEventListener = ((type: string, ...rest: any[]) => {
-      if (type === 'pointerdown') added.push(type);
+      if (WATCHED.includes(type)) added.push(type);
       return (realAdd as any).call(window, type, ...rest);
     }) as typeof window.addEventListener;
     window.removeEventListener = ((type: string, ...rest: any[]) => {
-      if (type === 'pointerdown') removed.push(type);
+      if (WATCHED.includes(type)) removed.push(type);
       return (realRemove as any).call(window, type, ...rest);
     }) as typeof window.removeEventListener;
     /* eslint-enable @typescript-eslint/no-explicit-any */
     try {
       render(ViewControls);
       await tick();
-      expect(added.length).toBe(0);
+      expect(added).toEqual([]);
       toggle().click();
       await tick();
-      expect(added.length).toBe(1);
-      expect(removed.length).toBe(0);
+      expect(added.sort()).toEqual(['click', 'pointerdown']);
+      expect(removed).toEqual([]);
       toggle().click();
       await tick();
-      expect(removed.length).toBe(1);
+      expect(removed.sort()).toEqual(['click', 'pointerdown']);
     } finally {
       window.addEventListener = realAdd;
       window.removeEventListener = realRemove;
