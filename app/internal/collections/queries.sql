@@ -130,7 +130,14 @@ WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
          SELECT 1 FROM featured_items fi
           WHERE fi.subject_kind = 'collection'
             AND fi.subject_id   = c.id
-            AND fi.scope        = 'org'
+            -- The SIGNED-IN arm of featured.ScopeVisibleSQL (#1104).
+            -- This is the parity oracle and sqlc queries are static
+            -- strings, so it cannot splice the Go helper; the signed-in
+            -- arm is the one the parity test exercises. Written
+            -- byte-for-byte as the helper renders it, and
+            -- TestScopeVisibleSQL_PinnedInStaticQueries fails the build
+            -- if the two ever drift.
+            AND fi.scope IN ('org', 'public')
        ))
   AND (sqlc.narg('q_name')::TEXT            IS NULL OR name ILIKE '%' || sqlc.narg('q_name')::TEXT || '%')
   AND (sqlc.narg('shared_with_user')::BIGINT IS NULL OR EXISTS (

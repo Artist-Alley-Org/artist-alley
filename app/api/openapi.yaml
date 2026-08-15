@@ -14241,6 +14241,27 @@ components:
           description: |
             Optional insertion position. Omit / null to append to the
             end of the list.
+        scope:
+          type: string
+          enum: [org, public]
+          default: org
+          description: |
+            The placement's AUDIENCE (#1104). `scope` decides who may
+            see the featuring; it does not decide which surface renders
+            it. A reader shows every audience its viewer qualifies for:
+            signed-in readers see `org` and `public`, anonymous readers
+            see `public` only.
+
+            Omit for `org`, the internal signed-in audience and the
+            audience every write produced before this property existed.
+            `public` includes anonymous visitors and is the deliberate
+            act; both are gated on `system.admin`, which is the
+            capability the whole endpoint already requires.
+
+            `team` is a valid value of the underlying column and is
+            deliberately not offered here: a team placement also needs a
+            team id, which this payload has no way to name, and no
+            reader consumes that audience yet.
 
     ResourceRequest:
       type: object

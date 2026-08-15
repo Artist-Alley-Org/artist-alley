@@ -85,6 +85,38 @@ type AddInput struct {
 	SubjectID   uuid.UUID
 	Position    *int32
 	CreatedBy   *int64
+
+	// Scope is the placement's AUDIENCE (#1104, closing the question
+	// #1088 raised). Empty means ScopeOrg, which is what every write
+	// produced before this field existed, so an old client's behaviour
+	// is unchanged.
+	//
+	// Admissible: ScopeOrg and ScopePublic.
+	//
+	// ScopeTeam is NOT writable here and that is deliberate rather than
+	// pending. A team placement needs a team_id — featured_items_team_
+	// scope_check binds the two — and nothing on the write path names a
+	// team, so accepting the scope would produce a row Postgres
+	// rejects. Team placements would need their own input shape and
+	// their own gate (an operator featuring content INTO one studio is
+	// a different act from featuring it to the install), and no reader
+	// consumes scope='team' today. It stays unwritable until one does.
+	//
+	// # The gate on ScopePublic
+	//
+	// system.admin — stated explicitly because it is worth knowing that
+	// it is not a NARROWER gate than the one on org. POST /admin/
+	// featured is system.admin in its entirety (http.go), and the
+	// capability set holds nothing between "may curate" and "may curate
+	// for anonymous visitors": featured.read is a READ cap (#356) and
+	// there is no featured.write. So v1 gates `public` on the same cap
+	// that gates the endpoint, and the distinction lives in the API
+	// being explicit about the audience rather than defaulting to the
+	// bigger one. If a narrower curation cap is ever introduced, `org`
+	// is the write that drops to it and `public` is the write that
+	// stays on system.admin — that is the split this comment exists to
+	// preserve.
+	Scope string
 }
 
 // List returns the curation list in display order (position asc, then
@@ -94,14 +126,32 @@ func (h *Handler) List(ctx context.Context) ([]ListFeaturedItemsRow, error) {
 	return New(h.Pool).ListFeaturedItems(ctx, h.Ladder(ctx))
 }
 
+// ErrScopeNotWritable is returned by Add for an audience the write path
+// does not accept. Mapped to HTTP 400.
+var ErrScopeNotWritable = errors.New("featured: scope must be org or public")
+
 // Add appends (or inserts at Position) a subject. A duplicate subject
-// surfaces as ErrAlreadyFeatured.
+// AT THE SAME AUDIENCE surfaces as ErrAlreadyFeatured; the same subject
+// at another scope is a distinct placement and is allowed.
 func (h *Handler) Add(ctx context.Context, in AddInput) (FeaturedItem, error) {
+	// The admissible-audience check lives here rather than only in the
+	// HTTP layer so a non-HTTP caller (the seed, a future job) cannot
+	// route around it and hand Postgres a 23514 that surfaces as a 500.
+	// Same argument the subject_kind check makes in http.go: the
+	// constraint is the backstop, this is the contract.
+	scope := in.Scope
+	if scope == "" {
+		scope = ScopeOrg
+	}
+	if scope != ScopeOrg && scope != ScopePublic {
+		return FeaturedItem{}, ErrScopeNotWritable
+	}
 	row, err := New(h.Pool).InsertFeaturedItem(ctx, InsertFeaturedItemParams{
 		SubjectKind:      in.SubjectKind,
 		SubjectID:        pgtype.UUID{Bytes: in.SubjectID, Valid: true},
 		Position:         in.Position,
 		CreatedByUserRef: in.CreatedBy,
+		Scope:            &scope,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError

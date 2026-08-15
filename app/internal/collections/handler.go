@@ -834,30 +834,30 @@ func (h *Handler) ListCollections(
 		// the 1.22.C-a visibility-enum cleanup, so the prefixed
 		// ListCollectionsParamsTabXxx names are gone.
 		switch *req.Params.Tab {
-		case openapi.Mine:
+		case openapi.ListCollectionsParamsTabMine:
 			ownerPtr = &caller.UserRef
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.Featured:
+		case openapi.ListCollectionsParamsTabFeatured:
 			vis := "org-only"
 			visPtr = &vis
 			f := true
 			featuredPtr = &f
 			ownerPtr = nil
-		case openapi.Public:
+		case openapi.ListCollectionsParamsTabPublic:
 			// "Public" tab kept as the user-facing label but now
 			// maps to org-only at the storage layer (1.22.C-a).
 			vis := "org-only"
 			visPtr = &vis
 			ownerPtr = nil
 			featuredPtr = nil
-		case openapi.Shared:
+		case openapi.ListCollectionsParamsTabShared:
 			sharedWithPtr = &caller.UserRef
 			excludeOwnerPtr = &caller.UserRef
 			ownerPtr = nil
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.All:
+		case openapi.ListCollectionsParamsTabAll:
 			// no overrides — the listing already enforces visibility
 			// at the row level via the existing filter.
 		}

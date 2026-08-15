@@ -427,7 +427,14 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
          SELECT 1 FROM featured_items fi
           WHERE fi.subject_kind = 'collection'
             AND fi.subject_id   = c.id
-            AND fi.scope        = 'org'
+            -- The SIGNED-IN arm of featured.ScopeVisibleSQL (#1104).
+            -- This is the parity oracle and sqlc queries are static
+            -- strings, so it cannot splice the Go helper; the signed-in
+            -- arm is the one the parity test exercises. Written
+            -- byte-for-byte as the helper renders it, and
+            -- TestScopeVisibleSQL_PinnedInStaticQueries fails the build
+            -- if the two ever drift.
+            AND fi.scope IN ('org', 'public')
        ))
   AND ($6::TEXT            IS NULL OR name ILIKE '%' || $6::TEXT || '%')
   AND ($7::BIGINT IS NULL OR EXISTS (

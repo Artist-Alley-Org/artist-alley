@@ -157,7 +157,17 @@ JOIN teams t
   ON t.id = f.subject_id
  AND t.deleted_at IS NULL
 WHERE f.subject_kind = 'team'
-  AND f.scope = 'org'
+  -- The SIGNED-IN arm of featured.ScopeVisibleSQL (#1104). This
+  -- endpoint 401s an anonymous caller before the query runs, so the
+  -- signed-in arm is the only one it can ever need — but it must be
+  -- THAT arm and not a third hand-picked scope, which is what
+  -- ` + "`" + `f.scope = 'org'` + "`" + ` was: a public team placement written through
+  -- POST /admin/featured was invisible on the only rail that renders
+  -- teams. sqlc queries are static strings and cannot splice the Go
+  -- helper, so this is written byte-for-byte as the helper renders it
+  -- and TestScopeVisibleSQL_PinnedInStaticQueries fails the build if
+  -- the two drift.
+  AND f.scope IN ('org', 'public')
 ORDER BY f.position ASC, f.created_at ASC
 LIMIT 24
 `

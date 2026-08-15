@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -64,10 +65,16 @@ type ListCollectionsPageGatedParams struct {
 	OwnerUserRef   *int64
 	ExcludeOwner   *int64
 	Visibility     *string
-	// Featured now resolves through featured_items at scope='org'
-	// (ADR 0065). The boolean column is gone; the filter's MEANING is
-	// unchanged for callers — "is this featured internally" — which is
-	// what the collections hub's Featured tab has always asked.
+	// Featured now resolves through featured_items (ADR 0065). The
+	// boolean column is gone; the filter's MEANING is "is this
+	// collection featured to THIS viewer", which is what the hub's
+	// Featured tab has always meant to ask.
+	//
+	// It asked `scope = 'org'` until #1104, which is why the tab was
+	// empty on every install whose placements came from the seed (all
+	// `public`). The audience now comes from featured.ScopeVisibleSQL,
+	// the same expression the browse rail splices — one rule, two
+	// surfaces, per #1063.
 	Featured        *bool
 	QName           *string
 	SharedWithUser  *int64
@@ -125,7 +132,7 @@ WHERE ($1::BIGINT IS NULL OR c.owner_user_ref = $1::BIGINT)
          SELECT 1 FROM featured_items fi
           WHERE fi.subject_kind = 'collection'
             AND fi.subject_id   = c.id
-            AND fi.scope        = 'org'
+            AND ` + featured.ScopeVisibleSQL("fi", caller) + `
        ))
   AND ($5::TEXT IS NULL OR c.name ILIKE '%' || $5::TEXT || '%')
   AND ($6::BIGINT IS NULL OR EXISTS (
