@@ -73,6 +73,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Changed
 
+- **The images now run Node 24, the current long-term-support release.** They were on Node 22,
+  which is heading into maintenance. Nothing about the app changes; the part worth stating is that
+  the 3D preview renderer runs on this, and it was checked rather than assumed — every supported
+  3D format re-rendered, and the output compared against the old build image by image (#1039).
+
+- **Published images state the right licence.** They carried a label saying BSD-3-Clause. This
+  project is AGPL-3.0. Release builds happened to report it correctly for an unrelated reason, so
+  the wrong value only reached the rolling `edge` image and anything built from a copy of the
+  source — which is most self-hosted installs. Registry pages, licence scanners and policy tools
+  read that field, so it now says AGPL-3.0 everywhere, and the two build paths were also made to
+  agree on the project's description, which had drifted apart (#1091).
+
 - **Dependency updates.** `@playwright/test` 1.60.0 → 1.62.1 (#1034), `three` 0.169.0 → 0.185.1 in
   the 3D preview worker (#1035), and a group of four minor/patch bumps in the frontend (#1037).
 
