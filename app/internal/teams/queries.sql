@@ -116,7 +116,7 @@ WHERE tm.user_ref = $1 AND t.deleted_at IS NULL
 ORDER BY t.name ASC, t.id ASC;
 
 -- name: FollowTeam :exec
--- Bookmark a team into the caller's channels rail (#577).
+-- Bookmark a team into the caller's teams rail (#577).
 --
 -- ON CONFLICT DO NOTHING makes follow IDEMPOTENT: a double-tapped
 -- button, a retried request and a genuine re-follow are one request
@@ -146,7 +146,7 @@ DELETE FROM team_follows
 WHERE user_ref = $1 AND team_id = $2;
 
 -- name: ListFollowedTeams :many
--- The caller's channels rail (#577). Same projection and ordering as
+-- The caller's teams rail (#577). Same projection and ordering as
 -- ListUserTeams so the two lists render through one code path, but a
 -- DIFFERENT table: this is what the user bookmarked, that is what the
 -- user belongs to. They are not the same question and neither implies
@@ -212,7 +212,17 @@ JOIN teams t
   ON t.id = f.subject_id
  AND t.deleted_at IS NULL
 WHERE f.subject_kind = 'team'
-  AND f.scope = 'org'
+  -- The SIGNED-IN arm of featured.ScopeVisibleSQL (#1104). This
+  -- endpoint 401s an anonymous caller before the query runs, so the
+  -- signed-in arm is the only one it can ever need — but it must be
+  -- THAT arm and not a third hand-picked scope, which is what
+  -- `f.scope = 'org'` was: a public team placement written through
+  -- POST /admin/featured was invisible on the only rail that renders
+  -- teams. sqlc queries are static strings and cannot splice the Go
+  -- helper, so this is written byte-for-byte as the helper renders it
+  -- and TestScopeVisibleSQL_PinnedInStaticQueries fails the build if
+  -- the two drift.
+  AND f.scope IN ('org', 'public')
 ORDER BY f.position ASC, f.created_at ASC
 LIMIT 24;
 

@@ -3,7 +3,7 @@
 
 package teams
 
-// Team follows — the channels model (#577).
+// Team follows — the teams-rail bookmark model (#577).
 //
 // # A follow is a bookmark
 //
@@ -11,7 +11,7 @@ package teams
 // studio does not make the caller a member of it, does not widen a
 // single row of what they can see of its work, and is never consulted
 // by the visibility planes. What it does is put the team in the
-// caller's channels rail — and, since #1048, select on the browse
+// caller's teams rail — and, since #1048, select on the browse
 // feed's "Following" filter, which is the same bookmark read as a
 // display preference: a NARROWING conjunct ANDed beside the read rule
 // (posts/list_page.go), never a disjunct with it, so it can only
@@ -28,7 +28,8 @@ package teams
 //
 // Deliberately absent, per the sprint's decisions: no denormalised
 // follower count, no last-read watermark, no notification fanout.
-// Channels are not notifications; #520's rules arc owns that.
+// A follow is a bookmark, not a subscription; #520's rules arc owns
+// notifications.
 
 import (
 	"context"
@@ -41,7 +42,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-// FollowTeam bookmarks a team into the caller's channels rail.
+// FollowTeam bookmarks a team into the caller's teams rail.
 //
 // # Liveness is probed explicitly, and it has to be
 //
@@ -144,7 +145,7 @@ func (h *Handler) UnfollowTeam(
 	return openapi.UnfollowTeam204Response{}, nil
 }
 
-// GetMyFollowedTeams returns the caller's channels rail.
+// GetMyFollowedTeams returns the caller's teams rail.
 //
 // Distinct from GetMyTeams, which returns MEMBERSHIPS. The two are
 // different questions with different answers and they stay separate

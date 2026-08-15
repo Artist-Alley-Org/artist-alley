@@ -7531,7 +7531,7 @@ paths:
         schema: { type: string, format: uuid }
     post:
       operationId: followTeam
-      summary: Follow a team (subscribe to its channel)
+      summary: Follow a team (bookmark it into your teams rail)
       description: |
         Adds the caller to `team_follows` (#577). Requires `teams.read`
         — the same capability that lets you see the team at all.
@@ -7542,10 +7542,10 @@ paths:
         never read by any authorization rule, and following a studio
         does not widen one row of what you can see of its work — the
         visibility planes decide that and do not consult this table.
-        All it does is put the team in your channels rail.
+        All it does is put the team in your teams rail.
 
         There is deliberately no unread model and no notification
-        fanout behind it; channels are not notifications.
+        fanout behind it; a follow is a bookmark, not a subscription.
 
         ## Idempotent
 
@@ -7608,7 +7608,7 @@ paths:
   /auth/me/followed-teams:
     get:
       operationId: getMyFollowedTeams
-      summary: Teams the caller follows (the channels rail)
+      summary: Teams the caller follows (the teams rail)
       description: |
         The caller's `team_follows` rows, resolved to teams and ordered
         by name (#577). Soft-deleted teams are filtered out, so a
@@ -14241,6 +14241,27 @@ components:
           description: |
             Optional insertion position. Omit / null to append to the
             end of the list.
+        scope:
+          type: string
+          enum: [org, public]
+          default: org
+          description: |
+            The placement's AUDIENCE (#1104). `scope` decides who may
+            see the featuring; it does not decide which surface renders
+            it. A reader shows every audience its viewer qualifies for:
+            signed-in readers see `org` and `public`, anonymous readers
+            see `public` only.
+
+            Omit for `org`, the internal signed-in audience and the
+            audience every write produced before this property existed.
+            `public` includes anonymous visitors and is the deliberate
+            act; both are gated on `system.admin`, which is the
+            capability the whole endpoint already requires.
+
+            `team` is a valid value of the underlying column and is
+            deliberately not offered here: a team placement also needs a
+            team id, which this payload has no way to name, and no
+            reader consumes that audience yet.
 
     ResourceRequest:
       type: object

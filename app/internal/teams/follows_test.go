@@ -385,7 +385,7 @@ func TestFollowedTeams_ExcludesSoftDeleted(t *testing.T) {
 		t.Fatalf("soft-delete: %v", err)
 	}
 	if ids := f.followedIDs(ctx); contains(ids, team) {
-		t.Errorf("a soft-deleted team is still in the channels rail")
+		t.Errorf("a soft-deleted team is still in the teams rail")
 	}
 	if n := f.followRows(user, team); n != 1 {
 		t.Errorf("the follow row was destroyed by a tombstone (%d rows, want 1) — "+

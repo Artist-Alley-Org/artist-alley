@@ -36,8 +36,12 @@ type RailRow struct {
 	AssetLadderAvailable bool
 }
 
-// ListPublicRail returns the public featured rail for one caller
-// (#417, ADR 0065).
+// ListPublicRail returns the featured rail for one caller (#417,
+// ADR 0065). "Public" names the ENDPOINT — GET /featured is the
+// unauthenticated route — not the audience: since #1104 the audience is
+// chosen per viewer by ScopeVisibleSQL, so an anonymous request sees
+// exactly the `public` placements it always saw and a signed-in one
+// also sees `org`.
 //
 // FEATURING NEVER WIDENS ACCESS. That is the whole invariant, and it is
 // enforced structurally here rather than by a second copy of the
@@ -186,15 +190,15 @@ LEFT JOIN LATERAL (
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT 1
 ) cover ON true
-WHERE f.scope = 'public'
+WHERE ` + ScopeVisibleSQL("f", caller) + `
   -- A 'team' placement (#1084) resolves neither join and is therefore
   -- dropped here, which is the correct outcome and is stated so nobody
-  -- reads it as an oversight: this rail is the ANONYMOUS landing strip,
-  -- and a team tile belongs to the signed-in teams rail
-  -- (GET /featured/teams, scope 'org'). Adding team subjects to this
+  -- reads it as an oversight: a team tile belongs to the signed-in
+  -- teams rail (GET /featured/teams). Adding team subjects to this
   -- query would put studio names on a surface that has never shown them
   -- to logged-out readers — a visibility decision, not a rendering one,
-  -- and not one this change makes.
+  -- and not one this change makes. ScopeVisibleSQL never admits the
+  -- 'team' scope either, so this holds for both arms.
   AND (a.id IS NOT NULL OR c.id IS NOT NULL)
 ORDER BY f.position ASC, f.created_at ASC
 LIMIT $1::INTEGER`

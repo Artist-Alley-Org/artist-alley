@@ -828,36 +828,60 @@ func (h *Handler) ListCollections(
 	var sharedWithPtr *int64
 	caller := auth.IdentityFromContext(ctx)
 	if req.Params.Tab != nil && caller != nil {
-		// oapi-codegen drops the type-name prefix on enum constants
-		// when there are no collisions — 'Public' / 'Shared' /
-		// 'Featured' / 'All' / 'Mine' are now globally unique after
-		// the 1.22.C-a visibility-enum cleanup, so the prefixed
-		// ListCollectionsParamsTabXxx names are gone.
+		// ⚠️ `hubPublicTier` is `public`, not `org-only`, and that is a
+		// FIX (#1104), not a restatement.
+		//
+		// Both tabs below pinned `visibility = 'org-only'` from v0.1.0
+		// until now, under a comment claiming the Public tab "maps to
+		// org-only at the storage layer". That was true when it was
+		// written: the baseline CHECK admitted private | org-only |
+		// followers | explicit-share and there was no public tier at
+		// all. Migration 00008 then ADDED `public` as a new, higher
+		// tier ABOVE org-only, and nothing came back to this switch.
+		//
+		// So the Public tab — "every install-public collection" per the
+		// OpenAPI description — has been returning exactly the
+		// collections that are NOT install-public, and the Featured tab
+		// has been ANDing a featured filter onto that same wrong set. On
+		// this dev database that is 2 rows of 6, and 0 of the 6 featured
+		// ones. #1104's report ("no featured collections in
+		// collections") had TWO causes stacked on it; the scope split
+		// was the one that was looked for, and this was underneath.
+		//
+		// The comment about oapi-codegen dropping the type-name prefix
+		// went stale in the same commit that found this: adding an
+		// org/public enum to FeaturedItemInput reintroduced the
+		// collision, so the constants are prefixed again.
+		const hubPublicTier = "public"
+
 		switch *req.Params.Tab {
-		case openapi.Mine:
+		case openapi.ListCollectionsParamsTabMine:
 			ownerPtr = &caller.UserRef
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.Featured:
-			vis := "org-only"
+		case openapi.ListCollectionsParamsTabFeatured:
+			// Kept as spec'd: visibility=public AND featured-to-this-
+			// viewer. Whether the tier pin belongs here AT ALL is a
+			// separate product question — since #1104 an admin can
+			// feature an org-only collection and it will not appear on
+			// this tab — and it is not decided here.
+			vis := hubPublicTier
 			visPtr = &vis
 			f := true
 			featuredPtr = &f
 			ownerPtr = nil
-		case openapi.Public:
-			// "Public" tab kept as the user-facing label but now
-			// maps to org-only at the storage layer (1.22.C-a).
-			vis := "org-only"
+		case openapi.ListCollectionsParamsTabPublic:
+			vis := hubPublicTier
 			visPtr = &vis
 			ownerPtr = nil
 			featuredPtr = nil
-		case openapi.Shared:
+		case openapi.ListCollectionsParamsTabShared:
 			sharedWithPtr = &caller.UserRef
 			excludeOwnerPtr = &caller.UserRef
 			ownerPtr = nil
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.All:
+		case openapi.ListCollectionsParamsTabAll:
 			// no overrides — the listing already enforces visibility
 			// at the row level via the existing filter.
 		}

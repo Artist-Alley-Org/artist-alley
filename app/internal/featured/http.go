@@ -134,10 +134,27 @@ func (h *HTTPHandler) AddFeaturedItem(
 		p := int32(*req.Body.Position)
 		in.Position = &p
 	}
+	// Audience (#1104). An omitted scope stays org — the OpenAPI
+	// `default` is documentation for the client, not a server-side
+	// fill, so the empty string arriving here means "not supplied" and
+	// Handler.Add resolves it. Both admissible values are gated on
+	// system.admin, already checked above; see AddInput.Scope for why
+	// there is no narrower gate to reach for and what should happen if
+	// one is ever added.
+	if req.Body.Scope != nil {
+		in.Scope = string(*req.Body.Scope)
+	}
 	row, err := h.domain.Add(ctx, in)
 	if err != nil {
 		if errors.Is(err, ErrAlreadyFeatured) {
 			return openapi.AddFeaturedItem409JSONResponse{Error: "subject already featured"}, nil
+		}
+		if errors.Is(err, ErrScopeNotWritable) {
+			return openapi.AddFeaturedItem400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "scope must be org or public",
+				},
+			}, nil
 		}
 		return nil, fmt.Errorf("featured: add: %w", err)
 	}
