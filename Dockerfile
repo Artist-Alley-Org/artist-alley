@@ -137,7 +137,7 @@ FROM debian:bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.title="artist-alley"
 LABEL org.opencontainers.image.description="Self-hosted art review and archival platform for artists, curators, and small studios."
-LABEL org.opencontainers.image.licenses="BSD-3-Clause"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
 
 # chromium: headless renderer for the three.js preview worker (#498). The

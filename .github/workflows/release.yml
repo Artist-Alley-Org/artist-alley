@@ -146,10 +146,25 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ !contains(needs.release-notes.outputs.tag, '-') }}
+          # metadata-action auto-derives `org.opencontainers.image.licenses`
+          # from the repo's GitHub-detected licence and emits the SPDX id
+          # GitHub reports — `AGPL-3.0`, which SPDX deprecated in favour of
+          # the explicit `AGPL-3.0-only` / `AGPL-3.0-or-later` split. Every
+          # other licence assertion in this tree (LICENSING.md, the SPDX
+          # file headers, both package.json files, the Dockerfile LABEL)
+          # says AGPL-3.0-only, so pin it here too rather than shipping
+          # release images that disagree with edge images (#1091).
+          #
+          # This has to live here, not only in the Dockerfile: these labels
+          # reach the build as `--label`, which OVERRIDES a Dockerfile
+          # LABEL of the same key. That override is exactly why the wrong
+          # BSD-3-Clause LABEL never reached a TAGGED image — only the edge
+          # ones, which build without metadata-action.
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.release-notes.outputs.tag }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
 
       - name: Build + push multi-arch image
         id: build
