@@ -163,6 +163,18 @@ export function tileSizesFor(rem: number): string {
  *  survived two rung recalibrations without moving. */
 export const DEFAULT_TILE_SIZES = tileSizesFor(TILE_STEPS_REM[DEFAULT_TILE_IDX]);
 
+/** `--tile-min`'s value at the default rung — the width a surface uses
+ *  when it wants the app's standard tile and NOT the browse stepper's
+ *  current one (#1098's featured strip).
+ *
+ *  The matched other half of `DEFAULT_TILE_SIZES`, and derived from the
+ *  same rung for the same reason: a fixed size written as a literal
+ *  `clamp(8.8rem, 18.33vw, 22rem)` would silently stop being "the
+ *  default tile" the first time the ladder is recalibrated, and the
+ *  drift would show up as the strip and the grid disagreeing at the
+ *  default — the exact complaint #909 was filed about. */
+export const DEFAULT_TILE_MIN = tileMinFor(TILE_STEPS_REM[DEFAULT_TILE_IDX]);
+
 const DEFAULT_MODE: ViewMode = 'grid';
 /** Phones default to `feed` — but only when nothing is stored, and only
  *  once at hydration. See `init()`. */

@@ -30,13 +30,22 @@
    * heading outright would have removed a navigation target rather
    * than just some pixels.
    *
-   * # The tiles follow the browse tile-size control (#909)
+   * # The strip holds ONE size, and the grid below moves (#1098)
+   *
+   * #909 wired these tiles to the browse tile-size stepper so a page
+   * did not show two card sizes. Seen live, that is the wrong half to
+   * make move: the strip is a header over the working surface, not part
+   * of it, and it jumping every time the reader tunes the grid's
+   * density is what the stepper is being used to get AWAY from. So the
+   * coupling is severed — deliberately, and only in this direction. The
+   * strip renders at the ladder's default rung forever; the grid
+   * underneath still follows the stepper exactly as it did.
    *
    * See `tileWidth` below.
    */
   import { onMount } from 'svelte';
   import { api } from '$api/client';
-  import { browseView } from '$stores/browseView.svelte';
+  import { DEFAULT_TILE_MIN, DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { t } from '$stores/lang.svelte';
 
@@ -132,51 +141,50 @@
     return it.subject_kind === 'collection' ? `/collections/${it.subject_id}` : null;
   }
 
-  /** The rail tile's width — the SAME CSS length the grid below uses as
-   *  its column minimum (#909).
+  /** The rail tile's width — the ladder's DEFAULT rung, fixed (#1098).
    *
-   *  Before this, the tiles were `w-40 sm:w-48` and the browse tile-size
-   *  control moved the post grid underneath while the curated strip
-   *  above sat still: one page, two card sizes.
+   *  Not `browseView.tileMin`. That getter is the stepper's live value,
+   *  and reading it here is what made the strip move with the grid
+   *  (#909); severing that is the whole of #1098's second half. This is
+   *  the one line that has to keep NOT being reactive, so if a future
+   *  change wants the strip to breathe again, it belongs in the issue
+   *  that reverses the product call, not in a quiet re-import.
    *
-   *  # What "larger tiles" means for a horizontal strip
+   *  `DEFAULT_TILE_MIN` rather than a literal length: it is
+   *  `tileMinFor()` at the default rung, which is precisely the size the
+   *  strip renders at TODAY for the overwhelming majority of readers —
+   *  anyone who never touched the stepper. So the lock ships as a
+   *  no-visible-change for them, and the ladder can still be
+   *  recalibrated without this component drifting off it.
    *
-   *  A rail is not a grid, so `auto-fill` has nothing to say here — the
-   *  tile width is chosen, not derived from a column count. The closest
-   *  a fixed-width strip can get to the grid it sits over is
-   *  `browseView.tileMin` itself: the grid's painted column is
-   *  `tileMin + remainder/n`, so the two agree to within one row's
-   *  leftover, and they step together on every rung.
+   *  # What is kept from #909, and why
    *
-   *  The three-zone clamp transfers UNCHANGED, and it is load-bearing
-   *  rather than inherited. A bare rung would be 22rem at the default —
-   *  352px, which at 390px is one tile filling the viewport with no hint
-   *  that the row scrolls sideways. The clamp's floor (0.4·R) puts about
-   *  two and a half tiles in view on a phone, which is what says
-   *  "scroller". So the same formula that gives the grid its column
-   *  count gives the rail its peek.
-   *
-   *  Reading the store's GETTER, not the raw rung, is deliberate: it
-   *  already carries thumbnail mode's +1 rung offset, so the rail
-   *  matches whatever the grid is painting right now rather than what
-   *  the stepper last stored. In `list` and `feed` the stepper is inert
-   *  by definition, so nothing moves in either place.
+   *  The three-zone clamp inside that constant is load-bearing rather
+   *  than inherited. A bare rung would be 22rem — 352px, which at 390px
+   *  is one tile filling the viewport with no hint that the row scrolls
+   *  sideways. The clamp's floor (0.4·R) puts about two and a half tiles
+   *  in view on a phone, which is what says "scroller". Fixing the SIZE
+   *  is not the same as fixing the number of pixels; the tile still
+   *  adapts to the viewport, it just stops adapting to the stepper.
    *
    *  `min(…, 100%)` for the same overflow reason TileGrid has it — the
-   *  top rung's floor is 22.8rem, which is wider than a 390px viewport's
-   *  content box.
+   *  clamp's ceiling is wider than a 390px viewport's content box.
    *
-   *  `tileSizes` comes along as the matched other half — see `srcset`
-   *  below for why the tile now HAS a source set to steer. */
-  const tileWidth = $derived(`min(${browseView.tileMin}, 100%)`);
+   *  `DEFAULT_TILE_SIZES` comes along as the matched other half — see
+   *  `srcset` below for why the tile HAS a source set to steer. The two
+   *  are one hint and must name the same rung, so they are both pinned
+   *  or neither is. */
+  const tileWidth = `min(${DEFAULT_TILE_MIN}, 100%)`;
 
   /** Responsive source set for the tile (#502/#610's pattern, reused).
    *
-   *  A resizable tile needs a resizable source. `col` is `fit: cover,
-   *  max_dim: 320` — fine when this rail was a fixed `w-40 sm:w-48`,
-   *  and a 2.6x upscale the moment the size control can take the tile
-   *  to 38rem. Making the tiles follow the grid without this would have
-   *  fixed "two card sizes" by shipping "two card qualities".
+   *  A tile that resizes with the VIEWPORT still needs a resizable
+   *  source, so this survives #1098's size lock unchanged. `col` is
+   *  `fit: cover, max_dim: 320` — fine when this rail was a fixed
+   *  `w-40 sm:w-48`, and an upscale at the clamp's ceiling on a wide
+   *  display, which is a width the strip still reaches on its own.
+   *  Pinning the rung narrowed the range this has to cover; it did not
+   *  remove it.
    *
    *  Gated on `ladder_available` exactly as CardThumb is: that flag is
    *  the server confirming every CONFIGURED rung exists for THIS asset
@@ -192,9 +200,13 @@
    *  squares; only the pixel count changes.
    *
    *  `sizes` ships with it and never without it — they are one hint.
-   *  `browseView.tileSizes` is the same three-zone clamp `tileWidth`
-   *  resolves, restated in the `sizes` grammar, so the width the
-   *  browser budgets for is the width the tile actually gets. Its
+   *  `DEFAULT_TILE_SIZES` is the same three-zone clamp `tileWidth`
+   *  resolves, at the same pinned rung, restated in the `sizes`
+   *  grammar — so the width the browser budgets for is the width the
+   *  tile actually gets. Reading the store's live `tileSizes` here
+   *  after #1098 would advertise the STEPPER's width for a tile that no
+   *  longer follows it, which is the two-card-qualities bug with the
+   *  sign flipped. Its
    *  leading `auto` depends on the `<img>` being `loading="lazy"`,
    *  which it is; making it eager would silently turn the hint into
    *  100vw. */
@@ -242,11 +254,41 @@
               <img
                 src={thumb}
                 srcset={set || undefined}
-                sizes={set ? browseView.tileSizes : undefined}
+                sizes={set ? DEFAULT_TILE_SIZES : undefined}
                 alt=""
                 loading="lazy"
                 class="h-full w-full object-cover transition group-hover:scale-[1.02]"
               />
+              <!-- The title, ON the artwork (#1098). This is the tile's
+                   ONLY title — the caption that used to sit under the
+                   square is gone, not hidden, so the one-title invariant
+                   above still holds and a screen reader still reads the
+                   name once.
+
+                   The scrim is what makes this safe on ANY cover. Light
+                   text needs a dark ground and a curated rail has no say
+                   in what the artwork looks like, so the bottom edge is
+                   darkened rather than the text being tinted per image —
+                   the same solution PostCard's grid overlay uses, and
+                   the reason both are `from-black/85`, not a theme
+                   token: the ground here is the picture, not the page,
+                   so it does not flip with the theme.
+
+                   PERSISTENT, not hover-revealed like PostCard's. A
+                   curated strip is scanned by name; hiding the name
+                   until hover would make the rail unreadable at a
+                   glance and unreadable full stop on a touch device.
+
+                   `pointer-events-none` keeps the whole tile one link —
+                   the scrim covers the lower third of the anchor, and a
+                   click there must open the collection, not land on a
+                   decorative div. -->
+              <div
+                class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/50
+                       to-transparent px-3 pb-2 pt-8"
+              >
+                <p class="truncate text-sm font-medium text-white">{it.title}</p>
+              </div>
             {:else}
               <!-- Title-only tile. The correct render for an asset
                    whose bytes are gated, for a collection with no
@@ -260,13 +302,12 @@
               </div>
             {/if}
           </div>
-          <!-- Caption only under an IMAGE tile. A title-only tile
-               already displays the name inside the square, so a caption
-               would print it twice — visibly, not just to a screen
-               reader. -->
-          {#if showThumb(it)}
-            <p class="mt-1.5 line-clamp-2 text-sm text-fg">{it.title}</p>
-          {/if}
+          <!-- No caption under the square, in either arm (#1098). The
+               image tile prints its name on the artwork; the title-only
+               tile prints it inside the square. Adding one back here
+               would print the name twice — visibly, not just to a
+               screen reader — which is the exact duplication the
+               one-title invariant above exists to prevent. -->
         </svelte:element>
       {/each}
     </div>
