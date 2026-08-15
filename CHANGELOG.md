@@ -9,6 +9,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **List-view columns are resizable.** Drag the boundary between two column headers to resize,
+  double-click it to reset that column, or use the arrow keys with the handle focused. Your
+  widths are remembered across reloads, per column, alongside your column visibility choices.
+  On touch screens the handles stay out of the way (#1100).
+
+- **The teams strip leads with "All teams" and a manage menu.** The all-teams link moved from
+  the end of the strip to the front where it is always visible, next to a small menu for
+  managing what you follow, and the team chips got bigger — comfortable to read and to tap.
+  Your featured team still comes first among the teams (#1097).
+
+- **Featured collections wear their names on the artwork.** The name used to sit under the
+  card; it now sits on the image itself over a soft dark fade, the way portfolio sites do it.
+  The strip also keeps its own fixed size now — tuning the card-size control resizes the browse
+  grid below without the featured strip jumping around (#1098).
+
 - **Wide artwork gets the room it needs in masonry.** A panorama or a waveform used to be squeezed
   into one portrait-shaped column and came out a few pixels tall — technically present, practically
   invisible. About a third of a typical feed here is that wide. Wide pieces now take two columns
