@@ -135,10 +135,16 @@ RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM debian:bookworm-slim AS runtime
 
+# These four are what an image built straight from this tree carries, and
+# what `edge.yml` inherits for any key it does not pass as a `--label`.
+# `release.yml` runs docker/metadata-action, whose `--label` args override
+# a Dockerfile LABEL of the same key — so keep these in sync with the
+# GitHub repo's own name/description, or edge and tagged images disagree
+# about what they are (#1091).
 LABEL org.opencontainers.image.title="artist-alley"
-LABEL org.opencontainers.image.description="Self-hosted art review and archival platform for artists, curators, and small studios."
+LABEL org.opencontainers.image.description="Self-hosted art review and archive for game studios — artist-first, AGPL-3.0 (commercial license available), Go + Postgres + SvelteKit."
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
-LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
+LABEL org.opencontainers.image.source="https://github.com/Artist-Alley-Org/artist-alley"
 
 # chromium: headless renderer for the three.js preview worker (#498). The
 # apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm, …)
