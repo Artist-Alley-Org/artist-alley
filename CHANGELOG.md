@@ -154,6 +154,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The masonry wall no longer opens bands of empty space as you scroll.** Pieces whose files
+  carry no recorded dimensions were reserved a square amount of room, and when the real image
+  arrived taller or shorter, the wall's shared row structure let that one piece push **every**
+  column down — so gaps appeared across the full width, once per loaded page, getting worse the
+  deeper you scrolled. The wall now checks its rendered layout against what it predicted and
+  quietly corrects the difference before each new page, the way large photo-feed sites do it.
+  Measured on a 14-column wall: 137 gaps down to 2, both being the small bounded seams a
+  two-column-wide piece can legitimately leave (#1095).
+
+- **The view switcher closes when you click away.** The panel used to stay open until its button
+  was clicked a second time; it now dismisses on any click or tap outside it — and the click
+  still does whatever you aimed it at — plus Escape, which returns focus to the button (#1096).
+
 - **The admin area now turns away people who don't administer anything.** It let every signed-in
   account in and showed them a page with two tiles on it. Two of the permissions it recognised —
   listing teams and listing roles — are ones everyone has, so that they can browse the team

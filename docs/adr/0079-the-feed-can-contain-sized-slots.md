@@ -189,6 +189,25 @@ column boxes), so the `role="presentation"` column-box compensation is
 gone. `aria-posinset`/`aria-setsize` stay explicit, because slots will
 make DOM order and feed position diverge again when they arrive.
 
+**Correction 2026-08-15 (#1095, PR #1101): the rework's anti-drift deletion
+did not survive contact with real content.** The #651 implementation read
+each column's true rendered height back from the DOM before every append;
+the rework dropped that on the argument "the reservation IS the position,
+so estimator error cannot accumulate." That argument missed a CSS fact
+worth recording for any future grid layout here: **a grid's row tracks are
+shared by every column**, so with `grid-auto-rows: minmax(unit, auto)` a
+single tile that renders taller than its reservation (an asset with no
+recorded dimensions settles from its square placeholder into its real
+ratio on image load) stretches the tracks it spans and displaces the
+**whole wall** at that depth — measured at up to 951px of accumulated
+displacement, appearing as a full-width band per appended page. The
+reconciliation mechanism is back (`reconcile`: re-solve row lines against
+measured heights before each append and on tile resize, never touching
+column, span or order), which is also how production masonry does it:
+positions derive from known sizes, and the rendered DOM is the authority
+the layout re-anchors to. Append-stability is unaffected — reconciliation
+runs *before* new placements and cannot reorder.
+
 ## What this explicitly rejects
 
 - **Building ad placement and premium placement separately.** They are one
