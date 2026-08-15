@@ -7,7 +7,7 @@
   // post-by-asset lookup — renders modes identically instead of forking
   // the switch per page:
   //   grid / thumbnail → auto-fill TileGrid (tiles ≥ --tile-min)
-  //   masonry          → append-stable column buckets (MasonryColumns)
+  //   masonry          → append-stable explicitly-placed grid (MasonryColumns)
   //   feed             → single column, image full-bleed (a `measure` cap)
   //   list             → the caller's table (`list` snippet); posts only,
   //                       so anything without one falls back to the grid
@@ -46,8 +46,10 @@
   <!-- Masonry is no longer a CSS multi-column flow (#651). Multicol
        BALANCES across the whole flow, so every infinite-scroll append
        re-sorted tiles the user was already looking at into different
-       columns. MasonryColumns owns the replacement mechanism and the
-       full argument. -->
+       columns. It is no longer N sibling column boxes either (#747):
+       those had no shared coordinate space, so nothing could straddle
+       two columns. MasonryColumns owns the replacement mechanism and
+       the full argument. -->
   <MasonryColumns {items} {tileMin} {loading} {card} />
 {:else if mode === 'feed'}
   <div class="posts-feed gap-4">

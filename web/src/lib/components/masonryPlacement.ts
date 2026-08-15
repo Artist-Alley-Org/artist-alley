@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
+// Masonry placement, as arithmetic (#747).
+//
+// MasonryColumns used to be N sibling column elements, each an ordinary
+// block flow. A tile lived INSIDE one column element, so there was no
+// shared coordinate space and nothing could straddle two columns — the
+// structural blocker ADR 0079 §4 records. The wall is now one CSS grid
+// with every tile explicitly placed, and this module is the placer: it
+// takes tile shapes and a geometry, and returns a grid area per tile.
+// No DOM, no framework — so the properties the layout rests on are
+// assertable rather than only observable in a browser.
+//
+// # Why the placement is explicit and not `grid-auto-flow`
+//
+// Sparse auto-flow looks like it would do this for free: it scans
+// row-major from a cursor that only moves forward, and while every
+// column's occupied cells form a prefix that scan lands on exactly the
+// shortest column. It stops being equivalent the moment a tile spans.
+// After a 2-wide tile is placed deep in the wall the cursor is left at
+// that row, and every later tile is forced to start at or below it —
+// so a column that was 400px shorter never gets filled again. Measured
+// against a hand-run of the CSS Grid §8.5 sparse algorithm, one wide
+// tile placed at row 505 with a neighbouring column at row 120 strands
+// a 385px hole that nothing can ever occupy. `dense` would fix the hole
+// by backfilling, which reorders items visually and is forbidden by
+// ADR 0079 §3 for exactly the reason #651 exists.
+//
+// Explicit placement keeps the whole packing decision here, where it is
+// one function and one set of tests.
+//
+// # The lattice
+//
+// Row heights are not content-derived: the grid declares a fine
+// `grid-auto-rows` unit and each tile reserves `ceil(height / unit)` of
+// them. That makes a tile's position arithmetic from the recorded
+// `pixel_width` / `pixel_height` (#646) BEFORE anything renders — no
+// measure-then-place pass, no JS masonry library, no waiting on image
+// bytes.
+//
+// It also removes the drift the sibling-column implementation had to
+// defend against by re-reading every column's `offsetHeight` before each
+// append. There, `colHeights` was a running sum of PREDICTIONS while the
+// wall rendered at its REAL heights, so the two diverged and the
+// divergence compounded down a long scroll. Here the reservation IS
+// where the tile renders — the lattice is authoritative — so a
+// prediction that is a few pixels out costs a few pixels of gap under
+// that one tile and contributes nothing to the next tile's position.
+// Error cannot accumulate because nothing sums it.
+//
+// The unit is a tradeoff, not a magic number: every tile rounds UP to
+// it, so a coarse unit shows as slack under tiles, and a fine one
+// multiplies the implicit tracks the engine has to size (a 72-tile wall
+// at 1440px is ~4300px of column, i.e. ~1100 tracks at 4px and ~4300 at
+// 1px). 4px is under the 8px inter-tile gap, so the slack is never
+// larger than the gap already there.
+
+import { masonryTileHeight } from './cardAsset';
+
+/** Height of one `grid-auto-rows` track, in px. See the header. */
+export const ROW_UNIT_PX = 4;
+
+/** A tile may span at most this many columns.
+ *
+ *  Owner's call, and the reason is legibility in both directions: a tile
+ *  spanning the full row stops reading as a card and reads as a section
+ *  break. Paired with `MIN_COLS_FOR_SPAN` and the `n - col` clamp in
+ *  `placeInto`, so a wide tile always has at least one ordinary column
+ *  beside it. */
+export const MAX_SPAN = 2;
+
+/** No spanning below this many columns. At two columns a 2-wide tile IS
+ *  the full row; at one it is meaningless. */
+export const MIN_COLS_FOR_SPAN = 3;
+
+/** The wall's measured geometry. All px, all read from the DOM by the
+ *  component — never assumed here. */
+export interface MasonryGeometry {
+  /** Live column count. The size stepper picks `--tile-min` and the
+   *  count falls out of the available width (browseView, #556), so this
+   *  is an outcome to be read, never a setting. */
+  colCount: number;
+  colWidth: number;
+  gapPx: number;
+  /** CardThumb's `min-height` floor (#652) resolved to px. */
+  minTilePx: number;
+}
+
+/** One tile's shape, as the placer needs it. The component resolves both
+ *  fields (see MasonryColumns' `shape`); this module never touches a
+ *  card row.
+ *
+ *  How WIDE a tile should be is the caller's decision, not the placer's:
+ *  a span may come from the tile's own content being too wide to read in
+ *  one column (#1025) or, later, from ADR 0079's sized slots,
+ *  where the size is configuration rather than a property of the
+ *  artwork. The placer only has to honour it. */
+export interface PlaceableTile {
+  id: string;
+  /** Columns this tile occupies. Clamped to what the wall can give it. */
+  span: number;
+  /** The ratio the HEIGHT prediction uses — declared, else the measured
+   *  cache, else null for a square. */
+  estimateRatio: number | null;
+}
+
+/** A tile's grid area. `col` / `row` are zero- and one-based
+ *  respectively to match how they are consumed: `col` indexes
+ *  `colRows`, `row` is a CSS grid line. */
+export interface PlacedTile {
+  id: string;
+  /** Position in the feed, for `aria-posinset`. Kept explicit even
+   *  though DOM order now matches feed order, because ADR 0079's sized
+   *  slots will put positions in the stream that are not tiles. */
+  index: number;
+  /** Zero-based column index of the tile's left edge. */
+  col: number;
+  span: number;
+  /** One-based CSS grid row line. */
+  row: number;
+  rows: number;
+}
+
+export interface MasonryState {
+  placements: PlacedTile[];
+  /** Each column's running bottom edge, in lattice rows. Integers we
+   *  assigned, so this is exact — see the header on drift. */
+  colRows: number[];
+}
+
+export function emptyState(colCount: number): MasonryState {
+  return { placements: [], colRows: new Array(Math.max(1, colCount)).fill(0) };
+}
+
+/** Rendered width of a tile spanning `span` columns. A span eats the
+ *  gaps it covers, which is why this is not `span * colWidth`. */
+export function spanWidthPx(geo: MasonryGeometry, span: number): number {
+  return span * geo.colWidth + (span - 1) * geo.gapPx;
+}
+
+/** Lattice rows a tile of `heightPx` reserves, gap included. */
+export function tileRows(heightPx: number, gapPx: number): number {
+  return Math.max(1, Math.ceil((heightPx + gapPx) / ROW_UNIT_PX));
+}
+
+/** Predicted height of `tile` at `span` columns wide, in px. Goes
+ *  through `masonryTileHeight` so the #652 floor is applied by the one
+ *  function CardThumb's `min-height` also reads. */
+export function tileHeightPx(tile: PlaceableTile, geo: MasonryGeometry, span: number): number {
+  return masonryTileHeight(spanWidthPx(geo, span), tile.estimateRatio, geo.minTilePx);
+}
+
+/** Shortest column, ties to the left. */
+function shortest(colRows: number[]): number {
+  let best = 0;
+  for (let i = 1; i < colRows.length; i++) if (colRows[i] < colRows[best]) best = i;
+  return best;
+}
+
+/** ADR 0079 §4 step 1: the ADJACENT PAIR with the smallest height
+ *  difference — not simply the shortest column. The residual gap under a
+ *  wide tile is exactly that difference, so minimising it is the whole
+ *  point.
+ *
+ *  Ties break to the HIGHER placement and then to the left. Two pairs
+ *  level with each other are equally good by §4's measure and there is
+ *  no reason to take the lower one. */
+function closestPair(colRows: number[]): number {
+  let best = 0;
+  let bestDiff = Infinity;
+  let bestTop = Infinity;
+  for (let c = 0; c + 1 < colRows.length; c++) {
+    const diff = Math.abs(colRows[c] - colRows[c + 1]);
+    const top = Math.max(colRows[c], colRows[c + 1]);
+    if (diff < bestDiff || (diff === bestDiff && top < bestTop)) {
+      best = c;
+      bestDiff = diff;
+      bestTop = top;
+    }
+  }
+  return best;
+}
+
+/** Place `tiles[from..]` into `state`, in feed order.
+ *
+ *  APPEND-STABILITY LIVES HERE, and it is now a property of the loop
+ *  rather than of a cache key: this only ever reads `colRows` and pushes
+ *  onto `placements`. It cannot revisit an existing tile's `col` / `row`
+ *  because it never looks at one. A page appended at the end therefore
+ *  cannot move anything already on screen — and because the wall renders
+ *  in feed order, the DOM does not reorder either.
+ *
+ *  Returns a NEW state; the caller decides whether to keep it. */
+export function placeInto(
+  state: MasonryState,
+  tiles: PlaceableTile[],
+  from: number,
+  geo: MasonryGeometry,
+): MasonryState {
+  const placements = state.placements.slice();
+  const colRows = state.colRows.slice();
+  // `colRows` is authoritative for the count, not `geo.colCount`: a
+  // caller that hands us a stale state must not be able to place a tile
+  // into a column that does not exist.
+  const n = colRows.length;
+  for (let i = from; i < tiles.length; i++) {
+    const tile = tiles[i];
+    let span = n < MIN_COLS_FOR_SPAN ? 1 : Math.max(1, Math.min(tile.span, MAX_SPAN));
+    const col = span === 1 ? shortest(colRows) : closestPair(colRows);
+    span = Math.max(1, Math.min(span, n - col));
+    // §4 step 2 — the slot sits at the GREATER of the pair's heights.
+    let top = colRows[col];
+    for (let c = col; c < col + span; c++) top = Math.max(top, colRows[c]);
+    const rows = tileRows(tileHeightPx(tile, geo, span), geo.gapPx);
+    placements.push({ id: tile.id, index: i, col, span, row: top + 1, rows });
+    // §4 step 3 — BOTH columns resume from the slot's bottom edge, which
+    // is what re-levels the pair.
+    for (let c = col; c < col + span; c++) colRows[c] = top + rows;
+  }
+  return { placements, colRows };
+}
+
+/** Place every tile from scratch. */
+export function placeAll(tiles: PlaceableTile[], geo: MasonryGeometry): MasonryState {
+  return placeInto(emptyState(geo.colCount), tiles, 0, geo);
+}

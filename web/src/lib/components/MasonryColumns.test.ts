@@ -1,26 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// #651 — masonry is column buckets, not a balanced multi-column flow.
+// #651 / #747 — masonry is one explicitly-placed grid, not a balanced
+// multi-column flow and no longer N sibling block flows.
 //
-// The bug is layout-over-time (appending re-sorted tiles the user was
-// already looking at into other columns) and no static assertion can see
-// it — that verification is a real browser with real scrolling, and the
-// numbers are in the PR. What IS assertable here, and what a refactor
-// would otherwise silently drop, is the two decisions the mechanism rests
-// on:
+// Some of this is only observable in a real browser with real scrolling
+// (does the wall LOOK right, does a wide tile read as artwork rather
+// than a sliver) and those numbers are in the PR. What IS assertable
+// here — and what a refactor would otherwise silently drop — is the
+// decisions the mechanism rests on:
 //
 //   1. `cardTileRatio` — the height prediction. It has to agree with
 //      CardThumb's `declaredRatio` (same ladder precondition, same clamp,
-//      same cover-asset resolution) or the bucketer balances columns
-//      against heights nothing actually has. Two copies of that rule in
-//      two files is exactly how it drifts, so it lives in one and this
-//      pins it.
-//   2. The accessibility contract. Column buckets mean DOM order is
-//      column-major, not feed order. We accept that traversal order and
-//      compensate with list semantics carrying the TRUE feed position;
-//      if a later change drops the `role="list"` / `aria-posinset` pair
-//      the layout still looks right and the compensation is just gone.
+//      same cover-asset resolution) or the placer sizes tiles against
+//      heights nothing actually has. Two copies of that rule in two
+//      files is exactly how it drifts, so it lives in one and this pins
+//      it.
+//   2. `masonryTileHeight` — the #652 floor, written by the renderer as
+//      `min-height` and predicted here.
+//   3. APPEND-STABILITY. The whole reason the implementation looks the
+//      way it does. `placeInto` may never move a tile it has already
+//      placed; the test below asserts that on the exact 36 → 72 append
+//      #651 measured, and it fails if the placer is made to re-place
+//      from the start.
+//   4. Spanning placement, ADR 0079 §4 — closest-matched adjacent pair,
+//      placed at the greater of the two, both columns resuming from the
+//      slot's bottom edge.
+//   5. The accessibility contract. DOM order matches feed order again
+//      now that the column boxes are gone, so the list semantics are
+//      simpler than they were — but `aria-posinset` / `aria-setsize`
+//      stay explicit, because ADR 0079's sized slots will put positions
+//      in the stream that are not one tile.
 
 import { render } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
@@ -33,6 +43,16 @@ import {
   RATIO_MAX,
   RATIO_MIN,
 } from './cardAsset';
+import {
+  ROW_UNIT_PX,
+  emptyState,
+  placeAll,
+  placeInto,
+  spanWidthPx,
+  tileRows,
+  type MasonryGeometry,
+  type PlaceableTile,
+} from './masonryPlacement';
 import { createRawSnippet } from 'svelte';
 
 describe('cardTileRatio', () => {
@@ -95,10 +115,9 @@ describe('cardTileRatio', () => {
 });
 
 // #652 — the tile floor. Same argument as cardTileRatio above: the
-// renderer writes it as `min-height` and the bucketer has to predict the
+// renderer writes it as `min-height` and the placer has to predict the
 // identical number, so it is one function and this pins it. A floor in
-// CSS only would place tiles against heights they never have, drift the
-// columns apart over a long scroll, and reintroduce #651.
+// CSS only would size tiles against heights they never have.
 describe('masonryTileHeight (#652)', () => {
   const MIN = 60;
 
@@ -136,6 +155,227 @@ describe('masonryTileHeight (#652)', () => {
   });
 });
 
+// ── The placer (#747 / #1025) ────────────────────────────────────────
+//
+// Every geometry below is MEASURED, not invented: 1440px with the 22rem
+// default rung renders 5 columns of 269px with an 8px gap and a 60px
+// floor, read out of Chromium on the dev feed.
+const WALL_1440: MasonryGeometry = { colCount: 5, colWidth: 269, gapPx: 8, minTilePx: 60 };
+/** The shapes the dev feed actually contains, in the proportion it
+ *  contains them — 16:9 and 4:3 stills, portraits, squares, and the
+ *  5.33:1 audio waveforms that are a third of the wall. */
+const FEED_RATIOS = [16 / 9, 1, 0.75, 4 / 3, 5.33, 1.5, 0.66, 5.33, 2 / 3, 1, 5.33, 8.68];
+
+function feed(count: number, from = 0): PlaceableTile[] {
+  return Array.from({ length: count }, (_, i) => {
+    const r = FEED_RATIOS[(from + i) % FEED_RATIOS.length];
+    // Wide content does not claim the extra column until #1025; the
+    // placer's ability to give it one is exercised directly below.
+    return { id: `t${from + i}`, span: 1, estimateRatio: r };
+  });
+}
+
+/** The same feed with every fourth tile UNDECLARED — a collection card, a
+ *  typed-doc plate, an asset whose preview predates #757. Those are the
+ *  tiles whose shape is only knowable once they have rendered, so their
+ *  `estimateRatio` is null on the first pass and the harvested measurement
+ *  by the time the next page arrives (`snapshotRatios`).
+ *
+ *  This is what makes the append-stability test load-bearing. A
+ *  shortest-column placer is prefix-deterministic: re-running it from
+ *  scratch over the SAME inputs reproduces the same wall, so a test built
+ *  on unchanging shapes passes even if the placer re-places everything on
+ *  every pass. It is only when the inputs for an already-placed tile
+ *  change under it — which they do, on every real feed — that skipping
+ *  the already-placed prefix is the thing keeping tiles still. */
+function mixedFeed(count: number, measured: boolean): PlaceableTile[] {
+  return feed(count).map((t, i) =>
+    i % 4 === 3
+      ? { ...t, span: 1, estimateRatio: measured ? 0.6 + (i % 7) * 0.3 : null }
+      : t,
+  );
+}
+
+const areaOf = (p: { col: number; span: number; row: number; rows: number }) =>
+  `${p.col}/${p.span}/${p.row}/${p.rows}`;
+
+describe('masonry placement — append-stability (#651)', () => {
+  // THE property. #651 exists because the previous multicol re-sorted 19
+  // of 24 sampled tiles into other columns on this exact append, while
+  // the user was looking at them.
+  it('never moves a tile that is already placed, on the 36 → 72 append', () => {
+    // The second pass sees UPDATED shapes for the tiles the first pass
+    // could only guess at — see `mixedFeed`. Placing them again would
+    // move them; not looking at them again is the mechanism.
+    const first = placeAll(mixedFeed(36, false), WALL_1440);
+    const grown = placeInto(first, mixedFeed(72, true), 36, WALL_1440);
+
+    expect(grown.placements.length).toBe(72);
+    let moved = 0;
+    for (let i = 0; i < first.placements.length; i++) {
+      expect(grown.placements[i].id).toBe(first.placements[i].id);
+      if (areaOf(grown.placements[i]) !== areaOf(first.placements[i])) moved++;
+    }
+    // Quoted in the PR. The multicol implementation this replaced scored
+    // 19 of 24; the acceptable answer here is zero, not "few".
+    expect(moved).toBe(0);
+  });
+
+  it('stays stable across three successive appends', () => {
+    let s = placeAll(mixedFeed(24, false), WALL_1440);
+    const seen = new Map(s.placements.map((p) => [p.id, areaOf(p)]));
+    for (const total of [48, 72, 96]) {
+      s = placeInto(s, mixedFeed(total, true), seen.size, WALL_1440);
+      for (const p of s.placements) {
+        const before = seen.get(p.id);
+        if (before !== undefined) expect(areaOf(p)).toBe(before);
+        else seen.set(p.id, areaOf(p));
+      }
+      expect(seen.size).toBe(total);
+    }
+  });
+
+  it('appends only ever grow a column downward', () => {
+    const first = placeAll(feed(36), WALL_1440);
+    const grown = placeInto(first, feed(72), 36, WALL_1440);
+    for (let c = 0; c < WALL_1440.colCount; c++) {
+      expect(grown.colRows[c]).toBeGreaterThanOrEqual(first.colRows[c]);
+    }
+  });
+
+  // A column-count change is the case that DELIBERATELY re-places
+  // everything: the user is resizing, already changing the layout, and
+  // expects it to change.
+  it('re-places from scratch when the column count changes', () => {
+    const wide = placeAll(feed(36), WALL_1440);
+    const narrowGeo = { ...WALL_1440, colCount: 3, colWidth: 460 };
+    const narrow = placeAll(feed(36), narrowGeo);
+    expect(narrow.colRows.length).toBe(3);
+    expect(narrow.placements.some((p, i) => areaOf(p) !== areaOf(wide.placements[i]))).toBe(true);
+  });
+});
+
+describe('masonry placement — spanning (ADR 0079 §4)', () => {
+  const wide: PlaceableTile = { id: 'w', span: 2, estimateRatio: 8.68 };
+
+  it('lands a 2-wide tile on the closest-matched ADJACENT PAIR', () => {
+    // Columns 1 and 2 are the closest-matched pair (Δ2). Column 0 is the
+    // shortest, so a shortest-column heuristic would put the tile there
+    // and leave a 300-row hole beside it.
+    const s = placeInto(
+      { placements: [], colRows: [100, 400, 402, 900] },
+      [wide],
+      0,
+      { ...WALL_1440, colCount: 4 },
+    );
+    const p = s.placements[0];
+    expect(p.span).toBe(2);
+    expect(p.col).toBe(1);
+    // §4 step 2 — placed at the GREATER of the pair's two heights.
+    expect(p.row).toBe(403);
+    // §4 step 3 — BOTH columns resume from the slot's bottom edge, which
+    // is what re-levels the pair.
+    expect(s.colRows[1]).toBe(402 + p.rows);
+    expect(s.colRows[2]).toBe(402 + p.rows);
+    // Untouched columns stay where they were.
+    expect(s.colRows[0]).toBe(100);
+    expect(s.colRows[3]).toBe(900);
+  });
+
+  it('leaves a residual gap of exactly the pair difference, never more', () => {
+    const s = placeInto({ placements: [], colRows: [100, 400, 402, 900] }, [wide], 0, {
+      ...WALL_1440,
+      colCount: 4,
+    });
+    // The slot's top minus the shorter column of the pair.
+    expect(s.placements[0].row - 1 - 400).toBe(2);
+  });
+
+  it('breaks a tie towards the higher pair', () => {
+    const s = placeInto({ placements: [], colRows: [700, 700, 100, 100] }, [wide], 0, {
+      ...WALL_1440,
+      colCount: 4,
+    });
+    expect(s.placements[0].col).toBe(2);
+  });
+
+  it('keeps a wall containing spanning tiles append-stable', () => {
+    const spanning = (n: number) =>
+      feed(n).map((t, i) => (i % 9 === 4 ? { ...t, span: 2 } : t));
+    const first = placeAll(spanning(36), WALL_1440);
+    expect(first.placements.filter((p) => p.span === 2).length).toBeGreaterThan(0);
+    const grown = placeInto(first, spanning(72), 36, WALL_1440);
+    for (let i = 0; i < first.placements.length; i++) {
+      expect(areaOf(grown.placements[i])).toBe(areaOf(first.placements[i]));
+    }
+  });
+
+  it('never lets a span run off the end of the wall', () => {
+    const s = placeInto({ placements: [], colRows: [0, 0, 0] }, [{ ...wide, span: 2 }], 0, {
+      ...WALL_1440,
+      colCount: 3,
+    });
+    expect(s.placements[0].col + s.placements[0].span).toBeLessThanOrEqual(3);
+    // Two columns is the whole row at two columns, so it is refused.
+    const narrow = placeInto({ placements: [], colRows: [0, 0] }, [{ ...wide, span: 2 }], 0, {
+      ...WALL_1440,
+      colCount: 2,
+    });
+    expect(narrow.placements[0].span).toBe(1);
+  });
+
+  it('sizes a spanning tile against the width it actually gets', () => {
+    // 2 columns is 2*269 + 8 = 546px, not 538 — the span eats the gap.
+    expect(spanWidthPx(WALL_1440, 2)).toBe(546);
+    const s = placeAll([wide], WALL_1440);
+    const p = s.placements[0];
+    // 546 / 8.68 = 62.9px, which clears the 60px floor — the whole
+    // point of spanning. At one column it would have been 31px.
+    expect(p.rows).toBe(tileRows(546 / 8.68, 8));
+    expect(masonryTileHeight(269, 8.68, 60)).toBe(60); // floored, i.e. squashed
+  });
+});
+
+describe('masonry placement — the lattice', () => {
+  it('reserves whole rows, gap included, and never fewer than one', () => {
+    expect(tileRows(400, 8)).toBe(Math.ceil(408 / ROW_UNIT_PX));
+    expect(tileRows(0, 0)).toBe(1);
+  });
+
+  it('gives a tile at least its own gap of slack under it', () => {
+    // The reservation rounds UP past height + gap, so the next tile in
+    // that column can never start inside this one.
+    for (const h of [30, 61, 150.19, 269, 422, 1144]) {
+      expect(tileRows(h, 8) * ROW_UNIT_PX).toBeGreaterThanOrEqual(h + 8);
+    }
+  });
+
+  it('places every tile inside the wall', () => {
+    const s = placeAll(feed(72), WALL_1440);
+    for (const p of s.placements) {
+      expect(p.col).toBeGreaterThanOrEqual(0);
+      expect(p.col + p.span).toBeLessThanOrEqual(WALL_1440.colCount);
+      expect(p.row).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('never overlaps two tiles in the same column', () => {
+    const s = placeAll(feed(72), WALL_1440);
+    const bottom = new Array(WALL_1440.colCount).fill(0);
+    for (const p of s.placements) {
+      for (let c = p.col; c < p.col + p.span; c++) {
+        expect(p.row).toBeGreaterThan(bottom[c]);
+        bottom[c] = p.row - 1 + p.rows;
+      }
+    }
+  });
+
+  it('starts from an empty wall of the right width', () => {
+    expect(emptyState(5).colRows).toEqual([0, 0, 0, 0, 0]);
+    expect(emptyState(0).colRows.length).toBe(1);
+  });
+});
+
 describe('MasonryColumns', () => {
   const items = Array.from({ length: 5 }, (_, i) => ({ id: `i${i}` }));
   const card = createRawSnippet(() => ({ render: () => '<span>tile</span>' }));
@@ -150,20 +390,38 @@ describe('MasonryColumns', () => {
     return el as HTMLElement;
   }
 
-  it('places every item in a column', () => {
+  it('places every item', () => {
     const el = wall();
-    expect(el.querySelectorAll('[data-masonry-col]').length).toBeGreaterThanOrEqual(1);
-    expect(el.querySelectorAll('[data-tile-id]').length).toBe(items.length);
+    const tiles = el.querySelectorAll<HTMLElement>('[data-tile-id]');
+    expect(tiles.length).toBe(items.length);
+    // Read the attribute, not the parsed CSSOM: jsdom does not implement
+    // the `grid-column` shorthand and reports it empty.
+    for (const tile of tiles) {
+      expect(tile.getAttribute('style')).toMatch(/grid-column: \d+ \/ span \d+/);
+      expect(tile.getAttribute('style')).toMatch(/grid-row: \d+ \/ span \d+/);
+    }
   });
 
-  // DOM order is column-major, so the feed position has to be carried
-  // explicitly or it is simply lost. See the header comment.
-  it('carries each tile\'s true feed position in list semantics', () => {
+  // The win the column boxes cost us, taken back. #651 accepted
+  // column-major traversal because a tile lived inside a column element;
+  // there are no column elements now, so the reading order IS the feed
+  // order and there is nothing to compensate for.
+  it('renders in feed order', () => {
+    const el = wall();
+    const ids = [...el.querySelectorAll<HTMLElement>('[data-tile-id]')].map(
+      (t) => t.dataset.tileId,
+    );
+    expect(ids).toEqual(items.map((i) => i.id));
+  });
+
+  // Kept explicit even though DOM order now agrees with it: ADR 0079's
+  // sized slots will put positions in the stream that are not one tile,
+  // and the announced position must not drift when they do.
+  it("carries each tile's true feed position in list semantics", () => {
     const el = wall();
     expect(el.getAttribute('role')).toBe('list');
-    for (const col of el.querySelectorAll('[data-masonry-col]')) {
-      expect(col.getAttribute('role')).toBe('presentation');
-    }
+    // No `role="presentation"` column boxes to make transparent any more.
+    expect(el.querySelectorAll('[data-masonry-col]').length).toBe(0);
     const tiles = [...el.querySelectorAll<HTMLElement>('[role="listitem"]')];
     expect(tiles.length).toBe(items.length);
     for (const tile of tiles) {

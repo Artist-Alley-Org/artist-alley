@@ -1,101 +1,129 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // Append-stable masonry (#651).
+  // Append-stable masonry, on one grid (#651, #747).
   //
-  // # What was wrong
+  // # Where this started
   //
-  // This layout was `column-width` multicol. Multicol BALANCES: it fills
+  // The layout was `column-width` multicol. Multicol BALANCES: it fills
   // columns to equal height across the whole flow, so appending 36 tiles
   // at the end legitimately changes which column tile #4 belongs in.
   // Measured at 1440px on the 36 → 72 append, 19 of 24 sampled tiles
   // changed column and 13 moved. The user watches the thing they are
   // looking at slide sideways every time the infinite loader fires.
   //
-  // The owner asked whether the render could be delayed until the
-  // calculation settles. It should not be: the recalculation is neither
-  // slow nor wrong. It is correct and unwanted. Delaying it only batches
-  // the same jump into a bigger, later one and adds latency on top.
+  // #651 replaced that with N sibling column elements, each an ordinary
+  // block flow, each item assigned to the shortest column on arrival and
+  // never reassigned. That fixed the movement and cost two things: a
+  // tile lived INSIDE one column element, so there was no shared
+  // coordinate space and nothing could straddle two columns (ADR 0079
+  // §4); and DOM order was column-major rather than feed order.
   //
-  // # What this does instead
+  // # What this is now
   //
-  // N sibling columns, each an ordinary block flow. Each item is assigned
-  // to the SHORTEST column at the moment it arrives, and that assignment
-  // is never revisited while the column count holds. Appending therefore
-  // only ever grows one column downward — there is no balancing pass, so
-  // nothing above the append point can move. Pinterest, Unsplash and
-  // Google Photos all land here for the same reason.
+  // ONE CSS grid. `grid-template-columns: repeat(n, minmax(0, 1fr))`,
+  // a fine `grid-auto-rows` lattice, and every tile explicitly placed
+  // with `grid-column` / `grid-row` computed in `masonryPlacement.ts`.
+  // Both costs go away:
   //
-  // The usual objection to hand-rolled column masonry is that you must
-  // render, measure, then place — a double layout pass with a visible
-  // reflow. That does not apply to us: #646 put `pixel_width` /
-  // `pixel_height` on the card payload, so a tile's height is arithmetic
-  // (`columnWidth / ratio`) BEFORE anything renders. No measurement pass,
-  // no waiting on image load, no JS masonry library.
+  //   * A tile can span columns, because the columns are tracks in one
+  //     coordinate space rather than separate boxes. That is #747, and
+  //     ADR 0079's sized slots inherit it.
+  //   * DOM ORDER IS FEED ORDER AGAIN. Tiles render in one flat keyed
+  //     list and the grid puts them where the placer said, so keyboard
+  //     traversal and the reading order follow the feed. The #651
+  //     compensation — column boxes marked `role="presentation"` so the
+  //     list still owned its items — is retired with the column boxes.
+  //     `aria-posinset` / `aria-setsize` stay, because ADR 0079 will put
+  //     positions in the stream that are not one tile.
   //
-  // # Three costs, taken deliberately
+  // # Append-stability, restated
   //
-  // 1. DOM ORDER STOPS MATCHING FEED ORDER. Item 2 can sit in column 3,
-  //    so keyboard traversal reads down column 1, then down column 2 —
-  //    column-major, not the feed's recency order. We ACCEPT that as the
-  //    semantic rather than fight it: the alternatives (`aria-owns` over
-  //    72 generated ids, or CSS `order` which cannot reorder across
-  //    separate column boxes) are fragile in exactly the assistive tech
-  //    they are meant to help. What we do NOT accept is losing the feed
-  //    position, so the container is a `role="list"`, the column boxes
-  //    are `role="presentation"` (transparent, so the list still owns its
-  //    items), and every tile carries `aria-posinset` / `aria-setsize`
-  //    with its TRUE index in the feed. A screen reader announces
-  //    "item 37 of 72" correctly even though it is the 4th thing tabbed
-  //    to — the traversal order is unusual, but the position never lies.
+  // #651 held this with a cache key: `epoch = n|ladderReady`, and within
+  // one epoch a placement was permanent. The epoch is still here for
+  // invalidation, but the property itself is now structural — `placeInto`
+  // only reads column bottoms and pushes onto the placement list, so it
+  // has no way to revisit an earlier tile, and appending renders as a
+  // pure push onto a keyed `{#each}`. "Placement is permanent" became
+  // "the DOM never reorders", which is the stronger statement.
   //
-  // 2. A COLUMN-COUNT CHANGE RE-BUCKETS EVERYTHING. That is a full
-  //    reflow, and it is fine: it happens on resize, where the user is
-  //    already changing the layout and expects it to change. Debounced
-  //    (RESIZE_DEBOUNCE_MS) so a drag re-buckets once, not 60 times. The
-  //    columns themselves are `flex: 1`, so width tracks continuously
-  //    during the drag and only the COUNT snaps.
+  // ⛔ `grid-auto-flow: dense` is forbidden (ADR 0079 §3). It backfills
+  // holes, which reorders items visually — the exact instability #651
+  // removed. Nothing here relies on auto-flow at all; every tile is
+  // explicitly placed.
   //
-  // 3. ASSETS WITH NO RECORDED DIMENSIONS need an estimated height.
-  //    The fallback is 1:1, and not as a hedge: CardThumb reserves
-  //    `aspect-square` for exactly the tiles that have no declared ratio
-  //    (no dimensions, no ladder, or a generated doc/icon card that has
-  //    no ratio to follow), so matching the renderer's own reservation
-  //    makes the estimate EXACT at first paint rather than a guess.
+  // `ladderReady` stays in the epoch key and still earns its place:
+  // CardThumb only honours recorded dimensions once `GET /previews` has
+  // answered (see `cardTileRatio`), so before that flip every tile is a
+  // square. A wall bucketed on pre-ladder squares would stay permanently
+  // lopsided. It resolves once, one RTT into the first page, well before
+  // any append.
   //
-  //    It is only the LAST resort, though, because it goes stale for the
-  //    subset that settles into a measured shape once its bytes arrive —
-  //    and on this library that subset is not marginal. Measured on the
-  //    dev feed, 24 of 72 tiles render at 5.33:1 or 8.8:1 from
-  //    `naturalWidth` after load (audio waveforms, video posters), with
-  //    nothing recorded server-side. Bucketing those as squares predicts
-  //    a 269px tile where a 50px one lands, and a re-bucket built purely
-  //    on that estimate left a 1144px height spread across five columns.
-  //    So `estimate()` reads, in order:
-  //      declared ratio → what CardThumb WILL render, authoritative and
-  //                       known before the request
-  //      measured cache → what this tile IS right now, harvested from
-  //                       the DOM on every bucketing pass (`snapshotRatios`)
-  //      1:1            → never rendered before, nothing recorded
-  //    Declared beats measured deliberately: at the `ladderReady` flip
-  //    the DOM still shows the square a declared tile is about to stop
-  //    being, so trusting the measurement there would bake in the shape
-  //    we are one frame away from replacing.
+  // # Heights are arithmetic, and the lattice is authoritative
   //
-  // # Height bookkeeping
+  // The usual objection to hand-rolled masonry is the double pass:
+  // render, measure, then position. That does not apply — #646 put
+  // `pixel_width` / `pixel_height` on the card payload, so a tile's
+  // height is `columnWidth / ratio` before anything renders.
   //
-  // Predicted heights accumulate in `colHeights`, but before each append
-  // we overwrite them with the columns' REAL `offsetHeight`. That is one
-  // layout read per column per page — not per tile, not per frame — and
-  // it is what stops estimator error accumulating over a long scroll:
-  // whatever the last page actually did to the columns is the base the
-  // next page is placed against.
+  // `estimate()` reads three sources IN THIS ORDER:
+  //   declared ratio → what CardThumb WILL render, authoritative and
+  //                    known before the request
+  //   measured cache → what this tile IS right now, harvested from the
+  //                    DOM on every placement pass (`snapshotRatios`)
+  //   square         → never rendered before, nothing recorded. Not a
+  //                    hedge: CardThumb reserves `aspect-square` for
+  //                    exactly these tiles, so matching its own
+  //                    reservation makes the estimate EXACT at first
+  //                    paint.
+  //
+  // Declared beats measured deliberately: at the `ladderReady` flip the
+  // DOM still shows the square a declared tile is about to stop being,
+  // so trusting the measurement there bakes in the shape we are one
+  // frame away from replacing. Bucketing the ultra-wide tiles as squares
+  // predicted a 269px tile where a 50px one landed, and a re-bucket
+  // built purely on that estimate left a 1144px height spread across
+  // five columns.
+  //
+  // # What replaced `syncHeightsFromDom`
+  //
+  // The sibling-column version re-read every column's real
+  // `offsetHeight` before each append, because `colHeights` was a running
+  // sum of PREDICTIONS while the wall rendered at its REAL heights — two
+  // numbers that diverge, with the divergence compounding down a long
+  // scroll.
+  //
+  // There is no such pair now. A tile renders exactly where its reserved
+  // rows put it, so the reservation IS the position: a prediction that is
+  // a few pixels short shows as a few pixels of slack under that one
+  // tile and contributes nothing to the next tile's row. Nothing sums the
+  // error, so nothing can drift. Measured in Chromium at 1440px, the
+  // reservation for every declared-ratio card on the dev feed is within
+  // 2px of what the card renders (the card's 1px border top and bottom),
+  // against a 4px lattice unit inside an 8px gap.
+  //
+  // The guard for what we CANNOT predict is in the CSS rather than in
+  // JS: `grid-auto-rows: minmax(ROW_UNITpx, auto)`. A card carrying flow
+  // chrome we have no way to compute ahead of time — a CollectionCard's
+  // title and footer wrap at a width we only learn at layout — grows its
+  // own tracks instead of overlapping the tile below it. When the
+  // reservation is right, which is the ordinary case, `auto` never
+  // engages and the lattice is exactly `ROW_UNIT` throughout.
 
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { cardTileRatio, masonryMinTilePx, masonryTileHeight } from './cardAsset';
+  import {
+    ROW_UNIT_PX,
+    emptyState,
+    placeInto,
+    tileRows,
+    type MasonryGeometry,
+    type MasonryState,
+    type PlaceableTile,
+  } from './masonryPlacement';
 
   interface Props {
     items: Array<{ id: string }>;
@@ -110,20 +138,11 @@
 
   let { items, tileMin, loading = false, card }: Props = $props();
 
-  /** Long enough that a drag re-buckets once; short enough that letting
+  /** Long enough that a drag re-places once; short enough that letting
    *  go feels immediate. */
   const RESIZE_DEBOUNCE_MS = 120;
-  /** Fallback for a tile whose ratio isn't declared — see cost (3). */
-  const SQUARE = 1;
   /** Skeleton tiles are square by construction (aspect-square below). */
   const SKELETONS = 8;
-
-  interface Placed {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    item: any;
-    /** Index in `items` — the feed position, for aria-posinset. */
-    index: number;
-  }
 
   let containerEl = $state<HTMLElement>();
   /** Zero-height probe whose width IS `--tile-min`. `tileMin` is a
@@ -132,23 +151,22 @@
    *  ask CSS the same question multicol used to answer internally. */
   let probeEl = $state<HTMLElement>();
 
-  /** Layout geometry, only ever written by `measure()`. */
-  let colCount = $state(1);
-  let colWidth = 0;
-  let gapPx = 0;
+  /** Layout geometry, only ever written by `measure()`. Reactive because
+   *  the template needs the column count and the placement effect has to
+   *  re-run when the wall is re-measured. */
+  let geo = $state<MasonryGeometry>({ colCount: 1, colWidth: 0, gapPx: 0, minTilePx: 0 });
   let lastWidth = -1;
-  /** CardThumb's `min-height` floor (#652), resolved to px. Read here
-   *  and not assumed, because it is declared in rem — see
-   *  `masonryMinTilePx`. */
-  let minTilePx = 0;
 
-  let columns = $state<Placed[][]>([]);
+  let placements = $state<MasonryState['placements']>([]);
+  /** Column bottoms after the last placement pass, in lattice rows.
+   *  Reactive only so the skeleton row can sit under the real wall. */
+  let colRows = $state<number[]>([]);
 
-  // Bucketer state. Deliberately plain (not $state): it is bookkeeping
-  // for the effect that writes `columns`, and making it reactive would
+  // Placer state. Deliberately plain (not $state): it is bookkeeping for
+  // the effect that writes `placements`, and making it reactive would
   // re-enter that effect.
   let placedIds: string[] = [];
-  let colHeights: number[] = [];
+  let wall: MasonryState = emptyState(1);
   let epoch = '';
   /** id → rendered height ÷ rendered width, harvested from the DOM. A
    *  dimensionless factor rather than an aspect ratio so it survives a
@@ -158,7 +176,10 @@
 
   /** Multicol's own column-count formula, so the wall keeps the density
    *  the `--tile-min` ladder was calibrated against (browseView's rungs
-   *  are MEASURED against real column counts — see TILE_STEPS_REM). */
+   *  are MEASURED against real column counts — see TILE_STEPS_REM).
+   *
+   *  The stepper picks a SIZE and the count falls out of the width
+   *  (#556). This is where it falls out; it is a live value. */
   function measure(): void {
     const el = containerEl;
     const probe = probeEl;
@@ -166,13 +187,18 @@
     const width = el.clientWidth;
     if (width <= 0) return;
     const cs = getComputedStyle(el);
-    gapPx = parseFloat(cs.columnGap) || 0;
+    const gapPx = parseFloat(cs.columnGap) || 0;
     const min = probe.getBoundingClientRect().width;
-    const n = min > 0 ? Math.max(1, Math.floor((width + gapPx) / (min + gapPx))) : 1;
-    colWidth = (width - gapPx * (n - 1)) / n;
-    minTilePx = masonryMinTilePx();
+    const colCount = min > 0 ? Math.max(1, Math.floor((width + gapPx) / (min + gapPx))) : 1;
     lastWidth = width;
-    colCount = n;
+    geo = {
+      colCount,
+      colWidth: (width - gapPx * (colCount - 1)) / colCount,
+      gapPx,
+      // CardThumb's `min-height` floor (#652), resolved to px. Read here
+      // and not assumed, because it is declared in rem.
+      minTilePx: masonryMinTilePx(),
+    };
   }
 
   $effect(() => {
@@ -189,7 +215,7 @@
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
       // The observer also fires as the wall GROWS taller. Only a width
-      // change can alter the column count, and re-bucketing on every
+      // change can alter the column count, and re-placing on every
       // append would reintroduce the exact bug this file removes.
       if (el.clientWidth === lastWidth) return;
       clearTimeout(timer);
@@ -202,31 +228,27 @@
     };
   });
 
-  /** Predicted height of `item`'s tile, in px, including the gap above
-   *  it. See cost (3) for why the three sources are in this order.
+  /** What the placer needs: how wide this tile should be, and the ratio
+   *  its height comes from.
    *
-   *  Every branch goes through `masonryTileHeight`, which applies the
-   *  #652 floor — the SAME rule CardThumb writes into `min-height`.
-   *  This is the desynchronisation hazard the brief for that issue
-   *  flagged: a floor that exists in CSS but not here means the
-   *  bucketer places tiles against heights 30px shorter than they
-   *  render, the columns drift apart over a long scroll, and the append
-   *  instability #651 removed comes back through the side door.
-   *  Measured ratios come back as height ÷ width, hence the invert. */
-  function estimate(item: { id: string }, ladderReady: boolean): number {
+   *  Every tile is one column wide here. The wall can now PLACE a wider
+   *  one — that is the whole point of the rework — but deciding that a
+   *  given tile deserves the extra column is a separate decision with its
+   *  own rule, and it arrives with its first consumer (#1025). Shipping
+   *  the primitive with nothing producing a span would leave it
+   *  unexercised, which is why the two land together. */
+  function shape(item: { id: string }, ladderReady: boolean): PlaceableTile {
     const declared = cardTileRatio(item, ladderReady);
-    if (declared !== null) return masonryTileHeight(colWidth, declared, minTilePx) + gapPx;
+    if (declared !== null) return { id: item.id, span: 1, estimateRatio: declared };
+    // Measured ratios come back as height ÷ width, hence the invert.
     const measured = measuredRatio.get(item.id);
-    if (measured !== undefined && measured > 0) {
-      return masonryTileHeight(colWidth, 1 / measured, minTilePx) + gapPx;
-    }
-    return masonryTileHeight(colWidth, SQUARE, minTilePx) + gapPx;
+    const estimateRatio = measured !== undefined && measured > 0 ? 1 / measured : null;
+    return { id: item.id, span: 1, estimateRatio };
   }
 
   /** Harvest what every rendered tile currently measures. Merged rather
    *  than rebuilt, so a tile stays remembered if it ever leaves the DOM.
-   *  Runs in the same forced-layout batch as `syncHeightsFromDom`, so it
-   *  costs reads, not extra reflows. */
+   *  One layout read per tile per PAGE — not per frame. */
   function snapshotRatios(): void {
     const el = containerEl;
     if (!el) return;
@@ -238,34 +260,12 @@
     }
   }
 
-  /** Replace predicted heights with what the columns actually measure. */
-  function syncHeightsFromDom(n: number): void {
-    const el = containerEl;
-    if (!el) return;
-    const cols = el.querySelectorAll<HTMLElement>('[data-masonry-col]');
-    if (cols.length !== n) return;
-    for (let i = 0; i < n; i++) colHeights[i] = cols[i].offsetHeight;
-  }
-
-  function shortest(): number {
-    let best = 0;
-    for (let i = 1; i < colHeights.length; i++) {
-      if (colHeights[i] < colHeights[best]) best = i;
-    }
-    return best;
-  }
-
-  function bucket(list: Array<{ id: string }>, n: number, ladderReady: boolean): void {
+  function place(list: Array<{ id: string }>, g: MasonryGeometry, ladderReady: boolean): void {
     // The layout epoch. A change to either input invalidates every
-    // existing placement, so we start over; within one epoch a placement
-    // is permanent, which IS the append stability.
-    //
-    // `ladderReady` is in here because CardThumb only honours the
-    // recorded dimensions once `GET /previews` has answered (see
-    // cardTileRatio). Before that every tile is square and a wall bucketed
-    // on those heights would stay permanently lopsided. That resolves
-    // once, one RTT into the first page, well before any append.
-    const ep = `${n}|${ladderReady}`;
+    // existing placement, so we start over. An APPEND is the case where
+    // neither changed and the list only grew at the end — the only case
+    // that must not move anything.
+    const ep = `${g.colCount}|${ladderReady}`;
     const append =
       ep === epoch &&
       list.length >= placedIds.length &&
@@ -273,99 +273,98 @@
 
     snapshotRatios();
 
-    let next: Placed[][];
     let from: number;
     if (append) {
-      syncHeightsFromDom(n);
-      next = columns.map((c) => c.slice());
       from = placedIds.length;
     } else {
       epoch = ep;
-      colHeights = new Array(n).fill(0);
-      next = Array.from({ length: n }, () => [] as Placed[]);
+      wall = emptyState(g.colCount);
       from = 0;
     }
 
-    for (let i = from; i < list.length; i++) {
-      const c = shortest();
-      next[c].push({ item: list[i], index: i });
-      colHeights[c] += estimate(list[i], ladderReady);
-    }
-
+    const shapes = list.map((it) => shape(it, ladderReady));
+    wall = placeInto(wall, shapes, from, g);
     placedIds = list.map((it) => it.id);
-    columns = next;
+    placements = wall.placements;
+    colRows = wall.colRows;
   }
 
   $effect(() => {
     const list = items;
-    const n = colCount;
+    const g = geo;
     const ladderReady = previewLadder.rungs.length > 0;
-    untrack(() => bucket(list, n, ladderReady));
+    untrack(() => place(list, g, ladderReady));
   });
 
-  /** Skeletons are dealt round-robin so they appear at the foot of every
-   *  column, which is where the next page will land. */
-  const skeletonRows = $derived(
-    Array.from({ length: colCount }, (_, c) =>
-      Math.floor(SKELETONS / colCount) + (c < SKELETONS % colCount ? 1 : 0),
-    ),
-  );
+  /** Skeletons are dealt to the shortest columns, which is where the
+   *  next page will land. Derived rather than placed, because they are
+   *  not feed positions — they never enter `wall`, so they cannot
+   *  perturb where the page they are waiting for goes. */
+  const skeletons = $derived.by(() => {
+    if (!loading || colRows.length === 0) return [];
+    const rows = colRows.slice();
+    const height = masonryTileHeight(geo.colWidth, 1, geo.minTilePx);
+    const span = tileRows(height, geo.gapPx);
+    return Array.from({ length: SKELETONS }, () => {
+      let col = 0;
+      for (let i = 1; i < rows.length; i++) if (rows[i] < rows[col]) col = i;
+      const row = rows[col] + 1;
+      rows[col] += span;
+      return { col, row, rows: span };
+    });
+  });
 </script>
 
 <div
   bind:this={containerEl}
   class="posts-masonry"
-  style="--tile-min: {tileMin}"
+  style="--tile-min: {tileMin}; --masonry-row-unit: {ROW_UNIT_PX}px; grid-template-columns: repeat({geo.colCount}, minmax(0, 1fr));"
   role="list"
 >
-  <!-- See `probeEl`: absolutely positioned + zero height so it takes no
-       part in the flex layout it is measuring. -->
+  <!-- See `probeEl`: absolutely positioned + zero height so it is not a
+       grid item and takes no part in the layout it is measuring. -->
   <div bind:this={probeEl} class="masonry-probe" aria-hidden="true"></div>
-  {#each columns as col, ci (ci)}
-    <div class="masonry-col" data-masonry-col role="presentation">
-      {#each col as placed (placed.item.id)}
-        <div
-          role="listitem"
-          data-tile-id={placed.item.id}
-          aria-posinset={placed.index + 1}
-          aria-setsize={items.length}
-        >
-          {@render card(placed.item, 'masonry')}
-        </div>
-      {/each}
-      {#if loading}
-        {#each Array(skeletonRows[ci] ?? 0) as _, i (i)}
-          <div
-            class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"
-          ></div>
-        {/each}
-      {/if}
+  {#each placements as p (p.id)}
+    <div
+      role="listitem"
+      data-tile-id={p.id}
+      data-tile-col={p.col}
+      data-tile-span={p.span}
+      aria-posinset={p.index + 1}
+      aria-setsize={items.length}
+      style="grid-column: {p.col + 1} / span {p.span}; grid-row: {p.row} / span {p.rows};"
+    >
+      {@render card(items[p.index], 'masonry')}
     </div>
+  {/each}
+  {#each skeletons as s, i (i)}
+    <div
+      class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"
+      style="grid-column: {s.col + 1} / span 1; grid-row: {s.row} / span {s.rows};"
+    ></div>
   {/each}
 </div>
 
 <style>
-  /* Sibling columns, not a balanced flow. `align-items: start` keeps a
-     short column short instead of stretching it to the tallest — the
-     columns are independent stacks, which is the whole mechanism. */
+  /* One grid, not N block flows. Every tile is explicitly placed, so
+     auto-flow never runs — and `dense` in particular is neither used
+     nor useful here (ADR 0079 §3). */
   .posts-masonry {
     position: relative;
-    display: flex;
-    align-items: flex-start;
+    display: grid;
     column-gap: 0.5rem;
-  }
-  .masonry-col {
-    display: flex;
-    flex-direction: column;
-    /* `gap` rather than a margin on each tile: no trailing margin means
-       a column's offsetHeight is exactly its content, which is what
-       syncHeightsFromDom reads. */
-    gap: 0.5rem;
-    /* Equal share of the row. `min-width: 0` because a flex item's
-       default `min-width: auto` floors it at its content's intrinsic
-       width, which a wide tile would blow past. */
-    flex: 1 1 0;
-    min-width: 0;
+    /* The inter-tile gap is inside each tile's row reservation (see
+       `tileRows`), so a row gap here would double it — and it would
+       apply between EVERY lattice row, not between tiles. */
+    row-gap: 0;
+    /* The lattice. `auto` as the maximum is the safety net for cards
+       whose flow chrome we cannot predict: those grow their own tracks
+       rather than overlapping the tile below. When the reservation is
+       right it never engages. */
+    grid-auto-rows: minmax(var(--masonry-row-unit, 4px), auto);
+    /* Tiles keep their own height inside a reservation that rounds up to
+       the lattice; stretching them would hand the slack to the card. */
+    align-items: start;
   }
   .masonry-probe {
     position: absolute;
