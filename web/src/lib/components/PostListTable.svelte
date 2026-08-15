@@ -24,9 +24,34 @@
     sort_order: number;
     asset: AssetSummary;
   }
+  // The renderable identity behind `author_user_ref` (#557). Already on
+  // every /posts payload — `enrichAuthors` stamps it per request from
+  // `users.LookupAuthors`, which resolves `display_name` through
+  // `users.ResolveDisplayName`: the ONE home of the display-name ladder,
+  // with its authenticated rung (fullname) and its anonymous arm.
+  //
+  // ⛔ Do not re-derive a name here. #1023 exists because that ladder
+  // had been transcribed four times and three copies were wrong; a
+  // `display_name || fullname || username` in this component would be
+  // the fifth. Render what the server resolved.
+  //
+  // OPTIONAL, and the absence is meaningful: an author who took ADR
+  // 0024's opt-out is omitted for anonymous callers rather than
+  // returned redacted, as is a hard-deleted account. So "no author
+  // object" means "no name to show", never "look it up another way".
+  interface PostAuthor {
+    ref: number;
+    username: string;
+    display_name: string;
+    avatar_url?: string | null;
+  }
   interface Post {
     id: string;
+    // Kept alongside `author` — it is the stable identifier the row
+    // needs for a profile link, and it is present even when the
+    // identity is withheld.
     author_user_ref: number;
+    author?: PostAuthor | null;
     title: string;
     description: string;
     visibility: string;
@@ -52,7 +77,13 @@
   function getValue(post: Post, colId: string): string | number | null {
     switch (colId) {
       case 'title':       return post.title?.toLowerCase() ?? '';
-      case 'author':      return post.author_user_ref;
+      // Sorts by what the eye sees. It sorted by `author_user_ref`
+      // until #1099 — a number the column never displayed, so clicking
+      // the header reordered the table by an invisible value (roughly
+      // account age). A withheld author sorts as '' and groups
+      // together, which is the only honest place for a row with no
+      // name.
+      case 'author':      return (post.author?.display_name ?? '').toLowerCase();
       case 'visibility':  return post.visibility ?? '';
       case 'tags':        return (post.tags ?? []).join(', ').toLowerCase();
       case 'members':     return post.members?.length ?? 0;
@@ -367,7 +398,21 @@
               {:else if col.id === 'title'}
                 <span class="truncate text-fg" title={post.title || ''}>{post.title || t('browse.list.untitled')}</span>
               {:else if col.id === 'author'}
-                <span class="truncate text-fg-muted">@{post.author_user_ref}</span>
+                <!-- The name, not the ref (#1099). `@14` was what this
+                     rendered before, because the component's local Post
+                     type omitted `author` — the payload has carried the
+                     resolved identity since #557.
+
+                     No nested link to the profile: the whole row is a
+                     <button> that opens the post, and interactive
+                     content inside a button is invalid and unreachable
+                     by keyboard. The handle rides the tooltip instead,
+                     and `author_user_ref` stays on the type for
+                     whenever the row layout can host a real link. -->
+                <span
+                  class="truncate text-fg-muted"
+                  title={post.author ? '@' + post.author.username : ''}
+                >{post.author?.display_name || '—'}</span>
               {:else if col.id === 'visibility'}
                 <span class="rounded bg-surface px-1.5 py-0.5 text-xs text-fg-muted capitalize">{post.visibility}</span>
               {:else if col.id === 'tags'}
