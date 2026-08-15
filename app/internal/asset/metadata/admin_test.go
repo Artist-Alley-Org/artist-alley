@@ -53,7 +53,7 @@ func envOr(k, d string) string {
 
 // seedAsset inserts a minimal asset + its storage_object parent,
 // returns the asset id. Hash is unique-per-call via rand so the
-// per-user dedup index from migration 00016 doesn't fire across
+// per-user dedup index from migration 00001 doesn't fire across
 // test cases.
 func seedAsset(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()

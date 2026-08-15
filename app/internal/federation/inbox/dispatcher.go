@@ -99,7 +99,7 @@ type RecipientUserRefFunc func(ctx context.Context, actorURI string) (int64, err
 type DispatcherConfig struct {
 	// Interval is the ticker-backstop period. The primary
 	// wake signal is LISTEN/NOTIFY on federation_inbox INSERT
-	// (per migration 00006); the ticker catches missed
+	// (per migration 00001); the ticker catches missed
 	// notifications under load. Default 30s per the design
 	// proposal §3.1 "correctness backstop only" pattern.
 	Interval time.Duration

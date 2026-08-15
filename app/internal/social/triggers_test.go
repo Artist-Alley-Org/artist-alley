@@ -3,7 +3,7 @@
 
 // Package social hosts likes + comments queries; the HTTP surface
 // lands in Phase 1.13.F-3. These tests verify the counter triggers
-// from migration 00020 — they're the load-bearing piece of the data
+// from migration 00001 — they're the load-bearing piece of the data
 // plane and we want them locked in before any handler reads or writes
 // posts.like_count / posts.comment_count.
 package social_test

@@ -105,7 +105,7 @@ type SubtitleHandler interface {
 }
 
 // Config knobs for the orchestrator. All fields have safe defaults
-// matching the 00012 migration seeds.
+// matching the 00001 migration seeds.
 type Config struct {
 	// ChunkWindowSec — Whisper context window per chunk. Default 25.
 	ChunkWindowSec int
@@ -115,7 +115,7 @@ type Config struct {
 	FFmpegBin  string
 	FFprobeBin string
 	// AutoDetectLanguage — when no explicit hint is passed, let
-	// the provider auto-detect. Matches the 00012 seed.
+	// the provider auto-detect. Matches the 00001 seed.
 	AutoDetectLanguage bool
 }
 

@@ -82,7 +82,7 @@ const (
 	// EmissionRefused — Worker marks the row refused with reason
 	// encryption_required_but_unavailable + audits the decision
 	// + does NOT POST. Terminal: the row's status flips to
-	// 'refused' (per migration 00012's expanded CHECK), which
+	// 'refused' (per migration 00001's expanded CHECK), which
 	// the partial-index on status='queued' filters out so
 	// ListDueOutbox never picks it up again. Operator action
 	// (re-pair → caps refresh OR move the share to a lower tier)

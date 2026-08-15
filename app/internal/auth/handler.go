@@ -1259,7 +1259,7 @@ func (h *Handler) GetMyCapabilities(
 
 	q := New(h.Pool)
 	// The API surface currently exposes a single "role" field; with the
-	// multi-role model (00016) we surface the user's first GLOBAL role
+	// multi-role model (00001) we surface the user's first GLOBAL role
 	// assignment for that field — team-scoped assignments aren't
 	// representable here. The 1.7.B-7 OpenAPI widening will switch this
 	// to a roles[] list with optional team scope per entry.

@@ -44,7 +44,7 @@ func seedAssetForEditSafety(t *testing.T) (uuid.UUID, time.Time, *assets.Handler
 	const userRef int64 = 525252
 	id := uuid.New()
 	// Random file_hash to avoid colliding with the per-user dedup
-	// unique index from migration 00016.
+	// unique index from migration 00001.
 	hb := make([]byte, 16)
 	_, _ = rand.Read(hb)
 	hashHex := hex.EncodeToString(sha256.New().Sum(hb))[:64]

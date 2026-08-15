@@ -11,7 +11,7 @@ import (
 )
 
 // ParseConfig with empty raw map returns the defaults (matches what
-// migration 00009 seeded into system_config on a fresh install).
+// migration 00001 seeded into system_config on a fresh install).
 func TestParseConfig_EmptyRaw_ReturnsDefaults(t *testing.T) {
 	cfg, err := ParseConfig(map[string][]byte{})
 	if err != nil {

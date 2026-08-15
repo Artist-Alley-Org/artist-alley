@@ -115,7 +115,7 @@ func AssertCanAuthenticateUser(
 // 1:1 by const value — the column is shared.
 //
 // Keep in sync with internal/users/userstate.go. The CHECK constraint
-// added in migration 00003 is the schema-side load-bearing
+// added in migration 00001 is the schema-side load-bearing
 // barrier; the typed predicate here is the call-site one.
 type UserState int64
 

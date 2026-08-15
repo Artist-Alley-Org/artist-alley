@@ -50,7 +50,7 @@ func seedTeam(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name string
 }
 
 // linkTeams adds a parent->child edge. Closure rows materialise via the
-// 00015 trigger.
+// 00001 trigger.
 func linkTeams(t *testing.T, ctx context.Context, pool *pgxpool.Pool, parent, child uuid.UUID) {
 	t.Helper()
 	if _, err := pool.Exec(ctx,

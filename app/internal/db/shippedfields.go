@@ -48,7 +48,7 @@
 // # And why the enforcement is derived
 //
 // A hand-maintained list rots by omission: someone adds a shipped
-// definition in migration 00030, nobody adds it here, and the very next
+// definition in a later migration, nobody adds it here, and the very next
 // `aa seed --reset` silently deletes it — reintroducing #812 one row at
 // a time and with no error anywhere. TestShippedFieldCatalogue_
 // MatchesMigrations reads the codes out of a FRESHLY MIGRATED database

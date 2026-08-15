@@ -4,7 +4,7 @@
 // Package identity holds the per-instance Ed25519 keypair the
 // federation transport layer uses to sign + verify peer-to-peer
 // messages. Distinct from per-actor keys (those live on the
-// "user" table via migration 00048) — this is the INSTANCE-level
+// "user" table via migration 00001) — this is the INSTANCE-level
 // identity, the equivalent of an SSH host key.
 //
 // # Storage

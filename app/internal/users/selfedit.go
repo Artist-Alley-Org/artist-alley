@@ -5,7 +5,7 @@
 //
 // Operators occasionally need to lock specific profile fields
 // (e.g., "display_name is mapped from HR, users can't edit it
-// themselves"). Migration 00007 seeded five system_config rows
+// themselves"). Migration 00001 seeded five system_config rows
 // + the profile.update_self capability + the Base-role binding.
 //
 // This file owns the typed surface:

@@ -111,7 +111,7 @@ type TagInput struct {
 }
 
 // TagSource is the typed enum matching the asset_tag.source CHECK
-// constraint from migration 00010.
+// constraint from migration 00001.
 type TagSource string
 
 const (

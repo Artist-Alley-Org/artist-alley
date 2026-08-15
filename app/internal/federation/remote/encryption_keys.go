@@ -4,7 +4,7 @@
 // Phase 1.22.I-c — remote-actor encryption-key cache + helpers.
 //
 // The federation_remote_actors table grew three nullable columns
-// in migration 00008 holding the X25519 public key a remote actor
+// in migration 00001 holding the X25519 public key a remote actor
 // advertises in their envelope's aa:encryptionPublicKey block.
 // This file is the in-process surface for reading + writing that
 // data: a small Handler with an LRU cache layered over the sqlc
@@ -61,7 +61,7 @@ const encryptionKeyCacheSize = 5_000
 // advertised X25519 public key. Held by-value in the LRU; the
 // 32-byte key array means zero allocs on Get.
 //
-// All fields are pre-validated at write time (migration 00008's
+// All fields are pre-validated at write time (migration 00001's
 // atomic CHECK + Handler.SetEncryptionKey's 32-byte assertion),
 // so consumers (I-e outbox encryption) can treat them as canonical.
 type RemoteEncryptionKey struct {

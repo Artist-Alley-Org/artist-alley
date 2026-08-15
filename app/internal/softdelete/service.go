@@ -168,7 +168,7 @@ func (s *Service) RestorePost(ctx context.Context, req *http.Request, postID uui
 }
 
 // RestoreCollection mirrors RestoreAsset for collections. Collections
-// gained deleted_at in migration 00029; pre-migration collection
+// gained deleted_at in migration 00001; pre-migration collection
 // rows are all live (deleted_at IS NULL by default), so the
 // "already-live" case returns ErrNotDeleted as usual.
 func (s *Service) RestoreCollection(ctx context.Context, req *http.Request, collectionID uuid.UUID, actorUserRef int64) error {

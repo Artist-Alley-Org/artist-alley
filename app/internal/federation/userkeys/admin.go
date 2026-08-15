@@ -58,11 +58,13 @@ const (
 )
 
 // RetentionDaysSysconfigKey is the system_config row that holds
-// the default retained_until grace window (in days). Migration
-// 00013 inserts the default value 30; admins can override via
-// the sysconfig admin UI. The rotation primitive reads this
-// before each call so an updated setting takes effect on the
-// next rotation without a restart.
+// the default retained_until grace window (in days). NO migration
+// seeds it — a fresh install has no such row, and the fallback is
+// [DefaultRetentionDays] in-binary until an admin writes one via the
+// sysconfig admin UI. (This doc used to name a migration as the
+// source of a default 30; nothing in db/migrations inserts this key.)
+// The rotation primitive reads this before each call so an updated
+// setting takes effect on the next rotation without a restart.
 const RetentionDaysSysconfigKey = "federation.user_keys.retained_until_days"
 
 // AdminHandler owns the three I-h HTTP endpoints. Construct once

@@ -66,7 +66,7 @@ func randHex(n int) string {
 }
 
 // seedAdmin creates an approved user + assigns the seeded
-// "Admin" role (which grants system.admin per migration 00002).
+// "Admin" role (which grants system.admin per migration 00001).
 func seedAdmin(t *testing.T, pool *pgxpool.Pool, label string) int64 {
 	t.Helper()
 	ctx := context.Background()

@@ -153,7 +153,7 @@ func seedSimilarAssets(t *testing.T, pool *pgxpool.Pool) map[string]uuid.UUID {
 	})
 
 	// The dim registry + default model live in system_config; a fresh
-	// test database has migration 00011's seed values, but pin them
+	// test database has migration 00001's seed values, but pin them
 	// here so the fixture does not depend on a seed staying put.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO system_config (key, value) VALUES

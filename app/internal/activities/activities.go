@@ -32,7 +32,7 @@ import (
 // only holds those) — activities can be about ANY local object
 // including comments, DMs, and other activities (Undo's target).
 //
-// Mirrored by the CHECK constraint in migration 00049 per ADR 0042.
+// Mirrored by the CHECK constraint in migration 00001 per ADR 0042.
 type ActivityObjectKind string
 
 const (

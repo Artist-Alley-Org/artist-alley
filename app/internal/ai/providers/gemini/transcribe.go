@@ -42,7 +42,7 @@ import (
 )
 
 // transcribeDefaultModel matches the system_config seed from
-// migration 00012. Operators override via Config.DefaultTranscriptionModel
+// migration 00001. Operators override via Config.DefaultTranscriptionModel
 // or TranscribeOpts.Model.
 const transcribeDefaultModel = "gemini-2.5-flash"
 

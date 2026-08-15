@@ -35,7 +35,7 @@
 //   - a direct member succeeds;
 //   - a scoped `assets.admin` on a PARENT team reaches a DESCENDANT,
 //     through a hierarchy this file builds with team_parents and lets
-//     the 00015 trigger materialise — the closure is the database's
+//     the 00001 trigger materialise — the closure is the database's
 //     answer, not a literal;
 //   - a GLOBAL `assets.admin` is deliberately NOT enough (see
 //     CanAssignToTeam);

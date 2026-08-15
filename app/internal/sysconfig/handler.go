@@ -39,7 +39,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-// Capability codes. Stable strings; seeded by migration 00023.
+// Capability codes. Stable strings; seeded by migration 00001.
 const (
 	CapConfigRead      = "system.config.read"
 	CapConfigWrite     = "system.config.write"

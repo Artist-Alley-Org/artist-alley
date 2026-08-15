@@ -32,7 +32,7 @@ import (
 )
 
 // adminRoleName is the seeded role we assign to the first admin. The
-// role + its system.admin capability come from migration 00002.
+// role + its system.admin capability come from migration 00001.
 const adminRoleName = "Admin"
 
 // minPasswordLen mirrors the OpenAPI spec.

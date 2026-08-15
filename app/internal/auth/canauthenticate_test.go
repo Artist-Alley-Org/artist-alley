@@ -56,7 +56,7 @@ func TestAssertCanAuthenticateUser_Pending_AllowsThrough(t *testing.T) {
 	// Pending users CAN authenticate so they can view the
 	// "waiting for approval" page. Brief calls this out
 	// explicitly — the restricted capability set (seeded in
-	// migration 00003) determines what they can do once
+	// migration 00001) determines what they can do once
 	// signed in.
 	rec := &recordingAudit{}
 	resp, err := AssertCanAuthenticateUser(context.Background(), rec, nil, "alice", userForAuthnGate{
