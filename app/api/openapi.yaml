@@ -12505,6 +12505,23 @@ components:
             OMITTED when every filter is off, which is every account
             that has not opted in — so this changes no existing session
             response.
+        team_rail:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesTeamRail"
+          description: |
+            The account's teams-rail curation (#1113), joined from
+            user_preferences at /auth/me time.
+
+            Here rather than behind a second fetch because these lists
+            decide WHAT THE RAIL DRAWS. Learning them after first paint
+            means the rail paints the uncurated list and then rearranges
+            itself in front of the reader — the layout shift the rail's
+            single `loaded` gate exists to avoid, reintroduced one level
+            up. Same first-paint argument as `default_views` (#706).
+
+            OMITTED when both lists are empty, which is every account
+            that has not curated its rail — so this changes no existing
+            session response.
         capabilities:
           type: array
           items:
@@ -15504,6 +15521,65 @@ components:
             model, so both were labels over the default order.
           enum: ["", newest, oldest]
 
+    UserPreferencesTeamRail:
+      type: object
+      description: |
+        The browse page's teams-rail curation (#1113).
+
+        The rail lists every team the caller can see, followed-first
+        then name order. This object is the READER'S EDIT of that list:
+        which chips they took out, and which ones they pulled to the
+        front. Both members are lists whose EMPTY value is the build's
+        default rail — the same "the zero value is what this build does
+        by default" contract `feed_filters` states for its booleans,
+        applied to lists.
+
+        CLIENT-APPLIED, and that is the load-bearing difference from
+        `feed_filters`. Feed filters are read by `GET /posts` and remove
+        rows before they reach the browser. Nothing here is ever
+        consulted to decide which POSTS a caller sees: hiding a team
+        from your rail must not hide that team's work from your feed.
+        The rail is navigation furniture; the feed is content. Anything
+        that starts reading this object server-side to shape a result
+        set has crossed that line.
+
+        Ids are NOT validated against the team table on write. A team
+        can be deleted or leave the caller's visibility between a save
+        and the next read, and refusing the write would strand the
+        reader in a rail they cannot edit. Unknown ids are inert — the
+        rail intersects both lists with the teams the server returned,
+        so a dead id is dropped at render.
+      properties:
+        hidden_team_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Teams the reader removed from their rail. Empty = nothing
+            hidden.
+
+            A hide-list rather than a show-list, deliberately: an empty
+            allow-list would have to mean "show everything", which is
+            the opposite of what an empty allow-list says, and the first
+            partial write would blank the rail.
+        team_order:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            The reader's explicit ordering, applied to the FOLLOWED
+            group (the manage panel's drag-reorder). Empty = the
+            server's order.
+
+            PARTIAL LISTS ARE LEGAL and are the normal case: the ids
+            named here lead, in this order, and everything else keeps
+            its previous relative position behind them. That is what
+            lets "drag one team to the top" persist one id rather than a
+            full snapshot that the next follow would immediately make
+            stale.
+
     UserPreferencesFeedFilters:
       type: object
       description: |
@@ -15627,6 +15703,15 @@ components:
             inside it, means the filter is OFF — there is no third state
             for a boolean to fall back to, so this follows the
             full-object-replacement contract like everything else here.
+        team_rail:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesTeamRail"
+          description: |
+            Teams-rail curation. Full-object replacement like everything
+            else on this endpoint: an absent object clears the curation
+            back to the default rail, and an absent list inside it
+            clears that list. The manage panel always sends both, which
+            is what makes "unhide the last hidden team" expressible.
 
     UserPreferencesResponse:
       type: object
@@ -15641,6 +15726,7 @@ components:
         - notification_channels
         - default_views
         - feed_filters
+        - team_rail
         - known_event_types
         - known_channels
         - default_channels_by_event
@@ -15667,6 +15753,15 @@ components:
             default" are different states the UI renders differently, a
             boolean filter has no third value, so omitting it would only
             make the client guess `false` rather than read it.
+        team_rail:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesTeamRail"
+          description: |
+            Teams-rail curation, always present with both lists
+            materialised even when empty. Same argument as
+            `feed_filters` above, for the list case: "no curation" and
+            "an empty curation" are the same rail, so omitting it would
+            only make the client re-derive `[]`.
         known_event_types:
           type: array
           items: { type: string }

@@ -1105,6 +1105,7 @@ type UserPreference struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	EmailCadence         []byte             `json:"email_cadence"`
 	FeedFilters          []byte             `json:"feed_filters"`
+	TeamRail             []byte             `json:"team_rail"`
 }
 
 type UserProfile struct {

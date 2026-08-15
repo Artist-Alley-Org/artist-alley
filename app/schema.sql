@@ -2600,7 +2600,8 @@ CREATE TABLE public.user_preferences (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL,
-    feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL
+    feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL,
+    team_rail jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
 

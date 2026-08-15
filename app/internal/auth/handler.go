@@ -949,17 +949,18 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 // carried the meaning.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	var lang, theme string
-	var viewsJSON, filtersJSON []byte
+	var viewsJSON, filtersJSON, teamRailJSON []byte
 	err := h.Pool.QueryRow(ctx, `
 		SELECT COALESCE(p.language, ''),
 		       COALESCE(p.theme, ''),
 		       COALESCE(up.default_views, '{}'::jsonb),
-		       COALESCE(up.feed_filters, '{}'::jsonb)
+		       COALESCE(up.feed_filters, '{}'::jsonb),
+		       COALESCE(up.team_rail, '{}'::jsonb)
 		FROM (SELECT $1::bigint AS user_ref) k
 		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
 		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
 		userRef,
-	).Scan(&lang, &theme, &viewsJSON, &filtersJSON)
+	).Scan(&lang, &theme, &viewsJSON, &filtersJSON, &teamRailJSON)
 	if err != nil {
 		// pgx.ErrNoRows is fine; we leave the fields nil.
 		return
@@ -978,6 +979,45 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 	if f, ok := decodeFeedFilters(filtersJSON); ok {
 		cu.FeedFilters = &f
 	}
+	if r, ok := decodeTeamRail(teamRailJSON); ok {
+		cu.TeamRail = &r
+	}
+}
+
+// decodeTeamRail parses the user_preferences.team_rail blob into the
+// wire type (#1113). Reports false when both lists are empty, so
+// /auth/me omits the object for every account that has not curated its
+// rail — the same "omit when it says nothing" rule decodeFeedFilters
+// applies to its boolean.
+//
+// Why it rides the session response at all, rather than the browse page
+// fetching /account/preferences: the rail's order and hide-list decide
+// WHAT IT DRAWS, so learning them after first paint means the rail
+// paints the uncurated list and then rearranges itself in front of the
+// reader — the layout shift the single `loaded` gate in teamFollows
+// exists to avoid, reintroduced one level up. #706 is the precedent and
+// the same argument: /auth/me is awaited before any page renders.
+//
+// Same "render hint, never fail the call" posture as its two
+// neighbours. A malformed blob decodes to "no curation", which is the
+// default rail — every visible team — rather than an empty one. That
+// direction matters: failing open here shows the reader more than they
+// asked for, failing closed would show them nothing and look like their
+// teams had been deleted.
+func decodeTeamRail(raw []byte) (openapi.UserPreferencesTeamRail, bool) {
+	var r openapi.UserPreferencesTeamRail
+	if len(raw) == 0 {
+		return openapi.UserPreferencesTeamRail{}, false
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return openapi.UserPreferencesTeamRail{}, false
+	}
+	hidden := r.HiddenTeamIds != nil && len(*r.HiddenTeamIds) > 0
+	ordered := r.TeamOrder != nil && len(*r.TeamOrder) > 0
+	if !hidden && !ordered {
+		return openapi.UserPreferencesTeamRail{}, false
+	}
+	return r, true
 }
 
 // decodeFeedFilters parses the user_preferences.feed_filters blob into

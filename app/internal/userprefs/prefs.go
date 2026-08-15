@@ -22,6 +22,8 @@ package userprefs
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/google/uuid"
 )
 
 // Preferences is the typed shape of a user_preferences row's JSON
@@ -41,6 +43,114 @@ type Preferences struct {
 	// (#891). Distinct from DefaultViews, which only rearranges the same
 	// set.
 	FeedFilters FeedFilters `json:"feed_filters"`
+	// TeamRail is the browse teams rail's per-user curation (#1113).
+	// Distinct from FeedFilters, which subtracts CONTENT server-side;
+	// this curates NAVIGATION FURNITURE and is applied by the client.
+	TeamRail TeamRail `json:"team_rail"`
+}
+
+// TeamRail is the browse page's teams-rail curation (#1113).
+//
+// The rail lists every team the caller can see. This is the reader's
+// edit of that list: which chips they took out of it, and which ones
+// they pulled to the front. Both members are LISTS, and the same
+// naming contract the booleans in FeedFilters carry applies: the ZERO
+// VALUE — a user with no preferences row, an empty `{}` blob, or a key
+// this build has never heard of — is THE BUILD'S DEFAULT RAIL, which is
+// every visible team, followed-first, then name order.
+//
+// # It never reaches the feed
+//
+// Nothing here is ever consulted to decide which POSTS a caller sees.
+// That is the difference from FeedFilters, which the posts handler
+// reads, and it is a requirement rather than an accident: #1113 says
+// hiding a team from your rail must not hide its posts from your feed.
+// So this struct has no server-side consumer at all — it is persisted,
+// returned on /auth/me, and applied in the rail component. If a future
+// change ever wants a server-side reader, that is a product decision to
+// argue in an issue, not a convenience to reach for here.
+//
+// # Why the ids are not validated against `teams`
+//
+// A team can be deleted, or stop being visible to this caller, between
+// the save and the next read. A 400 on "your own list mentions a team
+// that no longer exists" would strand the reader in a rail they cannot
+// edit. Unknown ids are inert instead: the client intersects both lists
+// with the teams the server returned, so a dead id is dropped at render.
+// See ValidatePreferences for what IS enforced (shape and size).
+type TeamRail struct {
+	// HiddenTeamIDs are teams the reader removed from their rail.
+	// Empty = nothing hidden, which is the default rail.
+	//
+	// Named for what it holds rather than its inverse: a
+	// `shown_team_ids` allow-list would make the empty zero value mean
+	// "show everything", which is the opposite of what an empty
+	// allow-list says, and the first partial write would blank the rail.
+	HiddenTeamIDs []string `json:"hidden_team_ids,omitempty"`
+
+	// TeamOrder is the reader's explicit ordering, applied to the
+	// FOLLOWED group (the drag-reorder in the manage panel). Empty = the
+	// server's order.
+	//
+	// PARTIAL LISTS ARE LEGAL and are the normal case: the ids named
+	// here lead, in this order, and everything else keeps its previous
+	// relative position behind them. That is what lets "drag one team to
+	// the top" persist one id rather than a full snapshot the next
+	// follow would immediately make stale.
+	TeamOrder []string `json:"team_order,omitempty"`
+}
+
+// MaxTeamRailIDs caps each list in TeamRail.
+//
+// A cap exists because this blob is joined onto /auth/me — the call
+// that gates the entire app — so an unbounded list is a session
+// response an authenticated user can inflate at will. 1000 is far past
+// any real instance's team count (the reference install has 11) and far
+// below a payload anyone would notice.
+const MaxTeamRailIDs = 1000
+
+// Sanitized drops entries a rail cannot use: blanks, non-UUIDs,
+// duplicates, and anything past the cap.
+//
+// Read-side counterpart to ValidatePreferences, and the same division
+// of labour DefaultViews.Sanitized uses — reject a bad write, but never
+// fail a read over a row that is already on disk. Unknown-but-wellformed
+// ids are deliberately kept: see the type's note on why they are inert
+// rather than invalid. UNPARSEABLE ones are not, and that is a
+// different judgement rather than an inconsistency: the wire type
+// declares these `format: uuid`, so a non-UUID cannot arrive through
+// the API at all and one on disk is tampering or a bug. Keeping it
+// would break the projection back onto the wire; dropping it costs a
+// reader nothing, because no team was ever identified by it.
+func (r TeamRail) Sanitized() TeamRail {
+	r.HiddenTeamIDs = dedupeIDs(r.HiddenTeamIDs)
+	r.TeamOrder = dedupeIDs(r.TeamOrder)
+	return r
+}
+
+func dedupeIDs(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, id := range in {
+		if id == "" || seen[id] {
+			continue
+		}
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+		if len(out) == MaxTeamRailIDs {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // FeedFilters is the browse feed's per-user presentation set (#891,
@@ -385,6 +495,17 @@ func ValidatePreferences(p Preferences) error {
 			return fmt.Errorf("unknown email cadence %q for event %q", cad, event)
 		}
 	}
+	// The team rail's two lists are checked for SIZE, not for
+	// membership. An id naming a team that no longer exists is inert at
+	// render (see TeamRail); an id list long enough to bloat every
+	// /auth/me response is not, and this is the only place a client can
+	// write one.
+	if n := len(p.TeamRail.HiddenTeamIDs); n > MaxTeamRailIDs {
+		return fmt.Errorf("hidden_team_ids holds %d entries, max %d", n, MaxTeamRailIDs)
+	}
+	if n := len(p.TeamRail.TeamOrder); n > MaxTeamRailIDs {
+		return fmt.Errorf("team_order holds %d entries, max %d", n, MaxTeamRailIDs)
+	}
 	return nil
 }
 
@@ -423,11 +544,20 @@ func MarshalFeedFilters(f FeedFilters) ([]byte, error) {
 	return json.Marshal(f)
 }
 
-// UnmarshalPreferencesRow parses a DB row's four JSONB columns back
+// MarshalTeamRail produces the team_rail JSONB payload (#1113). Both
+// members are `omitempty`, so an untouched rail persists as `{}` — the
+// same bytes the column defaults to, which keeps a saved-but-default
+// preference indistinguishable from a never-saved one, exactly as
+// MarshalFeedFilters does for the boolean bag.
+func MarshalTeamRail(r TeamRail) ([]byte, error) {
+	return json.Marshal(r.Sanitized())
+}
+
+// UnmarshalPreferencesRow parses a DB row's five JSONB columns back
 // into the typed struct. A malformed column (only possible via direct
 // DB tampering) surfaces as a loud error rather than a silently-zeroed
 // value.
-func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON []byte) (Preferences, error) {
+func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, teamRailJSON []byte) (Preferences, error) {
 	var p Preferences
 	if len(channelsJSON) > 0 {
 		if err := json.Unmarshal(channelsJSON, &p.NotificationChannels); err != nil {
@@ -458,6 +588,14 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON [
 		if err := json.Unmarshal(filtersJSON, &p.FeedFilters); err != nil {
 			return Preferences{}, fmt.Errorf("feed_filters: %w", err)
 		}
+	}
+	if len(teamRailJSON) > 0 {
+		if err := json.Unmarshal(teamRailJSON, &p.TeamRail); err != nil {
+			return Preferences{}, fmt.Errorf("team_rail: %w", err)
+		}
+		// Same read-side neutralisation DefaultViews gets above: a row
+		// on disk is never a reason to fail a preferences read.
+		p.TeamRail = p.TeamRail.Sanitized()
 	}
 	return p, nil
 }

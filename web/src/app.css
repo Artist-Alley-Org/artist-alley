@@ -450,6 +450,40 @@
   }
 }
 
+/* ── Horizontal rails with no scrollbar (#1110, extended by #1113).
+ *
+ * A rail is a slider; a scrollbar under it is the div showing through.
+ * Both spellings are required and neither is redundant: `scrollbar-width`
+ * is the standard property Firefox implements, and the
+ * `::-webkit-scrollbar` pseudo-element is what Chromium and Safari read.
+ * Shipping one alone leaves a visible bar in the other half of the
+ * browser market.
+ *
+ * HIDING A SCROLLBAR REMOVES AN AFFORDANCE. What replaces it lives in
+ * `$lib/util/railScroll.svelte.ts` — the edge chevrons, the
+ * click-and-drag pan, and the wheel/touch paths the browser already
+ * owns. This class and that module are two halves of one decision;
+ * applying the class without the module ships a strip a mouse cannot
+ * cross.
+ *
+ * It is global rather than component-scoped because two components now
+ * hold it (the featured slider and the teams rail) and #1110's note
+ * predicted exactly this move. It was deliberately NOT global while
+ * only one component used it, so that a sprint which did not own the
+ * teams rail could not change it silently.
+ *
+ * `user-select` goes with it: a dragged strip must not select the item
+ * titles as it goes, or a pan across three cards leaves three
+ * highlighted names behind it. */
+.rail-scroller {
+  scrollbar-width: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.rail-scroller::-webkit-scrollbar {
+  display: none;
+}
+
 /* ── Motion.
  * Everything that moves in the chrome moves via transform only —
  * compositable, off the main thread. Animating height/top would force

@@ -9,6 +9,8 @@
   import { auth } from '$stores/auth.svelte';
   import FeaturedRail from '$components/FeaturedRail.svelte';
   import TeamsRail from '$components/TeamsRail.svelte';
+  import TeamFollowButton from '$components/TeamFollowButton.svelte';
+  import { teamRail } from '$stores/teamRail.svelte';
   import PostCard from '$components/PostCard.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
   import PostHost from '$components/PostHost.svelte';
@@ -66,6 +68,40 @@
 
   const query = $derived(page.url.searchParams.get('q') ?? '');
 
+  /** The team the feed is filtered to (#1113), or null for the
+   *  unfiltered default.
+   *
+   *  The URL is the ONE owner of this state — not the rail, and not a
+   *  local `let`. It is what makes the filter survive a reload, travel
+   *  in a shared link, and answer the back button, and it is the same
+   *  shape `?q=` and `?post=` already use on this route.
+   *
+   *  Deliberately NOT validated against the rail's team list here. A
+   *  `?team=` naming something this reader cannot see is answered by
+   *  the server — `GET /posts` composes the team filter with the
+   *  visibility predicate, so the feed comes back empty rather than
+   *  leaking the team's existence. Second-guessing it client-side would
+   *  be a copy of a rule that already has one home. */
+  const activeTeamId = $derived(page.url.searchParams.get('team'));
+
+  /** The active team's row, for the heading and its follow button. Null
+   *  while the rail is still loading, or when `?team=` names something
+   *  outside this reader's visible set — the heading falls back to the
+   *  unfiltered title rather than printing a raw uuid. */
+  const activeTeam = $derived(
+    activeTeamId ? (teamRail.teams.find((c) => c.id === activeTeamId) ?? null) : null,
+  );
+
+  /** Apply or clear the team filter. `noScroll` + `keepFocus` because
+   *  this is a filter, not a navigation: the reader stays where they
+   *  are and the feed changes underneath the rail they just clicked. */
+  async function selectTeam(id: string | null) {
+    const target = new URL(page.url);
+    if (id) target.searchParams.set('team', id);
+    else target.searchParams.delete('team');
+    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+  }
+
   // #891 shipped a one-line note here — "items you don't have access to
   // are hidden by your preferences", with a link to change it — because
   // hiding was an opt-in and an opted-in reader's grid was shorter than
@@ -92,7 +128,7 @@
 
   let generation = 0;
 
-  async function fetchPage(q: string, cursor: string | null, reset: boolean) {
+  async function fetchPage(q: string, team: string | null, cursor: string | null, reset: boolean) {
     loading = true;
     error = null;
     guestFeed = false;
@@ -100,6 +136,11 @@
     try {
       const params: Record<string, string | number> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
+      // #1113 — the same parameter the team page has always sent
+      // (routes/teams/[id]/+page.svelte). The filter is the server's,
+      // so it composes with the feed pill, the sort direction and the
+      // visibility predicate without this page arranging anything.
+      if (team) params.team_id = team;
       if (!reset && cursor) params.cursor = cursor;
       // Feed filter + direction from the BrowseFooter store.
       //
@@ -163,7 +204,8 @@
   // searches for anything in it silently returned nothing, and every
   // diff rendered as "Binary file not shown" (#925). Do not put a raw
   // control byte back in here.
-  const feedKey = () => `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}`;
+  const feedKey = () =>
+    `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —
@@ -181,7 +223,7 @@
       items = [];
       nextCursor = null;
       initialLoaded = false;
-      void fetchPage(query, null, true);
+      void fetchPage(query, activeTeamId, null, true);
     });
   });
 
@@ -230,7 +272,7 @@
           if (entry.isIntersecting) {
             untrack(() => {
               if (nextCursor && !loading) {
-                void fetchPage(query, nextCursor, false);
+                void fetchPage(query, activeTeamId, nextCursor, false);
               }
             });
           }
@@ -282,7 +324,7 @@
       // the fetch resolves), so this only matters when the user
       // presses → again after the page lands.
       if (nextCursor && !loading) {
-        void fetchPage(query, nextCursor, false);
+        void fetchPage(query, activeTeamId, nextCursor, false);
       }
       return;
     }
@@ -332,19 +374,53 @@
        guest/member check: unfiltered browse keeps the rail for BOTH,
        including the signed-out visitor for whom it is the only thing on
        the page. -->
-  <!-- #577 — the teams rail, on the same `{#if !query}` condition as
-       the featured rail above and for the same reason (#908): `?q=`
-       turns this route into a result surface, and navigation chrome
-       unrelated to the query is then noise pinned above the answer.
-
-       It sits BELOW FeaturedRail deliberately. The featured strip is
-       the operator's curation and is the whole page for a guest; the
-       teams rail is the reader's own subscriptions and renders
-       nothing at all for a guest, so putting it second keeps the
-       signed-out layout identical to what it was. -->
+  <!-- #577 — the teams rail sits BELOW FeaturedRail deliberately. The
+       featured strip is the operator's curation and is the whole page
+       for a guest; the teams rail renders nothing at all for a guest,
+       so putting it second keeps the signed-out layout identical to
+       what it was. -->
   {#if !query}
     <FeaturedRail />
-    <TeamsRail />
+  {/if}
+
+  <!-- The teams rail is NOT under the `{#if !query}` gate the featured
+       strip is under, and the difference is the point of #1113.
+       #908 pulled both strips off the result surface because a CURATED
+       strip over an answer is unrelated content pinned above it. That
+       argument holds for the featured slider and inverts for this one:
+       the rail is now the feed's FILTER CONTROL, and `?q=` composes
+       with `team_id` server-side (both are `/posts` parameters), so
+       hiding it over a query would leave a reader who searched while
+       filtered with a narrowed result set and no visible way to widen
+       it again — the filter would be live, in the URL, and unreachable.
+       Keeping it also makes "search inside this team" a thing the page
+       can express. -->
+  <TeamsRail {activeTeamId} onselect={selectTeam} />
+
+  {#if !query || activeTeam}
+    <!-- The feed's own heading (#1113). It names what the wall below
+         IS — the filtered team, or "All Teams" when nothing is picked —
+         and it belongs to the FEED rather than to the rail: it scrolls
+         away with the content while the rail pins above it.
+
+         The follow button is inline beside it so the reader can follow
+         the team they just filtered to without leaving browse. It is
+         the SAME TeamFollowButton the team page and the directory use,
+         reading the same `teamFollows` store, so following here moves
+         the rail's sort on the next paint with nothing plumbed between
+         them.
+
+         `activeTeam` is null while the rail is still loading and for a
+         `?team=` this reader cannot see, and both fall back to the
+         unfiltered heading rather than printing a raw uuid. -->
+    <div class="flex flex-wrap items-center gap-3">
+      <h2 class="text-2xl font-semibold text-fg" data-testid="browse-feed-heading">
+        {activeTeam ? activeTeam.name : t('teams.rail_all_heading')}
+      </h2>
+      {#if activeTeam}
+        <TeamFollowButton team={activeTeam} />
+      {/if}
+    </div>
   {/if}
 
   {#if guestFeed}

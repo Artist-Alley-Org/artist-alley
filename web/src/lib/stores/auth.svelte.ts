@@ -52,6 +52,30 @@ export interface AccountFeedFilters {
   show_restricted?: boolean | null;
 }
 
+/**
+ * The account's teams-rail curation (#1113), joined onto the session
+ * response from `user_preferences.team_rail`.
+ *
+ * The rail lists every team the caller can see. This is the reader's
+ * edit of that list — the chips they took out, and the order they
+ * dragged the rest into — and unlike `feedFilters` it is applied HERE
+ * rather than by the server. That is the point of the split: hiding a
+ * team from your rail must not hide its work from your feed.
+ *
+ * It rides the session for the same first-paint reason `defaultViews`
+ * does, and for a more visible one: these lists decide WHAT THE RAIL
+ * DRAWS, so learning them a round-trip later means painting the
+ * uncurated rail and then rearranging it in front of the reader.
+ *
+ * Absent for every account that has not curated its rail — read an
+ * absent object as "the default rail" (every visible team,
+ * followed-first, then name order), never as "an empty rail".
+ */
+export interface AccountTeamRail {
+  hidden_team_ids?: string[] | null;
+  team_order?: string[] | null;
+}
+
 export interface AuthUser {
   ref: number;
   username: string;
@@ -72,6 +96,9 @@ export interface AuthUser {
   /** Account-level browse-feed content preferences (#891/#921). Absent —
    *  not an object of falses — for every account on the defaults. */
   feedFilters?: AccountFeedFilters | null;
+  /** Account-level teams-rail curation (#1113). Absent — not an object
+   *  of empty lists — for every account that has not curated it. */
+  teamRail?: AccountTeamRail | null;
   /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
@@ -344,6 +371,7 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     theme: (u.theme ?? null) as 'light' | 'dark' | 'system' | '' | null,
     defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
     feedFilters: (u.feed_filters ?? null) as AccountFeedFilters | null,
+    teamRail: (u.team_rail ?? null) as AccountTeamRail | null,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

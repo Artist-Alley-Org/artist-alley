@@ -62,6 +62,12 @@
   import { api } from '$api/client';
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { t } from '$stores/lang.svelte';
+  import {
+    createRailScroll,
+    RAIL_ARROW_CLASS,
+    RAIL_ARROW_LIVE_CLASS,
+    RAIL_ARROW_DISABLED_CLASS,
+  } from '$lib/util/railScroll.svelte';
 
   interface FeaturedItem {
     id: string;
@@ -276,237 +282,29 @@
     return smallest ? `/api/v1/assets/${it.cover_asset_id}/variants/${smallest}` : thumbUrl(it);
   }
 
-  // ── The slider's edge controls (#1110) ─────────────────────────────
+  // ── The slider's edge controls + drag pan (#1110) ─────────────────
   //
   // The strip is still an ordinary `overflow-x-auto` box: wheel,
   // trackpad and touch swipe keep working with no handler of ours in
-  // the path. What changed with the owner's amendment is that its
-  // SCROLLBAR is hidden (see the `.rail-scroller` style) and a
-  // click-and-drag pan replaces it, so the strip reads as a slider
-  // rather than as a scrolling div with a bar under it.
-  //
-  // Hiding a scrollbar removes an affordance, so three others have to
-  // carry its weight, and all three are here rather than assumed:
-  // the edge chevrons (for a mouse with no horizontal wheel), the
-  // grab-cursor drag (for a mouse that would have used the bar), and
-  // the keyboard path through the chevrons (unchanged — the drag adds
-  // no keyboard requirement because it adds no keyboard-only action).
+  // the path. What its SCROLLBAR being hidden costs, and what pays that
+  // back, is all in the shared helper — #1113 extracted it there when
+  // the teams rail needed the identical behaviour, rather than growing
+  // a second copy of a drag whose load-bearing detail (the dragstart
+  // cancel) is invisible from the code.
 
   let scroller = $state<HTMLDivElement | null>(null);
-  let atStart = $state(true);
-  let atEnd = $state(false);
-  /** True from the moment a drag passes the movement threshold until
-   *  the click that ends it has been swallowed. Drives the cursor and
-   *  the click guard. */
-  let dragging = $state(false);
-
-  /** Recompute which ends the scroller is parked at.
-   *
-   *  The 1px tolerance is not superstition: `scrollLeft` is fractional
-   *  on a zoomed or fractionally-scaled display, so `scrollLeft + w ===
-   *  scrollWidth` is false at the true end often enough to leave "next"
-   *  live with nothing left to scroll to. */
-  function measure() {
-    const el = scroller;
-    if (!el) return;
-    atStart = el.scrollLeft <= 1;
-    atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
-  }
-
-  /** Scroll by one card + its gap.
-   *
-   *  A card at a time rather than a viewport at a time: a viewport-sized
-   *  jump on a wide display moves two and a half cards and lands
-   *  mid-card, and the reader loses the one they were reading. The step
-   *  is computed from the rendered card, not from CARD_WIDTH, so it
-   *  stays right at the 390px width where the card is narrower than its
-   *  nominal size.
-   *
-   *  `behavior: smooth` is deliberate on a control that can be held
-   *  down; the browser coalesces repeats rather than queueing them. */
-  function step(direction: -1 | 1) {
-    const el = scroller;
-    if (!el) return;
-    const card = el.querySelector<HTMLElement>('[data-testid="featured-rail-item"]');
-    const by = (card?.getBoundingClientRect().width ?? CARD_WIDTH) + CARD_GAP;
-    el.scrollBy({ left: direction * by, behavior: 'smooth' });
-  }
-
-  /** The arrows are DISABLED, not removed, and disabled via ARIA rather
-   *  than the `disabled` attribute.
-   *
-   *  `disabled` takes a button out of the tab order entirely, so a
-   *  keyboard reader tabbing along the strip would find the control
-   *  appear and disappear under them as they scrolled — the control
-   *  moves, which is worse than a control that is present and inert.
-   *  `aria-disabled` + `tabindex=-1` is #1110's spelling and is the
-   *  pairing that keeps the button in the DOM, announced, and
-   *  unreachable while it has nothing to do.
-   *
-   *  The guard is in the handler too. aria-disabled is advisory — it
-   *  stops nothing on its own — so a click that arrives anyway (a
-   *  screen-reader activation, a stale pointer) must be a no-op here
-   *  rather than a scroll to a place that does not exist. */
-  function onPrev() {
-    if (atStart) return;
-    step(-1);
-  }
-  function onNext() {
-    if (atEnd) return;
-    step(1);
-  }
-
-  /** The arrows' classes, as plain strings rather than Tailwind's
-   *  `aria-disabled:` variant.
-   *
-   *  The variant works, but the disabled arm needs three declarations
-   *  including one that is itself breakpoint-scoped
-   *  (`aria-disabled:md:opacity-0`), and a stacked variant that silently
-   *  fails to compile leaves a live-looking control that does nothing —
-   *  a failure invisible to `npm run check` and to any test that does
-   *  not read computed styles. Two named strings switched in the markup
-   *  cannot half-apply. */
-  const ARROW_CLASS =
-    'absolute top-1/2 z-[3] grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full ' +
-    'border border-border bg-surface/90 text-fg shadow-md backdrop-blur-sm transition ' +
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:opacity-100';
-  /** Live: revealed on pointer hover over the strip on a pointer-ish
-   *  viewport, always visible below `md` where there is no hover to
-   *  speak of and the arrows are the only non-drag way across. */
-  const LIVE_CLASS = 'hover:bg-surface md:opacity-0 md:group-hover/rail:opacity-100';
-  /** Disabled: same reveal rule as live, dimmed, and click-through-proof.
-   *
-   *  Revealed on hover rather than hidden outright so the pair reads as
-   *  a pair — hovering the strip shows both ends, one of them plainly
-   *  spent. An arrow that VANISHES at the end of its travel makes the
-   *  other one jump position in the reader's peripheral vision, and
-   *  gives no clue that scrolling back is the thing that brings it back.
-   *
-   *  `pointer-events-none` is the belt to `aria-disabled`'s braces — the
-   *  handler already refuses, and this stops the cursor changing over a
-   *  control that will not respond. */
-  const DISABLED_CLASS =
-    'pointer-events-none opacity-30 md:opacity-0 md:group-hover/rail:opacity-30';
-
-  // ── Click-and-drag panning (owner amendment to #1110) ───────────────
-  //
-  // Pointer events, not mouse events, and MOUSE ONLY. Touch already
-  // pans natively through `overflow-x-auto`; running our own drag over
-  // the top of that fights the browser's momentum scrolling and loses,
-  // so `pointerType === 'mouse'` is the gate and a phone never enters
-  // this code at all. A pen behaves like touch here for the same reason.
-  //
-  // THE THRESHOLD IS THE WHOLE DESIGN. Every card is a link, so a drag
-  // implementation that treats pointerdown-then-pointerup as a drag
-  // breaks clicking, and one that never suppresses the click makes
-  // every pan open a collection. So movement is measured first and
-  // nothing is "a drag" until it exceeds DRAG_THRESHOLD; below that the
-  // gesture was a click and is left entirely alone.
-  //
-  // Capture is taken LAZILY, at the threshold rather than at
-  // pointerdown. Taking it on down would retarget the pointer to the
-  // scroller immediately, and the `click` a plain press produces would
-  // then never reach the anchor — the card would stop opening at all,
-  // which is the failure this ordering exists to avoid.
-
-  /** Pixels of horizontal movement before a press becomes a pan. 5px is
-   *  above the jitter a hand resting on a mouse produces and well below
-   *  what anyone would call a deliberate drag. */
-  const DRAG_THRESHOLD = 5;
-
-  let dragStartX = 0;
-  let dragStartScroll = 0;
-  let dragPointerId: number | null = null;
-
-  /** Kill the browser's OWN drag-and-drop inside the strip.
-   *
-   *  Without this the pan does not work at all, and the reason is worth
-   *  recording because it is invisible from the code: every card is an
-   *  `<a>` wrapping an `<img>`, and both are natively draggable. The
-   *  first pointermove of a press is below DRAG_THRESHOLD, so it
-   *  returns early — correctly — WITHOUT calling preventDefault, and in
-   *  that same instant Chromium starts a native image/link drag.
-   *  `dragstart` cancels the pointer sequence, so no further pointermove
-   *  is ever delivered and the strip moves by exactly one frame's worth
-   *  of travel and then stops. Measured: a 260px drag panned 20px.
-   *
-   *  Cancelling dragstart is the fix rather than moving preventDefault
-   *  up into pointerdown: preventing the default on pointerdown also
-   *  suppresses focus and the click that follows it, which would break
-   *  every card's link to buy the same thing. */
-  function onDragStart(e: DragEvent) {
-    e.preventDefault();
-  }
-
-  function onPointerDown(e: PointerEvent) {
-    if (e.pointerType !== 'mouse' || e.button !== 0) return;
-    const el = scroller;
-    if (!el || el.scrollWidth <= el.clientWidth) return;
-    dragPointerId = e.pointerId;
-    dragStartX = e.clientX;
-    dragStartScroll = el.scrollLeft;
-    // NOT dragging yet, and no capture taken — see the threshold note.
-    dragging = false;
-  }
-
-  function onPointerMove(e: PointerEvent) {
-    if (dragPointerId === null || e.pointerId !== dragPointerId) return;
-    const el = scroller;
-    if (!el) return;
-    const dx = e.clientX - dragStartX;
-    if (!dragging) {
-      if (Math.abs(dx) < DRAG_THRESHOLD) return;
-      dragging = true;
-      // Now that this IS a pan, keep receiving moves even when the
-      // pointer leaves the strip — a pan that stops at the element's
-      // edge is a pan that stops halfway.
-      el.setPointerCapture(e.pointerId);
-    }
-    // Native `behavior: smooth` from the chevrons would fight a direct
-    // assignment; setting scrollLeft cancels any in-flight smooth
-    // scroll, which is the behaviour a reader grabbing the strip
-    // mid-animation expects.
-    el.scrollLeft = dragStartScroll - dx;
-    // The browser's own text/image drag would otherwise start on the
-    // card artwork and paint a ghost image under the cursor.
-    e.preventDefault();
-  }
-
-  function endDrag(e: PointerEvent) {
-    if (dragPointerId === null || e.pointerId !== dragPointerId) return;
-    const el = scroller;
-    if (el?.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    dragPointerId = null;
-    // `dragging` is NOT cleared here. The click that follows this
-    // pointerup has not fired yet, and onClickCapture below needs to
-    // know a pan just happened so it can swallow it. It clears itself
-    // there, or on the next pointerdown if no click arrives.
-  }
-
-  /** Swallow the click a pan produces, and only that one.
-   *
-   *  Registered in the CAPTURE phase so it runs before the anchor's own
-   *  handler — by the bubble phase the card has already navigated.
-   *  A press that never crossed the threshold left `dragging` false and
-   *  passes through untouched, which is what keeps the cards clickable. */
-  function onClickCapture(e: MouseEvent) {
-    if (!dragging) return;
-    dragging = false;
-    e.preventDefault();
-    e.stopPropagation();
-  }
+  const rail = createRailScroll(() => scroller, {
+    itemSelector: '[data-testid="featured-rail-item"]',
+    gap: CARD_GAP,
+    fallbackWidth: CARD_WIDTH,
+  });
 
   // Re-measure whenever the strip's contents or box change. `items`
   // is read so the effect re-runs after the fetch lands, when the
   // scroller finally has something to overflow with.
   $effect(() => {
     void items.length;
-    const el = scroller;
-    if (!el) return;
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
+    return rail.attach();
   });
 </script>
 
@@ -556,15 +354,9 @@
            announce. -->
       <div
         bind:this={scroller}
-        onscroll={measure}
-        onpointerdown={onPointerDown}
-        onpointermove={onPointerMove}
-        onpointerup={endDrag}
-        onpointercancel={endDrag}
-        ondragstart={onDragStart}
-        onclickcapture={onClickCapture}
+        {...rail.handlers}
         role="group"
-        class="rail-scroller -mx-1 flex gap-3 overflow-x-auto px-1 {dragging
+        class="rail-scroller -mx-1 flex gap-3 overflow-x-auto px-1 {rail.dragging
           ? 'cursor-grabbing'
           : 'cursor-grab'}"
         data-testid="featured-rail-scroller"
@@ -695,64 +487,32 @@
            they take focus that way. -->
       <button
         type="button"
-        onclick={onPrev}
-        aria-disabled={atStart}
-        tabindex={atStart ? -1 : 0}
+        onclick={rail.prev}
+        aria-disabled={rail.atStart}
+        tabindex={rail.atStart ? -1 : 0}
         aria-label={t('collections.rail_prev')}
         title={t('collections.rail_prev')}
         data-testid="featured-rail-prev"
-        class="{ARROW_CLASS} left-1 {atStart ? DISABLED_CLASS : LIVE_CLASS}"
+        class="{RAIL_ARROW_CLASS} left-1 {rail.atStart
+          ? RAIL_ARROW_DISABLED_CLASS
+          : RAIL_ARROW_LIVE_CLASS}"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
       </button>
       <button
         type="button"
-        onclick={onNext}
-        aria-disabled={atEnd}
-        tabindex={atEnd ? -1 : 0}
+        onclick={rail.next}
+        aria-disabled={rail.atEnd}
+        tabindex={rail.atEnd ? -1 : 0}
         aria-label={t('collections.rail_next')}
         title={t('collections.rail_next')}
         data-testid="featured-rail-next"
-        class="{ARROW_CLASS} right-1 {atEnd ? DISABLED_CLASS : LIVE_CLASS}"
+        class="{RAIL_ARROW_CLASS} right-1 {rail.atEnd
+          ? RAIL_ARROW_DISABLED_CLASS
+          : RAIL_ARROW_LIVE_CLASS}"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
       </button>
     </div>
   </section>
 {/if}
-
-<style>
-  /* NO SCROLLBAR (owner amendment to #1110).
-
-     The strip is a slider; a scrollbar under it is the div showing
-     through. Both spellings are required and neither is redundant:
-     `scrollbar-width` is the standard property Firefox implements, and
-     the `::-webkit-scrollbar` pseudo-element is what Chromium and
-     Safari read. Shipping one alone leaves a visible bar in the other
-     half of the browser market.
-
-     Hiding a scrollbar REMOVES AN AFFORDANCE, and this is the note that
-     says what replaces it rather than leaving the next reader to
-     wonder: the edge chevrons, the click-and-drag pan (see
-     onPointerDown), the wheel — untouched — and touch swipe, which is
-     the browser's own and was never using the bar anyway.
-
-     This is deliberately NOT a global utility. The teams rail keeps its
-     bar until #1113 gives it the same treatment; a shared class would
-     have changed it today, silently, in a sprint that does not own it. */
-  .rail-scroller {
-    scrollbar-width: none;
-  }
-  .rail-scroller::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* A dragged strip must not select the card titles as it goes — a pan
-     across three cards would otherwise leave three highlighted names
-     behind it. Scoped to the scroller so the rest of the page keeps
-     ordinary text selection. */
-  .rail-scroller {
-    user-select: none;
-    -webkit-user-select: none;
-  }
-</style>

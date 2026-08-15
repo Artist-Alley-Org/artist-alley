@@ -109,6 +109,8 @@ const TRACKED_FILES = [
   'src/lib/components/MessagesButton.svelte',
   'src/lib/components/CommentsThread.svelte',
   'src/lib/components/PostHost.svelte',
+  'src/lib/components/TeamsRail.svelte',
+  'src/lib/components/TeamRailManageMenu.svelte',
   'src/lib/components/federation/RestrictedShareBanner.svelte',
   'src/lib/components/upload/UploadModal.svelte',
   'src/lib/components/upload/PostComposeForm.svelte',
