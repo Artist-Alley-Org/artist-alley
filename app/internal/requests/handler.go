@@ -427,9 +427,9 @@ func (h *Handler) Submit(ctx context.Context, req *http.Request, in SubmitInput)
 	h.notifySubmitted(ctx, row)
 
 	// Local LRU evict + broadcast in one call. cache.Cache.Invalidate
-	// does both (cache.go:Invalidate); the package-level
-	// InvalidatePendingCountAll is broadcast-only for cross-
-	// package callers that don't hold the local cache reference.
+	// does both (cache.go:Invalidate). This is a pending-count
+	// transition — a row enters `pending` here — so the eviction
+	// belongs next to the write that causes it.
 	h.invalidateCount(ctx)
 
 	return row, true, nil
