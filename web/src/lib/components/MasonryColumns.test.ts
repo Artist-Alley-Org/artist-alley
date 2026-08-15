@@ -46,14 +46,18 @@ import {
 } from './cardAsset';
 import {
   MAX_SPAN,
+  RECONCILE_SLOP_ROWS,
   ROW_UNIT_PX,
   emptyState,
   placeAll,
   placeInto,
+  reconcile,
   spanWidthPx,
   tileRows,
   tileSpan,
   type MasonryGeometry,
+  type MasonryState,
+  type PlacedTile,
   type PlaceableTile,
 } from './masonryPlacement';
 import { createRawSnippet } from 'svelte';
@@ -437,6 +441,234 @@ describe('masonry placement — the lattice', () => {
   it('starts from an empty wall of the right width', () => {
     expect(emptyState(5).colRows).toEqual([0, 0, 0, 0, 0]);
     expect(emptyState(0).colRows.length).toBe(1);
+  });
+});
+
+// ── The append band (#1095) ──────────────────────────────────────────
+//
+// The release-blocking regression in #747's wall, and the reason
+// `reconcile` exists. Measured on the dev feed at 2560px / 14 columns:
+// 126 inter-tile voids over 16px after ten appends, appearing as a band
+// of empty space across ALL FOURTEEN columns at one depth, once per
+// appended page, deepening as you scroll (525px of accumulated
+// displacement by tile 360).
+//
+// The mechanism has two halves and only the first is in this file:
+//
+//   1. A tile whose asset has no recorded dimensions reserves a SQUARE
+//      and then settles into the loaded image's own ratio when the bytes
+//      arrive — CardThumb's resolution case 2, which `cardTileRatio`
+//      cannot mirror because the number does not exist until the image
+//      has loaded. 9 of 432 tiles on the dev feed rendered 57-113px
+//      taller than they had reserved.
+//   2. `grid-auto-rows: minmax(unit, auto)` then lets those tiles grow
+//      the row tracks they span, and a grid's row tracks are shared by
+//      every column — so a local misprediction displaces the whole wall
+//      at that depth.
+//
+// Half 2 is CSS and only observable in a browser (the numbers are in the
+// PR). Half 1 is arithmetic and is what these tests pin: A RESERVATION
+// THAT DOES NOT COVER WHAT THE TILE RENDERS IS THE BUG, whatever the CSS
+// then does with it. The oracle is the ACTUAL height, supplied
+// independently of the prediction — not "does the placer agree with
+// itself", which it always did.
+describe('the append band (#1095)', () => {
+  /** 2560px at the 10rem rung, read out of Chromium: 14 columns of
+   *  163px, 8px gap, the 60px floor. The owner's reproduction. */
+  const WALL_2560: MasonryGeometry = { colCount: 14, colWidth: 163, gapPx: 8, minTilePx: 60 };
+  const PAGE = 36;
+  const PAGES = 10;
+
+  /** Which tiles are the ones that settle. Every twelfth, i.e. three per
+   *  appended page — close to the dev feed's measured 9-in-432 once the
+   *  wall is deep, and enough that a band would be unmissable. */
+  const settles = (i: number) => i % 12 === 5;
+  /** The shape such a tile turns out to have. Both directions on
+   *  purpose: a portrait settles TALLER than the square it reserved
+   *  (which is what grows the shared tracks) and an ultrawide settles
+   *  SHORTER (which leaves a void the size of the square). */
+  const settledRatio = (i: number) => (i % 24 === 5 ? 0.66 : 4.5);
+
+  /** What the placer is told before anything renders. */
+  function predicted(count: number): PlaceableTile[] {
+    return Array.from({ length: count }, (_, i) => {
+      if (settles(i)) return { id: `b${i}`, span: 1, estimateRatio: null };
+      const r = FEED_RATIOS[i % FEED_RATIOS.length];
+      return { id: `b${i}`, span: tileSpan(r, WALL_2560), estimateRatio: r };
+    });
+  }
+
+  /** What the tile ACTUALLY renders at. The oracle — deliberately not
+   *  derived from anything the placer produced. */
+  function actualHeight(i: number): number {
+    const r = settles(i) ? settledRatio(i) : FEED_RATIOS[i % FEED_RATIOS.length];
+    const span = settles(i) ? 1 : tileSpan(FEED_RATIOS[i % FEED_RATIOS.length], WALL_2560);
+    return masonryTileHeight(spanWidthPx(WALL_2560, span), r, WALL_2560.minTilePx);
+  }
+
+  /** The DOM's answer to "how many rows does this tile really need",
+   *  for every tile placed so far — what `snapshotTiles` harvests. */
+  function measure(state: MasonryState): Map<string, number> {
+    const m = new Map<string, number>();
+    for (const p of state.placements) {
+      m.set(p.id, tileRows(actualHeight(p.index), WALL_2560.gapPx));
+    }
+    return m;
+  }
+
+  /** Scroll the feed, one appended page at a time, exactly as
+   *  MasonryColumns does: harvest the rendered wall, reconcile against
+   *  it, then place the new page onto the corrected column bottoms.
+   *  `withReconcile: false` is the shipped-and-broken pipeline. */
+  function scroll(withReconcile: boolean): MasonryState {
+    let wall = emptyState(WALL_2560.colCount);
+    for (let page = 1; page <= PAGES; page++) {
+      const shapes = predicted(page * PAGE);
+      if (withReconcile) wall = reconcile(wall, measure(wall));
+      wall = placeInto(wall, shapes, (page - 1) * PAGE, WALL_2560);
+      // The size observer fires as the page's images land.
+      if (withReconcile) wall = reconcile(wall, measure(wall));
+    }
+    return wall;
+  }
+
+  /** Rendered geometry, in px: a tile's top is its row line, its bottom
+   *  is that plus what it really renders. */
+  const topPx = (p: { row: number }) => (p.row - 1) * ROW_UNIT_PX;
+  const bottomPx = (p: { row: number; index: number }) => topPx(p) + actualHeight(p.index);
+
+  /** Every inter-tile void in the rendered wall, per column. */
+  function voids(state: MasonryState) {
+    const cols = new Map<number, PlacedTile[]>();
+    for (const p of state.placements) {
+      for (let c = p.col; c < p.col + p.span; c++) {
+        if (!cols.has(c)) cols.set(c, []);
+        cols.get(c)!.push(p);
+      }
+    }
+    const out: Array<{ col: number; gap: number; at: number; prev: number; next: number }> = [];
+    for (const [col, list] of cols) {
+      list.sort((a, b) => a.row - b.row);
+      for (let i = 1; i < list.length; i++) {
+        out.push({
+          col,
+          gap: topPx(list[i]) - bottomPx(list[i - 1]),
+          at: bottomPx(list[i - 1]),
+          prev: list[i - 1].index,
+          next: list[i].index,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** ADR 0079 §4: the only void the packing rule is allowed to leave is
+   *  the one under a SPANNING tile, and it is exactly the placing pair's
+   *  height difference. Recovered by replaying the column bottoms the
+   *  final placement implies — the columns and spans come from the wall
+   *  itself, so this reads the residuals out rather than re-deciding
+   *  them. */
+  function spanResidualPx(state: MasonryState): Map<string, number> {
+    const colRows = new Array(WALL_2560.colCount).fill(0);
+    const residual = new Map<string, number>();
+    for (const p of state.placements) {
+      let top = 0;
+      for (let c = p.col; c < p.col + p.span; c++) top = Math.max(top, colRows[c]);
+      let worst = 0;
+      for (let c = p.col; c < p.col + p.span; c++) worst = Math.max(worst, top - colRows[c]);
+      residual.set(p.id, worst * ROW_UNIT_PX);
+      for (let c = p.col; c < p.col + p.span; c++) colRows[c] = top + p.rows;
+    }
+    return residual;
+  }
+
+  /** What a correct wall may leave under a tile: the gap itself, the
+   *  lattice's round-up, and the one row of quantisation `reconcile`
+   *  declines to chase. 16px at this geometry — which is why the
+   *  browser-side measurement counts voids OVER 16px. */
+  const SLACK_PX = WALL_2560.gapPx + (RECONCILE_SLOP_ROWS + 1) * ROW_UNIT_PX;
+
+  // ⛔ THE FAILING TEST. Reverting `reconcile` to a no-op turns this red
+  //    with ~30 uncovered reservations — the sabotage check.
+  it('reserves at least what every tile renders, ten appends deep', () => {
+    const wall = scroll(true);
+    expect(wall.placements.length).toBe(PAGE * PAGES);
+    const under = wall.placements.filter((p) => p.rows * ROW_UNIT_PX < actualHeight(p.index));
+    expect(under.map((p) => p.index)).toEqual([]);
+  });
+
+  it('leaves no void a spanning tile does not account for', () => {
+    const wall = scroll(true);
+    const residual = spanResidualPx(wall);
+    const byId = new Map(wall.placements.map((p) => [p.index, p]));
+    const unexplained = voids(wall).filter(
+      (v) => v.gap > SLACK_PX + (residual.get(byId.get(v.next)!.id) ?? 0),
+    );
+    expect(unexplained).toEqual([]);
+  });
+
+  // The signature the owner reported: not "some gaps", but a horizontal
+  // stripe of nothing across the whole wall, once per appended page.
+  it('never leaves a void at one depth in every column at once', () => {
+    const wall = scroll(true);
+    const wide = voids(wall).filter((v) => v.gap > SLACK_PX);
+    for (const v of wide) {
+      const mid = v.at + v.gap / 2;
+      const spanned = new Set(
+        wide.filter((o) => o.at <= mid && o.at + o.gap >= mid).map((o) => o.col),
+      );
+      expect(spanned.size).toBeLessThan(WALL_2560.colCount);
+    }
+  });
+
+  // The wall is measured, not summed: a tile that renders taller than it
+  // reserved must cost its OWN column that height and no other column
+  // anything. Without the correction the CSS pays for it out of the
+  // shared row tracks, which is every column at once.
+  it('charges a settled tile to its own column, and the wall grows by it', () => {
+    const before = scroll(false);
+    const after = reconcile(before, measure(before));
+    // Reconciliation is VERTICAL ONLY — same tile, same column, same
+    // width, same feed position. It answers "how far down does this
+    // column really go", never "which column".
+    expect(after.placements.map((p) => `${p.id}/${p.col}/${p.span}/${p.index}`)).toEqual(
+      before.placements.map((p) => `${p.id}/${p.col}/${p.span}/${p.index}`),
+    );
+    // The wall gets TALLER: the height the shared row tracks used to
+    // absorb — and charge to every column — is now reserved where it
+    // belongs. The tallest column grows by less than the total settled
+    // overflow, because it lands in one column at a time.
+    expect(Math.max(...after.colRows)).toBeGreaterThan(Math.max(...before.colRows));
+    // And the reconciled wall is the one that covers its tiles.
+    expect(before.placements.some((p) => p.rows * ROW_UNIT_PX < actualHeight(p.index))).toBe(true);
+    expect(after.placements.every((p) => p.rows * ROW_UNIT_PX >= actualHeight(p.index))).toBe(true);
+  });
+
+  it('is idempotent once the wall agrees with the DOM', () => {
+    const wall = scroll(true);
+    expect(reconcile(wall, measure(wall))).toBe(wall);
+  });
+
+  // Reconciling before an append re-solves ROWS. It must not be able to
+  // re-decide a packing, which is what would bring #651 back.
+  it('never moves a tile sideways or reorders the feed', () => {
+    const wall = placeAll(feed(144, 0, WALL_2560), WALL_2560);
+    const measured = new Map(wall.placements.map((p, i) => [p.id, p.rows + (i % 5) * 3]));
+    const next = reconcile(wall, measured);
+    expect(next.placements.map((p) => `${p.id}/${p.col}/${p.span}/${p.index}`)).toEqual(
+      wall.placements.map((p) => `${p.id}/${p.col}/${p.span}/${p.index}`),
+    );
+  });
+
+  // A one-row disagreement is the lattice's own resolution, not an
+  // error. Chasing it would rewrite a quarter of the wall's row lines
+  // for 4px and make every append look like it moved tiles.
+  it('ignores a disagreement inside the lattice unit', () => {
+    const wall = placeAll(feed(72, 0, WALL_2560), WALL_2560);
+    const noise = new Map(
+      wall.placements.map((p, i) => [p.id, p.rows + (i % 3) - 1] as [string, number]),
+    );
+    expect(reconcile(wall, noise)).toBe(wall);
   });
 });
 

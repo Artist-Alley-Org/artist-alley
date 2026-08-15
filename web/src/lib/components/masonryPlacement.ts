@@ -39,15 +39,9 @@
 // measure-then-place pass, no JS masonry library, no waiting on image
 // bytes.
 //
-// It also removes the drift the sibling-column implementation had to
-// defend against by re-reading every column's `offsetHeight` before each
-// append. There, `colHeights` was a running sum of PREDICTIONS while the
-// wall rendered at its REAL heights, so the two diverged and the
-// divergence compounded down a long scroll. Here the reservation IS
-// where the tile renders — the lattice is authoritative — so a
-// prediction that is a few pixels out costs a few pixels of gap under
-// that one tile and contributes nothing to the next tile's position.
-// Error cannot accumulate because nothing sums it.
+// The lattice is authoritative for POSITION — a tile renders where its
+// reserved rows put it — but it is not authoritative for HEIGHT, and
+// #1095 is what happens when the two are confused. See `reconcile`.
 //
 // The unit is a tradeoff, not a magic number: every tile rounds UP to
 // it, so a coarse unit shows as slack under tiles, and a fine one
@@ -257,4 +251,77 @@ export function placeInto(
 /** Place every tile from scratch. */
 export function placeAll(tiles: PlaceableTile[], geo: MasonryGeometry): MasonryState {
   return placeInto(emptyState(geo.colCount), tiles, 0, geo);
+}
+
+/** How far a reservation may disagree with the rendered height before
+ *  the measurement wins, in lattice rows.
+ *
+ *  One unit, because one unit is the coordinate system's own resolution:
+ *  `tileRows` rounds UP to it, and `offsetHeight` rounds to whole pixels,
+ *  so a reservation that is one row out is quantisation and not a
+ *  disagreement. Adopting those would rewrite a quarter of the wall's
+ *  rows for 4px — under the 8px gap, invisible, and it would make an
+ *  ordinary append look like it moved tiles. */
+export const RECONCILE_SLOP_ROWS = 1;
+
+/** Re-solve the wall's VERTICAL positions against what the tiles
+ *  actually render, keeping every tile in the column it was placed in.
+ *
+ *  # Why this exists (#1095)
+ *
+ *  A tile's height is a PREDICTION. Most of the time it is exact — #646
+ *  put the source dimensions on the card payload — but CardThumb has a
+ *  second resolution case the prediction cannot mirror: an asset with no
+ *  recorded dimensions renders as a square until its bytes arrive and
+ *  then takes the loaded image's own ratio. Measured on the dev feed at
+ *  14 columns, 9 of 432 tiles settled 57-113px TALLER than the square
+ *  they had reserved.
+ *
+ *  On its own that is a local cosmetic error. What made it #1095 is the
+ *  CSS: `grid-auto-rows: minmax(unit, auto)` lets a tile that outgrows
+ *  its reservation grow the row tracks it spans — and a grid's row
+ *  tracks are SHARED BY EVERY COLUMN. So one mispredicted tile in one
+ *  column pushes all fourteen columns down at that depth, which is the
+ *  full-width band the owner reported, and the growth accumulates down
+ *  the wall (525px by tile 360, measured) which is why it got worse the
+ *  further you scrolled.
+ *
+ *  So the rendered DOM is the source of truth for HEIGHT, and this is
+ *  where it is read back in. It is the anti-drift mechanism the
+ *  sibling-column implementation had as `syncHeightsFromDom`, restored
+ *  in the shape the one-grid layout needs: not a re-measure of column
+ *  bottoms (there are no column boxes to measure) but a re-solve of
+ *  every tile's row line from its measured reservation.
+ *
+ *  # What it may and may not change
+ *
+ *  `col`, `span`, `index` and the order are carried through UNTOUCHED.
+ *  This cannot move a tile sideways, cannot reorder the feed, and cannot
+ *  revisit a packing decision — so #651's append-stability survives it.
+ *  It only ever answers "how far down does this column actually go",
+ *  which is a question the wall was already getting wrong.
+ *
+ *  Returns `state` ITSELF when nothing moved, so a caller can skip the
+ *  write and a settled wall costs one pass and no re-render. */
+export function reconcile(
+  state: MasonryState,
+  measuredRows: ReadonlyMap<string, number>,
+): MasonryState {
+  const colRows = new Array(state.colRows.length).fill(0);
+  const placements: PlacedTile[] = [];
+  let changed = false;
+  for (const p of state.placements) {
+    const m = measuredRows.get(p.id);
+    const rows = m !== undefined && Math.abs(m - p.rows) > RECONCILE_SLOP_ROWS ? m : p.rows;
+    let top = 0;
+    for (let c = p.col; c < p.col + p.span; c++) top = Math.max(top, colRows[c]);
+    for (let c = p.col; c < p.col + p.span; c++) colRows[c] = top + rows;
+    if (rows === p.rows && top + 1 === p.row) {
+      placements.push(p);
+      continue;
+    }
+    changed = true;
+    placements.push({ ...p, row: top + 1, rows });
+  }
+  return changed ? { placements, colRows } : state;
 }

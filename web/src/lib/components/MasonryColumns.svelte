@@ -86,30 +86,45 @@
   // built purely on that estimate left a 1144px height spread across
   // five columns.
   //
-  // # What replaced `syncHeightsFromDom`
+  // # `syncHeightsFromDom`, restored — and why deleting it was wrong
   //
   // The sibling-column version re-read every column's real
-  // `offsetHeight` before each append, because `colHeights` was a running
-  // sum of PREDICTIONS while the wall rendered at its REAL heights — two
-  // numbers that diverge, with the divergence compounding down a long
-  // scroll.
+  // `offsetHeight` before each append. #747 dropped it on the argument
+  // that the reservation IS the position, so a prediction that is a few
+  // pixels short costs a few pixels of slack under that one tile and
+  // contributes nothing to the next tile's row.
   //
-  // There is no such pair now. A tile renders exactly where its reserved
-  // rows put it, so the reservation IS the position: a prediction that is
-  // a few pixels short shows as a few pixels of slack under that one
-  // tile and contributes nothing to the next tile's row. Nothing sums the
-  // error, so nothing can drift. Measured in Chromium at 1440px, the
-  // reservation for every declared-ratio card on the dev feed is within
-  // 2px of what the card renders (the card's 1px border top and bottom),
-  // against a 4px lattice unit inside an 8px gap.
+  // That argument is true of POSITION and false of HEIGHT, and #1095 is
+  // the bill. A tile whose asset has no recorded dimensions reserves a
+  // SQUARE and then settles into the loaded image's own ratio when the
+  // bytes arrive (CardThumb's resolution case 2, which `cardTileRatio`
+  // cannot mirror because the number does not exist until the image
+  // loads). Measured on the dev feed at 2560px / 14 columns, 9 of 432
+  // tiles ended up 57-113px TALLER than they had reserved.
   //
-  // The guard for what we CANNOT predict is in the CSS rather than in
-  // JS: `grid-auto-rows: minmax(ROW_UNITpx, auto)`. A card carrying flow
-  // chrome we have no way to compute ahead of time — a CollectionCard's
-  // title and footer wrap at a width we only learn at layout — grows its
-  // own tracks instead of overlapping the tile below it. When the
-  // reservation is right, which is the ordinary case, `auto` never
-  // engages and the lattice is exactly `ROW_UNIT` throughout.
+  // On its own that is a local error. What made it a release blocker is
+  // `grid-auto-rows: minmax(ROW_UNITpx, auto)`: a tile that outgrows its
+  // reservation grows the row tracks it spans, and a grid's row tracks
+  // are SHARED BY EVERY COLUMN. One mispredicted tile therefore pushes
+  // ALL FOURTEEN columns down at that depth — the full-width band — and
+  // the growth accumulates (525px of it by tile 360, measured), which is
+  // why it got worse the further you scrolled. Forcing a re-place fixed
+  // it only because the re-place bucketed on `measuredRatio`, i.e. on
+  // the settled DOM.
+  //
+  // So the DOM is read back in, in the shape this layout needs:
+  // `reconcile()` re-solves every tile's row line from its MEASURED
+  // reservation while carrying `col` / `span` / order through untouched.
+  // It runs before every append (so a new page anchors to the wall that
+  // is really there) and whenever a tile changes size (so a settling
+  // image is corrected in its own column instead of shoving the wall).
+  //
+  // `minmax(ROW_UNITpx, auto)` stays in the CSS, now as a one-frame net
+  // rather than the mechanism: it keeps a tile that has just outgrown
+  // its reservation from overlapping the one below while the reconcile
+  // is scheduled. Removing it and reconciling was measured too — 126
+  // voids → 10, but with 8 real overlaps in the frame before the
+  // correction lands, which is worse than a band.
 
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
@@ -120,6 +135,7 @@
     ROW_UNIT_PX,
     emptyState,
     placeInto,
+    reconcile,
     tileRows,
     tileSpan,
     type MasonryGeometry,
@@ -175,6 +191,15 @@
    *  column-width change AND carries whatever card chrome (borders, a
    *  CollectionCard footer) sits outside the thumb frame. */
   const measuredRatio = new Map<string, number>();
+  /** id → the lattice rows the tile ACTUALLY needs, harvested from the
+   *  DOM in the same pass as `measuredRatio`. This is what `reconcile`
+   *  reads; see its header for why the wall cannot be trusted to render
+   *  at the height it reserved.
+   *
+   *  Cleared on a re-place, unlike `measuredRatio`: a ratio is
+   *  dimensionless and survives a column-width change, a row count is
+   *  the answer to "how tall at THIS width" and does not. */
+  const measuredRows = new Map<string, number>();
 
   /** Multicol's own column-count formula, so the wall keeps the density
    *  the `--tile-min` ladder was calibrated against (browseView's rungs
@@ -252,18 +277,43 @@
     return { id: item.id, span, estimateRatio };
   }
 
-  /** Harvest what every rendered tile currently measures. Merged rather
-   *  than rebuilt, so a tile stays remembered if it ever leaves the DOM.
-   *  One layout read per tile per PAGE — not per frame. */
-  function snapshotRatios(): void {
+  /** Harvest what every rendered tile currently measures — its shape,
+   *  for the next re-place, and the rows it really occupies, for
+   *  `reconcile`. Merged rather than rebuilt, so a tile stays remembered
+   *  if it ever leaves the DOM.
+   *
+   *  One layout read per tile, and only on a placement pass or a size
+   *  change — not per frame. `offsetWidth` / `offsetHeight` are the
+   *  TILE's, and `align-items: start` keeps a tile at its content height
+   *  even when its row tracks have been stretched, so this reads what the
+   *  card is rather than what the grid grew to. */
+  function snapshotTiles(g: MasonryGeometry): void {
     const el = containerEl;
     if (!el) return;
     for (const tile of el.querySelectorAll<HTMLElement>('[data-tile-id]')) {
       const id = tile.dataset.tileId;
       const w = tile.offsetWidth;
       const h = tile.offsetHeight;
-      if (id && w > 0 && h > 0) measuredRatio.set(id, h / w);
+      if (!id || w <= 0 || h <= 0) continue;
+      measuredRatio.set(id, h / w);
+      measuredRows.set(id, tileRows(h, g.gapPx));
     }
+  }
+
+  /** Re-solve the wall against the DOM. Returns whether anything moved.
+   *
+   *  ⚠️ Reads geometry then writes state, so it must never run from
+   *  inside the placement effect's dependency graph — see the
+   *  `untrack` at the call sites. */
+  function reconcileFromDom(g: MasonryGeometry): boolean {
+    if (wall.placements.length === 0) return false;
+    snapshotTiles(g);
+    const next = reconcile(wall, measuredRows);
+    if (next === wall) return false;
+    wall = next;
+    placements = wall.placements;
+    colRows = wall.colRows;
+    return true;
   }
 
   function place(list: Array<{ id: string }>, g: MasonryGeometry, ladderReady: boolean): void {
@@ -277,14 +327,24 @@
       list.length >= placedIds.length &&
       placedIds.every((id, i) => list[i]?.id === id);
 
-    snapshotRatios();
+    snapshotTiles(g);
 
     let from: number;
     if (append) {
+      // Anchor the new page to the wall that is REALLY on screen, not to
+      // the heights we predicted for it (#1095). A tile that settled
+      // taller than its reservation has already been corrected by the
+      // size observer below; this is the belt to that pair of braces —
+      // whatever the cause, an append placed against reconciled column
+      // bottoms cannot inherit an error from the page before it.
+      wall = reconcile(wall, measuredRows);
       from = placedIds.length;
     } else {
       epoch = ep;
       wall = emptyState(g.colCount);
+      // Row counts are answers at the OLD column width. The ratios are
+      // dimensionless and stay.
+      measuredRows.clear();
       from = 0;
     }
 
@@ -300,6 +360,60 @@
     const g = geo;
     const ladderReady = previewLadder.rungs.length > 0;
     untrack(() => place(list, g, ladderReady));
+  });
+
+  /** Watch every tile for a height change and re-solve when one lands.
+   *
+   *  This is the trigger the prediction cannot supply: a tile with no
+   *  recorded dimensions reserves a square and only learns its real
+   *  shape when its bytes arrive, which is some arbitrary time after it
+   *  was placed (#1095). Observing the tiles catches that — and every
+   *  other cause of a height we could not compute ahead of layout,
+   *  including the wrapped card chrome the `auto` track maximum was
+   *  standing in for.
+   *
+   *  Coalesced to one rAF, so a page of 36 images landing together costs
+   *  one re-solve rather than 36. It cannot loop: `align-items: start`
+   *  makes a tile's height its content's, so moving its row line does
+   *  not resize it, and `reconcile` returns the same state once it has
+   *  agreed with the DOM.
+   *
+   *  No ResizeObserver (a test DOM) means the wall keeps its predicted
+   *  reservations and the pre-append `reconcile` above never has
+   *  measurements to act on — degraded, not broken, the same posture as
+   *  the column-count observer. */
+  let tileRo: ResizeObserver | undefined;
+  let pendingReconcile = 0;
+  const observed = new Set<Element>();
+
+  $effect(() => {
+    // Re-run on every placement pass so newly rendered tiles get watched.
+    // The observer is created once and only ever gains targets — calling
+    // `observe` again on one it already holds would re-notify for every
+    // tile in the wall on every append.
+    void placements;
+    const el = containerEl;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    tileRo ??= new ResizeObserver(() => {
+      if (pendingReconcile) return;
+      pendingReconcile = requestAnimationFrame(() => {
+        pendingReconcile = 0;
+        untrack(() => reconcileFromDom(geo));
+      });
+    });
+    for (const tile of el.querySelectorAll<HTMLElement>('[data-tile-id]')) {
+      if (observed.has(tile)) continue;
+      observed.add(tile);
+      tileRo.observe(tile);
+    }
+  });
+
+  $effect(() => () => {
+    tileRo?.disconnect();
+    tileRo = undefined;
+    observed.clear();
+    cancelAnimationFrame(pendingReconcile);
+    pendingReconcile = 0;
   });
 
   /** Skeletons are dealt to the shortest columns, which is where the
