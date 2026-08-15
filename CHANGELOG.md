@@ -131,6 +131,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The admin area now turns away people who don't administer anything.** It let every signed-in
+  account in and showed them a page with two tiles on it. Two of the permissions it recognised —
+  listing teams and listing roles — are ones everyone has, so that they can browse the team
+  directory, and holding either was enough to open the door. Those two now count towards opening
+  a tile but not towards opening the admin area itself, so an ordinary account gets a plain "you
+  don't have permission" page instead of a confusing near-empty one. Nobody's permissions changed
+  and the team directory works exactly as before (#962).
+
 - **The card-size control now resizes the whole page.** Making cards bigger or smaller changed the
   main grid while the featured strip above it stayed fixed, so one page showed two card sizes. The
   strip follows the control now — and because its pictures were capped at a small crop, they were
