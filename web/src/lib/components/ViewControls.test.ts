@@ -244,3 +244,134 @@ describe('ViewControls — bottom-edge reveal (#1020)', () => {
     expect(bar().classList.contains(HIDDEN)).toBe(false);
   });
 });
+
+// ── Light dismiss for the view switcher (#1096) ──────────────────────
+//
+// The panel used to close only by re-pressing the toggle that opened it,
+// so it followed the user around the page. It now closes on a press
+// anywhere outside — WITHOUT eating that press, which is the part worth
+// a test: dismissal that costs a throwaway click is the thing users
+// complain about in the menus that do it.
+describe('ViewControls — light dismiss (#1096)', () => {
+  beforeEach(() => {
+    realMatchMedia = window.matchMedia;
+    chromeScroll.hidden = false;
+  });
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+    chromeScroll.hidden = false;
+  });
+
+  function pointerDownOn(target: EventTarget): Event {
+    const Ctor = (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent;
+    const ev = Ctor
+      ? new Ctor('pointerdown', { bubbles: true, cancelable: true })
+      : new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+    target.dispatchEvent(ev);
+    return ev;
+  }
+
+  /** The switcher toggle — found by the state it publishes rather than
+   *  by copy, so this survives an i18n or icon change. */
+  function toggle(): HTMLButtonElement {
+    const el = bar().querySelector('button[aria-expanded]');
+    if (!el) throw new Error('no switcher toggle');
+    return el as HTMLButtonElement;
+  }
+  const isOpen = () => toggle().getAttribute('aria-expanded') === 'true';
+
+  async function open() {
+    usePointer('fine');
+    render(ViewControls);
+    await tick();
+    toggle().click();
+    await tick();
+    expect(isOpen()).toBe(true);
+  }
+
+  it('closes on a press outside, and lets that press through', async () => {
+    await open();
+
+    // Something else on the page — a tile in the feed.
+    const tile = document.createElement('button');
+    document.body.appendChild(tile);
+    const ev = pointerDownOn(tile);
+    await tick();
+
+    expect(isOpen()).toBe(false);
+    // THE POINT: the press that dismissed the panel is still a press on
+    // the tile. Nothing was prevented and nothing was stopped, so the
+    // click that follows it opens the tile.
+    expect(ev.defaultPrevented).toBe(false);
+    expect(ev.cancelBubble).toBe(false);
+    tile.remove();
+  });
+
+  it('stays open for a press on its own controls', async () => {
+    await open();
+    const views = [...bar().querySelectorAll('button')].filter((b) => b !== toggle());
+    expect(views.length).toBeGreaterThan(0);
+    pointerDownOn(views[0]);
+    await tick();
+    expect(isOpen()).toBe(true);
+  });
+
+  // The regression this shape invites: dismissing on the toggle's OWN
+  // pointerdown closes the panel a beat before its click reopens it, and
+  // the toggle stops working.
+  it('leaves the toggle toggling', async () => {
+    await open();
+    pointerDownOn(toggle());
+    toggle().click();
+    await tick();
+    expect(isOpen()).toBe(false);
+    toggle().click();
+    await tick();
+    expect(isOpen()).toBe(true);
+  });
+
+  it('closes on Escape and hands focus back to the toggle', async () => {
+    await open();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+    expect(isOpen()).toBe(false);
+    expect(document.activeElement).toBe(toggle());
+  });
+
+  // The listener is only installed while the panel is open — the shape
+  // BrowseFooter's Escape handler already uses. A window listener that
+  // outlives the thing it serves is how a component starts reacting to
+  // presses on pages it is no longer part of.
+  it('holds a window listener only while it is open', async () => {
+    usePointer('fine');
+    const added: string[] = [];
+    const removed: string[] = [];
+    const realAdd = window.addEventListener;
+    const realRemove = window.removeEventListener;
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    window.addEventListener = ((type: string, ...rest: any[]) => {
+      if (type === 'pointerdown') added.push(type);
+      return (realAdd as any).call(window, type, ...rest);
+    }) as typeof window.addEventListener;
+    window.removeEventListener = ((type: string, ...rest: any[]) => {
+      if (type === 'pointerdown') removed.push(type);
+      return (realRemove as any).call(window, type, ...rest);
+    }) as typeof window.removeEventListener;
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    try {
+      render(ViewControls);
+      await tick();
+      expect(added.length).toBe(0);
+      toggle().click();
+      await tick();
+      expect(added.length).toBe(1);
+      expect(removed.length).toBe(0);
+      toggle().click();
+      await tick();
+      expect(removed.length).toBe(1);
+    } finally {
+      window.addEventListener = realAdd;
+      window.removeEventListener = realRemove;
+    }
+  });
+});

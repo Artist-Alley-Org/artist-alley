@@ -47,6 +47,15 @@
   ];
 
   let expanded = $state(false);
+  /** The switcher cluster — the expanded view row, the size steppers and
+   *  the toggle that opens them. "Outside" is measured against this and
+   *  not against `root`: the sort toggle at the far end of the bar is
+   *  outside the switcher, and clicking it should dismiss the switcher
+   *  like anything else would. */
+  let switcherEl = $state<HTMLDivElement | null>(null);
+  /** The toggle, so Escape can hand focus back to the control that
+   *  opened the panel rather than dropping it on <body>. */
+  let toggleEl = $state<HTMLButtonElement | null>(null);
 
   $effect(() => chromeScroll.attach());
 
@@ -206,7 +215,9 @@
   }
 
   // Escape collapses the expanded switcher so keyboard users can dismiss
-  // without picking. Click-outside is handled by the floating wrapper.
+  // without picking, and hands focus back to the toggle that opened it —
+  // dropping focus on <body> would send the next Tab back to the top of
+  // the page. Pointer dismissal is `onWindowPointerDown` below.
   //
   // With nothing expanded, Escape instead dismisses a pointer reveal:
   // WCAG 2.2 §1.4.13 wants hover-revealed content that overlays other
@@ -219,6 +230,7 @@
     if (e.key !== 'Escape') return;
     if (expanded) {
       expanded = false;
+      toggleEl?.focus();
       return;
     }
     if (pointerNear) hoverDismissed = true;
@@ -228,6 +240,41 @@
     if (!expanded && !pointerNear) return;
     window.addEventListener('keydown', onWindowKey);
     return () => window.removeEventListener('keydown', onWindowKey);
+  });
+
+  /** Light dismiss (#1096): a press anywhere outside the switcher closes
+   *  it. Until now the only way back out was to re-press the toggle, so
+   *  the panel followed you around the page.
+   *
+   *  THREE THINGS ARE LOAD-BEARING HERE.
+   *
+   *  `pointerdown`, not `click`. The dismissal should feel like part of
+   *  the press that caused it, and a `click` listener also fires for a
+   *  press that STARTED inside the panel and ended outside it, which is
+   *  a drag, not a dismissal.
+   *
+   *  Nothing is prevented or stopped, so THE CLICK STILL LANDS. Choosing
+   *  a tile through an open panel opens that tile; it does not cost a
+   *  throwaway click to close the panel first.
+   *
+   *  Capture phase, so a surface that stops propagation on its own
+   *  pointerdown — a card, a canvas — cannot leave the panel stuck open.
+   *
+   *  ⛔ Not `:focus-within`, and not a focusout: a mouse click focuses
+   *  whatever it lands on, so either would pin the panel open exactly
+   *  when the user is trying to leave (#1020's class). The bar's own
+   *  keyboard-reveal already went through that and uses
+   *  `:focus-visible`; this is the pointer half of the same rule. */
+  function onWindowPointerDown(e: PointerEvent) {
+    const target = e.target;
+    if (target instanceof Node && switcherEl?.contains(target)) return;
+    expanded = false;
+  }
+
+  $effect(() => {
+    if (!expanded) return;
+    window.addEventListener('pointerdown', onWindowPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onWindowPointerDown, true);
   });
 
   /** Keyboard parity — `:focus-visible`, not `:focus-within`.
@@ -275,7 +322,7 @@
 >
   <!-- LEFT cluster: view switcher + back-to-top -->
   <div class="flex items-end gap-3">
-  <div class="pointer-events-auto flex flex-col items-center gap-1.5">
+  <div bind:this={switcherEl} class="pointer-events-auto flex flex-col items-center gap-1.5">
     {#if expanded}
       <div class="flex items-center gap-1.5">
       {#each otherViews as v (v.id)}
@@ -349,6 +396,7 @@
       {/if}
 
       <button
+        bind:this={toggleEl}
         type="button"
         onclick={toggle}
         disabled={!canSwitch}
