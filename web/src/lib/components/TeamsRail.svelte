@@ -13,7 +13,7 @@
    * with the navbar for the same job. So this is the pattern that is
    * already here: a horizontally-scrolling row of chips, no new chrome.
    *
-   * # The featured slot and the "All teams" chip (#1084)
+   * # The featured slot and the "All teams" chip (#1084, #1097)
    *
    * Two pieces of curated furniture, both of which #1030 deliberately
    * left for this change rather than guessing at early.
@@ -30,9 +30,19 @@
    * strip. It is PINNED beside the scroller rather than being the last
    * `<li>` inside it: as a list item it would sit past forty followed
    * teams, off the right edge, reachable only by scrolling — which is a
-   * worse affordance than the row it replaced, not a better one. So the
-   * strip is a flex row of [scrolling list][chip], the chip never
-   * scrolls away, and the featured team keeps first position.
+   * worse affordance than the row it replaced, not a better one.
+   *
+   * #1097 moves it from the tail to the HEAD. Pinning already solved
+   * "never scrolls away"; what it did not solve is that the exit from a
+   * strip you are reading left-to-right sat at the end of it, so the
+   * reader met forty studios before the one control that says "there
+   * are more of these". At the head it is the first thing in the row
+   * and the destination is legible before the browsing starts. The
+   * featured team still keeps first position AMONG TEAMS — the
+   * furniture leads, the curation leads the content.
+   *
+   * So the strip is a flex row of [⋯][All teams][scrolling list]: two
+   * fixed controls that never scroll, then everything that does.
    *
    * # No visible heading (#1030)
    *
@@ -59,11 +69,47 @@
    * Nothing renders before the first load resolves. A rail that
    * flashes its empty state and then fills in reads as a bug on every
    * single page load for anyone who follows anything.
+   *
+   * # The manage menu (#1097)
+   *
+   * A `⋯` at the far left, opening the rail's own options. It is NOT
+   * capability-gated: everything behind it is about the CALLER'S
+   * follows, which is their own list and needs no permission on the
+   * teams themselves. A menu that appears only for admins would be
+   * telling ordinary readers that managing what they follow is an
+   * administrative act.
+   *
+   * It is the shared `Menu` primitive — the same one ColumnPicker uses
+   * one surface over — rather than a hand-rolled panel, and that choice
+   * is load-bearing twice over.
+   *
+   * First, dismissal. `Menu` light-dismisses on CLICK, not on
+   * pointerdown. ViewControls' #1096 panel uses pointerdown and #1105
+   * is the bill for it: the panel's collapse re-flows its own footer
+   * cluster between pointerdown and pointerup, the sibling button slides
+   * out from under the cursor, and the click the reader aimed never
+   * lands. This rail has exactly that shape — the menu's neighbours are
+   * layout siblings in the same flex row — so the dismissal has to
+   * survive the reflow it causes. On `click` it does: the aimed control
+   * performs its action and THEN the menu closes.
+   *
+   * Second, keyboard. Escape closes and returns focus to the trigger,
+   * arrows walk the items, and that behaviour lives in one component
+   * instead of being re-derived per menu.
+   *
+   * The items NAVIGATE; none of them mutates anything from here. A
+   * reorder/hide surface does not exist yet and inventing one inside a
+   * navigation strip is how a strip becomes an application. Both
+   * entries land on /teams today because the directory is where follows
+   * are managed; they are separate items because they are separate
+   * intents, and the day a dedicated follow-management surface exists,
+   * one of them repoints without the menu changing shape.
    */
   import { onMount } from 'svelte';
   import { teamFollows } from '$stores/teamFollows.svelte';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
+  import Menu from '$components/Menu.svelte';
   import TeamAvatar from '$components/TeamAvatar.svelte';
 
   onMount(() => {
@@ -99,12 +145,121 @@
        region's name in the accessibility tree is unchanged — only its
        visual rendering went away. -->
   <section aria-label={t('teams.rail_title')} data-testid="teams-rail">
-    <!-- ONE row: the scroller and the directory chip are siblings, not
-         stacked. `min-w-0` on the scroller is load-bearing — a flex
+    <!-- ONE row: the two fixed controls and the scroller are siblings,
+         not stacked. `min-w-0` on the scroller is load-bearing — a flex
          child defaults to min-width:auto and would refuse to shrink
-         below its content, pushing the chip off screen for anyone who
-         follows more than a handful of teams. -->
+         below its content, pushing the fixed controls off screen for
+         anyone who follows more than a handful of teams. -->
     <div class="flex items-center gap-2">
+      <!-- The manage menu, far left (#1097). Sized to the chips beside
+           it so the row reads as one strip rather than a button with a
+           list next to it; `h-12 w-12` is also comfortably past the
+           44px tap target the chips are held to. -->
+      <div class="shrink-0">
+        <!-- `triggerClass` is not decoration: Menu's default wraps the
+             trigger in a `display: contents` button, which generates no
+             box, cannot take focus and is skipped by Tab — measured, and
+             true of every other menu in the app (see Menu's own prop
+             docs). `inline-flex` gives the button a box back, which is
+             the whole of what makes this menu keyboard-reachable. -->
+        <Menu
+          align="left"
+          triggerClass="inline-flex rounded-full"
+          triggerTestId="teams-rail-manage"
+          panelTestId="teams-rail-manage-menu"
+        >
+          {#snippet trigger({ open })}
+            <!-- `aria-label` on the span, not the wrapping button: the
+                 button's accessible name comes from its content, and
+                 that content is otherwise a decorative glyph — no name
+                 at all. Same shape ColumnPicker's trigger uses. -->
+            <span
+              class="flex h-12 w-12 items-center justify-center rounded-full border border-border
+                     bg-surface-elevated text-fg-muted transition-colors hover:border-border-strong
+                     hover:bg-state-hover hover:text-fg"
+              class:border-border-strong={open}
+              class:text-fg={open}
+              aria-label={t('teams.rail_manage')}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
+            </span>
+          {/snippet}
+
+          <a
+            href="/teams"
+            role="menuitem"
+            class="block px-3 py-2 text-sm text-fg hover:bg-state-hover"
+            data-testid="teams-rail-manage-all"
+          >
+            {t('teams.browse_all')}
+          </a>
+          <a
+            href="/teams"
+            role="menuitem"
+            class="block px-3 py-2 text-sm text-fg hover:bg-state-hover"
+            data-testid="teams-rail-manage-follows"
+          >
+            {t('teams.rail_manage_follows')}
+          </a>
+        </Menu>
+      </div>
+
+      <!-- The directory chip, now at the HEAD of the strip (#1097).
+           `shrink-0` so it keeps its size at 390px, where the scroller
+           gets whatever is left. The grid glyph is what makes it read
+           as "everything" beside a row of individual studios — without
+           it, a text-only chip in chip position looks like one more
+           team called "All teams".
+
+           Below `sm` the LABEL collapses and the glyph stands alone.
+           Measured at 390px with the label showing: the ⋯ and this chip
+           took 197 of 390px and left the scroller 146 — barely one team
+           chip, so the strip stopped looking like a strip on exactly
+           the width where it has the least room to explain itself. The
+           label goes `sr-only`, not `hidden`: the accessible name is
+           unchanged at every width, only the pixels go away. -->
+      <a
+        href="/teams"
+        class="flex min-h-12 shrink-0 items-center gap-2.5 rounded-full border border-border
+               bg-surface-elevated py-1 pl-1 pr-1 text-sm font-medium text-fg transition-colors
+               hover:border-border-strong hover:bg-state-hover sm:pr-4"
+        data-testid="teams-rail-browse-all"
+      >
+        <span
+          class="flex h-10 w-10 items-center justify-center rounded-full bg-state-hover text-fg-muted"
+          aria-hidden="true"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <rect x="14" y="14" width="7" height="7" rx="1" />
+          </svg>
+        </span>
+        <span class="sr-only whitespace-nowrap sm:not-sr-only">{t('teams.browse_all')}</span>
+      </a>
+
       <div class="min-w-0 flex-1">
         {#if !hasTeams}
           <!-- Actionable, not decorative: the whole point of the empty
@@ -124,17 +279,26 @@
           <!-- Horizontal scroll rather than wrap: the rail must stay one
                row tall whether the user follows two studios or forty, or
                it starts pushing the feed off the fold. -->
+          <!-- Chip size (#1097). The avatar is 40px and the chip clears
+               48px tall, so the whole thing is past the 44px minimum tap
+               target rather than relying on the row's padding to get
+               there — the old 28px avatar in a 34px chip was a
+               touch-target failure as much as a legibility one.
+
+               `min-h-12` rather than a fixed height: the name is the
+               chip's content and a fixed height would clip a language
+               whose glyphs are taller than English's. -->
           <ul class="flex gap-2 overflow-x-auto pb-1">
             {#each teamFollows.featured as team (team.id)}
               <li class="shrink-0">
                 <a
                   href={`/teams/${team.id}`}
-                  class="flex items-center gap-2 rounded-full border border-accent bg-surface-elevated py-1 pl-1 pr-3
-                         text-sm text-fg transition-colors hover:bg-state-hover"
+                  class="flex min-h-12 items-center gap-2.5 rounded-full border border-accent bg-surface-elevated
+                         py-1 pl-1 pr-4 text-sm text-fg transition-colors hover:bg-state-hover"
                   title={team.description || team.name}
                   data-testid="teams-rail-featured"
                 >
-                  <TeamAvatar {team} />
+                  <TeamAvatar {team} class="h-10 w-10 rounded-full" textClass="text-sm" />
                   <span class="max-w-[12rem] truncate font-medium">{team.name}</span>
                   <!-- The accent border is the visual cue; this is the
                        same cue for a screen reader, which cannot see a
@@ -148,11 +312,12 @@
               <li class="shrink-0">
                 <a
                   href={`/teams/${team.id}`}
-                  class="flex items-center gap-2 rounded-full border border-border bg-surface-elevated py-1 pl-1 pr-3
-                         text-sm text-fg transition-colors hover:border-border-strong hover:bg-state-hover"
+                  class="flex min-h-12 items-center gap-2.5 rounded-full border border-border bg-surface-elevated
+                         py-1 pl-1 pr-4 text-sm text-fg transition-colors hover:border-border-strong
+                         hover:bg-state-hover"
                   title={team.description || team.name}
                 >
-                  <TeamAvatar {team} />
+                  <TeamAvatar {team} class="h-10 w-10 rounded-full" textClass="text-sm" />
                   <span class="max-w-[12rem] truncate font-medium">{team.name}</span>
                 </a>
               </li>
@@ -160,18 +325,6 @@
           </ul>
         {/if}
       </div>
-
-      <!-- The directory chip, pinned at the end of the strip (#1084).
-           `shrink-0` keeps it at full width at 390px, where the
-           scroller gets whatever is left. -->
-      <a
-        href="/teams"
-        class="shrink-0 self-center rounded-full border border-border px-3 py-1.5 text-xs font-medium
-               text-accent transition-colors hover:border-border-strong hover:bg-state-hover"
-        data-testid="teams-rail-browse-all"
-      >
-        {t('teams.browse_all')}
-      </a>
     </div>
   </section>
 {/if}

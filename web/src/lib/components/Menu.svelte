@@ -40,6 +40,29 @@
     triggerTestId?: string;
     /** `data-testid` for the dropdown panel (rendered when open). */
     panelTestId?: string;
+    /** Class for the wrapping trigger BUTTON.
+     *
+     *  ⚠️ The default `contents` makes this menu unreachable by
+     *  keyboard, and that is a real defect, not a style choice.
+     *  Measured in Chromium on the browse page (#1097): every
+     *  `button[aria-haspopup="menu"]` carrying `class="contents"` —
+     *  six of them on `/` alone — reports `getClientRects().length ===
+     *  0`, refuses `.focus()`, and is skipped by Tab. An element with
+     *  `display: contents` generates no box, and browsers stopped
+     *  making an exception for form controls, so the button is styling
+     *  scaffolding that no longer exists at layout time. The visible
+     *  chip inside it is a `<span>`, which is not focusable either, so
+     *  there is nothing left to land on.
+     *
+     *  Pass a value that GENERATES A BOX — `inline-flex` is the usual
+     *  one — and the trigger becomes focusable and tabbable again with
+     *  no other change. The default is left alone here deliberately:
+     *  flipping it would re-layout every existing menu in the app in
+     *  one unrelated commit. Repairing the rest of them is its own
+     *  change, and this prop is what it will use.
+     *
+     *  New callers should pass one. */
+    triggerClass?: string;
   }
 
   let {
@@ -49,6 +72,7 @@
     panelClass = '',
     triggerTestId,
     panelTestId,
+    triggerClass = 'contents',
   }: Props = $props();
 
   let open = $state(false);
@@ -141,7 +165,7 @@
     aria-haspopup="menu"
     aria-expanded={open}
     data-testid={triggerTestId}
-    class="contents"
+    class={triggerClass}
   >
     {@render trigger({ open })}
   </button>

@@ -152,6 +152,7 @@
     },
     "columns": "Columns",
     "reset_columns": "Reset to default columns",
+    "resize_column": "Resize column",
     "list": {
       "post_singular": "post",
       "post_plural": "posts",
@@ -2531,6 +2532,8 @@
     "unfollow": "Unfollow",
     "rail_title": "Your teams",
     "browse_all": "All teams",
+    "rail_manage": "Team rail options",
+    "rail_manage_follows": "Manage follows",
     "featured": "Featured",
     "empty": "You aren't following any teams yet.",
     "empty_cta": "Find some",
