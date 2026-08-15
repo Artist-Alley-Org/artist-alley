@@ -14139,7 +14139,7 @@ components:
         the render-time hero re-check (#982), and resolving it here
         would be a second copy of that rule inside a query whose gates
         are deliberately weaker than the public rail's.
-      required: [id, subject_kind, subject_id, position, title, preview_available, created_at, ladder_available]
+      required: [id, subject_kind, subject_id, position, title, subtitle, preview_available, created_at, ladder_available]
       properties:
         id:
           type: string
@@ -14167,6 +14167,48 @@ components:
           description: |
             Resolved subject title (asset title or collection name).
             Empty when the subject was deleted out from under the row.
+        subtitle:
+          type: string
+          description: |
+            The wide card's second line (#1110): the COLLECTION's own
+            `description`, empty when it has none — and empty for every
+            other subject kind.
+
+            WITHHELD EXACTLY WHEN `title` IS, structurally rather than
+            by a second rule. It is selected from the same `c` join
+            that produces `title` for a collection subject, and that
+            join carries the caller's ADR 0063 collection predicate in
+            its ON clause: a collection this caller may not see fails
+            to join, contributes neither name nor description, and the
+            placement row is then dropped entirely. There is no
+            arrangement in which a description arrives without the name
+            it belongs to.
+
+            ASSET SUBJECTS CARRY NO SUBTITLE, deliberately. ADR 0020
+            makes a non-public asset title-only on this surface — the
+            rail already suppresses its thumbnail hints for exactly
+            that reason — so sourcing this from `assets.description`
+            would widen an embargo tile from "title" to "title and the
+            author's notes". #1110 specifies the collection's
+            description; the asset half of that widening is not a
+            rendering choice this field gets to make.
+        item_count:
+          type: integer
+          nullable: true
+          description: |
+            How many members of a COLLECTION subject THIS CALLER can
+            see — the wide card's subtitle fallback when `subtitle` is
+            empty (#1110). Null for every non-collection subject.
+
+            Caller-scoped, not a raw `COUNT(*)`. The membership is the
+            same one the mosaic composes from (pinned, unexpired, over
+            both `collection_posts` and `collection_resources`), with
+            each half gated by the caller's own read predicate — the
+            post rule for posts, the asset predicate for resources. A
+            bare count would publish the SIZE of the withheld part of a
+            public collection, which is the derived-copy leak class
+            #902 closed for search text and #1066 closed for
+            embeddings, arriving through a subtitle.
         cover_asset_id:
           type: string
           format: uuid

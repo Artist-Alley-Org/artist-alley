@@ -21,6 +21,16 @@ type RailRow struct {
 	SubjectID   pgtype.UUID
 	Position    int32
 	Title       string
+	// Subtitle is the wide card's second line (#1110) — a COLLECTION
+	// subject's own description, "" when it has none and "" for every
+	// other subject kind. See the SQL for why it is read from the same
+	// join as Title and why assets deliberately do not contribute one.
+	Subtitle string
+	// ItemCount is the subtitle's fallback: how many members of a
+	// collection subject THIS caller can see. nil for any other subject
+	// kind, which is not the same answer as 0 — an asset has no
+	// membership, an empty collection has one and it is empty.
+	ItemCount *int32
 	// CoverAssetID is the asset whose col variant renders the tile: the
 	// subject itself for an asset, ADR 0027's hero-card fallback for a
 	// collection. Invalid (NULL) when nothing is servable to the caller.
@@ -84,10 +94,45 @@ type RailRow struct {
 // asset predicate's args, then the collection predicate's. Each
 // ToSQL call is given the running length, so the two fragments never
 // collide.
+//
+// # The subtitle and its count (#1110)
+//
+// The wide card prints a second line under the name. Its source is the
+// collection's own `description`, and its fallback is how many members
+// the caller can see. Both are computed HERE rather than by a second
+// request, and both are subject to one rule stated twice below because
+// they arrive by different routes:
+//
+//   - The DESCRIPTION rides the `c` join. That join already carries the
+//     collection predicate in its ON clause, so a collection this
+//     caller cannot see contributes no name AND no description, and the
+//     row is dropped by the same WHERE that has always dropped it. The
+//     subtitle is therefore withheld exactly when the title is, by
+//     construction rather than by a matching pair of conditions that a
+//     later edit could unmatch.
+//
+//   - The COUNT is a fresh traversal into two membership tables, so it
+//     gets no such protection for free and each half is gated
+//     explicitly. Counting the whole membership would publish the size
+//     of the part this caller is not allowed to look at — a public
+//     collection of 400 posts of which a stranger may open 3 would
+//     announce "400 items". That is the derived-copy defect class:
+//     #902 (search text), #1066 (embeddings), and Elastic documents the
+//     same leak as a known limit of document-level security. The
+//     membership counted is the one ComposeCovers draws its mosaic from
+//     — pinned, unexpired, posts + resources — so the tile's picture
+//     and the tile's number describe the same set.
+//
+// postCaps is the caller's resolved post capabilities, needed by the
+// post half of that count and by nothing else in this query. Omitting
+// it yields the NARROWER answer (see visibility.WithPostCaps), so the
+// failure direction is a moderator's count reading low, never a
+// stranger's reading high.
 func ListPublicRail(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	caller visibility.Caller,
+	postCaps visibility.PostCaps,
 	limit int32,
 	ladder []string,
 ) ([]RailRow, error) {
@@ -118,10 +163,54 @@ func ListPublicRail(
 	coverFrag, coverArgs := assetPred.ToSQL("ca", len(args))
 	args = append(args, coverArgs...)
 
+	// Fourth and fifth splices, for the two halves of the member count
+	// (#1110). The resource half is the SAME asset predicate a third
+	// time, aliased for the count's own join; the post half is the post
+	// read rule, which this query did not need before — a collection's
+	// cover comes from a post but the cover lateral gates the ASSET, and
+	// counting members means asking whether the caller may see each
+	// MEMBER.
+	countAssetFrag, countAssetArgs := assetPred.ToSQL("ia", len(args))
+	args = append(args, countAssetArgs...)
+
+	postPred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(postCaps))
+	if err != nil {
+		return nil, fmt.Errorf("featured: post visibility filter: %w", err)
+	}
+	// Soft-delete NOT waived: a deleted post is not a member. Same shape
+	// collections.ComposeCovers splices for the same membership.
+	countPostFrag, countPostArgs := postPred.ToSQL("ip", len(args))
+	args = append(args, countPostArgs...)
+
 	// The predicate fragments arrive as " AND (...)", which is exactly
 	// what an ON clause wants appended.
 	sql := `SELECT f.id, f.subject_kind, f.subject_id, f.position,
        COALESCE(a.title, c.name, '')::text AS title,
+       -- The subtitle, from the SAME join as the name above (#1110).
+       -- Read the header note before adding an ` + "`a.description`" + ` arm here:
+       -- an embargo asset is title-only on this surface by ADR 0020, and
+       -- its own join is the one that surfaces it, so an asset arm would
+       -- print the withheld half of a tile whose pixels are suppressed
+       -- three lines down.
+       COALESCE(c.description, '')::text AS subtitle,
+       -- The subtitle's fallback: members THIS caller can see. NULL —
+       -- not 0 — for an asset subject, because "no membership" and "an
+       -- empty membership" are different tiles.
+       CASE WHEN c.id IS NOT NULL THEN (
+              (SELECT count(*)
+                 FROM collection_posts icp
+                 JOIN posts ip ON ip.id = icp.post_id` + countPostFrag + `
+                WHERE icp.collection_id = c.id
+                  AND icp.pinned = TRUE
+                  AND (icp.expires_at IS NULL OR icp.expires_at > NOW()))
+            + (SELECT count(*)
+                 FROM collection_resources icr
+                 JOIN assets ia ON ia.id = icr.asset_id` + countAssetFrag + `
+                WHERE icr.collection_id = c.id
+                  AND icr.pinned = TRUE
+                  AND (icr.expires_at IS NULL OR icr.expires_at > NOW()))
+       ) END::INTEGER AS item_count,
        -- Kept in lockstep with asset_file_hash: an id without a servable
        -- hash would have the client build a URL that 404s.
        CASE f.subject_kind
@@ -214,7 +303,7 @@ LIMIT $1::INTEGER`
 		var r RailRow
 		if err := rows.Scan(
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
-			&r.Title, &r.CoverAssetID,
+			&r.Title, &r.Subtitle, &r.ItemCount, &r.CoverAssetID,
 			&r.AssetFileHash, &r.AssetPreviewAvailable,
 			&r.AssetLadderAvailable,
 		); err != nil {
