@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Wide artwork gets the room it needs in masonry.** A panorama or a waveform used to be squeezed
+  into one portrait-shaped column and came out a few pixels tall — technically present, practically
+  invisible. About a third of a typical feed here is that wide. Wide pieces now take two columns
+  when one column would render them below a readable height, and the threshold adapts as you change
+  the tile size, so what counts as "too small" tracks what is actually on your screen (#1025).
+
+  Under the hood the masonry wall was rebuilt to make this possible — a tile can now truly straddle
+  columns — and the property that matters most was kept and re-measured: when more work loads in as
+  you scroll, **nothing you are already looking at moves**. The screen-reader experience also
+  improved: tiles now come in feed order again instead of column order (#747).
+
 - **A team can be spotlighted in the teams strip.** Operators could already hand-pick assets and
   collections for a home surface; teams are now spotlightable the same way, and a spotlighted team
   leads the strip. The "All teams" link moved into the strip itself rather than sitting on a row
