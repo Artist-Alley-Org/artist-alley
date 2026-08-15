@@ -116,7 +116,7 @@ WHERE tm.user_ref = $1 AND t.deleted_at IS NULL
 ORDER BY t.name ASC, t.id ASC;
 
 -- name: FollowTeam :exec
--- Bookmark a team into the caller's channels rail (#577).
+-- Bookmark a team into the caller's teams rail (#577).
 --
 -- ON CONFLICT DO NOTHING makes follow IDEMPOTENT: a double-tapped
 -- button, a retried request and a genuine re-follow are one request
@@ -146,7 +146,7 @@ DELETE FROM team_follows
 WHERE user_ref = $1 AND team_id = $2;
 
 -- name: ListFollowedTeams :many
--- The caller's channels rail (#577). Same projection and ordering as
+-- The caller's teams rail (#577). Same projection and ordering as
 -- ListUserTeams so the two lists render through one code path, but a
 -- DIFFERENT table: this is what the user bookmarked, that is what the
 -- user belongs to. They are not the same question and neither implies

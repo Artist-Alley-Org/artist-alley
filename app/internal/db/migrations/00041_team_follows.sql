@@ -3,8 +3,8 @@
 
 -- 00041_team_follows.sql
 --
--- Teams become followable channels (#577). One row per (user, team)
--- the user has bookmarked, feeding the channels rail on browse.
+-- Teams become followable (#577). One row per (user, team) the user
+-- has bookmarked, feeding the teams rail on browse.
 --
 -- ## A follow is a BOOKMARK, not a relationship
 --
@@ -36,8 +36,8 @@
 -- `COUNT(*)` against the PK is free. Add it when a query is slow, with
 -- the measurement that showed it.
 --
--- Likewise there is no `last_read_at`. Channels are not
--- notifications; the unread/digest model is #520's arc and it should
+-- Likewise there is no `last_read_at`. A follow is a bookmark, not a
+-- subscription; the unread/digest model is #520's arc and it should
 -- get to choose its own schema rather than inherit a column guessed
 -- at here.
 --

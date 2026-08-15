@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// #577 — migration 00041 creates `team_follows`, the channels
+// #577 — migration 00041 creates `team_follows`, the teams-rail
 // bookmark table.
 //
 // The interesting properties are not "a table appeared". They are:
