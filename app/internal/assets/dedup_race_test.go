@@ -7,7 +7,7 @@
 // uploads of the same file by the same user produce EXACTLY ONE
 // asset row, with the losers getting a dedup-warning response
 // (default behavior). The partial unique index on
-// (owner_user_ref, file_hash) from migration 00016 + the
+// (owner_user_ref, file_hash) from migration 00001 + the
 // 23505-classification race-loser path in CreateAsset together
 // provide the guarantee.
 

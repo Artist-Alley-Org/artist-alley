@@ -97,13 +97,13 @@ type Peer struct {
 	TrustTier          federation.TrustTier
 	EncryptionPolicy   federation.EncryptionPolicy
 	Enabled            bool
-	Status             federation.PeerStatus // handshake state (migration 00052)
+	Status             federation.PeerStatus // handshake state (migration 00001)
 	HandshakeAt        pgtype.Timestamptz
 	HandshakeByUserRef int64
 	LastSeenAt         pgtype.Timestamptz
 	Notes              string
 	// ShareInVisibleList — opt-in for peer-of-peer discovery
-	// per migration 00055. When TRUE this peer appears in
+	// per migration 00001. When TRUE this peer appears in
 	// GET /federation/peers/visible responses.
 	ShareInVisibleList bool
 

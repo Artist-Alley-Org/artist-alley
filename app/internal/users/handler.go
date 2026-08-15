@@ -4,7 +4,7 @@
 // Package users implements the public user-profile surface.
 //
 // The legacy "user" table carries auth-bearing data we never expose;
-// user_profiles (migration 00021) carries display-layer fields. Reads
+// user_profiles (migration 00001) carries display-layer fields. Reads
 // merge both; defaults substitute when no profile row exists. Federation:
 // the profile row is what gets mirrored to peer sites.
 package users
@@ -35,7 +35,7 @@ const (
 	CapEditAnyProfile = "users.profile.edit.any"
 	CapSystemAdmin    = "system.admin"
 	// CapUpdateSelfProfile is the per-user gate (Phase 1.17.F).
-	// Seeded for the Base role by migration 00007 so every
+	// Seeded for the Base role by migration 00001 so every
 	// existing user keeps the ability by default. An operator
 	// can revoke it per-user (disciplinary lock-out) without
 	// touching the handler's auth model.
@@ -456,7 +456,7 @@ func (h *Handler) UpdateUserProfile(
 	isSelfEdit := caller.UserRef == req.Ref
 	if isSelfEdit {
 		// profile.update_self capability gate. Bootstrap admin + Base
-		// role have it by default (migration 00007); an operator who
+		// role have it by default (migration 00001); an operator who
 		// wants to lock a user out of self-editing entirely can revoke
 		// this capability.
 		if !caller.Can(CapUpdateSelfProfile) && !caller.Can(CapSystemAdmin) {

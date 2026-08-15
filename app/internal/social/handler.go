@@ -3,7 +3,7 @@
 
 // Package social implements the likes + comments HTTP surface on top
 // of the polymorphic data plane from Phase 1.13.D-4. The schema and
-// triggers are in migration 00020; this file is the handler layer.
+// triggers are in migration 00001; this file is the handler layer.
 //
 // Endpoints (rooted under /api/v1):
 //
@@ -14,7 +14,7 @@
 //	POST   /posts/{id}/comments          — create (optionally a reply)
 //	DELETE /comments/{id}                — soft-delete (own or moderator)
 //
-// Capability gates (seeded in 00020):
+// Capability gates (seeded in 00001):
 //   - posts.like           — Base default
 //   - posts.comment        — Base default
 //   - comments.delete.own  — Base default (gates the own-delete branch)
@@ -731,7 +731,7 @@ var errCommentAbsent = errors.New("social: comment row absent")
 //
 // Whiteboards are stored as comments so they inherit threading (reply
 // to a sketch), likes, soft-delete, federation, and audit for free.
-// Migration 00029 extended the comments.annotation_type CHECK to
+// Migration 00001 extended the comments.annotation_type CHECK to
 // include 'whiteboard'; this is the HTTP surface that drives it.
 //
 // Capability: posts.comment (same gate as a regular comment).

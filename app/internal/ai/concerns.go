@@ -27,7 +27,7 @@ package ai
 import "fmt"
 
 // Concern is the typed AI task category. Five values, mirroring the
-// ai_provider_call.concern CHECK in migration 00009.
+// ai_provider_call.concern CHECK in migration 00001.
 type Concern string
 
 const (

@@ -20,12 +20,13 @@
 //     and avoids per-query dependency tracking.
 //
 // Ranking uses Postgres native ts_rank_cd against the tsvector
-// columns (assets.search_text + posts.search_text from the 00001
-// baseline; collections.search_text added in 00021). No new
+// columns (assets.search_text, posts.search_text and
+// collections.search_text — all three from the 00001 baseline). No new
 // Postgres extensions required.
 //
-// Ranking is UNWEIGHTED in this phase — see the 00021 migration
-// header for the divergence note. ts_rank_cd's default weight
+// Ranking is UNWEIGHTED in this phase; the divergence note that
+// explained why lived in a pre-fold migration header and did not
+// survive the baseline fold. ts_rank_cd's default weight
 // vector still delivers meaningful cover-density ranking without
 // setweight. Field-weighted retrofit is a clean seam left for a
 // later sub-phase.

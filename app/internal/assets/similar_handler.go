@@ -178,7 +178,7 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 }
 
 // defaultEmbeddingModel reads system_config.ai.embedding.default_model.
-// Falls back to "nomic-embed-text" (the migration 00011 seed value)
+// Falls back to "nomic-embed-text" (the migration 00001 seed value)
 // when the row is absent — keeps the response useful even on a
 // fresh DB before the seed has propagated.
 func (h *Handler) defaultEmbeddingModel(ctx context.Context) (string, error) {

@@ -12,7 +12,7 @@
 //
 // It reuses maFixture from mutation_authz_test.go deliberately: that
 // fixture builds a REAL team hierarchy through team_parents and lets
-// the 00015 trigger materialise team_closure, and loads identities
+// the 00001 trigger materialise team_closure, and loads identities
 // through auth.Resolver.LoadIdentity so scoped grants arrive
 // closure-expanded from the database. The seeded database has no team
 // hierarchy at all (11 self-referential closure rows), so a test that

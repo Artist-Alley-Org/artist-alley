@@ -175,7 +175,7 @@ func TestHandlers_CapabilityEnforcement(t *testing.T) {
 			t.Fatalf("no-role status=%d want 403 body=%s", resp.StatusCode, readBody(resp))
 		}
 
-		// Grant the test user the Admin role (seeded by migration 00002).
+		// Grant the test user the Admin role (seeded by migration 00001).
 		var adminID pgtype.UUID
 		if err := fx.pool.QueryRow(ctx, `SELECT id FROM roles WHERE name='Admin'`).Scan(&adminID); err != nil {
 			t.Fatalf("lookup Admin role: %v", err)

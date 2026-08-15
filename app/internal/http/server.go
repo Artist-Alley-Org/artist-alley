@@ -871,7 +871,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Federation OUTBOX dispatcher (Phase 1.22.D-b). LISTEN/
 	// NOTIFY-driven fan-out from activities → federation_outbox.
-	// Sub-100ms latency via the trigger from migration 00005;
+	// Sub-100ms latency via the trigger from migration 00001;
 	// 30s ticker is correctness backstop only.
 	if s.api != nil && s.api.outboxDispatcher != nil {
 		go s.api.outboxDispatcher.Run(ctx)

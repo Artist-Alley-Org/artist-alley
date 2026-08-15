@@ -4,11 +4,11 @@
 // Package teams implements the team-DAG slice of the artist-alley HTTP API.
 //
 // See ADR 0010 Layer 4. Capability gates:
-//   - teams.read  — list and view (granted to Base in 00015)
+//   - teams.read  — list and view (granted to Base in 00001)
 //   - teams.create — create new teams (Admin only)
 //   - teams.admin — edit any team / manage parents / manage members (Admin only)
 //
-// The DAG triggers in migration 00015 do the heavy lifting:
+// The DAG triggers in migration 00001 do the heavy lifting:
 //   - team_parents BEFORE INSERT rejects cycles (we surface as 409)
 //   - team_parents AFTER INSERT propagates closure rows
 //   - team_parents AFTER DELETE rebuilds the closure

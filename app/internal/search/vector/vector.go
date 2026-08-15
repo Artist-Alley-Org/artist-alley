@@ -19,13 +19,13 @@ import (
 
 // Dim is the CLIP / embedding vector dimensionality this package
 // operates against. Matches the schema's asset_embedding_d768 table
-// + the dim_registry entry seeded in migration 00011.
+// + the dim_registry entry seeded in migration 00001.
 const Dim = 768
 
 // DefaultProvider is the fallback provider value used to look up
 // stored embeddings when the caller hasn't specified one. Mirrors
 // the seed default in system_config.ai.routing.embed shipped by
-// migration 00009.
+// migration 00001.
 const DefaultProvider = "clip_local"
 
 // DefaultModel is the fallback model name. Aligns with the current

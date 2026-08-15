@@ -29,7 +29,7 @@ import (
 // DB error separately for the operator to see in logs.
 
 // CallRecord is the per-call shape. Aligns one-for-one with the
-// ai_provider_call columns from migration 00009.
+// ai_provider_call columns from migration 00001.
 type CallRecord struct {
 	Provider               string
 	Model                  string

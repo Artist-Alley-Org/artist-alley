@@ -11,7 +11,7 @@
 // No list-level cache: every user write would invalidate every
 // filter combination's page key, defeating the point. The per-user
 // `byRef` cache already hot-paths repeat single-user reads on the
-// detail page. The list query is index-backed (migration 00037)
+// detail page. The list query is index-backed (migration 00001)
 // with cursor pagination, so 100k-user instances answer in <100ms.
 
 package users

@@ -9,7 +9,7 @@
 //	GET  /admin/ai/usage   → per-provider cost rollup for one period
 //
 // All three require the ai.admin capability (seeded for the Admin
-// role by migration 00009). The capability gate runs inside each
+// role by migration 00001). The capability gate runs inside each
 // handler — apiServer doesn't enforce per-route caps automatically
 // (that's a future ADR).
 //
@@ -32,7 +32,7 @@ import (
 )
 
 // CapAIAdmin is the capability code gating every endpoint in this
-// package. Seeded for the Admin role in migration 00009.
+// package. Seeded for the Admin role in migration 00001.
 const CapAIAdmin = "ai.admin"
 
 // Handler wires the package's endpoints to the underlying AI

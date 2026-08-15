@@ -4,7 +4,7 @@
 // Capability vocabulary for Phase 1.22.I-d peer-handshake
 // capability negotiation. The bilateral intersection of both
 // peers' advertised sets is stored in federation_peers.capabilities
-// (migration 00009). This file defines the typed constants the
+// (migration 00001). This file defines the typed constants the
 // reference implementation recognises + the helpers callers use
 // to check membership, intersect, gate dispatch.
 //

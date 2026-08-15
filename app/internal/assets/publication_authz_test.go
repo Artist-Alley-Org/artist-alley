@@ -21,7 +21,7 @@
 //   - The CLOSURE works. A grant on a PARENT team must reach an asset
 //     owned by a DESCENDANT team. The seeded database has no team
 //     hierarchy at all (11 self-referential team_closure rows), so this
-//     file builds its own through team_parents and lets the 00015
+//     file builds its own through team_parents and lets the 00001
 //     trigger materialise the closure — a test against a flat hierarchy
 //     has not tested the closure.
 //
@@ -222,7 +222,7 @@ func TestAssetPublication_GlobalGrantReachesTeamlessAsset(t *testing.T) {
 //
 // The hierarchy is built here — teams "division" > "studio" > "strike"
 // linked through team_parents, with team_closure materialised by the
-// 00015 trigger — because the seeded database has none. A grant on the
+// 00001 trigger — because the seeded database has none. A grant on the
 // grandparent reaching a grandchild's asset also proves the closure is
 // transitive rather than one level deep.
 func TestAssetPublication_ParentTeamGrantReachesDescendantAsset(t *testing.T) {

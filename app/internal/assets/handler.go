@@ -428,7 +428,7 @@ func (h *Handler) CreateAsset(
 	//     per-user partial index for now (which still fires the
 	//     constraint for the same user uploading twice).
 	//
-	// The DB-side partial unique index from migration 00016
+	// The DB-side partial unique index from migration 00001
 	// provides the load-bearing concurrency guarantee — even if
 	// the pre-check passes, two concurrent uploads of the same
 	// file by the same user can still race; one wins the unique
@@ -2618,7 +2618,7 @@ func isImageExt(ext *string) bool {
 // category. Returns 0 (unset) when we don't have a strong opinion —
 // the caller's explicit choice still wins.
 //
-// Type refs (seeded in migrations 00027 + 00031 + 00033 + 00034):
+// Type refs (all fourteen seeded in migration 00001):
 //
 //	1 Image · 2 Document · 3 Video · 4 Audio · 5 3D Object · 6 Archive
 //	7 Font · 8 Comic · 10 Ebook · 11 Audiobook · 12 Texture

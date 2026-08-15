@@ -1968,9 +1968,13 @@ func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi
 }
 
 // validVisibility checks against the 4-tier closed catalogue
-// per the 1.22.C design proposal §1. `public` was removed at
-// migration 00056 (reserved for a future public-fediverse phase).
-// Writes attempting `public` get the clear "tier reserved" error.
+// per the 1.22.C design proposal §1. `public` was removed before the
+// v0.1 baseline fold — 00001_baseline_v0_1.sql's posts_visibility_check
+// lists the four tiers below and not `public` — and reserved for a
+// future public-fediverse phase. Migration 00008 later re-admitted the
+// value at the DB level (#414) for the READ rule; this WRITE gate still
+// refuses it, so writes attempting `public` get the clear "tier
+// reserved" error.
 func validVisibility(s string) bool {
 	switch s {
 	case "private", "org-only", "followers", "explicit-share":

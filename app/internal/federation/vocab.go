@@ -41,7 +41,7 @@ const (
 	// Add / Remove (AP §6.6 / §6.7) — used for collection
 	// membership: Add(object→target=collection) means "add the
 	// object to the collection"; Remove is the inverse. Added in
-	// migration 00050 alongside the collections handler wiring.
+	// migration 00001 alongside the collections handler wiring.
 	ActivityAdd    ActivityType = "Add"
 	ActivityRemove ActivityType = "Remove"
 
@@ -265,7 +265,7 @@ func (t TrustTier) Valid() bool {
 
 // ObjectVisibility is the 4-tier closed catalogue for object
 // visibility per the 1.22.C design proposal §1. Mirrors the
-// CHECK constraint added in migration 00056 on posts.visibility
+// CHECK constraint added in migration 00001 on posts.visibility
 // + collections.visibility (and any future shareable object).
 //
 //	private        — author + local admins only (no federation)
@@ -396,7 +396,7 @@ func (k ShareObjectKind) Valid() bool {
 }
 
 // PublishStatus is the state machine for publishing THIS instance
-// to a federation directory per migration 00054 + the publish
+// to a federation directory per migration 00001 + the publish
 // flow in docs/spec/federation-directory/v1.md §"POST /v1/register".
 //
 //	not_published    — fresh row; we've never tried to be listed
@@ -428,7 +428,7 @@ func (s PublishStatus) Valid() bool {
 }
 
 // PeerStatus is the handshake state machine for a federation_peers
-// row per migration 00052 + docs/spec/federation/v1.md §11.
+// row per migration 00001 + docs/spec/federation/v1.md §11.
 // Mirrors the CHECK constraint added in that migration.
 type PeerStatus string
 

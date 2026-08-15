@@ -256,7 +256,7 @@ func NewService(pool *pgxpool.Pool, logger *slog.Logger, reg *Registry) *Service
 //
 // IdempotencyKey (Phase 1.14.A): when non-empty, a partial UNIQUE
 // INDEX on (type, idempotency_key) WHERE status IN ('pending',
-// 'running') (migration 00009) prevents duplicate in-flight work.
+// 'running') (migration 00001) prevents duplicate in-flight work.
 // A re-enqueue with the same (type, key) returns the existing
 // pending/running job's id without inserting a duplicate row.
 // Completed/failed jobs with the same key don't block — that's

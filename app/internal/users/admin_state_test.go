@@ -6,7 +6,7 @@
 // Each test runs against real Postgres (skipped without
 // AA_DB_PASSWORD). Covers the constraints the brief calls out:
 //
-//   * Migration 00003 schema barriers (CHECK + system_config seed)
+//   * Migration 00001 schema barriers (CHECK + system_config seed)
 //   * Transition matrix enforcement at the handler layer
 //   * Last-admin invariant on disable AND archive (not just disable)
 //   * Cache invalidation on every transition
@@ -42,7 +42,7 @@ import (
 // Schema barriers
 // ---------------------------------------------------------------
 
-// CHECK constraint added by migration 00003 must reject values
+// CHECK constraint added by migration 00001 must reject values
 // outside {0,1,2,3}. The Go layer's ToOpenAPI* defenses are a
 // belt; the CHECK is the suspenders.
 func TestMigration_UserApprovedCheck_RejectsInvalidValues(t *testing.T) {

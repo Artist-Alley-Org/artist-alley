@@ -16,7 +16,7 @@ import (
 )
 
 // Config is the operator-tunable AI subsystem snapshot, parsed from
-// the six `ai.*` keys seeded in migration 00009. Read-hot path:
+// the six `ai.*` keys seeded in migration 00001. Read-hot path:
 // every inference call asks the router for a provider, which asks
 // the config for the routing preference + privacy policy. The whole
 // object lives in cacheDomainAIProviderConfig as a single global
@@ -150,7 +150,7 @@ func (l *Loader) readFromDB(ctx context.Context) (Config, error) {
 //
 // Missing keys fall back to the migration's seeded defaults so an
 // installation that hasn't been admin-tuned still gets a sane
-// snapshot (matches what migration 00009 seeded).
+// snapshot (matches what migration 00001 seeded).
 func ParseConfig(raw map[string][]byte) (Config, error) {
 	cfg := defaultConfig()
 
@@ -207,7 +207,7 @@ func ParseConfig(raw map[string][]byte) (Config, error) {
 }
 
 // defaultConfig returns the in-binary fallback snapshot mirroring
-// the migration 00009 seeds. Used when system_config has been
+// the migration 00001 seeds. Used when system_config has been
 // wiped or a key is missing.
 func defaultConfig() Config {
 	return Config{

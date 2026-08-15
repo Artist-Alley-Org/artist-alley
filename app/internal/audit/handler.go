@@ -8,7 +8,7 @@
 // and hot-path; reads are admin-only and cold-path.
 //
 // HTTPHandler is wired into the apiServer in app/internal/http/api.go.
-// Cap gate: system.audit.read (seeded by migration 00041).
+// Cap gate: system.audit.read (seeded by migration 00001).
 
 package audit
 

@@ -169,7 +169,7 @@ func TestDimRegistry_DimForModel_HitsAndMisses(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	// Seeded by migration 00011.
+	// Seeded by migration 00001.
 	if dim, ok := r.DimForModel("nomic-embed-text"); !ok || dim != 768 {
 		t.Errorf("nomic-embed-text → (%d, %t), want (768, true)", dim, ok)
 	}

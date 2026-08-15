@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // Package cliplocal implements the `clip_local` embedding provider —
-// the default backend for ai.routing.embed (see migration 00009).
+// the default backend for ai.routing.embed (see migration 00001).
 //
 // # Scope vs. naming
 //
@@ -39,7 +39,7 @@ import (
 )
 
 // Name matches the system_config ai.routing.embed default seeded by
-// migration 00009.
+// migration 00001.
 const Name = "clip_local"
 
 // defaultBaseURL points at the local Ollama install. Operators on a

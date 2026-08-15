@@ -71,7 +71,7 @@ import (
 const Algorithm = "naclbox-x25519-v1"
 
 // PublicKeyLen is the on-wire size of an X25519 public key
-// — 32 bytes per RFC 7748 §5. Migration 00007's CHECK constraint
+// — 32 bytes per RFC 7748 §5. Migration 00001's CHECK constraint
 // enforces the same length at the database boundary.
 const PublicKeyLen = 32
 
@@ -86,7 +86,7 @@ var (
 
 	// ErrPublicKeyWrongSize is returned by [Unwrap]-adjacent paths
 	// when a stored row's public key doesn't have the expected
-	// 32-byte length. Migration 00007 enforces this at insert time,
+	// 32-byte length. Migration 00001 enforces this at insert time,
 	// so this only fires for rows tampered with out-of-band — a
 	// signal worth surfacing rather than silently truncating.
 	ErrPublicKeyWrongSize = errors.New("userkeys: stored public key is not 32 bytes")
@@ -168,7 +168,7 @@ func Unwrap(wrapped []byte) (*ecdh.PrivateKey, error) {
 // ParsePublicKey turns a raw 32-byte public-key slice (the form
 // stored in federation_user_keys.public_key) into a usable
 // crypto/ecdh.PublicKey. Returns [ErrPublicKeyWrongSize] if the
-// slice is the wrong length — migration 00007's CHECK constraint
+// slice is the wrong length — migration 00001's CHECK constraint
 // makes this unreachable for normal reads, but a mutating DB-side
 // tool could violate it.
 func ParsePublicKey(raw []byte) (*ecdh.PublicKey, error) {

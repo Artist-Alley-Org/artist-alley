@@ -26,7 +26,7 @@
 // Pre-MVP, the existing int values are stable enough; the typed
 // Go layer gives us the gold-standard call-site ergonomics without
 // the schema churn. ADR 0046 (append-only migrations) still applies
-// at the constraint level (00003 adds a CHECK that pins the legal
+// at the constraint level (00001 adds a CHECK that pins the legal
 // set to {0,1,2,3}).
 //
 // # Transition matrix
@@ -55,7 +55,7 @@ import (
 
 // UserState is the typed user lifecycle state. The underlying int
 // values are pinned by the schema CHECK constraint added in
-// migration 00003 and by the legacy `approved` column convention
+// migration 00001 and by the legacy `approved` column convention
 // (1 = active by default).
 type UserState int64
 

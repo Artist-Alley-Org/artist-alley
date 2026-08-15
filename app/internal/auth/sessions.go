@@ -25,8 +25,10 @@ import (
 // consistent.
 //
 // Phase 1.17.B dropped the PHP-coexistence dual-write to
-// user.session / user.logged_in (migration 00004) — those columns are
-// gone, and the only state the session lives in is the sessions table
+// user.session / user.logged_in — the drop predates the v0.1 baseline
+// fold, so there is no migration to point at: the columns are simply
+// absent from 00001_baseline_v0_1.sql's `user` table. The only state
+// the session lives in is the sessions table
 // (id uuid PRIMARY KEY, looked up by sha256(cookie)).
 type SessionManager struct {
 	Pool *pgxpool.Pool

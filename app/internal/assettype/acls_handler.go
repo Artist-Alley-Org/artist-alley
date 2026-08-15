@@ -10,7 +10,7 @@
 //   DELETE /asset_types/{ref}/acls/{principal_type}/{principal_id}/{permission}
 //                                                                         — remove a row
 //
-// Cap gate: system.asset_types.admin (seeded by migration 00040).
+// Cap gate: system.asset_types.admin (seeded by migration 00001).
 // system.admin holders bypass via the existing wildcard logic in
 // Identity.Can.
 //

@@ -687,7 +687,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// Phase 1.14.C — register the whisper_local transcription
 	// provider. Same shape as clip_local: a sibling container per
 	// ADR 0034; the operator's enabled=false default in the
-	// system_config registration (migration 00012) means the
+	// system_config registration (migration 00001) means the
 	// admin UI gates the runtime call until the operator flips it.
 	s.aiRouter.Register(aiwhisperlocal.NewProvider(aiwhisperlocal.Config{}, aiCallAuditor))
 
@@ -776,7 +776,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// extract→chunk→route→stitch→VTT→subtitle pipeline lives in
 		// transcribe.Handler; the job handler is a thin wrapper that
 		// parses the payload + classifies errors. Operator's
-		// chunker config (system_config seeds from 00012) flows in
+		// chunker config (system_config seeds from 00001) flows in
 		// via the Config struct.
 		transcribeOrch := aitranscribe.NewHandler(
 			transcribeStorage, // same storage adapter as the Writer
@@ -1251,7 +1251,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.inboxDispatcher.SetAudit(auditRec)
 	// Phase 1.22.I-i — activates the I-h receiver-side
 	// encryption policy gate. The lookup resolves "asset"-kind
-	// objects to their sensitivity tier (migration 00014); other
+	// objects to their sensitivity tier (migration 00001); other
 	// kinds pass through (SensitivityNotFound). When the gate
 	// fires (plaintext envelope + restricted/embargo target),
 	// the dispatcher marks the row rejected with reason

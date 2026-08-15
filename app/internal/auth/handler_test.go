@@ -360,7 +360,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	}
 
 	// Idempotent upsert by username. The UNIQUE INDEX from migration
-	// 00007 makes ON CONFLICT (username) work directly — no fallback
+	// 00001 makes ON CONFLICT (username) work directly — no fallback
 	// path needed.
 	const upsert = `
 		INSERT INTO "user" (username, password, fullname, email, approved)

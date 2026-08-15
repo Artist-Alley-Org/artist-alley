@@ -89,7 +89,7 @@ const DefaultUsername = "admin"
 const DefaultEmail = "admin@localhost"
 
 // adminRoleName mirrors setup.adminRoleName — the "Admin" role
-// seeded by migration 00002.
+// seeded by migration 00001.
 const adminRoleName = "Admin"
 
 // Run executes the bootstrap check + creates the admin if
@@ -151,7 +151,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 
 	username := DefaultUsername
 	email := DefaultEmail
-	usergroup := int64(3) // legacy "Super Admin" group seeded by migration 00002
+	usergroup := int64(3) // legacy "Super Admin" group seeded by migration 00001
 	fullname := "Bootstrap Admin"
 
 	// Recover when the `admin` user already exists but has no admin

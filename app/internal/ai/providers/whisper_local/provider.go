@@ -3,7 +3,7 @@
 
 // Package whisperlocal implements the `whisper_local` transcription
 // provider — the seed default for ai.routing.transcribe (see migration
-// 00009 + 00012).
+// 00001).
 //
 // # Capability add-on, not in-process
 //
@@ -57,7 +57,7 @@ import (
 )
 
 // Name matches the seed routing key + the system_config provider
-// registration from migration 00012.
+// registration from migration 00001.
 const Name = "whisper_local"
 
 // defaultBaseURL targets the sibling container on the compose

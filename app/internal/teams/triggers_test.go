@@ -4,7 +4,7 @@
 // Package teams hosts the team-DAG slice of the API (ADR 0010, Layer 4).
 //
 // This file covers the closure-maintenance and cycle-rejection triggers
-// in migration 00015. The triggers are SQL-side, so the test exercises
+// in migration 00001. The triggers are SQL-side, so the test exercises
 // them with direct SQL — no application handlers needed yet.
 package teams_test
 
