@@ -298,12 +298,22 @@ func (h *HTTPHandler) GetPublicFeaturedRail(
 
 	// Anonymous callers resolve to the anonymous predicate; there is no
 	// nil-identity special case beyond building the caller.
+	//
+	// postCaps rides along for the subtitle's member count (#1110) and
+	// is resolved from the SAME identity, at the same moment, rather
+	// than inside the query builder: visibility.PostCaps is a resolved
+	// two-state value precisely so a closure over the identity cannot
+	// outlive the request that produced it (see ADR 0063's note on
+	// ContentCaps). Anonymous leaves it at its zero value, which admits
+	// nothing.
 	caller := visibility.NewCaller(nil)
+	postCaps := visibility.PostCaps{}
 	if id := auth.IdentityFromContext(ctx); id != nil {
 		caller = visibility.NewCaller(&id.UserRef)
+		postCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
 	}
 
-	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, limit, h.domain.Ladder(ctx))
+	rows, err := ListPublicRail(ctx, h.domain.Pool, caller, postCaps, limit, h.domain.Ladder(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("featured: public rail: %w", err)
 	}
@@ -331,6 +341,13 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 		SubjectId:   uuid.UUID(r.SubjectID.Bytes),
 		Position:    int(r.Position),
 		Title:       r.Title,
+		Subtitle:    r.Subtitle,
+	}
+	// nil stays nil: an asset subject has no membership, and emitting 0
+	// there would have the card print "0 items" under an asset's name.
+	if r.ItemCount != nil {
+		n := int(*r.ItemCount)
+		out.ItemCount = &n
 	}
 	if r.CoverAssetID.Valid {
 		id := uuid.UUID(r.CoverAssetID.Bytes)

@@ -50,6 +50,7 @@ ADR frontmatter follows the schema in [ADR 0035](docs/adr/0035-adr-conventions.m
 - **TypeScript / Svelte:** project Prettier and ESLint configs.
 - **Migrations:** goose, in [`app/internal/db/migrations/`](app/internal/db/migrations/). PL/pgSQL functions need `-- +goose StatementBegin` / `-- +goose StatementEnd` markers — fresh-DB CI runs fail without them.
 - **OpenAPI:** the spec at [`app/api/openapi.yaml`](app/api/openapi.yaml) is the contract. After editing it, regenerate the frontend client with `npm run generate:api` from `web/`.
+- **Icons:** we use [lucide](https://lucide.dev) via the `@lucide/svelte` package (`lucide-svelte` is the deprecated Svelte-4-era name — don't install it). Import each icon **by its own path** and never from the package root: `import Shapes from '@lucide/svelte/icons/shapes';`, not `import { Shapes } from '@lucide/svelte';`. The barrel re-exports every icon, so one glyph pulls the whole set through Vite's dev server; the production build tree-shakes either way, which means the barrel's cost is invisible in CI and lands entirely on you. Shared kind→icon mappings belong in [`web/src/lib/components/kindIcon.ts`](web/src/lib/components/kindIcon.ts). Some older components still carry inline lucide path data ( `CardFallback`, `ViewControls`); those migrate when the component is next touched, not in a sweep.
 
 ## Pull requests
 

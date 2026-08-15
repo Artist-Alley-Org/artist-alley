@@ -30,9 +30,21 @@
     /** The id this card contributes to the selection (post id on browse,
      *  asset id in collections / profile assets). */
     id: string;
+    /** Which top corner to sit in (#1111). Left by default, which is
+     *  every card this component has ever rendered on.
+     *
+     *  Grid post cards pass `right`, and that is a CONSEQUENCE of the
+     *  owner's overlay layout rather than a preference: #1111 puts the
+     *  asset-kind icons at top-left and moves the ⋯ menu down to the
+     *  identity block, so top-left is now taken and top-right is now
+     *  free. Both controls are 44px and both are hover-revealed, so
+     *  leaving them stacked would have put a checkbox under an icon on
+     *  every hover — the same corner collision #578 resolved for the
+     *  multi-asset badge by moving it, not by shrinking it. */
+    corner?: 'left' | 'right';
   }
 
-  let { id }: Props = $props();
+  let { id, corner = 'left' }: Props = $props();
 
   const canSelect = $derived(!!auth.user && !site.demoMode);
   const selected = $derived(selection.has(id));
@@ -53,7 +65,9 @@
     aria-checked={selected}
     aria-label={selected ? t('card.select.deselect') : t('card.select.label')}
     onclick={toggle}
-    class="pointer-events-auto absolute left-2 top-2 z-10 inline-flex h-11 w-11 items-center justify-center
+    class="pointer-events-auto absolute {corner === 'right'
+      ? 'right-2'
+      : 'left-2'} top-2 z-10 inline-flex h-11 w-11 items-center justify-center
            transition-opacity duration-150 focus-visible:outline-none
            {pinned
              ? 'opacity-100'

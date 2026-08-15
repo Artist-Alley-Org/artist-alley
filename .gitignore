@@ -149,3 +149,6 @@ kaggle.json
 # Real screenshots are committed under docs/screenshots/, so ignoring
 # root-level ones only ever hides throwaway artifacts.
 /*.png
+
+# local design references — never committed
+reference_pages/*

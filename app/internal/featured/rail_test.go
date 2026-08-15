@@ -121,7 +121,7 @@ func railCollection(t *testing.T, pool *pgxpool.Pool, name, vis string) uuid.UUI
 
 func railTitles(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller) map[string]bool {
 	t.Helper()
-	rows, err := ListPublicRail(context.Background(), pool, caller, 500, defaultLadder)
+	rows, err := ListPublicRail(context.Background(), pool, caller, visibility.PostCaps{}, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRail_InvisibleSubjectProducesNoRowAtAll(t *testing.T) {
 	privateColl := railCollection(t, pool, "rail-only-private", "private")
 	place(t, pool, "collection", privateColl, "public", 0)
 
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), 500, defaultLadder)
+	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), visibility.PostCaps{}, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestRail_DanglingPlacementIsDropped(t *testing.T) {
 	orphan := uuid.New() // never inserted into either subject table
 	place(t, pool, "collection", orphan, "public", 0)
 
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), 500, defaultLadder)
+	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), visibility.PostCaps{}, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestRail_EmbargoAssetShowsTitleOnly(t *testing.T) {
 	place(t, pool, "asset", embargo, "public", 0)
 
 	stranger := int64(4170099)
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(&stranger), 500, defaultLadder)
+	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(&stranger), visibility.PostCaps{}, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -377,7 +377,7 @@ func railPostInCollection(t *testing.T, pool *pgxpool.Pool, coll, cover uuid.UUI
 // railRowFor finds the placement row for one subject.
 func railRowFor(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller, subject uuid.UUID) (RailRow, bool) {
 	t.Helper()
-	rows, err := ListPublicRail(context.Background(), pool, caller, 500, defaultLadder)
+	rows, err := ListPublicRail(context.Background(), pool, caller, visibility.PostCaps{}, 500, defaultLadder)
 	if err != nil {
 		t.Fatalf("ListPublicRail: %v", err)
 	}
@@ -510,5 +510,253 @@ func TestRail_EmptyCollectionIsTitleOnly(t *testing.T) {
 	}
 	if row.AssetFileHash != nil || row.CoverAssetID.Valid || row.AssetPreviewAvailable {
 		t.Error("empty collection advertised a cover")
+	}
+}
+
+// --- #1110: the wide card's subtitle -------------------------------
+//
+// The card grew a second line under the name: the collection's own
+// description, falling back to how many members the caller can see.
+// Both are new READS of collection-owned data on a surface an anonymous
+// visitor reaches, so both carry the same burden as the cover above.
+
+// railDescribe stamps a description onto an existing seeded collection.
+// A setter rather than a second constructor: railCollection is called
+// from a dozen places that do not care about the field, and #1110 needs
+// exactly two that do.
+func railDescribe(t *testing.T, pool *pgxpool.Pool, coll uuid.UUID, desc string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE collections SET description=$2 WHERE id=$1`, coll, desc); err != nil {
+		t.Fatalf("describe collection: %v", err)
+	}
+}
+
+// railPostVisibility retunes a seeded post's tier. railPostInCollection
+// takes the column default ('org-only'), which is invisible to an
+// anonymous caller — fine for the cover tests, which gate the ASSET, and
+// exactly the axis the member count has to get right.
+func railPostVisibility(t *testing.T, pool *pgxpool.Pool, post uuid.UUID, vis string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE posts SET visibility=$2 WHERE id=$1`, post, vis); err != nil {
+		t.Fatalf("set post visibility: %v", err)
+	}
+}
+
+// railAddResource pins an asset directly into a collection — the other
+// half of a collection's membership, and the half the mosaic and this
+// count both read alongside posts.
+func railAddResource(t *testing.T, pool *pgxpool.Pool, coll, asset uuid.UUID) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO collection_resources (collection_id, asset_id) VALUES ($1,$2)`,
+		coll, asset); err != nil {
+		t.Fatalf("pin resource: %v", err)
+	}
+}
+
+// TestRail_SubtitleIsWithheldExactlyWhenTheTitleIs is the #1110 pair.
+//
+// The positive control proves the field is wired at all — without it a
+// permanently-empty subtitle would pass every negative control forever,
+// which is the shape of assertion that lets a withheld-value test go on
+// passing after the value stops existing.
+//
+// The negative control here is the WHOLLY-WITHHELD collection, and it is
+// deliberately NOT "the row's Subtitle is empty": a withheld collection
+// produces no row, so a per-row assertion has nothing to run against and
+// passes vacuously. It asserts instead that the description STRING
+// appears nowhere in the rail at all.
+//
+// Note what that does and does not prove. Today it cannot fail even for
+// a subtitle read through an UNGATED subquery, because the placement row
+// for an invisible collection is dropped by the WHERE before any column
+// is rendered — verified by mutation. It is kept as the guard for the
+// day a subject kind survives that WHERE without resolving `c` (a `team`
+// arm, say), at which point an ungated read would surface here and
+// nowhere else. The negative control that bites TODAY is the tier case
+// below.
+func TestRail_SubtitleIsWithheldExactlyWhenTheTitleIs(t *testing.T) {
+	pool := railPool(t)
+	anon := visibility.NewCaller(nil)
+
+	const secret = "rail-subtitle-secret-description-1110"
+
+	shown := railCollection(t, pool, "rail-subtitle-public", "public")
+	railDescribe(t, pool, shown, secret)
+	place(t, pool, "collection", shown, "public", 0)
+
+	hidden := railCollection(t, pool, "rail-subtitle-private", "private")
+	railDescribe(t, pool, hidden, secret)
+	place(t, pool, "collection", hidden, "public", 1)
+
+	rows, err := ListPublicRail(context.Background(), pool, anon, visibility.PostCaps{}, 500, defaultLadder)
+	if err != nil {
+		t.Fatalf("ListPublicRail: %v", err)
+	}
+
+	var sawShown bool
+	for _, r := range rows {
+		switch uuid.UUID(r.SubjectID.Bytes) {
+		case shown:
+			sawShown = true
+			if r.Title != "rail-subtitle-public" {
+				t.Errorf("title = %q, want the collection name", r.Title)
+			}
+			if r.Subtitle != secret {
+				t.Errorf("subtitle = %q, want the collection description %q — the positive "+
+					"control is what proves the negative control below is not vacuous",
+					r.Subtitle, secret)
+			}
+		case hidden:
+			t.Errorf("a private collection rendered on the anonymous rail at all (title=%q); "+
+				"featuring must never widen access", r.Title)
+		}
+	}
+	if !sawShown {
+		t.Fatal("the public collection is missing from the rail; the positive control cannot run")
+	}
+
+	// The withheld description must not have arrived on ANY row, by any
+	// route. Both collections carry the same string, so a subtitle
+	// sourced outside the gated join would show up here even though the
+	// private collection's own row is gone.
+	for _, r := range rows {
+		if uuid.UUID(r.SubjectID.Bytes) == shown {
+			continue
+		}
+		if r.Subtitle == secret {
+			t.Errorf("the withheld collection's description surfaced on placement %v "+
+				"(subject %v); a subtitle must be withheld exactly when the title is",
+				uuid.UUID(r.ID.Bytes), uuid.UUID(r.SubjectID.Bytes))
+		}
+	}
+}
+
+// TestRail_EmbargoAssetSubtitleIsWithheldWithItsPixels is the negative
+// control with teeth, and the one the tier semantics at the head of
+// rail.go actually demand.
+//
+// It is the only case on this surface where a row SURVIVES while part of
+// its subject is withheld: an authenticated non-owner reaches an embargo
+// asset through the asset predicate, so the tile renders, ADR 0020 gives
+// it its title, and the thumbnail hints are suppressed. The subtitle
+// must land on the suppressed side of that line. Sourcing it from
+// `assets.description` — the obvious "make asset tiles consistent with
+// collection tiles" edit — would print the author's notes under the name
+// of a picture nobody outside the embargo may look at.
+//
+// Twinned with TestRail_EmbargoAssetShowsTitleOnly above, which asserts
+// the pixel half of the same rule.
+func TestRail_EmbargoAssetSubtitleIsWithheldWithItsPixels(t *testing.T) {
+	pool := railPool(t)
+
+	const notes = "rail-embargo-secret-notes-1110"
+	embargo := railAsset(t, pool, "rail-embargo-subtitle", "active", "embargo", "ready")
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET description=$2 WHERE id=$1`, embargo, notes); err != nil {
+		t.Fatalf("describe embargo asset: %v", err)
+	}
+	place(t, pool, "asset", embargo, "public", 0)
+
+	stranger := int64(4170099)
+	row, ok := railRowFor(t, pool, visibility.NewCaller(&stranger), embargo)
+	if !ok {
+		t.Skip("authenticated asset visibility no longer admits embargo rows; " +
+			"re-point this test at whatever tier it admits instead")
+	}
+	if row.Title != "rail-embargo-subtitle" {
+		t.Fatalf("title = %q, want the real title — without it this test is not "+
+			"exercising the surviving-row case at all", row.Title)
+	}
+	if row.Subtitle != "" {
+		t.Errorf("subtitle = %q for an embargo asset whose pixels are suppressed; "+
+			"ADR 0020 keeps this surface title-only, and a description arm in the "+
+			"COALESCE widens the tile to the author's notes", row.Subtitle)
+	}
+	if row.ItemCount != nil {
+		t.Errorf("item_count = %d for an asset subject, want nil", *row.ItemCount)
+	}
+}
+
+// TestRail_ItemCountCountsOnlyWhatTheCallerCanSee is the count half of
+// the same rule. A public collection whose membership is partly withheld
+// must not report the size of the withheld part.
+func TestRail_ItemCountCountsOnlyWhatTheCallerCanSee(t *testing.T) {
+	pool := railPool(t)
+	anon := visibility.NewCaller(nil)
+
+	coll := railCollection(t, pool, "rail-count-mixed", "public")
+	place(t, pool, "collection", coll, "public", 0)
+
+	// Two posts the anonymous caller may read, one it may not.
+	visibleAsset := railStoredAsset(t, pool, "rail-count-post-cover", "public", true)
+	for _, vis := range []string{"public", "public", "org-only"} {
+		p := railPostInCollection(t, pool, coll, visibleAsset, time.Hour)
+		railPostVisibility(t, pool, p, vis)
+	}
+
+	// One pinned resource it may see, one gated by sensitivity.
+	railAddResource(t, pool, coll, railStoredAsset(t, pool, "rail-count-res-ok", "public", true))
+	railAddResource(t, pool, coll, railStoredAsset(t, pool, "rail-count-res-gated", "embargo", true))
+
+	row, ok := railRowFor(t, pool, anon, coll)
+	if !ok {
+		t.Fatal("public collection missing from the rail")
+	}
+	if row.ItemCount == nil {
+		t.Fatal("item_count is nil for a collection subject; the card has no subtitle fallback")
+	}
+	// 2 readable posts + 1 readable resource. The org-only post and the
+	// embargo asset are members this caller cannot open, and a count
+	// that included them would publish the size of the withheld part.
+	if want := int32(3); *row.ItemCount != want {
+		t.Errorf("item_count = %d, want %d — the count must cover only the members this "+
+			"caller can see, or a subtitle becomes the side channel #902 closed for "+
+			"search text", *row.ItemCount, want)
+	}
+}
+
+// An ASSET subject has no membership at all, which is a different answer
+// from an empty one: nil renders no fallback line, 0 would print
+// "0 items" under a picture's name.
+func TestRail_ItemCountIsNilForAnAssetSubject(t *testing.T) {
+	pool := railPool(t)
+	anon := visibility.NewCaller(nil)
+
+	asset := railAsset(t, pool, "rail-count-asset-subject", "active", "public", "ready")
+	place(t, pool, "asset", asset, "public", 0)
+
+	row, ok := railRowFor(t, pool, anon, asset)
+	if !ok {
+		t.Fatal("public asset missing from the rail")
+	}
+	if row.ItemCount != nil {
+		t.Errorf("item_count = %d for an asset subject, want nil", *row.ItemCount)
+	}
+	if row.Subtitle != "" {
+		t.Errorf("subtitle = %q for an asset subject, want empty — ADR 0020 keeps this "+
+			"surface title-only for a gated asset, and the field must not become the "+
+			"exception", row.Subtitle)
+	}
+}
+
+// An empty public collection reports 0, not nil: the membership exists
+// and is empty, which the card prints as "0 items" rather than dropping
+// the line.
+func TestRail_ItemCountIsZeroForAnEmptyCollection(t *testing.T) {
+	pool := railPool(t)
+	anon := visibility.NewCaller(nil)
+
+	coll := railCollection(t, pool, "rail-count-empty", "public")
+	place(t, pool, "collection", coll, "public", 0)
+
+	row, ok := railRowFor(t, pool, anon, coll)
+	if !ok {
+		t.Fatal("empty public collection missing from the rail")
+	}
+	if row.ItemCount == nil || *row.ItemCount != 0 {
+		t.Errorf("item_count = %v, want 0 for an empty collection", row.ItemCount)
 	}
 }

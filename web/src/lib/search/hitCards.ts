@@ -184,6 +184,7 @@ export function hitAsPost(h: SearchHit): SearchPostRow {
       const a = (m.asset ?? {}) as Record<string, unknown>;
       const asset: CardCoverAsset = {
         id: str(a.id) ?? assetId,
+        asset_type: num(a.asset_type),
         file_hash: str(a.file_hash),
         file_extension: str(a.file_extension),
         thumbhash: str(a.thumbhash),
