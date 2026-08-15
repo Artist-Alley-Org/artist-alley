@@ -92,3 +92,69 @@ func CanReadCollection(
 	}
 	return visible, nil
 }
+
+// CollectionReadableSQL is [CanReadCollection] as a WHERE-clause
+// fragment: the same rule, for a surface that must decide it over a SET
+// of collections instead of one id (#1078).
+//
+// It follows [Predicate.ToSQL]'s contract — the fragment starts with
+// " AND ", placeholders number from argOffset+1, and the caller appends
+// the returned args in order — with ONE addition: a system.admin gets
+// the EMPTY fragment and no args, because "no restriction" is what the
+// admin arm means and an admin must not pay for a predicate that would
+// only narrow them. An empty string concatenates into a WHERE clause as
+// a no-op, so the call site needs no branch.
+//
+// # Why this exists rather than a third open-coded disjunct
+//
+// #1059 gave the admin disjunct one home after two call sites had
+// hand-copied it. #1078 is the third surface that needs it — the
+// collections autocomplete source, where a system.admin got no
+// completions for private collection names they can open perfectly well
+// from the collection page. That surface composes a predicate over a
+// set, so it could not call [CanReadCollection] and would have
+// open-coded the disjunct a third time. This is the same decision in
+// the shape that surface can consume.
+//
+// Everything [CanReadCollection]'s doc says about what the admin arm
+// ASSUMES applies here unchanged, and applies harder: a fragment is
+// easier to paste than a function call. Do not reach for this on a
+// surface where a system.admin cannot already open the collections in
+// question.
+//
+// # ⚠️ Soft-delete is NOT decided here, and that is deliberate
+//
+// On the row-plane arm the predicate carries `deleted_at IS NULL`, as
+// it does everywhere. On the ADMIN arm nothing does — the fragment is
+// empty. That is faithful to [CanReadCollection], whose doc explicitly
+// disclaims the tombstone question ("an admin also sees soft-deleted
+// rows … is a different question about a different set of rows"), and
+// GetCollection depends on exactly that behaviour to reach its Restore
+// branch.
+//
+// So a CALLER that must not surface tombstoned rows to an admin — a
+// corpus, a listing, an autocomplete — has to say so itself. That is a
+// corpus constraint, not a second copy of the read rule, and it is the
+// ONLY expression of it on the admin arm rather than a restatement of
+// the predicate's (the #449 defect). State it inline and say why.
+func CollectionReadableSQL(
+	ctx context.Context,
+	alias string,
+	caller Caller,
+	caps CapabilityChecker,
+	argOffset int,
+) (string, []any, error) {
+	// Capability FIRST, mirroring CanReadCollection: an admin costs
+	// zero query planning, and their answer cannot depend on the
+	// predicate builder failing.
+	if caps != nil && caps(SystemAdmin) {
+		return "", nil, nil
+	}
+
+	pred, err := Filter(ctx, EntityCollection, caller)
+	if err != nil {
+		return "", nil, fmt.Errorf("collection row plane: %w", err)
+	}
+	frag, args := pred.ToSQL(alias, argOffset)
+	return frag, args, nil
+}

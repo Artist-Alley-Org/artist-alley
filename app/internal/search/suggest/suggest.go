@@ -81,8 +81,16 @@ type Request struct {
 	// complete it was the one place the three surfaces disagreed.
 	// Zero value = none, correct for anonymous.
 	MutationCaps visibility.AssetMutationCaps
-	Threshold    float64
-	Limit        int
+	// CollectionCaps is the caller's capability lookup for the
+	// COLLECTION read rule (#1078). Unlike its three neighbours this is
+	// the raw checker rather than a resolved value type, because
+	// [visibility.CanReadCollection] — the rule this surface must agree
+	// with — takes a checker, and resolving it into a new struct here
+	// would be a fourth shape of the same question. Nil = no
+	// capabilities, correct for anonymous.
+	CollectionCaps visibility.CapabilityChecker
+	Threshold      float64
+	Limit          int
 }
 
 // Response is the ordered result set.
@@ -134,7 +142,7 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	}
 	all = append(all, tags...)
 
-	cols, err := s.collections(ctx, prefix, threshold, req.Caller)
+	cols, err := s.collections(ctx, prefix, threshold, req.Caller, req.CollectionCaps)
 	if err != nil {
 		return Response{}, err
 	}
@@ -244,16 +252,44 @@ func (s *Service) tags(
 	return s.scanSuggestionsWith(ctx, KindTag, sql, queryArgs)
 }
 
-func (s *Service) collections(ctx context.Context, prefix string, threshold float64, caller visibility.Caller) ([]Suggestion, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityCollection, caller)
+// collections completes on collection names.
+//
+// #1078 — it composes [visibility.CollectionReadableSQL], the whole
+// collection read rule, rather than `Filter(EntityCollection)` alone.
+// The predicate has no admin disjunct by design (the row plane
+// describes who a collection is SHARED WITH, and an instance admin is
+// on nobody's share list), so this source used to complete nothing for
+// a private collection a system.admin can open from its own page — the
+// collections counterpart of #1064, failing CLOSED in the same way.
+//
+// The rule is #1059's composite, called rather than restated: two hand
+// copies is how an admin ends up able to open a collection and unable
+// to find it, and a third would have been this one.
+//
+// ⚠️ The soft-delete conjunct below is load-bearing and is NOT the
+// #449 defect. CollectionReadableSQL returns an EMPTY fragment for a
+// system.admin — the admin arm deliberately says nothing about
+// tombstones, because GetCollection needs it not to (its Restore branch
+// depends on an admin passing the read check on a deleted row). Without
+// this line an admin's autocomplete would start completing the names of
+// collections in the trash. On the row-plane arm the predicate states
+// the same rule and the two agree; on the admin arm this is the only
+// expression of it, which is why it is here rather than removed as a
+// duplicate. It is a CORPUS constraint — "what may be completed" —
+// not a second copy of the read rule.
+func (s *Service) collections(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.CapabilityChecker,
+) ([]Suggestion, error) {
+	frag, args, err := visibility.CollectionReadableSQL(ctx, "c", caller, caps, 2)
 	if err != nil {
 		return nil, err
 	}
-	frag, args := pred.ToSQL("c", 2)
 	sql := `
 		SELECT c.name AS value, similarity(c.name, $1) AS sim
 		  FROM collections c
-		 WHERE similarity(c.name, $1) > $2` + frag + `
+		 WHERE similarity(c.name, $1) > $2
+		   AND c.deleted_at IS NULL` + frag + `
 		 ORDER BY sim DESC
 		 LIMIT ` + itoa(MaxResults)
 	queryArgs := append([]any{prefix, threshold}, args...)

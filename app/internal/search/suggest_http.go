@@ -50,6 +50,7 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var caps visibility.ContentCaps
 	var postCaps visibility.PostCaps
 	var mutCaps visibility.AssetMutationCaps
+	var collCaps visibility.CapabilityChecker
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		callerRef = &ref
@@ -72,15 +73,21 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			func(code string) bool { return id.Can(code) },
 			id.ScopedTeams(visibility.AssetsAdmin),
 		)
+		// #1078 — the collection read rule's admin arm. Passed as a
+		// raw checker because visibility.CanReadCollection takes one,
+		// and this surface has to give a system.admin the same answer
+		// the collection page does.
+		collCaps = func(code string) bool { return id.Can(code) }
 	}
 
 	req := suggest.Request{
-		Prefix:       prefix,
-		Caller:       visibility.NewCaller(callerRef),
-		Caps:         caps,
-		PostCaps:     postCaps,
-		MutationCaps: mutCaps,
-		Limit:        limit,
+		Prefix:         prefix,
+		Caller:         visibility.NewCaller(callerRef),
+		Caps:           caps,
+		PostCaps:       postCaps,
+		MutationCaps:   mutCaps,
+		CollectionCaps: collCaps,
+		Limit:          limit,
 	}
 	resp, err := h.Service.Suggest(r.Context(), req)
 	if err != nil {
