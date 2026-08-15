@@ -19,7 +19,7 @@
 
 import { api } from '$api/client';
 import { lang, t } from '$stores/lang.svelte';
-import { ADMIN_TILE_CAPS } from '$lib/admin/sections';
+import { ADMIN_ENTRY_CAPS } from '$lib/admin/sections';
 
 /** The account's default-view selections, as `/auth/me` reports them
  *  (`CurrentUser.default_views`). Snake_case because it is the wire
@@ -147,6 +147,14 @@ class AuthState {
    * surface in the UI instead of the old binary `system.admin` gate
    * hiding admin entirely from read-only roles.
    *
+   * "Can open at least one admin surface" is narrower than "names any
+   * live tile's cap" (#962). `roles.read` and `teams.read` are ordinary
+   * read capabilities the seeded `Base` role carries — `teams.read`
+   * gates the public /teams surfaces — so counting them made this
+   * getter true for every signed-in account and the /admin refusal
+   * panel unreachable. `ADMIN_ENTRY_CAPS` excludes them; the roles and
+   * groups tiles are still visible to anyone already in the shell.
+   *
    * A getter, not a $derived: it reads `this.caps` ($state), so callers
    * that reference it inside their own $derived/effect stay reactive.
    */
@@ -154,7 +162,7 @@ class AuthState {
     // Unknown rights are no rights (#956) — same rule as can().
     if (this.capsUnavailable) return false;
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
-    return ADMIN_TILE_CAPS.some((c) => this.caps.includes(c));
+    return ADMIN_ENTRY_CAPS.some((c) => this.caps.includes(c));
   }
 
   /**

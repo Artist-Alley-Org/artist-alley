@@ -31,6 +31,24 @@ export interface AdminTile {
   // A read-cap holder sees exactly the tiles whose `cap` they hold, so
   // no tile 403s on click.
   cap?: string;
+  // Whether holding `cap` is, by itself, grounds to open the admin
+  // shell (#962). Defaults to true: for almost every tile the cap is an
+  // administrative code, so holding it is a claim to administrative
+  // standing and the shell must open or the tile is unreachable.
+  //
+  // Set `false` where `cap` is an ordinary read capability that
+  // ordinary signed-in users hold. The tile still appears — a holder
+  // who is already inside the shell can open it — but the cap alone no
+  // longer opens the door. Without this, every authenticated account
+  // reached /admin, because the seeded `Base` role carries `roles.read`
+  // and `teams.read` and those are two live tiles' caps.
+  //
+  // The fix belongs here and not in the role: `teams.read` gates the
+  // public /teams surfaces (routes/teams, ExploreMenu, TeamsRail,
+  // TeamFollowButton, MobileNavDrawer, stores/teamFollows) as the
+  // signed-in-vs-guest line, so revoking it from `Base` would break
+  // ordinary browsing.
+  grantsAdminEntry?: boolean;
   // Universally visible — the tile's page guards nothing sensitive
   // (help, docs, about, release notes, support) and enforces no
   // server-side cap. Distinct from an absent `cap`, which means
@@ -52,8 +70,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'identity',
     tiles: [
       { key: 'users',      status: 'live',   href: '/admin/users', cap: 'users.read' },
-      { key: 'roles',      status: 'live',   href: '/admin/roles', cap: 'roles.read' },
-      { key: 'groups',     status: 'live',   href: '/admin/teams', cap: 'teams.read' },
+      // `roles.read` ("List available roles and their capabilities") and
+      // `teams.read` are ordinary read capabilities the seeded `Base`
+      // role holds, not claims to administrative standing — so they open
+      // their tiles but not the shell (#962). See `grantsAdminEntry`.
+      { key: 'roles',      status: 'live',   href: '/admin/roles', cap: 'roles.read', grantsAdminEntry: false },
+      { key: 'groups',     status: 'live',   href: '/admin/teams', cap: 'teams.read', grantsAdminEntry: false },
       // Per-user active sessions are managed on the user-detail page
       // (admin/users/[ref], Phase 1.17.C). The tile lands on the user
       // list; drill into a user to view + revoke their sessions.
@@ -291,15 +313,28 @@ export function sectionBySlug(slug: string): AdminSection | undefined {
   return ADMIN_SECTIONS.find((s) => s.slug === slug);
 }
 
-// Every capability referenced by a live tile. `canSeeAdmin` uses this to
-// decide whether to show the admin entry point at all: a user who holds
-// any one of these can open at least one admin surface. Superuser-only
-// tiles (no `cap`) aren't here — they don't grant a read-only user the
-// menu, `system.admin` does.
-export const ADMIN_TILE_CAPS: readonly string[] = [
+// Every capability that opens the admin entry point. `canSeeAdmin` uses
+// this to decide whether to show the admin shell at all: a user who
+// holds any one of these can open at least one admin surface AND has
+// administrative standing to be there. Superuser-only tiles (no `cap`)
+// aren't here — they don't grant a read-only user the menu,
+// `system.admin` does. Tiles marked `grantsAdminEntry: false` aren't
+// here either: their cap is an ordinary read capability every signed-in
+// account holds, so including it made the /admin refusal panel
+// unreachable for every authenticated user (#962).
+//
+// Derived from the tile table, never hand-listed — a second array
+// copied by hand is a third place to drift out of sync with the tiles
+// it describes.
+//
+// There is deliberately no companion "every cap a live tile names"
+// constant. Per-tile visibility is decided by `auth.canSeeTile(tile)`,
+// which reads `tile.cap` directly and never consults a flattened list,
+// so such a constant would have no consumer.
+export const ADMIN_ENTRY_CAPS: readonly string[] = [
   ...new Set(
     ADMIN_SECTIONS.flatMap((s) => s.tiles)
-      .filter((t) => t.status === 'live' && t.cap)
+      .filter((t) => t.status === 'live' && t.cap && t.grantsAdminEntry !== false)
       .map((t) => t.cap as string),
   ),
 ];
