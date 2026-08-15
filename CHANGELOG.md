@@ -169,6 +169,16 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Switching between Latest and Following no longer scrambles the masonry wall.** Changing the
+  feed filter could leave tiles overlapping each other with stray holes, because the wall kept
+  drawing the old feed's layout while the new feed's posts streamed in — and the mismatch
+  crashed the very code that would have redrawn it. The wall now only draws tiles whose post is
+  actually the one the layout was computed for, so a feed change redraws cleanly (#1103).
+
+- **Buttons beside an open view panel work again.** With the view switcher open, clicking
+  "Back to top" or the Latest/Following tabs only dismissed the panel and swallowed the click.
+  The aimed button now does its job first, then the panel closes (#1105).
+
 - **The masonry wall no longer opens bands of empty space as you scroll.** Pieces whose files
   carry no recorded dimensions were reserved a square amount of room, and when the real image
   arrived taller or shorter, the wall's shared row structure let that one piece push **every**
