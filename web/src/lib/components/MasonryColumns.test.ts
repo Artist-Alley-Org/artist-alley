@@ -36,6 +36,7 @@
 import { render } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import MasonryColumns from './MasonryColumns.svelte';
+import MasonryFeedHarness from '../../../vitest-stubs/MasonryFeedHarness.svelte';
 import {
   cardTileRatio,
   masonryMinTilePx,
@@ -725,5 +726,72 @@ describe('MasonryColumns', () => {
       expect(tile.getAttribute('aria-posinset')).toBe(String(idx + 1));
       expect(tile.getAttribute('aria-setsize')).toBe(String(items.length));
     }
+  });
+});
+
+// #1103 — SWITCHING THE FEED FILTER CORRUPTED THE WALL.
+//
+// `placements` and `items` are two independent reactive inputs to one
+// `{#each}`: the block iterates the placements and renders
+// `items[p.index]`. They agree only while the placement pass is up to
+// date, and a feed swap breaks that on purpose — browse sets `items =
+// []` and refills it a page at a time, so for several flushes the block
+// was still iterating the PREVIOUS feed's 180 placements while `items`
+// held 0, then 36, then 72.
+//
+// Every index past the end handed the card `undefined`. Real cards read
+// their row (PostCard reads `post.members`), so the render effect threw,
+// the flush aborted, and the user `$effect` that re-places the wall
+// never ran — for the whole refill. The wall kept the old feed's rows
+// under the new feed's posts, and the tile ResizeObserver's `reconcile`
+// (a rAF, outside the effect graph) then re-solved those rows against
+// heights measured from tiles showing DIFFERENT posts. Measured on the
+// dev feed at 2560px: 0 overlapping pairs before the swap and 10 after,
+// worst void 214px → 521px, with three uncaught `undefined.members`.
+//
+// The oracle is a fresh mount: a wall that has been swapped TO a feed
+// must be indistinguishable from a wall that was mounted with it.
+describe('MasonryColumns — feed swap (#1103)', () => {
+  const feedOf = (ids: string[]) => ids.map((id) => ({ id }));
+
+  function readWall(container: Element) {
+    return [...container.querySelectorAll<HTMLElement>('[data-tile-id]')].map((t) => ({
+      id: t.dataset.tileId,
+      style: t.getAttribute('style'),
+      pos: t.getAttribute('aria-posinset'),
+    }));
+  }
+
+  const LATEST = feedOf(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  // The same set in a different order. The account the owner reported
+  // this on follows everything, so Latest → Following is a REORDER and
+  // the tile count is identical before and after — which is what makes
+  // it the case the placer must treat as a brand-new wall rather than
+  // as an append.
+  const FOLLOWING = feedOf(['e', 'a', 'g', 'c', 'h', 'b', 'f', 'd']);
+
+  it('lands on the same wall a fresh mount would', async () => {
+    const swapped = render(MasonryFeedHarness, { props: { items: LATEST } });
+    // Browse empties the list before refetching (+page.svelte's feedKey
+    // effect), then the infinite loader refills it a page at a time.
+    for (const items of [[], FOLLOWING.slice(0, 4), FOLLOWING]) {
+      await swapped.rerender({ items });
+    }
+    const fresh = render(MasonryFeedHarness, { props: { items: FOLLOWING } });
+
+    expect(readWall(swapped.container)).toEqual(readWall(fresh.container));
+  });
+
+  it('never renders a tile the current feed has no item for', async () => {
+    const { container, rerender } = render(MasonryFeedHarness, { props: { items: LATEST } });
+    // Every intermediate state the refill passes through, including the
+    // short ones the old code indexed past the end of.
+    for (const items of [[], FOLLOWING.slice(0, 2), FOLLOWING.slice(0, 5), FOLLOWING]) {
+      await rerender({ items });
+      const tiles = readWall(container);
+      expect(tiles.length).toBeLessThanOrEqual(items.length);
+      for (const [i, tile] of tiles.entries()) expect(tile.id).toBe(items[i].id);
+    }
+    expect(readWall(container).length).toBe(FOLLOWING.length);
   });
 });

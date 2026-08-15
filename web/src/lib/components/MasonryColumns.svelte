@@ -125,6 +125,38 @@
   // is scheduled. Removing it and reconciling was measured too — 126
   // voids → 10, but with 8 real overlaps in the frame before the
   // correction lands, which is worse than a band.
+  //
+  // # A placement may only render against the item it was made for
+  //
+  // `placements` and `items` are two independent reactive inputs to one
+  // `{#each}` — the block iterates the placements and renders
+  // `items[p.index]` — and they agree only while the placement pass is
+  // up to date. An append never breaks that (the list grows at the end,
+  // so every existing index still points at the same row). A FEED SWAP
+  // breaks it on purpose: browse sets `items = []` and refills it a page
+  // at a time, so the block was left iterating the previous feed's 180
+  // placements while `items` held 0, then 36, then 72.
+  //
+  // Every index past the end handed the card `undefined`. Cards read
+  // their row — PostCard reads `post.members` — so the render effect
+  // threw, and a throw during a flush takes the REST OF THAT FLUSH with
+  // it: the user `$effect` below never ran, for the whole refill. The
+  // wall kept the old feed's rows under the new feed's posts, and the
+  // tile ResizeObserver's `reconcile` (a rAF, outside the effect graph,
+  // so nothing stopped it) then re-solved those rows against heights
+  // measured from tiles showing DIFFERENT posts. Measured at 2560px on
+  // the dev feed: 0 overlapping pairs before the swap and 10 after,
+  // worst void 214px → 521px, plus three uncaught `undefined.members`
+  // (#1103).
+  //
+  // The fix is `rendered` below, and it is deliberately a RENDER-TIME
+  // gate rather than another thing to invalidate. Adding feed identity
+  // to the epoch key was the obvious candidate and it would not have
+  // helped: the epoch decides append-vs-re-place inside `place()`, and
+  // `place()` was never reached. A `$derived` is evaluated when the
+  // template reads it, so "a tile is only rendered when the current
+  // `items` still stands behind its placement" holds in the same frame
+  // the list changes, with no ordering to win.
 
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
@@ -387,11 +419,14 @@
   const observed = new Set<Element>();
 
   $effect(() => {
-    // Re-run on every placement pass so newly rendered tiles get watched.
+    // Re-run on every change to the rendered set so newly rendered tiles
+    // get watched. `rendered` and not `placements` because this observes
+    // the DOM, and the DOM is the gated set (#1103).
+    //
     // The observer is created once and only ever gains targets — calling
     // `observe` again on one it already holds would re-notify for every
     // tile in the wall on every append.
-    void placements;
+    void rendered;
     const el = containerEl;
     if (!el || typeof ResizeObserver === 'undefined') return;
     tileRo ??= new ResizeObserver(() => {
@@ -401,6 +436,15 @@
         untrack(() => reconcileFromDom(geo));
       });
     });
+    // A feed swap destroys every tile element and builds new ones, so
+    // without this the Set (and the observer) accumulate a whole wall of
+    // detached nodes per swap — each of which reports a 0x0 resize on
+    // its way out and buys a reconcile pass that measures nothing.
+    for (const gone of observed) {
+      if (gone.isConnected) continue;
+      tileRo.unobserve(gone);
+      observed.delete(gone);
+    }
     for (const tile of el.querySelectorAll<HTMLElement>('[data-tile-id]')) {
       if (observed.has(tile)) continue;
       observed.add(tile);
@@ -416,12 +460,46 @@
     pendingReconcile = 0;
   });
 
+  /** The placements the CURRENT `items` still stands behind (#1103).
+   *
+   *  A placement carries the feed index it was made for, so the question
+   *  is answerable exactly: `items[p.index]` must still be the row that
+   *  produced `p`. The scan stops at the first disagreement rather than
+   *  filtering, because a placement is only meaningful on top of the
+   *  ones before it — rendering tile 90 while tiles 0-89 belong to
+   *  another feed would put it in a column whose bottom edge no longer
+   *  exists.
+   *
+   *  The common cases are both O(1)-ish in practice and neither
+   *  allocates: an append agrees all the way to the old length and
+   *  returns `placements` itself (so the keyed `{#each}` sees the same
+   *  array identity it did before), and a swap disagrees at index 0.
+   *  The full walk only happens on the pass that re-places, which is
+   *  already O(n).
+   *
+   *  This is what keeps a tile out of the DOM rather than merely quiet:
+   *  a tile that is not rendered is not measured by `snapshotTiles`
+   *  either, so a stale placement cannot contribute a height to
+   *  `measuredRows` under an id it no longer describes. */
+  const rendered = $derived.by(() => {
+    const list = placements;
+    const src = items;
+    let k = 0;
+    while (k < list.length && src[list[k].index]?.id === list[k].id) k++;
+    return k === list.length ? list : list.slice(0, k);
+  });
+
   /** Skeletons are dealt to the shortest columns, which is where the
    *  next page will land. Derived rather than placed, because they are
    *  not feed positions — they never enter `wall`, so they cannot
-   *  perturb where the page they are waiting for goes. */
+   *  perturb where the page they are waiting for goes.
+   *
+   *  Withheld while the wall is mid-swap: `colRows` describes the whole
+   *  of `placements`, so dealing skeletons against it while only a
+   *  prefix is on screen would park them below a wall that is not
+   *  there. One frame later `place()` has run and they land properly. */
   const skeletons = $derived.by(() => {
-    if (!loading || colRows.length === 0) return [];
+    if (!loading || colRows.length === 0 || rendered.length !== placements.length) return [];
     const rows = colRows.slice();
     const height = masonryTileHeight(geo.colWidth, 1, geo.minTilePx);
     const span = tileRows(height, geo.gapPx);
@@ -444,7 +522,9 @@
   <!-- See `probeEl`: absolutely positioned + zero height so it is not a
        grid item and takes no part in the layout it is measuring. -->
   <div bind:this={probeEl} class="masonry-probe" aria-hidden="true"></div>
-  {#each placements as p (p.id)}
+  <!-- `rendered`, not `placements`: see its header. The gate is what
+       makes `items[p.index]` below a total function. -->
+  {#each rendered as p (p.id)}
     <div
       role="listitem"
       data-tile-id={p.id}
