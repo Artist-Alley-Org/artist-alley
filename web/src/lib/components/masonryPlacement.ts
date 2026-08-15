@@ -65,8 +65,8 @@ export const ROW_UNIT_PX = 4;
  *
  *  Owner's call, and the reason is legibility in both directions: a tile
  *  spanning the full row stops reading as a card and reads as a section
- *  break. Paired with `MIN_COLS_FOR_SPAN` and the `n - col` clamp in
- *  `placeInto`, so a wide tile always has at least one ordinary column
+ *  break. Paired with `MIN_COLS_FOR_SPAN` and the `colCount - 1` cap in
+ *  `tileSpan`, so a wide tile always has at least one ordinary column
  *  beside it. */
 export const MAX_SPAN = 2;
 
@@ -137,6 +137,39 @@ export function emptyState(colCount: number): MasonryState {
  *  gaps it covers, which is why this is not `span * colWidth`. */
 export function spanWidthPx(geo: MasonryGeometry, span: number): number {
   return span * geo.colWidth + (span - 1) * geo.gapPx;
+}
+
+/** How many columns `declaredRatio` needs to stay legible.
+ *
+ *  THE RULE: a tile spans the smallest number of columns that lifts its
+ *  RENDERED HEIGHT back above the #652 floor — the same floor CardThumb
+ *  writes into `min-height` and the same one the height prediction
+ *  applies, not a second constant.
+ *
+ *  It is stated against rendered pixels and not against an aspect ratio
+ *  on purpose. An aspect-ratio threshold is scale-invariant by
+ *  construction, so it would say the same thing at every rung of the
+ *  size stepper — but the stepper changes `--tile-min`, which changes
+ *  the column width, which is exactly what decides whether a given ratio
+ *  still has 60px of height to render into. At the 22rem default on a
+ *  1440px viewport (5 columns, 269px each) the rule fires above 4.48:1;
+ *  at the 10rem rung on 1920px (11 columns, ~160px) it fires above
+ *  2.67:1. One rule, two thresholds, because the pixels differ. */
+export function tileSpan(declaredRatio: number | null, geo: MasonryGeometry): number {
+  if (declaredRatio === null || declaredRatio <= 0) return 1;
+  if (geo.colCount < MIN_COLS_FOR_SPAN) return 1;
+  // Never the whole row: a wide tile keeps at least one ordinary column
+  // beside it, or it is a section break rather than a card.
+  const cap = Math.min(MAX_SPAN, geo.colCount - 1);
+  if (cap < 2) return 1;
+  for (let span = 1; span < cap; span++) {
+    if (spanWidthPx(geo, span) / declaredRatio >= geo.minTilePx) return span;
+  }
+  // Still under the floor at the cap. It renders letterboxed onto the
+  // floor by the SAME `min-height` that produced this decision — the
+  // ratio ceiling and the #652 floor are the same box, so there is no
+  // second mechanism to apply. See `masonryTileHeight`.
+  return cap;
 }
 
 /** Lattice rows a tile of `heightPx` reserves, gap included. */

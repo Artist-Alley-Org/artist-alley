@@ -55,9 +55,10 @@
   // `ladderReady` stays in the epoch key and still earns its place:
   // CardThumb only honours recorded dimensions once `GET /previews` has
   // answered (see `cardTileRatio`), so before that flip every tile is a
-  // square. A wall bucketed on pre-ladder squares would stay permanently
-  // lopsided. It resolves once, one RTT into the first page, well before
-  // any append.
+  // square — and now it also means no tile knows it is wide enough to
+  // span. A wall bucketed on pre-ladder squares would stay permanently
+  // lopsided AND permanently unspanned. It resolves once, one RTT into
+  // the first page, well before any append.
   //
   // # Heights are arithmetic, and the lattice is authoritative
   //
@@ -120,6 +121,7 @@
     emptyState,
     placeInto,
     tileRows,
+    tileSpan,
     type MasonryGeometry,
     type MasonryState,
     type PlaceableTile,
@@ -231,19 +233,23 @@
   /** What the placer needs: how wide this tile should be, and the ratio
    *  its height comes from.
    *
-   *  Every tile is one column wide here. The wall can now PLACE a wider
-   *  one — that is the whole point of the rework — but deciding that a
-   *  given tile deserves the extra column is a separate decision with its
-   *  own rule, and it arrives with its first consumer (#1025). Shipping
-   *  the primitive with nothing producing a span would leave it
-   *  unexercised, which is why the two land together. */
-  function shape(item: { id: string }, ladderReady: boolean): PlaceableTile {
+   *  ⭐ SPAN READS THE DECLARED RATIO AND ONLY THE DECLARED RATIO.
+   *  A measured ratio is the shape the tile currently RENDERS at, which
+   *  for a tile already squashed onto the #652 floor is the FLOORED
+   *  shape — a 267x62 box measures 4.3:1, not the 8.68:1 it truly is.
+   *  Asking "is this too thin to read?" of a number the thinness has
+   *  already been clamped out of cannot work. The consequence is that an
+   *  asset whose preview predates #757, and which therefore has no
+   *  recorded dimensions, does not span until `aa rebuild-previews` has
+   *  given it some. */
+  function shape(item: { id: string }, ladderReady: boolean, g: MasonryGeometry): PlaceableTile {
     const declared = cardTileRatio(item, ladderReady);
-    if (declared !== null) return { id: item.id, span: 1, estimateRatio: declared };
+    const span = tileSpan(declared, g);
+    if (declared !== null) return { id: item.id, span, estimateRatio: declared };
     // Measured ratios come back as height ÷ width, hence the invert.
     const measured = measuredRatio.get(item.id);
     const estimateRatio = measured !== undefined && measured > 0 ? 1 / measured : null;
-    return { id: item.id, span: 1, estimateRatio };
+    return { id: item.id, span, estimateRatio };
   }
 
   /** Harvest what every rendered tile currently measures. Merged rather
@@ -282,7 +288,7 @@
       from = 0;
     }
 
-    const shapes = list.map((it) => shape(it, ladderReady));
+    const shapes = list.map((it) => shape(it, ladderReady, g));
     wall = placeInto(wall, shapes, from, g);
     placedIds = list.map((it) => it.id);
     placements = wall.placements;

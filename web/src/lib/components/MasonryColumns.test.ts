@@ -25,7 +25,8 @@
 //      from the start.
 //   4. Spanning placement, ADR 0079 §4 — closest-matched adjacent pair,
 //      placed at the greater of the two, both columns resuming from the
-//      slot's bottom edge.
+//      slot's bottom edge — plus the threshold, the cap and the stepper
+//      rule that decide which tiles get one (#1025).
 //   5. The accessibility contract. DOM order matches feed order again
 //      now that the column boxes are gone, so the list semantics are
 //      simpler than they were — but `aria-posinset` / `aria-setsize`
@@ -44,12 +45,14 @@ import {
   RATIO_MIN,
 } from './cardAsset';
 import {
+  MAX_SPAN,
   ROW_UNIT_PX,
   emptyState,
   placeAll,
   placeInto,
   spanWidthPx,
   tileRows,
+  tileSpan,
   type MasonryGeometry,
   type PlaceableTile,
 } from './masonryPlacement';
@@ -161,17 +164,17 @@ describe('masonryTileHeight (#652)', () => {
 // default rung renders 5 columns of 269px with an 8px gap and a 60px
 // floor, read out of Chromium on the dev feed.
 const WALL_1440: MasonryGeometry = { colCount: 5, colWidth: 269, gapPx: 8, minTilePx: 60 };
+/** The 10rem rung on 1920px: 11 columns of ~160px. */
+const WALL_DENSE: MasonryGeometry = { colCount: 11, colWidth: 160, gapPx: 8, minTilePx: 60 };
 /** The shapes the dev feed actually contains, in the proportion it
  *  contains them — 16:9 and 4:3 stills, portraits, squares, and the
  *  5.33:1 audio waveforms that are a third of the wall. */
 const FEED_RATIOS = [16 / 9, 1, 0.75, 4 / 3, 5.33, 1.5, 0.66, 5.33, 2 / 3, 1, 5.33, 8.68];
 
-function feed(count: number, from = 0): PlaceableTile[] {
+function feed(count: number, from = 0, geo = WALL_1440): PlaceableTile[] {
   return Array.from({ length: count }, (_, i) => {
     const r = FEED_RATIOS[(from + i) % FEED_RATIOS.length];
-    // Wide content does not claim the extra column until #1025; the
-    // placer's ability to give it one is exercised directly below.
-    return { id: `t${from + i}`, span: 1, estimateRatio: r };
+    return { id: `t${from + i}`, span: tileSpan(r, geo), estimateRatio: r };
   });
 }
 
@@ -249,13 +252,13 @@ describe('masonry placement — append-stability (#651)', () => {
   it('re-places from scratch when the column count changes', () => {
     const wide = placeAll(feed(36), WALL_1440);
     const narrowGeo = { ...WALL_1440, colCount: 3, colWidth: 460 };
-    const narrow = placeAll(feed(36), narrowGeo);
+    const narrow = placeAll(feed(36, 0, narrowGeo), narrowGeo);
     expect(narrow.colRows.length).toBe(3);
     expect(narrow.placements.some((p, i) => areaOf(p) !== areaOf(wide.placements[i]))).toBe(true);
   });
 });
 
-describe('masonry placement — spanning (ADR 0079 §4)', () => {
+describe('masonry placement — spanning (ADR 0079 §4, #1025)', () => {
   const wide: PlaceableTile = { id: 'w', span: 2, estimateRatio: 8.68 };
 
   it('lands a 2-wide tile on the closest-matched ADJACENT PAIR', () => {
@@ -333,6 +336,67 @@ describe('masonry placement — spanning (ADR 0079 §4)', () => {
     // point of spanning. At one column it would have been 31px.
     expect(p.rows).toBe(tileRows(546 / 8.68, 8));
     expect(masonryTileHeight(269, 8.68, 60)).toBe(60); // floored, i.e. squashed
+  });
+});
+
+describe('the span threshold (#1025)', () => {
+  // The rule is against RENDERED HEIGHT, so the same ratio decides
+  // differently at different rungs of the size stepper. An aspect-ratio
+  // threshold would be scale-invariant and could not.
+  it('spans exactly the ratios whose tile falls under the #652 floor', () => {
+    // 269 / 60 = 4.48:1 is the break-even at the 22rem default.
+    expect(tileSpan(4.4, WALL_1440)).toBe(1);
+    expect(tileSpan(4.6, WALL_1440)).toBe(2);
+    expect(tileSpan(5.33, WALL_1440)).toBe(2);
+    expect(tileSpan(8.68, WALL_1440)).toBe(2);
+  });
+
+  it('moves the threshold with the stepper, not with the ratio', () => {
+    // 160 / 60 = 2.67:1 at the dense rung — a 3:1 tile is a sliver there
+    // and comfortable at the default.
+    expect(tileSpan(3, WALL_1440)).toBe(1);
+    expect(tileSpan(3, WALL_DENSE)).toBe(2);
+  });
+
+  it('takes the SMALLEST span that clears the floor, never more', () => {
+    // Nothing between 1 and the cap to skip at MAX_SPAN 2, so this is
+    // pinned against the cap growing later.
+    expect(MAX_SPAN).toBe(2);
+    expect(tileSpan(1, WALL_DENSE)).toBe(1);
+    expect(tileSpan(2.6, WALL_DENSE)).toBe(1);
+  });
+
+  it('never spans more than two columns', () => {
+    // 12:1, the clamp ceiling, still only gets two. Past that the tile
+    // letterboxes onto the #652 floor — the ratio ceiling and that floor
+    // are the same box — rather than eating the row.
+    expect(tileSpan(RATIO_MAX, WALL_DENSE)).toBe(MAX_SPAN);
+    expect(tileSpan(60, WALL_DENSE)).toBe(MAX_SPAN);
+    expect(masonryTileHeight(spanWidthPx(WALL_DENSE, MAX_SPAN), RATIO_MAX, 60)).toBe(60);
+  });
+
+  it('never spans the whole row — a wide tile keeps a neighbour', () => {
+    expect(tileSpan(8.68, { ...WALL_1440, colCount: 3 })).toBe(2);
+    expect(tileSpan(8.68, { ...WALL_1440, colCount: 2 })).toBe(1);
+    expect(tileSpan(8.68, { ...WALL_1440, colCount: 1 })).toBe(1);
+  });
+
+  it('does not span a tile whose shape is not declared', () => {
+    // A measured ratio is the shape the tile RENDERS at, which for an
+    // already-floored tile is the floored shape — it cannot tell us the
+    // tile is being squashed. Span reads the declared ratio alone.
+    expect(tileSpan(null, WALL_1440)).toBe(1);
+    const s = placeAll([{ id: 'u', span: tileSpan(null, WALL_1440), estimateRatio: 4.3 }], WALL_1440);
+    expect(s.placements[0].span).toBe(1);
+  });
+
+  it('keeps a wall of real feed shapes append-stable once they span', () => {
+    const first = placeAll(feed(36), WALL_1440);
+    expect(first.placements.filter((p) => p.span === 2).length).toBeGreaterThan(0);
+    const grown = placeInto(first, feed(72), 36, WALL_1440);
+    for (let i = 0; i < first.placements.length; i++) {
+      expect(areaOf(grown.placements[i])).toBe(areaOf(first.placements[i]));
+    }
   });
 });
 
