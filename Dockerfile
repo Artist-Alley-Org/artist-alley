@@ -21,7 +21,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG GO_VERSION=1.26
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 # ---- web-build ------------------------------------------------------------
 #
@@ -112,7 +112,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 #
 # The headless three.js preview worker's node_modules (puppeteer + three)
 # for preview.model's 3D renderer (#498, ADR 0069). Multi-arch: buildx
-# resolves node:22-bookworm-slim per TARGETPLATFORM, so the node binary +
+# resolves node:24-bookworm-slim per TARGETPLATFORM, so the node binary +
 # modules copied into the runtime below match the target arch. Puppeteer's
 # bundled Chromium download is skipped — the runtime uses the apt
 # `chromium` package, which exists on amd64 AND arm64. That is why arm64
