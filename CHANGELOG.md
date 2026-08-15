@@ -169,6 +169,18 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Featuring something now shows it everywhere it should.** A featured collection could appear
+  on the browse page's featured strip but not in the Collections hub's Featured tab — or the
+  other way round — because the two surfaces disagreed about which audience a featured item was
+  for, and the admin screen could only write one of the audiences. All three surfaces now share
+  one rule (signed-in viewers see internal + public featuring, visitors see public only), and an
+  operator can choose the audience when featuring, with "internal" still the default (#1104,
+  #1088). The list view's Author column also shows people's names now instead of an internal
+  number (#1099), search suggestions can no longer omit private collections from the one person
+  allowed to see everything — while deleted collections stay out of everyone's suggestions
+  (#1078) — and the guarantee that search only matches text you may read is now enforced by the
+  build rather than by convention (#1065).
+
 - **Switching between Latest and Following no longer scrambles the masonry wall.** Changing the
   feed filter could leave tiles overlapping each other with stray holes, because the wall kept
   drawing the old feed's layout while the new feed's posts streamed in — and the mismatch
