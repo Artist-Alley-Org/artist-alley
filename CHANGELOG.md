@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The featured strip is a proper showcase now.** Wide cinematic cards (the shape you'd expect
+  from a portfolio site's top row) with the collection's name and description on the artwork,
+  arrow buttons at the edges, and click-drag panning — no scrollbar. What a card reveals about a
+  collection stays exactly within what you're allowed to see: a withheld title never brings a
+  description or an honest item count along with it (#1110).
+
+- **Grid view cards got the portfolio treatment.** At rest a card is just the artwork. Hovering
+  (or keyboard-focusing) reveals what kind of work it is as an icon — with a count when a post
+  holds several pieces — plus the title, the artist's avatar and name, and the card menu. No more
+  text badges over your art in grid view (#1111).
+
 - **List-view columns are resizable.** Drag the boundary between two column headers to resize,
   double-click it to reset that column, or use the arrow keys with the handle focused. Your
   widths are remembered across reloads, per column, alongside your column visibility choices.
