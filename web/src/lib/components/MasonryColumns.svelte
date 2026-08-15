@@ -71,7 +71,7 @@
   //   declared ratio → what CardThumb WILL render, authoritative and
   //                    known before the request
   //   measured cache → what this tile IS right now, harvested from the
-  //                    DOM on every placement pass (`snapshotRatios`)
+  //                    DOM on every placement pass (`snapshotTiles`)
   //   square         → never rendered before, nothing recorded. Not a
   //                    hedge: CardThumb reserves `aspect-square` for
   //                    exactly these tiles, so matching its own

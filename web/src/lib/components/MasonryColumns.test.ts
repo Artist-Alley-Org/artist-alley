@@ -186,7 +186,7 @@ function feed(count: number, from = 0, geo = WALL_1440): PlaceableTile[] {
  *  typed-doc plate, an asset whose preview predates #757. Those are the
  *  tiles whose shape is only knowable once they have rendered, so their
  *  `estimateRatio` is null on the first pass and the harvested measurement
- *  by the time the next page arrives (`snapshotRatios`).
+ *  by the time the next page arrives (`snapshotTiles`).
  *
  *  This is what makes the append-stability test load-bearing. A
  *  shortest-column placer is prefix-deterministic: re-running it from
