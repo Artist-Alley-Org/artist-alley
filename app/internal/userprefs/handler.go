@@ -26,8 +26,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -137,7 +139,7 @@ func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, 
 	case err != nil:
 		return Preferences{}, err
 	default:
-		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters)
+		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters, row.TeamRail)
 		if err != nil {
 			return Preferences{}, err
 		}
@@ -243,11 +245,22 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		ShowRestricted: &p.FeedFilters.ShowRestricted,
 	}
 
+	// Always present, with both lists materialised even when empty
+	// (#1113). Same argument as feed_filters one line up, for the list
+	// case: "no curation" and "an empty curation" are the same rail, so
+	// an omitted object would only make the client re-derive `[]`.
+	rail := p.TeamRail.Sanitized()
+	teamRail := openapi.UserPreferencesTeamRail{
+		HiddenTeamIds: toWireIDs(rail.HiddenTeamIDs),
+		TeamOrder:     toWireIDs(rail.TeamOrder),
+	}
+
 	return openapi.UserPreferencesResponse{
 		NotificationChannels:   channels,
 		EmailCadence:           &cadence,
 		DefaultViews:           views,
 		FeedFilters:            filters,
+		TeamRail:               teamRail,
 		KnownEventTypes:        append([]string(nil), KnownEventTypes...),
 		KnownChannels:          append([]string(nil), KnownChannels...),
 		DefaultChannelsByEvent: defaults,
@@ -290,12 +303,62 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 	if body.FeedFilters != nil && body.FeedFilters.ShowRestricted != nil {
 		filters.ShowRestricted = *body.FeedFilters.ShowRestricted
 	}
+	// Full-object replacement, like everything else on this endpoint: an
+	// absent `team_rail` clears the curation back to the default rail,
+	// and an absent list inside it clears that list. The manage panel
+	// always sends both, which is what makes "unhide the last hidden
+	// team" expressible at all.
+	rail := TeamRail{}
+	if body.TeamRail != nil {
+		rail.HiddenTeamIDs = fromWireIDs(body.TeamRail.HiddenTeamIds)
+		rail.TeamOrder = fromWireIDs(body.TeamRail.TeamOrder)
+	}
 	return Preferences{
 		NotificationChannels: channels,
 		DefaultViews:         views,
 		EmailCadence:         cadence,
 		FeedFilters:          filters,
+		TeamRail:             rail.Sanitized(),
 	}
+}
+
+// toWireIDs projects the stored id list onto the generated wire type.
+//
+// It hands back a pointer to a NON-NIL slice, so an empty list
+// marshals as `[]` rather than `null`. The client treats the two the
+// same, but a response that alternates between them depending on
+// whether the reader has ever hidden a team is a needless shape change
+// in a session payload.
+//
+// A parse failure is impossible here rather than swallowed:
+// TeamRail.Sanitized has already dropped anything that is not a UUID,
+// and every caller sanitizes before projecting. Belt and braces anyway,
+// because a silently truncated rail would be a bad way to learn that a
+// future caller skipped that step.
+func toWireIDs(in []string) *[]openapi_types.UUID {
+	out := make([]openapi_types.UUID, 0, len(in))
+	for _, id := range in {
+		u, err := uuid.Parse(id)
+		if err != nil {
+			continue
+		}
+		out = append(out, u)
+	}
+	return &out
+}
+
+// fromWireIDs is the inverse. The JSONB column stores plain strings —
+// the typed UUID exists to reject a malformed id at the edge, not to
+// change what is on disk.
+func fromWireIDs(in *[]openapi_types.UUID) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, 0, len(*in))
+	for _, u := range *in {
+		out = append(out, u.String())
+	}
+	return out
 }
 
 // CadenceFor returns the caller's email cadence for a verb via the
@@ -370,12 +433,17 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 	if err != nil {
 		return err
 	}
+	teamRailJSON, err := MarshalTeamRail(prefs.TeamRail)
+	if err != nil {
+		return err
+	}
 	if err := New(h.pool).UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
 		UserRef:              ref,
 		NotificationChannels: channelsJSON,
 		DefaultViews:         viewsJSON,
 		EmailCadence:         cadenceJSON,
 		FeedFilters:          filtersJSON,
+		TeamRail:             teamRailJSON,
 	}); err != nil {
 		return err
 	}
