@@ -9,6 +9,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **The teams strip filters your feed in place.** Click a team and the page stays put while the
+  feed narrows to that team's work, with the team's name as a heading and a follow button right
+  there; click All teams (or the same chip again) to clear. The strip now shows every team you
+  can see — your followed ones first — stays pinned to the top as you scroll, and pans by
+  drag or arrow buttons with no scrollbar. Its ⋯ menu is a real manager: search teams, follow
+  and unfollow inline, hide teams from your strip, and drag them into your own order — your
+  arrangement follows your account, and hiding a team never hides its posts (#1113).
+
 - **The featured strip is a proper showcase now.** Wide cinematic cards (the shape you'd expect
   from a portfolio site's top row) with the collection's name and description on the artwork,
   arrow buttons at the edges, and click-drag panning — no scrollbar. What a card reveals about a
@@ -179,6 +187,10 @@ where applicable, otherwise note "no-spec-impact."
   (#902).
 
 ### Fixed
+
+- **The feed's scrollbar no longer hides under the top bar.** Its top segment was painted
+  behind the navbar — worse when the demo or impersonation banner added height. The scroll
+  area now begins exactly where the bars end, in every banner state (#1122).
 
 - **Featuring something now shows it everywhere it should.** A featured collection could appear
   on the browse page's featured strip but not in the Collections hub's Featured tab — or the
