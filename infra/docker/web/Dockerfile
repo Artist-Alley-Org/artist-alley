@@ -4,7 +4,7 @@
 # output into the Go binary via //go:embed — there is no prod image
 # for this service.
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 ARG UID=1000
 ARG GID=1000
@@ -20,20 +20,25 @@ RUN if [ "$UID" != "1000" ] || [ "$GID" != "1000" ]; then \
 
 WORKDIR /app
 
-# Pin npm 11 — do not remove this to "use the image default" (#1004).
+# npm 11 comes from the BASE IMAGE now — there is no explicit pin here
+# any more, and that is deliberate (#1039). Keep node on an Active LTS
+# line that ships npm 11+; do not drop back to a base whose bundled npm
+# is 10.
 #
-# web/package-lock.json was written by npm 11+, which records a `libc`
-# field on the 10 optional platform bindings (@rolldown/*, lightningcss-*).
-# node:22-alpine still ships npm 10.9.8, and npm 10 does not know that
-# field: it silently strips all 10 on any write. So the obvious dev
-# command — `docker compose exec web npm update <pkg>` — comes back with
+# The constraint that used to need a pin (#1004): web/package-lock.json
+# is written by npm 11+, which records a `libc` field on the 10 optional
+# platform bindings (@rolldown/*, lightningcss-*). npm 10 does not know
+# that field and silently strips all 10 on any write, so the obvious dev
+# command — `docker compose exec web npm update <pkg>` — came back with
 # 30 phantom deletions on top of the real change, and the next npm 11
-# writer puts them all back. That round-trip bit #1001.
+# writer put them all back. That round-trip bit #1001. node:22-alpine
+# shipped npm 10.9.8, hence `RUN npm install -g npm@11`.
 #
-# CI never surfaced it because CI only ever runs `npm ci`, which is
-# read-only against the lockfile and safe at either version. This pin
-# is what makes the obvious in-container command the correct one.
-RUN npm install -g npm@11
+# node:24-alpine ships npm 11.17.0 in the image, so the pin was a layer
+# that reinstalled npm 11 over npm 11. CI never surfaced the original
+# problem because CI only ever runs `npm ci`, which is read-only against
+# the lockfile and safe at either version — the WRITE path is what needs
+# npm 11, and it is the base image that guarantees it now.
 
 # Install deps first so we get a cached layer that doesn't bust on
 # source edits. node_modules ownership has to match the runtime user

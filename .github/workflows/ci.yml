@@ -134,9 +134,8 @@ jobs:
     name: Frontend type-check + build
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 10
-    # All node work runs inside `docker run` against a node:22-alpine
-    # derivative (npm pinned — see the pin step) rather than via the
-    # workflow's `container:` directive. Why:
+    # All node work runs inside `docker run` against node:24-alpine
+    # rather than via the workflow's `container:` directive. Why:
     #
     # `container:` makes GitHub Actions inject a node24_alpine
     # binary at /__e/node24_alpine for JS actions like
@@ -157,56 +156,41 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      # Pre-pull once so subsequent steps don't each pay the
-      # cold-start cost, then derive a toolchain image with npm PINNED
-      # (#948).
+      # Pre-pull once so the five steps below don't each pay the
+      # cold-start cost, and assert the npm major while we're here.
       #
-      # node:22-alpine ships npm 10.9.8, and npm 10 does not know the
-      # `libc` field that npm 11 records on the 10 optional platform
-      # bindings in web/package-lock.json — it silently strips all of
-      # them on any write. infra/docker/web/Dockerfile pinned npm@11 for
-      # exactly this reason (#1013); this job was the other half, left
-      # unpinned. It never corrupted anything because every step below
-      # is read-only against the lockfile (`npm ci`, not `npm install`),
-      # which is precisely why the gap survived unnoticed. Pinning it
-      # means the version that VALIDATES the lockfile is the version
-      # that WRITES it, so CI can still catch a corrupted lockfile if
-      # one ever gets committed.
+      # There used to be a derived `aa-ci-node:22-npm11` image here, built
+      # per run, for one reason (#948/#1013): node:22-alpine shipped npm
+      # 10.9.8, and npm 10 does not know the `libc` field that npm 11
+      # records on the 10 optional platform bindings in
+      # web/package-lock.json — it silently strips all of them on any
+      # write (#1004). Pinning npm@11 meant the version that VALIDATES the
+      # lockfile is the version that WRITES it.
       #
-      # `npm@11` (floating minor), matching the Dockerfile: the
-      # load-bearing constraint is the major, since 11 is where `libc`
-      # awareness landed. web/package.json's `packageManager` field
-      # carries the exact version for corepack-aware tooling.
-      #
-      # Built once per run rather than `npm i -g` in each of the five
-      # steps below; the layer caches on the self-hosted runner, so a
-      # warm run pays nothing.
-      - name: Pull alpine node image + pin npm
+      # node:24-alpine (Active LTS, Krypton) ships npm 11.17.0, so that
+      # reason is gone and the derived image with it (#1039). The
+      # `npm --version` assertion below stays: it is the thing that fails
+      # loudly if a future base image ever regresses the npm major,
+      # instead of letting a stripped lockfile through silently.
+      - name: Pull alpine node image
         run: |
-          docker pull node:22-alpine
-          docker build -t aa-ci-node:22-npm11 - <<'DOCKERFILE'
-          FROM node:22-alpine
-          RUN npm install -g npm@11
-          DOCKERFILE
-          docker run --rm aa-ci-node:22-npm11 npm --version
+          docker pull node:24-alpine
+          npm_major=$(docker run --rm node:24-alpine npm --version | cut -d. -f1)
+          echo "node:24-alpine ships npm ${npm_major}.x"
+          if [ "${npm_major}" -lt 11 ]; then
+            echo "::error::node:24-alpine ships npm ${npm_major}, but web/package-lock.json needs an npm 11+ writer (#1004). Re-add an explicit npm pin."
+            exit 1
+          fi
 
       - name: Install web deps (npm ci against committed lockfile)
         # npm ci is read-only against the lockfile, so this cannot
-        # rewrite it at any npm version — the pin above is about the
-        # tree it resolves, and about not having a second npm major
-        # loose in the toolchain.
-        #
-        # (The comment that used to sit here claimed npm 10 was
-        # DELIBERATE, to dodge "the npm 11 strictness mismatch we hit
-        # chasing this". It dates from the v0.1.0 squash, a month before
-        # #1013 made npm 11 the lockfile's writer, and it no longer
-        # holds: the full chain below — ci, generate:api, check, test,
-        # build — was run under npm 11.19.0 in node:22-alpine against
-        # this lockfile before the pin was made, and passes clean.)
+        # rewrite it at any npm version — the base image's npm 11 is
+        # about the tree it resolves, and about not having a second npm
+        # major loose in the toolchain.
         run: |
           docker run --rm \
             -v "${PWD}":/work -w /work/web \
-            aa-ci-node:22-npm11 \
+            node:24-alpine \
             sh -c 'npm ci --no-audit'
 
       - name: Generate API schema (TypeScript types from openapi.yaml)
@@ -214,7 +198,7 @@ jobs:
           docker run --rm \
             -v "${PWD}":/work -w /work/web \
             -e AA_OPENAPI_SPEC=../app/api/openapi.yaml \
-            aa-ci-node:22-npm11 \
+            node:24-alpine \
             npm run generate:api
 
       - name: svelte-check
@@ -222,7 +206,7 @@ jobs:
           docker run --rm \
             -v "${PWD}":/work -w /work/web \
             -e NODE_OPTIONS=--max-old-space-size=4096 \
-            aa-ci-node:22-npm11 \
+            node:24-alpine \
             npm run check
 
       - name: vitest (frontend unit tests)
@@ -230,7 +214,7 @@ jobs:
           docker run --rm \
             -v "${PWD}":/work -w /work/web \
             -e NODE_OPTIONS=--max-old-space-size=4096 \
-            aa-ci-node:22-npm11 \
+            node:24-alpine \
             npm test
 
       - name: vite build (catches errors svelte-check can't)
@@ -238,7 +222,7 @@ jobs:
           docker run --rm \
             -v "${PWD}":/work -w /work/web \
             -e NODE_OPTIONS=--max-old-space-size=4096 \
-            aa-ci-node:22-npm11 \
+            node:24-alpine \
             npm run build
 
   # ── Detect stale generated code. Re-runs sqlc + oapi-codegen +
@@ -264,7 +248,7 @@ jobs:
   #   2. The portability gate. `ubuntu-latest` was a vanilla box, so a
   #      green run also proved codegen reproduces off our own machines.
   #      Exposure is small — the job installs its own Go 1.26, its own
-  #      Node 22, and a version-pinned oapi-codegen read out of
+  #      Node 24, and a version-pinned oapi-codegen read out of
   #      scripts/generate.sh — but it is not zero. Nothing now proves
   #      the regen is independent of what is baked into the runner
   #      image; if that ever matters, restore a hosted twin rather than
@@ -353,7 +337,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 

@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "CLIP visual encoder sidecar for artist-alley reverse-image search"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "BSD-3-Clause" }
+license = { text = "AGPL-3.0-only" }
 authors = [{ name = "artist-alley" }]
 dependencies = [
     # Torch — bump deliberately + regenerate the sidecar image.
