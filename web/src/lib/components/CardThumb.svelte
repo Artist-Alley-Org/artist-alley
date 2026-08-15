@@ -184,6 +184,20 @@
      *  A PostCard passes a cover id as the former and nothing as the
      *  latter — see CardRestricted's prop note. */
     requestAssetId?: string | null;
+    /** Draw the persistent `video` / `3D` media-type chip (default on).
+     *
+     *  Grid post cards pass `false` (#1111): the owner's overlay states
+     *  the kind as an ICON, in the same corner, and #1111 is explicit
+     *  that no TEXT kind badges remain in grid view. Rendering both
+     *  would say "video" twice, once in each notation, stacked.
+     *
+     *  A prop rather than a mode check inside this component: CardThumb
+     *  is handed a presentation, it does not infer one — and the caller
+     *  that turns the chip off is the same caller that draws the
+     *  replacement, so the two decisions stay in one file. Every other
+     *  surface (AssetCard in every density, thumbnail, masonry, feed) is
+     *  untouched and keeps the chip. */
+    kindBadge?: boolean;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -213,6 +227,7 @@
     restricted = false,
     restrictedOwnerName = null,
     requestAssetId = null,
+    kindBadge = true,
     children,
   }: Props = $props();
 
@@ -714,12 +729,12 @@
          `left-2 top-2`, which is exactly where the selection checkbox
          goes, and on a 60px masonry tile the two are the whole tile.
          The type is in the hover tooltip there instead. -->
-    {#if isVideo && !compact}
+    {#if isVideo && !compact && kindBadge}
       <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
         video
       </div>
-    {:else if is3D && !compact}
+    {:else if is3D && !compact && kindBadge}
       <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
         3D

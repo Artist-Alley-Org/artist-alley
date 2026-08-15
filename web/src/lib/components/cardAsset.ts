@@ -143,6 +143,23 @@ export interface ContentOrigin {
  *  created_at) rather than off the cover asset. */
 export interface CardCoverAsset {
   id: string;
+  /** The asset-type ref, which OVERRIDES the extension when resolving
+   *  what kind of thing this is (#1111).
+   *
+   *  This was deliberately absent until the grid overlay needed it. The
+   *  argument for leaving it out — recorded on CardThumb's `assetType`
+   *  prop — was that the only kind `asset_type` changes is a sprite
+   *  atlas, which is a raster, always has a preview, and so never
+   *  reaches the no-preview plate that was the sole consumer. That note
+   *  ends "widen the contract if that stops being true", and #1111 is
+   *  where it stops: the overlay labels EVERY grid tile with its kind,
+   *  preview or not, so a sprite sheet resolved from `.png` alone would
+   *  be captioned "Image" on a wall of them.
+   *
+   *  Required-but-nullable like its neighbours: null is a real answer
+   *  (a row that genuinely has no type), a missing key is a caller that
+   *  forgot, and only the first is expressible. */
+  asset_type: number | null;
   file_hash: string | null;
   file_extension: string | null;
   thumbhash: string | null;

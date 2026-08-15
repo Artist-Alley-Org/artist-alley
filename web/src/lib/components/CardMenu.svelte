@@ -97,6 +97,22 @@
      *  itself re-answers it authoritatively, so a card that guesses
      *  generously costs a page, not a silent failure. */
     editPath?: string | null;
+    /** The CALLER already reveals this control, so skip the built-in
+     *  hover/focus fade (#1111).
+     *
+     *  The grid post card's overlay renders this menu INSIDE a block
+     *  that is itself hidden at rest and revealed on hover-or-focus.
+     *  Two reveal rules multiply: the outer one turns the block on, the
+     *  inner `opacity-0` keeps the button off, and the ⋯ is simply
+     *  missing from an overlay that is otherwise fully drawn — which is
+     *  how it shipped for exactly one screenshot. Handing the decision
+     *  to the parent means one rule decides, and it is the rule that
+     *  knows about the block.
+     *
+     *  Every other caller leaves this false and keeps the behaviour
+     *  #578 specified: hidden at rest on fine pointers, revealed on
+     *  hover / focus, always shown on touch. */
+    revealed?: boolean;
   }
 
   let {
@@ -105,6 +121,7 @@
     detailPath,
     manageAccess = null,
     editPath = null,
+    revealed = false,
   }: Props = $props();
 
   // What this card would put in a collection, and which endpoint that
@@ -264,8 +281,10 @@
   stretched nav link + the title overlay.
 -->
 <div
-  class="pointer-events-none absolute right-2 top-2 z-20 opacity-0 transition-opacity duration-150
-         group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100
+  class="pointer-events-none absolute right-2 top-2 z-20 transition-opacity duration-150
+         {revealed
+    ? 'opacity-100'
+    : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100'}
          {open ? 'opacity-100' : ''}"
 >
   <button

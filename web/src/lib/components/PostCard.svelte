@@ -28,6 +28,8 @@
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
   import { api } from '$api/client';
   import type { CardCoverAsset, ContentOrigin } from '$components/cardAsset';
+  import { kindForAsset } from './viewers/controller';
+  import { iconForKind, MultiAssetIcon } from './kindIcon';
 
   // Cover-asset shape is the shared card feed contract (#595) — its
   // presentation fields are REQUIRED so a surface cannot hand-map a
@@ -327,6 +329,40 @@
 
   const memberCount = $derived(memberCountProp ?? post.members.length);
 
+  // ── #1111: the grid card's overlay ──────────────────────────────────
+  //
+  // At rest a grid tile is IMAGE ONLY — the reference's discovery-wall
+  // posture. Everything below appears on hover AND on keyboard focus,
+  // over the same gradient scrim the title already used.
+  //
+  // What moves, and where:
+  //   top-left     the asset KIND, as an icon. Multi-asset posts show
+  //                the count then the Shapes glyph instead.
+  //   bottom-left  the title, then a 40px avatar + the author's name.
+  //   right of it  the ⋯ menu, relocated out of the top-right corner.
+  //   top-right    the select checkbox, which inherits the corner ⋯
+  //                vacated (see CardCheckbox.corner).
+  //
+  // The kind icon replaces CardThumb's `video` / `3D` TEXT chip, which
+  // is switched off for this mode only (`kindBadge` below) — #1111 is
+  // explicit that no text kind badges survive in grid.
+
+  /** The cover's kind, resolved through the SAME function CardFallback
+   *  and the viewer router use. Not a second extension table: a PNG
+   *  uploaded as a sprite atlas is a sprite sheet, and only
+   *  `kindForAsset` knows that. */
+  const coverKind = $derived(
+    kindForAsset({ asset_type: coverAsset?.asset_type ?? null, file_extension: coverFileExtension }),
+  );
+  const KindIcon = $derived(iconForKind(coverKind));
+
+  /** Grid only, and only when the tile is a real card — a restricted
+   *  cover states its own restriction and must not also be labelled by
+   *  kind, since the kind of something you may not see is not yours to
+   *  know. */
+  const showOverlay = $derived(mode === 'grid' && !coverRestricted);
+  const multi = $derived(memberCount > 1);
+
   // The corner conflict was a THREE-way fight, not the two the brief
   // described (#578). Top-left already hosts the select checkbox AND
   // CardThumb's persistent video/3D media-type badge; top-right now hosts
@@ -504,6 +540,7 @@
     titleAdjacent={detailed}
     restricted={coverRestricted}
     restrictedOwnerName={coverOwnerName}
+    kindBadge={!showOverlay}
   >
     <!-- Whole-card navigation target (modal intercept + permalink
          fallback). Hover here drives CardThumb's sprite-scrub and, in
@@ -518,8 +555,10 @@
       aria-label={post.title || 'Untitled'}
     ></a>
 
-    <!-- Multi-select checkbox (top-left). -->
-    <CardCheckbox id={post.id} />
+    <!-- Multi-select checkbox. Top-left everywhere except the #1111
+         grid overlay, where top-left carries the kind icon and the ⋯
+         menu has vacated top-right. -->
+    <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} />
 
     <!-- Multi-asset "stacked" indicator (#578). BOTTOM-right, PERSISTENT —
          the one piece of chrome that stays at rest, so a wall of art
@@ -537,7 +576,7 @@
          is still available, just not at rest. This is the one place
          #580's "persistent at rest" property is traded away; if the
          owner wants it back in masonry, the tile floor has to grow. -->
-    {#if memberCount > 1 && !compact}
+    {#if memberCount > 1 && !compact && !showOverlay}
       <div
         class="pointer-events-none absolute bottom-2 right-2 z-[2] inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm"
         aria-label={t('card.multi.badge_label', { count: String(memberCount) })}
@@ -551,8 +590,169 @@
       </div>
     {/if}
 
-    {#if !detailed && !compact && !social}
-      <!-- Grid: hover-only title overlay (clicks fall to the link).
+    {#if showOverlay}
+      <!-- ═══ #1111: the grid overlay ═══════════════════════════════
+           Two corner blocks and a BOTTOM-ONLY scrim, revealed together.
+
+           NO GRADIENT ACROSS THE ARTWORK (owner correction, 2026-08-15).
+           This shipped for one screenshot as a single full-card gradient
+           — `from-black/85 via-transparent to-black/45` over `inset-0` —
+           and on a flat saturated field like a flag it STEPPED visibly:
+           an 8-bit alpha ramp stretched over 378px is roughly one level
+           every two rows, and flat colour is exactly where that reads as
+           horizontal scanlines. It looked like a filter and was a
+           gradient over too long a run.
+
+           The tint itself is fine — the owner's follow-up allows a
+           subtle uniform darkening, and it earns its place by making the
+           corner icon read against a light cover. What it must be is
+           FLAT. A single-alpha fill has one value and therefore cannot
+           band, at any card size, over any artwork; the moment it
+           becomes a ramp the length of the card, it can. That is the
+           rule this file is keeping, not a particular opacity.
+
+           So: one flat wash over the whole card, plus a short gradient
+           scrim confined to the bottom band where the type actually
+           sits. The scrim is a ramp too, but over ~45% of the height and
+           ending in a region already going black, which is a short
+           enough run for its steps to fall below the eye's threshold —
+           the same treatment the featured rail and the old grid overlay
+           have always used without complaint.
+
+           HOVER **AND** FOCUS. Hover alone leaves a keyboard reader
+           tabbing through a wall of unlabelled pictures — at rest this
+           card shows NOTHING but the image, so without the focus arm
+           the keyboard path has no title at all. The card's stretched
+           `<a>` is the focus target and lives inside this same `.group`,
+           so the rule is "the group contains a focus-visible element".
+
+           WHY THE RULE IS IN <style> AND NOT IN THE CLASS LIST.
+           `group-focus-within:` is the obvious spelling and is the
+           WRONG one: `:focus-within` fires for a MOUSE click too, so
+           clicking a card would pin its overlay open after the pointer
+           left — the #1020 regression, exactly. `:focus-visible` is the
+           keyboard-only half, and the ancestor form of it
+           (`:has(:focus-visible)`) has no Tailwind variant that is
+           guaranteed to compile; a variant that silently fails to
+           compile leaves an overlay a keyboard reader can never see,
+           which no type check and no DOM assertion would catch. So the
+           two selectors are written out, where they cannot half-apply.
+
+           `pointer-events-none` on the overlay, `pointer-events-auto`
+           re-enabled only on the ⋯ trigger (CardMenu does that itself).
+           The author's name is deliberately NOT a link here: the card is
+           one stretched anchor to the post, and nesting a profile link
+           inside it would put two targets in one tile on a surface whose
+           whole job is "open this". The feed card, which has room to be
+           read rather than scanned, keeps the profile link. -->
+      <div
+        class="grid-overlay pointer-events-none absolute inset-0 z-[2] flex flex-col justify-between
+               bg-black/20 p-2.5 opacity-0 transition-opacity duration-200"
+        data-testid="post-card-overlay"
+      >
+        <!-- The bottom scrim. `-m-2.5` cancels the container's padding:
+             a scrim that stops 10px short of the edges is a dark
+             rectangle sitting on the picture instead of the bottom of
+             the picture going dark. -->
+        <div
+          class="pointer-events-none absolute inset-x-0 bottom-0 -m-2.5 h-[45%]
+                 bg-gradient-to-t from-black/80 via-black/40 to-transparent"
+          aria-hidden="true"
+          data-testid="post-card-scrim"
+        ></div>
+        <!-- TOP-LEFT: the kind, as an icon and never as a word.
+             A multi-asset post states the SET instead of any one
+             member's kind, with the count to the LEFT of the glyph —
+             #1111's spelling, and the right way round: the number is
+             read first and the glyph qualifies it.
+
+             `memberCount` is the truth rule from the props block: a
+             search hit ships one member and carries its real size
+             beside it, so this never becomes `members.length` and never
+             becomes an unbounded query for a badge. -->
+        <div class="relative flex items-start justify-between gap-2">
+          {#if multi}
+            <span
+              class="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs
+                     font-semibold text-white backdrop-blur-sm"
+              data-testid="post-card-multi"
+              aria-label={t('card.multi.badge_label', { count: String(memberCount) })}
+              title={t('card.multi.badge_label', { count: String(memberCount) })}
+            >
+              <span class="tabular-nums">{memberCount}</span>
+              <MultiAssetIcon size={14} strokeWidth={2.25} aria-hidden="true" />
+            </span>
+          {:else}
+            <span
+              class="inline-flex items-center rounded-full bg-black/60 p-1.5 text-white backdrop-blur-sm"
+              data-testid="post-card-kind"
+              aria-label={t(`card.fallback.kind.${coverKind}`)}
+              title={t(`card.fallback.kind.${coverKind}`)}
+            >
+              <KindIcon size={15} strokeWidth={2} aria-hidden="true" />
+            </span>
+          {/if}
+        </div>
+
+        <!-- BOTTOM-LEFT: identity. Title, then the author.
+             `relative` + `pr-11` are load-bearing exactly as they are on
+             the feed header: CardMenu anchors `absolute right-2 top-2`
+             to the nearest positioned ancestor and reserves no flex
+             space, so without both the ⋯ escapes to the card and a long
+             display name runs underneath it. -->
+        <div class="relative z-[1] flex items-end pr-11" data-testid="post-card-identity">
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-semibold text-white" title={post.title || 'Untitled'}>
+              {post.title || 'Untitled'}
+            </p>
+            {#if author}
+              <span class="mt-1 flex items-center gap-2">
+                <!-- 40px circular avatar, or the initials disc. The
+                     fallback is NOT a broken circle and not a generic
+                     silhouette: `avatar_url` is null for every account
+                     that never uploaded one, which on a fresh install is
+                     all of them, so the fallback is the common case and
+                     has to look deliberate. -->
+                <span
+                  class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full
+                         bg-white/15 text-xs font-semibold text-white backdrop-blur-sm"
+                  data-testid="post-card-avatar"
+                >
+                  {#if author.avatar_url}
+                    <img src={author.avatar_url} alt="" class="h-full w-full object-cover" />
+                  {:else}
+                    {authorInitials}
+                  {/if}
+                </span>
+                <!-- `display_name` is the SERVER's resolution, never a
+                     re-transcription here (#1023): real name for a
+                     signed-in reader, username when there is no fullname
+                     or the reader is anonymous. Rendering the ladder in
+                     the client is how the anonymous rung gets skipped by
+                     a COALESCE that reaches `fullname`. -->
+                <span class="truncate text-xs text-white/80" data-testid="post-card-author">
+                  {author.display_name}
+                </span>
+              </span>
+            {/if}
+          </div>
+          <!-- ⋯ right of the identity block. NOT a second menu: the
+               top-right instance below is skipped in this mode, so the
+               card still has exactly one. -->
+          <CardMenu
+            assetId={coverAssetId}
+            postId={post.id}
+            detailPath="/posts/{post.id}"
+            manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+            revealed
+          />
+        </div>
+      </div>
+    {:else if !detailed && !compact && !social}
+      <!-- List: hover-only title overlay (clicks fall to the link).
+           Grid takes the #1111 overlay above; a grid tile whose cover is
+           RESTRICTED also lands here, because that plate states its own
+           restriction and must not be captioned by kind as well.
            Thumbnail shows a persistent footer below instead; masonry
            shows the hover tooltip instead (#652); feed prints the title
            as a PERSISTENT caption under the media (#557) — a social card
@@ -569,9 +769,11 @@
       </div>
     {/if}
 
-    {#if !social}
+    {#if !social && !showOverlay}
       <!-- Overflow menu. ONE affordance in every mode, including
-           thumbnail — owner amendment 2026-07-25 to #556.
+           thumbnail — owner amendment 2026-07-25 to #556. Skipped under
+           the #1111 grid overlay, which renders the same component
+           beside the identity block instead — one ⋯ per card, always.
            add-to-collection targets the cover asset.
 
            Feed renders the SAME component in its header instead, so the
@@ -684,3 +886,36 @@
     </a>
   {/if}
 </div>
+
+<style>
+  /* The #1111 grid overlay's reveal rule. See the markup comment for why
+     it is here and not in the class list.
+
+     `:global` on the ancestor because `.group` is the card wrapper's
+     class in this same file but Tailwind-authored — Svelte's scoper does
+     not stamp it, so the compiler would prune the rule as unmatched.
+     The `.grid-overlay` half stays scoped, so this cannot reach any
+     other component's overlay. */
+  :global(.group:hover) .grid-overlay,
+  :global(.group:has(:focus-visible)) .grid-overlay {
+    opacity: 1;
+  }
+
+  /* Touch has neither of those. A coarse-pointer device cannot hover and
+     is not tabbing, so both selectors above are dead there — and this
+     overlay now CONTAINS the ⋯ menu, which used to carry its own
+     `[@media(hover:none)]:opacity-100` and was therefore always
+     reachable. Without this arm, moving the menu inside the overlay
+     would have taken every grid card's only action affordance away from
+     every phone, silently.
+
+     So on touch the overlay is PERSISTENT rather than revealed. That is
+     the same trade #578 made for the same reason, and it is the honest
+     one: "revealed on hover" is not a design a device without a pointer
+     can express. */
+  @media (hover: none) {
+    .grid-overlay {
+      opacity: 1;
+    }
+  }
+</style>
