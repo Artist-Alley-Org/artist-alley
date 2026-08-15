@@ -169,17 +169,29 @@
           panelTestId="teams-rail-manage-menu"
         >
           {#snippet trigger({ open })}
-            <!-- `aria-label` on the span, not the wrapping button: the
-                 button's accessible name comes from its content, and
-                 that content is otherwise a decorative glyph — no name
-                 at all. Same shape ColumnPicker's trigger uses. -->
+            <!-- The name is TEXT INSIDE the trigger, not an `aria-label`
+                 on this span (#1108 review).
+
+                 Menu wraps the trigger snippet in the button, so the
+                 button's accessible name is computed FROM ITS CONTENT —
+                 and the only content here is an `aria-hidden` glyph.
+                 Labelling the span looks like it fixes that and does not:
+                 a bare `<span>` maps to role `generic`, which ARIA 1.2
+                 forbids naming, so a conforming engine ignores the
+                 attribute and the button is left nameless. Chromium is
+                 lenient and does report "Team rail options", which is why
+                 this survived review — it is a name that exists in one
+                 engine.
+
+                 Visually-hidden text has no such caveat: it is content,
+                 name-from-content is what a button does, and it is the
+                 shape AdminMenu's identical ⋯ trigger already uses. -->
             <span
               class="flex h-12 w-12 items-center justify-center rounded-full border border-border
                      bg-surface-elevated text-fg-muted transition-colors hover:border-border-strong
                      hover:bg-state-hover hover:text-fg"
               class:border-border-strong={open}
               class:text-fg={open}
-              aria-label={t('teams.rail_manage')}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -193,6 +205,7 @@
                 <circle cx="12" cy="12" r="2" />
                 <circle cx="19" cy="12" r="2" />
               </svg>
+              <span class="sr-only">{t('teams.rail_manage')}</span>
             </span>
           {/snippet}
 
