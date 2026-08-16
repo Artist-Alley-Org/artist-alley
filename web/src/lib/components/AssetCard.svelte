@@ -271,15 +271,18 @@
 >
   {#if detailed && !restricted}
     <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
-         #1158: TYPE ICON LEFT, CONTROLS RIGHT, and no extension text —
-         the twin of PostCard's band, and the full argument is written
-         once over there. The short version: the icon (plus #1144's
-         tooltip, which says the type in words) is the exact answer to
-         "what kind of thing is this?", the extension was a second and
-         coarser answer to the same question, and the band now separates
-         what the card IS from what you can DO to it. The two controls
-         are a tight CLUSTER, with the elastic space between the groups
-         and none inside the pair — see PostCard's band for why.
+         #1158: TYPE ICON LEFT, and no extension text — the twin of
+         PostCard's band, and the full argument is written once over
+         there. The short version: the icon (plus #1144's tooltip, which
+         says the type in words) is the exact answer to "what kind of
+         thing is this?", and the extension was a second and coarser
+         answer to the same question.
+
+         The band now holds exactly TWO things — the kind badge left and
+         the CHECKBOX right — because the owner's ruling moved the ⋯
+         menu out of it and down to the end of the metadata stack. Same
+         change, same reasons, same sizing consequence as PostCard's;
+         see that band and CardMenu's trigger comment.
 
          It REPLACES #556's title header; the title moves down into the
          metadata stack where one fact per row reads as a record. -->
@@ -289,15 +292,7 @@
     >
       <CardKindBadge {kind} variant="inline" tooltipKey={asset.id} />
       <span class="flex-1"></span>
-      <div class="flex items-center">
-        <CardCheckbox id={asset.id} placement="inline" />
-        <CardMenu
-          assetId={asset.id}
-          detailPath="/assets/{asset.id}"
-          editPath={canEdit ? `/assets/${asset.id}/edit` : null}
-          placement="inline"
-        />
-      </div>
+      <CardCheckbox id={asset.id} placement="inline" />
     </div>
   {/if}
 
@@ -451,32 +446,59 @@
              unreachable by keyboard (#1126). -->
         <CardAuthorLink author={owner} size="sm" />
       {/if}
-      <a
-        href="/assets/{asset.id}"
-        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        {#if cardFields.length > 0}
-          <dl class="space-y-0.5" data-testid="card-fields">
-            {#each cardFields as f (f.code)}
-              <div class="flex gap-1.5 text-xs">
-                <dt class="shrink-0 text-fg-subtle">{f.label}</dt>
-                <dd class="truncate text-fg-muted" data-testid="card-field-{f.code}">{f.value}</dd>
-              </div>
-            {/each}
-          </dl>
-        {/if}
-        {#if origin}
-          <p
-            class="flex items-center gap-1 text-[11px] text-fg-subtle"
-            data-testid="card-origin"
-            title={originHost ? `${origin.display_name} — ${originHost}` : origin.display_name}
-            aria-label={t('card.origin_label')}
-          >
-            <span aria-hidden="true">↗</span>
-            <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
-          </p>
-        {/if}
-      </a>
+      <!-- THE LAST ROW, and the one that carries the ⋯ MENU (owner's
+           ruling: "I like the menu bottom right"). PostCard's twin row
+           holds the date and the engagement counts; an asset card's
+           holds the operator's `show_on_card` fields and the
+           provenance line, and either way the trigger sits at its end.
+
+           A SIBLING of the anchor, never inside it: interactive content
+           in an <a> is invalid HTML and the anchor's own handler would
+           navigate on the way to opening the menu (#1126, and the same
+           note is on PostCard's row). The anchor takes the elastic
+           space with `min-w-0 flex-1` so its truncating field values
+           and peer name can still shrink instead of shoving the
+           trigger off the card.
+
+           When the operator has configured no card fields and the asset
+           is local, this anchor is EMPTY and the row is the trigger
+           alone, right-aligned under the metadata. That is the intended
+           degenerate case, not an accident: the menu has to be reachable
+           on every card, and it no longer has a band to fall back to. -->
+      <div class="flex items-center gap-2">
+        <a
+          href="/assets/{asset.id}"
+          class="block min-w-0 flex-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          {#if cardFields.length > 0}
+            <dl class="space-y-0.5" data-testid="card-fields">
+              {#each cardFields as f (f.code)}
+                <div class="flex gap-1.5 text-xs">
+                  <dt class="shrink-0 text-fg-subtle">{f.label}</dt>
+                  <dd class="truncate text-fg-muted" data-testid="card-field-{f.code}">{f.value}</dd>
+                </div>
+              {/each}
+            </dl>
+          {/if}
+          {#if origin}
+            <p
+              class="flex items-center gap-1 text-[11px] text-fg-subtle"
+              data-testid="card-origin"
+              title={originHost ? `${origin.display_name} — ${originHost}` : origin.display_name}
+              aria-label={t('card.origin_label')}
+            >
+              <span aria-hidden="true">↗</span>
+              <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
+            </p>
+          {/if}
+        </a>
+        <CardMenu
+          assetId={asset.id}
+          detailPath="/assets/{asset.id}"
+          editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+          placement="inline"
+        />
+      </div>
     </div>
 
   {/if}
