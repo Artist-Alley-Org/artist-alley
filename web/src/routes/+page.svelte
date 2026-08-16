@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  import { untrack, onMount } from 'svelte';
+  import { untrack, onMount, tick } from 'svelte';
   import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -24,6 +24,7 @@
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createMarquee } from '$lib/util/marquee.svelte';
+  import { scrollportOf } from '$lib/util/scrollport';
   import type { components } from '$api/schema';
 
   onMount(() => { browseView.init(); });
@@ -169,6 +170,7 @@
     error = null;
     guestFeed = false;
     const gen = ++generation;
+    let appended = 0;
     try {
       const params: Record<string, string | number> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
@@ -224,6 +226,7 @@
       const pageItems = (data.items ?? []) as Post[];
       items = reset ? pageItems : [...items, ...pageItems];
       nextCursor = (data.next_cursor as string | null) ?? null;
+      appended = pageItems.length;
     } catch (e) {
       error = e instanceof Error ? e.message : t('common.failed_to_load');
     } finally {
@@ -232,6 +235,19 @@
         initialLoaded = true;
       }
     }
+    // #1159 — top the buffer back up. See `pumpFeed` for why the
+    // IntersectionObserver alone cannot do this once the lookahead is
+    // deeper than one page is tall.
+    //
+    // `appended > 0` is the anti-runaway guard and it is load-bearing:
+    // a feed that answers with an empty page and a non-null cursor
+    // (a filter that thins a page to nothing server-side) would
+    // otherwise leave the buffer permanently short and pump forever.
+    // One empty page stops the chase; the observer still re-arms it
+    // when the reader scrolls.
+    if (gen !== generation || appended === 0) return;
+    await tick();
+    requestAnimationFrame(pumpFeed);
   }
 
   // Identity of the result set currently on screen. Reading all three
@@ -273,8 +289,9 @@
   //
   // The feed is the one surface where restoring the offset alone would
   // be actively worse than not restoring it: come back holding only
-  // page 1 and a 1500px offset sits inside the sentinel's 600px
-  // rootMargin, so the loader fires, the content grows, and the user is
+  // page 1 and a 1500px offset sits inside the sentinel's lookahead
+  // (#1159 made that deeper still, so the argument only got stronger),
+  // so the loader fires, the content grows, and the user is
   // parked somewhere they never were. Handing back the accumulated
   // pages puts the offset back over the same posts and leaves the
   // sentinel where it belongs — off screen.
@@ -303,27 +320,133 @@
     },
   });
 
-  // Infinite scroll: rootMargin head-start so the next batch is in
-  // flight before the user reaches the end.
+  // ── Infinite scroll: stay ahead of the reader (#1159) ─────────────
+  //
+  // # The bug was not that 600px is too small. The 600px never applied.
+  //
+  // This observer was built with the DEFAULT root — `null`, meaning the
+  // document viewport — and `rootMargin: '600px 0px'`. But this app
+  // never scrolls the window: the shell is `overflow-hidden` with
+  // `<main class="flex-1 overflow-y-auto">` as the real scrollport
+  // (+layout.svelte, #1122). `rootMargin` inflates the ROOT's rect and
+  // nothing else, while the intersection is still clipped by every
+  // scrolling ancestor in between — so `<main>`'s own unexpanded clip
+  // rect cut the 600px straight back off. The sentinel was reported as
+  // intersecting only once it genuinely entered `<main>`'s visible box:
+  // a lookahead of approximately ZERO, which is exactly what "the feed
+  // loads too late" feels like.
+  //
+  // MEASURED, not deduced. With the margin raised to 2700px and the
+  // trigger left on the implicit root, an in-page rAF sampler recorded
+  // the unread-feed buffer sawtoothing 3893px → 52px → 3893px: the
+  // refills were firing at a buffer of ~50-300px, not at 2700px. Raising
+  // the number could never have worked; the root had to change. The
+  // marquee already knew this about the same wall (its autoscroll walks
+  // up for the scrollport) — this observer just never asked.
+  //
+  // # What replaces it
+  //
+  // `root` is the sentinel's actual scrollport, so `rootMargin` inflates
+  // the box that is really doing the clipping, and the margin is
+  // `LOOKAHEAD_VIEWPORTS × the scrollport's own height` — a head-start
+  // measured in screenfuls of reading, which scales across a 390px phone
+  // and a 4k display without either being written down. Both are
+  // recomputed on resize (rAF-coalesced, and only when the height
+  // actually moved), rebuilding rather than mutating because `root` and
+  // `rootMargin` are fixed at construction.
+  //
+  // The depth has to cover RENDER, not the wire: the wire is 21ms p50 on
+  // this stack, while painting 36 fresh cards on a main thread already
+  // busy scrolling is what costs the hundreds of milliseconds the reader
+  // was waiting on. 2.5 screenfuls buys ~1.6s at a 1.6k px/s wheel and
+  // ~1s at 2.7k px/s, which measurement says is enough and 1.5 is not.
+  //
+  // # Why the observer alone is not the whole trigger
+  //
+  // An IntersectionObserver notifies on threshold CROSSINGS. A lookahead
+  // deeper than one page is tall (a page is ~1.3 screenfuls of tiles at
+  // 1920px) means the sentinel is STILL inside the margin after an
+  // append: the intersection state never changes, no callback is queued,
+  // and the feed stalls one page in — a strictly worse bug than the one
+  // being fixed. So the trigger is a predicate over the sentinel's own
+  // geometry and both edges call it: the observer when the reader moves,
+  // and the tail of a successful fetch when the buffer moves.
+  //
+  // That makes filling a deep buffer a bounded SEQUENTIAL chase. At most
+  // one request is ever in flight (`loading` is still the gate, as it
+  // was), and the chase stops the moment the buffer is covered, so the
+  // steady-state cost is a fixed depth of prefetched pages rather than
+  // anything that scales with how far the reader goes.
+  const LOOKAHEAD_VIEWPORTS = 2.5;
+
+  /** The box that actually clips the sentinel. `null` before mount, and
+   *  on any surface where nothing above the wall scrolls — in which case
+   *  the viewport IS the scrollport and the observer's default root is
+   *  already correct. */
+  const scrollport = () => scrollportOf(sentinel);
+  const portHeight = () => scrollport()?.clientHeight ?? window.innerHeight;
+  const lookaheadPx = () => Math.round(portHeight() * LOOKAHEAD_VIEWPORTS);
+
+  /** Is there less than a lookahead's worth of unread feed below the
+   *  fold? Read off the sentinel, which sits at the wall's tail, so it
+   *  answers for whatever the wall's real height turned out to be —
+   *  masonry's variable tiles included. Measured against the scrollport's
+   *  bottom edge for the same reason the observer is rooted there. */
+  function wantsMore(): boolean {
+    const node = sentinel;
+    if (!node) return false;
+    const port = scrollport();
+    const bottom = port ? port.getBoundingClientRect().bottom : window.innerHeight;
+    return node.getBoundingClientRect().top <= bottom + lookaheadPx();
+  }
+
+  function pumpFeed() {
+    untrack(() => {
+      if (!nextCursor || loading) return;
+      if (!wantsMore()) return;
+      void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
+    });
+  }
+
   $effect(() => {
     const node = sentinel;
     if (!node) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            untrack(() => {
-              if (nextCursor && !loading) {
-                void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
-              }
-            });
-          }
-        }
-      },
-      { rootMargin: '600px 0px' },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
+    let observer: IntersectionObserver | undefined;
+    let raf = 0;
+    let armedFor = -1;
+
+    const arm = () => {
+      armedFor = portHeight();
+      observer?.disconnect();
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) pumpFeed();
+        },
+        { root: scrollport(), rootMargin: `${lookaheadPx()}px 0px` },
+      );
+      observer.observe(node);
+    };
+
+    // rAF-coalesced, and only when the HEIGHT moved: a drag-resize fires
+    // a resize event per frame, and rebuilding an observer per frame
+    // would be the same churn MasonryColumns' width guard exists to
+    // avoid. A width-only change (the column count moving) cannot alter
+    // a vertical lookahead.
+    const onResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (portHeight() !== armedFor) arm();
+      });
+    };
+
+    arm();
+    window.addEventListener('resize', onResize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', onResize);
+      if (raf) cancelAnimationFrame(raf);
+    };
   });
 
   // ── Marquee drag-select (#1127) ───────────────────────────────────
