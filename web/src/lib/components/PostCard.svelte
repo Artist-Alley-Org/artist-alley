@@ -72,6 +72,19 @@
      *  for the whole page, so the heart is right on first paint without
      *  a request per card. */
     liked?: boolean;
+    /** The head of the thread — the newest few top-level comments, in
+     *  the order the thread shows them (#1047). Server-resolved for the
+     *  whole page like `author` and `liked`, and for the same reason: a
+     *  card that fetched its own comments would be one request per post
+     *  on a browse surface.
+     *
+     *  Optional and possibly empty, and the feed card renders nothing
+     *  when it is. A commenter's `author` is absent when they are not
+     *  disclosed to this reader (ADR 0024) — see PostAuthor and the
+     *  server's `enrichTopComments`; the card draws the words with no
+     *  name rather than a placeholder identity, which is the same
+     *  answer the post's own header gives for a withheld author. */
+    comments_preview?: PostCommentPreview[];
     cover_asset_id?: string | null;
     created_at: string;
     like_count: number;
@@ -84,6 +97,20 @@
     username: string;
     display_name: string;
     avatar_url?: string | null;
+  }
+
+  /** One comment as the feed card shows it — a name, a line of text and
+   *  when. The server's allow-list shape (#1047), not a trimmed
+   *  `Comment`: threading, reactions and annotations are what opening
+   *  the post is for. */
+  interface PostCommentPreview {
+    id: string;
+    body: string;
+    created_at: string;
+    author?: PostAuthorSummary | null;
+    /** A comment that arrived from a paired peer has no local user; the
+     *  cached remote name rides here instead of in `author`. */
+    remote_display_name?: string | null;
   }
 
   interface Props {
@@ -188,6 +215,26 @@
   }
 
   const origin = $derived(post.origin ?? null);
+
+  // The head of the thread (#1047). Rendered only in the social view —
+  // the other four densities are walls of artwork where a conversation
+  // is a count at most.
+  const commentsPreview = $derived(post.comments_preview ?? []);
+
+  /** The commenter's name, or "" when there is none to print.
+   *
+   *  THREE CASES, and only the first two produce a name: a local
+   *  commenter the server disclosed, a remote one whose peer has
+   *  shipped a display hint, and a commenter who is NOT disclosed to
+   *  this reader (the ADR 0024 opt-out, a deleted account, or a peer
+   *  with no hint yet). The third renders the comment with no name —
+   *  never a placeholder, never the actor URI's host, because both
+   *  would be this client inventing an identity the server declined to
+   *  send (#1023). */
+  function commenterName(c: PostCommentPreview): string {
+    if (c.author) return c.author.display_name;
+    return c.remote_display_name ?? '';
+  }
 
   // Like state. Seeded from the payload (#557) so the heart is correct
   // on first paint — no per-card `GET /posts/{id}/like`, which on a
@@ -324,12 +371,27 @@
   const FEED_SIZES = 'auto, (max-width: 46rem) 100vw, 46rem';
   const sizesHint = $derived(feed || social ? FEED_SIZES : tileSizes);
 
-  // The tallest a feed image may render, as width/height — 4:5, the cap
-  // every social feed converges on. At the 46rem measure a genuine 1:4
-  // portrait would otherwise be ~3000px and the reader would scroll
-  // three screens past one post. CardThumb LETTERBOXES to it rather
-  // than cropping, which is slice 1's rule wherever `fill` is off.
-  const FEED_PORTRAIT_FLOOR = 0.8;
+  // ── Uniform feed sizing (#1047) ──────────────────────────────────
+  //
+  // THE FEED'S MEDIA BOX IS THE SAME SHAPE ON EVERY POST. #557 sized it
+  // from the cover's own aspect ratio with a 4:5 portrait cap, which is
+  // right for a wall and wrong for a column: scrolling a single-column
+  // feed whose every card is a different height means the like button,
+  // the caption and the comments land somewhere new on every post, and
+  // the reader re-finds them each time. The owner's density table asks
+  // for "uniform post sizing (thumbnail-view-like), not aspect-driven",
+  // and that is what a social feed's grid of controls needs.
+  //
+  // A SQUARE, and letterboxed rather than cropped, so the whole work is
+  // still shown — CardThumb's rule everywhere `fill` is off. The
+  // alternative, cropping to the box, is what the commercial feeds do
+  // and what this codebase deliberately does not do outside grid's
+  // contact sheet.
+  //
+  // `variableAspect` and `ratioFloor` are therefore both off in feed
+  // now, and the 4:5 cap they existed to apply here goes with them: a
+  // fixed box needs no floor. CardThumb's `aspect-square` default is
+  // the box.
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub animation.
@@ -619,8 +681,7 @@
     {hovering}
     framed={framed && !social}
     fill={mode === 'grid'}
-    variableAspect={mode === 'masonry' || social}
-    ratioFloor={social ? FEED_PORTRAIT_FLOOR : null}
+    variableAspect={mode === 'masonry'}
     {compact}
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
@@ -933,6 +994,53 @@
           <p class="mt-0.5 line-clamp-3 whitespace-pre-wrap text-sm text-fg-muted">{post.description}</p>
         {/if}
       </a>
+
+      {#if commentsPreview.length > 0}
+        <!-- ── The comments snippet (#1047) ──────────────────────────
+             The HEAD OF THE THREAD, not a summary: the same top-level
+             rows in the same order `GET /posts/{id}/comments` returns,
+             so what is under the picture is literally the top of what
+             opening the post shows.
+
+             Two, and never a scrollable list: a feed card's comments
+             are a signal that a conversation exists, and the
+             conversation itself is a click away. `TopCommentsPerPost`
+             on the server is what decides; this renders what arrived.
+
+             NO NAME IS NOT A MISSING NAME. `author` is absent when the
+             commenter is not disclosed to this reader (ADR 0024) —
+             the same absence the post's own header answers by drawing
+             no author — so the words render on their own rather than
+             beside a placeholder identity. A remote comment carries a
+             cached peer name instead and takes the same shape. -->
+        <ul class="mt-1.5 space-y-0.5 px-2" data-testid="feed-comments">
+          {#each commentsPreview as c (c.id)}
+            <li class="line-clamp-2 text-sm text-fg-muted">
+              {#if commenterName(c)}
+                <span class="font-medium text-fg" data-testid="feed-comment-author"
+                  >{commenterName(c)}</span
+                >
+                <span> </span>
+              {/if}<span data-testid="feed-comment-body">{c.body}</span>
+            </li>
+          {/each}
+        </ul>
+        {#if post.comment_count > commentsPreview.length}
+          <!-- The link the count has always been able to draw, now that
+               there is something above it to be "all" of. Same
+               navigation the card itself performs — the modal, with the
+               thread in it. -->
+          <a
+            href="/posts/{post.id}"
+            onclick={handleClick}
+            class="mt-0.5 block px-2 text-xs text-fg-subtle hover:text-fg focus-visible:outline-none
+                   focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            data-testid="feed-comments-all"
+          >
+            {t('card.feed.view_all_comments', { count: String(post.comment_count) })}
+          </a>
+        {/if}
+      {/if}
     </div>
   {/if}
 

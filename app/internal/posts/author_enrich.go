@@ -6,6 +6,7 @@ package posts
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -37,7 +38,192 @@ func (h *Handler) enrichForCaller(ctx context.Context, posts ...*openapi.Post) e
 	if err := h.enrichLiked(ctx, posts...); err != nil {
 		return err
 	}
+	if err := h.enrichTopComments(ctx, posts...); err != nil {
+		return err
+	}
 	return h.enrichPreview(ctx, posts...)
+}
+
+// TopCommentsPerPost is how many comments ride a post payload for the
+// feed card's preview (#1047).
+//
+// TWO, which is the social convention rather than a measurement — every
+// feed worth copying shows two and a "view all N" link, because two is
+// the most that fits under a picture without the comments becoming the
+// post. The count for the link is `comment_count`, which the card
+// already had, so N is purely how many bodies travel.
+//
+// It is a constant and not a parameter: a client-chosen N is a client
+// that can ask for a whole thread through the feed endpoint, which is
+// what `GET /posts/{id}/comments` is for and is paginated for.
+const TopCommentsPerPost = 2
+
+// enrichTopComments attaches `comments_preview` — the head of each
+// post's thread — to a page of posts, in ONE query (#1047).
+//
+// # The composition, and what it deliberately does not invent
+//
+// The feed card wants a couple of comments under the description. The
+// tempting implementation is to call the comments endpoint per post,
+// and it is wrong twice over: it is an N+1 on a browse surface, and
+// that endpoint's gate is `signed in AND the post row exists` — it does
+// NOT apply `postReadableExpr`. Composing it here would have imported
+// that weakness into the feed.
+//
+// So this composes the FEED's rule instead, which is the stronger one
+// and is already applied: every post reaching this pass came out of
+// ListPostsPageGated, i.e. through `postReadableExpr` (author, tier,
+// followers, ACL grant) for THIS caller. The preview inherits exactly
+// that and adds only what the thread query itself adds — top-level
+// rows, not soft-deleted, newest first.
+//
+// ⚠️ WHAT IS NOT HERE, and is not an oversight: there is no
+// comment-level visibility rule in this codebase to compose. Comment
+// text is gated by nothing but `deleted_at IS NULL`, and `user_blocks`
+// is consulted by notifications, DMs and mention resolution and by
+// NOTHING on any comment read path — so a blocked user's comments are
+// visible to the blocker everywhere today. Making the feed preview the
+// one surface that filtered them would be a comment-visibility model
+// invented in a card, disagreeing with the thread the card links to.
+// Recorded in #1047's handoff rather than fixed here.
+//
+// # The identity is the part that IS governed
+//
+// A commenter's name is disclosed by the same expression a post
+// author's is — users.LookupAuthors — so the ADR 0024 opt-out and the
+// authenticated-only real-name rung hold without being restated, and a
+// withheld commenter is an OMISSION from the map rather than a redacted
+// entry. Their words still ride, exactly as an opted-out author's post
+// still rides: the opt-out is about the identity.
+//
+// # One query, bounded
+//
+// A window function over the whole page rather than a LATERAL per post
+// or a query per post: `row_number()` partitioned by target ranks each
+// post's comments and the outer filter keeps the first N, so adding
+// posts to the page cannot add queries and the rows returned are capped
+// at N × page size. Per-caller (the identities are), so it runs here on
+// the way out and never into the cross-caller post cache — the reason
+// enrichAuthors spells out at length.
+func (h *Handler) enrichTopComments(ctx context.Context, posts ...*openapi.Post) error {
+	ids := make([]uuid.UUID, 0, len(posts))
+	for _, p := range posts {
+		if p == nil {
+			continue
+		}
+		// Reset first: the post came off a cross-caller cache and this
+		// must be THIS caller's answer or nothing.
+		p.CommentsPreview = nil
+		ids = append(ids, uuid.UUID(p.Id))
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	rows, err := h.Pool.Query(ctx, `
+		SELECT c.target_id,
+		       c.id,
+		       c.body,
+		       c.created_at,
+		       c.author_user_ref,
+		       COALESCE(fra.display_name, '') AS remote_display_name
+		  FROM (
+		        SELECT id, target_id, body, created_at, author_user_ref, actor_uri,
+		               row_number() OVER (PARTITION BY target_id ORDER BY created_at DESC, id ASC) AS rn
+		          FROM comments
+		         WHERE target_kind = 'post'
+		           AND target_id = ANY($1::UUID[])
+		           AND parent_id IS NULL
+		           AND deleted_at IS NULL
+		       ) c
+		  LEFT JOIN federation_remote_actors fra ON fra.actor_uri = c.actor_uri
+		 WHERE c.rn <= $2::int
+		 ORDER BY c.target_id, c.created_at DESC, c.id ASC`, ids, TopCommentsPerPost)
+	if err != nil {
+		return fmt.Errorf("posts: comment preview: %w", err)
+	}
+	defer rows.Close()
+
+	type previewRow struct {
+		target   uuid.UUID
+		entry    openapi.PostCommentPreview
+		authorID *int64
+	}
+	scanned := make([]previewRow, 0, len(ids)*TopCommentsPerPost)
+	refSet := make(map[int64]struct{}, len(ids))
+	for rows.Next() {
+		var (
+			target    uuid.UUID
+			id        uuid.UUID
+			body      string
+			createdAt time.Time
+			authorRef *int64
+			remote    string
+		)
+		if err := rows.Scan(&target, &id, &body, &createdAt, &authorRef, &remote); err != nil {
+			return fmt.Errorf("posts: comment preview scan: %w", err)
+		}
+		e := openapi.PostCommentPreview{
+			Id:        id,
+			Body:      body,
+			CreatedAt: createdAt,
+		}
+		if remote != "" {
+			r := remote
+			e.RemoteDisplayName = &r
+		}
+		if authorRef != nil {
+			refSet[*authorRef] = struct{}{}
+		}
+		scanned = append(scanned, previewRow{target: target, entry: e, authorID: authorRef})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("posts: comment preview rows: %w", err)
+	}
+	if len(scanned) == 0 {
+		return nil
+	}
+
+	// One identity lookup for every commenter on the page, under the
+	// same rule the post's own author header uses.
+	authors := map[int64]openapi.PostAuthor{}
+	if len(refSet) > 0 {
+		refs := make([]int64, 0, len(refSet))
+		for ref := range refSet {
+			refs = append(refs, ref)
+		}
+		anonymous := auth.IdentityFromContext(ctx) == nil
+		authors, err = users.LookupAuthors(ctx, h.Pool, refs, anonymous)
+		if err != nil {
+			return err
+		}
+	}
+
+	byTarget := make(map[uuid.UUID][]openapi.PostCommentPreview, len(ids))
+	for _, r := range scanned {
+		e := r.entry
+		if r.authorID != nil {
+			// Absent from the map = withheld or gone. Writing only what
+			// the map contains is what makes the failure mode of any bug
+			// above "no name", never "the wrong person's name".
+			if a, ok := authors[*r.authorID]; ok {
+				author := a
+				e.Author = &author
+			}
+		}
+		byTarget[r.target] = append(byTarget[r.target], e)
+	}
+
+	for _, p := range posts {
+		if p == nil {
+			continue
+		}
+		if list, ok := byTarget[uuid.UUID(p.Id)]; ok {
+			entries := list
+			p.CommentsPreview = &entries
+		}
+	}
+	return nil
 }
 
 // enrichAuthors stamps `post.author` — the renderable identity behind
