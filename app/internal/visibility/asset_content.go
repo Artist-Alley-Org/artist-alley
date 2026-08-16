@@ -12,22 +12,38 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// CanAttachAsset answers "may this caller put THIS asset into a
-// container they control" — a collection (#882) or a post (#922).
+// CanSeeAssetContent answers the one question every surface that speaks
+// ABOUT an asset's content has to ask first: may this caller reach that
+// asset AT ALL — the row AND the bytes behind it?
 //
-// # Why it lives here and not in either container package
+// # Who asks it
+//
+//   - "may I put THIS asset into a container I control" — a collection
+//     (#882) or a post (#922), via collections.mayCollectAsset and
+//     posts.mayAttachAsset. You may reference what you may open.
+//   - "may I read or write a text annotation ON this asset" — the
+//     doc-viewer review tools (#1135), via social.assetContentReadable.
+//     An annotation QUOTES the content: its anchor names line and column
+//     ranges of the document and its body discusses what is there. So it
+//     is governed by the payload it is about, not by the principal who
+//     wrote it (the #881 lesson).
+//
+// It was named `CanAttachAsset` while attaching was the only caller.
+// #1135 found the second question and the name was the only thing that
+// had to change — renamed rather than copied, because a second
+// expression of a security rule is the defect epic #665 exists to remove
+// (#892 and #904 each spent a sprint deleting one). See ADR 0064.
+//
+// # Why it lives here and not in any calling package
 //
 // #882 built this composition inside collections.Handler. #922 needed
-// the identical question on the post surface, and a second copy of a
-// security rule is the defect epic #665 exists to remove (#892 and #904
-// each spent a sprint deleting one). So the composition moved here,
-// beside the two planes it composes, and both container packages call
-// it.
+// the identical question on the post surface, so the composition moved
+// here, beside the two planes it composes, and every caller calls it.
 //
 // # The rule
 //
 // The conjunction [FieldsReadable] already documents (member.go, "the
-// CONJUNCTION of the two planes"): a caller may attach an asset iff they
+// CONJUNCTION of the two planes"): a caller may reach an asset iff they
 // could have reached that ROW standalone AND could have reached its
 // BYTES. FieldsReadable itself is not callable here — it takes an
 // already-fetched MemberRow supplied by the container queries — so this
@@ -38,7 +54,8 @@ import (
 //     Load-bearing on its own account: ContentReadable never looks at
 //     deleted_at, so without this conjunct a caller could attach a
 //     deleted public asset — a member row the container's contents query
-//     then drops in SQL, i.e. an invisible phantom member.
+//     then drops in SQL, i.e. an invisible phantom member — and could
+//     keep annotating a document that has been deleted out from under it.
 //   - CONTENT plane — [CanReadContent] (ADR 0064): the tier rule. Public
 //     admits everyone, team admits the asset's team, restricted /
 //     embargo / anything unrecognised admit only the owner and the two
@@ -60,14 +77,14 @@ import (
 // A nonexistent asset stops at the ROW plane. CanReadContent wraps
 // pgx.ErrNoRows into an error (it is the "we could not load the row"
 // case), so the race in which the asset is deleted between the two
-// queries is folded into "not attachable" rather than surfacing as a
+// queries is folded into "not reachable" rather than surfacing as a
 // 500 — which would also be an oracle, since a 500 is distinguishable
 // from a 404.
 //
-// Callers MUST answer an unattachable asset with the SAME response they
+// Callers MUST answer an unreachable asset with the SAME response they
 // give a nonexistent one. Any difference turns the endpoint into a
 // UUID-existence probe.
-func CanAttachAsset(
+func CanSeeAssetContent(
 	ctx context.Context,
 	pool Pool,
 	caller Caller,

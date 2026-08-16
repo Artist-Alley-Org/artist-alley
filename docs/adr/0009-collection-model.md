@@ -27,7 +27,7 @@ things this ADR left implicit.
 **1. The divergence in point 3 below now has its post-shaped half.** Collecting another user's
 post is a *reference*, never a copy, and it widens nothing: the gate is
 `visibility.PostReadable`, and adding a post to your collection gives you exactly the read you
-already had. The asset half shipped earlier in #898 via `visibility.CanAttachAsset`. Both rules
+already had. The asset half shipped earlier in #898 via `visibility.CanSeeAssetContent`. Both rules
 live in `visibility/` with the callers in `posts`/`collections` delegating, so there is one
 expression per rule rather than one per caller. The write half is separately gated on
 `canMutateCollection` — you may save a stranger's post into *your* collection, never into

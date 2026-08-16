@@ -898,9 +898,9 @@ func (h *Handler) ListAssetTextAnnotations(
 		}, nil
 	}
 	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.assetExists(ctx, pgAssetID); err != nil {
-		return nil, fmt.Errorf("social: asset check: %w", err)
-	} else if !exists {
+	if ok, err := h.assetContentReadablePG(ctx, caller, pgAssetID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.ListAssetTextAnnotations404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
@@ -937,9 +937,9 @@ func (h *Handler) CreateAssetTextAnnotation(
 		}, nil
 	}
 	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.assetExists(ctx, pgAssetID); err != nil {
-		return nil, fmt.Errorf("social: asset check: %w", err)
-	} else if !exists {
+	if ok, err := h.assetContentReadablePG(ctx, caller, pgAssetID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.CreateAssetTextAnnotation404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
@@ -1010,6 +1010,30 @@ func (h *Handler) UpdateTextAnnotation(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "not a text-range annotation"},
 		}, nil
 	}
+	// The asset gate (#1135), and it runs BEFORE the author/moderator
+	// check on purpose. This handler echoes the stored row back, so an
+	// update is also a read; the moderator disjunct below is exactly the
+	// principal who would otherwise edit — and read — annotations on a
+	// document they were never admitted to. Placing the gate after it
+	// would also make the refusal distinguishable (403 "not the author"
+	// on an asset you cannot reach vs 404 on one that does not exist),
+	// which is the oracle #1132 closed.
+	//
+	// A row whose target is not an asset is not this endpoint's object
+	// at all; it collapses into the same 404 rather than reaching a gate
+	// that would ask the assets table about a post id.
+	if existing.TargetKind != "asset" {
+		return openapi.UpdateTextAnnotation404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+		}, nil
+	}
+	if ok, gerr := h.assetContentReadablePG(ctx, caller, existing.TargetID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return openapi.UpdateTextAnnotation404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+		}, nil
+	}
 	// Author can always update; moderators (comments.delete.any holders)
 	// can also update — we treat the moderator cap as "manage any
 	// comment" for now since we don't have a separate update gate.
@@ -1056,23 +1080,6 @@ func (h *Handler) UpdateTextAnnotation(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// assetExists asserts the target asset row is present before the
-// text-annotation handlers accept a read or a write. Returns false (not
-// an error) on a clean miss so the caller can surface a 404.
-//
-// ⚠️ This is a PRESENCE check, and presence is not readability — the
-// same shape `postExists` had before #1132 replaced it with
-// [Handler.postReadable]. The asset surfaces here are not gated by the
-// asset read rule yet; see read_gate.go's sweep note. Do not copy this
-// helper onto a new endpoint.
-func (h *Handler) assetExists(ctx context.Context, id pgtype.UUID) (bool, error) {
-	var exists bool
-	err := h.Pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1)`, id,
-	).Scan(&exists)
-	return exists, err
-}
 
 // commentRowToAPI converts the sqlc-generated Comment model (used by
 // both ListThreadForTarget and CreateComment — sqlc returns the same

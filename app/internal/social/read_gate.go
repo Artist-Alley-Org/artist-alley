@@ -73,19 +73,22 @@ import (
 // nobody asked. Filed as a follow-up; the gate above is orthogonal to
 // it and neither blocks the other.
 //
-// # What the sweep found and did NOT fix here
+// # What the sweep found, and how #1135 answered it
 //
 // The other by-target social listing in this package is
 // `GET /assets/{id}/text-annotations` (with its create + update
-// siblings), which opens with `assetExists` — the same presence-for-
-// readability substitution, on the ASSET plane. It is not fixed in this
-// change because the asset answer is a different expression: ADR 0064
+// siblings), which opened with `assetExists` — the same presence-for-
+// readability substitution, on the ASSET plane. #1132 deliberately left
+// it, because the asset answer is a different expression: ADR 0064
 // splits an asset into a row plane and a content plane, and which of
 // [visibility.CanSee], [visibility.CanReadContent] and
 // [visibility.FieldsReadable] an annotation body belongs behind is a
 // decision, not a transcription of the post rule. Picking one silently
 // inside a post-scoped fix is how a gate ends up scoped to its
-// PRINCIPAL rather than its PAYLOAD. Reported for its own issue.
+// PRINCIPAL rather than its PAYLOAD.
+//
+// #1135 made that decision — see [Handler.assetContentReadable] below —
+// and `assetExists` is gone the same way `postExists` went.
 //
 // `DELETE /comments/{id}` needs no post gate: it authorises on the
 // comment's own author / moderator capability and discloses nothing
@@ -124,4 +127,103 @@ func (h *Handler) postReadable(ctx context.Context, id *auth.Identity, postID uu
 // here already holds the id in that shape for its queries.
 func (h *Handler) postReadablePG(ctx context.Context, id *auth.Identity, postID pgtype.UUID) (bool, error) {
 	return h.postReadable(ctx, id, uuid.UUID(postID.Bytes))
+}
+
+// ---------------------------------------------------------------------------
+// The asset gate on the text-annotation surface (#1135)
+// ---------------------------------------------------------------------------
+//
+// # Which plane, and why
+//
+// A text annotation is not metadata ABOUT an asset row — it is a
+// quotation FROM the asset's content. Its anchor is a line/column range
+// inside the document and its body discusses what stands at that range;
+// `GET /assets/{id}/text-annotations` therefore hands back other
+// people's reading of a document, one container over from handing back
+// the document. That is the #899/#902 class, and it puts the annotation
+// behind the CONTENT plane (ADR 0064), not mere row visibility.
+//
+// Row visibility alone would have gated nothing at all. EntityAsset's
+// AUTHENTICATED predicate is `deleted_at IS NULL` and nothing more, so
+// [visibility.CanSee] returns true for every signed-in caller against
+// every undeleted asset — a gate built on it would have reviewed as if
+// it worked while changing no verdict (the trap collections.go's
+// mayCollectAsset already documents).
+//
+// [visibility.FieldsReadable] is the wrong plane in the other
+// direction. It admits the FIELD plane to holders of a MUTATION
+// capability — a team lead reads the title of an asset they are
+// entitled to edit but not to open (#939, ADR 0064). Being allowed to
+// retitle a picture is not being allowed to read what reviewers said
+// about what is IN it, and routing annotations through that plane would
+// scope the gate to the caller's editing rights rather than to the
+// payload.
+//
+// So: [visibility.CanSeeAssetContent], the ROW ∧ CONTENT conjunction —
+// the same call the collection and post attach gates make. "Whose
+// annotations you may read" cannot drift from "whose bytes you may
+// receive", because it is one expression, called from three places.
+//
+// # It gates the WRITES too, not just the listing
+//
+// Create and update both run it. An annotation is authored INTO the
+// asset's thread, and a caller who may not read the document may not
+// leave marginalia on it either — the write is also a read on the way
+// out, since both handlers echo the stored row back. Update reaches the
+// asset through the annotation's own `target_id` rather than a path
+// parameter, and the moderator disjunct there (`comments.delete.any`)
+// is precisely the principal who could otherwise edit — and read back —
+// annotations on documents they were never admitted to.
+//
+// # The refusal shape
+//
+// Identical 404 for "hidden from you" and "no such asset", per the
+// shape #1132 standardised. Anything else re-opens the UUID oracle.
+//
+// # The sweep for the remaining presence checks
+//
+// Two `SELECT EXISTS (... FROM assets ...)` pre-checks survive the
+// grep and are deliberately left alone, because neither is a GATE:
+// `assets.SetAITagsForAsset` (via `AssetExistsForAI`) and
+// `transcribe.Writer.SetAITranscriptForAsset` are the AI bridge's
+// WRITE-side entry points, called by the pipeline with no caller
+// identity in scope at all. They ask "is there still a row to write
+// to" so they can return `ai.ErrAssetNotFound` before allocating
+// storage bytes; there is no principal to withhold anything from.
+// A readability rule there would have to invent a caller, and
+// inventing one is how a system job acquires a user's permissions.
+//
+// The other three (`search/http.go`, `search/saved/execute.go`,
+// `search/feedback`) already splice the visibility predicate into
+// the EXISTS — they are the shape this gate now matches, not the
+// shape it replaced.
+//
+// A nil / anonymous identity takes the rule's anonymous branch, which
+// resolves against the sensitivity tier alone — the narrower answer.
+// Every annotation endpoint 401s an anonymous caller before reaching
+// here; that branch is the one a public-mode allowlist entry would
+// activate, and it must already be correct on the day someone adds one
+// (#709).
+//
+// Returns (false, nil) for "hidden from you" AND "no such asset" alike.
+func (h *Handler) assetContentReadable(ctx context.Context, id *auth.Identity, assetID uuid.UUID) (bool, error) {
+	caller := visibility.NewCaller(nil)
+	var caps visibility.CapabilityChecker
+	if id != nil && !id.IsAnonymous() {
+		ref := id.UserRef
+		caller = visibility.NewCaller(&ref)
+		caps = func(code string) bool { return id.Can(code) }
+	}
+	ok, err := visibility.CanSeeAssetContent(ctx, h.Pool, caller, caps, assetID)
+	if err != nil {
+		return false, fmt.Errorf("social: asset content gate: %w", err)
+	}
+	return ok, nil
+}
+
+// assetContentReadablePG is the pgtype.UUID-shaped form, since the
+// annotation handlers already hold the id in that shape for their
+// queries.
+func (h *Handler) assetContentReadablePG(ctx context.Context, id *auth.Identity, assetID pgtype.UUID) (bool, error) {
+	return h.assetContentReadable(ctx, id, uuid.UUID(assetID.Bytes))
 }
