@@ -125,7 +125,7 @@ func seedTeamWithMember(t *testing.T, pool *pgxpool.Pool, member int64) uuid.UUI
 func can(t *testing.T, pool *pgxpool.Pool, ref int64, caps CapabilityChecker, id uuid.UUID) bool {
 	t.Helper()
 	r := ref
-	ok, err := CanReadContent(context.Background(), pool, NewCaller(&r), caps, id)
+	ok, err := CanReadContent(context.Background(), pool, NewCaller(&r), caps, id, MatureViewer{})
 	if err != nil {
 		return false // fail closed, which is the contract
 	}
@@ -267,7 +267,7 @@ func TestCanReadContent_FailsClosed(t *testing.T) {
 	// nothing else — that split is the whole point of public mode.
 	t.Run("anonymous reads public bytes", func(t *testing.T) {
 		pub := seedContentAsset(t, pool, "public", nil, false)
-		ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), nil, pub)
+		ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), nil, pub, MatureViewer{})
 		if err != nil || !ok {
 			t.Errorf("anonymous denied a public asset (ok=%v err=%v); public mode cannot serve images", ok, err)
 		}
@@ -276,7 +276,7 @@ func TestCanReadContent_FailsClosed(t *testing.T) {
 	t.Run("anonymous is denied every non-public tier", func(t *testing.T) {
 		for _, tier := range []string{"team", "restricted", "embargo"} {
 			id := seedContentAsset(t, pool, tier, nil, false)
-			ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), nil, id)
+			ok, err := CanReadContent(context.Background(), pool, NewCaller(nil), nil, id, MatureViewer{})
 			if err != nil || ok {
 				t.Errorf("anonymous admitted to a %s asset (ok=%v err=%v)", tier, ok, err)
 			}
@@ -347,7 +347,7 @@ func TestCanReadContent_AnonymousNeverMatchesOwnerSentinel(t *testing.T) {
 				_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id)
 			})
 
-			ok, err := CanReadContent(ctx, pool, NewCaller(nil), notAdmin, id)
+			ok, err := CanReadContent(ctx, pool, NewCaller(nil), notAdmin, id, MatureViewer{})
 			if err != nil || ok {
 				t.Errorf("anonymous caller admitted to a %s asset with owner_user_ref=0 "+
 					"(ok=%v err=%v) — the sentinel was treated as an ownership claim", tier, ok, err)

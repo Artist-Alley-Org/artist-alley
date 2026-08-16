@@ -72,6 +72,14 @@ import (
 // FieldsReadable, which would then render the very members this refused
 // to create.
 //
+// ⚠️ THE MATURE AXIS IS INHERITED TOO, AND ContentReadAll DOES NOT
+// SATISFY IT (#1116). That asymmetry is deliberate and it is CanReadContent's
+// — see its note. It lands here unchanged because this rule is "you may
+// attach what you can see", and a viewer who has not opted in cannot
+// see a mature asset. The `mature` argument is threaded rather than
+// resolved here for the reason it is everywhere else: this package has
+// no store to resolve it from.
+//
 // # Fails closed
 //
 // A nonexistent asset stops at the ROW plane. CanReadContent wraps
@@ -90,6 +98,7 @@ func CanSeeAssetContent(
 	caller Caller,
 	caps CapabilityChecker,
 	assetID uuid.UUID,
+	mature MatureViewer,
 ) (bool, error) {
 	visible, err := CanSee(ctx, pool, EntityAsset, caller, assetID)
 	if err != nil {
@@ -99,7 +108,7 @@ func CanSeeAssetContent(
 		return false, nil
 	}
 
-	readable, err := CanReadContent(ctx, pool, caller, caps, assetID)
+	readable, err := CanReadContent(ctx, pool, caller, caps, assetID, mature)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil

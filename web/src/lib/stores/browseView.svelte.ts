@@ -173,26 +173,77 @@ const ROOT_PX = 16;
 /** The viewport width below which the clamp sits on its floor. */
 const FLOOR_BELOW_PX = CEIL_AT_PX * FLOOR_RATIO;
 
-/** The clamp's three zones for a rung, as numbers. */
-function clampZones(rem: number): { floorRem: number; vw: number; ceilRem: number } {
+/** The small-viewport floor for THUMBNAIL mode (#1140 rider).
+ *
+ *  MEASURED, and it exists because the shared floor is wrong for this
+ *  mode alone. `FLOOR_RATIO · R` is calibrated for a mode whose tile is
+ *  a picture: at the thumbnail default (effective rung 1 = 12rem) it
+ *  resolves to 4.8rem = 77px, and 390px fits FOUR of those. A 77px
+ *  "preview" in a panel that also carries a format band, a stacked
+ *  metadata list and a control band is not a small card — it is a card
+ *  whose picture has become an icon, with three bands of text under it.
+ *
+ *  9.5rem = 152px puts TWO columns across a 390px phone, which is the
+ *  planning call recorded when #1140 shipped.
+ *
+ *  ⚠️ MEASURED, AND THE OBVIOUS NUMBER WAS WRONG BY A WHOLE COLUMN —
+ *  the trap TILE_STEPS_REM's own comment warns about, walked into again
+ *  on the first attempt. The browse grid at a 390px viewport is 328px
+ *  wide with an 8px gap, so two columns need a floor of at most
+ *  (328 - 8) / 2 = 160px. 11rem = 176px was the round number that
+ *  "obviously" gives two, and it gives ONE — a 326px full-width tile,
+ *  which is worse than the four it replaced and the opposite of what
+ *  was asked for. Driven in a real browser at 390 and read off the
+ *  computed grid, not derived.
+ *
+ *  9.5rem rather than the exact 10rem the arithmetic permits, because
+ *  10rem lands on 328px EXACTLY — two columns with zero slack, one
+ *  rounding change in the shell's padding away from collapsing to one.
+ *  152px leaves 16px of room and still cannot reach three (three would
+ *  need 3 x 152 + 16 = 472px, well over 328).
+ *
+ *  ⚠️ IT IS A FLOOR, NOT A PIN, and that distinction keeps the stepper
+ *  alive. The clamp still takes the LARGER of this and the rung's own
+ *  vw zone, so stepping up from the default still widens the tile on a
+ *  phone; what it can no longer do is go below two columns' worth. Only
+ *  the rungs at or under the default are affected, which is exactly the
+ *  band the complaint was about.
+ *
+ *  ⚠️ OVERRIDABLE — this is a planning call, not an owner ruling. If the
+ *  owner wants 3 columns at 390px, this constant is the single knob:
+ *  ~7.3rem gives 3, ~5.5rem gives 4 (today's behaviour). Nothing else
+ *  moves, because `tileSizesFor` reads the same number. */
+const THUMBNAIL_FLOOR_REM = 9.5;
+
+/** The clamp's three zones for a rung, as numbers.
+ *
+ *  `floorMinRem` raises the floor without touching the other two zones,
+ *  so a mode can set a small-viewport minimum and leave desktop exactly
+ *  as it was. It is a MAX rather than a replacement: a rung whose own
+ *  floor is already higher keeps it, which is what stops the override
+ *  from SHRINKING a large rung on a phone. */
+function clampZones(
+  rem: number,
+  floorMinRem = 0,
+): { floorRem: number; vw: number; ceilRem: number } {
   return {
-    floorRem: +(rem * FLOOR_RATIO).toFixed(2),
+    floorRem: +Math.max(rem * FLOOR_RATIO, floorMinRem).toFixed(2),
     vw: +((rem * ROOT_PX * 100) / CEIL_AT_PX).toFixed(2),
     ceilRem: rem,
   };
 }
 
 /** `--tile-min` for a rung: the CSS lever the layout actually uses. */
-export function tileMinFor(rem: number): string {
-  const { floorRem, vw, ceilRem } = clampZones(rem);
+export function tileMinFor(rem: number, floorMinRem = 0): string {
+  const { floorRem, vw, ceilRem } = clampZones(rem, floorMinRem);
   return `clamp(${floorRem}rem, ${vw}vw, ${ceilRem}rem)`;
 }
 
 /** The `<img sizes>` list for a rung — see `BrowseViewState.tileSizes`
  *  for the full argument. Exported so a card that renders outside a
  *  browse surface has one honest default instead of a literal `22rem`. */
-export function tileSizesFor(rem: number): string {
-  const { floorRem, vw, ceilRem } = clampZones(rem);
+export function tileSizesFor(rem: number, floorMinRem = 0): string {
+  const { floorRem, vw, ceilRem } = clampZones(rem, floorMinRem);
   return (
     `auto, (max-width: ${FLOOR_BELOW_PX}px) ${floorRem}rem, ` +
     `(max-width: ${CEIL_AT_PX}px) ${vw}vw, ${ceilRem}rem`
@@ -622,7 +673,18 @@ class BrowseViewState {
    *  the column count — it's a property of the viewport, and the only
    *  thing qualified to compute it is the layout engine. */
   get tileMin(): string {
-    return tileMinFor(this.activeRem);
+    return tileMinFor(this.activeRem, this.floorMinRem);
+  }
+
+  /** The small-viewport floor for the ACTIVE mode (#1140 rider).
+   *
+   *  Thumbnail only. It is read by BOTH `tileMin` and `tileSizes` — the
+   *  two have to agree or the browser picks a preview rung for a width
+   *  the layout never gives the tile, which is the defect #639's shared
+   *  `clampZones` exists to prevent, and a mode-specific floor applied
+   *  to one of them would reintroduce it. */
+  private get floorMinRem(): number {
+    return this.mode === 'thumbnail' ? THUMBNAIL_FLOOR_REM : 0;
   }
 
   /** The slot width to advertise in `<img sizes>`.
@@ -677,7 +739,7 @@ class BrowseViewState {
    *  per-engine bet, while media-conditioned lengths are the original
    *  `sizes` grammar and resolve to the identical number. */
   get tileSizes(): string {
-    return tileSizesFor(this.activeRem);
+    return tileSizesFor(this.activeRem, this.floorMinRem);
   }
 
   /** Whether dec / inc are currently meaningful. list + feed lock both:

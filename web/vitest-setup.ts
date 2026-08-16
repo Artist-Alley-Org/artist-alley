@@ -36,6 +36,50 @@ if (typeof HTMLCanvasElement !== 'undefined') {
   HTMLCanvasElement.prototype.getContext = (() => fakeCtx) as never;
 }
 
+// ── No test opens a socket ───────────────────────────────────────
+//
+// THE DEFAULT `fetch` NEVER REACHES THE NETWORK, and this is a real bug
+// fix rather than tidying.
+//
+// happy-dom resolves relative URLs against `http://localhost:3000`, and
+// nothing is listening there during a unit run. Any component that
+// fetches on mount therefore opened a socket that failed, and because
+// the failure arrives on the SOCKET rather than in the awaited promise,
+// it surfaced as an unhandled `AggregateError: connect ECONNREFUSED
+// ::1:3000 / 127.0.0.1:3000` — printed AFTER the run summary, racing
+// vitest's own teardown (`AsyncTaskManager.abort` appears in the same
+// trace).
+//
+// Traced to source: `CardThumb.svelte` calls `previewLadder.init()` in
+// an `$effect`, which GETs `/api/v1/previews` through openapi-fetch. So
+// EVERY test that renders a card — CardRestricted, CardFallback,
+// CardThumb.scrub, and anything mounting AssetCard — emitted it. It has
+// been there since the ladder store landed and is present on `dev`.
+//
+// Sprint 21 recorded it as harmless post-summary noise. It is not: an
+// unhandled rejection whose timing depends on how fast teardown wins is
+// a coin flip, and a coin flip in CI is a flake waiting to be blamed on
+// whatever branch is unlucky. Removing the socket removes the race.
+//
+// A 503 rather than a 200, deliberately: the components already have a
+// "the ladder did not load" path (that is what they take today, via the
+// network error), so this keeps their behaviour under test IDENTICAL
+// while removing the connection attempt. A synthetic 200 would silently
+// put every card test on a code path production rarely takes.
+//
+// Tests that need real responses stub `fetch` themselves with
+// `vi.stubGlobal`, which overrides this and restores back to it on
+// `vi.unstubAllGlobals()`. Nothing here prevents that.
+if (typeof globalThis.fetch !== 'undefined') {
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response('{}', {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )) as typeof globalThis.fetch;
+}
+
 if (typeof window !== 'undefined' && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,

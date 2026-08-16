@@ -35,6 +35,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 const hubOwner int64 = 11041101
@@ -96,12 +97,24 @@ func hubSeed(t *testing.T, pool *pgxpool.Pool, name, vis, scope string) uuid.UUI
 	return id
 }
 
-// hubTab calls the real endpoint and returns the ids it produced.
-func hubTab(t *testing.T, pool *pgxpool.Pool, tab openapi.ListCollectionsParamsTab) map[uuid.UUID]bool {
+// hubTab calls the real endpoint AS `callerRef` and returns the ids it
+// produced.
+//
+// The caller is a PARAMETER as of #1121, because that issue's whole
+// question is whether two DIFFERENT viewers get different answers about
+// the same row — a helper hardcoding one identity can only ever assert
+// a single verdict, and a single verdict passes on a tab that admits
+// everyone as readily as on one that admits nobody.
+func hubTab(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	tab openapi.ListCollectionsParamsTab,
+	callerRef int64,
+) map[uuid.UUID]bool {
 	t.Helper()
 	h := collections.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ctx := auth.WithIdentity(context.Background(),
-		&auth.Identity{UserRef: hubOwner, AuthMethod: "session"})
+		&auth.Identity{UserRef: callerRef, AuthMethod: "session"})
 
 	limit := 200
 	resp, err := h.ListCollections(ctx, openapi.ListCollectionsRequestObject{
@@ -134,7 +147,7 @@ func TestHubTabs_PublicTierIsPublicNotOrgOnly(t *testing.T) {
 	org := hubSeed(t, pool, "1104 hub org-only", "org-only", "")
 	priv := hubSeed(t, pool, "1104 hub private", "private", "")
 
-	got := hubTab(t, pool, openapi.ListCollectionsParamsTabPublic)
+	got := hubTab(t, pool, openapi.ListCollectionsParamsTabPublic, hubOwner)
 
 	if !got[pub] {
 		t.Error("the Public tab omitted a visibility='public' collection. Its description is " +
@@ -164,7 +177,7 @@ func TestHubTabs_FeaturedShowsWhatTheAdminFeatured(t *testing.T) {
 	// tab still filters on featuring at all.
 	notFeatured := hubSeed(t, pool, "1104 hub not featured", "public", "")
 
-	got := hubTab(t, pool, openapi.ListCollectionsParamsTabFeatured)
+	got := hubTab(t, pool, openapi.ListCollectionsParamsTabFeatured, hubOwner)
 
 	if !got[orgFeatured] {
 		t.Error("the Featured tab omitted a collection featured at scope=org — which is what " +
@@ -177,5 +190,103 @@ func TestHubTabs_FeaturedShowsWhatTheAdminFeatured(t *testing.T) {
 	if got[notFeatured] {
 		t.Error("the Featured tab returned a collection that is not featured at all; the tab has " +
 			"stopped filtering on featuring and the two assertions above are vacuous")
+	}
+}
+
+// hubRail reports whether the collection is on the browse rail for
+// `callerRef` (0 = anonymous).
+//
+// The rail is in this file because #1121 is a DISAGREEMENT between two
+// surfaces, and a disagreement cannot be asserted from one of them. The
+// hub tab's verdict alone is compatible with any rail behaviour at all.
+func hubRail(t *testing.T, pool *pgxpool.Pool, callerRef int64, id uuid.UUID) bool {
+	t.Helper()
+	var caller visibility.Caller
+	if callerRef == 0 {
+		caller = visibility.NewCaller(nil)
+	} else {
+		ref := callerRef
+		caller = visibility.NewCaller(&ref)
+	}
+	rows, err := featured.ListPublicRail(context.Background(), pool, caller,
+		visibility.PostCaps{}, 500, []string{"col", "preview", "screen", "hires"})
+	if err != nil {
+		t.Fatalf("browse rail: %v", err)
+	}
+	for _, r := range rows {
+		if uuid.UUID(r.SubjectID.Bytes) == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestHubTabs_FeaturedHasNoTierPin is #1121's acceptance pair, and it is
+// a SAME-ITEM-OPPOSITE-VERDICTS pair rather than two assertions about
+// two rows.
+//
+// ONE org-only collection, featured at scope=org, asked about by TWO
+// viewers:
+//
+//	the owner       — may read it → present on the tab AND the rail
+//	a stranger      — may not     → absent from BOTH
+//
+// Both halves are load-bearing and neither is sufficient. Without the
+// first, a tab that returned nothing at all would pass. Without the
+// second, a tab that had genuinely dropped its read gate along with its
+// tier pin would pass — and that is the failure mode a "just remove the
+// conjunct" change actually risks, so it is the one that has to be
+// asserted rather than reasoned about.
+//
+// The RAIL assertions are the point of the issue. Before #1121 the
+// owner's row was on the rail and off the tab: one placement, two
+// surfaces, two answers. After it, each viewer gets the same answer from
+// both, which is the property #1104 established for scope and this
+// extends to tier.
+func TestHubTabs_FeaturedHasNoTierPin(t *testing.T) {
+	pool := hubPool(t)
+	// The row the issue is about: NOT install-public, featured through
+	// the audience POST /admin/featured writes by default.
+	orgOnly := hubSeed(t, pool, "1121 hub featured org-only", "org-only", featured.ScopeOrg)
+	// The control. A public collection featured the same way — it was
+	// visible before this change and must still be, or the tab has been
+	// broken in the other direction.
+	control := hubSeed(t, pool, "1121 hub featured public", "public", featured.ScopeOrg)
+
+	// ── Arm 1: the owner, who may read an org-only collection they own.
+	owner := hubTab(t, pool, openapi.ListCollectionsParamsTabFeatured, hubOwner)
+	if !owner[orgOnly] {
+		t.Error("the Featured tab omitted an ORG-ONLY collection the caller owns and an admin " +
+			"featured. This is #1121: the tab pinned visibility='public' on top of the read " +
+			"predicate, so a tier the viewer is entitled to was filtered out anyway — and the " +
+			"rail, which has no such pin, showed the very same placement.")
+	}
+	if !owner[control] {
+		t.Error("the Featured tab omitted a PUBLIC featured collection; dropping the tier pin " +
+			"has broken the tab in the other direction and the assertion above proves nothing")
+	}
+	if !hubRail(t, pool, hubOwner, orgOnly) {
+		t.Error("the rail omitted the org-only placement for its owner — the surface the tab " +
+			"is being brought into agreement WITH does not have the behaviour claimed, so " +
+			"this test is measuring against the wrong baseline")
+	}
+
+	// ── Arm 2: a stranger, who may not read it. Same rows, same
+	//    placements, opposite verdict — and the read gate is the ONLY
+	//    thing that can produce it now.
+	const stranger int64 = 11211121
+	other := hubTab(t, pool, openapi.ListCollectionsParamsTabFeatured, stranger)
+	if other[orgOnly] {
+		t.Error("the Featured tab handed an ORG-ONLY collection to a viewer who neither owns it " +
+			"nor holds an ACL on it. Removing the tier pin must not remove the READ gate: " +
+			"featuring is a placement, never a grant.")
+	}
+	if !other[control] {
+		t.Error("the Featured tab hid a PUBLIC featured collection from a signed-in stranger; " +
+			"the refusal above is then just 'this tab returns nothing' and asserts nothing")
+	}
+	if hubRail(t, pool, stranger, orgOnly) {
+		t.Error("the rail handed the org-only collection to a stranger; the two surfaces now " +
+			"agree, but on the wrong answer")
 	}
 }

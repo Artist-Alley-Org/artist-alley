@@ -861,13 +861,44 @@ func (h *Handler) ListCollections(
 			visPtr = nil
 			featuredPtr = nil
 		case openapi.ListCollectionsParamsTabFeatured:
-			// Kept as spec'd: visibility=public AND featured-to-this-
-			// viewer. Whether the tier pin belongs here AT ALL is a
-			// separate product question — since #1104 an admin can
-			// feature an org-only collection and it will not appear on
-			// this tab — and it is not decided here.
-			vis := hubPublicTier
-			visPtr = &vis
+			// NO TIER PIN (#1121). The question the comment that stood
+			// here left open — "whether the tier pin belongs here AT
+			// ALL" — is answered: it does not.
+			//
+			// The Featured tab means "featured collections THIS VIEWER
+			// MAY SEE", and every read on this list is already gated by
+			// the row predicate spliced in below (`visibility.Filter`
+			// over EntityCollection: owner OR live ACL OR
+			// `visibility='public'`, AND not soft-deleted). A
+			// `visibility = 'public'` equality on top of that is a
+			// SECOND, NARROWER rule for the same question — and a
+			// second rule is free to disagree with the first, which is
+			// exactly what it did.
+			//
+			// It disagreed with the RAIL. `featured.ListPublicRail`
+			// gates its collection arm on the row predicate and nothing
+			// else, so since #1104 made org-scoped featuring reachable,
+			// an admin who featured an `org-only` collection saw it on
+			// the rail and never on this tab. Two surfaces answering
+			// one question differently is the divergence #1104 had just
+			// finished eliminating for SCOPE; this is the same medicine
+			// on the same table.
+			//
+			// ⚠️ THIS DOES NOT WIDEN ACCESS, and the reason is
+			// structural rather than a promise. Featuring is a
+			// PLACEMENT, not a grant (the "FEATURING NEVER WIDENS
+			// ACCESS" line on `GET /featured`) — dropping the pin
+			// removes a conjunct from a predicate whose remaining
+			// conjuncts still have to admit the caller. A viewer who
+			// cannot read the collection could not read it with the pin
+			// either; the pin was only ever hiding rows from viewers
+			// who WERE entitled to them.
+			//
+			// The Public tab below keeps its pin, and that is not an
+			// inconsistency: `public` is that tab's whole CONTRACT
+			// ("every install-public collection"), so there the tier is
+			// the question rather than an extra answer.
+			visPtr = nil
 			f := true
 			featuredPtr = &f
 			ownerPtr = nil
@@ -1227,6 +1258,7 @@ func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetI
 		visibility.NewCaller(&id.UserRef),
 		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
 		assetID,
+		visibility.MatureFromContext(ctx),
 	)
 }
 
