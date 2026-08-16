@@ -9,6 +9,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Every browse view has its own personality now.** Thumbnail shows the work AND its facts —
+  type icon, artist (clickable), title, plus whichever fields the operator marks for cards;
+  list keeps its image column a steady size; masonry strips down to pure art (with the full
+  info overlay appearing on hover once tiles are large enough to read it); and feed became a
+  proper social view — uniform post size, the description, and the first couple of comments
+  under each post. Grid keeps its hover-reveal. Commenters' names in previews respect the same
+  privacy rules as everywhere else (#1047).
+
 - **Follow a hashtag.** Tags work like teams now: follow one from the strip's manage menu and
   its posts join your Following feed; a `#tag` chip joins your strip and filters the feed in
   place like a team chip. Following a tag never shows you anything you couldn't already see (#1123).
