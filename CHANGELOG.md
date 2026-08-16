@@ -9,6 +9,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Mature content is fully live.** Artists mark a work with one checkbox at upload (operators
+  can override per asset); each account chooses whether to see mature work; the instance has a
+  master switch. When you're not opted in — or not signed in — mature work is simply absent:
+  from the feed, browsing, search results and counts, suggestions, similar-image results, and
+  previews; a direct link shows a blurred tile and the file itself won't download. Owners always
+  see their own work (#1114-#1117).
+
+- **Thumbnail tiles got shorter and smarter.** Selection, type and the menu share one compact
+  band above the preview (40px shorter per tile), the type icon names itself in a tooltip, and
+  file extensions only show where they mean something (#1144).
+
 - **Mature content support, part one.** The groundwork landed: works can carry a mature flag
   (posts inherit it from their files automatically), the instance has an operator switch for
   whether mature content is allowed at all, and each signed-in account has its own opt-in.
