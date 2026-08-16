@@ -256,6 +256,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // GET, so `system.config.read` is what it actually needs to
       // render. The save button is disabled without the write cap.
       { key: 'browse_views', status: 'live',   href: '/admin/system/browse-views', cap: 'system.config.read' },
+      // #1116, ADR 0090 — the install-wide mature-content switch. Same
+      // read-cap gate and the same reasoning as browse_views above: the
+      // page renders from the admin GET, and the save button is what the
+      // write cap disables.
+      { key: 'mature_content', status: 'live', href: '/admin/system/mature-content', cap: 'system.config.read' },
       { key: 'maintenance',  status: 'future' },
       { key: 'feature_flags', status: 'future' },
       { key: 'backup',       status: 'future' },

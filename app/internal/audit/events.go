@@ -122,6 +122,17 @@ const (
 	// diffing the changeset of an unrelated system-config save.
 	EventAdminBrowseViewsUpdated = "admin.system.browse_views_updated"
 
+	// #1116 — the install-wide mature-content switch (ADR 0090 §2). Its
+	// own event because it is the one setting on this list that changes
+	// what an ALREADY-PUBLISHED library shows to its readers: flipping it
+	// off hides every flagged asset from everyone but owners and admins,
+	// and refuses new flags. "When did this install stop allowing mature
+	// content, and who decided that" is a question an operator will be
+	// asked by an artist whose work disappeared, and answering it should
+	// not require diffing the changeset of an unrelated system-config
+	// save.
+	EventAdminMatureContentUpdated = "admin.system.mature_content_updated"
+
 	// #40 — the scheduled-action engine (ADR 0020). Each execution
 	// writes one of these, tx-bound with the domain change, so the
 	// audit log IS the "trail" ADR 0020's action shape refers to and

@@ -135,6 +135,12 @@ func (h *SaveAsCollectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			func(code string) bool { return id.Can(code) },
 			id.ScopedTeams(visibility.AssetsAdmin),
 		),
+		// #1117 — the mature axis, off the same request context /search
+		// reads it from. Without it this button would save a collection
+		// containing the mature assets the page it was clicked from did
+		// not show, which is the accepted-but-wider write the Caps note
+		// above is about, on a second axis.
+		Mature: visibility.MatureFromContext(r.Context()),
 	}
 	// Force a fresh, cache-bypassing execution so the operator sees
 	// current-truth hits (the /search cache serves 25-hit pages by

@@ -104,6 +104,27 @@ export interface AuthUser {
    *  lists — for every account that has not curated it. */
   browseRail?: AccountBrowseRail | null;
   /**
+   * Whether the INSTANCE allows mature content at all (#1116, ADR 0090
+   * §2) — the operator's switch, not this account's opt-in.
+   *
+   * ⚠️ NOT THE SAME QUESTION as "does this reader see mature content".
+   * That answer is three conjuncts ANDed: signed in, opted in
+   * (`user_preferences.mature_content.show`), and this. A surface that
+   * renders "mature is on for you" from either one alone will be wrong.
+   *
+   * What it is FOR is deciding whether to draw a control at all. When
+   * false, the account opt-in and the upload self-label are not
+   * rendered — not rendered disabled — because a control the server will
+   * not honour is a control that lies.
+   *
+   * Defaults to TRUE when the session response does not carry it, which
+   * is the unconfigured install's answer and the only safe guess: false
+   * would hide the opt-in on every install that has never touched the
+   * setting. Nothing is disclosed either way — the server ANDs the same
+   * switch into every request regardless of what this says.
+   */
+  matureContentAllowed: boolean;
+  /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
    * "you are acting as @target" banner. Phase 1.19.A-2.
@@ -376,6 +397,10 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
     feedFilters: (u.feed_filters ?? null) as AccountFeedFilters | null,
     browseRail: (u.browse_rail ?? null) as AccountBrowseRail | null,
+    // Absent → true. Required on the wire since #1116, so absence means
+    // a producer that predates it (only /setup/complete ever did), and
+    // a fresh install allows mature content by default.
+    matureContentAllowed: u.mature_content_allowed !== false,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

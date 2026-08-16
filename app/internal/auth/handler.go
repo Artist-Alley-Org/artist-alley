@@ -65,6 +65,12 @@ type Handler struct {
 	// haven't configured one.
 	Policy passwordPolicySource
 
+	// MatureAllowed answers "does this install allow mature content"
+	// for the session response (#1116, ADR 0090 §2). Nil is safe and
+	// answers TRUE — see SetMatureAllowedReader for why this one field
+	// fails OPEN while every viewing rule on the same axis fails closed.
+	MatureAllowed MatureAllowedReader
+
 	// Providers is the identity-provider registry consulted by Login()
 	// to dispatch credentials to the right backend (password vs LDAP
 	// vs ...). Nil-safe — when nil, Login falls back to the legacy
@@ -141,6 +147,62 @@ func (h *Handler) SetPasswordPolicySource(p passwordPolicySource) {
 // NewHandler signature stays stable.
 func (h *Handler) SetProviderRegistry(r *Registry) {
 	h.Providers = r
+}
+
+// MatureAllowedReader answers the third conjunct of ADR 0090 §2 — does
+// this INSTALL allow mature content — for the session response (#1116).
+//
+// # A function type, not the sysconfig store
+//
+// Package auth cannot import sysconfig: sysconfig's handler imports auth
+// for RequestFromContext and the capability helpers, so the arrow only
+// goes one way. Taking the answer as a one-line function keeps it that
+// way, and keeps this package from learning that `system_config` exists
+// at all.
+//
+// # It is the SAME switch the predicate reads, not a copy of it
+//
+// The value on the session response is a RENDER HINT and nothing else.
+// Nothing server-side consults it: visibility.QualifiesForMature ANDs
+// the operator's switch in on every request regardless of what any
+// session response said, so a client that ignores this — or a stale one
+// that cached yesterday's answer — can still not be shown a single
+// mature byte. That is why it is safe to serve it best-effort.
+type MatureAllowedReader func(ctx context.Context) (bool, error)
+
+// SetMatureAllowedReader wires the install-wide mature switch into the
+// session response. Same post-construction pattern as the setters above.
+//
+// Unwired, [Handler.matureAllowed] answers TRUE — matching
+// sysconfig.KeyMatureContent's own absent-means-allowed default rather
+// than the fail-closed direction the VIEWING rules take. The two
+// directions are right for their own questions: refusing to widen is
+// correct for a gate over content, and this is not one. It decides
+// whether an account is offered a checkbox, and answering false here
+// would hide the opt-in control on every install that has never
+// configured the setting — which is all of them — while disclosing
+// nothing either way.
+func (h *Handler) SetMatureAllowedReader(r MatureAllowedReader) {
+	h.MatureAllowed = r
+}
+
+// matureAllowed resolves the flag for a session response, best-effort.
+//
+// An ERROR resolves to TRUE, same as unwired, and for the same reason:
+// this field offers a control, it does not grant anything. A config-read
+// blip that hid the mature opt-in from every signed-in account would be
+// a bug report ("the setting vanished") caused by a transient, and the
+// opposite failure — showing a checkbox on an install that disallows —
+// costs the user one tick that the server then declines to honour.
+func (h *Handler) matureAllowed(ctx context.Context) bool {
+	if h.MatureAllowed == nil {
+		return true
+	}
+	allowed, err := h.MatureAllowed(ctx)
+	if err != nil {
+		return true
+	}
+	return allowed
 }
 
 // auditRecorder is the subset of audit.Recorder that the auth handler
@@ -795,7 +857,17 @@ func (h *Handler) GetCurrentUser(
 // new field on CurrentUser belongs behind this call, not at the call
 // sites.
 func (h *Handler) hydrateSessionUser(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
-	if h.Pool == nil || cu == nil {
+	if cu == nil {
+		return
+	}
+	// ABOVE the pool guard, deliberately. This one is not a per-account
+	// lookup — it is an install-wide switch with a permissive default,
+	// and a handler constructed without a pool (tests, boot order) must
+	// still answer it rather than leave the required field on Go's
+	// `false`, which would mean "this install forbids mature content"
+	// and hide the opt-in control everywhere.
+	cu.MatureContentAllowed = h.matureAllowed(ctx)
+	if h.Pool == nil {
 		return
 	}
 	h.hydrateAccountPrefs(ctx, userRef, cu)

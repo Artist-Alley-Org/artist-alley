@@ -1092,6 +1092,21 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// visibility.MatureFromContext for why ten wiring lines became one
 	// middleware. s.matureResolver is what server.go mounts.
 	s.matureResolver = matureRes
+	// The session response carries the OPERATOR's conjunct so a
+	// signed-in surface can decide whether to draw the opt-in at all
+	// (CurrentUser.mature_content_allowed). A render hint only — the
+	// predicate above re-reads the same switch on every request, so a
+	// client that ignores this cannot be shown anything by doing so.
+	s.auth.SetMatureAllowedReader(func(ctx context.Context) (bool, error) {
+		if sysCfg == nil {
+			return true, nil
+		}
+		cfg, err := sysCfg.GetMatureContent(ctx)
+		if err != nil {
+			return false, err
+		}
+		return cfg.Allowed(), nil
+	})
 
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
@@ -3541,6 +3556,16 @@ func (s *apiServer) UpdateBrowseViews(ctx context.Context, req openapi.UpdateBro
 }
 func (s *apiServer) GetPublicBrowseViews(ctx context.Context, req openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
 	return s.sysconfigH.GetPublicBrowseViews(ctx, req)
+}
+
+// #1116 — the install's mature switch. NO public counterpart: every
+// consumer is signed in, so the answer rides the session response
+// (CurrentUser.mature_content_allowed) instead of being published.
+func (s *apiServer) GetMatureContentConfig(ctx context.Context, req openapi.GetMatureContentConfigRequestObject) (openapi.GetMatureContentConfigResponseObject, error) {
+	return s.sysconfigH.GetMatureContentConfig(ctx, req)
+}
+func (s *apiServer) UpdateMatureContentConfig(ctx context.Context, req openapi.UpdateMatureContentConfigRequestObject) (openapi.UpdateMatureContentConfigResponseObject, error) {
+	return s.sysconfigH.UpdateMatureContentConfig(ctx, req)
 }
 
 // --- audit viewer (Phase 1.17.K) ------------------------------------------

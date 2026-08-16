@@ -29,11 +29,27 @@
   type FeedFilters = NonNullable<
     components['schemas']['UserPreferencesRequest']['feed_filters']
   >;
+  type BrowseRail = NonNullable<
+    components['schemas']['UserPreferencesRequest']['browse_rail']
+  >;
+  type MatureContent = NonNullable<
+    components['schemas']['UserPreferencesRequest']['mature_content']
+  >;
+  // ⚠️ EVERY member of UserPreferencesRequest must appear here, and the
+  // reason is not tidiness — see savePrefs. The PATCH is a FULL-OBJECT
+  // REPLACEMENT, so a field this interface does not declare is a field
+  // savePrefs cannot echo back, and an un-echoed field is RESET on every
+  // save. `browse_rail` was missing until #1116 and every toggle on this
+  // page silently wiped the reader's rail curation (hidden teams, team
+  // order, hidden tags, tag order) — invisible because TypeScript had
+  // never been told the field existed.
   interface PrefsResponse {
     notification_channels: Record<string, string[]>;
     email_cadence?: Record<string, string>;
     default_views: ViewSelections;
     feed_filters: FeedFilters;
+    browse_rail: BrowseRail;
+    mature_content: MatureContent;
     known_event_types: string[];
     known_channels: string[];
     default_channels_by_event: Record<string, string[]>;
@@ -182,15 +198,48 @@
     });
   }
 
+  // Mature-content opt-in (#1116, ADR 0090 §2). Same shape as the two
+  // setters above: send the whole sub-object with the one key set.
+  async function setMatureContent(show: boolean): Promise<void> {
+    if (!prefs) return;
+    await savePrefs({ mature_content: { show } });
+  }
+
+  // ⚠️ THIS IS A FULL-OBJECT REPLACEMENT, NOT A MERGE (#1116).
+  //
+  // `UserPreferencesRequest` says so in as many words: an absent member
+  // RESETS that preference, and an absent key inside a present member
+  // resets that key. So this function's job is to re-send the ENTIRE
+  // document with one member swapped — every member, every time.
+  //
+  // Two of them were missing. `browse_rail` had been absent since the
+  // rail shipped, so every theme-independent toggle on this page wiped
+  // the reader's curation; `mature_content` would have joined it the
+  // moment #1116 added the checkbox below, and the symptom would have
+  // been the worst kind: a reader opts in, changes a notification
+  // channel an hour later, and is silently opted back out of content
+  // they had consented to see.
+  //
+  // It re-GETs first rather than echoing the in-memory `prefs`. That
+  // snapshot is as old as the page, and this is not a hypothetical
+  // window: browseRail.svelte.ts writes the SAME row from the rail's own
+  // drag handlers, so a reader who reorders a chip and then ticks a box
+  // here would have had the reorder reverted by a stale echo. The extra
+  // round trip costs one read on a settings page; the alternative costs
+  // data the reader entered by hand.
   async function savePrefs(patch: Partial<PrefsResponse>): Promise<void> {
     if (!prefs || savingPrefs) return;
     savingPrefs = true;
     try {
+      const fresh = await api.GET('/account/preferences', {});
+      const base = (fresh.data as unknown as PrefsResponse | undefined) ?? prefs;
       const body = {
-        notification_channels: patch.notification_channels ?? prefs.notification_channels,
-        email_cadence: patch.email_cadence ?? prefs.email_cadence ?? {},
-        default_views: patch.default_views ?? prefs.default_views,
-        feed_filters: patch.feed_filters ?? prefs.feed_filters,
+        notification_channels: patch.notification_channels ?? base.notification_channels,
+        email_cadence: patch.email_cadence ?? base.email_cadence ?? {},
+        default_views: patch.default_views ?? base.default_views,
+        feed_filters: patch.feed_filters ?? base.feed_filters,
+        browse_rail: patch.browse_rail ?? base.browse_rail ?? {},
+        mature_content: patch.mature_content ?? base.mature_content ?? {},
       };
       const r = await api.PATCH('/account/preferences', { body });
       if (r.data) {
@@ -437,6 +486,42 @@
         </label>
         <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.filters_show_restricted_help')}</p>
       </div>
+
+      <!-- #1116, ADR 0090 — the mature-content opt-in.
+           A SIBLING of the feed filters above, not a key inside them,
+           and the difference is not filing: those decide how the feed
+           arranges content this reader is entitled to either way, this
+           decides whether they have consented to be shown a class of
+           content at all. It is also composed on the picture plane, so
+           it changes deep links and not just the feed.
+
+           HIDDEN ENTIRELY — not disabled — when the operator has
+           switched mature content off for this install. A toggle the
+           server will not honour is a control that lies: the reader
+           would tick it, the PATCH would succeed (the preference is
+           storable on any install), and nothing would change. Absence is
+           the honest rendering of "this install does not offer that".
+
+           The instance answer rides the session response because it is
+           one of three conjuncts and this page only knows one of them;
+           see CurrentUser.mature_content_allowed. -->
+      {#if auth.user?.matureContentAllowed}
+        <div class="mt-4 border-t border-border pt-4">
+          <h4 class="mb-2 text-sm font-medium text-fg">{t('account.preferences.mature_title')}</h4>
+          <label class="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              class="mt-0.5 h-4 w-4 shrink-0"
+              data-testid="pref-show-mature"
+              checked={prefs.mature_content?.show ?? false}
+              onchange={(e) => setMatureContent((e.target as HTMLInputElement).checked)}
+              disabled={savingPrefs}
+            />
+            <span class="font-medium text-fg">{t('account.preferences.mature_show')}</span>
+          </label>
+          <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.mature_show_help')}</p>
+        </div>
+      {/if}
     {/if}
   </section>
 </div>

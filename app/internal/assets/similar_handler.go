@@ -266,6 +266,27 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 	// search-side splice sites need.
 	frag, predArgs := pred.ToSQL("", 2)
 	readFrag := visibility.ContentReadableSQL("assets", "$2", visibility.ResolveContentCaps(caps))
+	// #1117 — the mature axis on the NEIGHBOURS.
+	//
+	// #1066 already refuses a restricted neighbour here, and the ANCHOR
+	// side of this endpoint is already mature-gated (CanReadContent takes
+	// the viewer). This closes the remaining half: without it a
+	// disqualified viewer anchored on an ordinary asset would still be
+	// handed mature ones as its nearest neighbours — ranked, titled, and
+	// with a thumbhash, which is the derived-copy leak ADR 0090 §5 names.
+	//
+	// A DROP, not a withhold, and the drop happens because the row simply
+	// does not come back — the ordering loop above skips any neighbour
+	// this query did not return. That is #1066's chosen shape and it
+	// stays value-independent: a mature neighbour is dropped for every
+	// anchor equally, so its absence is not a fresh oracle.
+	//
+	// $2 is referenced unconditionally by FieldsColumnsSQL's membership
+	// EXISTS, so this fragment can name it without the bind-count care
+	// the search-side splice sites need.
+	readFrag += visibility.MatureFilterSQL("assets", visibility.MatureOwnerColAsset,
+		"$2", visibility.MatureFromContext(ctx),
+		visibility.ResolveContentCaps(caps).SystemAdmin)
 	// Build a $1, $2, ... placeholder list. pgx5 supports ANY($1::uuid[])
 	// when passing the slice directly; that's the cleanest path.
 	rows, err := h.Pool.Query(ctx, `

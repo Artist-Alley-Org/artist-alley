@@ -849,6 +849,93 @@ func (h *Handler) UpdateBrowseViews(
 	return openapi.UpdateBrowseViews200JSONResponse(browseViewsToAPI(cfg)), nil
 }
 
+// ---------------------------------------------------------------------------
+// Mature content (#1116, ADR 0090) — whether the install allows it at all
+// ---------------------------------------------------------------------------
+//
+// TWO endpoints, not three, and the missing one is the point. Browse
+// views has a public counterpart because every visitor's switcher renders
+// from it. This setting has no anonymous consumer at all: the upload
+// self-label, the operator's per-asset override and the account opt-in
+// are all signed-in surfaces, and an anonymous viewer can never opt in
+// (ADR 0090 §2 — there is nowhere to store the answer). So the value
+// reaches its clients on the session response
+// (CurrentUser.mature_content_allowed) and this pair stays behind
+// system.config.read/write like the rest of the operator's panel.
+//
+// Read is gated on system.config.read and write on system.config.write,
+// matching every other system setting. There is deliberately no
+// `system.mature.write` cap: a role that may decide whether this install
+// carries adult work but may not touch the rest of its configuration is
+// not a role anyone has asked for, and inventing it would add a cap that
+// no seeded role holds.
+
+func (h *Handler) GetMatureContentConfig(
+	ctx context.Context,
+	_ openapi.GetMatureContentConfigRequestObject,
+) (openapi.GetMatureContentConfigResponseObject, error) {
+	if _, denied := h.requireCap(ctx, CapConfigRead); denied != nil {
+		return matureContentDenial(denied), nil
+	}
+	cfg, err := h.Store.GetMatureContent(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get mature content: %w", err)
+	}
+	return openapi.GetMatureContentConfig200JSONResponse(matureContentToAPI(cfg)), nil
+}
+
+// UpdateMatureContentConfig flips the install's switch.
+//
+// # A missing body is a 400, not a switch-off
+//
+// `allowed` is REQUIRED on the wire precisely so this handler never has
+// to guess. A PATCH with no body, or with the field absent, would
+// otherwise decode to Go's `false` and DISALLOW mature content — hiding
+// every flagged asset on the install from everyone but its owners,
+// because a client sent a malformed request. That is the accepted-but-
+// empty shape #946 and the "bad UUID wrote an all-NULL row" lesson are
+// both about, and it is refused here rather than detected later.
+//
+// # No invalidation call, because there is no cache
+//
+// sysconfig.SetMatureContent's doc carries the argument: the read is
+// deliberately uncached, because a stale TRUE would keep serving mature
+// content on an install whose operator has just switched it off. If a
+// cache is ever added, ADR 0013's rule applies and the invalidation
+// belongs on the line below this comment — the absence of one here is a
+// consequence of that decision, not an oversight of it.
+func (h *Handler) UpdateMatureContentConfig(
+	ctx context.Context,
+	req openapi.UpdateMatureContentConfigRequestObject,
+) (openapi.UpdateMatureContentConfigResponseObject, error) {
+	id, denied := h.requireCap(ctx, CapConfigWrite)
+	if denied != nil {
+		return matureContentUpdateDenial(denied), nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateMatureContentConfig400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	before, beforeErr := h.Store.GetMatureContent(ctx)
+	cfg := matureContentFromAPI(*req.Body)
+	if err := h.Store.SetMatureContent(ctx, cfg, h.Logger); err != nil {
+		return nil, fmt.Errorf("sysconfig: set mature content: %w", err)
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*MatureContentConfig)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminMatureContentUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
+	}
+	return openapi.UpdateMatureContentConfig200JSONResponse(matureContentToAPI(cfg)), nil
+}
+
 // GetPublicBrowseViews is the boot-path read every client renders from.
 //
 // "Public" here means PUBLIC-MODE GOVERNED, not unauthenticated: the

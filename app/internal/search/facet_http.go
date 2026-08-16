@@ -103,6 +103,11 @@ func (h *FacetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Caps:         caps,
 		PostCaps:     postCaps,
 		MutationCaps: mutCaps,
+		// #1117 — the mature axis, off the request context. Outside the
+		// identity branch above for the reason /search reads it outside
+		// its own: an anonymous caller has a definite answer here (the
+		// disqualified viewer), not an absent one.
+		Mature: visibility.MatureFromContext(r.Context()),
 	}
 	resp := h.Dispatcher.Run(r.Context(), req)
 	writeJSON(w, http.StatusOK, resp)

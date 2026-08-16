@@ -87,7 +87,11 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		PostCaps:       postCaps,
 		MutationCaps:   mutCaps,
 		CollectionCaps: collCaps,
-		Limit:          limit,
+		// #1117 — the mature axis, off the request context, outside the
+		// identity branch for the reason its siblings on /search and
+		// /search/facets are.
+		Mature: visibility.MatureFromContext(r.Context()),
+		Limit:  limit,
 	}
 	resp, err := h.Service.Suggest(r.Context(), req)
 	if err != nil {

@@ -320,11 +320,23 @@ func filterVisibleAssetIDs(
 	// args follow at whatever offset that leaves.
 	args := []any{ids}
 	readFrag := visibility.ContentReadableSQL("", "$2", caps)
-	if readFrag != "" {
+	// #1117 — the mature axis. Reverse image search is the sharpest form
+	// of the derived-copy problem on this axis: the caller supplies a
+	// picture and the endpoint answers with how close the catalogue comes
+	// to it, so a mature asset surfacing here has had its APPEARANCE
+	// disclosed to a viewer who never opted in. Same drop-not-withhold
+	// shape #1066 chose for the restricted case one line up.
+	//
+	// Shares $2, appended when EITHER fragment names it — both fold
+	// independently, so binding on one alone would leave the other's
+	// placeholder unbound.
+	matureFrag := visibility.MatureFilterSQL("", visibility.MatureOwnerColAsset,
+		"$2", visibility.MatureFromContext(ctx), caps.SystemAdmin)
+	if readFrag != "" || matureFrag != "" {
 		args = append(args, caller.UserRef)
 	}
 	visFrag, visArgs := pred.ToSQL("", len(args))
-	sql := `SELECT id FROM assets WHERE id = ANY($1::uuid[])` + readFrag + visFrag
+	sql := `SELECT id FROM assets WHERE id = ANY($1::uuid[])` + readFrag + matureFrag + visFrag
 	args = append(args, visArgs...)
 
 	rows, err := pool.Query(ctx, sql, args...)
