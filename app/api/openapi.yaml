@@ -12842,6 +12842,28 @@ components:
             read-only banner can render once signed in. Absent/false in
             a normal install — zero footprint when off.
           example: false
+        visual_search_enabled:
+          type: boolean
+          readOnly: true
+          description: |
+            True when this install can answer a reverse-image search —
+            i.e. `search.visual.enabled` is on AND the CLIP visual
+            encoder sidecar was reachable when the process booted.
+
+            It is the RESOLVED capability, not the config flag, and the
+            difference is the whole point (#1163): an install whose
+            sidecar was unreachable at boot has `enabled: true` in
+            sysconfig and still serves **501 sidecar_not_installed** on
+            `POST /search/by-image`, so publishing the config value
+            would advertise an arm that cannot work. Read it as "the
+            by-image endpoint will do something".
+
+            Surfaced here, on the boot path the frontend already reads,
+            so the reverse-image dropzone can be absent on an install
+            without the channel instead of being discovered by dropping
+            an image and getting an error. Absent/false on a default
+            install — the feature is off unless an operator turns it on.
+          example: false
         logo_url:
           type: string
           readOnly: true

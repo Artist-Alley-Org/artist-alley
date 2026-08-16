@@ -58,6 +58,27 @@ class SiteState {
   setDemoMode(next: boolean | null | undefined): void {
     this.demoMode = next === true;
   }
+
+  /** True when this install can answer a reverse-image search (#1163).
+   *  Rides the same public /appearance boot fetch as the name and demo
+   *  flag, and is the RESOLVED capability rather than the config knob —
+   *  an install whose CLIP sidecar failed to start is `false` here even
+   *  with `search.visual.enabled` on, because the endpoint would answer
+   *  501 either way.
+   *
+   *  Uncached and defaulting to FALSE, the same rule demoMode follows
+   *  and for the same reason: a surface that appears and then vanishes
+   *  is worse than one that arrives a beat late, and the install this
+   *  flag exists for is the one WITHOUT the channel. The by-image
+   *  component keeps its 501 handling regardless — this hides the arm,
+   *  it does not become the only thing standing between a click and an
+   *  error. */
+  visualSearchEnabled = $state(false);
+
+  /** Called by the appearance store after the public boot fetch. */
+  setVisualSearchEnabled(next: boolean | null | undefined): void {
+    this.visualSearchEnabled = next === true;
+  }
 }
 
 export const site = new SiteState();

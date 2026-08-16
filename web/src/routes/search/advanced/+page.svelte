@@ -51,6 +51,7 @@
   import { t } from '$stores/lang.svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
+  import { site } from '$stores/site.svelte';
   import AdvancedQueryBuilder from '$components/search/AdvancedQueryBuilder.svelte';
   import ReverseImageDropzone from '$components/search/ReverseImageDropzone.svelte';
   import { selectableOptions, normalizeOptions } from '$lib/fieldOptions';
@@ -130,20 +131,19 @@
 
   // Whether the instance has the CLIP/similarity channel.
   //
-  // `undefined` = not yet known, and the arm RENDERS while unknown:
-  // showing it and collapsing on the first 501 is the behaviour the
-  // existing dropzone already has, and the alternative (hide until
-  // proven) would hide the feature on every install that has it.
+  // #1163 closed the residual this comment used to describe: the flag is
+  // now DECLARED on the /appearance boot payload the app already fetches
+  // (`visual_search_enabled`), so the arm is absent on an install without
+  // the channel rather than visible until someone drops an image and
+  // gets a 501 back.
   //
-  // ⚠️ RESIDUAL, and it is an acceptance gap worth naming rather than
-  // burying: this is attempt-based, so on a disabled instance the arm is
-  // visible until someone drops an image. A DECLARATIVE flag is the
-  // right shape — `search.visual.enabled` surfaced on /appearance, the
-  // public boot payload appearance.svelte.ts already fetches — and it
-  // is not here because it needs an openapi.yaml schema change plus a
-  // Go+TS regeneration, which is a change to a shared generated surface
-  // rather than a line in this file.
-  let clipEnabled = $state<boolean | undefined>(undefined);
+  // The `oncapability` signal is kept as the second channel, not as the
+  // first: the boot flag is resolved once at process start, so an
+  // operator who turns the sidecar off mid-session is still caught by
+  // the response the component reads. `false` from either source hides
+  // the section.
+  let clipDenied = $state(false);
+  const clipEnabled = $derived(site.visualSearchEnabled && !clipDenied);
 
   // The compiled DSL the builder last produced. The builder's own
   // submit and this page's submit do the SAME thing — run the search —
@@ -307,7 +307,7 @@
        `oncapability` lets the dropzone tell its host what it learned, so
        the SECTION disappears instead of rendering a heading above a
        "not configured" message. -->
-  {#if clipEnabled !== false}
+  {#if clipEnabled}
     <section
       class="mt-6 rounded-lg border border-border bg-surface p-4"
       data-testid="advanced-by-image"
@@ -315,7 +315,7 @@
       <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-fg-muted">
         {t('search.advanced_page.by_image_heading')}
       </h2>
-      <ReverseImageDropzone oncapability={(ok) => (clipEnabled = ok)} />
+      <ReverseImageDropzone oncapability={(ok) => (clipDenied = !ok)} />
     </section>
   {/if}
 

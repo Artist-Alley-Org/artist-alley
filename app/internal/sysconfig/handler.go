@@ -85,6 +85,20 @@ type Handler struct {
 	// value (false) — a normal install never advertises demo mode.
 	DemoMode bool
 
+	// VisualSearchEnabled is the RESOLVED reverse-image capability
+	// (#1163), surfaced on the public /appearance boot payload so the
+	// frontend can omit the dropzone on an install that has no CLIP
+	// channel instead of discovering it from a failed upload.
+	//
+	// Resolved, not configured, and that distinction is the reason it
+	// is a field here rather than a read of `search.visual.enabled`:
+	// the by-image endpoint answers 501 whenever its Provider is nil,
+	// which happens when the operator disabled the feature OR when the
+	// sidecar was unreachable at boot. Only the boot path knows which,
+	// so it sets this after the provider bootstrap decides. Defaults to
+	// false, which is a default install.
+	VisualSearchEnabled bool
+
 	// BrowseViews is the cached read of the operator's enabled browse
 	// layouts (#709), used by the public boot-path endpoint. nil-safe:
 	// unwired, GetPublicBrowseViews reads the store directly, which is
@@ -701,6 +715,12 @@ func (h *Handler) GetPublicAppearance(
 	// true when AA_DEMO_MODE=1 was set at boot.
 	demo := h.DemoMode
 	out.DemoMode = &demo
+	// Same boot path, same reason (#1163): the reverse-image arm is a
+	// whole section of /search/advanced, and without this the only way
+	// the frontend could learn the instance has no CLIP channel was to
+	// upload an image and read the 501 back.
+	visual := h.VisualSearchEnabled
+	out.VisualSearchEnabled = &visual
 	return openapi.GetPublicAppearance200JSONResponse(out), nil
 }
 
