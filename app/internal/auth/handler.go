@@ -949,18 +949,19 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 // carried the meaning.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	var lang, theme string
-	var viewsJSON, filtersJSON, browseRailJSON []byte
+	var viewsJSON, filtersJSON, browseRailJSON, matureJSON []byte
 	err := h.Pool.QueryRow(ctx, `
 		SELECT COALESCE(p.language, ''),
 		       COALESCE(p.theme, ''),
 		       COALESCE(up.default_views, '{}'::jsonb),
 		       COALESCE(up.feed_filters, '{}'::jsonb),
-		       COALESCE(up.browse_rail, '{}'::jsonb)
+		       COALESCE(up.browse_rail, '{}'::jsonb),
+		       COALESCE(up.mature_content, '{}'::jsonb)
 		FROM (SELECT $1::bigint AS user_ref) k
 		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
 		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
 		userRef,
-	).Scan(&lang, &theme, &viewsJSON, &filtersJSON, &browseRailJSON)
+	).Scan(&lang, &theme, &viewsJSON, &filtersJSON, &browseRailJSON, &matureJSON)
 	if err != nil {
 		// pgx.ErrNoRows is fine; we leave the fields nil.
 		return
@@ -982,6 +983,43 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 	if r, ok := decodeBrowseRail(browseRailJSON); ok {
 		cu.BrowseRail = &r
 	}
+	if m, ok := decodeMatureContent(matureJSON); ok {
+		cu.MatureContent = &m
+	}
+}
+
+// decodeMatureContent parses the user_preferences.mature_content blob
+// into the wire type (#1115).
+//
+// Reports false when the opt-in is OFF, so /auth/me omits the object
+// for every account that has not opted in — the same "omit when it says
+// nothing" rule decodeFeedFilters applies to its boolean, and the same
+// consequence: this changes no existing session response.
+//
+// A malformed blob is treated as "not opted in", which is both the safe
+// direction and the only one available: hydrateAccountPrefs has no
+// error channel, being a best-effort enrichment of a session response
+// that must not fail because a preference did. Failing /auth/me — the
+// call that gates the entire app — over an unreadable preferences
+// column would lock a user out of the page where they could fix it.
+//
+// Decoded into the GENERATED type rather than userprefs.MatureContent,
+// for the reason decodeDefaultViews records: importing userprefs is an
+// import cycle (userprefs depends on this package for
+// IdentityFromContext). The two structs are the same one field, and
+// openapi.yaml is the shared source both are generated or written from.
+func decodeMatureContent(raw []byte) (openapi.UserPreferencesMatureContent, bool) {
+	var m openapi.UserPreferencesMatureContent
+	if len(raw) == 0 {
+		return m, false
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return openapi.UserPreferencesMatureContent{}, false
+	}
+	if m.Show == nil || !*m.Show {
+		return openapi.UserPreferencesMatureContent{}, false
+	}
+	return m, true
 }
 
 // decodeBrowseRail parses the user_preferences.browse_rail blob into

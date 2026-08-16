@@ -98,6 +98,7 @@ type Asset struct {
 	PageCount        *int32
 	DeletedReason    *string
 	DeletedByUserRef *int64
+	Mature           bool
 }
 
 type AssetAlternate struct {
@@ -783,6 +784,7 @@ type Post struct {
 	SubtitleTrackOverride []byte
 	DeletedReason         *string
 	DeletedByUserRef      *int64
+	Mature                bool
 }
 
 type PostAcl struct {
@@ -1112,6 +1114,7 @@ type UserPreference struct {
 	EmailCadence         []byte
 	FeedFilters          []byte
 	BrowseRail           []byte
+	MatureContent        []byte
 }
 
 type UserProfile struct {

@@ -98,6 +98,7 @@ type Asset struct {
 	PageCount        *int32  `json:"page_count"`
 	DeletedReason    *string `json:"deleted_reason"`
 	DeletedByUserRef *int64  `json:"deleted_by_user_ref"`
+	Mature           bool    `json:"mature"`
 }
 
 type AssetAlternate struct {
@@ -783,6 +784,7 @@ type Post struct {
 	SubtitleTrackOverride []byte  `json:"subtitle_track_override"`
 	DeletedReason         *string `json:"deleted_reason"`
 	DeletedByUserRef      *int64  `json:"deleted_by_user_ref"`
+	Mature                bool    `json:"mature"`
 }
 
 type PostAcl struct {
@@ -1112,6 +1114,7 @@ type UserPreference struct {
 	EmailCadence         []byte             `json:"email_cadence"`
 	FeedFilters          []byte             `json:"feed_filters"`
 	BrowseRail           []byte             `json:"browse_rail"`
+	MatureContent        []byte             `json:"mature_content"`
 }
 
 type UserProfile struct {

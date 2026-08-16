@@ -2,15 +2,15 @@
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash, team_id
+    state_id, processing_status, thumbhash, team_id, mature
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14
+    $11, $12, $13, $14, $15
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id;
+          created_at, updated_at, team_id, mature;
 
 -- name: GetAsset :one
 -- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -22,7 +22,7 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id
+       created_at, updated_at, team_id, mature
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -49,12 +49,16 @@ UPDATE assets SET
     description = COALESCE(sqlc.narg('description'), description),
     status      = COALESCE(sqlc.narg('status'),      status),
     metadata    = COALESCE(sqlc.narg('metadata'),    metadata),
+    -- #1115. narg, so PATCH semantics hold: absent leaves the flag as
+    -- it is, which is what makes the artist's own edit and the operator
+    -- override the same column on the same endpoint.
+    mature      = COALESCE(sqlc.narg('mature'),      mature),
     updated_at  = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id;
+          created_at, updated_at, team_id, mature;
 
 -- name: MergeAssetMetadata :exec
 -- Shallow-merge an incoming JSONB blob into the existing metadata

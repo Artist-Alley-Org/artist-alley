@@ -12696,6 +12696,28 @@ components:
             OMITTED when every list is empty, which is every account
             that has not curated its rail — so this changes no existing
             session response.
+        mature_content:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesMatureContent"
+          description: |
+            The account's mature-content consent, joined from
+            user_preferences at /auth/me time (#1115).
+
+            Here rather than behind a second fetch for the same
+            first-paint reason as `feed_filters`: it decides what the
+            feed CONTAINS, and a page that learns it after paint renders
+            one library and then swaps it. #706 is the precedent.
+
+            ⚠️ IT IS ONE OF THREE CONJUNCTS, NOT THE ANSWER. The reader
+            also has to be signed in (they are, if they are reading
+            this) and the INSTANCE has to allow mature content, which is
+            an operator setting this object says nothing about. A client
+            rendering "mature content is on for you" from this alone
+            will be wrong on an instance that has switched it off.
+
+            OMITTED when the opt-in is off, which is every account that
+            has not opted in — so this changes no existing session
+            response.
         capabilities:
           type: array
           items:
@@ -14080,6 +14102,22 @@ components:
         asset_type: { type: integer, format: int64 }
         owner_user_ref: { type: integer, format: int64, nullable: true }
         status: { type: string, enum: [draft, active, archived] }
+        mature:
+          type: boolean
+          description: |
+            This asset carries a MATURE rating (#1115, epic #1114, ADR
+            0090).
+
+            ⚠️ A RATING IS NOT A CLEARANCE. `sensitivity` answers who is
+            ALLOWED to see this; `mature` answers who has OPTED IN. They
+            are orthogonal — a `public` artwork can be mature, and a
+            `restricted` one need not be — and a client that treats one
+            as a level of the other will get both wrong.
+
+            Whether a disqualified viewer receives this row at all, and
+            whether its preview is blurred, are the server's decisions
+            (ADR 0090 §3). The flag is here so a client can LABEL what it
+            was given, never so it can decide what to hide.
         file_hash: { type: string, nullable: true, description: sha256 of the linked storage object }
         file_extension: { type: string, nullable: true }
         file_size_bytes: { type: integer, format: int64, nullable: true }
@@ -14738,6 +14776,23 @@ components:
           type: string
           enum: [draft, active, archived]
           default: active
+        mature:
+          type: boolean
+          description: |
+            Self-label this asset as MATURE (#1115, ADR 0090). One
+            checkbox, default `false` — the minimal-friction bar the
+            upload flow is held to.
+
+            ⚠️ REFUSED WITH 400 WHEN THE INSTANCE DISALLOWS MATURE
+            CONTENT. Not accepted-and-ignored: an accepted-but-inert
+            write is how a library fills with flags nothing enforces,
+            and the uploader would have no way to learn their label did
+            not take. Sending `false` is always accepted, on any
+            instance — refusing a write that asserts nothing would break
+            every client that sends the whole object.
+
+            Orthogonal to `sensitivity`, which answers a different
+            question; setting one says nothing about the other.
         file_hash:
           type: string
           nullable: true
@@ -14796,6 +14851,20 @@ components:
         status:
           type: string
           enum: [draft, active, archived]
+        mature:
+          type: boolean
+          description: |
+            Set or clear this asset's MATURE rating (#1115, ADR 0090).
+            PATCH semantics: absent leaves the flag as it is, which is
+            what makes the operator override and the artist's own edit
+            the same field on the same endpoint.
+
+            ⚠️ Setting it to `true` is REFUSED WITH 400 when the
+            instance disallows mature content — see AssetCreate for why
+            the refusal is loud. Clearing it (`false`) is always
+            accepted, including on a disallowing instance: an operator
+            who has just switched the feature off must still be able to
+            unmark what was marked while it was on.
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }
@@ -16043,6 +16112,38 @@ components:
             Request access in the feed — is stated in the setting's own
             help text rather than left to be discovered.
 
+    UserPreferencesMatureContent:
+      type: object
+      description: |
+        This account's answer on the MATURE axis (#1115, epic #1114,
+        ADR 0090).
+
+        A sibling of `feed_filters`, not a key inside it, and the
+        difference is not filing. `feed_filters` decides what the browse
+        FEED draws for content the reader is entitled to either way;
+        this decides whether the reader has consented to be shown a
+        class of content at all, and that answer is composed on the
+        picture plane too — an item reached by deep link renders blurred
+        and its bytes are refused.
+
+        NOT SUFFICIENT ON ITS OWN. Opting in qualifies a reader only if
+        they are signed in AND the instance allows mature content. The
+        server ANDs all three; a client that renders "you have opted in"
+        as "you will see it" will be wrong on an instance whose operator
+        has switched the feature off.
+
+        Same naming rule as `feed_filters`: the key is named for the
+        PERMISSIVE direction so its absence means the restrictive
+        default. An account that has never touched this object does not
+        see mature content.
+      properties:
+        show:
+          type: boolean
+          description: |
+            Opt in to being shown mature content. Absent or `false` —
+            the default for every account — hides it.
+      additionalProperties: false
+
     UserPreferencesRequest:
       type: object
       description: |
@@ -16092,6 +16193,16 @@ components:
             absent list inside it clears that list. The manage panel
             always sends all four, which is what makes "unhide the last
             hidden chip" expressible.
+        mature_content:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesMatureContent"
+          description: |
+            ⚠️ FULL-OBJECT REPLACEMENT, like every other member of this
+            request. An absent object resets the opt-in to `false`, and
+            so does an absent `show` inside a present object. A client
+            that PATCHes one preference must GET, merge and send the
+            whole document — sending `{"default_views": {...}}` alone
+            silently opts the account back out of mature content.
 
     UserPreferencesResponse:
       type: object
@@ -16107,6 +16218,7 @@ components:
         - default_views
         - feed_filters
         - browse_rail
+        - mature_content
         - known_event_types
         - known_channels
         - default_channels_by_event
@@ -16142,6 +16254,14 @@ components:
             `feed_filters` above, for the list case: "no curation" and
             "an empty curation" are the same rail, so omitting it would
             only make the client re-derive `[]`.
+        mature_content:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesMatureContent"
+          description: |
+            This account's mature-content consent, always present with
+            `show` populated. Same argument as `feed_filters`: a boolean
+            has no third state, so omitting it would only make the
+            client guess.
         known_event_types:
           type: array
           items: { type: string }

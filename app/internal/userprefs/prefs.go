@@ -48,6 +48,43 @@ type Preferences struct {
 	// which subtracts CONTENT server-side; this curates NAVIGATION
 	// FURNITURE and is applied by the client.
 	BrowseRail BrowseRail `json:"browse_rail"`
+	// MatureContent is the reader's own answer on the mature axis
+	// (#1115, ADR 0090). A separate bag from FeedFilters, and the
+	// difference is not filing: `feed_filters` is what the FEED
+	// subtracts with, and this is consulted on the picture plane too.
+	MatureContent MatureContent `json:"mature_content"`
+}
+
+// MatureContent is the reader's mature-content consent (#1115, epic
+// #1114, ADR 0090).
+//
+// # The zero value is the default, and here that is load-bearing
+//
+// Same naming contract as [FeedFilters]: the field is named for the
+// PERMISSIVE direction so its zero value is the restrictive one. A user
+// with no preferences row, an `{}` blob, or a key this build has never
+// heard of is NOT opted in — which is the owner's stated default and
+// the only safe reading of "we do not know".
+//
+// # It is a CONSENT, not a filter
+//
+// `FeedFilters.ShowRestricted` decides what a feed draws for content the
+// reader is entitled to either way. This decides whether the reader has
+// agreed to be shown a class of content at all, and the answer travels
+// further: ADR 0090 §3 composes it on the row plane (the feed does not
+// return it) AND the picture plane (an item reached by name renders
+// blurred and its bytes are refused). That is why it is not a key inside
+// the feed's bag.
+//
+// # It is not sufficient on its own
+//
+// Opting in qualifies the reader only if they are signed in and the
+// INSTANCE allows mature content. See visibility.QualifiesForMature —
+// this struct is one of that predicate's three conjuncts, never the
+// whole answer, and no caller should read it as one.
+type MatureContent struct {
+	// Show is the opt-in. False (the zero value) hides mature content.
+	Show bool `json:"show,omitempty"`
 }
 
 // BrowseRail is the browse page's rail curation (#1113, widened by
@@ -653,11 +690,18 @@ func MarshalBrowseRail(r BrowseRail) ([]byte, error) {
 	return json.Marshal(r.Sanitized())
 }
 
-// UnmarshalPreferencesRow parses a DB row's five JSONB columns back
-// into the typed struct. A malformed column (only possible via direct
-// DB tampering) surfaces as a loud error rather than a silently-zeroed
+// MarshalMatureContent produces the mature_content JSONB payload
+// (#1115). No sanitiser: the struct is one boolean and there is no
+// vocabulary to neutralise a removed value from.
+func MarshalMatureContent(m MatureContent) ([]byte, error) {
+	return json.Marshal(m)
+}
+
+// UnmarshalPreferencesRow parses a DB row's JSONB columns back into the
+// typed struct. A malformed column (only possible via direct DB
+// tampering) surfaces as a loud error rather than a silently-zeroed
 // value.
-func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, browseRailJSON []byte) (Preferences, error) {
+func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, browseRailJSON, matureJSON []byte) (Preferences, error) {
 	var p Preferences
 	if len(channelsJSON) > 0 {
 		if err := json.Unmarshal(channelsJSON, &p.NotificationChannels); err != nil {
@@ -696,6 +740,11 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, 
 		// Same read-side neutralisation DefaultViews gets above: a row
 		// on disk is never a reason to fail a preferences read.
 		p.BrowseRail = p.BrowseRail.Sanitized()
+	}
+	if len(matureJSON) > 0 {
+		if err := json.Unmarshal(matureJSON, &p.MatureContent); err != nil {
+			return Preferences{}, fmt.Errorf("mature_content: %w", err)
+		}
 	}
 	return p, nil
 }
