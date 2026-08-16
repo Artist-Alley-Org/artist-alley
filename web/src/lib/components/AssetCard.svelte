@@ -271,43 +271,33 @@
 >
   {#if detailed && !restricted}
     <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
-         Format on the left, type icon on the right — the owner's
-         placement grammar, and the twin of PostCard's. It REPLACES
-         #556's title header; the title moves down into the metadata
-         stack where one fact per row reads as a record. See PostCard's
-         band for the full argument, written once. -->
+         #1158: TYPE ICON LEFT, CONTROLS RIGHT, and no extension text —
+         the twin of PostCard's band, and the full argument is written
+         once over there. The short version: the icon (plus #1144's
+         tooltip, which says the type in words) is the exact answer to
+         "what kind of thing is this?", the extension was a second and
+         coarser answer to the same question, and the band now separates
+         what the card IS from what you can DO to it. The two controls
+         are a tight CLUSTER, with the elastic space between the groups
+         and none inside the pair — see PostCard's band for why.
+
+         It REPLACES #556's title header; the title moves down into the
+         metadata stack where one fact per row reads as a record. -->
     <div
       class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
     >
-      <CardCheckbox id={asset.id} placement="inline" />
       <CardKindBadge {kind} variant="inline" tooltipKey={asset.id} />
-      <!-- #1144: an ASSET is always singular, so the "which file's
-           extension?" ambiguity PostCard's band has cannot arise here and
-           the format label always earns its place. This is the single-
-           asset half of the stated choice, not an exemption from it. -->
-      {#if asset.file_extension}
-        <!-- #1144: HIDDEN BELOW `sm`, and that is the "only where
-             meaningful" half of the rule applied to width rather than to
-             cardinality. At 390px the thumbnail grid is two-up, so a tile
-             is ~157px and the band's three 44px-tall controls leave the
-             format label about 30px — enough to render "M.." and nothing
-             else. A truncated format label is not a shorter fact, it is
-             noise that reads as a bug, so the label is dropped and the
-             kind icon (which is exact at any width) carries the answer
-             alone. Same judgement as the multi-asset case one branch up:
-             say the true thing or say nothing. -->
-        <span class="hidden truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted sm:inline">
-          {asset.file_extension.replace(/^\./, '')}
-        </span>
-      {/if}
       <span class="flex-1"></span>
-      <CardMenu
-        assetId={asset.id}
-        detailPath="/assets/{asset.id}"
-        editPath={canEdit ? `/assets/${asset.id}/edit` : null}
-        placement="inline"
-      />
+      <div class="flex items-center">
+        <CardCheckbox id={asset.id} placement="inline" />
+        <CardMenu
+          assetId={asset.id}
+          detailPath="/assets/{asset.id}"
+          editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+          placement="inline"
+        />
+      </div>
     </div>
   {/if}
 

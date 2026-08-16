@@ -682,52 +682,57 @@
          is the question a working shelf asks first and the one the
          filename half-answers.
 
-         The extension is drawn UPPERCASE and without its dot — it is a
-         format label here, not a filename fragment. Absent for a post
-         whose cover has none (a restricted member, a
-         no-file placeholder), and the band then carries the kind alone
-         rather than an empty cell. -->
+         #1158 — THE EXTENSION IS GONE, and the band's order is fixed:
+         TYPE ICON LEFT, CONTROLS RIGHT.
+
+         #1136 opened this band as a FORMAT band and #1144 narrowed the
+         extension to "where it is unambiguous" (single-asset, ≥sm). The
+         owner's ruling retires that whole line: the extension text never
+         renders in thumbnail view at all. The icon already answers "what
+         kind of thing is this?" exactly — for all thirteen ViewKinds, at
+         every width, with #1144's tooltip spelling the type out in words
+         — and the extension was a second, coarser answer to the same
+         question sitting next to it. Two labels for one fact is what the
+         density pass has been removing everywhere else (#1047, #1124).
+
+         The ordering is the other half. The band held CONTENT (kind) and
+         CONTROLS (checkbox, ⋯) interleaved, with the checkbox first, so
+         the eye met a widget before it met the fact. Now the two groups
+         are separated: what the card IS on the left, what you can DO to
+         it on the right — the same split the metadata stack below and
+         the grid overlay already use, and the reading order a shelf
+         wants. The checkbox moving to the right is a MOVE, not a second
+         checkbox: same `CardCheckbox`, same `orderedIds`, so
+         shift-range and the marquee's passthrough behave as before.
+
+         TWO GROUPS, ONE GAP. The elastic space is between the groups and
+         nowhere else — the controls are a CLUSTER, not a distribution.
+         Spreading them with the band's own `gap-2` put ~28px of daylight
+         between the checkbox and the ⋯ (each is a 44px tap target around
+         a ~24px glyph, so the gap the eye sees is both paddings plus the
+         gap), and two controls that far apart read as two unrelated
+         widgets rather than this card's toolbar. The cluster has no gap
+         of its own: the tap targets butt together, which leaves the
+         glyphs a tight ~14px apart while both controls keep the full
+         44px target — the spacing shrinks, the touch surface does not. -->
     <div
       class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
     >
-      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
       {#if !coverRestricted}
         <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
       {/if}
-      <!-- #1144: the extension is MEANINGLESS ON A MULTI-ASSET POST —
-           "which file's extension?" has no answer, and the one we were
-           drawing was the COVER's, which is an arbitrary member. So a
-           multi-asset tile drops it and keeps the count + shapes icon,
-           which say the true thing (how many, and that they are mixed).
-
-           A single-asset tile KEEPS it, and that is the stated choice:
-           there the label is unambiguous and it is the fact a working
-           shelf sorts on — PNG next to PSD next to MP4 — which is why
-           #1136 put a format band up here in the first place. -->
-      {#if memberCount <= 1 && coverFileExtension}
-        <!-- #1144: HIDDEN BELOW `sm`, and that is the "only where
-             meaningful" half of the rule applied to width rather than to
-             cardinality. At 390px the thumbnail grid is two-up, so a tile
-             is ~157px and the band's three 44px-tall controls leave the
-             format label about 30px — enough to render "M.." and nothing
-             else. A truncated format label is not a shorter fact, it is
-             noise that reads as a bug, so the label is dropped and the
-             kind icon (which is exact at any width) carries the answer
-             alone. Same judgement as the multi-asset case one branch up:
-             say the true thing or say nothing. -->
-        <span class="hidden truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted sm:inline">
-          {coverFileExtension.replace(/^\./, '')}
-        </span>
-      {/if}
       <span class="flex-1"></span>
-      <CardMenu
-        assetId={coverAssetId}
-        postId={post.id}
-        detailPath="/posts/{post.id}"
-        manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
-        placement="inline"
-      />
+      <div class="flex items-center">
+        <CardCheckbox id={post.id} placement="inline" {orderedIds} />
+        <CardMenu
+          assetId={coverAssetId}
+          postId={post.id}
+          detailPath="/posts/{post.id}"
+          manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+          placement="inline"
+        />
+      </div>
     </div>
   {/if}
 
