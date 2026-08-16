@@ -9,6 +9,19 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Follow a hashtag.** Tags work like teams now: follow one from the strip's manage menu and
+  its posts join your Following feed; a `#tag` chip joins your strip and filters the feed in
+  place like a team chip. Following a tag never shows you anything you couldn't already see (#1123).
+
+- **Select many posts at once.** Drag a selection box across the feed, or Shift-click one post
+  and then another to select everything between them (in feed order); list view gained the
+  checkbox column it was missing, and the column-resize handles are easier to see in both
+  themes (#1127).
+
+- **Cards point at people.** Hovering a grid card, the artist's name and avatar are now a link
+  to their profile; long titles follow your cursor in full; and the card menu visibly reacts
+  when you're over it (#1126).
+
 - **The teams strip filters your feed in place.** Click a team and the page stays put while the
   feed narrows to that team's work, with the team's name as a heading and a follow button right
   there; click All teams (or the same chip again) to clear. The strip now shows every team you
