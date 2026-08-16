@@ -5,6 +5,28 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [Unreleased]
+
+### Changed
+
+- **Typing in the search box no longer re-queries the feed.** Suggestions still appear as you
+  type; the results change only when you press Enter. Measured: zero feed requests during
+  typing, exactly one on commit (#1156, PR #1162).
+- **The search button is now Advanced search.** It opens a dedicated page combining the typed
+  conditional builder with per-field metadata filters drawn from the instance's own field
+  catalogue; every choice composes into one query and lands on the normal results page with the
+  query in the address. Capability-gated fields refuse to filter for callers without the
+  capability (#1157, PR #1162).
+
+### Fixed
+
+- **Search suggestions no longer offer terms that find nothing.** Suggestions are now backed by
+  the same match rule the search itself executes, per viewer and per surface — on the seeded
+  library the zero-result suggestion rate went from 9 in 25 to 0 (#1155, PR #1162).
+- **A filter-only search now runs.** Selecting a filter with no search text used to land on a
+  silent empty page — including plain extension filters, broken since the facet rail shipped.
+  One authority now decides what counts as a runnable search (#1157, PR #1162).
+
 ## [v0.10.0] — 2026-08-16 — The browse experience release: search sealed, the wall rebuilt, every view given its own feel
 
 ### Added
