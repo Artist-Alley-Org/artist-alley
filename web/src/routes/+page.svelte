@@ -547,7 +547,16 @@
          against; `select-none` stops a drag across the wall painting a
          browser text selection over every title it crosses, which is
          the one visual artefact a rubber band must not have. -->
-    <div bind:this={wallEl} {...marquee.handlers} class="relative select-none">
+    <!-- `data-testid` is here for the #1138 drag guard: the marquee is
+         the third `nativeDrag` consumer and the only one whose surface
+         is not already addressable, so the per-consumer drag test had
+         nothing to press on. -->
+    <div
+      bind:this={wallEl}
+      {...marquee.handlers}
+      class="relative select-none"
+      data-testid="browse-wall"
+    >
       <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
         {#snippet card(item, mode)}
           {@const post = item as Post}
