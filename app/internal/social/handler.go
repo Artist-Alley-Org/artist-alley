@@ -232,9 +232,9 @@ func (h *Handler) GetPostLike(
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	// Confirm the post exists so we can return a proper 404 rather
 	// than silently saying "not liked" for a missing target.
-	if exists, err := h.postExists(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.GetPostLike404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -266,9 +266,9 @@ func (h *Handler) LikePost(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.LikePost404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -426,9 +426,9 @@ func (h *Handler) ListPostComments(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.ListPostComments404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -537,9 +537,9 @@ func (h *Handler) CreatePostComment(
 		}, nil
 	}
 	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgPostID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgPostID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.CreatePostComment404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -750,9 +750,9 @@ func (h *Handler) ListPostWhiteboards(
 		}, nil
 	}
 	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgPostID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgPostID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.ListPostWhiteboards404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -809,9 +809,9 @@ func (h *Handler) CreatePostWhiteboard(
 	}
 
 	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgPostID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgPostID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.CreatePostWhiteboard404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -1057,18 +1057,15 @@ func (h *Handler) UpdateTextAnnotation(
 // Helpers
 // ---------------------------------------------------------------------------
 
-func (h *Handler) postExists(ctx context.Context, id pgtype.UUID) (bool, error) {
-	var exists bool
-	err := h.Pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NULL)`, id,
-	).Scan(&exists)
-	return exists, err
-}
-
-// assetExists mirrors postExists for the text-annotation handlers —
-// asserts the target asset row is present and not soft-deleted before
-// we accept a write. Returns false (not an error) on a clean miss so
-// the caller can surface a 404.
+// assetExists asserts the target asset row is present before the
+// text-annotation handlers accept a read or a write. Returns false (not
+// an error) on a clean miss so the caller can surface a 404.
+//
+// ⚠️ This is a PRESENCE check, and presence is not readability — the
+// same shape `postExists` had before #1132 replaced it with
+// [Handler.postReadable]. The asset surfaces here are not gated by the
+// asset read rule yet; see read_gate.go's sweep note. Do not copy this
+// helper onto a new endpoint.
 func (h *Handler) assetExists(ctx context.Context, id pgtype.UUID) (bool, error) {
 	var exists bool
 	err := h.Pool.QueryRow(ctx,
