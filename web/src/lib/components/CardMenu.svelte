@@ -296,12 +296,29 @@
     aria-label={t('card.tools.menu_label')}
     title={t('card.tools.menu_label')}
     data-testid="card-menu-trigger"
-    class="pointer-events-auto group/tool inline-flex h-11 w-11 items-center justify-center focus-visible:outline-none"
+    class="pointer-events-auto group/tool inline-flex h-11 w-11 cursor-pointer items-center
+           justify-center focus-visible:outline-none"
   >
+    <!-- #1126: the hover state, made visible.
+         `cursor-pointer` first, because there was none — a `<button>`
+         computes `cursor: default` (measured), and Tailwind's preflight
+         does not change it, so the one control on the card that IS a
+         button was the one that did not look clickable.
+
+         The chip's hover step was `bg-black/60` → `bg-black/80`, which
+         over artwork is a 20% alpha change on an already-dark disc:
+         present in the stylesheet, invisible on screen. It now brightens
+         to a near-opaque disc AND takes a hairline ring, so the state
+         reads by two channels rather than one — the same reason the rail
+         chips pair a border change with a background change. Scaling was
+         the alternative and is wrong here: the ⋯ sits 8px from the tile
+         corner, and a control that grows on hover would cross the edge. -->
     <span
-      class="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm
-             transition-colors group-hover/tool:bg-black/80 group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80
-             {open ? 'bg-black/80' : ''}"
+      class="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white ring-1
+             ring-transparent backdrop-blur-sm transition-colors
+             group-hover/tool:bg-black/85 group-hover/tool:ring-white/40
+             group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80
+             {open ? 'bg-black/85 ring-white/40' : ''}"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <circle cx="12" cy="5" r="1.75" />

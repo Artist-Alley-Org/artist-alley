@@ -391,18 +391,56 @@
     ].filter((v): v is string => !!v),
   );
 
+  // ── #1126: the grid overlay's full-title tooltip ────────────────────
+  //
+  // ONLY WHEN THE TITLE IS ACTUALLY CLIPPED. A tooltip that repeats a
+  // title already legible on the card is noise on every hover, so the
+  // gate is the DOM's own answer — `scrollWidth > clientWidth` on the
+  // truncating element — rather than a character count, which cannot
+  // know the rendered font, the tile width or the reader's zoom.
+  //
+  // Measured at hover time, not cached: the tile's width changes with
+  // the `--tile-min` slider and the viewport, so a value taken at mount
+  // would be stale for the whole session. One layout read per hover on
+  // one element is not a cost worth caching against.
+  let titleEl = $state<HTMLElement | null>(null);
+  function titleIsClipped(): boolean {
+    return !!titleEl && titleEl.scrollWidth > titleEl.clientWidth;
+  }
+
+  const tipTitle = $derived(post.title || 'Untitled');
+
   function tipEnter(e: MouseEvent) {
     hovering = true;
     if (compact) {
-      cardTooltip.enter(post.id, { title: post.title || 'Untitled', meta: tipMeta }, e);
+      cardTooltip.enter(post.id, { title: tipTitle, meta: tipMeta }, e);
+    } else if (showOverlay && titleIsClipped()) {
+      // No meta line: masonry's tooltip exists to carry the facts its
+      // stripped overlay dropped, this one exists to finish a sentence
+      // the card started. Adding dimensions here would answer a
+      // question the reader did not ask.
+      cardTooltip.enter(post.id, { title: tipTitle, meta: [], placement: 'follow' }, e);
     }
   }
   function tipMove(e: MouseEvent) {
-    if (compact) cardTooltip.move(post.id, e);
+    if (compact || showOverlay) cardTooltip.move(post.id, e);
   }
   function tipLeave() {
     hovering = false;
-    if (compact) cardTooltip.leave(post.id);
+    if (compact || showOverlay) cardTooltip.leave(post.id);
+  }
+
+  /** The keyboard arm. Focusing the card shows the same full title
+   *  pinned under the tile — see CardTooltip for why this is not also an
+   *  `aria-describedby` (the stretched link's accessible name already
+   *  carries the untruncated string; truncation is pixels, not
+   *  semantics). */
+  function tipFocus(e: FocusEvent) {
+    if (!showOverlay || !titleIsClipped()) return;
+    cardTooltip.showFor(post.id, { title: tipTitle, meta: [] }, e.currentTarget as HTMLElement);
+  }
+  function tipBlur() {
+    if (showOverlay) cardTooltip.leave(post.id);
   }
 
   async function handleClick(e: MouseEvent) {
@@ -551,6 +589,8 @@
       onmouseenter={tipEnter}
       onmousemove={tipMove}
       onmouseleave={tipLeave}
+      onfocus={tipFocus}
+      onblur={tipBlur}
       class="absolute inset-0 z-[1]"
       aria-label={post.title || 'Untitled'}
     ></a>
@@ -639,12 +679,25 @@
            two selectors are written out, where they cannot half-apply.
 
            `pointer-events-none` on the overlay, `pointer-events-auto`
-           re-enabled only on the ⋯ trigger (CardMenu does that itself).
-           The author's name is deliberately NOT a link here: the card is
-           one stretched anchor to the post, and nesting a profile link
-           inside it would put two targets in one tile on a surface whose
-           whole job is "open this". The feed card, which has room to be
-           read rather than scanned, keeps the profile link. -->
+           re-enabled only on the ⋯ trigger (CardMenu does that itself)
+           and, since #1126, on the AUTHOR LINK.
+
+           THE AUTHOR IS NOW A LINK, reversing #1111's call (owner
+           direction, 2026-08-15). The old note read: "the card is one
+           stretched anchor to the post, and nesting a profile link
+           inside it would put two targets in one tile". The nesting
+           half was right and is still obeyed — this anchor is a SIBLING
+           of the card's stretched link, not a descendant of it, exactly
+           as the ⋯ menu already was. Nested anchors are invalid HTML and
+           unreachable by keyboard; two SIBLING anchors in one tile are
+           the ordinary card pattern the feed card has always used.
+
+           Stacking is what makes a sibling work: the card's stretched
+           `<a>` is `absolute inset-0` at z-[1], this overlay is z-[2],
+           and the identity block inside it is z-[1] of that stacking
+           context — so the author link sits ON TOP of the card link and
+           takes the click in its own box, while every other pixel of
+           the tile still falls through to "open this post". -->
       <div
         class="grid-overlay pointer-events-none absolute inset-0 z-[2] flex flex-col justify-between
                bg-black/20 p-2.5 opacity-0 transition-opacity duration-200"
@@ -702,11 +755,32 @@
              display name runs underneath it. -->
         <div class="relative z-[1] flex items-end pr-11" data-testid="post-card-identity">
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm font-semibold text-white" title={post.title || 'Untitled'}>
+            <!-- No `title` attribute: the styled tooltip replaces the
+                 native one for this element (#1126), and keeping both
+                 would show two tooltips a second apart saying the same
+                 thing. The full string is still on the card link's
+                 `aria-label`, which is where a screen reader reads it.
+                 `bind:this` is what lets the hover handler ask whether
+                 this element is actually clipped. -->
+            <p bind:this={titleEl} class="truncate text-sm font-semibold text-white">
               {post.title || 'Untitled'}
             </p>
             {#if author}
-              <span class="mt-1 flex items-center gap-2">
+              <!-- `w-fit` is load-bearing: without it the anchor is a
+                   block filling the identity column, so the clickable
+                   region would extend across empty space to the right
+                   of a short name and swallow clicks meant for the
+                   post. The link is exactly as wide as the avatar plus
+                   the name. -->
+              <a
+                href="/users/by-username/{author.username}"
+                class="pointer-events-auto mt-1 flex w-fit max-w-full items-center gap-2 rounded-full
+                       transition-colors hover:bg-white/15 focus-visible:outline-none
+                       focus-visible:ring-2 focus-visible:ring-white/90"
+                title={t('card.feed.author_profile', { name: author.display_name })}
+                data-testid="post-card-author-link"
+                onclick={(e) => e.stopPropagation()}
+              >
                 <!-- 40px circular avatar, or the initials disc. The
                      fallback is NOT a broken circle and not a generic
                      silhouette: `avatar_url` is null for every account
@@ -730,10 +804,11 @@
                      or the reader is anonymous. Rendering the ladder in
                      the client is how the anonymous rung gets skipped by
                      a COALESCE that reaches `fullname`. -->
-                <span class="truncate text-xs text-white/80" data-testid="post-card-author">
-                  {author.display_name}
-                </span>
-              </span>
+                <span
+                  class="truncate pr-2 text-xs text-white/80 group-hover:text-white"
+                  data-testid="post-card-author">{author.display_name}</span
+                >
+              </a>
             {/if}
           </div>
           <!-- ⋯ right of the identity block. NOT a second menu: the
