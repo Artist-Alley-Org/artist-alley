@@ -146,6 +146,28 @@
     return pathname === '/' || pathname === '/search';
   }
 
+  /** Which corpus a commit from the nav box will actually be executed
+   *  against (#1155).
+   *
+   *  This is derived from `handleSearch`'s own destination, deliberately:
+   *  the suggest endpoint completes only terms that would return a result
+   *  under the executing surface's match rule, and "the executing surface"
+   *  is whatever `handleSearch` navigates to. `/search` runs the Engine
+   *  over assets, posts and collections; EVERY other surface — browse
+   *  itself, and every page whose commit is sent to browse — runs
+   *  `GET /posts`, which matches `posts.search_text` alone.
+   *
+   *  Deriving it rather than hardcoding `pathname === '/search'` is what
+   *  keeps the two in step: the next surface added to
+   *  `consumesGlobalQuery` gets its scope from the same line that gets it
+   *  a destination, instead of silently inheriting `browse` and offering
+   *  completions its feed cannot answer. */
+  const searchScope = $derived(
+    consumesGlobalQuery(page.url.pathname) && page.url.pathname === '/search'
+      ? ('search' as const)
+      : ('browse' as const),
+  );
+
   async function handleSearch(q: string) {
     const trimmed = q.trim();
     // On a result surface (browse, /search), keep the user in place and
@@ -351,6 +373,7 @@
                 bind:value={searchValue}
                 onsearch={handleSearch}
                 placeholder={t('nav.search_placeholder')}
+                scope={searchScope}
               />
             </div>
             <!-- The entry point to the search SURFACE (#850).
