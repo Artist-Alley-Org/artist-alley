@@ -109,7 +109,7 @@ func TestUnsubscribeEmail_PreservesBrowseRail(t *testing.T) {
 
 	if err := h.savePreferences(ctx, ref, Preferences{
 		NotificationChannels: NotificationChannels{EventMentionOfMe: {ChannelInApp, ChannelEmail}},
-		BrowseRail:             BrowseRail{HiddenTeamIDs: []string{teamA}, TeamOrder: []string{teamB}},
+		BrowseRail:           BrowseRail{HiddenTeamIDs: []string{teamA}, TeamOrder: []string{teamB}},
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}

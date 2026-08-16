@@ -144,9 +144,9 @@ type apiServer struct {
 	// because the follow is a bookmark rather than a post fact, and
 	// separate from `teams` for the reason team follows are separate
 	// from memberships: the shapes rhyme, the tables do not.
-	tags  *tags.Handler
-	users *users.Handler
-	social       *social.Handler
+	tags   *tags.Handler
+	users  *users.Handler
+	social *social.Handler
 	// #937 — GET /account/trash. Reads across assets/posts/collections
 	// but owns none of them; see the package doc for why it is one
 	// endpoint and not three.
