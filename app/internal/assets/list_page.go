@@ -63,7 +63,26 @@ type ListAssetsPageGatedParams struct {
 	// still a placeholder for a non-member here — the same placeholder
 	// browse already renders — because the predicate and the field
 	// plane decide that, and neither one reads this field.
-	TeamID          pgtype.UUID
+	TeamID pgtype.UUID
+	// LikedByUserRef scopes the page to assets THIS ref has liked
+	// (#1106) — the profile's Likes tab. NARROWING like every filter
+	// above it: the likes table is written by a third party, so ORing it
+	// into the rule would let anybody put an asset into anybody's view
+	// by liking it. It is a conjunct.
+	//
+	// ⚠️ It ALSO changes what an unreadable row LOOKS like on this page,
+	// and that is the one behavioural difference in this struct. Browse
+	// returns a row the caller cannot read as a PLACEHOLDER — ADR 0064's
+	// answer for a corpus listing, and what #881's "request access" flow
+	// attaches to. A derived listing is a different statement: its rows
+	// are one person's ACTIONS, and a placeholder there says "this
+	// person liked something you cannot see", which discloses a fact
+	// about a third party's behaviour that nothing on the page is
+	// entitled to disclose. So when this is set the page also filters on
+	// visibility.FieldsReadableSQL and a row the viewer cannot read is
+	// ABSENT rather than withheld — see the splice in
+	// ListAssetsPageGated.
+	LikedByUserRef  *int64
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
@@ -166,6 +185,7 @@ func ListAssetsPageGated(
 		p.Ladder,          // $9 — configured preview ladder (#591)
 		p.Tag,             // $10 — optional single-tag filter (#657)
 		p.TeamID,          // $11 — optional single-team filter (#684)
+		p.LikedByUserRef,  // $12 — optional "liked by this ref" filter (#1106)
 	}
 
 	var opts []visibility.Option
@@ -241,10 +261,27 @@ WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
        OR EXISTS (SELECT 1 FROM asset_tag t
                    WHERE t.asset_id = assets.id AND t.tag = $10::TEXT))
   AND ($11::UUID IS NULL OR team_id = $11::UUID)
+  AND ($12::BIGINT IS NULL
+       OR EXISTS (SELECT 1 FROM likes lk
+                   WHERE lk.target_kind = 'asset'
+                     AND lk.target_id = assets.id
+                     AND lk.user_ref = $12::BIGINT))
   AND ($5::TIMESTAMPTZ IS NULL
        OR created_at < $5::TIMESTAMPTZ
        OR (created_at = $5::TIMESTAMPTZ AND id < $6::UUID))`)
 	b.WriteString(visFrag)
+	// #1106 — the derived-listing conjunct. Only when LikedByUserRef is
+	// set, and the branch is the whole argument: browse must keep
+	// listing placeholders (ADR 0064, and #881's request-access flow
+	// hangs off them), while a likes listing must not disclose that
+	// somebody liked a thing this viewer cannot see. Same expression the
+	// per-row FieldsReadable below decides with — its sanctioned SQL twin
+	// — so a row that survives this filter is exactly a row that would
+	// have rendered unredacted, and the two cannot drift.
+	if p.LikedByUserRef != nil {
+		b.WriteString(visibility.FieldsReadableSQL(
+			"assets", "$8", caller, visibility.ResolveContentCaps(caps), p.MutationCaps))
+	}
 	b.WriteString(`
 ORDER BY created_at DESC, id DESC
 LIMIT $7::INTEGER`)

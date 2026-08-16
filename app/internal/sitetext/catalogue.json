@@ -3318,7 +3318,26 @@
     "section": {
       "posts": "Posts",
       "collections": "Collections",
-      "assets": "Assets"
+      "assets": "Assets",
+      "uploads": "Your uploads",
+      "liked_posts": "Liked posts",
+      "liked_assets": "Liked assets"
+    },
+    "tabs": {
+      "label": "Profile sections"
+    },
+    "tab": {
+      "portfolio": "Portfolio",
+      "about": "About",
+      "likes": "Likes"
+    },
+    "about": {
+      "location": "Location",
+      "website": "Website",
+      "empty": "This artist hasn't added anything about themselves yet."
+    },
+    "likes": {
+      "empty": "Nothing liked yet, or nothing you can see."
     }
   },
   "post_by_asset": {

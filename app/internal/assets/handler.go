@@ -1940,6 +1940,16 @@ func (h *Handler) ListAssets(
 	if req.Params.OwnerRef != nil {
 		ownerRef = req.Params.OwnerRef
 	}
+	// ?liked_by= scopes the page to one user's likes (#1106). Narrowing
+	// only, and no authorization decision here — the predicate and the
+	// field plane still decide every row, and neither one reads `likes`.
+	// See ListAssetsPageGatedParams.LikedByUserRef for the one thing it
+	// DOES change: on this page an unreadable row is absent rather than
+	// a placeholder.
+	var likedBy *int64
+	if req.Params.LikedBy != nil {
+		likedBy = req.Params.LikedBy
+	}
 	var resType *int64
 	if req.Params.AssetType != nil {
 		resType = req.Params.AssetType
@@ -2012,6 +2022,7 @@ func (h *Handler) ListAssets(
 		Q:               qText,
 		Tag:             tagFilter,
 		TeamID:          teamFilter,
+		LikedByUserRef:  likedBy,
 		CursorCreatedAt: cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,

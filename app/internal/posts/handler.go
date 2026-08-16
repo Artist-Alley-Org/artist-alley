@@ -991,6 +991,20 @@ func (h *Handler) ListPosts(
 		visPtr = &v
 	case req.Params.AuthorRef != nil && *req.Params.AuthorRef == caller.UserRef:
 		visPtr = nil
+	case req.Params.LikedBy != nil:
+		// #1106 — the Likes tab drops the default for the same reason
+		// the own-author case does: it is not the browse feed. "What
+		// this person liked" means every tier of it THIS caller may
+		// read, and pinning the display filter to org-only would answer
+		// a question nobody asked ("what they liked in the walled-garden
+		// tier") while looking like a complete list.
+		//
+		// This widens the DISPLAY filter and nothing else. The read rule
+		// is spliced below and is untouched, so the extra tiers a caller
+		// sees here are exactly the ones they could already read — their
+		// own posts, posts by authors they follow, posts shared with
+		// them. A tier they cannot read stays absent.
+		visPtr = nil
 	default:
 		v := "org-only"
 		visPtr = &v
@@ -998,6 +1012,18 @@ func (h *Handler) ListPosts(
 	var authorPtr *int64
 	if req.Params.AuthorRef != nil {
 		authorPtr = req.Params.AuthorRef
+	}
+
+	// ?liked_by= scopes the page to one user's likes (#1106). No
+	// authorization decision here, for the same reason ?team_id= has
+	// none: the conjunct NARROWS, the read rule below still decides
+	// every row, and it never consults `likes`. So this cannot be a
+	// probe either — an unknown ref, a ref who liked nothing, and a ref
+	// whose likes are all on posts this caller cannot read produce the
+	// same empty page.
+	var likedByPtr *int64
+	if req.Params.LikedBy != nil {
+		likedByPtr = req.Params.LikedBy
 	}
 
 	var qText *string
@@ -1092,6 +1118,7 @@ func (h *Handler) ListPosts(
 		Tag:             tagPtr,
 		FeedFollowerRef: followerPtr,
 		TeamID:          teamID,
+		LikedByUserRef:  likedByPtr,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
