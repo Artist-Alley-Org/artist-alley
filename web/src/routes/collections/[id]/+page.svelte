@@ -103,6 +103,11 @@
      *  ratio, carried by the CollectionResource row. */
     pixel_width?: number | null;
     pixel_height?: number | null;
+    /** The at-a-glance `show_on_card` strip (#552), server-resolved to
+     *  display strings (#1133). Absent until this page's API row
+     *  started carrying it, which is why the flag rendered on browse
+     *  and on nothing here for a year. */
+    card_fields?: Array<{ code: string; label: string; value: string }> | null;
   }
 
   // #882 — a post pinned in this collection. The API returns the FULL
@@ -239,6 +244,11 @@
             pixel_width: m.pixel_width ?? null,
             pixel_height: m.pixel_height ?? null,
             restricted: false,
+            // #1133 — the at-a-glance strip. Passed through rather than
+            // reconstructed: the server already resolved every slug to
+            // its label (ADR 0012's rule, one home), so there is nothing
+            // for this page to format.
+            card_fields: m.card_fields ?? null,
           },
     ),
   );

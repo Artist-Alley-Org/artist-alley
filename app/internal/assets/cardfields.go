@@ -72,37 +72,22 @@ func (h *Handler) decorateCards(ctx context.Context, out []openapi.Asset) error 
 	}
 	q := New(h.Pool)
 
-	rows, err := q.ListCardFieldValues(ctx, ids)
+	// The card-field projection itself lives in `metadata` since #1133 —
+	// the collection member grid renders the same tiles from the same
+	// flag and could not reach it here (assets → posts → collections is
+	// an import cycle), so it had never rendered one. See
+	// metadata.CardFieldsForAssets; this is now the assets-side splice.
+	fields, err := metadata.CardFieldsForAssets(ctx, h.Pool, ids)
 	if err != nil {
 		return err
 	}
-	for _, r := range rows {
-		i, ok := index[uuid.UUID(r.AssetID.Bytes)]
+	for id, vals := range fields {
+		i, ok := index[id]
 		if !ok {
 			continue
 		}
-		// metadata.DisplayValue, not a local formatter: resolving a stored
-		// slug to its label is ADR 0012's rule and it has one home. An
-		// empty answer means this asset carries nothing for the field, and
-		// the entry is dropped rather than rendered blank — the same
-		// contract "no value, no row" that the field read path honours.
-		text := r.ValueText
-		var textPtr *string
-		if text != "" {
-			textPtr = &text
-		}
-		value := metadata.DisplayValue(r.Type, r.Options, textPtr, r.ValueNum, r.ValueDate, r.ValueOptions)
-		if value == "" {
-			continue
-		}
-		if out[i].CardFields == nil {
-			out[i].CardFields = &[]openapi.CardField{}
-		}
-		*out[i].CardFields = append(*out[i].CardFields, openapi.CardField{
-			Code:  r.Code,
-			Label: r.Label,
-			Value: value,
-		})
+		v := vals
+		out[i].CardFields = &v
 	}
 
 	origins, err := q.ListAssetOrigins(ctx, ids)

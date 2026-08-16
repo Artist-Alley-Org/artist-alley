@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -1057,6 +1058,23 @@ func (h *Handler) ListCollectionResources(
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
 	}
+	// #1133 — the at-a-glance field strip, from the SAME projection the
+	// browse page decorates its tiles with. A member renders through the
+	// same card as a browse tile, and `show_on_card` had simply never
+	// reached this surface: the decoration lived in `assets`, which this
+	// package cannot import (assets → posts → collections is a cycle), so
+	// the flag worked everywhere except here from the day #552 shipped.
+	//
+	// It runs AFTER the gated page query above and decorates only the
+	// rows that query already admitted; ADR 0012 puts the flag in
+	// `display_order`'s class, so it takes no part in choosing rows and
+	// takes none here. Restricted placeholders are excluded BY ID before
+	// the call, not filtered after — #883's allow-list is that a withheld
+	// member carries the membership row's own columns and nothing from
+	// `assets`, and a field strip is something from `assets`.
+	if err := decorateMemberCardFields(ctx, h.Pool, items); err != nil {
+		return nil, fmt.Errorf("collections: list resources: card fields: %w", err)
+	}
 	resp := openapi.CollectionResourceList{Items: items}
 	if len(rows) > int(limit) {
 		next := encodeResourceCursor(lastSort, lastAdded)
@@ -1585,6 +1603,53 @@ func rowToAPI(r Collection) openapi.Collection {
 		c.CoverAssetId = &v
 	}
 	return c
+}
+
+// decorateMemberCardFields attaches `card_fields` to a page of
+// collection members (#1133), in one query for the whole page.
+//
+// A per-row lookup here would be 200 round trips on a full member grid,
+// which is the same reason the browse page batches it — and the reason
+// the projection is shared rather than re-derived: see
+// [metadata.CardFieldsForAssets].
+//
+// Restricted members are skipped BY ID rather than cleared afterwards.
+// That is the #883 allow-list direction: a placeholder is built as a
+// complete literal carrying only the membership row's own columns, so a
+// key added to CollectionResource later is absent from it by
+// construction. Attaching a strip and then removing it would put this
+// key on the deny-list side, where the next reader has to remember.
+func decorateMemberCardFields(
+	ctx context.Context,
+	db metadata.DBTX,
+	items []openapi.CollectionResource,
+) error {
+	ids := make([]pgtype.UUID, 0, len(items))
+	index := make(map[uuid.UUID]int, len(items))
+	for i := range items {
+		if items[i].Restricted {
+			continue
+		}
+		id := uuid.UUID(items[i].AssetId)
+		if id == uuid.Nil {
+			continue
+		}
+		ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
+		index[id] = i
+	}
+	fields, err := metadata.CardFieldsForAssets(ctx, db, ids)
+	if err != nil {
+		return err
+	}
+	for id, vals := range fields {
+		i, ok := index[id]
+		if !ok {
+			continue
+		}
+		v := vals
+		items[i].CardFields = &v
+	}
+	return nil
 }
 
 // resourceRowToAPI serialises ONE membership row.
