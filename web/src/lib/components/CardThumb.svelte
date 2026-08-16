@@ -155,6 +155,23 @@
      *  tile with full chrome, and reading the mode in here is what
      *  #640 deliberately avoided. */
     compact?: boolean;
+    /** A CSS colour to paint the letterbox matte with, instead of the
+     *  neutral `bg-thumb-matte` token (#1136).
+     *
+     *  Thumbnail view passes a colour SAMPLED FROM THE IMAGE (see
+     *  `thumbhashMatteColor`), which is the reference panel's own
+     *  treatment and the detail the prior-art notes flagged as worth
+     *  taking: on a shelf of mixed-aspect work it is the difference
+     *  between a wall of grey rectangles containing pictures and a wall
+     *  that reads as the pictures.
+     *
+     *  ⚠️ It paints the FRAME only, never the fallback plates inside it.
+     *  The typed-doc card, the icon placeholder and the restricted plate
+     *  are GENERATED artwork with their own designed backgrounds; tinting
+     *  those would colour a thing that is not a photograph after a
+     *  photograph it is not. Null / undefined ⇒ the neutral, which is
+     *  every other mode and every asset with no thumbhash. */
+    matteColor?: string | null;
     /** Recorded SOURCE dimensions for this asset, or null (#640). These
      *  are what let `variableAspect` reserve the tile's height before a
      *  single byte is requested — the difference between a wall that is
@@ -207,6 +224,7 @@
     variableAspect = false,
     ratioFloor = null,
     compact = false,
+    matteColor = null,
     pixelWidth = null,
     pixelHeight = null,
     titleAdjacent = false,
@@ -579,8 +597,8 @@
 -->
 <div
   data-card-thumb
-  style={frameStyle}
-  class="relative overflow-hidden bg-thumb-matte
+  style={matteColor ? `${frameStyle ?? ''} background-color: ${matteColor};` : frameStyle}
+  class="relative overflow-hidden {matteColor ? '' : 'bg-thumb-matte'}
          {tileRatio ? '' : 'aspect-square'}
          after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
          {fill ? 'rounded-[2px] after:rounded-[2px]' : ''}

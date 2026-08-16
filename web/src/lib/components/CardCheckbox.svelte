@@ -51,9 +51,27 @@
      *  checkbox then falls back to a plain toggle, which is what it has
      *  always done. */
     orderedIds?: () => string[];
+    /** Where this checkbox sits (#1136).
+     *
+     *  `overlay` — the historical placement: absolutely positioned in a
+     *  top corner OF THE ARTWORK, hidden at rest, on a dark translucent
+     *  chip so it reads against any picture. Right for a discovery wall,
+     *  where chrome is an interruption of the art.
+     *
+     *  `inline` — an ordinary flow element in a chrome band OUTSIDE the
+     *  preview, for thumbnail's frame layout. Two consequences follow
+     *  from being off the picture and both are the point: it is ALWAYS
+     *  VISIBLE (there is no artwork for it to interrupt, and a working
+     *  surface should not hide its select affordance), and it drops the
+     *  white-on-black chip for the theme's own border colours, because
+     *  a chip designed to survive an unknown photograph looks like a
+     *  sticker on a solid panel.
+     *
+     *  `corner` is ignored under `inline`; the band decides the order. */
+    placement?: 'overlay' | 'inline';
   }
 
-  let { id, corner = 'left', orderedIds }: Props = $props();
+  let { id, corner = 'left', orderedIds, placement = 'overlay' }: Props = $props();
 
   const canSelect = $derived(!!auth.user && !site.demoMode);
   const selected = $derived(selection.has(id));
@@ -86,19 +104,22 @@
     aria-checked={selected}
     aria-label={selected ? t('card.select.deselect') : t('card.select.label')}
     onclick={toggle}
-    class="pointer-events-auto absolute {corner === 'right'
-      ? 'right-2'
-      : 'left-2'} top-2 z-10 inline-flex h-11 w-11 items-center justify-center
+    class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center
            transition-opacity duration-150 focus-visible:outline-none
-           {pinned
-             ? 'opacity-100'
-             : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'}"
+           {placement === 'inline'
+      ? 'opacity-100'
+      : `absolute ${corner === 'right' ? 'right-2' : 'left-2'} top-2 z-10 ` +
+        (pinned
+          ? 'opacity-100'
+          : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100')}"
   >
     <span
-      class="flex h-6 w-6 items-center justify-center rounded-md border-2 shadow-sm backdrop-blur-sm transition-colors
+      class="flex h-6 w-6 items-center justify-center rounded-md border-2 shadow-sm transition-colors
              {selected
                ? 'border-accent bg-accent text-on-accent'
-               : 'border-white/90 bg-black/40 text-transparent'}"
+               : placement === 'inline'
+                 ? 'border-border-strong bg-surface text-transparent'
+                 : 'border-white/90 bg-black/40 text-transparent backdrop-blur-sm'}"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="20 6 9 17 4 12" />

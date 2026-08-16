@@ -14,6 +14,7 @@
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
   import { kindForAsset } from './viewers/controller';
+  import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import { auth } from '$stores/auth.svelte';
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
@@ -269,21 +270,20 @@
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if detailed && !restricted}
-    <!-- Details HEADER (#556). The owner's ask was "there should be a
-         top to the thumbnail cards … title near the top": the title now
-         LEADS the card instead of trailing it as a caption strip.
-         Actions are NOT duplicated here — per the owner's 2026-07-25
-         amendment the ⋮ CardMenu is the one action affordance in every
-         mode, so it stays in its overlay position over the thumb.
-         Kept self-contained: #552 swaps this field set for an
-         operator-configured one, and wants that swap local. -->
-    <div class="border-b border-border px-3 py-2">
-      <a
-        href="/assets/{asset.id}"
-        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
-      </a>
+    <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
+         Format on the left, type icon on the right — the owner's
+         placement grammar, and the twin of PostCard's. It REPLACES
+         #556's title header; the title moves down into the metadata
+         stack where one fact per row reads as a record. See PostCard's
+         band for the full argument, written once. -->
+    <div
+      class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5"
+      data-testid="thumb-band-top"
+    >
+      <span class="truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted">
+        {asset.file_extension ? asset.file_extension.replace(/^\./, '') : ''}
+      </span>
+      <CardKindBadge {kind} variant="inline" />
     </div>
   {/if}
 
@@ -306,6 +306,7 @@
     pixelWidth={asset.pixel_width}
     pixelHeight={asset.pixel_height}
     titleAdjacent={detailed}
+    matteColor={detailed ? thumbhashMatteColor(asset.thumbhash) : null}
     {restricted}
     restrictedOwnerName={asset.owner_display_name ?? null}
     requestAssetId={restricted ? asset.id : null}
@@ -333,8 +334,12 @@
         aria-label={asset.title}
       ></a>
 
-      <!-- Multi-select checkbox (top-left). -->
-      <CardCheckbox id={asset.id} />
+      <!-- Multi-select checkbox (top-left). NOT IN THUMBNAIL (#1136):
+           it is an inline control in the bottom band there, so nothing
+           sits over the preview. -->
+      {#if !detailed}
+        <CardCheckbox id={asset.id} />
+      {/if}
 
       <!-- The kind, as an ICON and never as a word (#1047). This is the
            replacement for CardThumb's hardcoded `video` / `3D` text
@@ -352,7 +357,9 @@
            Suppressed under `compact`: a 60px masonry tile is one 44px
            control band tall, and the wall is about the art. The kind is
            in its hover tooltip there instead (#652). -->
-      {#if !compact}
+      <!-- NOT IN THUMBNAIL (#1136): the same badge draws in the top
+           chrome band, which leaves the artwork untouched. -->
+      {#if !compact && !detailed}
         <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" />
       {/if}
     {/if}
@@ -391,10 +398,12 @@
       </div>
     {/if}
 
-    {#if !restricted}
+    {#if !restricted && !detailed}
       <!-- Overflow menu (info / copy link / edit / add-to-collection). ONE affordance
            in every mode, including thumbnail — owner amendment 2026-07-25
-           to #556, superseding "actions visible in the details tile". -->
+           to #556, superseding "actions visible in the details tile".
+           Thumbnail renders the SAME component inline in its bottom band
+           (#1136); still exactly one per card. -->
       <CardMenu
         assetId={asset.id}
         detailPath="/assets/{asset.id}"
@@ -403,19 +412,25 @@
     {/if}
   </CardThumb>
 
-  {#if detailed && !restricted && (owner || cardFields.length > 0 || origin)}
-    <!-- Details FOOTER — thumbnail's PERSISTENT chrome (#1047).
+  {#if detailed && !restricted}
+    <!-- ═══ #1136: the METADATA STACK ══════════════════════════════
          "Information at a glance, preview still clear" (owner's density
-         table): the identity sits AROUND the image, not over it, and it
-         is not hover-gated. Grid's #1111 vocabulary, same components,
-         same order (kind, then who, then what) — the two densities are
-         meant to read as one language, and the difference between them
-         is when it appears, not what it says.
+         table), now with the owner's placement grammar: one fact per
+         row, BELOW the preview, never over it — title, artist, then the
+         operator's `show_on_card` fields (#552).
 
-         The title stays in the header, where #556 put it on the owner's
-         "there should be a top to the thumbnail cards" note; this is the
-         supporting half. -->
-    <div class="space-y-1.5 px-3 py-2">
+         The rows are unconditional where the fact exists, and the block
+         itself is no longer gated on `owner || fields || origin`: the
+         TITLE is always present, so a card with no artist and no
+         configured fields still has a metadata stack, where before it
+         rendered a bare picture with a header. -->
+    <div class="space-y-1 px-3 py-2" data-testid="thumb-metadata">
+      <a
+        href="/assets/{asset.id}"
+        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
+      </a>
       {#if owner}
         <!-- The artist. A SIBLING link, not nested inside the card's
              own anchor — nested anchors are invalid HTML and
@@ -448,6 +463,23 @@
           </p>
         {/if}
       </a>
+    </div>
+
+    <!-- ═══ #1136: the BOTTOM CHROME BAND ══════════════════════════
+         Selection left, actions right, inside the frame. The twin of
+         PostCard's — see it for why these two controls stop being
+         hover-revealed once they are off the artwork. -->
+    <div
+      class="flex items-center justify-between border-t border-border px-1.5 py-0.5"
+      data-testid="thumb-band-bottom"
+    >
+      <CardCheckbox id={asset.id} placement="inline" />
+      <CardMenu
+        assetId={asset.id}
+        detailPath="/assets/{asset.id}"
+        editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+        placement="inline"
+      />
     </div>
   {/if}
 </div>
