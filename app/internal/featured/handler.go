@@ -117,13 +117,40 @@ type AddInput struct {
 	// stays on system.admin — that is the split this comment exists to
 	// preserve.
 	Scope string
+
+	// BandID names the SURFACE (#1118). nil is the featured rail; a
+	// band id makes this a card in that band.
+	//
+	// ⚠️ Scope and BandID are not both meaningful. A rail placement's
+	// audience is its own `scope`; a band card's audience is the BAND's,
+	// and this row's scope is left at its default and never read (see
+	// migration 00053). The write path therefore REFUSES an explicit
+	// scope alongside a band rather than storing a value that looks
+	// authoritative and is not — the failure being avoided is an
+	// operator setting a card to `public`, seeing it stored, and
+	// believing they have widened the band's audience.
+	BandID *uuid.UUID
 }
 
-// List returns the curation list in display order (position asc, then
-// created_at). Each row resolves its subject's display title plus, for
-// asset subjects, thumbnail hints.
-func (h *Handler) List(ctx context.Context) ([]ListFeaturedItemsRow, error) {
-	return New(h.Pool).ListFeaturedItems(ctx, h.Ladder(ctx))
+// ErrScopeOnBandCard is returned by Add when a caller supplies an
+// audience for a band card. Mapped to HTTP 400.
+var ErrScopeOnBandCard = errors.New("featured: a band card takes its audience from its band, not from the placement")
+
+// List returns ONE SURFACE's curation list in display order (position
+// asc, then created_at). Each row resolves its subject's display title
+// plus, for asset subjects, thumbnail hints.
+//
+// bandID nil is the featured rail — every placement written before bands
+// existed (#1118). A band id lists that band's cards. The parameter is
+// not optional-with-a-default because the two lists must never be
+// confused: a rail list that quietly included band cards would let an
+// operator "remove" a card from a surface it is not on.
+func (h *Handler) List(ctx context.Context, bandID *uuid.UUID) ([]ListFeaturedItemsRow, error) {
+	p := ListFeaturedItemsParams{Ladder: h.Ladder(ctx)}
+	if bandID != nil {
+		p.BandID = pgtype.UUID{Bytes: *bandID, Valid: true}
+	}
+	return New(h.Pool).ListFeaturedItems(ctx, p)
 }
 
 // ErrScopeNotWritable is returned by Add for an audience the write path
@@ -140,19 +167,26 @@ func (h *Handler) Add(ctx context.Context, in AddInput) (FeaturedItem, error) {
 	// Same argument the subject_kind check makes in http.go: the
 	// constraint is the backstop, this is the contract.
 	scope := in.Scope
+	if in.BandID != nil && scope != "" {
+		return FeaturedItem{}, ErrScopeOnBandCard
+	}
 	if scope == "" {
 		scope = ScopeOrg
 	}
 	if scope != ScopeOrg && scope != ScopePublic {
 		return FeaturedItem{}, ErrScopeNotWritable
 	}
-	row, err := New(h.Pool).InsertFeaturedItem(ctx, InsertFeaturedItemParams{
+	params := InsertFeaturedItemParams{
 		SubjectKind:      in.SubjectKind,
 		SubjectID:        pgtype.UUID{Bytes: in.SubjectID, Valid: true},
 		Position:         in.Position,
 		CreatedByUserRef: in.CreatedBy,
 		Scope:            &scope,
-	})
+	}
+	if in.BandID != nil {
+		params.BandID = pgtype.UUID{Bytes: *in.BandID, Valid: true}
+	}
+	row, err := New(h.Pool).InsertFeaturedItem(ctx, params)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

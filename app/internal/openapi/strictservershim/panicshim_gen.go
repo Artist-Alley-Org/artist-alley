@@ -265,6 +265,26 @@ func (*PanicShim) ReorderFeaturedItems(context.Context, openapi.ReorderFeaturedI
 	panic("PanicShim: ReorderFeaturedItems called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// DeletePromoBand panics by default; test shims override.
+func (*PanicShim) DeletePromoBand(context.Context, openapi.DeletePromoBandRequestObject) (openapi.DeletePromoBandResponseObject, error) {
+	panic("PanicShim: DeletePromoBand called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetAdminPromoBand panics by default; test shims override.
+func (*PanicShim) GetAdminPromoBand(context.Context, openapi.GetAdminPromoBandRequestObject) (openapi.GetAdminPromoBandResponseObject, error) {
+	panic("PanicShim: GetAdminPromoBand called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SavePromoBand panics by default; test shims override.
+func (*PanicShim) SavePromoBand(context.Context, openapi.SavePromoBandRequestObject) (openapi.SavePromoBandResponseObject, error) {
+	panic("PanicShim: SavePromoBand called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// AddPromoBandItem panics by default; test shims override.
+func (*PanicShim) AddPromoBandItem(context.Context, openapi.AddPromoBandItemRequestObject) (openapi.AddPromoBandItemResponseObject, error) {
+	panic("PanicShim: AddPromoBandItem called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RemoveFeaturedItem panics by default; test shims override.
 func (*PanicShim) RemoveFeaturedItem(context.Context, openapi.RemoveFeaturedItemRequestObject) (openapi.RemoveFeaturedItemResponseObject, error) {
 	panic("PanicShim: RemoveFeaturedItem called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1183,6 +1203,11 @@ func (*PanicShim) SetEmailTemplate(context.Context, openapi.SetEmailTemplateRequ
 // GetPublicFeaturedRail panics by default; test shims override.
 func (*PanicShim) GetPublicFeaturedRail(context.Context, openapi.GetPublicFeaturedRailRequestObject) (openapi.GetPublicFeaturedRailResponseObject, error) {
 	panic("PanicShim: GetPublicFeaturedRail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetPromoBand panics by default; test shims override.
+func (*PanicShim) GetPromoBand(context.Context, openapi.GetPromoBandRequestObject) (openapi.GetPromoBandResponseObject, error) {
+	panic("PanicShim: GetPromoBand called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListFeaturedTeams panics by default; test shims override.

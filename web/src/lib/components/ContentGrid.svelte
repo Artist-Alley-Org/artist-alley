@@ -37,8 +37,25 @@
     /** Whole-list table for `list` mode. Absent ⇒ list falls back to the
      *  grid AND SAYS SO — see `listUnavailable` below (#1137). */
     list?: Snippet;
+    /** Where `items[0]` sits in the whole feed, and the feed's length
+     *  (#1118). Only masonry consumes them today — it is the one mode
+     *  that publishes `aria-posinset`/`aria-setsize` — but they belong
+     *  on this contract rather than on that component's, because it is
+     *  THIS switch a caller renders twice when a promo band splits the
+     *  feed. Defaults reproduce the single-wall behaviour. */
+    posOffset?: number;
+    setSize?: number;
   }
-  let { mode, items, tileMin = '22rem', loading = false, card, list }: Props = $props();
+  let {
+    mode,
+    items,
+    tileMin = '22rem',
+    loading = false,
+    card,
+    list,
+    posOffset = 0,
+    setSize,
+  }: Props = $props();
 
   /** The caller asked for `list` and supplied no table (#1137).
    *
@@ -72,7 +89,7 @@
        those had no shared coordinate space, so nothing could straddle
        two columns. MasonryColumns owns the replacement mechanism and
        the full argument. -->
-  <MasonryColumns {items} {tileMin} {loading} {card} />
+  <MasonryColumns {items} {tileMin} {loading} {card} {posOffset} {setSize} />
 {:else if mode === 'feed'}
   <div class="posts-feed gap-4">
     {#each items as item (item.id)}{@render card(item, 'feed')}{/each}

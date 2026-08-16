@@ -16,15 +16,27 @@
   // read landing on an index the current feed no longer has.
   import MasonryColumns from '$components/MasonryColumns.svelte';
 
+  // `posOffset` / `setSize` ride through so the #1118 split-feed tests
+  // can drive the same real-snippet path the #1103 ones do, rather than
+  // constructing a second harness that differs in the one respect that
+  // matters.
   let {
     items,
     tileMin = '22rem',
     loading = false,
-  }: { items: Array<{ id: string }>; tileMin?: string; loading?: boolean } = $props();
+    posOffset,
+    setSize,
+  }: {
+    items: Array<{ id: string }>;
+    tileMin?: string;
+    loading?: boolean;
+    posOffset?: number;
+    setSize?: number;
+  } = $props();
 </script>
 
 {#snippet card(item: { id: string })}
   <span data-card-id={item.id}>{item.id}</span>
 {/snippet}
 
-<MasonryColumns {items} {tileMin} {loading} {card} />
+<MasonryColumns {items} {tileMin} {loading} {card} {posOffset} {setSize} />

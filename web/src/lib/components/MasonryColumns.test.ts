@@ -795,3 +795,47 @@ describe('MasonryColumns — feed swap (#1103)', () => {
     expect(readWall(container).length).toBe(FOLLOWING.length);
   });
 });
+
+// #1118 — THE FEED IS RENDERED AS TWO WALLS WHEN A PROMO BAND SPLITS IT.
+//
+// The band sits between two `ContentGrid` instances at the page layer,
+// so the tail wall's `items` starts at feed index 36 rather than 0. Left
+// to its own arithmetic that wall announces "1 of 72" for the 37th post
+// — ADR 0079's consequence names exactly this ("aria-posinset /
+// aria-setsize bookkeeping must account for slots, or announced
+// positions drift"), and #1118 is the first change that makes DOM order
+// and feed position diverge.
+//
+// Both halves are asserted. `posOffset` alone would pass on a wall that
+// announced "37 of 36".
+describe('MasonryColumns — a split feed announces absolute positions (#1118)', () => {
+  const tail = Array.from({ length: 4 }, (_, i) => ({ id: `tail-${i}` }));
+
+  it('offsets posinset and announces the WHOLE feed as the set size', () => {
+    const { container } = render(MasonryFeedHarness, {
+      props: { items: tail, posOffset: 36, setSize: 72 },
+    });
+    const tiles = [...container.querySelectorAll<HTMLElement>('[role="listitem"]')];
+    expect(tiles.length).toBe(tail.length);
+    tiles.forEach((tile) => {
+      const idx = tail.findIndex((it) => it.id === tile.dataset.tileId);
+      expect(tile.getAttribute('aria-posinset')).toBe(String(36 + idx + 1));
+      // Not `tail.length`. A wall that announced its own slice would
+      // tell a screen reader the feed is 4 posts long.
+      expect(tile.getAttribute('aria-setsize')).toBe('72');
+    });
+  });
+
+  it('defaults reproduce the single-wall behaviour exactly', () => {
+    // The regression guard for every OTHER surface: profile pages, the
+    // post-by-asset lookup and search all render one wall and pass
+    // neither prop.
+    const { container } = render(MasonryFeedHarness, { props: { items: tail } });
+    const tiles = [...container.querySelectorAll<HTMLElement>('[role="listitem"]')];
+    tiles.forEach((tile) => {
+      const idx = tail.findIndex((it) => it.id === tile.dataset.tileId);
+      expect(tile.getAttribute('aria-posinset')).toBe(String(idx + 1));
+      expect(tile.getAttribute('aria-setsize')).toBe(String(tail.length));
+    });
+  });
+});

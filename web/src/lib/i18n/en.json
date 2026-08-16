@@ -136,8 +136,7 @@
       "masonry": "Masonry",
       "feed": "Feed",
       "thumbnail": "Thumbnail",
-      "list": "List"
-    ,
+      "list": "List",
       "list_unavailable": "List view isn’t available for this content — showing tiles instead."
     },
     "filter": {
@@ -927,7 +926,35 @@
       "reordered": "Order updated.",
       "err_bad_id": "Enter a valid asset, collection or team ID.",
       "err_duplicate": "That item is already featured.",
-      "err_generic": "Something went wrong. Try again."
+      "err_generic": "Something went wrong. Try again.",
+      "band_heading": "Promo band",
+      "band_intro": "A full-width strip between pages of the browse feed. It renders only when it is switched on, has a headline, and has at least one card the reader can see.",
+      "band_none": "No promo band yet. Fill this in and save to create one.",
+      "band_title": "Headline",
+      "band_title_placeholder": "e.g. Winter showcase",
+      "band_blurb": "Blurb",
+      "band_blurb_placeholder": "One short line under the headline",
+      "band_cta_label": "Button text",
+      "band_cta_label_placeholder": "e.g. See the showcase",
+      "band_cta_url": "Button link",
+      "band_cta_url_placeholder": "https://… or /collections/…",
+      "band_enabled": "Show the band on browse",
+      "band_after_page": "Show after page",
+      "band_after_page_hint": "1 puts the band after the first page of the feed.",
+      "band_scope": "Audience",
+      "band_scope_org": "Signed-in readers",
+      "band_scope_public": "Everyone, including signed-out visitors",
+      "band_save": "Save band",
+      "band_saving": "Saving…",
+      "band_saved": "Promo band saved.",
+      "band_delete": "Delete band",
+      "band_delete_confirm": "Delete the promo band and all of its cards?",
+      "band_deleted": "Promo band deleted.",
+      "band_cards": "Cards",
+      "band_cards_empty": "No cards yet. Add an asset or collection below — a band with no cards renders nothing.",
+      "band_add_card": "Add card",
+      "band_err_cta": "Give the button both a text and a link, and use an https:// address or a path starting with /.",
+      "band_err_duplicate": "That item is already a card in the band."
     },
     "site_text": {
       "title": "Site text",
@@ -3414,5 +3441,10 @@
     "view_trash": "View trash",
     "undo_error": "Couldn't put that back. Open your trash to try again.",
     "undone": "Put back."
+  },
+  "promo_band": {
+    "kicker": "Featured",
+    "kind_asset": "Asset",
+    "kind_collection": "Collection"
   }
 }

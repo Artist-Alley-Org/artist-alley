@@ -66,9 +66,16 @@
 //
 // ContentGrid renders the card through a `Snippet<[item, mode]>` the
 // PAGE declares, so a value produced inside MasonryColumns cannot reach
-// the card without widening that contract at all seven call sites. There
-// is one masonry wall per page (it is a whole-page browse layout, not a
-// component that repeats), so a singleton says something true.
+// the card without widening that contract at all seven call sites.
+//
+// ⚠️ "ONE WALL PER PAGE" STOPPED BEING TRUE IN #1118 and the singleton
+// survived it — but only because `clear()` learned to count. The promo
+// band splits the browse feed into two walls with the band between them,
+// so two MasonryColumns are mounted at once. The MAP is fine either way
+// (the key is a tile id and the two walls hold disjoint slices), but the
+// unmount hook was not: whichever wall tore down first would empty the
+// boxes of the one still on screen, and every card on it would drop to
+// the `minimal` posture until something resized. See `acquire`/`release`.
 //
 // It is deliberately WRITE-ONE-READ-MANY and carries no behaviour: the
 // card reads its own box and decides its own posture. Nothing here knows
@@ -108,11 +115,35 @@ class MasonryLayout {
     return this.boxes.get(id) ?? null;
   }
 
-  /** Called when the wall unmounts, so a card rendered by some OTHER
-   *  surface can never read a box left behind by a masonry that is no
-   *  longer on screen. */
-  clear(): void {
-    this.boxes.clear();
+  /** How many masonry walls are mounted right now.
+   *
+   *  A plain number, not `$state`: nothing renders from it, and making
+   *  it reactive would wake every card on a mount. */
+  private walls = 0;
+
+  /** Called by a wall as it mounts. Pairs with `release`. */
+  acquire(): void {
+    this.walls++;
+  }
+
+  /** Called when a wall unmounts. The boxes are dropped only when the
+   *  LAST one goes, which is what preserves #1047's invariant — a card
+   *  on some other surface must never read a box left behind by a
+   *  masonry that is no longer on screen — now that a page can hold two
+   *  walls at once (#1118's promo band splits the feed).
+   *
+   *  Clearing on every unmount would have been the smaller diff and is
+   *  the bug: the surviving wall's cards would read `null` boxes and
+   *  drop to the `minimal` posture, silently, until the next resize or
+   *  placement pass happened to re-measure them.
+   *
+   *  The counter floors at zero rather than trusting the pairing. A
+   *  negative count would make the next `release` a no-op and leak the
+   *  map into the next surface — a stale box being exactly what this
+   *  method exists to prevent. */
+  release(): void {
+    this.walls = Math.max(0, this.walls - 1);
+    if (this.walls === 0) this.boxes.clear();
   }
 }
 

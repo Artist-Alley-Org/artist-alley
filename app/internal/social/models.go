@@ -432,6 +432,8 @@ type FeaturedItem struct {
 	CreatedByUserRef *int64
 	Scope            string
 	TeamID           pgtype.UUID
+	// Which surface this placement belongs to (#1118): NULL is the featured rail — every row that existed before this column — and a band id makes the row a card in that promo band. There is no second membership table on purpose (ADR 0065; see migration 00053's header). ⚠️ For a band row the `scope` column is NOT the audience: the BAND carries the audience, and this row's scope keeps its table default. Reading scope on a band row would be a second, stale copy of a visibility input.
+	BandID pgtype.UUID
 }
 
 type FederationDirectory struct {
@@ -807,6 +809,22 @@ type PostAsset struct {
 type PostTag struct {
 	PostID pgtype.UUID
 	Tag    string
+}
+
+// Operator-authored full-width promo strips rendered BETWEEN feed pages (#1118). The cards are ordinary featured_items rows carrying this band's id — see featured_items.band_id — so curation, ordering and visibility composition have one home (ADR 0065). `scope` is the whole band's audience, read by featured.ScopeVisibleSQL; the cards' own scope column is not consulted. An empty or disabled band renders nothing at all (ADR 0030's collapse rule, which governs a full-width band; ADR 0079 §2's substitution rule is scoped to in-grid sized slots).
+type PromoBand struct {
+	ID       pgtype.UUID
+	Title    string
+	Blurb    string
+	CtaLabel string
+	CtaUrl   string
+	Enabled  bool
+	// Where the band falls in the feed, counted in whole loaded pages: 1 renders it after the first page. The PAGE SIZE is the client's (the browse feed requests 36), so this is a position in the reader's scroll rather than a row count — deliberately, because it is what the operator can predict without knowing the API's limit.
+	AfterPage        int32
+	Scope            string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	CreatedByUserRef *int64
 }
 
 type ResourceRequest struct {

@@ -121,9 +121,9 @@ func railCollection(t *testing.T, pool *pgxpool.Pool, name, vis string) uuid.UUI
 
 func railTitles(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller) map[string]bool {
 	t.Helper()
-	rows, err := ListPublicRail(context.Background(), pool, caller, visibility.PostCaps{}, 500, defaultLadder)
+	rows, err := ListPlacements(context.Background(), pool, PlacementQuery{Caller: caller, Limit: 500, Ladder: defaultLadder})
 	if err != nil {
-		t.Fatalf("ListPublicRail: %v", err)
+		t.Fatalf("ListPlacements: %v", err)
 	}
 	out := map[string]bool{}
 	for _, r := range rows {
@@ -184,9 +184,9 @@ func TestRail_InvisibleSubjectProducesNoRowAtAll(t *testing.T) {
 	privateColl := railCollection(t, pool, "rail-only-private", "private")
 	place(t, pool, "collection", privateColl, "public", 0)
 
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), visibility.PostCaps{}, 500, defaultLadder)
+	rows, err := ListPlacements(context.Background(), pool, PlacementQuery{Caller: visibility.NewCaller(nil), Limit: 500, Ladder: defaultLadder})
 	if err != nil {
-		t.Fatalf("ListPublicRail: %v", err)
+		t.Fatalf("ListPlacements: %v", err)
 	}
 	for _, r := range rows {
 		if uuid.UUID(r.SubjectID.Bytes) == privateColl {
@@ -245,9 +245,9 @@ func TestRail_DanglingPlacementIsDropped(t *testing.T) {
 	orphan := uuid.New() // never inserted into either subject table
 	place(t, pool, "collection", orphan, "public", 0)
 
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(nil), visibility.PostCaps{}, 500, defaultLadder)
+	rows, err := ListPlacements(context.Background(), pool, PlacementQuery{Caller: visibility.NewCaller(nil), Limit: 500, Ladder: defaultLadder})
 	if err != nil {
-		t.Fatalf("ListPublicRail: %v", err)
+		t.Fatalf("ListPlacements: %v", err)
 	}
 	for _, r := range rows {
 		if uuid.UUID(r.SubjectID.Bytes) == orphan {
@@ -268,9 +268,9 @@ func TestRail_EmbargoAssetShowsTitleOnly(t *testing.T) {
 	place(t, pool, "asset", embargo, "public", 0)
 
 	stranger := int64(4170099)
-	rows, err := ListPublicRail(context.Background(), pool, visibility.NewCaller(&stranger), visibility.PostCaps{}, 500, defaultLadder)
+	rows, err := ListPlacements(context.Background(), pool, PlacementQuery{Caller: visibility.NewCaller(&stranger), Limit: 500, Ladder: defaultLadder})
 	if err != nil {
-		t.Fatalf("ListPublicRail: %v", err)
+		t.Fatalf("ListPlacements: %v", err)
 	}
 	var found bool
 	for _, r := range rows {
@@ -377,9 +377,9 @@ func railPostInCollection(t *testing.T, pool *pgxpool.Pool, coll, cover uuid.UUI
 // railRowFor finds the placement row for one subject.
 func railRowFor(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller, subject uuid.UUID) (RailRow, bool) {
 	t.Helper()
-	rows, err := ListPublicRail(context.Background(), pool, caller, visibility.PostCaps{}, 500, defaultLadder)
+	rows, err := ListPlacements(context.Background(), pool, PlacementQuery{Caller: caller, Limit: 500, Ladder: defaultLadder})
 	if err != nil {
-		t.Fatalf("ListPublicRail: %v", err)
+		t.Fatalf("ListPlacements: %v", err)
 	}
 	for _, r := range rows {
 		if uuid.UUID(r.SubjectID.Bytes) == subject {
@@ -591,9 +591,9 @@ func TestRail_SubtitleIsWithheldExactlyWhenTheTitleIs(t *testing.T) {
 	railDescribe(t, pool, hidden, secret)
 	place(t, pool, "collection", hidden, "public", 1)
 
-	rows, err := ListPublicRail(context.Background(), pool, anon, visibility.PostCaps{}, 500, defaultLadder)
+	rows, err := ListPlacements(context.Background(), pool, PlacementQuery{Caller: anon, Limit: 500, Ladder: defaultLadder})
 	if err != nil {
-		t.Fatalf("ListPublicRail: %v", err)
+		t.Fatalf("ListPlacements: %v", err)
 	}
 
 	var sawShown bool
