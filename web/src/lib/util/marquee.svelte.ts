@@ -42,6 +42,7 @@
 // reason: it is used on a surface that also scrolls.
 
 import { selection } from '$stores/selection.svelte';
+import { cancelNativeDrag } from '$lib/util/nativeDrag';
 
 /** Movement before a press becomes a marquee. Same number railScroll
  *  uses; the two gestures should feel identical up to the point they
@@ -87,6 +88,11 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
   let active = $state(false);
 
   let pointerId: number | null = null;
+  /** The element holding the pointer capture, remembered from the frame
+   *  the threshold was crossed. Escape has no event target to read it
+   *  off, and releasing capture on the wrong element leaves the pointer
+   *  retargeted for the rest of the press. */
+  let capturedEl: HTMLElement | null = null;
   let startX = 0;
   let startY = 0;
   /** Where the drag began in DOCUMENT space. Kept alongside the viewport
@@ -137,21 +143,42 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
     apply(left, top, width, height);
   }
 
-  /** Hit-test every card against the band and union the intersections
-   *  into the baseline.
+  /** Hit-test every card against the band, then XOR the hits against the
+   *  pre-gesture snapshot.
    *
-   *  Recomputed from the baseline on EVERY frame rather than
-   *  incrementally added: a reader who overshoots and drags back must
-   *  see the cards they left behind become unselected again. An
-   *  incremental union cannot do that, and "the selection only ever
-   *  grows while I am still holding the button" is precisely the
-   *  behaviour that makes a rubber band feel broken.
+   *  THE BAND TOGGLES; IT DOES NOT ONLY CHECK (owner refinement to
+   *  #1127). It used to union the hits into the baseline, so sweeping a
+   *  band over already-checked cards did nothing to them and there was
+   *  no gesture that could clear a block of a selection except clicking
+   *  each one. Every desktop file manager answers this with a toggling
+   *  band, and the owner asked for the same.
+   *
+   *  XOR IS THE WHOLE RULE, and it is what makes the gesture reversible:
+   *
+   *      displayed(id) = snapshot(id) XOR inBand(id)
+   *
+   *  so a checked card inside the band previews as unchecked, an
+   *  unchecked one previews as checked, and a card that the band sweeps
+   *  ACROSS and off again lands back on exactly what it was — live,
+   *  before release. Release commits what is on screen, because what is
+   *  on screen is already the answer.
+   *
+   *  Recomputed from the snapshot on EVERY frame rather than applied
+   *  incrementally, which is the property that buys all of the above: an
+   *  incremental toggle would flip a card once per frame it spent under
+   *  the band, and "the selection flickers while I hold the button" is
+   *  precisely the behaviour that makes a rubber band feel broken.
+   *
+   *  Ids in the snapshot that no card on this page carries — a selection
+   *  built on a previous page of an infinite scroll — are outside the
+   *  band by construction and survive untouched, which is the same
+   *  answer the union gave them.
    */
   function apply(dl: number, dt: number, dw: number, dh: number) {
     const el = getEl();
     if (!el) return;
     const st = scrollTopOf();
-    const hit: string[] = [];
+    const inBand = new Set<string>();
     for (const node of el.querySelectorAll<HTMLElement>(itemSelector)) {
       const id = node.dataset.selectId;
       if (!id) continue;
@@ -159,10 +186,18 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
       // Card rect into document space, then a plain AABB overlap.
       const top = r.top + st;
       if (r.left < dl + dw && r.right > dl && top < dt + dh && top + r.height > dt) {
-        hit.push(id);
+        inBand.add(id);
       }
     }
-    selection.ids = [...new Set([...baseline, ...hit])];
+    const next: string[] = [];
+    for (const id of baseline) {
+      if (!inBand.has(id)) next.push(id); // was on, band leaves it on
+    }
+    const was = new Set(baseline);
+    for (const id of inBand) {
+      if (!was.has(id)) next.push(id); // was off, band turns it on
+    }
+    selection.ids = next;
   }
 
   /** Scroll the wall when the pointer sits near the scrollport's top or
@@ -242,6 +277,66 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
     active = false;
   }
 
+  /** Kill the browser's own drag-and-drop for the press this controller
+   *  owns (#1047 fix-forward on #1127).
+   *
+   *  THIS WAS MISSING AND THE MARQUEE DID NOT WORK WITHOUT IT. The whole
+   *  argument — why the native drag wins the race, and why the fix is
+   *  here and not a `preventDefault` on pointerdown — lives in
+   *  `cancelNativeDrag`, because railScroll hit the identical wall in
+   *  #1122 and a copied comment is how one rule becomes two.
+   *
+   *  CONDITIONAL on this controller holding the pointer, deliberately,
+   *  where the rail's arm is unconditional. `pointerId` is set only by a
+   *  press that could become a band — `onPointerDown` returns early on a
+   *  control press and on touch — so a genuine drag-and-drop that begins
+   *  on some future draggable inside the wall is untouched, and the ONE
+   *  press this gesture claimed is the one whose ghost is suppressed. An
+   *  unconditional arm here would silently make the whole browse wall
+   *  undraggable, which is a bigger promise than the bug asked for. */
+  function onDragStart(e: DragEvent) {
+    if (pointerId === null) return;
+    cancelNativeDrag(e);
+  }
+
+  /** Escape while a band is live puts the selection back exactly as it
+   *  was and drops the gesture (owner refinement to #1127).
+   *
+   *  A toggling band can now UNCHECK things, so "I started this drag by
+   *  accident" needs an exit that is not "drag back out the way you came
+   *  in" — which is impossible once the pointer has left the wall, and
+   *  hopeless once the wall has autoscrolled. Restoring the snapshot IS
+   *  the undo, and it is complete precisely because `apply` never
+   *  mutated anything else.
+   *
+   *  The gesture is torn down rather than merely reset, so the pointer
+   *  the reader is still holding cannot re-enter the band on its next
+   *  move. The click that a following pointerup produces is left alone:
+   *  `active` is false by then, so nothing swallows it, and the press
+   *  the reader cancelled opens the card under it — which is the same
+   *  thing a plain sub-threshold press would have done. */
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !active) return;
+    e.preventDefault();
+    e.stopPropagation();
+    selection.ids = [...baseline];
+    cancel();
+  }
+
+  /** Drop the gesture without committing anything. Shared by Escape and
+   *  by `endDrag`'s teardown so the two cannot fall out of step. */
+  function cancel() {
+    window.removeEventListener('keydown', onKeyDown, true);
+    if (capturedEl && pointerId !== null && capturedEl.hasPointerCapture?.(pointerId)) {
+      capturedEl.releasePointerCapture(pointerId);
+    }
+    capturedEl = null;
+    pointerId = null;
+    active = false;
+    stopRaf();
+    rect = null;
+  }
+
   function onPointerMove(e: PointerEvent) {
     if (pointerId === null || e.pointerId !== pointerId) return;
     lastX = e.clientX;
@@ -251,9 +346,16 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
         return;
       }
       active = true;
-      // Additive: whatever was already selected survives the drag.
+      // THE PRE-GESTURE SNAPSHOT. Everything the band does is expressed
+      // against this and nothing else — see `apply` for the XOR, and
+      // `cancel` for the fact that restoring it is the whole undo.
       baseline = [...selection.ids];
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      capturedEl = e.currentTarget as HTMLElement;
+      capturedEl.setPointerCapture(e.pointerId);
+      // Escape is armed only while a band is live, and torn down with
+      // it: a document-level key handler that outlived the gesture would
+      // eat Escape from every modal on the page.
+      window.addEventListener('keydown', onKeyDown, true);
       stopRaf();
       raf = requestAnimationFrame(tick);
     }
@@ -265,11 +367,13 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
 
   function endDrag(e: PointerEvent) {
     if (pointerId === null || e.pointerId !== pointerId) return;
-    const el = e.currentTarget as HTMLElement;
-    if (el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    pointerId = null;
-    stopRaf();
-    rect = null;
+    const wasActive = active;
+    // `cancel` clears `active`, and onClickCapture still needs to know a
+    // band completed so it can swallow the click this pointerup will
+    // produce — so it is restored immediately afterwards. It clears
+    // itself there, or on the next pointerdown.
+    cancel();
+    active = wasActive;
     if (active) {
       // A marquee leaves a pivot behind so a following Shift+click has
       // somewhere to extend from — the last id in feed order that the
@@ -278,9 +382,6 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
       const caught = ordered.filter((id) => selection.has(id));
       selection.setAnchor(caught.length > 0 ? caught[caught.length - 1] : null);
     }
-    // `active` is NOT cleared here: the click this pointerup produces
-    // has not fired yet and onClickCapture needs to know to swallow it.
-    // It clears itself there, or on the next pointerdown.
   }
 
   function onClickCapture(e: MouseEvent) {
@@ -302,6 +403,7 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
       onpointermove: onPointerMove,
       onpointerup: endDrag,
       onpointercancel: endDrag,
+      ondragstart: onDragStart,
       onclickcapture: onClickCapture,
     },
   };

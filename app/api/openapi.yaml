@@ -14246,6 +14246,35 @@ components:
             without making remote work look lesser — federated content
             uses the same card, the same viewer and the same display
             hints; what it must not do is arrive unattributed.
+        owner:
+          allOf:
+            - $ref: '#/components/schemas/PostAuthor'
+          nullable: true
+          description: |
+            The renderable identity behind `owner_user_ref` — the
+            artist block on an asset card (#1047).
+
+            THE SAME SHAPE AND THE SAME RESOLUTION AS A POST'S AUTHOR,
+            because it is literally the same code: `users.LookupAuthors`,
+            batched once per page. An asset card that resolved the
+            owner client-side would be an N+1 per tile, and worse, it
+            would re-derive the display-name ladder in the browser —
+            which is how the anonymous rung gets skipped (#1023).
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO OWNER". A ref is
+            omitted from the lookup when the owner set
+            `hide_from_anonymous` and the reader is anonymous (ADR 0024
+            / ADR 0070 §3), or when the account is gone. There is no
+            redacted entry and no placeholder identity: the card draws
+            no artist block at all. Deliberately not a sentinel —
+            "someone who opted out owns this" still discloses that they
+            own it.
+
+            Absent on a `restricted` placeholder too, which carries
+            `owner_display_name` instead: that surface has its own
+            allow-list and its own name rule
+            (`users.PlaceholderOwnerName`), and a second, wider
+            identity object riding the same row would defeat it.
     CardField:
       type: object
       description: |
@@ -14934,6 +14963,42 @@ components:
             PER-CALLER, therefore derived after the post cache and
             never written into it. See posts.enrichLiked.
         comment_count: { type: integer, format: int64 }
+        comments_preview:
+          type: array
+          items: { $ref: "#/components/schemas/PostCommentPreview" }
+          description: |
+            The head of this post's thread — the newest `N` TOP-LEVEL
+            comments, newest first, where N is small and fixed
+            (posts.TopCommentsPerPost). The feed card prints them under
+            the description and links to the post for the rest (#1047).
+
+            THE HEAD OF THE THREAD, not a summary of it. The ordering
+            and the predicates are the ones `GET /posts/{id}/comments`
+            already applies to its thread roots — newest first, no
+            replies, no soft-deleted rows — so the preview is literally
+            the top of what opening the post shows, and there is no
+            second notion of "which comments matter" to keep in step.
+
+            Absent or empty when the post has no comments. A client that
+            ignores it renders the card it rendered before, with the
+            comment COUNT it always had.
+
+            VISIBILITY. This rides a post the caller has already been
+            granted by `postReadableExpr` — the list query's own gate —
+            so the preview inherits it and adds nothing. It is
+            deliberately NOT built by calling the comments endpoint per
+            post: that would be an N+1, and (see #1047's handoff) that
+            endpoint's own gate is weaker than the feed's.
+
+            The commenter's identity is resolved by
+            `users.LookupAuthors`, the same expression the post's own
+            `author` uses, so the ADR 0024 opt-out holds here too: a
+            commenter who hid from anonymous readers has NO `author`
+            object on their preview entry for an anonymous caller. Their
+            words still appear, exactly as an opted-out author's POST
+            still appears — the opt-out is about the identity, not the
+            content, and treating it otherwise would silently delete
+            people's comments from the feed.
         tags:
           type: array
           items: { type: string }
@@ -14983,6 +15048,66 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+    PostCommentPreview:
+      type: object
+      description: |
+        One comment as a feed card shows it (#1047) — a name, a line of
+        text, and when.
+
+        ALLOW-LIST, NOT A TRIMMED `Comment`. The server BUILDS this
+        object from four named columns rather than building the full
+        comment and deleting fields from it, so a column added to
+        `comments` later — a moderation note, an annotation payload, an
+        actor URI — is withheld from the feed because it was never
+        fetched. Same discipline as `PostAuthor` and `PostMember`'s
+        placeholder.
+
+        Notably ABSENT, and deliberately: `body_html`, `like_count`,
+        `parent_id` / `root_id` / `depth`, `edited_at`,
+        `annotation_type` / `annotation_data`. A preview is two lines
+        under a picture; threading, reactions and review annotations are
+        what opening the post is for.
+
+        `body` and not `body_html`: the card clamps this to a couple of
+        lines of plain text, and shipping server-rendered markup to be
+        truncated by CSS would mean either rendering HTML in a card that
+        has no business rendering it, or clipping mid-tag.
+      required: [id, body, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        body:
+          type: string
+          description: |
+            The comment's plain text, as written. Untruncated — the card
+            clamps it, because how many lines fit is a question about
+            the card and not about the comment.
+        created_at: { type: string, format: date-time }
+        author:
+          allOf: [{ $ref: "#/components/schemas/PostAuthor" }]
+          nullable: true
+          description: |
+            The commenter, when they are disclosed to this caller.
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO COMMENTER", and the
+            three ways it happens are all correct as an absence: the
+            commenter set `hide_from_anonymous` and the reader is
+            anonymous (ADR 0024 / ADR 0070 §3), the account is gone, or
+            the comment came from a FEDERATION PEER and has no local
+            user at all — see `remote_display_name`.
+        remote_display_name:
+          type: string
+          nullable: true
+          description: |
+            For a comment that arrived from a paired peer: the remote
+            actor's cached display name, resolved from
+            `federation_remote_actors` exactly as the thread endpoint
+            resolves it. Absent on locally-authored comments, which
+            carry `author` instead.
+
+            May be empty when the peer has shipped no display hints
+            yet — the same caveat `Comment.display_name` carries — in
+            which case the card prints no name rather than inventing
+            one from the actor URI.
     PostAuthor:
       type: object
       description: |

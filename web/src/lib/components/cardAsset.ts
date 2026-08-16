@@ -109,6 +109,22 @@ export interface CardAsset {
    *  behaviour it had before the flag existed. Absent on a `restricted`
    *  placeholder by design — see owner_display_name. */
   card_fields?: CardFieldValue[] | null;
+  /** The renderable identity behind `owner_user_ref` — the artist block
+   *  on a card (#1047). Server-resolved, batched once per page, and the
+   *  SAME shape a post carries as `author`.
+   *
+   *  ABSENT MEANS "NOT DISCLOSED", NOT "NO OWNER", exactly as it does on
+   *  a post: the owner set `hide_from_anonymous` and this reader is
+   *  anonymous (ADR 0024 / ADR 0070 §3), or the account is gone. The card
+   *  then draws NO artist block — never a placeholder identity, because
+   *  "someone who opted out owns this" still discloses that they own it.
+   *
+   *  OPTIONAL like the two hints below it: a surface that hand-maps a
+   *  narrower row loses the artist block on that surface and renders a
+   *  plainer card, not a wrong one. Absent on a `restricted` placeholder
+   *  by design — that row's identity is `owner_display_name`, under its
+   *  own narrower allow-list. */
+  owner?: CardAuthor | null;
   /** Which peer this asset came from, or absent/null when it is ours
    *  (#552).
    *
@@ -118,6 +134,22 @@ export interface CardAsset {
    *  wrong reading of the constraint; making it look identical and
    *  UNATTRIBUTED is the other wrong reading. */
   origin?: ContentOrigin | null;
+}
+
+/** The renderable identity a card draws — a face, a name, and somewhere
+ *  to click, and nothing else (the server's `PostAuthor` allow-list).
+ *
+ *  ONE TYPE for a post's author and an asset's owner, because they are
+ *  one shape resolved by one function (`users.LookupAuthors`) and drawn
+ *  by one component (CardAuthorLink). `display_name` is the SERVER's
+ *  resolution and is rendered verbatim: the ladder's rung 2 is
+ *  authenticated-only, so re-deriving it here would leak real names to
+ *  anonymous readers (#1023). */
+export interface CardAuthor {
+  ref: number;
+  username: string;
+  display_name: string;
+  avatar_url?: string | null;
 }
 
 /** One at-a-glance field value on a card. `value` is a display string,

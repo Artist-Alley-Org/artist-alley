@@ -275,6 +275,7 @@
       "likes": "{count} likes",
       "comment": "Comment",
       "comments": "{count} comments",
+      "view_all_comments": "View all {count} comments",
       "share": "Share",
       "shared": "Link copied"
     }

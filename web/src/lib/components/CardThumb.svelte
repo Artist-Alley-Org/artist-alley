@@ -38,7 +38,7 @@
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
-  import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
+  import { isDocExt } from './viewers/controller';
   import {
     loadSpriteCues,
     cueBackgroundStyle,
@@ -184,20 +184,6 @@
      *  A PostCard passes a cover id as the former and nothing as the
      *  latter — see CardRestricted's prop note. */
     requestAssetId?: string | null;
-    /** Draw the persistent `video` / `3D` media-type chip (default on).
-     *
-     *  Grid post cards pass `false` (#1111): the owner's overlay states
-     *  the kind as an ICON, in the same corner, and #1111 is explicit
-     *  that no TEXT kind badges remain in grid view. Rendering both
-     *  would say "video" twice, once in each notation, stacked.
-     *
-     *  A prop rather than a mode check inside this component: CardThumb
-     *  is handed a presentation, it does not infer one — and the caller
-     *  that turns the chip off is the same caller that draws the
-     *  replacement, so the two decisions stay in one file. Every other
-     *  surface (AssetCard in every density, thumbnail, masonry, feed) is
-     *  untouched and keeps the chip. */
-    kindBadge?: boolean;
     /** Card-specific chrome stacked over the thumb (multi-asset badge,
      *  hover title overlay, future tool row / checkbox). Rendered inside
      *  the same positioned frame so absolute overlays anchor to it. */
@@ -227,7 +213,6 @@
     restricted = false,
     restrictedOwnerName = null,
     requestAssetId = null,
-    kindBadge = true,
     children,
   }: Props = $props();
 
@@ -280,8 +265,6 @@
   });
 
   const isDoc = $derived(isDocExt(fileExtension));
-  const isVideo = $derived(isVideoExt(fileExtension));
-  const is3D = $derived(is3DExt(fileExtension));
 
   // Render the <img> only when the server confirms a servable col for
   // this caller (preview_available, #471) and the asset actually has
@@ -646,6 +629,17 @@
       rest of the sizes list is not consulted — measured. Making this
       eager would turn the slot hint into "the whole viewport" on every
       card, with no other visible symptom.
+
+      #1047 — a VARIABLE-ASPECT tile drops the `p-1.5` matte inset too.
+      Not for symmetry with `fill`: the inset exists to letterbox art on
+      a matte when the box and the picture are different shapes, and a
+      variable-aspect tile IS the shape of its picture, so the padding
+      can only shrink the art and draw a frame around it. On masonry —
+      "maximum art per page" — that was 6px of chrome per side on every
+      tile of the wall. The one case where the shapes still disagree is
+      a tile clamped by the #652 floor or by `ratioFloor`, and there the
+      art letterboxes onto the matte exactly as before, just without the
+      extra ring.
     -->
     <img
       src={imgSrc}
@@ -655,7 +649,7 @@
       loading="lazy"
       decoding="async"
       class="absolute inset-0 h-full w-full transition-opacity duration-200 group-hover:scale-[1.02]
-             {fill ? 'object-cover' : 'object-contain p-1.5'}"
+             {fill ? 'object-cover' : variableAspect ? 'object-contain' : 'object-contain p-1.5'}"
       class:opacity-0={!imgLoaded}
       class:opacity-100={imgLoaded}
       onload={onLoad}
@@ -725,21 +719,14 @@
         ></div>
       </div>
     {/if}
-    <!-- Media-type badge. Suppressed under `compact` (#652): it lives at
-         `left-2 top-2`, which is exactly where the selection checkbox
-         goes, and on a 60px masonry tile the two are the whole tile.
-         The type is in the hover tooltip there instead. -->
-    {#if isVideo && !compact && kindBadge}
-      <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
-        video
-      </div>
-    {:else if is3D && !compact && kindBadge}
-      <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
-        3D
-      </div>
-    {/if}
+    <!-- The media-type chip that used to live here is gone (#1047). It
+         was two hardcoded English words — `video` and `3D` — covering
+         two of thirteen ViewKinds, so a PDF, an audiobook and a sprite
+         sheet were all unlabelled, and #1111 had already replaced it
+         with an icon in grid. The replacement is CardKindBadge, drawn by
+         the CARD in the children slot: the caller knows the density and
+         therefore the corner, and CardThumb is handed a presentation
+         rather than inferring one. -->
   {:else if !placeholder}
     <!-- No servable preview AND no thumbhash — nothing of the asset can
          be shown, so the plate states what it is instead (#558). This
