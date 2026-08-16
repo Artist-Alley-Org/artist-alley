@@ -149,15 +149,15 @@ const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash, team_id
+    state_id, processing_status, thumbhash, team_id, mature
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14
+    $11, $12, $13, $14, $15
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id
+          created_at, updated_at, team_id, mature
 `
 
 type CreateAssetParams struct {
@@ -175,6 +175,7 @@ type CreateAssetParams struct {
 	ProcessingStatus string
 	Thumbhash        []byte
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 type CreateAssetRow struct {
@@ -195,6 +196,7 @@ type CreateAssetRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
@@ -213,6 +215,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.ProcessingStatus,
 		arg.Thumbhash,
 		arg.TeamID,
+		arg.Mature,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -233,6 +236,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TeamID,
+		&i.Mature,
 	)
 	return i, err
 }
@@ -278,7 +282,7 @@ const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id
+       created_at, updated_at, team_id, mature
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -301,6 +305,7 @@ type GetAssetRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 // Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -330,6 +335,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TeamID,
+		&i.Mature,
 	)
 	return i, err
 }
@@ -1311,12 +1317,16 @@ UPDATE assets SET
     description = COALESCE($2, description),
     status      = COALESCE($3,      status),
     metadata    = COALESCE($4,    metadata),
+    -- #1115. narg, so PATCH semantics hold: absent leaves the flag as
+    -- it is, which is what makes the artist's own edit and the operator
+    -- override the same column on the same endpoint.
+    mature      = COALESCE($5,      mature),
     updated_at  = NOW()
-WHERE id = $5 AND deleted_at IS NULL
+WHERE id = $6 AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id
+          created_at, updated_at, team_id, mature
 `
 
 type UpdateAssetParams struct {
@@ -1324,6 +1334,7 @@ type UpdateAssetParams struct {
 	Description *string
 	Status      *string
 	Metadata    []byte
+	Mature      *bool
 	ID          pgtype.UUID
 }
 
@@ -1345,6 +1356,7 @@ type UpdateAssetRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -1355,6 +1367,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		arg.Description,
 		arg.Status,
 		arg.Metadata,
+		arg.Mature,
 		arg.ID,
 	)
 	var i UpdateAssetRow
@@ -1376,6 +1389,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TeamID,
+		&i.Mature,
 	)
 	return i, err
 }

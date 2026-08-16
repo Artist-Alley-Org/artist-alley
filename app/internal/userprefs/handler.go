@@ -139,7 +139,7 @@ func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, 
 	case err != nil:
 		return Preferences{}, err
 	default:
-		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters, row.BrowseRail)
+		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters, row.BrowseRail, row.MatureContent)
 		if err != nil {
 			return Preferences{}, err
 		}
@@ -257,12 +257,18 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		TagOrder:      toWireTags(rail.TagOrder),
 	}
 
+	// Always present with `show` populated (#1115). Same argument as
+	// feed_filters two blocks up: a boolean has no third state, so an
+	// omitted object would only make the client guess `false`.
+	matureContent := openapi.UserPreferencesMatureContent{Show: &p.MatureContent.Show}
+
 	return openapi.UserPreferencesResponse{
 		NotificationChannels:   channels,
 		EmailCadence:           &cadence,
 		DefaultViews:           views,
 		FeedFilters:            filters,
 		BrowseRail:             browseRail,
+		MatureContent:          matureContent,
 		KnownEventTypes:        append([]string(nil), KnownEventTypes...),
 		KnownChannels:          append([]string(nil), KnownChannels...),
 		DefaultChannelsByEvent: defaults,
@@ -317,12 +323,23 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 		rail.HiddenTags = fromWireTags(body.BrowseRail.HiddenTags)
 		rail.TagOrder = fromWireTags(body.BrowseRail.TagOrder)
 	}
+	// Full-object replacement, like everything above (#1115). An absent
+	// `mature_content`, or an absent `show` inside a present one, opts
+	// the account OUT — which is the safe direction and the reason the
+	// key is named for the permissive one. A client that PATCHes a
+	// single preference must GET, merge and send the whole document;
+	// the endpoint's own schema says so.
+	mature := MatureContent{}
+	if body.MatureContent != nil && body.MatureContent.Show != nil {
+		mature.Show = *body.MatureContent.Show
+	}
 	return Preferences{
 		NotificationChannels: channels,
 		DefaultViews:         views,
 		EmailCadence:         cadence,
 		FeedFilters:          filters,
 		BrowseRail:           rail.Sanitized(),
+		MatureContent:        mature,
 	}
 }
 
@@ -465,6 +482,10 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 	if err != nil {
 		return err
 	}
+	matureJSON, err := MarshalMatureContent(prefs.MatureContent)
+	if err != nil {
+		return err
+	}
 	if err := New(h.pool).UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
 		UserRef:              ref,
 		NotificationChannels: channelsJSON,
@@ -472,6 +493,7 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 		EmailCadence:         cadenceJSON,
 		FeedFilters:          filtersJSON,
 		BrowseRail:           browseRailJSON,
+		MatureContent:        matureJSON,
 	}); err != nil {
 		return err
 	}

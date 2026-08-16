@@ -26,10 +26,11 @@
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
-  import { masonryLayout, MASONRY_OVERLAY_MIN_COL_PX } from '$stores/masonryLayout.svelte';
+  import { masonryLayout, masonryOverlayTier } from '$stores/masonryLayout.svelte';
   import { api } from '$api/client';
   import type { CardCoverAsset, ContentOrigin } from '$components/cardAsset';
   import { kindForAsset } from './viewers/controller';
+  import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
 
@@ -170,20 +171,28 @@
   // ── Masonry's two postures (#652, split by scale in #1047) ────────
   //
   // MASONRY IS MINIMAL WHEN ITS TILES ARE SMALL AND FULL WHEN THEY ARE
-  // BIG, and the switch is the RENDERED COLUMN WIDTH, not the rung the
+  // BIG, and the switch is the tile's RENDERED BOX, not the rung the
   // reader picked (owner amendment; #1025's lesson — a rung is a clamp,
-  // and the same clamp yields different widths at different viewports).
-  // `masonryLayout` carries the measured number and the calibration
-  // note for the threshold.
+  // and the same clamp yields different sizes at different viewports).
+  // `masonryLayout` carries the measured box and the calibration notes
+  // for all three thresholds.
   //
-  // Below the threshold the tile can be as short as the 60px control
-  // floor, so it holds the ⋮ menu and the checkbox and nothing else and
-  // its facts live in the hover tooltip. Above it, the tile is wider
-  // than a default grid tile and there is nothing "compact" left to
-  // justify: it takes grid's own overlay, unchanged.
-  const masonryWide = $derived(
-    mode === 'masonry' && masonryLayout.colWidth >= MASONRY_OVERLAY_MIN_COL_PX,
+  // THREE POSTURES, NOT TWO (#1139). Width alone was the gate and it let
+  // through the one shape it could not describe: a wide tile is SHORT by
+  // construction, so a two-column 5.33:1 piece cleared 280px easily and
+  // then cut the artist's avatar and name off at its bottom edge. Height
+  // now qualifies too, and between the two heights the overlay
+  // COMPRESSES to the title alone rather than clipping — a clipped
+  // identity row states less than the tooltip it replaced while still
+  // covering the art.
+  //
+  // Below both, the tile can be as short as the 60px control floor, so
+  // it holds the ⋮ menu and the checkbox and nothing else and its facts
+  // live in the hover tooltip.
+  const overlayTier = $derived(
+    mode === 'masonry' ? masonryOverlayTier(masonryLayout.box(post.id)) : 'minimal',
   );
+  const masonryWide = $derived(mode === 'masonry' && overlayTier !== 'minimal');
   const compact = $derived(mode === 'masonry' && !masonryWide);
 
   // ── Feed: the social card (#557) ─────────────────────────────────
@@ -462,6 +471,12 @@
   // goes BOTTOM-left — the one persistently-clear corner — still always
   // visible, still the single piece of resting chrome.
 
+  /** The letterbox matte's colour in THUMBNAIL only (#1136) — sampled
+   *  from the cover's thumbhash, which the card already holds for its
+   *  loading placeholder. Null everywhere else and for any cover with
+   *  no hash, and CardThumb then paints its neutral token. */
+  const matteColor = $derived(detailed ? thumbhashMatteColor(coverThumbhash) : null);
+
   const created = $derived(new Date(post.created_at));
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -653,18 +668,35 @@
   {/if}
 
   {#if detailed}
-    <!-- Details HEADER (#556) — the title leads the card. See the twin in
-         AssetCard for the reasoning; actions stay in the overlay ⋮ menu. -->
-    <div class="border-b border-border px-3 py-2">
-      <a
-        href="/posts/{post.id}"
-        onclick={handleClick}
-        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>
-          {post.title || 'Untitled'}
-        </p>
-      </a>
+    <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
+         THE OWNER'S PLACEMENT GRAMMAR, top row: format on the left, type
+         icon on the right — above the preview, never over it.
+
+         This REPLACES #556's title header, and the swap is the point of
+         the issue rather than a casualty of it. #556 put the title up
+         here on "there should be a top to the thumbnail cards"; the
+         reference panel answers that same request with a FORMAT band and
+         puts the title with the rest of the metadata below the picture,
+         where the one-fact-per-row stack reads as a record. The card
+         still has a top; it now says what KIND of thing this is, which
+         is the question a working shelf asks first and the one the
+         filename half-answers.
+
+         The extension is drawn UPPERCASE and without its dot — it is a
+         format label here, not a filename fragment. Absent for a post
+         whose cover has none (a restricted member, a
+         no-file placeholder), and the band then carries the kind alone
+         rather than an empty cell. -->
+    <div
+      class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5"
+      data-testid="thumb-band-top"
+    >
+      <span class="truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted">
+        {coverFileExtension ? coverFileExtension.replace(/^\./, '') : ''}
+      </span>
+      {#if !coverRestricted}
+        <CardKindBadge kind={coverKind} count={memberCount} variant="inline" />
+      {/if}
     </div>
   {/if}
 
@@ -686,6 +718,7 @@
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
     titleAdjacent={detailed}
+    {matteColor}
     restricted={coverRestricted}
     restrictedOwnerName={coverOwnerName}
   >
@@ -707,8 +740,13 @@
 
     <!-- Multi-select checkbox. Top-left everywhere except the #1111
          grid overlay, where top-left carries the kind icon and the ⋯
-         menu has vacated top-right. -->
-    <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} {orderedIds} />
+         menu has vacated top-right.
+         NOT IN THUMBNAIL (#1136): that density's chrome lives in the
+         frame, so the checkbox is an inline control in the bottom band
+         below and nothing at all sits over the preview. -->
+    {#if !detailed}
+      <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} {orderedIds} />
+    {/if}
 
     <!-- Kind / multi-asset indicator. BOTTOM-right, PERSISTENT — the one
          piece of chrome that stays at rest outside grid, so a wall of art
@@ -732,8 +770,12 @@
          The facts are in the hover tooltip there instead. This is the
          one place #580's "persistent at rest" property is traded away;
          if the owner wants it back in masonry, the tile floor has to
-         grow. -->
-    {#if !compact && !showOverlay && !coverRestricted}
+         grow.
+
+         NOT IN THUMBNAIL (#1136): the same badge draws in the top
+         chrome band instead, which is where the reference panel puts
+         its type indicator and which leaves the artwork untouched. -->
+    {#if !compact && !showOverlay && !coverRestricted && !detailed}
       <CardKindBadge
         kind={coverKind}
         count={memberCount}
@@ -844,7 +886,19 @@
              to the nearest positioned ancestor and reserves no flex
              space, so without both the ⋯ escapes to the card and a long
              display name runs underneath it. -->
-        <div class="relative z-[1] flex items-end pr-11" data-testid="post-card-identity">
+        <!-- `min-h-11` is the ⋯ menu's own tap target, and it is
+             load-bearing rather than cosmetic (#1139). CardMenu is
+             `absolute right-2 top-2` inside this block and reserves NO
+             flex space, so on the compressed tier — where the block is
+             one 20px title line — a 44px control would hang 32px below
+             the picture. That is the same clipping bug this issue is
+             about, one element smaller. On the full tier the block is
+             67px and this changes nothing. -->
+        <div
+          class="relative z-[1] flex min-h-11 items-end pr-11"
+          data-testid="post-card-identity"
+          data-overlay-tier={overlayTier}
+        >
           <div class="min-w-0 flex-1">
             <!-- No `title` attribute: the styled tooltip replaces the
                  native one for this element (#1126), and keeping both
@@ -856,8 +910,16 @@
             <p bind:this={titleEl} class="truncate text-sm font-semibold text-white">
               {post.title || 'Untitled'}
             </p>
-            {#if author}
-              <!-- The identity block now lives in CardAuthorLink (#1047)
+            {#if author && overlayTier !== 'compressed'}
+              <!-- DROPPED ON THE COMPRESSED TIER (#1139), which is the
+                   whole point of that tier: a wide, short tile has room
+                   for a caption and not for a 40px avatar under it. The
+                   choice is not "identity or nothing" — it is "a title
+                   that reads, or an identity row cut in half by the
+                   bottom of the picture". The artist is still one hover
+                   away in the tooltip, exactly as on the minimal tier.
+
+                   The identity block now lives in CardAuthorLink (#1047)
                    so grid, thumbnail and AssetCard draw ONE artist block
                    rather than three that drift. Everything that made it
                    work here is carried there: the `w-fit` that stops the
@@ -904,9 +966,11 @@
       </div>
     {/if}
 
-    {#if !social && !showOverlay}
+    {#if !social && !showOverlay && !detailed}
       <!-- Overflow menu. ONE affordance in every mode, including
-           thumbnail — owner amendment 2026-07-25 to #556. Skipped under
+           thumbnail — owner amendment 2026-07-25 to #556. Thumbnail now
+           renders it INLINE in the bottom band (#1136) rather than over
+           the artwork; it is still exactly one per card. Skipped under
            the #1111 grid overlay, which renders the same component
            beside the identity block instead — one ⋯ per card, always.
            add-to-collection targets the cover asset.
@@ -1058,11 +1122,24 @@
          even though grid hides it until hover.
 
          The title stays in the header, where #556 put it. -->
-    <div class="space-y-1.5 px-3 py-2">
+    <div class="space-y-1 px-3 py-2" data-testid="thumb-metadata">
+      <!-- ROW 1 — the title. Moved down from #556's header (see the top
+           band's note): one fact per row, in the reference panel's own
+           order, reads as a record rather than as a caption strip. -->
+      <a href="/posts/{post.id}" onclick={handleClick} class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>
+          {post.title || 'Untitled'}
+        </p>
+      </a>
       {#if author}
-        <!-- SIBLING link, not nested in the card's anchor (#1126). -->
+        <!-- ROW 2 — the artist. SIBLING link, not nested in the card's
+             anchor (#1126). -->
         <CardAuthorLink {author} size="sm" />
       {/if}
+      <!-- ROW 3 — the date and the engagement facts. One row rather than
+           one per fact: they are a single "how has this been received"
+           reading, and four rows of one number each would push the
+           preview off a 200px card. -->
       <a href="/posts/{post.id}" onclick={handleClick} class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <p class="flex items-center gap-2 text-xs text-fg-muted">
           <span>{createdShort}</span>
@@ -1088,6 +1165,36 @@
           {/if}
         </p>
       </a>
+    </div>
+
+    <!-- ═══ #1136: the BOTTOM CHROME BAND ══════════════════════════
+         The owner's grammar's last row: selection on the left, actions
+         on the right, both INSIDE the frame.
+
+         This is the half that actually clears the preview. The checkbox
+         and the ⋯ were the two things still drawn over the artwork in
+         this density, and they were there because on a discovery wall
+         transient affordances over the image are conventional and right
+         (#1136 says as much, and grid keeps them). Thumbnail is not a
+         discovery wall — it is the density someone works a shelf in —
+         so its controls are PERSISTENT chrome in a band, not chrome
+         that appears on the art when you approach it.
+
+         Both are always visible here, which follows from the same
+         argument: hiding a control until hover is a concession to the
+         artwork it covers, and these cover nothing. -->
+    <div
+      class="flex items-center justify-between border-t border-border px-1.5 py-0.5"
+      data-testid="thumb-band-bottom"
+    >
+      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
+      <CardMenu
+        assetId={coverAssetId}
+        postId={post.id}
+        detailPath="/posts/{post.id}"
+        manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+        placement="inline"
+      />
     </div>
   {/if}
 </div>

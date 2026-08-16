@@ -87,25 +87,66 @@ const TILE_STEPS_REM = [10, 12, 13.5, 16, 18, 22, 28, 38, 57] as const;
 const TILE_MIN_IDX = 0;
 const TILE_MAX_IDX = TILE_STEPS_REM.length - 1;
 
-/** Index 5 → 22rem → 1 column at 390px, 5 at 1920px, 10 at 3840px.
- *  Both ends fall out of the one number: 5-at-1920 preserves exactly
- *  what the old default rendered (no regression on the width that
- *  matters most), and 1-at-390 is the explicit product call. Neither
- *  is written down as a rule — they're consequences. */
-const DEFAULT_TILE_IDX = 5;
-
-/** thumbnail is the same ladder, one rung ROOMIER than grid — at the
- *  default that is 28rem → 4 columns at 1920px, against grid's 22rem → 5.
+/** Index 3 → 16rem (#1140, owner direction with reference DOM).
  *
- *  This inverts the previous -2 ("a dense preview wall", 16rem → 7
- *  columns), and the inversion is the point (#556). thumbnail is the
- *  DETAILS view: it carries a title header, the thumb, and a metadata
- *  footer, and the owner's ask is "info at a glance". A details tile
- *  that is denser than the plain grid tile is a contradiction — it was
- *  why the metadata read as a cramped caption strip. Roomier than grid
- *  is the product intent now; do not "restore" the dense wall without
- *  re-reading #556. */
-const THUMBNAIL_RUNG_OFFSET = 1;
+ *  MEASURED, NOT CHOSEN. The owner's target is "the reference discovery
+ *  wall's compact card — ~240-260px tiles at 1920, ≈7 columns". Driving
+ *  every rung at 1920 and reading the rendered tile:
+ *
+ *      rung 2 (13.5rem)  232px   8 columns
+ *      rung 3 (16rem)    265px   7 columns   ← this one
+ *      rung 4 (18rem)    306px   6 columns
+ *      rung 5 (22rem)    367px   5 columns   ← the old default
+ *
+ *  ⚠️ NO RUNG PRODUCES 250px, AND NONE CAN. A 1920 viewport's content
+ *  row is ~1844px, so seven columns ARE 265px and eight ARE 232px —
+ *  the two constraints in the target ("240-260px" and "≈7 columns") name
+ *  different rungs, because a column count is an integer. Adding a rung
+ *  was checked and does nothing: 15rem also resolves to 7 columns of
+ *  265px, since the clamp is a MINIMUM and the columns divide what is
+ *  left. So the column count is the half that was honoured — it is the
+ *  one the owner can see — and the tile lands 5px over the stated band.
+ *
+ *  At 2560 the same rung gives 273px across 9 columns.
+ *
+ *  Stored preferences are untouched: `readTileIdx` returns the stored
+ *  rung when there is one and only falls back to this constant when
+ *  there is not (#709's rule — preserve, never overwrite). */
+const DEFAULT_TILE_IDX = 3;
+
+/** thumbnail is the same ladder, two rungs TIGHTER than grid — at the
+ *  default that is 12rem → ~197px previews across 9 columns at 1920,
+ *  against grid's 16rem → 265px across 7.
+ *
+ *  ⚠️ THIS REVERSES #556'S SIGN, DELIBERATELY AND ON OWNER DIRECTION
+ *  (#1140, with reference DOM). The note that stood here said the
+ *  opposite in as many words — "roomier than grid is the product intent
+ *  now; do not restore the dense wall without re-reading #556" — so the
+ *  reversal is recorded rather than quietly applied.
+ *
+ *  What changed is not the reasoning, it is the SHAPE the reasoning was
+ *  about. #556's argument was that a details tile denser than a grid
+ *  tile is a contradiction, "which was why the metadata read as a
+ *  cramped caption strip". The caption strip is gone: #1136 rebuilt this
+ *  density as an info PANEL — a format band above the preview, the
+ *  metadata stacked one fact per row below it, a control band under
+ *  that. A panel states its facts in rows and does not need the width a
+ *  caption needed to avoid truncating; what it needs is to be small
+ *  enough that a shelf of them fits on a screen. The owner's reference
+ *  panel is exactly that: a ~200px preview in a ~336px-tall card.
+ *
+ *  MEASURED at 1920 (the offset resolves the stored rung 3 to effective
+ *  rung 1): 197px preview, 199px card, 378px tall, 9 columns. At 2560:
+ *  199px preview, 12 columns. Both on the ~200px target; our card runs
+ *  ~40px taller than the reference's 336 because our stack carries the
+ *  artist row the reference panel does not.
+ *
+ *  The offset is CLAMPED at both ends by `activeRem`, so the two lowest
+ *  grid rungs resolve to the same 10rem floor in thumbnail rather than
+ *  underflowing — the stepper's bottom two steps do nothing in this
+ *  mode, which is the cost of one shared index and is preferable to a
+ *  second stored preference for the same control. */
+const THUMBNAIL_RUNG_OFFSET = -2;
 
 // ── The tile-size clamp, in one place (#639) ─────────────────────────
 //

@@ -409,6 +409,19 @@ func (h *Handler) CreateAsset(
 	// is born with the placeholder. Failure here is soft: log + keep
 	// thumbhash=NULL. The feed card just won't have a blurred
 	// placeholder; the original /file URL still works.
+	// #1115 — the mature self-label, refused when the instance
+	// disallows it. Checked BEFORE any storage or thumbhash work: a
+	// request that is going to be refused should not first spend a
+	// synchronous image decode on it.
+	mature := in.Mature != nil && *in.Mature
+	if ok, err := h.matureWriteAllowed(ctx, mature); err != nil {
+		return nil, fmt.Errorf("assets: mature policy: %w", err)
+	} else if !ok {
+		return openapi.CreateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: errMatureNotAllowed.Error()},
+		}, nil
+	}
+
 	var thumbhashBytes []byte
 	if fileHashPtr != nil && isImageExt(in.FileExtension) {
 		hCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -475,6 +488,7 @@ func (h *Handler) CreateAsset(
 		ProcessingStatus: processingStatus,
 		Thumbhash:        thumbhashBytes,
 		TeamID:           teamID,
+		Mature:           mature,
 	})
 	if err != nil {
 		// The team gate above already refused every team this caller
@@ -1614,12 +1628,28 @@ func (h *Handler) UpdateAsset(
 		}
 	}
 
+	// #1115. narg, so an absent field leaves the flag alone — the same
+	// PATCH contract every other column here honours, and what lets the
+	// artist's own edit and the operator's override be one endpoint.
+	var maturePtr *bool
+	if req.Body != nil && req.Body.Mature != nil {
+		if ok, merr := h.matureWriteAllowed(ctx, *req.Body.Mature); merr != nil {
+			return nil, fmt.Errorf("assets: mature policy: %w", merr)
+		} else if !ok {
+			return openapi.UpdateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: errMatureNotAllowed.Error()},
+			}, nil
+		}
+		maturePtr = req.Body.Mature
+	}
+
 	row, err := q.UpdateAsset(ctx, UpdateAssetParams{
 		ID:          pgID,
 		Title:       titlePtr,
 		Description: descPtr,
 		Status:      statusPtr,
 		Metadata:    metaJSON,
+		Mature:      maturePtr,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2483,6 +2513,11 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		CreatedAt:        &row.CreatedAt.Time,
 		UpdatedAt:        &row.UpdatedAt.Time,
 		Tags:             &tags,
+		// #1115. A LABEL, not a gate: whether this viewer receives the
+		// row at all, and whether its preview is blurred, are decided
+		// server-side (ADR 0090 §3). This is here so a client can say
+		// what it was given.
+		Mature: &row.Mature,
 	}
 	if len(details) > 0 {
 		td := make([]openapi.AssetTagDetail, 0, len(details))

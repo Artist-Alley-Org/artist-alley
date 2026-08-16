@@ -280,7 +280,7 @@ func (h *Handler) CreatePost(
 	// indistinguishable, or POST /posts becomes a UUID-existence probe.
 	//
 	// The covers are here rather than in a check of their own because
-	// the rule has exactly one home (visibility.CanAttachAsset, ADR
+	// the rule has exactly one home (visibility.CanSeeAssetContent, ADR
 	// 0064) and consolidating it there was the whole point of #922.
 	// Only the EXPLICIT covers are added: the implicit cover is
 	// members[0], already in this list, and re-gating it would just
@@ -670,7 +670,7 @@ func (h *Handler) UpdatePost(
 	// member and carries its own FK, so it is a second door into the
 	// same room #941 just locked — connecting it ungated would re-open
 	// that hole on the one column nobody was watching. Same adapter,
-	// same rule, one home (visibility.CanAttachAsset, ADR 0064).
+	// same rule, one home (visibility.CanSeeAssetContent, ADR 0064).
 	//
 	// The refusal is byte-identical to the cover's, and to the FK
 	// backstop below, so an unreadable thumbnail and a nonexistent one
@@ -1855,7 +1855,7 @@ func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 //
 // # Why it is not a second rule
 //
-// The two-plane conjunction lives in visibility.CanAttachAsset, which
+// The two-plane conjunction lives in visibility.CanSeeAssetContent, which
 // the collection surface calls through collections.mayCollectAsset
 // (#882). This is the posts-side adapter over the same function, not a
 // second readability notion — epic #665, and the sprints #892 and #904
@@ -1864,7 +1864,7 @@ func (h *Handler) mayAttachAsset(ctx context.Context, id *auth.Identity, assetID
 	if id == nil {
 		return false, nil
 	}
-	return visibility.CanAttachAsset(
+	return visibility.CanSeeAssetContent(
 		ctx,
 		h.Pool,
 		visibility.NewCaller(&id.UserRef),

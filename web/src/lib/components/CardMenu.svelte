@@ -113,6 +113,18 @@
      *  #578 specified: hidden at rest on fine pointers, revealed on
      *  hover / focus, always shown on touch. */
     revealed?: boolean;
+    /** Where the trigger sits (#1136).
+     *
+     *  `overlay` — the historical placement: absolutely positioned at
+     *  the artwork's top-right on a dark translucent disc, hidden at
+     *  rest. Designed to survive an unknown photograph underneath it.
+     *
+     *  `inline` — an ordinary flow element in a chrome band OUTSIDE the
+     *  preview, for thumbnail's frame layout. Always visible (it is not
+     *  covering anything, and `revealed` is about artwork), and it wears
+     *  the theme's own colours: the black disc is camouflage for a
+     *  photograph, and on a solid panel it reads as a sticker. */
+    placement?: 'overlay' | 'inline';
   }
 
   let {
@@ -122,6 +134,7 @@
     manageAccess = null,
     editPath = null,
     revealed = false,
+    placement = 'overlay',
   }: Props = $props();
 
   // What this card would put in a collection, and which endpoint that
@@ -281,10 +294,13 @@
   stretched nav link + the title overlay.
 -->
 <div
-  class="pointer-events-none absolute right-2 top-2 z-20 transition-opacity duration-150
-         {revealed
+  class="pointer-events-none transition-opacity duration-150
+         {placement === 'inline'
     ? 'opacity-100'
-    : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100'}
+    : 'absolute right-2 top-2 z-20 ' +
+      (revealed
+        ? 'opacity-100'
+        : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100')}
          {open ? 'opacity-100' : ''}"
 >
   <button
@@ -314,11 +330,16 @@
          the alternative and is wrong here: the ⋯ sits 8px from the tile
          corner, and a control that grows on hover would cross the edge. -->
     <span
-      class="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white ring-1
-             ring-transparent backdrop-blur-sm transition-colors
-             group-hover/tool:bg-black/85 group-hover/tool:ring-white/40
-             group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80
-             {open ? 'bg-black/85 ring-white/40' : ''}"
+      class="flex h-9 w-9 items-center justify-center rounded-full ring-1 ring-transparent
+             transition-colors
+             {placement === 'inline'
+        ? 'text-fg-muted hover:bg-state-hover group-hover/tool:bg-state-hover group-hover/tool:text-fg ' +
+          'group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-ring ' +
+          (open ? 'bg-state-hover text-fg' : '')
+        : 'bg-black/60 text-white backdrop-blur-sm ' +
+          'group-hover/tool:bg-black/85 group-hover/tool:ring-white/40 ' +
+          'group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80 ' +
+          (open ? 'bg-black/85 ring-white/40' : '')}"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <circle cx="12" cy="5" r="1.75" />

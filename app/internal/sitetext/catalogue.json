@@ -137,6 +137,8 @@
       "feed": "Feed",
       "thumbnail": "Thumbnail",
       "list": "List"
+    ,
+      "list_unavailable": "List view isn’t available for this content — showing tiles instead."
     },
     "filter": {
       "label": "Feed filter",

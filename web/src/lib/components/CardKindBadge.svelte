@@ -41,9 +41,19 @@
      *  look — pill, scrim, backdrop blur — and the caller owns where it
      *  sits, because that differs per density. */
     class?: string;
+    /** Which surface the badge sits on (#1136).
+     *
+     *  `overlay` — over artwork. The black pill and the backdrop blur
+     *  are camouflage: they have to survive an unknown photograph
+     *  underneath, at any brightness.
+     *
+     *  `inline` — in a chrome band, on the card's own surface, where
+     *  that camouflage reads as a sticker. Same glyph, same notation,
+     *  same accessible name; theme colours instead of the scrim. */
+    variant?: 'overlay' | 'inline';
   }
 
-  let { kind, count = 1, class: klass = '' }: Props = $props();
+  let { kind, count = 1, class: klass = '', variant = 'overlay' }: Props = $props();
 
   const multi = $derived(count > 1);
   const KindIcon = $derived(iconForKind(kind));
@@ -53,8 +63,9 @@
 </script>
 
 <span
-  class="pointer-events-none inline-flex items-center rounded-full bg-black/60 text-white
-         backdrop-blur-sm {multi ? 'gap-1 px-2 py-1 text-xs font-semibold' : 'p-1.5'} {klass}"
+  class="pointer-events-none inline-flex items-center rounded-full
+         {variant === 'inline' ? 'text-fg-muted' : 'bg-black/60 text-white backdrop-blur-sm'}
+         {multi ? 'gap-1 px-2 py-1 text-xs font-semibold' : 'p-1.5'} {klass}"
   data-testid={multi ? 'card-kind-multi' : 'card-kind'}
   aria-label={label}
   title={label}

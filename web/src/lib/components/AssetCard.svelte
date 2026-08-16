@@ -14,11 +14,12 @@
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
   import { kindForAsset } from './viewers/controller';
+  import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import { auth } from '$stores/auth.svelte';
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
-  import { masonryLayout, MASONRY_OVERLAY_MIN_COL_PX } from '$stores/masonryLayout.svelte';
+  import { masonryLayout, masonryOverlayTier } from '$stores/masonryLayout.svelte';
   import { t } from '$stores/lang.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
@@ -72,14 +73,21 @@
   // across the bottom of the artwork would cover the entire work. Those
   // facts move to the hover tooltip.
   //
-  // ABOVE THE CALIBRATED COLUMN WIDTH the tile is wider than a default
-  // grid tile and there is nothing compact left to justify, so it takes
-  // the ordinary hover chrome back (owner amendment). The switch is the
-  // RENDERED width and not the rung — see masonryLayout for why, and for
-  // where the number comes from.
-  const masonryWide = $derived(
-    mode === 'masonry' && masonryLayout.colWidth >= MASONRY_OVERLAY_MIN_COL_PX,
+  // ABOVE THE CALIBRATED BOX the tile is wider than a default grid tile
+  // and there is nothing compact left to justify, so it takes the
+  // ordinary hover chrome back (owner amendment). The switch is the
+  // RENDERED BOX and not the rung — see masonryLayout for why, and for
+  // where all three numbers come from.
+  //
+  // HEIGHT IS HALF THE QUESTION (#1139). Width alone let a wide, short
+  // spanning tile through and then clipped the artist's avatar and name
+  // off its bottom edge; between the two heights the overlay compresses
+  // to the title alone instead. The twin in PostCard carries the same
+  // three tiers from the same function — one rule, two cards.
+  const overlayTier = $derived(
+    mode === 'masonry' ? masonryOverlayTier(masonryLayout.box(asset.id)) : 'minimal',
   );
+  const masonryWide = $derived(mode === 'masonry' && overlayTier !== 'minimal');
   const compact = $derived(mode === 'masonry' && !masonryWide);
 
   // The kind, as the icon vocabulary #1111 established (#1047). Resolved
@@ -262,21 +270,20 @@
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if detailed && !restricted}
-    <!-- Details HEADER (#556). The owner's ask was "there should be a
-         top to the thumbnail cards … title near the top": the title now
-         LEADS the card instead of trailing it as a caption strip.
-         Actions are NOT duplicated here — per the owner's 2026-07-25
-         amendment the ⋮ CardMenu is the one action affordance in every
-         mode, so it stays in its overlay position over the thumb.
-         Kept self-contained: #552 swaps this field set for an
-         operator-configured one, and wants that swap local. -->
-    <div class="border-b border-border px-3 py-2">
-      <a
-        href="/assets/{asset.id}"
-        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
-      </a>
+    <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
+         Format on the left, type icon on the right — the owner's
+         placement grammar, and the twin of PostCard's. It REPLACES
+         #556's title header; the title moves down into the metadata
+         stack where one fact per row reads as a record. See PostCard's
+         band for the full argument, written once. -->
+    <div
+      class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5"
+      data-testid="thumb-band-top"
+    >
+      <span class="truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted">
+        {asset.file_extension ? asset.file_extension.replace(/^\./, '') : ''}
+      </span>
+      <CardKindBadge {kind} variant="inline" />
     </div>
   {/if}
 
@@ -299,6 +306,7 @@
     pixelWidth={asset.pixel_width}
     pixelHeight={asset.pixel_height}
     titleAdjacent={detailed}
+    matteColor={detailed ? thumbhashMatteColor(asset.thumbhash) : null}
     {restricted}
     restrictedOwnerName={asset.owner_display_name ?? null}
     requestAssetId={restricted ? asset.id : null}
@@ -326,8 +334,12 @@
         aria-label={asset.title}
       ></a>
 
-      <!-- Multi-select checkbox (top-left). -->
-      <CardCheckbox id={asset.id} />
+      <!-- Multi-select checkbox (top-left). NOT IN THUMBNAIL (#1136):
+           it is an inline control in the bottom band there, so nothing
+           sits over the preview. -->
+      {#if !detailed}
+        <CardCheckbox id={asset.id} />
+      {/if}
 
       <!-- The kind, as an ICON and never as a word (#1047). This is the
            replacement for CardThumb's hardcoded `video` / `3D` text
@@ -345,7 +357,9 @@
            Suppressed under `compact`: a 60px masonry tile is one 44px
            control band tall, and the wall is about the art. The kind is
            in its hover tooltip there instead (#652). -->
-      {#if !compact}
+      <!-- NOT IN THUMBNAIL (#1136): the same badge draws in the top
+           chrome band, which leaves the artwork untouched. -->
+      {#if !compact && !detailed}
         <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" />
       {/if}
     {/if}
@@ -359,8 +373,18 @@
                p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
       >
         <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
-        <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
-        {#if origin}
+        <!-- The COMPRESSED tier keeps the title and drops everything
+             under it (#1139). This overlay is bottom-anchored so it
+             cannot spill past the picture the way PostCard's
+             `justify-between` stack could — what it does on a short
+             wide tile is cover nearly all of it, which on a density
+             whose premise is "maximum art per page" is the same
+             complaint wearing different clothes. One line of caption
+             is what fits; the date and the peer stay in the tooltip. -->
+        {#if overlayTier !== 'compressed'}
+          <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
+        {/if}
+        {#if origin && overlayTier !== 'compressed'}
           <!-- Provenance rides EVERY density, not just the details tile
                (#552). Grid is the default view: attributing remote work
                only in a mode most people never switch to would leave it
@@ -374,10 +398,12 @@
       </div>
     {/if}
 
-    {#if !restricted}
+    {#if !restricted && !detailed}
       <!-- Overflow menu (info / copy link / edit / add-to-collection). ONE affordance
            in every mode, including thumbnail — owner amendment 2026-07-25
-           to #556, superseding "actions visible in the details tile". -->
+           to #556, superseding "actions visible in the details tile".
+           Thumbnail renders the SAME component inline in its bottom band
+           (#1136); still exactly one per card. -->
       <CardMenu
         assetId={asset.id}
         detailPath="/assets/{asset.id}"
@@ -386,19 +412,25 @@
     {/if}
   </CardThumb>
 
-  {#if detailed && !restricted && (owner || cardFields.length > 0 || origin)}
-    <!-- Details FOOTER — thumbnail's PERSISTENT chrome (#1047).
+  {#if detailed && !restricted}
+    <!-- ═══ #1136: the METADATA STACK ══════════════════════════════
          "Information at a glance, preview still clear" (owner's density
-         table): the identity sits AROUND the image, not over it, and it
-         is not hover-gated. Grid's #1111 vocabulary, same components,
-         same order (kind, then who, then what) — the two densities are
-         meant to read as one language, and the difference between them
-         is when it appears, not what it says.
+         table), now with the owner's placement grammar: one fact per
+         row, BELOW the preview, never over it — title, artist, then the
+         operator's `show_on_card` fields (#552).
 
-         The title stays in the header, where #556 put it on the owner's
-         "there should be a top to the thumbnail cards" note; this is the
-         supporting half. -->
-    <div class="space-y-1.5 px-3 py-2">
+         The rows are unconditional where the fact exists, and the block
+         itself is no longer gated on `owner || fields || origin`: the
+         TITLE is always present, so a card with no artist and no
+         configured fields still has a metadata stack, where before it
+         rendered a bare picture with a header. -->
+    <div class="space-y-1 px-3 py-2" data-testid="thumb-metadata">
+      <a
+        href="/assets/{asset.id}"
+        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <p class="truncate text-sm font-medium text-fg" title={asset.title}>{asset.title}</p>
+      </a>
       {#if owner}
         <!-- The artist. A SIBLING link, not nested inside the card's
              own anchor — nested anchors are invalid HTML and
@@ -431,6 +463,23 @@
           </p>
         {/if}
       </a>
+    </div>
+
+    <!-- ═══ #1136: the BOTTOM CHROME BAND ══════════════════════════
+         Selection left, actions right, inside the frame. The twin of
+         PostCard's — see it for why these two controls stop being
+         hover-revealed once they are off the artwork. -->
+    <div
+      class="flex items-center justify-between border-t border-border px-1.5 py-0.5"
+      data-testid="thumb-band-bottom"
+    >
+      <CardCheckbox id={asset.id} placement="inline" />
+      <CardMenu
+        assetId={asset.id}
+        detailPath="/assets/{asset.id}"
+        editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+        placement="inline"
+      />
     </div>
   {/if}
 </div>

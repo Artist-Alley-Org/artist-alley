@@ -183,6 +183,56 @@ equivalent worth testing is *anonymous* denial, not non-owner denial.
 Until the row-level story changes (Phase 1.28 blur-and-reveal, or #210), that asymmetry is the
 design, not a gap.
 
+### Amendment 2026-08-16 (#1135) — the same conjunction gates TEXT ANNOTATIONS, so it is no longer named after attaching
+
+`GET /assets/{id}/text-annotations` and its create + update siblings gated on `assetExists` — a
+bare presence check, the exact shape #1132 had just eliminated from the post surface. Any
+signed-in caller could read and write annotations on an asset whose bytes they were never
+entitled to, and presence made the endpoint a UUID-existence oracle besides.
+
+#1132 left it deliberately, because the asset answer is a **choice between planes**, not a
+transcription of the post rule. #1135 made the choice:
+
+> **A text annotation is governed by the CONTENT plane.** It is not metadata *about* a row — its
+> anchor names a line/column range *inside* the document and its body discusses what stands
+> there. Handing back other people's reading of a document is one container over from handing
+> back the document (the #899/#902 class).
+
+The two planes that were **rejected**, recorded because each would have reviewed as if it worked:
+
+- **Row plane alone** (`CanSee(EntityAsset)`) gates *nothing here*. The authenticated asset
+  predicate is `deleted_at IS NULL` and no more, so it returns true for every signed-in caller
+  against every undeleted asset — a gate that changes no verdict. This is the same trap
+  `collections.mayCollectAsset` already documents.
+- **`FieldsReadable`** is wrong in the other direction: per #939 it admits the field plane to
+  holders of a *mutation* capability, so a team lead entitled to retitle a picture would be
+  admitted to what reviewers said about what is **in** it. That scopes the gate to the caller's
+  editing rights rather than to the payload — the #881 lesson.
+
+**The rule already existed.** "Row ∧ content, for the same caller" is exactly what the attach
+amendment below decided, so #1135 added no expression — it **renamed** the one there is:
+`visibility.CanAttachAsset` → **`visibility.CanSeeAssetContent`** (`visibility/asset_content.go`).
+Three callers now: `collections.mayCollectAsset`, `posts.mayAttachAsset`,
+`social.assetContentReadable`. The name was the only thing that had to change, which is the
+property epic #665 is after — when a second surface asks the same security question, the answer
+should be a call, not a copy. *(References to the old name in dated roadmap entries are left as
+written; they are a record of what shipped when.)*
+
+Also recorded: the **update** endpoint needed the gate most, and its ordering is load-bearing.
+`UpdateTextAnnotation` authorises on author-**or-moderator**, and a `comments.delete.any` holder
+is by construction neither the author nor the owner — so before this fix they could edit, and
+(since the handler echoes the row back) *read*, annotations on documents they were never
+admitted to. The gate runs **before** the author/moderator check, or the refusal would be a
+distinguishable 403 on an asset you cannot reach versus a 404 on one that does not exist,
+re-opening the oracle. The write arms are asserted against the **persisted** row, not the
+handler's own answer (#946).
+
+Two `SELECT EXISTS (... FROM assets ...)` pre-checks survive the sweep and are deliberately kept:
+`assets.SetAITagsForAsset` and `transcribe.Writer.SetAITranscriptForAsset` are AI-pipeline write
+entry points with **no caller identity in scope**. They ask "is there still a row to write to";
+there is no principal to withhold from, and inventing one is how a system job acquires a user's
+permissions.
+
 ### Amendment 2026-08-06 (#922, PR #940) — the ATTACH rule has one home now
 
 The membership amendment below governs what a container **shows**. There is a second, distinct
@@ -192,7 +242,7 @@ answers in two packages.
 > **A caller may attach an asset iff they could have reached it standalone AND are entitled to its
 > content tier** — the row plane and the content plane, conjoined, for the same caller.
 
-That composition now lives in **`visibility.CanAttachAsset`**, beside the two planes it composes,
+That composition now lives in **`visibility.CanSeeAssetContent`**, beside the two planes it composes,
 and both container packages call it through thin identity adapters (`collections.mayCollectAsset`,
 `posts.mayAttachAsset`).
 
@@ -219,7 +269,7 @@ Two things worth recording because both were surprises:
 
 ~~**Still open**: the post's `cover_asset_id` / `cover_thumbnail_asset_id` are **not** routed through
 this rule when supplied explicitly (**#941**).~~ **CLOSED — both columns now route through
-`visibility.CanAttachAsset`.** `cover_asset_id` in **#941** (create and update), and
+`visibility.CanSeeAssetContent`.** `cover_asset_id` in **#941** (create and update), and
 `cover_thumbnail_asset_id` in **#946 / PR #959** (`e4d699ee`).
 
 ⚠️ **They closed nearly three weeks apart, and the gap is the lesson.** #941 gated the column

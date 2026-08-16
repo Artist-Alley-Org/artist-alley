@@ -227,7 +227,7 @@ func PostLiveGrantSQL(qualifier string, argIdx int) string {
 // GET /posts/{id} and drifted the first time a tier moved.
 //
 // So it sits beside the expression it probes, exactly like
-// [CanAttachAsset] sits beside the two planes it composes (#922). There
+// [CanSeeAssetContent] sits beside the two planes it composes (#922). There
 // is still only ONE expression of the post read rule —
 // [postReadableExpr] — and this runs it as an EXISTS against one id, so
 // the single-item answer cannot diverge from what the feed lists. That

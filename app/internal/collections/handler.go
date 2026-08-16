@@ -1206,7 +1206,7 @@ var errAssetMissing = errors.New("collections: asset row absent")
 // # The rule
 //
 // The two-plane conjunction that answers it — CanSee(EntityAsset) AND
-// CanReadContent — lives in visibility.CanAttachAsset, which carries the
+// CanReadContent — lives in visibility.CanSeeAssetContent, which carries the
 // full reasoning: why each plane is load-bearing on its own account, why
 // the SystemAdmin / ContentReadAll short-circuits are inherited, and why
 // it fails closed. #922 needed the identical question on the post
@@ -1221,7 +1221,7 @@ func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetI
 	if id == nil {
 		return false, nil
 	}
-	return visibility.CanAttachAsset(
+	return visibility.CanSeeAssetContent(
 		ctx,
 		h.Pool,
 		visibility.NewCaller(&id.UserRef),

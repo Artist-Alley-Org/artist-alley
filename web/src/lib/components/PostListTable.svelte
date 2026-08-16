@@ -25,7 +25,26 @@
   interface PostMember {
     asset_id: string;
     sort_order: number;
-    asset: AssetSummary;
+    /** ⚠️ OPTIONAL, and this table never reads it (#1137).
+     *
+     *  It was declared REQUIRED, which was false twice over. On the
+     *  wire it is absent for a member the caller may not see — #883
+     *  omits the object and sets `restricted` instead — so a table
+     *  demanding it was demanding something the API does not always
+     *  send. And nothing here consults it: the row thumbnail resolves
+     *  from `cover_asset_id` or `members[0].asset_id`, both of which
+     *  are present either way.
+     *
+     *  The cost of that false requirement was not hypothetical. It is
+     *  what made this table unusable from the collection page, whose
+     *  own (correct) member type has `asset?` — TypeScript reported a
+     *  shape mismatch between two descriptions of the SAME payload, and
+     *  the surface went without a list view rather than with a cast.
+     *  That is the #1099 trap from the component side: a local
+     *  interface that over-declares is a compatibility barrier around a
+     *  component that was always compatible. Declare from the schema,
+     *  not from convenience. */
+    asset?: AssetSummary;
   }
   // The renderable identity behind `author_user_ref` (#557). Already on
   // every /posts payload — `enrichAuthors` stamps it per request from
