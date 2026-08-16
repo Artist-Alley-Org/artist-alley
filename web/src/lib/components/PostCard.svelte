@@ -688,15 +688,46 @@
          no-file placeholder), and the band then carries the kind alone
          rather than an empty cell. -->
     <div
-      class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5"
+      class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
     >
-      <span class="truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted">
-        {coverFileExtension ? coverFileExtension.replace(/^\./, '') : ''}
-      </span>
+      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
       {#if !coverRestricted}
-        <CardKindBadge kind={coverKind} count={memberCount} variant="inline" />
+        <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
       {/if}
+      <!-- #1144: the extension is MEANINGLESS ON A MULTI-ASSET POST —
+           "which file's extension?" has no answer, and the one we were
+           drawing was the COVER's, which is an arbitrary member. So a
+           multi-asset tile drops it and keeps the count + shapes icon,
+           which say the true thing (how many, and that they are mixed).
+
+           A single-asset tile KEEPS it, and that is the stated choice:
+           there the label is unambiguous and it is the fact a working
+           shelf sorts on — PNG next to PSD next to MP4 — which is why
+           #1136 put a format band up here in the first place. -->
+      {#if memberCount <= 1 && coverFileExtension}
+        <!-- #1144: HIDDEN BELOW `sm`, and that is the "only where
+             meaningful" half of the rule applied to width rather than to
+             cardinality. At 390px the thumbnail grid is two-up, so a tile
+             is ~157px and the band's three 44px-tall controls leave the
+             format label about 30px — enough to render "M.." and nothing
+             else. A truncated format label is not a shorter fact, it is
+             noise that reads as a bug, so the label is dropped and the
+             kind icon (which is exact at any width) carries the answer
+             alone. Same judgement as the multi-asset case one branch up:
+             say the true thing or say nothing. -->
+        <span class="hidden truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted sm:inline">
+          {coverFileExtension.replace(/^\./, '')}
+        </span>
+      {/if}
+      <span class="flex-1"></span>
+      <CardMenu
+        assetId={coverAssetId}
+        postId={post.id}
+        detailPath="/posts/{post.id}"
+        manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+        placement="inline"
+      />
     </div>
   {/if}
 
@@ -779,8 +810,7 @@
       <CardKindBadge
         kind={coverKind}
         count={memberCount}
-        class="absolute bottom-2 right-2 z-[2]"
-      />
+        class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} />
     {/if}
 
     {#if showOverlay}
@@ -877,7 +907,7 @@
              beside it, so this never becomes `members.length` and never
              becomes an unbounded query for a badge. -->
         <div class="relative flex items-start justify-between gap-2">
-          <CardKindBadge kind={coverKind} count={memberCount} />
+          <CardKindBadge kind={coverKind} count={memberCount} tooltipKey={post.id} />
         </div>
 
         <!-- BOTTOM-LEFT: identity. Title, then the author.
@@ -1167,35 +1197,6 @@
       </a>
     </div>
 
-    <!-- ═══ #1136: the BOTTOM CHROME BAND ══════════════════════════
-         The owner's grammar's last row: selection on the left, actions
-         on the right, both INSIDE the frame.
-
-         This is the half that actually clears the preview. The checkbox
-         and the ⋯ were the two things still drawn over the artwork in
-         this density, and they were there because on a discovery wall
-         transient affordances over the image are conventional and right
-         (#1136 says as much, and grid keeps them). Thumbnail is not a
-         discovery wall — it is the density someone works a shelf in —
-         so its controls are PERSISTENT chrome in a band, not chrome
-         that appears on the art when you approach it.
-
-         Both are always visible here, which follows from the same
-         argument: hiding a control until hover is a concession to the
-         artwork it covers, and these cover nothing. -->
-    <div
-      class="flex items-center justify-between border-t border-border px-1.5 py-0.5"
-      data-testid="thumb-band-bottom"
-    >
-      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
-      <CardMenu
-        assetId={coverAssetId}
-        postId={post.id}
-        detailPath="/posts/{post.id}"
-        manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
-        placement="inline"
-      />
-    </div>
   {/if}
 </div>
 

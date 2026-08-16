@@ -277,13 +277,37 @@
          stack where one fact per row reads as a record. See PostCard's
          band for the full argument, written once. -->
     <div
-      class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5"
+      class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
     >
-      <span class="truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted">
-        {asset.file_extension ? asset.file_extension.replace(/^\./, '') : ''}
-      </span>
-      <CardKindBadge {kind} variant="inline" />
+      <CardCheckbox id={asset.id} placement="inline" />
+      <CardKindBadge {kind} variant="inline" tooltipKey={asset.id} />
+      <!-- #1144: an ASSET is always singular, so the "which file's
+           extension?" ambiguity PostCard's band has cannot arise here and
+           the format label always earns its place. This is the single-
+           asset half of the stated choice, not an exemption from it. -->
+      {#if asset.file_extension}
+        <!-- #1144: HIDDEN BELOW `sm`, and that is the "only where
+             meaningful" half of the rule applied to width rather than to
+             cardinality. At 390px the thumbnail grid is two-up, so a tile
+             is ~157px and the band's three 44px-tall controls leave the
+             format label about 30px — enough to render "M.." and nothing
+             else. A truncated format label is not a shorter fact, it is
+             noise that reads as a bug, so the label is dropped and the
+             kind icon (which is exact at any width) carries the answer
+             alone. Same judgement as the multi-asset case one branch up:
+             say the true thing or say nothing. -->
+        <span class="hidden truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted sm:inline">
+          {asset.file_extension.replace(/^\./, '')}
+        </span>
+      {/if}
+      <span class="flex-1"></span>
+      <CardMenu
+        assetId={asset.id}
+        detailPath="/assets/{asset.id}"
+        editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+        placement="inline"
+      />
     </div>
   {/if}
 
@@ -360,7 +384,7 @@
       <!-- NOT IN THUMBNAIL (#1136): the same badge draws in the top
            chrome band, which leaves the artwork untouched. -->
       {#if !compact && !detailed}
-        <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" />
+        <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" tooltipKey={asset.id} />
       {/if}
     {/if}
 
@@ -465,21 +489,5 @@
       </a>
     </div>
 
-    <!-- ═══ #1136: the BOTTOM CHROME BAND ══════════════════════════
-         Selection left, actions right, inside the frame. The twin of
-         PostCard's — see it for why these two controls stop being
-         hover-revealed once they are off the artwork. -->
-    <div
-      class="flex items-center justify-between border-t border-border px-1.5 py-0.5"
-      data-testid="thumb-band-bottom"
-    >
-      <CardCheckbox id={asset.id} placement="inline" />
-      <CardMenu
-        assetId={asset.id}
-        detailPath="/assets/{asset.id}"
-        editPath={canEdit ? `/assets/${asset.id}/edit` : null}
-        placement="inline"
-      />
-    </div>
   {/if}
 </div>
