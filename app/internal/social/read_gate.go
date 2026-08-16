@@ -214,7 +214,8 @@ func (h *Handler) assetContentReadable(ctx context.Context, id *auth.Identity, a
 		caller = visibility.NewCaller(&ref)
 		caps = func(code string) bool { return id.Can(code) }
 	}
-	ok, err := visibility.CanSeeAssetContent(ctx, h.Pool, caller, caps, assetID)
+	ok, err := visibility.CanSeeAssetContent(ctx, h.Pool, caller, caps, assetID,
+		visibility.MatureFromContext(ctx))
 	if err != nil {
 		return false, fmt.Errorf("social: asset content gate: %w", err)
 	}

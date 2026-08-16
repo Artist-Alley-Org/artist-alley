@@ -3,6 +3,8 @@
 
 package visibility
 
+import "context"
+
 // ---------------------------------------------------------------------------
 // The mature-content qualification predicate (#1115, epic #1114, ADR 0090)
 // ---------------------------------------------------------------------------
@@ -186,3 +188,95 @@ const (
 	MatureOwnerColAsset = "owner_user_ref"
 	MatureOwnerColPost  = "author_user_ref"
 )
+
+// ---------------------------------------------------------------------------
+// Resolving a viewer (#1116/#1117)
+// ---------------------------------------------------------------------------
+
+// MatureResolver turns a caller into the three-conjunct answer above.
+//
+// # Why this is an INTERFACE here rather than a struct somewhere
+//
+// [MatureViewer]'s three fields come from three different places — the
+// session, `user_preferences`, and `system_config` — and only the first
+// is already in scope wherever a predicate is composed. Something has
+// to read the other two, and that something needs a pool and a config
+// store, which this package deliberately does not have.
+//
+// So the CONTRACT lives here, beside the rule it feeds, and the
+// implementation lives at the HTTP edge where both stores already are
+// (see `http.matureResolverAdapter`). Every consuming package holds
+// this one type instead of declaring its own, which is the difference
+// between one spelling of "who qualifies" and six.
+//
+// # It is called ONCE PER REQUEST, never per row
+//
+// The whole reason [MatureViewer] is a struct of resolved booleans
+// rather than a closure is that the answer is stable for the life of a
+// request and has to reach a SQL fragment and a cache key. A resolver
+// consulted per row would be a preferences lookup per row.
+type MatureResolver interface {
+	// ResolveMature answers for this caller. Implementations must NOT
+	// return a widened viewer on error — see [ResolveMatureOr].
+	ResolveMature(ctx context.Context, caller Caller) (MatureViewer, error)
+}
+
+// ResolveMatureOr is the seam every call site should use, and it exists
+// so that "what happens when the lookup fails" is answered once.
+//
+// ⚠️ IT FAILS CLOSED, and that is the opposite of the sibling decision
+// in `posts.showRestricted` — deliberately, because the two gates
+// protect different things.
+//
+// `showRestricted` degrades to the build's DEFAULT FEED, and the
+// argument there is explicitly that "it leaks nothing either way: the
+// redaction that protects the content already happened". That argument
+// does not transfer. This gate IS the redaction. A viewer resolved
+// permissively on a failed preferences read is a viewer who is shown
+// mature content they never opted into — the exact outcome the whole
+// axis exists to prevent — and unlike a shortened feed, it cannot be
+// taken back once it has been rendered.
+//
+// A nil resolver resolves the same way, and that case is real rather
+// than defensive: it is the boot-order and test-construction path, and
+// a handler wired without its resolver must refuse to widen rather than
+// silently serve every reader the unfiltered library.
+//
+// The cost of failing closed is bounded and symmetric: an opted-in
+// reader briefly sees the same library an opted-out reader sees. The
+// cost of failing open is unbounded.
+func ResolveMatureOr(ctx context.Context, r MatureResolver, caller Caller) MatureViewer {
+	if r == nil {
+		return AnonymousMatureViewer
+	}
+	v, err := r.ResolveMature(ctx, caller)
+	if err != nil {
+		return AnonymousMatureViewer
+	}
+	return v
+}
+
+// CacheKey is the component every cache keyed on a request's inputs
+// must include (#1117).
+//
+// `search.keyForQuery` states the rule this satisfies: "every input the
+// Engine READS is a component of the key". Without this, an opted-in
+// reader's cached result page is served verbatim to an opted-out one —
+// a leak that is invisible in every single-caller test, because it
+// needs two callers and a warm cache to appear at all.
+//
+// Three characters, one per conjunct, so the string is fixed-width and
+// a missing conjunct cannot alias with a present one.
+func (v MatureViewer) CacheKey() string {
+	b := []byte("---")
+	if v.SignedIn {
+		b[0] = 'i'
+	}
+	if v.OptedIn {
+		b[1] = 'o'
+	}
+	if v.InstanceAllows {
+		b[2] = 'a'
+	}
+	return string(b)
+}

@@ -533,6 +533,38 @@ func (h *Handler) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (boo
 	return prefs.FeedFilters.ShowRestricted, nil
 }
 
+// ShowMatureContent reports whether this account has opted IN to being
+// shown mature content (#1116, ADR 0090 §2).
+//
+// ⚠️ THIS IS ONE CONJUNCT OF THREE, NOT THE ANSWER. The reader also has
+// to be signed in, and the INSTANCE has to allow the feature — an
+// operator setting this row says nothing about. `true` here on an
+// install whose operator has switched mature content off still means
+// "hidden". [visibility.QualifiesForMature] is where the three meet;
+// nothing should branch on this value alone, which is why the name says
+// what the COLUMN holds rather than what the viewer gets.
+//
+// It rides the same 5-minute by_user LRU as ShowRestrictedFeedMembers,
+// for the same reason: this is consulted once per feed page, per search
+// and per addressed asset, and a cold PK lookup on each would be a
+// preferences read on the hottest paths in the app.
+//
+// AN ERROR IS PROPAGATED RATHER THAN FLATTENED TO FALSE, which is the
+// opposite of the sibling above and is deliberate. There, `false` on
+// error IS the default experience and the doc says so. Here `false`
+// happens to be the safe answer too — but returning it silently would
+// let the caller treat "this reader has not opted in" and "we could not
+// find out" as the same fact, and only one of those should be logged.
+// The failing-closed decision belongs at one seam, and that seam is
+// visibility.ResolveMatureOr.
+func (h *Handler) ShowMatureContent(ctx context.Context, ref int64) (bool, error) {
+	prefs, err := h.loadPreferences(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	return prefs.MatureContent.Show, nil
+}
+
 // touch keeps the time import live for the (currently unused)
 // updated_at logging path; pre-empting an unused-import error if we
 // later add a "saved X seconds ago" admin surface against the

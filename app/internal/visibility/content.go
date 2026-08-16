@@ -207,7 +207,25 @@ func CanReadContent(
 	caller Caller,
 	caps CapabilityChecker,
 	assetID uuid.UUID,
+	mature MatureViewer,
 ) (bool, error) {
+	// ⚠️ THE MATURE AXIS IS RESOLVED BELOW THE SHORT-CIRCUIT, NOT ABOVE
+	// IT (#1116, ADR 0090 §1). `system.admin` is exempt and returns
+	// early with the other admin arm; `content.read.all` is NOT, and
+	// that separation is the whole reason this function grew a
+	// parameter instead of an early return.
+	//
+	// `content.read.all` is a CLEARANCE capability — "admits the bytes
+	// at EVERY tier", for the demo-viewer that has to render a
+	// mostly-restricted catalogue. Mature is a RATING axis, and the two
+	// are orthogonal by ADR 0090 §1. Letting a clearance capability
+	// satisfy a rating conjunct scopes the gate to the caller's
+	// STANDING rather than to the payload, which is #881's lesson, and
+	// it would have had a live consequence rather than a theoretical
+	// one: the public demo runs on exactly this capability, so every
+	// mature asset on it would have streamed its bytes to anonymous
+	// visitors while the feed correctly hid the rows.
+	//
 	// Anonymous callers are NOT rejected outright (#415): a public-tier
 	// asset is readable by anyone, which is what public mode means.
 	// They resolve against the sensitivity tier alone and never reach
@@ -219,7 +237,7 @@ func CanReadContent(
 	// admits the bytes at EVERY tier — restricted, team, embargo — which
 	// is the point: a demo-viewer must render a mostly-restricted
 	// catalogue. It grants nothing beyond these bytes; see its doc.
-	if caps != nil && (caps(SystemAdmin) || caps(ContentReadAll)) {
+	if caps != nil && caps(SystemAdmin) {
 		return true, nil
 	}
 
@@ -227,11 +245,12 @@ func CanReadContent(
 		sensitivity string
 		owner       *int64
 		teamID      pgtype.UUID
+		isMature    bool
 	)
 	err := pool.QueryRow(ctx,
-		`SELECT sensitivity, owner_user_ref, team_id FROM assets WHERE id = $1`,
+		`SELECT sensitivity, owner_user_ref, team_id, mature FROM assets WHERE id = $1`,
 		assetID,
-	).Scan(&sensitivity, &owner, &teamID)
+	).Scan(&sensitivity, &owner, &teamID, &isMature)
 	if err != nil {
 		// Includes pgx.ErrNoRows: an asset we cannot read is an asset
 		// whose bytes we do not hand out.
@@ -256,7 +275,14 @@ func CanReadContent(
 			return false, fmt.Errorf("visibility.CanReadContent: team membership: %w", err)
 		}
 	}
-	return ContentReadable(sensitivity, owner, caller, caps, member), nil
+	// Both axes, ANDed, never merged (ADR 0090 §1). The clearance
+	// answer is unchanged — ContentReadable still owns it, including
+	// the `content.read.all` arm that no longer short-circuits above.
+	if !ContentReadable(sensitivity, owner, caller, caps, member) {
+		return false, nil
+	}
+	isOwner := owner != nil && *owner == caller.UserRef
+	return MatureItemVisible(mature, isMature, isOwner, caps != nil && caps(SystemAdmin)), nil
 }
 
 // ContentReadable is the query-free core of the binary-plane rule (ADR

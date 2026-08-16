@@ -94,6 +94,35 @@ type ListPostsPageParams struct {
 	// Ascending flips the feed to oldest-first (?dir=asc). It moves the
 	// ORDER BY and the keyset predicate TOGETHER — see feedOrder.
 	Ascending bool
+	// Mature is the caller's resolved mature-content qualification
+	// (#1116, ADR 0090 §2/§3). ZERO VALUE DISQUALIFIES, which is the
+	// property that makes a caller who forgets to set it fail closed.
+	//
+	// ⚠️ THIS IS A ROW-PLANE CONJUNCT, NOT A PRESENTATION FILTER, and
+	// the distinction decides which of two existing mechanisms it joins.
+	//
+	// #921's `applyHideRestricted` is the other one, and it is the wrong
+	// home for this. That filter runs in Go over an already-enriched
+	// page, subtracting posts whose members were all redacted — a
+	// PRESENTATION preference layered on top of a rule that already
+	// returned the row, and it says so ("deliberately incapable of
+	// disagreeing with the rule because it does not know the rule").
+	// Mature is not a preference about how a returned row is drawn; it
+	// is a rule about whether the row is returned. Putting it there
+	// would have made it (a) defeatable by `show_restricted`, which is
+	// an unrelated toggle, and (b) absent from ListSharedWithMeGated
+	// and ListPostsByAssetGated, which never call it.
+	//
+	// So it lives HERE, beside `ruleFrag`, where every sibling query
+	// composes it too and where a disqualified viewer's mature post is
+	// never in the result set to begin with.
+	Mature visibility.MatureViewer
+	// MatureAdmin waives the mature axis for a `system.admin` caller,
+	// who has to be able to moderate what the instance switch hid (ADR
+	// 0090 §2). It waives NOTHING ELSE — the read rule above still
+	// applies in full, so this is not an `IncludeDeleted`-style
+	// superuser flag and must not grow into one.
+	MatureAdmin bool
 }
 
 // feedOrder is the (posted_at, id) keyset in one direction, expressed
@@ -247,6 +276,29 @@ func (h *Handler) ListPostsPageGated(
 		p.TeamID,          // $10
 		p.LikedByUserRef,  // $11
 	}
+	// $12 — the caller's own ref, for the mature owner exemption. Bound
+	// BEFORE readRuleSQL is asked for its offset, so the rule's own
+	// placeholders start above it (ADR 0063's discipline: whoever binds
+	// last counts what is already there). A bound placeholder rather
+	// than an inlined literal, unlike the facet aggregators: this is the
+	// hottest query in the app and a per-user query TEXT would defeat
+	// statement caching for a value that changes nothing about the plan.
+	//
+	// ⚠️ BOUND ONLY WHEN THE FRAGMENT REFERENCES IT. MatureFilterSQL
+	// returns the EMPTY STRING for a qualified viewer and for an admin —
+	// no conjunct at all, so Postgres never sees a filter on the common
+	// path. Binding $12 unconditionally therefore sent a parameter no
+	// statement mentioned, and Postgres cannot infer a type for one:
+	// `could not determine data type of parameter $12` (42P18), on every
+	// request by a QUALIFIED reader. The unqualified path — the one a
+	// single-arm test exercises — worked perfectly, which is why this
+	// reached the suite instead of the keyboard.
+	matureFrag := visibility.MatureFilterSQL(
+		"", visibility.MatureOwnerColPost, "$12", p.Mature, p.MatureAdmin)
+	if matureFrag != "" {
+		args = append(args, matureOwnerArg(id))
+	}
+
 	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
 	if err != nil {
 		return nil, err
@@ -283,6 +335,7 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
                       AND lk.target_id = posts.id
                       AND lk.user_ref = $11::BIGINT))
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
+	b.WriteString(matureFrag)
 	b.WriteString(ruleFrag)
 	b.WriteString(`
 ` + order.orderBySQL("posted_at", "id") + `
@@ -340,18 +393,46 @@ LIMIT $9::INTEGER`)
 //
 // An anonymous caller cannot reach this (the handler 401s first) and
 // would have no principal to match anyway.
+//
+// ⚠️ THE MATURE AXIS *IS* APPLIED HERE, and it is the one conjunct the
+// paragraph above does not cover (#1116, ADR 0090 §1).
+//
+// "A grant is purely additive, so a live grant alone is sufficient
+// authorization" is a true statement about CLEARANCE, and it is exactly
+// why no further read-rule conjunct belongs here. It says nothing about
+// RATING. ADR 0090's whole claim is that the two are independent axes —
+// `sensitivity` answers who is ALLOWED, `mature` answers who has OPTED
+// IN — so somebody granting me access to a post tells me they chose to
+// let me read it, and tells me nothing about whether I consented to be
+// shown adult content. Reading the additivity of the first axis as
+// consent on the second is precisely the conflation the ADR exists to
+// prevent, and it would make "share it with them" a way to route mature
+// content to a reader who switched it off.
+//
+// The reader loses nothing they cannot recover: the grant survives
+// untouched, and the item reappears the moment they opt in. Nothing is
+// revoked — it is not offered.
 func (h *Handler) ListSharedWithMeGated(
 	ctx context.Context,
 	userRef int64,
 	cursorPostedAt pgtype.Timestamptz,
 	cursorID pgtype.UUID,
 	rowLimit int32,
+	mature visibility.MatureViewer,
+	matureAdmin bool,
 ) ([]ListPostsPageRow, error) {
 	args := []any{
 		cursorPostedAt, // $1
 		cursorID,       // $2
 		rowLimit,       // $3
 		userRef,        // $4 — consumed by PostLiveGrantSQL
+	}
+	// $5 only when the conjunct is present — see ListPostsPageGated's
+	// note: an unreferenced parameter is a 42P18, not a no-op.
+	matureFrag := visibility.MatureFilterSQL(
+		"", visibility.MatureOwnerColPost, "$5", mature, matureAdmin)
+	if matureFrag != "" {
+		args = append(args, userRef)
 	}
 
 	sql := `SELECT ` + listPostsPageColumns + `
@@ -360,7 +441,7 @@ WHERE deleted_at IS NULL
   AND ($1::TIMESTAMPTZ IS NULL
        OR posted_at < $1::TIMESTAMPTZ
        OR (posted_at = $1::TIMESTAMPTZ AND id < $2::UUID))
-  AND ` + visibility.PostLiveGrantSQL("", 4) + `
+  AND ` + visibility.PostLiveGrantSQL("", 4) + matureFrag + `
 ORDER BY posted_at DESC, id DESC
 LIMIT $3::INTEGER`
 
@@ -400,12 +481,27 @@ LIMIT $3::INTEGER`
 // three relationship tiers — an author could not find their OWN private
 // post by asset. It now obtains the rule instead of restating it (#665),
 // which both closes that gap and removes the second expression.
+// The mature axis is ANDed on for the same reason it is on the feed
+// (#1116): this is a DISCOVERY surface — "which posts contain this
+// thing" — and answering it for a disqualified viewer would name mature
+// posts by id, which is the first half of finding them. That the asset
+// gate upstream would probably have refused already is not the
+// argument; a predicate that depends on another endpoint's behaviour is
+// a predicate whose correctness moves when that endpoint does.
 func (h *Handler) ListPostsByAssetGated(
 	ctx context.Context,
 	id *auth.Identity,
 	assetID uuid.UUID,
+	mature visibility.MatureViewer,
+	matureAdmin bool,
 ) ([]pgtype.UUID, error) {
 	args := []any{assetID} // $1
+	// $2 only when the conjunct is present — see ListPostsPageGated.
+	matureFrag := visibility.MatureFilterSQL(
+		"p", visibility.MatureOwnerColPost, "$2", mature, matureAdmin)
+	if matureFrag != "" {
+		args = append(args, matureOwnerArg(id))
+	}
 	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "p", len(args))
 	if err != nil {
 		return nil, err
@@ -417,7 +513,7 @@ FROM posts p
 WHERE p.deleted_at IS NULL
   AND EXISTS (SELECT 1 FROM post_assets pa
                 WHERE pa.post_id = p.id AND pa.asset_id = $1::UUID)` +
-		ruleFrag + `
+		matureFrag + ruleFrag + `
 ORDER BY p.posted_at DESC, p.id DESC
 LIMIT 200`
 

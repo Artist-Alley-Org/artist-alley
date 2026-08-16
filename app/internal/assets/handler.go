@@ -2187,7 +2187,8 @@ func (h *Handler) DownloadAssetFile(
 	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
 	// plane does not confirm that a restricted asset exists.
 	caller, caps := contentCaller(ctx)
-	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id))
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id),
+		visibility.MatureFromContext(ctx))
 	if err != nil || !allowed {
 		return openapi.DownloadAssetFile404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
@@ -2225,7 +2226,8 @@ func (h *Handler) DownloadAssetVariant(
 	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
 	// plane does not confirm that a restricted asset exists.
 	caller, caps := contentCaller(ctx)
-	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id))
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id),
+		visibility.MatureFromContext(ctx))
 	if err != nil || !allowed {
 		return openapi.DownloadAssetVariant404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},

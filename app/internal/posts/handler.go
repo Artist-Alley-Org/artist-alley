@@ -163,6 +163,10 @@ type Handler struct {
 	// (#891) — today just "hide restricted members". See
 	// feed_filters.go for the seam and why nil means "filter nothing".
 	feedFilters feedFilterReader
+	// matureResolver answers the mature-content axis for a caller
+	// (#1116). Nil until wired, and a nil resolver DISQUALIFIES rather
+	// than widens — see visibility.ResolveMatureOr.
+	matureResolver visibility.MatureResolver
 }
 
 // notifier is the notifications.Writer slice this package needs.
@@ -1123,6 +1127,11 @@ func (h *Handler) ListPosts(
 		CursorID:        cursorID,
 		RowLimit:        fetch,
 		Ascending:       ascending,
+		// The mature axis (#1116, ADR 0090 §3 row plane). Resolved ONCE
+		// here and carried into the query, never consulted per row —
+		// the answer is a property of the request, not of a post.
+		Mature:      h.resolveMature(ctx, caller),
+		MatureAdmin: caller != nil && caller.Can(CapSystemAdmin),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)
@@ -1269,7 +1278,8 @@ func (h *Handler) ListPostsSharedWithMe(
 		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
 
-	rows, err := h.ListSharedWithMeGated(ctx, caller.UserRef, cursorTs, cursorID, limit+1)
+	rows, err := h.ListSharedWithMeGated(ctx, caller.UserRef, cursorTs, cursorID, limit+1,
+		h.resolveMature(ctx, caller), caller.Can(CapSystemAdmin))
 	if err != nil {
 		return nil, fmt.Errorf("posts: shared with me: %w", err)
 	}
@@ -1330,7 +1340,10 @@ func (h *Handler) GetPostsByAsset(
 	ctx context.Context,
 	req openapi.GetPostsByAssetRequestObject,
 ) (openapi.GetPostsByAssetResponseObject, error) {
-	ids, err := h.ListPostsByAssetGated(ctx, auth.IdentityFromContext(ctx), req.Id)
+	byAssetCaller := auth.IdentityFromContext(ctx)
+	ids, err := h.ListPostsByAssetGated(ctx, byAssetCaller, req.Id,
+		h.resolveMature(ctx, byAssetCaller),
+		byAssetCaller != nil && byAssetCaller.Can(CapSystemAdmin))
 	if err != nil {
 		return nil, err
 	}
@@ -1870,6 +1883,7 @@ func (h *Handler) mayAttachAsset(ctx context.Context, id *auth.Identity, assetID
 		visibility.NewCaller(&id.UserRef),
 		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
 		assetID,
+		visibility.MatureFromContext(ctx),
 	)
 }
 

@@ -108,6 +108,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
 
@@ -213,7 +214,11 @@ type apiServer struct {
 	jobsAdmin          *jobs.AdminHandler
 	storageAdmin       *storage.AdminHandler
 	sysCfg             *sysconfig.Store
-	seedAdmin          *seed.AdminHandler
+	// matureResolver is the request-scoped mature-content lookup
+	// (#1116). Held here so server.go can mount it as middleware beside
+	// ResolveIdentity; nothing else should read it.
+	matureResolver visibility.MatureResolver
+	seedAdmin      *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
 	// minimal server without the search subsystem).
@@ -1072,6 +1077,21 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// so a feed page costs a cache hit rather than a query, and a PATCH
 	// to /account/preferences invalidates it process-wide + across peers.
 	s.posts.SetFeedFilters(userprefsFeedFilterAdapter{h: s.userprefs})
+
+	// #1116 — the mature-content axis (ADR 0090). ONE adapter, wired
+	// into every surface that composes the predicate, so the three
+	// conjuncts are resolved by one piece of code rather than by each
+	// domain's idea of them. A handler left unwired disqualifies every
+	// caller rather than widening — visibility.ResolveMatureOr — so the
+	// failure mode of forgetting a line here is a surface that shows too
+	// LITTLE, which is visible, rather than one that leaks, which is not.
+	matureRes := matureResolverAdapter{prefs: s.userprefs, sys: sysCfg}
+	s.posts.SetMatureResolver(matureRes)
+	// The CONTENT plane reaches the same resolver through the request
+	// context instead of a per-package field — see
+	// visibility.MatureFromContext for why ten wiring lines became one
+	// middleware. s.matureResolver is what server.go mounts.
+	s.matureResolver = matureRes
 
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
@@ -2131,6 +2151,77 @@ type userprefsFeedFilterAdapter struct{ h *userprefs.Handler }
 
 func (a userprefsFeedFilterAdapter) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
 	return a.h.ShowRestrictedFeedMembers(ctx, ref)
+}
+
+// matureResolverAdapter satisfies visibility.MatureResolver (#1116).
+//
+// It is the ONE place the three conjuncts of ADR 0090 §2 meet, and it
+// lives here rather than in either store because neither store can see
+// the other: `user_preferences` holds the reader's answer and
+// `system_config` holds the operator's, and the rule is their
+// conjunction with the session.
+//
+// # Order of evaluation is a cost decision, not a correctness one
+//
+// An anonymous caller short-circuits before either read. That is the
+// common case on a public install's browse feed, and it is also the
+// case where BOTH reads would be pointless: there is no preferences row
+// to find, and the instance switch cannot rescue a viewer who fails the
+// signed-in conjunct anyway. Every remaining caller pays one cached
+// preferences lookup and one config read.
+//
+// # THE CONFIG READ IS NOT CACHED, AND THAT IS SYSCONFIG'S DECISION
+//
+// sysconfig.GetMatureContent documents why (a stale TRUE keeps serving
+// mature content on an install whose operator has just switched it
+// off), and ADR 0013's invalidation would have to be wired there, not
+// here. This adapter must not "helpfully" memoise it — doing so would
+// move the staleness window into a file that says nothing about it.
+//
+// # Errors travel; the failing-closed decision is at ONE seam
+//
+// Both halves propagate. visibility.ResolveMatureOr is where a failed
+// lookup becomes the disqualified viewer, and it is the only place that
+// conversion happens — an adapter that swallowed its own errors would
+// make a config outage indistinguishable from an install that has
+// switched the feature off, and only one of those is worth an alert.
+type matureResolverAdapter struct {
+	prefs *userprefs.Handler
+	sys   *sysconfig.Store
+}
+
+func (a matureResolverAdapter) ResolveMature(
+	ctx context.Context,
+	caller visibility.Caller,
+) (visibility.MatureViewer, error) {
+	// Anonymous fails the first conjunct outright. Returning the zero
+	// value rather than a partially-filled struct keeps the "zero value
+	// is the disqualified viewer" property MatureViewer documents.
+	if caller.IsAnonymous || caller.UserRef == 0 {
+		return visibility.AnonymousMatureViewer, nil
+	}
+	v := visibility.MatureViewer{SignedIn: true}
+	if a.prefs != nil {
+		show, err := a.prefs.ShowMatureContent(ctx, caller.UserRef)
+		if err != nil {
+			return visibility.AnonymousMatureViewer, err
+		}
+		v.OptedIn = show
+	}
+	// A nil config store resolves to ALLOWED, matching
+	// sysconfig.KeyMatureContent's own absent-means-allowed default.
+	// It is permissive about the OPERATOR's intent only: the reader
+	// still had to opt in above, so this cannot widen anything on its
+	// own.
+	v.InstanceAllows = true
+	if a.sys != nil {
+		cfg, err := a.sys.GetMatureContent(ctx)
+		if err != nil {
+			return visibility.AnonymousMatureViewer, err
+		}
+		v.InstanceAllows = cfg.Allowed()
+	}
+	return v, nil
 }
 
 // socialNotifyAdapter satisfies the social package's Notifier

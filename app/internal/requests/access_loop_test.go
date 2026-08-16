@@ -480,7 +480,11 @@ func seedRestrictedAsset(t *testing.T, pool *pgxpool.Pool, ownerRef int64) uuid.
 func readable(t *testing.T, pool *pgxpool.Pool, assetID uuid.UUID, callerRef int64) bool {
 	t.Helper()
 	ok, err := visibility.CanReadContent(context.Background(), pool,
-		visibility.NewCaller(&callerRef), visibility.ContentCaps{}.Checker(), assetID)
+		visibility.NewCaller(&callerRef), visibility.ContentCaps{}.Checker(), assetID,
+		// The mature axis is not this test's subject and its fixtures
+		// are unflagged, so the zero (disqualified) viewer is the honest
+		// input: MatureItemVisible admits a non-mature item to anyone.
+		visibility.MatureViewer{})
 	if err != nil {
 		t.Fatalf("CanReadContent: %v", err)
 	}

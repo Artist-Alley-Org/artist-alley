@@ -90,7 +90,8 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 	//
 	// Same 404, deliberately: a distinguishable refusal would tell the
 	// caller that the id exists and is restricted.
-	readable, err := visibility.CanReadContent(ctx, h.Pool, caller, anchorCaps, anchorID)
+	readable, err := visibility.CanReadContent(ctx, h.Pool, caller, anchorCaps, anchorID,
+		visibility.MatureFromContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("ListSimilarAssets: anchor content: %w", err)
 	}
