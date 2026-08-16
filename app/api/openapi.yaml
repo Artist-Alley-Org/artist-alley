@@ -6450,11 +6450,19 @@ paths:
           in: query
           required: false
           description: |
-            Filters on whether the collection has an ORG-scoped
-            placement in `featured_items` (ADR 0065). Featuring is a
-            placement, not a property of the collection, so this asks
-            "is it featured internally", not "is its featured flag
-            set" — the flag no longer exists.
+            Filters on whether the collection has a placement in
+            `featured_items` THIS CALLER CAN SEE (ADR 0065) — `public`
+            placements for everyone, plus `org` placements once signed
+            in. Not "ORG-scoped": #1104 split the scope, and the filter
+            follows the caller rather than pinning one value.
+
+            Featuring is a placement, not a property of the collection,
+            so this asks "is it featured to me", not "is its featured
+            flag set" — the flag no longer exists.
+
+            IT NEVER WIDENS ACCESS. The placement filter is ANDed onto
+            the ordinary collection read predicate, so a collection the
+            caller may not read is absent whether it is featured or not.
           schema: { type: boolean }
         - name: tab
           in: query
@@ -6462,8 +6470,20 @@ paths:
           description: |
             Pre-canned filter for the collections hub:
             - `mine` — collections owned by the caller (any visibility)
-            - `featured` — visibility=public AND org-featured (ADR 0065)
-            - `public` — visibility=public (every install-public collection)
+            - `featured` — featured to this caller AND readable by them.
+              NO TIER PIN (#1121): this tab means "featured collections
+              I may see", so it is the placement filter ANDed onto the
+              ordinary read predicate and nothing else. It used to also
+              pin `visibility=public`, which made it disagree with the
+              rail (`GET /featured`) — an admin could feature an
+              `org-only` collection, see it on the rail, and never see
+              it here. Removing the pin cannot widen access: featuring
+              is a placement, not a grant, and the read predicate it is
+              ANDed onto is unchanged.
+            - `public` — visibility=public (every install-public
+              collection). This tab KEEPS its tier pin, because there
+              the tier is the tab's contract rather than an extra
+              conjunct on top of one.
             - `shared` — collections the caller has ACL access to but doesn't own
             - `all` — every collection the caller is allowed to see (default)
             `tab` is mutually-exclusive with `owner_ref`/`visibility`/`featured`
