@@ -15,6 +15,7 @@
   import ContentGrid from '$components/ContentGrid.svelte';
   import PostCard from '$components/PostCard.svelte';
   import PostListTable from '$components/PostListTable.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
 
   let posts = $state<any[]>([]);
   let loading = $state(true);
@@ -70,3 +71,9 @@
 {#if !loading && posts.length > 0}
   <ViewControls />
 {/if}
+
+<!-- #1130's sweep. PostCard and PostListTable both write `?post=` onto
+     this url; without a host the click dead-ends here exactly as it did
+     on the collection route. `ordered` is the whole (unpaginated)
+     result, so ← / → walk it and there is no end to reach. -->
+<PostParamHost ordered={() => posts.map((p) => p.id)} />

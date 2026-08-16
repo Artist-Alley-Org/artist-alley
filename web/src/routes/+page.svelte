@@ -14,7 +14,7 @@
   import { tagFollows } from '$stores/tagFollows.svelte';
   import PostCard from '$components/PostCard.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
-  import PostHost from '$components/PostHost.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import ContentGrid from '$components/ContentGrid.svelte';
@@ -345,51 +345,25 @@
   // "nothing here yet" block would render underneath it.
   const showEmpty = $derived(initialLoaded && items.length === 0 && !error && !guestFeed);
 
-  // ?post={uuid} → overlay the PostModal on top of the feed. The
-  // feed stays mounted (no scroll loss, no re-fetch). PostCard's
-  // click handler sets this param via goto(); the modal's onClose
-  // clears it.
-  const modalPostId = $derived(page.url.searchParams.get('post'));
+  // ?post={uuid} → overlay the post on top of the feed. The feed stays
+  // mounted (no scroll loss, no re-fetch). The watcher, the close
+  // policy and the ← / → walk all live in PostParamHost since #1130 —
+  // this route only says what "sibling" means here and what to do when
+  // the walk runs off the loaded end.
+  //
+  // `orderedIds` is already the marquee's ordering (the loaded feed in
+  // feed order, the same array the grid renders from), so the arrows
+  // and the range-selection gesture cannot disagree about what comes
+  // next.
 
-  async function closeModal() {
-    const target = new URL(page.url);
-    target.searchParams.delete('post');
-    await goto(target.pathname + target.search, {
-      keepFocus: true,
-      noScroll: true,
-    });
-  }
-
-  // ← / → inside an open post overlay jumps to the prev / next post
-  // in the current feed page. Two corners of UX nuance:
-  //   1. If the current post id isn't in items (deep-linked from
-  //      somewhere outside this feed), we no-op rather than guess.
-  //   2. At the end of the feed, if there's a next cursor, we kick
-  //      off a fetchPage() so navigation can spill into the next
-  //      page — the user sees the new post as soon as it arrives.
-  //      We don't await it; the keypress is fire-and-forget.
-  async function navigateToSibling(dir: 'prev' | 'next') {
-    if (!modalPostId) return;
-    const idx = items.findIndex((p) => p.id === modalPostId);
-    if (idx < 0) return;
-    const targetIdx = dir === 'next' ? idx + 1 : idx - 1;
-    if (targetIdx < 0) return;
-    if (targetIdx >= items.length) {
-      // Past the end — fetch the next page if we can; the new post
-      // doesn't auto-open (we don't know which id is "next" until
-      // the fetch resolves), so this only matters when the user
-      // presses → again after the page lands.
-      if (nextCursor && !loading) {
-        void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
-      }
-      return;
+  // Past the end of what is loaded: kick off the next page so the walk
+  // can spill into it. Fire-and-forget — the new post does not
+  // auto-open, because which id is "next" is not known until the fetch
+  // resolves; the user sees it on the next press.
+  function loadMoreForSiblingWalk() {
+    if (nextCursor && !loading) {
+      void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
     }
-    const target = new URL(page.url);
-    target.searchParams.set('post', items[targetIdx].id);
-    await goto(target.pathname + target.search, {
-      keepFocus: true,
-      noScroll: true,
-    });
   }
 </script>
 
@@ -609,13 +583,7 @@
   {/if}
 </div>
 
-{#if modalPostId}
-  <PostHost
-    postId={modalPostId}
-    onClose={closeModal}
-    onNavigateSibling={navigateToSibling}
-  />
-{/if}
+<PostParamHost ordered={orderedIds} onEndReached={loadMoreForSiblingWalk} />
 
 <!-- Floating browse controls: view switcher + back-to-top. Stays
      mounted alongside the feed so the user can change layouts without

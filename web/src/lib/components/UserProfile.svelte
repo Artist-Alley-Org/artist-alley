@@ -19,6 +19,7 @@
   import ContentGrid from '$components/ContentGrid.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import ViewControls from '$components/ViewControls.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
 
   interface Props {
     ref?: number;
@@ -201,4 +202,15 @@
   <!-- The shared floating view controls (mode switcher + sort), same bar
        as browse (#511). No feed-filter middle — that's browse-only. -->
   <ViewControls />
+
+  <!-- #1130's sweep. The profile grids render PostCard, whose primary
+       click writes `?post=` onto this url, and nothing here consumed it.
+
+       Declared in this COMPONENT rather than in the two routes that use
+       it (/users/by-username, /users/by-ref) on purpose: it is the whole
+       body of both, it has no dialog ancestor, so this IS route level —
+       and one declaration keeps the two permalinks identical, which is
+       the reason this component exists at all. ADR 0067's portal rule is
+       what makes "no dialog ancestor" the thing to check. -->
+  <PostParamHost ordered={() => sortedPosts.map((p) => p.id)} />
 {/if}

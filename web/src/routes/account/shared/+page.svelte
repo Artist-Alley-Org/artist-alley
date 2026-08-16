@@ -19,9 +19,9 @@
   // Rendering is the shared ContentGrid + PostCard, driven by the same
   // global browseView store as browse and the profile grids, so a post
   // looks and behaves identically wherever it is listed — including
-  // PostCard's `?post={id}` overlay, which is why PostHost is mounted
-  // below rather than letting the click dead-end on a page with no
-  // modal host.
+  // PostCard's `?post={id}` overlay, which is why PostParamHost is
+  // mounted below rather than letting the click dead-end on a page with
+  // no viewer host (#1130).
 
   import { onMount } from 'svelte';
   import { page } from '$app/state';
@@ -33,7 +33,7 @@
   import ContentGrid from '$components/ContentGrid.svelte';
   import PostCard from '$components/PostCard.svelte';
   import PostListTable from '$components/PostListTable.svelte';
-  import PostHost from '$components/PostHost.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
 
   // Same member shape browse declares (#595): the presentation fields
@@ -102,17 +102,6 @@
     }
   }
 
-  // ?post={uuid} → overlay the post, same as browse. PostCard's click
-  // handler writes the param onto whatever URL it is on, so without a
-  // host here the primary click on this page would do nothing visible.
-  const modalPostId = $derived(page.url.searchParams.get('post'));
-
-  async function closeModal(): Promise<void> {
-    const target = new URL(page.url);
-    target.searchParams.delete('post');
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
-  }
-
   const showEmpty = $derived(loaded && items.length === 0 && !error);
 </script>
 
@@ -159,6 +148,4 @@
   {/if}
 {/if}
 
-{#if modalPostId}
-  <PostHost postId={modalPostId} onClose={closeModal} />
-{/if}
+<PostParamHost />

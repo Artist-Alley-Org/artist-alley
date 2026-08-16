@@ -20,9 +20,10 @@
   // renders from, so nothing here has to hydrate an id through a second
   // endpoint.
   //
-  // PostHost is mounted for the same reason /account/shared mounts it:
-  // PostCard's primary click writes `?post={id}` onto whatever URL it is
-  // on, so without a host here the click would dead-end.
+  // PostParamHost is mounted for the same reason every card-showing
+  // surface mounts it (#1130): PostCard's primary click writes
+  // `?post={id}` onto whatever URL it is on, so without a host here the
+  // click would dead-end.
   //
   // LAYOUT. No `max-w`. Every other browse surface is full-viewport
   // width (the standing direction: 1080p baseline, 4K for art houses),
@@ -62,7 +63,7 @@
   import AssetCard from '$components/AssetCard.svelte';
   import PostCard from '$components/PostCard.svelte';
   import CollectionCard from '$components/CollectionCard.svelte';
-  import PostHost from '$components/PostHost.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import {
@@ -654,15 +655,6 @@
     },
   });
 
-  // ?post={uuid} → overlay the post, same as browse and /account/shared.
-  const modalPostId = $derived(page.url.searchParams.get('post'));
-
-  async function closeModal(): Promise<void> {
-    const target = new URL(page.url);
-    target.searchParams.delete('post');
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
-  }
-
   async function submitSave() {
     if (!saveName.trim()) return;
     saving = true;
@@ -964,9 +956,7 @@
      then searching lands you in masonry. -->
 <ViewControls />
 
-{#if modalPostId}
-  <PostHost postId={modalPostId} onClose={closeModal} />
-{/if}
+<PostParamHost />
 
 <!-- Facet counts. A panel, not a rail: the rail was a `w-64 shrink-0`
      column that could not fit beside a grid at 390px (#901). -->
