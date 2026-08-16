@@ -74,10 +74,23 @@ func (e *Engine) ladder(ctx context.Context) []string {
 // normalises scores, merges, orders, cuts to the page, computes
 // the next cursor, and stamps total counts.
 func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
-	// Empty text is allowed when the caller supplied a
-	// SimilarityHint — the hybrid path can rank purely on vector
-	// similarity. Pure-BM25 empty queries stay rejected.
-	if q.Text == "" && q.SimilarityHint == "" {
+	// WHAT COUNTS AS A SEARCH TO RUN.
+	//
+	// Empty text is allowed when the caller supplied a SimilarityHint —
+	// the hybrid path can rank purely on vector similarity — and, since
+	// #1157, when the caller supplied a FACET SELECTION.
+	//
+	// The selection arm is the fix for a dead arm that predates the
+	// advanced page and is not specific to its `field:` dimension:
+	// `/search?filter=extension:png` with no `q` returned 400
+	// `query_required`, and so did every other dimension. "Everything at
+	// pipeline stage Final" is the primary thing an advanced search page
+	// exists to ask, and a filter is a complete question on its own — the
+	// mature incumbent's browse IS a search with the query unspecified
+	// (#1067), which is exactly this shape.
+	//
+	// Only a request carrying NONE of the three is empty.
+	if q.Text == "" && q.SimilarityHint == "" && q.Filters.Empty() {
 		return QueryResult{}, ErrEmptyQuery
 	}
 	limit := q.Limit
@@ -661,6 +674,58 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		"assets", `plainto_tsquery('english', $1)`, "$3",
 		caller, q.Caps, mut)
 
+	// #1157 — A FILTER-ONLY SEARCH DROPS THE `@@` HALF AND KEEPS THE
+	// SECURITY HALF.
+	//
+	// `plainto_tsquery('english', '')` is the EMPTY tsquery and
+	// `search_text @@ ''` is false for every row, so a text-less search
+	// that kept this conjunct would return nothing no matter what the
+	// caller filtered on. What has to go is the text predicate; what must
+	// NOT go with it is `FieldsReadableSQL`, which is the other half of
+	// AssetSearchMatchSQL and the whole of #902's gate.
+	//
+	// So this rebuilds the conjunct as the field plane ALONE rather than
+	// skipping matchFrag. The #907 filter conjunct above already appends
+	// the identical expression whenever a selection is active — and a
+	// filter-only search always has one — so this is belt and braces.
+	// That is deliberate: making the gate depend on the other branch
+	// staying non-empty would be a security property held up by an `if`
+	// somewhere else, which is how #1065's convention-only rule got
+	// filed. Two identical conjuncts AND together to themselves.
+	//
+	// ⚠️ The condition is `Text == "" AND a selection exists`, never
+	// `Text == ""` alone. A similarity-only query (empty text, a
+	// SimilarityHint, no filters) reaches here too, and today its text
+	// leg deliberately matches NOTHING — applyHybrid contributes the
+	// vector hits separately. Widening on empty text alone would turn
+	// that leg into "every asset", unranked and unfiltered.
+	//
+	// The `TRUE` seed is load-bearing, not filler: this fragment is
+	// spliced straight after `WHERE`, so it has to be a standalone
+	// boolean, and FieldsReadableSQL returns the EMPTY string for a
+	// system.admin / content.read.all / global assets.admin caller. A
+	// bare `(` + fragment + `)` would render `()` for exactly those
+	// callers — a syntax error on the admin path, which is the path most
+	// likely to be used to test this.
+	//
+	// `$1` is REFERENCED as a typed tautology rather than dropped. It is
+	// still bound (the hits query ranks on it), but the COUNT statement's
+	// only mention of it was the predicate now being removed, and pgx
+	// rejects a statement bound with an argument it never names —
+	// `could not determine data type of parameter $1`. Same tautology
+	// trick, and same reason, as the `$3`/`$4` references below.
+	//
+	// ⚠️ THE INNER PARENTHESES AROUND THE TAUTOLOGY ARE LOAD-BEARING.
+	// `AND` binds tighter than `OR`, so writing it unparenthesised would
+	// parse as `($1 IS NOT NULL) OR (TRUE AND <field plane>)` — a
+	// disjunction that is TRUE for every row and SHEDS THE SECURITY
+	// CONJUNCT entirely. Grouped, it is `(<tautology>) AND (<field
+	// plane>)`, which is what it has to be.
+	if q.Text == "" && !q.Filters.Empty() {
+		matchFrag = `(($1::TEXT IS NOT NULL OR TRUE)` +
+			visibility.FieldsReadableSQL("assets", "$3", caller, q.Caps, mut) + `)`
+	}
+
 	// #1117 — THE MATURE CONJUNCT, and it is DELIBERATELY NOT INSIDE
 	// matchFrag.
 	//
@@ -1000,6 +1065,46 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		"posts", visibility.MatureOwnerColPost, "$3",
 		q.Mature, q.Caps.SystemAdmin)
 
+	// #1157 — the post half of the filter-only search. Same reasoning as
+	// runAssets: `plainto_tsquery('english', '')` is the empty tsquery
+	// and matches no row, so a text-less search has to drop the text
+	// predicate rather than run it against nothing.
+	//
+	// Unlike assets there is no security half to preserve here. A post
+	// has no field-withholding tier — the post READ rule the predicate
+	// above composes is the whole access story (see the #907 note), so
+	// what is left when the text goes is `TRUE`, and visFrag, matureFrag
+	// and selFrag continue to carry the gate.
+	// It is spelled as an OR-arm BESIDE the text predicate rather than as
+	// a replacement for it, and the `@@` literal stays INLINE in both
+	// statements below, for two reasons that turned out to be the same
+	// reason.
+	//
+	// First, #1065's guard walks the tree for every `search_text @@` and
+	// resolves which table each one matches by walking back to a
+	// FROM/JOIN binding. Hoisting the predicate into a variable put the
+	// literal out of reach of its own FROM, and the guard failed CLOSED —
+	// "cannot resolve which table" — which is exactly the behaviour that
+	// issue asked for. Keeping the literal where its FROM is visible
+	// keeps the guard able to classify it (as `posts`, therefore out of
+	// scope) instead of forcing an allow-list entry for a site that needs
+	// no exemption.
+	//
+	// Second, `$1` keeps its reference in the COUNT statement for free.
+	// Removing the predicate outright left `$1` bound but never named
+	// there, and pgx rejects that — `could not determine data type of
+	// parameter $1`.
+	//
+	// `(text OR FALSE)` is the text predicate unchanged; `(text OR TRUE)`
+	// is every row the other conjuncts allow. visFrag, matureFrag and
+	// selFrag are ANDed after it either way, and a post has no
+	// field-withholding tier — the post read rule IS its whole access
+	// story — so nothing security-bearing rides on this clause.
+	postTextless := `FALSE`
+	if q.Text == "" && !q.Filters.Empty() {
+		postTextless = `TRUE`
+	}
+
 	// #850 — the card fields. `cover_asset_id` alone was never enough to
 	// render a tile: a post with no explicit cover shows its FIRST member,
 	// which is the same resolution order PostCard applies client-side and
@@ -1025,7 +1130,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		         WHERE pa.post_id = posts.id) AS member_count,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM posts
-		 WHERE search_text @@ plainto_tsquery('english', $1)
+		 WHERE (search_text @@ plainto_tsquery('english', $1) OR ` + postTextless + `)
 		   -- $3 is the caller ref, read ONLY by the mature conjunct, and
 		   -- that conjunct renders NOTHING for a qualified viewer or a
 		   -- system.admin. Referenced as a tautology so the statement
@@ -1040,7 +1145,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM posts
-			 WHERE search_text @@ plainto_tsquery('english', $1)
+			 WHERE (search_text @@ plainto_tsquery('english', $1) OR ` + postTextless + `)
 			   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + `
 			 LIMIT $2
 		) x

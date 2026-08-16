@@ -36,6 +36,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -137,13 +138,20 @@ func fdStrPtr(s string) *string { return &s }
 // fdRun executes one search with one field filter for one caller.
 func fdRun(t *testing.T, pool *pgxpool.Pool, filter string, caps visibility.CapabilityChecker) int {
 	t.Helper()
+	return fdRunText(t, pool, fdPhrase, filter, caps)
+}
+
+// fdRunText is fdRun with the free-text term under the caller's control,
+// so the filter-only path ("" text) can be driven through the same door.
+func fdRunText(t *testing.T, pool *pgxpool.Pool, text, filter string, caps visibility.CapabilityChecker) int {
+	t.Helper()
 	sel, err := facet.ParseSelection([]string{filter})
 	if err != nil {
 		t.Fatalf("parse %q: %v", filter, err)
 	}
 	ref := fdOwner
 	res, err := NewEngine(pool).Run(context.Background(), Query{
-		Text:          fdPhrase,
+		Text:          text,
 		Types:         []HitType{HitTypeAsset},
 		Limit:         50,
 		Filters:       sel,
@@ -237,5 +245,78 @@ func TestFieldFilter_SelectionIsUncacheable(t *testing.T) {
 				t.Errorf("NamesFieldDimension() = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// TestFieldFilter_FilterOnlySearchRuns is the #1157 review finding: a
+// selection with NO free text is a runnable search.
+//
+// It was not, for ANY dimension. `/search?filter=extension:png` with no
+// `q` answered 400 `query_required` — the HTTP handler rejected on empty
+// text before `filter=` was parsed at all, so this predates the `field:`
+// dimension and had been dead since the rail shipped in #907. "Everything
+// at pipeline stage Final" is the primary question an advanced search
+// page exists to ask.
+//
+// Two halves, and the second is the one that could go wrong quietly:
+// the text predicate has to go (`plainto_tsquery('english',”)` is the
+// empty tsquery and matches no row, so keeping it would return nothing
+// however the caller filtered) while the FIELD PLANE has to stay
+// (AssetSearchMatchSQL is `search_text @@ q AND FieldsReadableSQL`, and
+// only the first half is about text).
+func TestFieldFilter_FilterOnlySearchRuns(t *testing.T) {
+	pool := coPool(t)
+	fdSeed(t, pool)
+
+	// The fixture's own field, no text at all.
+	if got := fdRunText(t, pool, "", "field:"+fdOpenCode+"=Locked", nil); got != 2 {
+		t.Errorf("a filter-only search returned %d hits, want 2.\n"+
+			"  Zero here means the empty tsquery is still being ANDed in;\n"+
+			"  an error means the request never reached the Engine.", got)
+	}
+	// And it is still a SEARCH, not "everything": a value nothing carries
+	// returns nothing rather than the whole table.
+	if got := fdRunText(t, pool, "", "field:"+fdOpenCode+"=Nonexistent", nil); got != 0 {
+		t.Errorf("a filter-only search on an unmatched value returned %d hits, want 0 —\n"+
+			"  dropping the text predicate must not drop the FILTER with it.", got)
+	}
+}
+
+// TestFieldFilter_FilterOnlyKeepsTheFieldPlane is the security half,
+// asserted on the new path specifically.
+//
+// ⚠️ Without this, the natural implementation — skip the whole match
+// fragment when the text is empty — silently sheds FieldsReadableSQL,
+// because that conjunct lives INSIDE AssetSearchMatchSQL. The gate would
+// still pass every existing test, all of which run with text present.
+func TestFieldFilter_FilterOnlyKeepsTheFieldPlane(t *testing.T) {
+	pool := coPool(t)
+	fdSeed(t, pool)
+
+	filter := "field:" + fdGatedCode + "=Secret"
+	holder := visibility.CapabilityChecker(func(code string) bool { return code == fdGatedCap })
+	stranger := visibility.CapabilityChecker(func(string) bool { return false })
+
+	if got := fdRunText(t, pool, "", filter, stranger); got != 0 {
+		t.Errorf("a filter-only search by a caller WITHOUT %s returned %d hits, want 0.\n"+
+			"  The read gate must not depend on there being text to match.", fdGatedCap, got)
+	}
+	if got := fdRunText(t, pool, "", filter, holder); got != 1 {
+		t.Errorf("a filter-only search by a caller WITH %s returned %d hits, want 1.", fdGatedCap, got)
+	}
+}
+
+// TestEmptyRequestIsStillRejected pins the other side of the widened
+// rule: text, similarity hint and selection all absent is still 400.
+func TestEmptyRequestIsStillRejected(t *testing.T) {
+	pool := coPool(t)
+	_, err := NewEngine(pool).Run(context.Background(), Query{
+		Types: []HitType{HitTypeAsset},
+		Limit: 10,
+	})
+	if !errors.Is(err, ErrEmptyQuery) {
+		t.Errorf("a request with no text, no hint and no filters returned err=%v,\n"+
+			"  want ErrEmptyQuery — widening what counts as a search must not\n"+
+			"  make the genuinely empty request run.", err)
 	}
 }

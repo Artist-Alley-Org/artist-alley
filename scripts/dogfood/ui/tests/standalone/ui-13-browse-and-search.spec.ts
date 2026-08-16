@@ -9,6 +9,50 @@ import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 import { tid } from '../../helpers/testids';
 
+// TYPING DOES NOT SEARCH (#1156).
+//
+// The nav box used to commit on a 250ms keystroke debounce, so every one
+// of these flows drove it by `fill()` alone and waited for the URL to
+// change by itself. Owner direction retired that: suggestions may appear
+// while typing, but the feed and the address change only on an EXPLICIT
+// commit — Enter, a picked suggestion, or the clear button.
+//
+// This helper is how every spec below drives the box, and it asserts
+// BOTH halves so the specs are the regression guard for #1156 rather
+// than merely surviving it:
+//
+//   - the negative: after typing and waiting out the old debounce window
+//     plus a wide margin, the URL has NOT moved. On the pre-#1156
+//     component this fails here, which is what makes these tests a
+//     guard;
+//   - the positive: Enter commits, and the caller asserts where it went.
+//
+// The wait is a real one, not a sleep dressed up: there is no "the
+// navigation did not happen" event to await, so the only way to observe
+// an absence is to outlast the window in which it would have occurred.
+// 900ms is ~3.6x the retired 250ms debounce.
+const RETIRED_DEBOUNCE_MARGIN_MS = 900;
+
+async function typeWithoutSearching(page: import('@playwright/test').Page, term: string) {
+  const nav = page.locator(tid('nav-search'));
+  const before = page.url();
+  await nav.click();
+  await nav.fill(term);
+  await page.waitForTimeout(RETIRED_DEBOUNCE_MARGIN_MS);
+  expect(
+    page.url(),
+    'typing in the nav search box navigated — #1156 says only an explicit commit may',
+  ).toBe(before);
+  return nav;
+}
+
+/** Type, prove nothing happened, then commit with Enter. */
+async function commitNavSearch(page: import('@playwright/test').Page, term: string) {
+  const nav = await typeWithoutSearching(page, term);
+  await nav.press('Enter');
+  return nav;
+}
+
 test.describe('UI-13 browse + search', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdminViaUI(page);
@@ -33,30 +77,40 @@ test.describe('UI-13 browse + search', () => {
     await expect(page).toHaveURL(new RegExp(`(${href?.replace(/\//g, '\\/')}|post=)`));
   });
 
-  test('search box on browse updates the URL with ?q=', async ({ page }) => {
+  test('search box on browse searches on Enter, and only on Enter', async ({ page }) => {
     await page.goto('/');
-    const searchbox = page.locator(tid('nav-search'));
-    await searchbox.fill('a');
-    await searchbox.press('Enter');
-    // From the browse page, handleSearch keeps the user in place
-    // and updates the query string (see +layout.svelte).
+    // typeWithoutSearching asserts the URL does not move while typing
+    // (#1156); Enter then commits in place (+layout.svelte handleSearch).
+    await commitNavSearch(page, 'a');
     await expect(page).toHaveURL(/\/\?.*q=/);
     await expectPageRendersCleanly(page);
   });
 
-  // browse → search navigation. Renamed with the control in #850 (it
-  // read "Advanced search" and pointed at a page that is now a panel);
-  // located by test id so the next rename does not break it.
-  //
-  // The landing assertion got STRONGER rather than weaker, because
-  // /search stopped being a text list: it now renders through the same
-  // ContentGrid as browse, so the result of this navigation is a wall of
-  // the same tiles. Asserting only the URL would have let the page come
-  // back as a column of text and still pass.
-  test('search-surface link navigates browse → /search and lands on the grid', async ({ page }) => {
+  // browse → advanced search. #1157 gave this control a destination of
+  // its own: the form, not the result surface the nav box already
+  // reaches. Located by test id so the next rename does not break it.
+  test('advanced-search link navigates browse → /search/advanced', async ({ page }) => {
     await page.goto('/');
     await page.locator(tid('nav-search-page')).click();
-    await expect(page).toHaveURL(/\/search\b/);
+    await expect(page).toHaveURL(/\/search\/advanced\b/);
+    await expectPageRendersCleanly(page);
+    // The page's own chrome: the conditional search and the metadata
+    // field filters are what distinguish it from the result surface.
+    await expect(page.locator(tid('advanced-search-page'))).toBeVisible();
+    await expect(page.locator(tid('advanced-conditions'))).toBeVisible();
+    await expect(page.locator(tid('advanced-field-filters'))).toBeVisible();
+  });
+
+  // The result surface still lands on the grid. This used to be asserted
+  // as a side effect of the nav control's destination; now that the
+  // control goes elsewhere, /search is reached directly and the
+  // assertion is unchanged.
+  //
+  // It is STRONGER than a URL check on purpose: /search renders through
+  // the same ContentGrid as browse, so asserting only the address would
+  // let the page come back as a column of text and still pass.
+  test('/search lands on the grid surface', async ({ page }) => {
+    await page.goto('/search');
     await expectPageRendersCleanly(page);
     // The kind chips are the search surface's own chrome — present at
     // every width, so this is not a viewport-dependent assertion.
@@ -80,34 +134,19 @@ test.describe('UI-13 browse + search', () => {
     const term = (title.match(/[A-Za-z]{5,}/g) ?? [])[0] ?? '';
     expect(term, `no searchable word in the first post's title: "${title}"`).toBeTruthy();
 
-    // Typing into the nav search box arms a 250ms debounce inside
-    // SearchBar; when it settles it calls the layout's handleSearch,
-    // which NAVIGATES. Clicking the search-surface link inside that
-    // window starts a second navigation that the debounce then
-    // overtakes: the click lands on /search?q=…, ~130ms later the timer
-    // fires, handleSearch sees a pathname that is no longer `/` and
-    // goto()s the browse page instead — leaving the URL at /?q=<term>,
-    // which is precisely the string #1024's CI failure reported.
+    // This test used to reach /search by typing into the nav box and
+    // then clicking the search-surface link, and carried a long note
+    // about racing the 250ms commit debounce: the click would start one
+    // navigation and the timer would overtake it with another, stranding
+    // the URL at /?q=<term> (#1024's CI failure).
     //
-    // So wait for the commit to have HAPPENED before clicking. On
-    // browse it is directly observable: handleSearch rewrites this
-    // page's own URL to /?q=<term>. Once that lands, SearchBar's
-    // lastCommitted equals what is in the box and no timer is left
-    // armed to yank the page out from under the click. This is a wait
-    // on an observed state change, not a sleep.
-    await page.locator(tid('nav-search')).fill(term);
-    await expect(page).toHaveURL(new RegExp(`/\\?.*q=${term}`, 'i'));
-    // The link's href is computed reactively from what was typed
-    // (+layout.svelte). Assert it is carrying the query before clicking
-    // it — the ui-07 pattern; `toHaveAttribute` retries, a click does
-    // not.
-    await expect(page.locator(tid('nav-search-page'))).toHaveAttribute(
-      'href',
-      `/search?q=${encodeURIComponent(term)}`,
-    );
-    await page.locator(tid('nav-search-page')).click();
+    // #1156 deleted that race along with the timer — typing starts no
+    // navigation at all — and #1157 pointed that link at the advanced
+    // FORM rather than at /search. Both reasons for the dance are gone,
+    // so the test goes where it was always trying to go and asserts the
+    // thing it was always about: a hit is a tile, not a text row.
+    await page.goto(`/search?q=${encodeURIComponent(term)}`);
     await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${term}`, 'i'));
-    await expectPageRendersCleanly(page);
 
     // A hit is a TILE — a link into the entity, inside the shared grid.
     // Before #850 it was a `<li data-testid="search-hit">` carrying a
@@ -119,6 +158,7 @@ test.describe('UI-13 browse + search', () => {
     await expect(page.locator('[data-testid="search-hit"]')).toHaveCount(0);
     // And the raw relevance score is not printed on results any more.
     await expect(page.locator('main')).not.toContainText(/score \d\.\d{3}/);
+    await expectPageRendersCleanly(page);
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -251,13 +291,15 @@ test.describe('UI-13 browse + search', () => {
       0,
     );
 
-    const nav = page.locator(tid('nav-search'));
-    await nav.click();
-    await nav.fill(second);
+    // #1156 — typing changes nothing; Enter commits. The helper asserts
+    // the URL does not move while typing, which on this surface is also
+    // the #1053 property under test: a refinement must not bounce you to
+    // browse, and it cannot bounce you anywhere if it does not fire.
+    const nav = await commitNavSearch(page, second);
 
-    // THE BUG: this used to become /?q=<second> about 250-450ms after
-    // the keystroke. The negative assertion is separate from the
-    // positive one so a failure says which half broke.
+    // THE #1053 BUG: this used to become /?q=<second>. The negative
+    // assertion is separate from the positive one so a failure says
+    // which half broke.
     await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${second}`, 'i'));
     expect(new URL(page.url()).pathname).toBe('/search');
 
@@ -270,7 +312,27 @@ test.describe('UI-13 browse + search', () => {
 
     // Focus and scroll survive, as they do on browse.
     await expect(nav).toBeFocused();
-    expect(await page.locator('main').evaluate((el) => el.scrollTop)).toBe(before);
+
+    // Scroll survives UP TO WHAT THE NEW RESULT SET CAN HOLD.
+    //
+    // The refinement swaps in a different, usually SHORTER wall, and the
+    // browser clamps scrollTop to that wall's maximum — losing the extra
+    // is the content being shorter, not the page jumping. The bare
+    // `toBe(before)` this replaced only held because the assertion used
+    // to run before the new grid had rendered: typing committed after a
+    // ~250ms debounce, so the read landed on the OLD wall's height. With
+    // the commit now explicit (#1156) the new wall is up by the time we
+    // look, and the clamp is visible.
+    //
+    // Asserting `min(before, max)` keeps the property #1053 is about —
+    // the offset is preserved, not reset — and the `> 0` guard keeps it
+    // from passing vacuously if the page did jump to the top and the new
+    // wall happened to be short.
+    const { top, max } = await page
+      .locator('main')
+      .evaluate((el) => ({ top: el.scrollTop, max: Math.max(0, el.scrollHeight - el.clientHeight) }));
+    expect(top).toBe(Math.min(before, max));
+    expect(top, 'the refinement reset the scroll offset to the top').toBeGreaterThan(0);
   });
 
   test('refining the query keeps the kind chips and the facet filter', async ({ page }) => {
@@ -297,9 +359,7 @@ test.describe('UI-13 browse + search', () => {
     const token = new URL(page.url()).searchParams.get('filter')!;
     await page.locator(tid('search-slideover-close')).click();
 
-    const nav = page.locator(tid('nav-search'));
-    await nav.click();
-    await nav.fill(second);
+    await commitNavSearch(page, second);
     await expect(page.locator(tid('search-input'))).toHaveValue(second);
 
     // Both survive. A refinement that silently dropped either would
@@ -402,8 +462,7 @@ test.describe('UI-13 browse + search', () => {
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
     const firstResults = await resultFingerprint(page);
 
-    const nav = page.locator(tid('nav-search'));
-    await nav.fill(second);
+    await commitNavSearch(page, second);
     await expect(page).toHaveURL(new RegExp(`/search\\?.*q=${second}`, 'i'));
     await expect(input).toHaveValue(second);
     await expect.poll(() => resultFingerprint(page)).not.toBe(firstResults);
@@ -541,9 +600,10 @@ test.describe('UI-13 browse + search', () => {
     const [term] = await seededTerms(page);
 
     await page.goto('/account');
-    const nav = page.locator(tid('nav-search'));
-    await nav.click();
-    await nav.fill(term);
+    // #1156 — the helper's negative half matters most HERE: on a
+    // non-result surface the old debounce navigated you away from the
+    // page you were on, mid-keystroke. Now nothing happens until Enter.
+    await commitNavSearch(page, term);
 
     await expect(page).toHaveURL(new RegExp(`^[^?]*/\\?.*q=${term}`, 'i'));
     expect(new URL(page.url()).pathname).toBe('/');
