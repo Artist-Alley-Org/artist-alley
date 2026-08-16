@@ -9,6 +9,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Operators can run a promo strip in the feed.** A full-width band between feed pages — a
+  title, a short blurb, a call-to-action button, and a row of hand-picked works — curated from
+  the same admin surface as featuring, aimed at whichever audience the operator chooses, and
+  invisible when empty or when nothing in it is visible to you. Scrolling stability is
+  untouched. Featuring in general also now respects the mature-content rules — a featured
+  mature work only shows to people who opted in (#1118).
+
 - **Mature content is fully live.** Artists mark a work with one checkbox at upload (operators
   can override per asset); each account chooses whether to see mature work; the instance has a
   master switch. When you're not opted in — or not signed in — mature work is simply absent:
