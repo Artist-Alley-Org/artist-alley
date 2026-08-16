@@ -20,6 +20,14 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Endless scrolling stays ahead of the reader.** The next-page trigger had been watching the
+  wrong scroll container since the facet rail shipped, so its lookahead never applied and fast
+  wheel scrolling hit blank waits. It now watches the real one, 2.5 screens ahead: measured
+  blank-frame rate went from 9.7–15.5% to zero at wheel speed, at one request per page
+  (#1159, PR #1168).
+- **Thumbnail tiles lost the extension label.** The top band is now the asset-type icon (with
+  count on multi-asset posts) on the left and the checkbox + menu as a tight cluster on the
+  right; the icon's tooltip names the type (#1158, PR #1168).
 - **Search suggestions no longer offer terms that find nothing.** Suggestions are now backed by
   the same match rule the search itself executes, per viewer and per surface — on the seeded
   library the zero-result suggestion rate went from 9 in 25 to 0 (#1155, PR #1162).
