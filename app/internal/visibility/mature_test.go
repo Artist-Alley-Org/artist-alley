@@ -104,10 +104,10 @@ func TestMatureItemVisible_NonMatureIsAlwaysVisible(t *testing.T) {
 // asks for, per arm: ONE mature item, two viewers, opposite answers.
 func TestMatureItemVisible_SameItemOppositeVerdicts(t *testing.T) {
 	arms := []struct {
-		name         string
-		admits       MatureViewer
-		refuses      MatureViewer
-		what         string
+		name    string
+		admits  MatureViewer
+		refuses MatureViewer
+		what    string
 	}{
 		{
 			name:    "anonymous vs opted-in",
