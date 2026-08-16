@@ -26,8 +26,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -137,7 +139,7 @@ func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, 
 	case err != nil:
 		return Preferences{}, err
 	default:
-		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters)
+		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters, row.BrowseRail, row.MatureContent)
 		if err != nil {
 			return Preferences{}, err
 		}
@@ -243,11 +245,30 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		ShowRestricted: &p.FeedFilters.ShowRestricted,
 	}
 
+	// Always present, with every list materialised even when empty
+	// (#1113, #1123). Same argument as feed_filters one line up, for the
+	// list case: "no curation" and "an empty curation" are the same rail,
+	// so an omitted object would only make the client re-derive `[]`.
+	rail := p.BrowseRail.Sanitized()
+	browseRail := openapi.UserPreferencesBrowseRail{
+		HiddenTeamIds: toWireIDs(rail.HiddenTeamIDs),
+		TeamOrder:     toWireIDs(rail.TeamOrder),
+		HiddenTags:    toWireTags(rail.HiddenTags),
+		TagOrder:      toWireTags(rail.TagOrder),
+	}
+
+	// Always present with `show` populated (#1115). Same argument as
+	// feed_filters two blocks up: a boolean has no third state, so an
+	// omitted object would only make the client guess `false`.
+	matureContent := openapi.UserPreferencesMatureContent{Show: &p.MatureContent.Show}
+
 	return openapi.UserPreferencesResponse{
 		NotificationChannels:   channels,
 		EmailCadence:           &cadence,
 		DefaultViews:           views,
 		FeedFilters:            filters,
+		BrowseRail:             browseRail,
+		MatureContent:          matureContent,
 		KnownEventTypes:        append([]string(nil), KnownEventTypes...),
 		KnownChannels:          append([]string(nil), KnownChannels...),
 		DefaultChannelsByEvent: defaults,
@@ -290,12 +311,99 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 	if body.FeedFilters != nil && body.FeedFilters.ShowRestricted != nil {
 		filters.ShowRestricted = *body.FeedFilters.ShowRestricted
 	}
+	// Full-object replacement, like everything else on this endpoint: an
+	// absent `browse_rail` clears the curation back to the default rail,
+	// and an absent list inside it clears that list. The manage panel
+	// always sends all four, which is what makes "unhide the last hidden
+	// chip" expressible at all.
+	rail := BrowseRail{}
+	if body.BrowseRail != nil {
+		rail.HiddenTeamIDs = fromWireIDs(body.BrowseRail.HiddenTeamIds)
+		rail.TeamOrder = fromWireIDs(body.BrowseRail.TeamOrder)
+		rail.HiddenTags = fromWireTags(body.BrowseRail.HiddenTags)
+		rail.TagOrder = fromWireTags(body.BrowseRail.TagOrder)
+	}
+	// Full-object replacement, like everything above (#1115). An absent
+	// `mature_content`, or an absent `show` inside a present one, opts
+	// the account OUT — which is the safe direction and the reason the
+	// key is named for the permissive one. A client that PATCHes a
+	// single preference must GET, merge and send the whole document;
+	// the endpoint's own schema says so.
+	mature := MatureContent{}
+	if body.MatureContent != nil && body.MatureContent.Show != nil {
+		mature.Show = *body.MatureContent.Show
+	}
 	return Preferences{
 		NotificationChannels: channels,
 		DefaultViews:         views,
 		EmailCadence:         cadence,
 		FeedFilters:          filters,
+		BrowseRail:           rail.Sanitized(),
+		MatureContent:        mature,
 	}
+}
+
+// toWireIDs projects the stored id list onto the generated wire type.
+//
+// It hands back a pointer to a NON-NIL slice, so an empty list
+// marshals as `[]` rather than `null`. The client treats the two the
+// same, but a response that alternates between them depending on
+// whether the reader has ever hidden a team is a needless shape change
+// in a session payload.
+//
+// A parse failure is impossible here rather than swallowed:
+// TeamRail.Sanitized has already dropped anything that is not a UUID,
+// and every caller sanitizes before projecting. Belt and braces anyway,
+// because a silently truncated rail would be a bad way to learn that a
+// future caller skipped that step.
+func toWireIDs(in []string) *[]openapi_types.UUID {
+	out := make([]openapi_types.UUID, 0, len(in))
+	for _, id := range in {
+		u, err := uuid.Parse(id)
+		if err != nil {
+			continue
+		}
+		out = append(out, u)
+	}
+	return &out
+}
+
+// fromWireIDs is the inverse. The JSONB column stores plain strings —
+// the typed UUID exists to reject a malformed id at the edge, not to
+// change what is on disk.
+func fromWireIDs(in *[]openapi_types.UUID) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, 0, len(*in))
+	for _, u := range *in {
+		out = append(out, u.String())
+	}
+	return out
+}
+
+// toWireTags / fromWireTags are the tag-list counterparts (#1123).
+//
+// Separate from the id pair rather than generic over both, because the
+// id pair's whole substance is the uuid parse — the thing a tag must
+// NOT be put through. A `[]string` → `*[]string` helper that shared a
+// body with the uuid one would either drop every tag or stop rejecting
+// malformed ids; keeping them apart makes each one's rule visible.
+//
+// Non-nil slice for the same reason toWireIDs returns one: an empty
+// list marshals as `[]`, so the response shape does not change
+// depending on whether the reader has ever hidden a chip.
+func toWireTags(in []string) *[]string {
+	out := make([]string, 0, len(in))
+	out = append(out, in...)
+	return &out
+}
+
+func fromWireTags(in *[]string) []string {
+	if in == nil {
+		return nil
+	}
+	return append([]string(nil), *in...)
 }
 
 // CadenceFor returns the caller's email cadence for a verb via the
@@ -370,12 +478,22 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 	if err != nil {
 		return err
 	}
+	browseRailJSON, err := MarshalBrowseRail(prefs.BrowseRail)
+	if err != nil {
+		return err
+	}
+	matureJSON, err := MarshalMatureContent(prefs.MatureContent)
+	if err != nil {
+		return err
+	}
 	if err := New(h.pool).UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
 		UserRef:              ref,
 		NotificationChannels: channelsJSON,
 		DefaultViews:         viewsJSON,
 		EmailCadence:         cadenceJSON,
 		FeedFilters:          filtersJSON,
+		BrowseRail:           browseRailJSON,
+		MatureContent:        matureJSON,
 	}); err != nil {
 		return err
 	}
@@ -413,6 +531,38 @@ func (h *Handler) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (boo
 		return false, err
 	}
 	return prefs.FeedFilters.ShowRestricted, nil
+}
+
+// ShowMatureContent reports whether this account has opted IN to being
+// shown mature content (#1116, ADR 0090 §2).
+//
+// ⚠️ THIS IS ONE CONJUNCT OF THREE, NOT THE ANSWER. The reader also has
+// to be signed in, and the INSTANCE has to allow the feature — an
+// operator setting this row says nothing about. `true` here on an
+// install whose operator has switched mature content off still means
+// "hidden". [visibility.QualifiesForMature] is where the three meet;
+// nothing should branch on this value alone, which is why the name says
+// what the COLUMN holds rather than what the viewer gets.
+//
+// It rides the same 5-minute by_user LRU as ShowRestrictedFeedMembers,
+// for the same reason: this is consulted once per feed page, per search
+// and per addressed asset, and a cold PK lookup on each would be a
+// preferences read on the hottest paths in the app.
+//
+// AN ERROR IS PROPAGATED RATHER THAN FLATTENED TO FALSE, which is the
+// opposite of the sibling above and is deliberate. There, `false` on
+// error IS the default experience and the doc says so. Here `false`
+// happens to be the safe answer too — but returning it silently would
+// let the caller treat "this reader has not opted in" and "we could not
+// find out" as the same fact, and only one of those should be logged.
+// The failing-closed decision belongs at one seam, and that seam is
+// visibility.ResolveMatureOr.
+func (h *Handler) ShowMatureContent(ctx context.Context, ref int64) (bool, error) {
+	prefs, err := h.loadPreferences(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	return prefs.MatureContent.Show, nil
 }
 
 // touch keeps the time import live for the (currently unused)

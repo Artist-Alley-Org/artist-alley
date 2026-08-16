@@ -80,7 +80,7 @@ func newUserStateCache(registry *cache.Registry) *UserStateCache {
 // helpers (CanAuthenticate, ValidateTransition).
 //
 // Unknown / out-of-range column values defensively map to
-// UserStateDisabled — the schema CHECK from migration 00003 should
+// UserStateDisabled — the schema CHECK from migration 00001 should
 // make this impossible, but defense-in-depth at the boundary
 // means a corrupted row can't be reported as "active".
 func (h *Handler) GetUserState(ctx context.Context, userRef int64) (UserState, error) {

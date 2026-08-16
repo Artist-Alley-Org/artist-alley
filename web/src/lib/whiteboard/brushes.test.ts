@@ -35,7 +35,41 @@ function fixturePack(stamps: BrushStamp[]): BrushPack {
   return { id: TEST_PACK_ID, name: 'Fixture pack', stamps };
 }
 
+// ── The preloader must never touch the network ──────────────────
+//
+// `registerPackFromAPI` kicks off `preloadStamp` for every stamp, and
+// that is a FIRE-AND-FORGET real `fetch()` at
+// `/api/v1/brush-packs/stamps/<id>`. Nothing here awaits it, so nothing
+// here ever caught it: happy-dom resolves the relative URL against its
+// default origin (`http://localhost:3000`), no server is listening, and
+// the connection failure surfaced as an UNHANDLED `AggregateError:
+// connect ECONNREFUSED ::1:3000 / 127.0.0.1:3000` printed alongside this
+// file's results.
+//
+// It has been there since the preloader landed, on `dev` as well as on
+// any branch, and sprint 21 recorded it as harmless post-summary noise.
+// It is not harmless — it is an unhandled rejection racing the runner's
+// own teardown (`AsyncTaskManager.abort` shows up in the same trace), so
+// whether it lands as noise or as a fatal depends on timing the suite
+// does not control. That is a landmine, and the cost of removing it is
+// these ten lines.
+//
+// `preloadStamp` swallows the REJECTION it awaits (it logs "stamp
+// preload error"), which is why the fix is not another try/catch there:
+// the escaping error is the socket's, raised outside the awaited promise.
+// The only reliable answer is to not open the socket. Stubbing here
+// rather than in a shared setup file keeps it next to the one call that
+// needs it, and keeps the assertion below — that `source` is still a
+// plain URL string — honest.
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => Promise.resolve(new Response(new Blob(), { status: 200 }))),
+  );
+});
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   // Drop the fixture pack so the next test starts from the builtin
   // baseline. Safe to call when the pack was never registered.
   unregisterPack(TEST_PACK_ID);

@@ -97,7 +97,9 @@
     },
     "page_title": "Search",
     "idle": "Search the library — artwork, posts and collections in one place.",
-    "facets_intro": "What is in these results. Counts reflect what you can open.",
+    "facets_intro": "Tick a value to narrow these results. Counts reflect what you can open.",
+    "facets_empty": "Nothing left to narrow by. Clear a filter to see more.",
+    "filters_clear": "Clear filters",
     "kind": {
       "all": "Everything",
       "assets": "Artwork",
@@ -109,7 +111,8 @@
       "tag": "Tags",
       "sensitivity": "Sensitivity",
       "owner": "Owner",
-      "extension": "File type"
+      "extension": "File type",
+      "collection": "In collection"
     }
   },
   "blogs": {
@@ -133,7 +136,8 @@
       "masonry": "Masonry",
       "feed": "Feed",
       "thumbnail": "Thumbnail",
-      "list": "List"
+      "list": "List",
+      "list_unavailable": "List view isn’t available for this content — showing tiles instead."
     },
     "filter": {
       "label": "Feed filter",
@@ -149,12 +153,14 @@
     },
     "columns": "Columns",
     "reset_columns": "Reset to default columns",
+    "resize_column": "Resize column",
     "list": {
       "post_singular": "post",
       "post_plural": "posts",
       "untitled": "Untitled"
     },
     "col": {
+      "select": "Select",
       "thumbnail": "",
       "title": "Title",
       "author": "Author",
@@ -205,6 +211,8 @@
       "status_active": "Published — anyone who can reach this site can see it",
       "status_archived": "Archived — kept, but out of the way",
       "status_note": "Publishing decides who can reach this asset, not how it looks.",
+      "field_mature": "Mature content",
+      "mature_note": "Labels what this work is, not who may see it — a public piece can be marked mature. People who haven’t opted in won’t see it in browse or search, and a direct link shows a blurred tile. You and site admins always see it.",
       "error_save": "Couldn't save this asset.",
       "forbidden_heading": "You can't edit this asset",
       "forbidden_body": "It belongs to someone else, and your account doesn't hold the rights to change other people's work.",
@@ -231,7 +239,6 @@
     },
     "origin_from": "from {peer}",
     "origin_label": "This item is hosted by another server",
-
     "multi": {
       "badge_label": "{count} assets in this post"
     },
@@ -271,6 +278,7 @@
       "likes": "{count} likes",
       "comment": "Comment",
       "comments": "{count} comments",
+      "view_all_comments": "View all {count} comments",
       "share": "Share",
       "shared": "Link copied"
     }
@@ -621,6 +629,9 @@
       "filters_title": "Feed filters",
       "filters_show_restricted": "Show items I don’t have access to",
       "filters_show_restricted_help": "By default your browse feed leaves out work you can’t open, and a post whose items are all restricted doesn’t appear at all — except your own posts, which always stay. Turn this on and those items come back as a “you don’t have access” tile. The Request access button sits on that tile, so while this is off you won’t find it in your feed — open the post itself, or a collection it’s in, to ask.",
+      "mature_title": "Mature content",
+      "mature_show": "Show mature content",
+      "mature_show_help": "Some work on this site is labelled mature by the artist who posted it. While this is off, that work is left out of your browse feed and search results, and opening a link to it shows a blurred tile instead. Your own uploads always stay visible to you, whatever this says.",
       "views_use_default": "Use default",
       "views_home_tab": "Home tab",
       "views_home_tab_latest": "Latest",
@@ -894,13 +905,14 @@
     },
     "featured": {
       "title": "Featured content",
-      "intro": "Hand-picked assets and collections a home or browse surface can spotlight. Drag order sets how they appear.",
-      "empty": "Nothing featured yet. Add an asset or collection below.",
+      "intro": "Hand-picked assets, collections and teams a home or browse surface can spotlight. Drag order sets how they appear.",
+      "empty": "Nothing featured yet. Add an asset, collection or team below.",
       "add_heading": "Feature an item",
       "kind": "Kind",
       "kind_asset": "Asset",
       "kind_collection": "Collection",
-      "subject_id": "Asset or collection ID",
+      "kind_team": "Team",
+      "subject_id": "Asset, collection or team ID",
       "subject_id_placeholder": "Paste a UUID",
       "add": "Add",
       "adding": "Adding…",
@@ -912,9 +924,37 @@
       "added": "Added to featured.",
       "removed": "Removed from featured.",
       "reordered": "Order updated.",
-      "err_bad_id": "Enter a valid asset or collection ID.",
+      "err_bad_id": "Enter a valid asset, collection or team ID.",
       "err_duplicate": "That item is already featured.",
-      "err_generic": "Something went wrong. Try again."
+      "err_generic": "Something went wrong. Try again.",
+      "band_heading": "Promo band",
+      "band_intro": "A full-width strip between pages of the browse feed. It renders only when it is switched on, has a headline, and has at least one card the reader can see.",
+      "band_none": "No promo band yet. Fill this in and save to create one.",
+      "band_title": "Headline",
+      "band_title_placeholder": "e.g. Winter showcase",
+      "band_blurb": "Blurb",
+      "band_blurb_placeholder": "One short line under the headline",
+      "band_cta_label": "Button text",
+      "band_cta_label_placeholder": "e.g. See the showcase",
+      "band_cta_url": "Button link",
+      "band_cta_url_placeholder": "https://… or /collections/…",
+      "band_enabled": "Show the band on browse",
+      "band_after_page": "Show after page",
+      "band_after_page_hint": "1 puts the band after the first page of the feed.",
+      "band_scope": "Audience",
+      "band_scope_org": "Signed-in readers",
+      "band_scope_public": "Everyone, including signed-out visitors",
+      "band_save": "Save band",
+      "band_saving": "Saving…",
+      "band_saved": "Promo band saved.",
+      "band_delete": "Delete band",
+      "band_delete_confirm": "Delete the promo band and all of its cards?",
+      "band_deleted": "Promo band deleted.",
+      "band_cards": "Cards",
+      "band_cards_empty": "No cards yet. Add an asset or collection below — a band with no cards renders nothing.",
+      "band_add_card": "Add card",
+      "band_err_cta": "Give the button both a text and a link, and use an https:// address or a path starting with /.",
+      "band_err_duplicate": "That item is already a card in the band."
     },
     "site_text": {
       "title": "Site text",
@@ -1579,6 +1619,10 @@
           "browse_views": {
             "title": "Browse layouts",
             "blurb": "Choose which browse layouts your users can pick from."
+          },
+          "mature_content": {
+            "title": "Mature content",
+            "blurb": "Allow artists to label work as mature, and readers to opt in."
           },
           "maintenance": {
             "title": "Maintenance mode",
@@ -2465,6 +2509,16 @@
         "org_binding_error_label": "Cross-binding failed",
         "org_binding_recovery_hint": "Recovery: copy the original org.key into place (file permissions 0600), or run scripts/customer-activation in the license-server repo to generate a new one and request a license re-issuance against the new public key."
       },
+      "mature_content": {
+        "title": "Mature content",
+        "description": "Whether artists on this install can label their work as mature, and readers can choose to be shown it. Turning it on shows nothing to anybody on its own — a reader still has to be signed in and turn it on for themselves, and that is off by default.",
+        "legend": "Mature content on this install",
+        "allow": "Allow mature content",
+        "allow_help": "Artists get one checkbox when they upload, and readers get one in their account settings. Neither does anything while this is off.",
+        "off_note": "Turning this off hides work already labelled mature from everyone except the artist who posted it and site admins — and it erases nothing, so turning it back on restores the library exactly as it was. While it is off, new mature labels are refused, but existing ones can still be cleared.",
+        "saved": "Saved.",
+        "read_only": "You can view this setting but not change it."
+      },
       "browse_views": {
         "title": "Browse layouts",
         "description": "Pick the layouts the view switcher offers on this install. This applies to everyone — anyone already using a layout you turn off is moved to one that is still on, so nobody lands on an empty page.",
@@ -2522,16 +2576,19 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
-  "channels": {
+  "teams": {
     "follow": "Follow",
     "following": "Following",
     "unfollow": "Unfollow",
-    "rail_title": "Your channels",
+    "rail_title": "Teams",
     "browse_all": "All teams",
+    "rail_manage": "Team rail options",
+    "rail_manage_follows": "Manage follows",
+    "featured": "Featured",
     "empty": "You aren't following any teams yet.",
     "empty_cta": "Find some",
     "directory_title": "Teams",
-    "directory_blurb": "Studios and groups on this instance. Follow one to keep it in your channels.",
+    "directory_blurb": "Studios and groups on this instance. Follow one to keep it in your teams.",
     "directory_empty": "No teams yet",
     "directory_empty_hint": "Teams appear here once an administrator creates them.",
     "guest_title": "Teams are for members",
@@ -2547,7 +2604,35 @@
     "tab_assets": "Assets",
     "no_posts": "This team hasn't posted anything yet.",
     "no_assets": "This team has no assets yet.",
-    "load_more": "Load more"
+    "load_more": "Load more",
+    "rail_filter_label": "Filter the feed by team",
+    "rail_all_heading": "All Teams",
+    "rail_clear_filter": "All teams",
+    "rail_prev": "Scroll teams left",
+    "rail_next": "Scroll teams right",
+    "rail_search": "Search teams",
+    "rail_search_empty": "No teams match that.",
+    "rail_section_following": "Teams you follow",
+    "rail_section_all": "All teams",
+    "rail_hide": "Hide from your rail",
+    "rail_show": "Show in your rail",
+    "rail_reorder": "Reorder {name}",
+    "rail_reorder_hint": "Use the up and down arrow keys to move this team.",
+    "rail_explore": "Explore all teams",
+    "rail_hidden_note": "Hidden from your rail. Their work still appears in your feed."
+  },
+  "tags": {
+    "follow": "Follow",
+    "following": "Following",
+    "chip_label": "tag {tag}",
+    "rail_section": "Following tags",
+    "rail_follow_placeholder": "Follow a hashtag",
+    "rail_follow_label": "Follow a hashtag",
+    "rail_follow_submit": "Follow this hashtag",
+    "rail_already_following": "You already follow #{tag}",
+    "rail_unfollow": "Unfollow #{tag}",
+    "rail_reorder": "Reorder #{tag}",
+    "rail_empty": "Follow a hashtag to add it to your rail."
   },
   "messages": {
     "title": "Messages",
@@ -2744,12 +2829,17 @@
     "vis_public": "Public",
     "featured": "Featured",
     "rail_title": "Featured",
+    "rail_item_count": "{count} items",
+    "rail_item_count_one": "1 item",
+    "rail_prev": "Previous featured items",
+    "rail_next": "More featured items",
     "featured_flag": "Feature this collection on the hub",
     "untitled": "Untitled collection",
     "create": "Create",
     "creating": "Creating…",
     "saving": "Saving…",
     "search_placeholder": "Search collections…",
+    "search_within": "Search in this collection",
     "tab_mine": "Mine",
     "tab_featured": "Featured",
     "tab_public": "Public",
@@ -2769,7 +2859,6 @@
     "manage_members": "Manage members",
     "manage_members_soon": "Drag-reorder + bulk remove coming soon.",
     "set_cover": "Set cover",
-    "set_cover_soon": "Custom cover picker coming soon.",
     "delete": "Delete collection",
     "error_load": "Couldn't load collections.",
     "error_create": "Couldn't create the collection.",
@@ -2790,7 +2879,14 @@
     "detail_empty_hint": "Open a post or an asset and choose \"Save to collection\" to add it here.",
     "posts_heading": "Posts",
     "assets_heading": "Assets",
-    "posts_loading": "Loading posts…"
+    "posts_loading": "Loading posts…",
+    "cover": "Cover picture",
+    "cover_hint": "Pick a member to use as this collection's cover. Without one, the card shows a mosaic built from the newest members.",
+    "cover_derived": "Use mosaic",
+    "cover_derived_hint": "No chosen cover",
+    "cover_none": "Add some members first — there is nothing to choose from yet.",
+    "cover_current_external": "Current cover (not a member of this collection)",
+    "cover_loading": "Loading members…"
   },
   "errors": {
     "save_failed": "Couldn't save changes."
@@ -3210,6 +3306,7 @@
       "subtitle": "Anywhere on the page works."
     },
     "file_row": {
+      "mature": "This is mature content",
       "fields_load_error": "Failed to load fields.",
       "state_queued": "Queued",
       "state_uploading": "Uploading {pct}%",
@@ -3270,7 +3367,26 @@
     "section": {
       "posts": "Posts",
       "collections": "Collections",
-      "assets": "Assets"
+      "assets": "Assets",
+      "uploads": "Your uploads",
+      "liked_posts": "Liked posts",
+      "liked_assets": "Liked assets"
+    },
+    "tabs": {
+      "label": "Profile sections"
+    },
+    "tab": {
+      "portfolio": "Portfolio",
+      "about": "About",
+      "likes": "Likes"
+    },
+    "about": {
+      "location": "Location",
+      "website": "Website",
+      "empty": "This artist hasn't added anything about themselves yet."
+    },
+    "likes": {
+      "empty": "Nothing liked yet, or nothing you can see."
     }
   },
   "post_by_asset": {
@@ -3325,5 +3441,10 @@
     "view_trash": "View trash",
     "undo_error": "Couldn't put that back. Open your trash to try again.",
     "undone": "Put back."
+  },
+  "promo_band": {
+    "kicker": "Featured",
+    "kind_asset": "Asset",
+    "kind_collection": "Collection"
   }
 }

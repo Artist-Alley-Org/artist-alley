@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.9.1
+  version: 0.10.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -3291,6 +3291,164 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/featured/promo:
+    get:
+      operationId: getAdminPromoBand
+      summary: The operator promo band, for editing (GitHub #1118)
+      description: |
+        The band definition and its cards, with NO audience gate and no
+        collapse: a disabled band, a band with no cards and a band whose
+        cards are all above the tier this operator would read on the
+        public surface all come back in full. This is the page an
+        operator uses to BUILD the band, so it has to show what is
+        there.
+
+        Returns 404 when the install has no band at all. The
+        distinction from "an empty band" is real and the client needs
+        it: one offers "create", the other offers "add a card".
+
+        `items` here resolves through the same list as the rail's admin
+        curation list, which is deliberately gated more weakly than the
+        public read (see `listFeaturedItems`).
+
+        Read takes `featured.read` so a read-only auditor can see what
+        is published; every write below stays `system.admin`.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The band and its cards.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromoBand" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: savePromoBand
+      summary: Create or replace the operator promo band (GitHub #1118)
+      description: |
+        Upserts THE band. v1 renders one band, so this is a singleton
+        write rather than an id-addressed create — the table admits
+        several (ADR 0030's slot inventory is plural) and the reader
+        takes the enabled one with the lowest `after_page`, but the API
+        does not pretend to a plurality the release does not ship.
+
+        A REPLACE, not a PATCH: every field the form owns is written on
+        every save, so clearing the blurb is expressible.
+
+        The read that decides insert-vs-update runs in the same
+        transaction as the write, so two operators saving at once cannot
+        both find no band and both create one.
+
+        400 for a `cta_label`/`cta_url` supplied without its partner,
+        for an `after_page` below 1, and for a `cta_url` that is not an
+        absolute http(s) URL or a site-relative path — see
+        `PromoBand.cta_url` for why that last one is a security check.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromoBandInput" }
+      responses:
+        "200":
+          description: The saved band and its cards.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromoBand" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      operationId: deletePromoBand
+      summary: Delete the operator promo band (GitHub #1118)
+      description: |
+        Removes the band. Its cards go with it, through the
+        `featured_items.band_id` cascade — they are NOT orphaned onto
+        the featured rail, which is the anonymous landing page and not a
+        surface the operator chose for them.
+
+        Disabling (`enabled: false`) is the reversible alternative and
+        is what an operator normally wants; this exists so a band can be
+        actually removed rather than left switched off forever.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/featured/promo/items:
+    post:
+      operationId: addPromoBandItem
+      summary: Add a card to the operator promo band (GitHub #1118)
+      description: |
+        Appends one asset or collection to the band, at the end of its
+        own ordering — band positions are computed WITHIN the band, so
+        adding a card never reads or writes a rail position.
+
+        Removal and reordering are the EXISTING endpoints:
+        `DELETE /admin/featured/{id}` takes any placement id, band card
+        or rail entry, and `PUT /admin/featured/order` assigns positions
+        by id. Minting band-only twins of two operations that already do
+        exactly the right thing would have been two more places for the
+        next change to miss.
+
+        409 when the subject is already a card in this band. The same
+        subject may still be on the rail, and may be in another band —
+        those are different placements on different surfaces, which is
+        what the widened uniqueness key in migration 00053 exists to
+        allow.
+
+        404 when the install has no band to add to.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromoBandItemInput" }
+      responses:
+        "201":
+          description: The created placement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeaturedItem" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: That subject is already a card in this band.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /admin/users:
     get:
       operationId: listAdminUsers
@@ -3768,6 +3926,26 @@ paths:
           in: query
           required: false
           description: Filter to a single owner's assets.
+          schema: { type: integer, format: int64 }
+        - name: liked_by
+          in: query
+          required: false
+          description: |
+            Restrict the page to assets this user ref has LIKED (#1106).
+            Same contract as `liked_by` on `GET /posts` — see there.
+
+            ONE DIFFERENCE, and it is deliberate. Unfiltered browse
+            returns an asset the caller may not read as a `restricted`
+            PLACEHOLDER (ADR 0064; #881's request-access flow attaches to
+            it). With `liked_by` set the row is ABSENT instead: the page
+            is then a statement about one person's ACTIONS, and a
+            placeholder on it would disclose that they liked something
+            this viewer cannot see — a fact about a third party attached
+            to a row they do not own. The filter is
+            `visibility.FieldsReadableSQL`, the sanctioned SQL twin of
+            the per-row decision that would otherwise have redacted it,
+            so "survives the filter" and "renders unredacted" are the
+            same answer.
           schema: { type: integer, format: int64 }
         - name: asset_type
           in: query
@@ -5502,6 +5680,27 @@ paths:
           in: query
           required: false
           schema: { type: integer, format: int64 }
+        - name: liked_by
+          in: query
+          required: false
+          description: |
+            Restrict the page to posts this user ref has LIKED (#1106) —
+            the profile's Likes tab.
+
+            It is a filter on this feed rather than an endpoint of its
+            own because a likes listing is a DERIVED listing: its rows
+            are chosen by one user's actions and read by another, so the
+            only question that matters is whose read rule decides what
+            appears. Here the answer is structural — the caller's own
+            read rule is ANDed onto the result exactly as it is for
+            every other filter, so a post the caller may not read is
+            ABSENT from the page whoever liked it, and the count on the
+            page is the count of what they may read.
+
+            NARROWING, never widening. The `likes` table is written by
+            third parties, so liking a post can never put it in front of
+            somebody the author did not admit.
+          schema: { type: integer, format: int64 }
         - name: visibility
           in: query
           required: false
@@ -5542,9 +5741,15 @@ paths:
           description: |
             Pre-baked feed selector. When set, applies
             a viewer-anchored filter on top of the other query params.
-            - `following` — restrict to authors the caller follows
-              (browse-page "Following" tab). Returns an empty page for
-              callers who don't follow anyone yet.
+            - `following` — restrict to what the caller follows
+              (browse-page "Following" tab): posts by an author they
+              follow, OR posts belonging to a team they follow. One
+              filter over both follow graphs, because the page offers
+              one control and its rail lists the teams you follow.
+              Still NARROWING — the read rule is ANDed on after it and
+              consults neither follow table, so following a studio
+              reveals nothing of its work you could not already see.
+              Returns an empty page for callers who follow nothing.
             - `latest` (default) — no extra filter; same shape as
               omitting the param.
           schema:
@@ -6403,11 +6608,19 @@ paths:
           in: query
           required: false
           description: |
-            Filters on whether the collection has an ORG-scoped
-            placement in `featured_items` (ADR 0065). Featuring is a
-            placement, not a property of the collection, so this asks
-            "is it featured internally", not "is its featured flag
-            set" — the flag no longer exists.
+            Filters on whether the collection has a placement in
+            `featured_items` THIS CALLER CAN SEE (ADR 0065) — `public`
+            placements for everyone, plus `org` placements once signed
+            in. Not "ORG-scoped": #1104 split the scope, and the filter
+            follows the caller rather than pinning one value.
+
+            Featuring is a placement, not a property of the collection,
+            so this asks "is it featured to me", not "is its featured
+            flag set" — the flag no longer exists.
+
+            IT NEVER WIDENS ACCESS. The placement filter is ANDed onto
+            the ordinary collection read predicate, so a collection the
+            caller may not read is absent whether it is featured or not.
           schema: { type: boolean }
         - name: tab
           in: query
@@ -6415,8 +6628,20 @@ paths:
           description: |
             Pre-canned filter for the collections hub:
             - `mine` — collections owned by the caller (any visibility)
-            - `featured` — visibility=public AND org-featured (ADR 0065)
-            - `public` — visibility=public (every install-public collection)
+            - `featured` — featured to this caller AND readable by them.
+              NO TIER PIN (#1121): this tab means "featured collections
+              I may see", so it is the placement filter ANDed onto the
+              ordinary read predicate and nothing else. It used to also
+              pin `visibility=public`, which made it disagree with the
+              rail (`GET /featured`) — an admin could feature an
+              `org-only` collection, see it on the rail, and never see
+              it here. Removing the pin cannot widen access: featuring
+              is a placement, not a grant, and the read predicate it is
+              ANDed onto is unchanged.
+            - `public` — visibility=public (every install-public
+              collection). This tab KEEPS its tier pin, because there
+              the tier is the tab's contract rather than an extra
+              conjunct on top of one.
             - `shared` — collections the caller has ACL access to but doesn't own
             - `all` — every collection the caller is allowed to see (default)
             `tab` is mutually-exclusive with `owner_ref`/`visibility`/`featured`
@@ -6530,9 +6755,10 @@ paths:
       operationId: updateCollection
       summary: Partial update of a collection
       description: |
-        Only fields present in the body are touched. Pass
-        `expires_at: null` to remove the TTL; omit the field to keep
-        the current value.
+        Only fields present in the body are touched; omit a field to
+        keep its current value. Send `clear_expires_at: true` to remove
+        the TTL — sending `expires_at: null` does NOT, because null is
+        already "leave alone" for every property here.
 
         Optimistic concurrency: pass the collection's
         last-known `updated_at` as `if_unchanged_since`; 409 if
@@ -7265,6 +7491,76 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/hero:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setTeamHero
+      summary: Choose or clear the team's hero picture
+      description: |
+        Points the team at an ordinary asset to use as its picture
+        (#982), or clears the pointer so the team falls back to its
+        initials tile.
+
+        # Why this is not part of `updateTeam`
+
+        The gate is different. Renaming a team is a global `teams.admin`
+        act; choosing its picture is one a team's OWN admin should be
+        able to do, so this endpoint accepts `teams.admin` scoped to
+        this team. Folding it into the PATCH would mean one operation
+        answering to two different authorisation rules depending on
+        which field the body happened to carry, which is how a gate ends
+        up being widened by accident.
+
+        # What the server will accept
+
+        The asset must be `sensitivity: public` AND carry this team's
+        `team_id`. Both halves are required: `public` alone would let a
+        team pin any public asset in the install onto itself, and
+        ownership alone would paint a `team`- or `restricted`-
+        sensitivity picture into a strip anonymous readers can see.
+
+        An asset that fails either half is refused with the same 400
+        given for an id that does not exist — telling the two apart
+        would make this an existence oracle for assets the caller
+        cannot see.
+
+        A just-uploaded asset is accepted before its `col` rendition
+        exists; the team simply keeps painting initials until the
+        rendition lands. Refusing it would be an error the admin cannot
+        act on.
+
+        Passing the check is not a promise the picture keeps rendering.
+        The read path re-checks the same rule on every read, so an asset
+        later set to `restricted` drops out of the payload and the team
+        reverts to initials.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamHeroUpdate" }
+      responses:
+        "200":
+          description: The team, carrying its new hero (or none)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/parents:
     parameters:
       - name: id
@@ -7454,7 +7750,7 @@ paths:
         schema: { type: string, format: uuid }
     post:
       operationId: followTeam
-      summary: Follow a team (subscribe to its channel)
+      summary: Follow a team (bookmark it into your teams rail)
       description: |
         Adds the caller to `team_follows` (#577). Requires `teams.read`
         — the same capability that lets you see the team at all.
@@ -7465,10 +7761,10 @@ paths:
         never read by any authorization rule, and following a studio
         does not widen one row of what you can see of its work — the
         visibility planes decide that and do not consult this table.
-        All it does is put the team in your channels rail.
+        All it does is put the team in your teams rail.
 
         There is deliberately no unread model and no notification
-        fanout behind it; channels are not notifications.
+        fanout behind it; a follow is a bookmark, not a subscription.
 
         ## Idempotent
 
@@ -7531,7 +7827,7 @@ paths:
   /auth/me/followed-teams:
     get:
       operationId: getMyFollowedTeams
-      summary: Teams the caller follows (the channels rail)
+      summary: Teams the caller follows (the teams rail)
       description: |
         The caller's `team_follows` rows, resolved to teams and ordered
         by name (#577). Soft-deleted teams are filtered out, so a
@@ -7558,6 +7854,138 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /tags/{tag}/follow:
+    parameters:
+      - name: tag
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 200 }
+        description: |
+          The tag itself, URL-encoded. Tags are a CORPUS rather than an
+          entity — `post_tags` has no id to address one by — so the
+          string is the identifier.
+
+          Matching against the corpus is EXACT, because `GET /posts`'s
+          `tag` filter is exact. The server trims surrounding whitespace
+          (the same normalisation `post_tags` writes apply) and does
+          nothing else: folding case here would give the reader a rail
+          chip whose `?tag=` filter finds nothing while their Following
+          feed fills with differently-cased posts. Unifying case across
+          the corpus is the #789 vocabulary arc's decision.
+    post:
+      operationId: followTag
+      summary: Follow a tag (bookmark it into your browse rail)
+      description: |
+        Adds the caller to `tag_follows` (#1123). Authentication is the
+        only gate.
+
+        ## A follow is a BOOKMARK, not a grant
+
+        It grants nothing. It is never read by any authorization rule,
+        and following a tag does not widen one row of what you can see.
+        What it does is put a `#` chip in your browse rail and add a
+        third source to the Following feed — posts carrying a tag you
+        follow, INTERSECTED with what you could already read, never
+        unioned with it.
+
+        That distinction is sharper for tags than for teams and users,
+        because a tag's other side is written by whoever authored the
+        post: anyone may tag their own restricted post `fantasy`. The
+        Following filter is therefore ANDed beside the post read rule
+        rather than ORed into it, so a restricted post carrying a tag
+        you follow stays exactly as invisible as it was.
+
+        ## No capability, and no existence check
+
+        Team follows require `teams.read` because that is what lets you
+        see a team at all. A tag needs no such gate: it is a free
+        string, and the feed it feeds is already gated by the post read
+        rule.
+
+        There is deliberately no "does this tag exist" probe either —
+        following a tag nobody has used is legal and inert until
+        somebody uses it. A probe would have to answer from a corpus
+        spanning posts the caller cannot read, which would make this
+        endpoint an oracle enumerating the tags of private work one
+        guess at a time.
+
+        ## Idempotent
+
+        Following a tag you already follow is a no-op `204`, not a
+        `409`.
+      tags: [tags]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Followed (or already following)
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: unfollowTag
+      summary: Unfollow a tag
+      description: |
+        Removes the caller's `tag_follows` row (#1123). Idempotent:
+        unfollowing a tag you do not follow is a `204`, not a `404`.
+
+        The tag is trimmed on the way in exactly as it is on the write
+        path, so a follow and its unfollow normalise to the same key. No
+        length refusal here, unlike `POST`: an over-long tag cannot be
+        in the table, so the delete simply matches nothing — which is
+        the right answer to "make sure I am not following this".
+      tags: [tags]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unfollowed (or was not following)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/me/followed-tags:
+    get:
+      operationId: getMyFollowedTags
+      summary: Tags the caller follows (the rail's # chips)
+      description: |
+        The caller's `tag_follows` rows (#1123), most recently followed
+        first.
+
+        Recency rather than alphabetical, unlike
+        `GET /auth/me/followed-teams`. A team chip carries an avatar and
+        a name the reader recognises by shape, so alphabetical order is
+        findable; a row of `#` chips is visually uniform, and recency is
+        the only ordering that puts a reader's newest interest where
+        they will look for it. The reader's own `tag_order` preference
+        is a partial override of this order.
+
+        No liveness filter, because a tag has no liveness: one with no
+        posts left matches nothing and the chip stays until the reader
+        removes it. Returns `[]`, never `null`.
+      tags: [tags, auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tags the caller follows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FollowedTag" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -9680,6 +10108,101 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/mature-content:
+    get:
+      operationId: getMatureContentConfig
+      summary: Read whether this install allows mature content
+      description: |
+        The operator's install-wide mature-content switch (#1116, epic
+        #1114, ADR 0090 §2).
+
+        An install that has never configured this reads back
+        `allowed: true`, and that default is deliberate: an install
+        upgraded into this feature has consented to nothing, and the
+        only safe reading of "no row" is the behaviour it already had —
+        which is one with no mature machinery at all, i.e. one where
+        nothing is filtered. The reading that *seems* safer (absent
+        means disallowed) is the one that breaks an upgrade, by making
+        every existing install refuse mature publication on the day it
+        upgraded, for a flag none of their assets carry.
+
+        Note what allowing does NOT do: it shows nothing to anybody on
+        its own. A viewer still has to be signed in AND opted in, and
+        the opt-in defaults OFF. This switch is permissive about the
+        OPERATOR's intent, never about a reader's.
+
+        There is no public counterpart to this endpoint. Every consumer
+        of the answer — the upload self-label, the operator override,
+        the account opt-in — is behind authentication, so the value
+        rides the session response as `CurrentUser.mature_content_allowed`
+        instead of being published to anonymous callers.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The install's mature-content switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MatureContentConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateMatureContentConfig
+      summary: Allow or disallow mature content on this install
+      description: |
+        Sets the switch. Requires the `system.config.write` capability
+        and is recorded as an `admin.system.mature_content_updated`
+        audit event.
+
+        ⚠️ SWITCHING IT OFF CLEARS NOTHING. Flags already set survive,
+        so switching it back on restores the library exactly. The switch
+        governs ENFORCEMENT and PUBLICATION, never storage — turning it
+        off would otherwise be a destructive operation disguised as a
+        display preference, and an operator who flipped it to see what
+        happened could not undo it.
+
+        With it off:
+
+          * nobody qualifies for mature content except an asset's OWNER
+            and a `system.admin` (ADR 0090 §2 — an artist must not lose
+            access to their own work because an operator flipped a
+            display switch, and an admin has to be able to moderate what
+            the switch hid);
+          * setting a `mature` flag on an asset is REFUSED with a 400
+            rather than accepted-and-ignored. Clearing one is still
+            accepted, so an operator who has just switched the feature
+            off can unmark what was marked while it was on.
+
+        The change takes effect on the next request without a restart:
+        the read is deliberately uncached, because a stale `true` would
+        keep serving mature content on an install whose operator has
+        just switched it off.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MatureContentConfig" }
+      responses:
+        "200":
+          description: The updated switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MatureContentConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /site-text:
     get:
       operationId: getSiteText
@@ -9943,6 +10466,97 @@ paths:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/FeaturedItem" }
+
+  /featured/promo:
+    get:
+      operationId: getPromoBand
+      summary: The operator promo band for the browse feed (GitHub #1118)
+      description: |
+        The full-width strip the browse feed renders BETWEEN pages, or
+        nothing.
+
+        THE COLLAPSE IS DECIDED HERE, NOT BY THE CLIENT. The response is
+        `{}` — no `band` key at all — when the install has no band, when
+        the band is disabled, when it has no headline, or when every one
+        of its cards filtered away for this caller. Answering with an
+        empty band and letting the page decide would put the rule in
+        every client that ever renders one; answering with nothing puts
+        it beside the filter that produced the emptiness. See
+        `PromoBand` for why collapse (ADR 0030) rather than substitution
+        (ADR 0079 §2, which is scoped to in-grid sized slots).
+
+        FEATURING NEVER WIDENS ACCESS, and the band is not an exception.
+        Every card resolves through the same query the featured rail
+        uses: the caller's ADR 0063 predicate is spliced into the JOIN
+        that resolves each subject, per-asset sensitivity still
+        suppresses the thumbnail hints (ADR 0020), and the ADR 0090
+        mature conjunct drops a mature item for a reader who has not
+        opted in. A card pointing at content the caller may not see
+        produces no row, not a blank tile.
+
+        Anonymous-readable, and gated by the install's public-mode
+        setting exactly like `GET /featured` — the `/featured` prefix is
+        one entry in `auth.PublicSurfaceRoutes`, so both move together.
+        Whether an anonymous visitor sees a band at all is then the
+        BAND's own `scope`: `public` shows to everyone, `org` to
+        signed-in readers only.
+      tags: [featured]
+      security: []
+      responses:
+        "200":
+          description: |
+            The band this caller may see, or an empty object when there
+            is nothing to render.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  band: { $ref: "#/components/schemas/PromoBand" }
+
+  /featured/teams:
+    get:
+      operationId: listFeaturedTeams
+      summary: Operator-curated teams for the teams rail (GitHub #1084)
+      description: |
+        The `featured_items` placements with `subject_kind = 'team'` at
+        `scope = 'org'`, in curation order — the slot that runs first in
+        the teams rail.
+
+        `org` rather than `public` is deliberate and it is what the write
+        endpoint already produces: `POST /admin/featured` writes
+        `scope = 'org'`, and ADR 0065 defines `org` as the internal,
+        signed-in audience — which is exactly this rail's audience, since
+        it renders only for a signed-in reader holding `teams.read`. A
+        `public` placement is a separate audience with a separate surface
+        (`GET /featured`) and is not read here.
+
+        **A placement is not a grant.** Featuring a team makes nothing
+        visible that was not already: the join drops any team that is not
+        live, the endpoint holds the same `teams.read` gate as the rest
+        of the teams rail, and each team's picture goes through the
+        render-time hero re-check (#982) rather than the stored pointer,
+        so a hero whose asset stopped being public falls back to initials
+        here exactly as it does everywhere else.
+
+        Sits under `/featured` rather than `/teams/featured` so the path
+        cannot be confused with `/teams/{id}` by a router or a reader.
+      tags: [featured, teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Featured teams the caller may see, in curation order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /appearance:
     get:
@@ -11424,6 +12038,34 @@ components:
             type: string
             enum: [grid, masonry, thumbnail, list, feed]
           example: [grid, list, feed]
+    MatureContentConfig:
+      type: object
+      required: [allowed]
+      description: |
+        The install-wide mature-content switch (#1116, ADR 0090 §2).
+
+        ⚠️ THE WIRE FIELD IS NAMED FOR THE PERMISSIVE DIRECTION AND THE
+        STORED ONE IS NOT, and the difference is not an oversight. The
+        stored struct's field is `disallowed`, so its ZERO VALUE — an
+        empty blob, a partial decode, an install that has never
+        configured this — reads as the permissive upgrade default. The
+        wire field is `allowed`, because that is the question an
+        operator is answering, and it is REQUIRED so no zero value is
+        ever in play on this side: a body that omits it is a 400, not a
+        silent switch-off.
+      properties:
+        allowed:
+          type: boolean
+          description: |
+            Whether this install permits mature content at all. `true`
+            for an install that has never configured it.
+
+            Allowing shows nothing to anybody by itself — the viewer
+            still has to be signed in and opted in, and the opt-in
+            defaults off. DISallowing is absolute: it outranks an
+            opted-in reader's own preference, because the operator's
+            answer is about the install and the reader's is about
+            themselves.
     SMTPConfig:
       type: object
       required: [host, port, encryption, from_address]
@@ -12311,7 +12953,7 @@ components:
 
     CurrentUser:
       type: object
-      required: [ref, username, auth_method, capabilities_status]
+      required: [ref, username, auth_method, capabilities_status, mature_content_allowed]
       properties:
         ref:
           type: integer
@@ -12384,6 +13026,77 @@ components:
             OMITTED when every filter is off, which is every account
             that has not opted in — so this changes no existing session
             response.
+        browse_rail:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesBrowseRail"
+          description: |
+            The account's browse-rail curation — team chips (#1113) and
+            followed-tag chips (#1123) — joined from user_preferences at
+            /auth/me time.
+
+            Here rather than behind a second fetch because these lists
+            decide WHAT THE RAIL DRAWS. Learning them after first paint
+            means the rail paints the uncurated list and then rearranges
+            itself in front of the reader — the layout shift the rail's
+            single `loaded` gate exists to avoid, reintroduced one level
+            up. Same first-paint argument as `default_views` (#706).
+
+            OMITTED when every list is empty, which is every account
+            that has not curated its rail — so this changes no existing
+            session response.
+        mature_content:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesMatureContent"
+          description: |
+            The account's mature-content consent, joined from
+            user_preferences at /auth/me time (#1115).
+
+            Here rather than behind a second fetch for the same
+            first-paint reason as `feed_filters`: it decides what the
+            feed CONTAINS, and a page that learns it after paint renders
+            one library and then swaps it. #706 is the precedent.
+
+            ⚠️ IT IS ONE OF THREE CONJUNCTS, NOT THE ANSWER. The reader
+            also has to be signed in (they are, if they are reading
+            this) and the INSTANCE has to allow mature content — that
+            third conjunct is `mature_content_allowed` below. A client
+            rendering "mature content is on for you" from THIS field
+            alone will be wrong on an instance that has switched the
+            feature off.
+
+            OMITTED when the opt-in is off, which is every account that
+            has not opted in — so this changes no existing session
+            response.
+        mature_content_allowed:
+          type: boolean
+          description: |
+            Whether this INSTANCE allows mature content at all (#1116,
+            ADR 0090 §2) — the operator's switch, not this account's.
+
+            ⚠️ REQUIRED, unlike `mature_content` above, and the asymmetry
+            is the point. `mature_content` may be omitted because absent
+            and `false` mean the same thing there (not opted in). Here
+            they do NOT: the unconfigured default is `true`, so a client
+            that read an absent field as `false` would hide the opt-in
+            control on every install that has never touched the setting —
+            which is all of them. Declared required so the guess is
+            impossible to need: every producer of this schema must answer,
+            and the compiler says so.
+
+            It rides the session response rather than getting a public
+            endpoint because every consumer is behind authentication:
+            the upload self-label, the operator's per-asset override,
+            and the account opt-in are all signed-in surfaces, and an
+            anonymous viewer can never opt in (there is nowhere to store
+            the answer). The operator's read/write pair is
+            `/admin/system/mature-content`.
+
+            What a client does with it: when `false`, the account's
+            mature opt-in control is not rendered AT ALL — not rendered
+            disabled — because a toggle the server will not honour is a
+            control that lies. Server-side nothing depends on the
+            client obeying: the same switch is ANDed into the
+            qualification predicate on every request.
         capabilities:
           type: array
           items:
@@ -13292,6 +14005,94 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The curator's CHOSEN cover picture (#1027), or null to
+            compose the derived mosaic from members instead.
+
+            ANY asset the curator could picture when they set it — not
+            necessarily a member of this collection. That is what makes
+            it survive the member being removed, which is the failure a
+            member-only pointer has. "Upload a dedicated banner" is
+            still available: upload it as an ordinary asset, then pick
+            it. One extra step, no separate upload machinery, and one
+            representation for a cover instead of two.
+
+            THIS IS THE CURATOR'S SETTING, NOT THE RENDER ANSWER. Read
+            `covers` to know what to paint; read this to populate the
+            edit form's picker. They disagree on purpose whenever the
+            reader may not picture the chosen asset — see `covers`.
+
+            It does NOT federate. A local asset id names something that
+            exists only on this server, which is ADR 0083's exclusion
+            criterion; a peer composes its own mosaic from the members
+            it holds.
+        covers:
+          type: array
+          items: { $ref: "#/components/schemas/CollectionCover" }
+          description: |
+            What to PAINT for this collection's tile — the curator's
+            chosen cover if there is a renderable one (#1027), else up
+            to four members whose picture this caller may render, the
+            derived mosaic (#1026).
+
+            A COVER THIS READER MAY NOT PICTURE FALLS BACK TO THE
+            MOSAIC; it never yields a blank tile, and it never leaks the
+            withheld picture either. The choice is the curator's, but
+            whether it renders is still decided per reader, so two
+            readers of the same collection can correctly get different
+            answers here. A client cannot tell an overridden cover from
+            a one-member mosaic, and does not need to.
+
+            BOTH MEMBER KINDS CONTRIBUTE. `collection_resources` supply
+            their asset directly, and `collection_posts` supply
+            `cover_thumbnail_asset_id ?? cover_asset_id` — the same
+            preference a feed card uses. #882 made a post-only
+            collection an ordinary thing to own ("save someone else's
+            post"), and until #1026 such a collection had no cover
+            source at all and rendered as an empty folder.
+
+            ORDER is the curator's, `added_at` ascending, INTERLEAVED
+            across both kinds: the arrangement is the curation, and the
+            two membership tables are one shelf.
+
+            EACH ASSET APPEARS AT MOST ONCE, at its earliest position.
+            One asset can be reached by several routes — pinned
+            directly AND carried as a post's cover, or shared as the
+            cover of two posts — and the same picture twice summarises
+            nothing. Clients may therefore key a list on `asset_id`.
+
+            WITHHELD MEMBERS ARE SKIPPED, NOT SLOTTED. Only members
+            passing the caller's picture plane (ADR 0064) and having a
+            `col` rendition appear, so a restricted member never
+            occupies a slot a renderable one behind it could fill.
+            That is deliberately NOT the placeholder shape
+            `GET /collections/{id}/resources` uses: a placeholder there
+            exists so the reader can see a restriction and ask for
+            access (#881/#883), whereas a blank quarter of a mosaic
+            says nothing and costs a picture.
+
+            ABSENT means "not composed on this surface", never "no
+            members" — an empty array is the honest "nothing to show".
+    CollectionCover:
+      type: object
+      description: |
+        One tile of a collection's composed mosaic cover (#1026). An
+        entry exists only if this caller may render the asset, so
+        clients paint every entry unconditionally — there is no
+        `preview_available` to branch on and no placeholder rung.
+      required: [asset_id]
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+          description: |
+            Fetch the picture from
+            `/assets/{asset_id}/variants/col`. Guaranteed to have that
+            rendition — an asset without one is not a cover candidate.
     CollectionCreate:
       type: object
       required: [name]
@@ -13339,8 +14140,9 @@ components:
     CollectionUpdate:
       type: object
       description: |
-        Partial update; only present fields are touched. Pass
-        `expires_at: null` to clear the TTL.
+        Partial update; only present fields are touched. A null is
+        "leave alone", not "clear" — removing a value that is already
+        set is an explicit flag (`clear_expires_at`, `clear_cover`).
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
@@ -13354,9 +14156,52 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: |
+            Set this collection's expiry. Send `clear_expires_at: true`
+            to remove an existing TTL — sending `null` here does not
+            clear it, for the same reason it does not for
+            `cover_asset_id`: null already means "leave alone".
+        clear_expires_at:
+          type: boolean
+          description: |
+            Remove this collection's TTL, so it no longer expires (#1073).
+            Mutually exclusive with `expires_at` — sending both is a 400,
+            rather than the server picking one and silently discarding
+            the other.
         purpose:
           type: string
           nullable: true
+        cover_asset_id:
+          type: string
+          format: uuid
+          description: |
+            Choose this collection's cover picture (#1027). Any asset
+            you may PICTURE — it does not have to be a member of this
+            collection.
+
+            The server refuses an asset you may not picture, with the
+            same 400 it gives for an id that does not exist: telling the
+            two apart would make this endpoint an existence oracle for
+            assets you cannot see.
+
+            Send `clear_cover: true` to go back to the derived mosaic —
+            a partial update cannot express "remove" by sending null,
+            because null is already "leave alone" for every other
+            property here. Same reasoning, and the same shape, as
+            `clear_default` on FieldDefinitionUpdate.
+
+            EDIT-ONLY, deliberately absent from CollectionCreate. #914
+            took a question off the new-collection dialog because the
+            API already had a sensible default; a cover is a curation
+            act performed on a collection that already has members, not
+            a decision anyone can make while naming an empty one.
+        clear_cover:
+          type: boolean
+          description: |
+            Remove the chosen cover, reverting this collection to the
+            derived mosaic composed from its members. Mutually exclusive
+            with `cover_asset_id` — sending both is a 400, rather than
+            the server picking one and silently discarding the other.
         if_unchanged_since:
           type: string
           format: date-time
@@ -13499,6 +14344,25 @@ components:
             REQUIRED (nullable), same as Asset.pixel_height. Projected
             as a PAIR with `pixel_width` — never one without the other.
         asset_created_at: { type: string, format: date-time }
+        card_fields:
+          type: array
+          items: { $ref: '#/components/schemas/CardField' }
+          description: |
+            The values of the fields an operator marked `show_on_card`,
+            already resolved to display strings and in the order the
+            field definitions declare — identical contract to
+            Asset.card_fields, see there.
+
+            #1133: this key was missing, and with it the flag had never
+            worked on the member grid. A collection member renders
+            through the same card as a browse tile, so "at a glance"
+            meant one thing on browse and nothing here. The values are
+            resolved by the same projection the browse page uses
+            (metadata.CardFieldsForAssets), not by a second one.
+
+            Absent on a `restricted` placeholder, like every other
+            asset-derived key above — the withheld row's permitted key
+            set is unchanged by this addition.
     CollectionResourceWrite:
       type: object
       required: [asset_id]
@@ -13617,6 +14481,22 @@ components:
         asset_type: { type: integer, format: int64 }
         owner_user_ref: { type: integer, format: int64, nullable: true }
         status: { type: string, enum: [draft, active, archived] }
+        mature:
+          type: boolean
+          description: |
+            This asset carries a MATURE rating (#1115, epic #1114, ADR
+            0090).
+
+            ⚠️ A RATING IS NOT A CLEARANCE. `sensitivity` answers who is
+            ALLOWED to see this; `mature` answers who has OPTED IN. They
+            are orthogonal — a `public` artwork can be mature, and a
+            `restricted` one need not be — and a client that treats one
+            as a level of the other will get both wrong.
+
+            Whether a disqualified viewer receives this row at all, and
+            whether its preview is blurred, are the server's decisions
+            (ADR 0090 §3). The flag is here so a client can LABEL what it
+            was given, never so it can decide what to hide.
         file_hash: { type: string, nullable: true, description: sha256 of the linked storage object }
         file_extension: { type: string, nullable: true }
         file_size_bytes: { type: integer, format: int64, nullable: true }
@@ -13843,6 +14723,35 @@ components:
             without making remote work look lesser — federated content
             uses the same card, the same viewer and the same display
             hints; what it must not do is arrive unattributed.
+        owner:
+          allOf:
+            - $ref: '#/components/schemas/PostAuthor'
+          nullable: true
+          description: |
+            The renderable identity behind `owner_user_ref` — the
+            artist block on an asset card (#1047).
+
+            THE SAME SHAPE AND THE SAME RESOLUTION AS A POST'S AUTHOR,
+            because it is literally the same code: `users.LookupAuthors`,
+            batched once per page. An asset card that resolved the
+            owner client-side would be an N+1 per tile, and worse, it
+            would re-derive the display-name ladder in the browser —
+            which is how the anonymous rung gets skipped (#1023).
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO OWNER". A ref is
+            omitted from the lookup when the owner set
+            `hide_from_anonymous` and the reader is anonymous (ADR 0024
+            / ADR 0070 §3), or when the account is gone. There is no
+            redacted entry and no placeholder identity: the card draws
+            no artist block at all. Deliberately not a sentinel —
+            "someone who opted out owns this" still discloses that they
+            own it.
+
+            Absent on a `restricted` placeholder too, which carries
+            `owner_display_name` instead: that surface has its own
+            allow-list and its own name rule
+            (`users.PlaceholderOwnerName`), and a second, wider
+            identity object riding the same row would defeat it.
     CardField:
       type: object
       description: |
@@ -13877,11 +14786,16 @@ components:
       type: object
       description: |
         GitHub #341 — one admin-curated featured entry pointing at an
-        asset or collection, with an explicit ordering position and
-        the resolved subject title. Both subject kinds carry thumbnail
-        hints so a tile can render a cover: assets from themselves,
-        collections via ADR 0027's hero-card fallback (#559).
-      required: [id, subject_kind, subject_id, position, title, preview_available, created_at, ladder_available]
+        asset, a collection or a team, with an explicit ordering
+        position and the resolved subject title. Assets and collections
+        carry thumbnail hints so a tile can render a cover: assets from
+        themselves, collections via ADR 0027's hero-card fallback
+        (#559). A `team` subject (#1084) resolves its NAME only and
+        carries no hints — a team's picture is admissible solely through
+        the render-time hero re-check (#982), and resolving it here
+        would be a second copy of that rule inside a query whose gates
+        are deliberately weaker than the public rail's.
+      required: [id, subject_kind, subject_id, position, title, subtitle, preview_available, created_at, ladder_available]
       properties:
         id:
           type: string
@@ -13889,7 +14803,15 @@ components:
           description: The featured_items row id (used for remove/reorder).
         subject_kind:
           type: string
-          enum: [asset, collection]
+          description: |
+            Must list every value `FeaturedItemInput.subject_kind`
+            accepts. It is a separate schema and was the place this was
+            nearly missed in #1084: the server would have gone on
+            serialising `team` (Go emits the string it holds), while the
+            generated client's type narrowed it away and a strict
+            response validator rejected the row — a placement the
+            operator could see in the database and not in the UI.
+          enum: [asset, collection, team]
         subject_id:
           type: string
           format: uuid
@@ -13901,6 +14823,48 @@ components:
           description: |
             Resolved subject title (asset title or collection name).
             Empty when the subject was deleted out from under the row.
+        subtitle:
+          type: string
+          description: |
+            The wide card's second line (#1110): the COLLECTION's own
+            `description`, empty when it has none — and empty for every
+            other subject kind.
+
+            WITHHELD EXACTLY WHEN `title` IS, structurally rather than
+            by a second rule. It is selected from the same `c` join
+            that produces `title` for a collection subject, and that
+            join carries the caller's ADR 0063 collection predicate in
+            its ON clause: a collection this caller may not see fails
+            to join, contributes neither name nor description, and the
+            placement row is then dropped entirely. There is no
+            arrangement in which a description arrives without the name
+            it belongs to.
+
+            ASSET SUBJECTS CARRY NO SUBTITLE, deliberately. ADR 0020
+            makes a non-public asset title-only on this surface — the
+            rail already suppresses its thumbnail hints for exactly
+            that reason — so sourcing this from `assets.description`
+            would widen an embargo tile from "title" to "title and the
+            author's notes". #1110 specifies the collection's
+            description; the asset half of that widening is not a
+            rendering choice this field gets to make.
+        item_count:
+          type: integer
+          nullable: true
+          description: |
+            How many members of a COLLECTION subject THIS CALLER can
+            see — the wide card's subtitle fallback when `subtitle` is
+            empty (#1110). Null for every non-collection subject.
+
+            Caller-scoped, not a raw `COUNT(*)`. The membership is the
+            same one the mosaic composes from (pinned, unexpired, over
+            both `collection_posts` and `collection_resources`), with
+            each half gated by the caller's own read predicate — the
+            post rule for posts, the asset predicate for resources. A
+            bare count would publish the SIZE of the withheld part of a
+            public collection, which is the derived-copy leak class
+            #902 closed for search text and #1066 closed for
+            embeddings, arriving through a subtitle.
         cover_asset_id:
           type: string
           format: uuid
@@ -13945,18 +14909,214 @@ components:
             passes the content plane. Identical contract to
             Asset.ladder_available — see there for why this is computed
             from config rather than from the default rung list.
+        author:
+          $ref: "#/components/schemas/PostAuthor"
+          description: |
+            The subject's owner, as the promo band's card chip draws it
+            (#1118) — the asset's owner for an asset subject, the
+            collection's for a collection.
+
+            POPULATED ONLY BY `GET /featured/promo`, and the absence
+            elsewhere is a statement rather than an oversight. The
+            featured rail's card prints a subtitle, not an author
+            (#1110), and a value nothing consumes is a value nothing
+            tests; the admin curation list identifies a row by its
+            subject id, which is what an operator needs to prune it.
+
+            The name inside is resolved by `users.ResolveDisplayName`
+            through `users.LookupAuthors` — the one home of the
+            display-name ladder, with its authenticated rung and its
+            anonymous arm. It is NOT re-derived per surface: #1023
+            exists because that ladder had been transcribed four times
+            and three copies were wrong.
+
+            ABSENT — not redacted — for an author who took ADR 0024's
+            opt-out and for a hard-deleted account, exactly as on a post
+            card. "No author object" means "no name to show", never
+            "look it up another way".
         created_at:
           type: string
           format: date-time
 
-    FeaturedItemInput:
+    PromoBand:
       type: object
-      description: GitHub #341 — payload to feature an asset or collection.
+      description: |
+        An operator-authored full-width promo strip rendered BETWEEN
+        pages of the browse feed (#1118): a headline, a blurb, an
+        optional call-to-action, and an ordered row of curated cards.
+
+        THE CARDS ARE ORDINARY PLACEMENTS. They are `featured_items`
+        rows carrying this band's id, resolved through the same query,
+        the same ADR 0063 predicate splices and the same ADR 0020
+        sensitivity and ADR 0090 mature gates as the featured rail — so
+        a card pointing at content this caller may not see produces
+        nothing at all, and a band is never a way to surface something.
+
+        THE COLLAPSE IS DECIDED SERVER-SIDE. `GET /featured/promo`
+        answers with NO band object at all when the install has none,
+        when the band is disabled, when it has no headline, or when
+        every card filtered away for this reader. That is ADR 0030's
+        rule for a banner between content, which is the geometry a
+        full-width band has; ADR 0079 §2's "an unfilled slot becomes
+        ordinary content" is scoped to IN-GRID sized slots, where
+        collapsing would leave a hole in the middle of a wall. Between
+        two walls there is no hole to leave.
+      required: [id, title, blurb, cta_label, cta_url, enabled, after_page, scope, items]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: |
+            The strip's headline. A band with an empty one does not
+            render — a button and a blurb with no headline is an
+            unfinished draft, not a banner.
+        blurb:
+          type: string
+          description: The short line under the headline. May be empty.
+        cta_label:
+          type: string
+          description: |
+            The call-to-action button's text. Empty means the band has
+            no button; `cta_label` and `cta_url` are written and
+            validated as a PAIR, so one is never present without the
+            other.
+        cta_url:
+          type: string
+          description: |
+            Where the button goes. Restricted to an absolute `http(s)`
+            URL or a site-relative path beginning with a single `/`.
+
+            THIS IS A SECURITY CONSTRAINT, not a formatting one. The
+            value becomes an `href` on the browse page of every reader
+            the band is shown to, and a `javascript:` URL there is
+            stored XSS. A scheme-relative `//host/x` is refused too — a
+            reader cannot tell it from a local link. Enforced by the
+            handler (a 400) and by a CHECK constraint in migration
+            00053 (the backstop).
+        enabled:
+          type: boolean
+          description: |
+            The operator's switch. A disabled band is invisible to
+            readers — it is filtered out by the query, not returned with
+            a flag for a client to honour.
+        after_page:
+          type: integer
+          minimum: 1
+          description: |
+            Where the band falls, counted in whole feed pages: 1 renders
+            it after the first page.
+
+            The PAGE SIZE is the client's (browse requests 36 posts at a
+            time), so this is a position in the reader's scroll rather
+            than a row count — deliberately, because "after the first
+            page" is something an operator can predict without knowing
+            the API's limit.
+        scope:
+          type: string
+          enum: [public, org]
+          description: |
+            THE WHOLE BAND'S AUDIENCE (ADR 0065's placement scopes,
+            narrowed to the two a band can hold). `public` includes
+            anonymous visitors on an install that has opened its public
+            surface; `org` is the signed-in audience.
+
+            It lives on the BAND and not on each card. A band is one
+            authored unit with a headline and a button, and "half these
+            cards are for logged-out visitors" is not a state an
+            operator can hold in their head — nor one worth a
+            denormalised copy of a visibility input on every card row.
+            A card's own `scope` column is left at its default and is
+            never read.
+        items:
+          type: array
+          description: |
+            The cards, in curation order, filtered to what THIS caller
+            may see. Never empty in a response: a band whose cards all
+            filtered away is not returned at all.
+          items: { $ref: "#/components/schemas/FeaturedItem" }
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PromoBandInput:
+      type: object
+      description: |
+        The band definition an operator saves (#1118). Every field the
+        form owns is written on every save — this is a REPLACE, not a
+        PATCH, because a partial write would make "clear the blurb"
+        indistinguishable from "leave the blurb alone".
+      required: [title]
+      properties:
+        title: { type: string }
+        blurb: { type: string, default: "" }
+        cta_label: { type: string, default: "" }
+        cta_url:
+          type: string
+          default: ""
+          description: |
+            Absolute `http(s)` URL or a site-relative path. See
+            `PromoBand.cta_url` — the restriction is a security
+            constraint and a `javascript:` value is refused with a 400.
+        enabled: { type: boolean, default: false }
+        after_page: { type: integer, minimum: 1, default: 1 }
+        scope:
+          type: string
+          enum: [public, org]
+          default: org
+          description: |
+            The band's audience. `org` — the signed-in audience — is the
+            default for the same reason `POST /admin/featured` defaults
+            to it: publishing to anonymous visitors is a deliberate act,
+            not the shape you get by leaving a field out.
+
+    PromoBandItemInput:
+      type: object
+      description: |
+        A card to add to the band (#1118).
+
+        NO `scope`, deliberately. A band card takes its audience from
+        its band, and accepting one here would store a value that looks
+        authoritative and is never read — an operator setting a card to
+        `public`, seeing it stored, and believing they had widened the
+        band. `POST /admin/featured` refuses the combination for the
+        same reason.
+
+        NO `team` kind either. A team tile belongs to the signed-in
+        teams rail (`GET /featured/teams`), whose render-time hero
+        re-check (#982) is the only admissible route to a team's
+        picture; the band renders covers, so it takes the two subject
+        kinds that resolve one.
       required: [subject_kind, subject_id]
       properties:
         subject_kind:
           type: string
           enum: [asset, collection]
+        subject_id:
+          type: string
+          format: uuid
+
+    FeaturedItemInput:
+      type: object
+      description: |
+        GitHub #341 — payload to feature an asset, a collection or a
+        team.
+      required: [subject_kind, subject_id]
+      properties:
+        subject_kind:
+          type: string
+          description: |
+            `team` was added by #1084. The admissible list is restated in
+            the handler's validation and in the
+            `featured_items_subject_kind_check` database constraint
+            (migration 00048); all three move together, because a value
+            missing here is one the generated client will not send at
+            all.
+          enum: [asset, collection, team]
         subject_id:
           type: string
           format: uuid
@@ -13966,6 +15126,27 @@ components:
           description: |
             Optional insertion position. Omit / null to append to the
             end of the list.
+        scope:
+          type: string
+          enum: [org, public]
+          default: org
+          description: |
+            The placement's AUDIENCE (#1104). `scope` decides who may
+            see the featuring; it does not decide which surface renders
+            it. A reader shows every audience its viewer qualifies for:
+            signed-in readers see `org` and `public`, anonymous readers
+            see `public` only.
+
+            Omit for `org`, the internal signed-in audience and the
+            audience every write produced before this property existed.
+            `public` includes anonymous visitors and is the deliberate
+            act; both are gated on `system.admin`, which is the
+            capability the whole endpoint already requires.
+
+            `team` is a valid value of the underlying column and is
+            deliberately not offered here: a team placement also needs a
+            team id, which this payload has no way to name, and no
+            reader consumes that audience yet.
 
     ResourceRequest:
       type: object
@@ -14161,6 +15342,23 @@ components:
           type: string
           enum: [draft, active, archived]
           default: active
+        mature:
+          type: boolean
+          description: |
+            Self-label this asset as MATURE (#1115, ADR 0090). One
+            checkbox, default `false` — the minimal-friction bar the
+            upload flow is held to.
+
+            ⚠️ REFUSED WITH 400 WHEN THE INSTANCE DISALLOWS MATURE
+            CONTENT. Not accepted-and-ignored: an accepted-but-inert
+            write is how a library fills with flags nothing enforces,
+            and the uploader would have no way to learn their label did
+            not take. Sending `false` is always accepted, on any
+            instance — refusing a write that asserts nothing would break
+            every client that sends the whole object.
+
+            Orthogonal to `sensitivity`, which answers a different
+            question; setting one says nothing about the other.
         file_hash:
           type: string
           nullable: true
@@ -14219,6 +15417,20 @@ components:
         status:
           type: string
           enum: [draft, active, archived]
+        mature:
+          type: boolean
+          description: |
+            Set or clear this asset's MATURE rating (#1115, ADR 0090).
+            PATCH semantics: absent leaves the flag as it is, which is
+            what makes the operator override and the artist's own edit
+            the same field on the same endpoint.
+
+            ⚠️ Setting it to `true` is REFUSED WITH 400 when the
+            instance disallows mature content — see AssetCreate for why
+            the refusal is loud. Clearing it (`false`) is always
+            accepted, including on a disallowing instance: an operator
+            who has just switched the feature off must still be able to
+            unmark what was marked while it was on.
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }
@@ -14446,6 +15658,42 @@ components:
             PER-CALLER, therefore derived after the post cache and
             never written into it. See posts.enrichLiked.
         comment_count: { type: integer, format: int64 }
+        comments_preview:
+          type: array
+          items: { $ref: "#/components/schemas/PostCommentPreview" }
+          description: |
+            The head of this post's thread — the newest `N` TOP-LEVEL
+            comments, newest first, where N is small and fixed
+            (posts.TopCommentsPerPost). The feed card prints them under
+            the description and links to the post for the rest (#1047).
+
+            THE HEAD OF THE THREAD, not a summary of it. The ordering
+            and the predicates are the ones `GET /posts/{id}/comments`
+            already applies to its thread roots — newest first, no
+            replies, no soft-deleted rows — so the preview is literally
+            the top of what opening the post shows, and there is no
+            second notion of "which comments matter" to keep in step.
+
+            Absent or empty when the post has no comments. A client that
+            ignores it renders the card it rendered before, with the
+            comment COUNT it always had.
+
+            VISIBILITY. This rides a post the caller has already been
+            granted by `postReadableExpr` — the list query's own gate —
+            so the preview inherits it and adds nothing. It is
+            deliberately NOT built by calling the comments endpoint per
+            post: that would be an N+1, and (see #1047's handoff) that
+            endpoint's own gate is weaker than the feed's.
+
+            The commenter's identity is resolved by
+            `users.LookupAuthors`, the same expression the post's own
+            `author` uses, so the ADR 0024 opt-out holds here too: a
+            commenter who hid from anonymous readers has NO `author`
+            object on their preview entry for an anonymous caller. Their
+            words still appear, exactly as an opted-out author's POST
+            still appears — the opt-out is about the identity, not the
+            content, and treating it otherwise would silently delete
+            people's comments from the feed.
         tags:
           type: array
           items: { type: string }
@@ -14495,6 +15743,66 @@ components:
           type: string
           nullable: true
           description: Optional reason captured at soft-delete time.
+    PostCommentPreview:
+      type: object
+      description: |
+        One comment as a feed card shows it (#1047) — a name, a line of
+        text, and when.
+
+        ALLOW-LIST, NOT A TRIMMED `Comment`. The server BUILDS this
+        object from four named columns rather than building the full
+        comment and deleting fields from it, so a column added to
+        `comments` later — a moderation note, an annotation payload, an
+        actor URI — is withheld from the feed because it was never
+        fetched. Same discipline as `PostAuthor` and `PostMember`'s
+        placeholder.
+
+        Notably ABSENT, and deliberately: `body_html`, `like_count`,
+        `parent_id` / `root_id` / `depth`, `edited_at`,
+        `annotation_type` / `annotation_data`. A preview is two lines
+        under a picture; threading, reactions and review annotations are
+        what opening the post is for.
+
+        `body` and not `body_html`: the card clamps this to a couple of
+        lines of plain text, and shipping server-rendered markup to be
+        truncated by CSS would mean either rendering HTML in a card that
+        has no business rendering it, or clipping mid-tag.
+      required: [id, body, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        body:
+          type: string
+          description: |
+            The comment's plain text, as written. Untruncated — the card
+            clamps it, because how many lines fit is a question about
+            the card and not about the comment.
+        created_at: { type: string, format: date-time }
+        author:
+          allOf: [{ $ref: "#/components/schemas/PostAuthor" }]
+          nullable: true
+          description: |
+            The commenter, when they are disclosed to this caller.
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO COMMENTER", and the
+            three ways it happens are all correct as an absence: the
+            commenter set `hide_from_anonymous` and the reader is
+            anonymous (ADR 0024 / ADR 0070 §3), the account is gone, or
+            the comment came from a FEDERATION PEER and has no local
+            user at all — see `remote_display_name`.
+        remote_display_name:
+          type: string
+          nullable: true
+          description: |
+            For a comment that arrived from a paired peer: the remote
+            actor's cached display name, resolved from
+            `federation_remote_actors` exactly as the thread endpoint
+            resolves it. Absent on locally-authored comments, which
+            carry `author` instead.
+
+            May be empty when the peer has shipped no display hints
+            yet — the same caveat `Comment.display_name` carries — in
+            which case the card prints no name rather than inventing
+            one from the actor URI.
     PostAuthor:
       type: object
       description: |
@@ -14847,6 +16155,36 @@ components:
           description: |
             Set on rows mirroring a federated team. NULL = locally
             owned.
+        hero_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The team's picture (#982) — fetch it from
+            `/assets/{hero_asset_id}/variants/col`. NULL means the
+            client falls back to the team's initials tile.
+
+            THIS IS THE RENDER ANSWER, NOT THE STORED SETTING. The
+            server re-derives it on every read, and it is absent
+            whenever the chosen asset no longer qualifies: set to
+            `restricted`, moved to another team, soft-deleted, or still
+            missing its `col` rendition. The stored pointer survives all
+            of those, so restoring the asset brings the picture back
+            without an admin re-picking it — but until then the wire
+            says "no hero" and the client paints initials.
+
+            One field rather than the setting/render pair `Collection`
+            carries, because the two cannot disagree PER READER here.
+            ADR 0088 gates a representative image per viewer; #982
+            narrows that for a team, because the followed-teams rail is
+            a navigation strip and a strip that shows some teams'
+            pictures and not others depending on who is looking is noise
+            rather than security. A team hero is admissible only if it
+            is `public` AND owned by that team — visible to everyone or
+            to no one — so a single field cannot be misread.
+
+            It does NOT federate: a local asset id names something that
+            exists only on this server.
         parents:
           type: array
           description: |
@@ -14934,6 +16272,38 @@ components:
         description:
           type: string
           maxLength: 500
+
+    TeamHeroUpdate:
+      type: object
+      description: |
+        Choose or clear a team's hero picture (#982). Exactly one of the
+        two properties must be present — an empty body is a 400 rather
+        than a no-op, because a request that says nothing about a
+        single-valued endpoint is a client bug, not an instruction.
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+          description: |
+            The asset to use as this team's picture. Must be
+            `sensitivity: public` AND carry this team's `team_id`; any
+            other asset — including one that does not exist — is
+            refused with the same 400.
+
+            Not `nullable`: sending null to mean "remove" is exactly the
+            shape that stops working the moment the Go field is a
+            pointer with `omitempty`, because absent and null collapse
+            before the handler sees them. Removal is `clear_hero`.
+        clear_hero:
+          type: boolean
+          description: |
+            Remove the chosen picture, reverting the team to its
+            initials tile. Mutually exclusive with `asset_id` — sending
+            both is a 400, rather than the server picking one and
+            silently discarding the other.
+
+            Same shape, and the same reasoning, as `clear_cover` on
+            `CollectionUpdate` and `clear_expires_at` before it.
 
     TeamList:
       type: object
@@ -15104,6 +16474,126 @@ components:
             model, so both were labels over the default order.
           enum: ["", newest, oldest]
 
+    FollowedTag:
+      type: object
+      description: |
+        One tag the caller follows (#1123).
+
+        An object rather than a bare string, even though `tag` is the
+        only field the rail draws. `followed_at` is what the server
+        orders by, and a client that receives the order but not the key
+        it was sorted on cannot merge a newly-followed tag into the list
+        without a refetch — which is exactly what the rail's optimistic
+        follow does. There is deliberately no follower count and no post
+        count: both are per-caller-visibility questions this endpoint
+        would have to answer against the read rule, and neither is drawn.
+      required: [tag, followed_at]
+      properties:
+        tag:
+          type: string
+          description: |
+            The tag, exactly as stored — trimmed, case preserved. This
+            is the value to pass as `?tag=` to `GET /posts`; the two
+            match exactly, which is the point.
+        followed_at:
+          type: string
+          format: date-time
+          description: When the caller followed it.
+
+    UserPreferencesBrowseRail:
+      type: object
+      description: |
+        The browse page's rail curation — team chips (#1113) and
+        followed-tag chips (#1123).
+
+        ONE BAG FOR ONE PIECE OF FURNITURE. The rail is a single strip
+        with a single manage panel and a single save; a team chip and a
+        `#fantasy` chip differ in what they filter by (`?team=` /
+        `?tag=`), which is a difference between two rows of one list,
+        not between two concerns. A sibling `tag_rail` object would have
+        split one save across two bags with nothing but convention
+        keeping them consistent, and would have foreclosed a future
+        single order interleaving both kinds. (This object was
+        `team_rail` until #1123; migration 00051 renamed the column and
+        carries the full argument.)
+
+        The rail lists every team the caller can see, followed-first
+        then name order, plus the tags the caller follows. This object
+        is the READER'S EDIT of that list: which chips they took out,
+        and which ones they pulled to the front. Every member is a list
+        whose EMPTY value is the build's default rail — the same "the
+        zero value is what this build does by default" contract
+        `feed_filters` states for its booleans, applied to lists.
+
+        CLIENT-APPLIED, and that is the load-bearing difference from
+        `feed_filters`. Feed filters are read by `GET /posts` and remove
+        rows before they reach the browser. Nothing here is ever
+        consulted to decide which POSTS a caller sees: hiding a team or
+        a tag from your rail must not hide that team's or tag's work
+        from your feed. The rail is navigation furniture; the feed is
+        content. Anything that starts reading this object server-side to
+        shape a result set has crossed that line.
+
+        Entries are NOT validated on write, in either notation. A team
+        can be deleted or leave the caller's visibility, and a tag can
+        be unfollowed, between a save and the next read; refusing the
+        write would strand the reader in a rail they cannot edit.
+        Unknown entries are inert — the rail intersects these lists with
+        what the server returned, so a dead one is dropped at render.
+      properties:
+        hidden_team_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Teams the reader removed from their rail. Empty = nothing
+            hidden.
+
+            A hide-list rather than a show-list, deliberately: an empty
+            allow-list would have to mean "show everything", which is
+            the opposite of what an empty allow-list says, and the first
+            partial write would blank the rail.
+        team_order:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            The reader's explicit ordering, applied to the FOLLOWED
+            group (the manage panel's drag-reorder). Empty = the
+            server's order.
+
+            PARTIAL LISTS ARE LEGAL and are the normal case: the ids
+            named here lead, in this order, and everything else keeps
+            its previous relative position behind them. That is what
+            lets "drag one team to the top" persist one id rather than a
+            full snapshot that the next follow would immediately make
+            stale.
+        hidden_tags:
+          type: array
+          items:
+            type: string
+          description: |
+            Followed tags whose chip the reader removed from their rail
+            (#1123). Empty = nothing hidden.
+
+            HIDING IS NOT UNFOLLOWING, and the two verbs sit next to
+            each other in the manage panel precisely so the difference
+            is visible. Unfollowing drops the `tag_follows` row and
+            changes what the Following feed CONTAINS. Hiding only takes
+            the chip off the strip; the tag's posts keep reaching the
+            feed exactly as before.
+        tag_order:
+          type: array
+          items:
+            type: string
+          description: |
+            The reader's explicit ordering of their followed-tag chips.
+            Empty = the server's order (most recently followed first).
+
+            Partial lists are legal and normal, exactly as `team_order`.
+
     UserPreferencesFeedFilters:
       type: object
       description: |
@@ -15188,6 +16678,38 @@ components:
             Request access in the feed — is stated in the setting's own
             help text rather than left to be discovered.
 
+    UserPreferencesMatureContent:
+      type: object
+      description: |
+        This account's answer on the MATURE axis (#1115, epic #1114,
+        ADR 0090).
+
+        A sibling of `feed_filters`, not a key inside it, and the
+        difference is not filing. `feed_filters` decides what the browse
+        FEED draws for content the reader is entitled to either way;
+        this decides whether the reader has consented to be shown a
+        class of content at all, and that answer is composed on the
+        picture plane too — an item reached by deep link renders blurred
+        and its bytes are refused.
+
+        NOT SUFFICIENT ON ITS OWN. Opting in qualifies a reader only if
+        they are signed in AND the instance allows mature content. The
+        server ANDs all three; a client that renders "you have opted in"
+        as "you will see it" will be wrong on an instance whose operator
+        has switched the feature off.
+
+        Same naming rule as `feed_filters`: the key is named for the
+        PERMISSIVE direction so its absence means the restrictive
+        default. An account that has never touched this object does not
+        see mature content.
+      properties:
+        show:
+          type: boolean
+          description: |
+            Opt in to being shown mature content. Absent or `false` —
+            the default for every account — hides it.
+      additionalProperties: false
+
     UserPreferencesRequest:
       type: object
       description: |
@@ -15227,6 +16749,26 @@ components:
             inside it, means the filter is OFF — there is no third state
             for a boolean to fall back to, so this follows the
             full-object-replacement contract like everything else here.
+        browse_rail:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesBrowseRail"
+          description: |
+            Browse-rail curation (teams + followed tags). Full-object
+            replacement like everything else on this endpoint: an absent
+            object clears the curation back to the default rail, and an
+            absent list inside it clears that list. The manage panel
+            always sends all four, which is what makes "unhide the last
+            hidden chip" expressible.
+        mature_content:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesMatureContent"
+          description: |
+            ⚠️ FULL-OBJECT REPLACEMENT, like every other member of this
+            request. An absent object resets the opt-in to `false`, and
+            so does an absent `show` inside a present object. A client
+            that PATCHes one preference must GET, merge and send the
+            whole document — sending `{"default_views": {...}}` alone
+            silently opts the account back out of mature content.
 
     UserPreferencesResponse:
       type: object
@@ -15241,6 +16783,8 @@ components:
         - notification_channels
         - default_views
         - feed_filters
+        - browse_rail
+        - mature_content
         - known_event_types
         - known_channels
         - default_channels_by_event
@@ -15267,6 +16811,23 @@ components:
             default" are different states the UI renders differently, a
             boolean filter has no third value, so omitting it would only
             make the client guess `false` rather than read it.
+        browse_rail:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesBrowseRail"
+          description: |
+            Browse-rail curation, always present with every list
+            materialised even when empty. Same argument as
+            `feed_filters` above, for the list case: "no curation" and
+            "an empty curation" are the same rail, so omitting it would
+            only make the client re-derive `[]`.
+        mature_content:
+          allOf:
+            - $ref: "#/components/schemas/UserPreferencesMatureContent"
+          description: |
+            This account's mature-content consent, always present with
+            `show` populated. Same argument as `feed_filters`: a boolean
+            has no third state, so omitting it would only make the
+            client guess.
         known_event_types:
           type: array
           items: { type: string }

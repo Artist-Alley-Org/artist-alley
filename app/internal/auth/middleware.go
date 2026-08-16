@@ -73,7 +73,7 @@ func (id *Identity) IsImpersonating() bool {
 }
 
 // SuperAdminCapability bypasses every Can() check. Matches the
-// "system.admin" code seeded by migration 00002.
+// "system.admin" code seeded by migration 00001.
 const SuperAdminCapability = "system.admin"
 
 // canQuery accumulates Can() options. Currently just the team scope.
@@ -486,7 +486,7 @@ func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identit
 }
 
 // AnonymousRoleName is the seeded role used to represent unauthenticated
-// requests when anonymous browse is enabled. Defined in migration 00019.
+// requests when anonymous browse is enabled. Defined in migration 00001.
 // The role has no capabilities by default — granting it
 // `posts.read.public` (etc.) is what enables anonymous access.
 const AnonymousRoleName = "Anonymous"

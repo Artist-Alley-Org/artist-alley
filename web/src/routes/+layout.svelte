@@ -102,8 +102,9 @@
   // `feedback_navbar_search_always_visible`. Search is the primary
   // discovery affordance in a media library this size; gating it to
   // the browse page friction-trained users to leave settings/admin
-  // just to look something up. Submitting from a non-browse page
-  // navigates to `/?q=...` in handleSearch.
+  // just to look something up. Submitting from a page that does not
+  // itself render results navigates to `/?q=...` — see handleSearch
+  // and consumesGlobalQuery below.
   const showSearch = $derived(showChrome);
 
   // Active-state for the Collections nav link. Derived in script so we
@@ -122,22 +123,45 @@
     searchValue = urlQuery;
   });
 
+  /** Does the route at `pathname` render a result feed keyed off the
+   *  global `q`?
+   *
+   *  This is a question about the SURFACE, not a list of paths that
+   *  happen to be special, which is why it is a predicate and not a
+   *  `pathname === '/' || pathname === '/search'` chain. A surface that
+   *  consumes `q` is refined in place; every other surface is left in
+   *  place and the user is taken to one that does. Adding the next one
+   *  — #910's search-within-a-collection is the queued example — is a
+   *  line in this function and nothing else.
+   *
+   *  `/search` qualifies since #850: it stopped being a different kind
+   *  of page (its own text rows beside a facet rail) and became a
+   *  result feed rendering the same cards through the same ContentGrid,
+   *  with its own chrome on top. Before this it was treated as "some
+   *  other page", so typing a refinement into the nav box on the one
+   *  surface built for refining a search navigated you AWAY from it to
+   *  browse — ~250ms after the last keystroke, taking your focus and
+   *  your scroll position with it (#1053). */
+  function consumesGlobalQuery(pathname: string): boolean {
+    return pathname === '/' || pathname === '/search';
+  }
+
   async function handleSearch(q: string) {
     const trimmed = q.trim();
-    // From the browse page (/), keep the user in place and update
-    // the query string. From any other page (account, admin, post
-    // detail, etc.), navigate TO the browse page with the query —
-    // the search input is global per
-    // `feedback_navbar_search_always_visible` and submitting from a
-    // non-browse surface should land the user on the result feed.
-    const isBrowse = page.url.pathname === '/';
-    const target = isBrowse ? new URL(page.url) : new URL('/', page.url);
+    // On a result surface (browse, /search), keep the user in place and
+    // update the query string — the page re-runs its own search off the
+    // URL. From any other page (account, admin, post detail, etc.),
+    // navigate TO the browse page with the query — the search input is
+    // global per `feedback_navbar_search_always_visible` and submitting
+    // from a non-result surface should land the user on a result feed.
+    const inPlace = consumesGlobalQuery(page.url.pathname);
+    const target = inPlace ? new URL(page.url) : new URL('/', page.url);
     if (trimmed === '') {
       target.searchParams.delete('q');
     } else {
       target.searchParams.set('q', trimmed);
     }
-    await goto(target.pathname + target.search, { keepFocus: isBrowse, noScroll: isBrowse });
+    await goto(target.pathname + target.search, { keepFocus: inPlace, noScroll: inPlace });
   }
 
   // Sign-out + theme cycling moved into UserMenu.
@@ -180,9 +204,9 @@
   //                    (#628/#629).
   //   - showChrome   — login/setup render no chrome at all; there is
   //                    nothing to sit below.
+  const chromeBottom = $derived(showChrome && !chromeHidden ? chromeH : 0);
   $effect(() => {
-    const bottom = showChrome && !chromeHidden ? chromeH : 0;
-    document.documentElement.style.setProperty('--aa-chrome-bottom', `${bottom}px`);
+    document.documentElement.style.setProperty('--aa-chrome-bottom', `${chromeBottom}px`);
   });
 </script>
 
@@ -201,18 +225,25 @@
       main-thread layout on every frame, i.e. exactly the jank this is
       meant to remove.
 
-      <main> carries the layer's measured height as padding-top, so the
-      first screenful still starts below the chrome. The padding is only
-      "wasted" space at scrollTop 0, where the chrome is visible anyway
-      — by the time it hides (past 96px) that padding has scrolled off.
+      <main> carries the layer's measured height, split between its own
+      margin-top and padding-top so that the first screenful starts
+      below the chrome AND the scroll container's box does too (#1122).
+      See the comment on <main> for why the split is what keeps the
+      slide free of layout.
 
       bind:clientHeight measures instead of hardcoding: the header is
       two rows on a phone and one from md up, and the banners come and
       go. A constant would be wrong in at least three states.
     -->
+    <!-- data-testid, on a layer that renders nothing itself: the
+         auto-hide is a TRANSFORM, so a test that needs to know whether
+         the chrome is up or down has nothing else to read. The box's own
+         rectangle is not that signal — it lags the state by a pending
+         scroll event and again by the 200ms transition (#1061). -->
     <div
       class="chrome-slide absolute inset-x-0 top-0 z-30 transition-transform duration-200 ease-out"
       class:chrome-hidden-top={chromeHidden}
+      data-testid="chrome-layer"
       bind:clientHeight={chromeH}
     >
     <!-- Persistent impersonation banner — only renders when the
@@ -390,10 +421,111 @@
     </div>
   {/if}
 
+  <!--
+    THE SCROLL CONTAINER STARTS AT THE CHROME'S BOTTOM EDGE (#1122).
+
+    It used to span the full viewport and carry the whole chrome height
+    as `padding-top`. Padding moves the CONTENT down; it does not move
+    the BOX, and the scrollbar is painted on the box. So the track began
+    at y=0, underneath the fixed chrome, and its top segment — thumb
+    included, at scrollTop 0 — was unreachable. The demo banner and the
+    impersonation banner made `chromeH` taller and hid more of it, which
+    is why the report ("worse with demo mode") pointed straight at the
+    measurement rather than at a style.
+
+    The fix splits `chromeH` in two, with an invariant sum:
+
+      margin-top on <main>  = chromeBottom            (where the box starts)
+      a SPACER inside it    = chromeH - chromeBottom  (the rest)
+
+    `chromeBottom` is the chrome's VISIBLE bottom edge — chromeH while
+    the layer is on screen, 0 once it has slid away — i.e. the same
+    number `--aa-chrome-bottom` publishes, now read twice instead of
+    computed twice. `flex-1` accounts for the margin, so the box height
+    follows without a `calc()` and without measuring the viewport.
+
+    ## Why the sum has to stay constant
+
+    That invariant is the whole reason the auto-hide still works. On the
+    flip the box top moves by chromeH and every content offset inside it
+    moves by chromeH the other way, so `scrollTop` stays valid and NOT
+    ONE PIXEL OF CONTENT MOVES — the render is identical to the old
+    padding version at every scroll offset, in both chrome states. The
+    scroll RANGE is unchanged too (scrollHeight and clientHeight both
+    grow by chromeH), so there is no anchor loss and no jump on reveal.
+
+    Get the split wrong in either direction and you get a bug: margin
+    alone leaves a blank band when the chrome hides, and all-of-it as
+    the box offset is what shipped.
+
+    ## Why the second half is a SPACER ELEMENT and not padding-top
+
+    Padding is the obvious spelling and it is the wrong one, measured:
+    Blink resolves a descendant's `position: sticky` against the scroll
+    container's CONTENT box, i.e. inset by its padding. With the
+    remainder as padding, the content box's top sits at a constant
+    `chromeH` in both chrome states, so every sticky descendant pinned
+    at a fixed 73px — correct while the chrome was up, and 73px BELOW
+    the top of the reclaimed viewport once it had slid away, with the
+    feed scrolling through the gap above it. #1113's rail found this the
+    first time it was pinned through a chrome-hide.
+
+    A spacer moves the same pixels through the flow instead of through
+    the box model, so the padding box, the content box and the border
+    box all coincide and the sticky rectangle IS the visible top of the
+    scroll container — in every engine, with no reliance on which box a
+    given browser resolves sticky against.
+
+    ## The container resizes on chrome-hide, and does it INSTANTLY
+
+    Stated because the issue asked for the choice: the box does resize —
+    an inset container under a chrome that auto-hides would otherwise
+    reclaim nothing, just uncover the shell's background. The resize is
+    NOT transitioned. Animating margin/height on the scroll container
+    would reflow the entire feed on every frame for 200ms, which is the
+    jank the chrome's transform-only slide exists to avoid (see the
+    layer's comment above). Untransitioned, the box is already where the
+    chrome is going while the chrome takes 200ms to get there, so the
+    only visible difference is a scrollbar top edge that leads the slide
+    rather than trailing it. Content, again, does not move either way.
+
+    ## What this buys the page beneath
+
+    `position: sticky; top: 0` inside <main> now pins to the chrome's
+    bottom edge while the chrome is up and to the top of the viewport
+    once it has hidden — with no JS and no magic offset, because the box
+    itself moved. #1113's sticky teams rail is built on exactly that,
+    and the browse page's SelectionBar stops pinning underneath the
+    navbar as a side effect.
+  -->
+  <!-- `data-testid` because `main` alone is not a unique handle on this
+       app. /admin/integrations/api embeds Scalar's API reference, a Vue
+       app that renders `<main class="references-rendered">` of its own,
+       so `locator('main')` there resolves to more than one element and
+       any strict-mode assertion on it throws. We do not author Scalar's
+       DOM and cannot fix its landmarks; what we can do is give OUR shell
+       a name, so "did the app shell render" is asked of the app shell.
+       See helpers/assertions.ts. -->
   <main
+    data-testid="app-shell-main"
     class="flex flex-1 flex-col overflow-y-auto"
-    style={showChrome ? `padding-top:${chromeH}px` : undefined}
+    style={showChrome ? `margin-top:${chromeBottom}px` : undefined}
   >
+    <!-- The chrome-compensation spacer. Holds whatever part of the
+         chrome's height the margin above is not currently holding, so
+         the first screenful starts below the chrome in both states and
+         nothing moves when they swap. `shrink-0` because <main> is a
+         flex column and a zero-content box is the first thing flex
+         would collapse. `aria-hidden` + no content: it is a measured
+         gap, not a region. -->
+    {#if showChrome && chromeH > chromeBottom}
+      <div
+        class="shrink-0"
+        style={`height:${chromeH - chromeBottom}px`}
+        data-testid="chrome-spacer"
+        aria-hidden="true"
+      ></div>
+    {/if}
     {@render children?.()}
   </main>
 

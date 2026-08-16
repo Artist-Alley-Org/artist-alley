@@ -3,7 +3,7 @@
 
 // Package acls hosts the per-resource ACL slice of the API (ADR 0010
 // Layer 6). For now this package contains only the trigger tests that
-// lock in the sweep semantics from migration 00017 — the OpenAPI surface
+// lock in the sweep semantics from migration 00001 — the OpenAPI surface
 // + handlers land in Phase 1.7.B-7.
 package acls_test
 

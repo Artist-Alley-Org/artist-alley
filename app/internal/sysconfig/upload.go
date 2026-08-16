@@ -9,7 +9,7 @@ import (
 )
 
 // Phase 1.18.A-2 follow-up A — typed accessors for the
-// upload.* sysconfig keys seeded by migration 00015. These cover
+// upload.* sysconfig keys seeded by migration 00001. These cover
 // the dedup posture (scope + behavior) that the upload handler
 // reads on every CreateAsset call.
 
@@ -23,7 +23,7 @@ const (
 //
 //   - DedupScopePerUser (default): only the uploading user's
 //     own assets. Backed by the partial unique index from
-//     migration 00016.
+//     migration 00001.
 //   - DedupScopePerTeam: every asset owned by the uploading
 //     user's owning team. Application-level check; no DB
 //     constraint (team membership is mutable).
@@ -80,7 +80,7 @@ func ValidDedupBehavior(b DedupBehavior) bool {
 // UploadConfig is the typed projection of the upload.* sysconfig
 // keys. Both fields default to the conservative-but-visible pair
 // (per_user + warn) when their underlying keys are absent —
-// matches the operator-safe behaviour migration 00015 seeded.
+// matches the operator-safe behaviour migration 00001 seeded.
 type UploadConfig struct {
 	DedupScope    DedupScope
 	DedupBehavior DedupBehavior

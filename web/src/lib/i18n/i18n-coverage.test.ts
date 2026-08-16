@@ -61,6 +61,14 @@ function flatten(
 }
 
 const TRACKED_FILES = [
+  // The operator promo band (#1118) and the page that curates it.
+  // Tracked from the day they land: every visible string on the band is
+  // either operator-authored data (headline, blurb, button text) or a
+  // catalogue key, and the point of listing them here is that the split
+  // stays that way — a hardcoded label on a surface whose whole content
+  // is operator-supplied reads as a bug in the operator's own copy.
+  'src/lib/components/PromoBand.svelte',
+  'src/routes/admin/content/featured/+page.svelte',
   // — pre-1.55.V-2 surfaces —
   'src/lib/components/viewers/ArchiveView.svelte',
   'src/lib/components/viewers/tools/ArchiveTool/Body.svelte',
@@ -109,6 +117,8 @@ const TRACKED_FILES = [
   'src/lib/components/MessagesButton.svelte',
   'src/lib/components/CommentsThread.svelte',
   'src/lib/components/PostHost.svelte',
+  'src/lib/components/BrowseRail.svelte',
+  'src/lib/components/BrowseRailManageMenu.svelte',
   'src/lib/components/federation/RestrictedShareBanner.svelte',
   'src/lib/components/upload/UploadModal.svelte',
   'src/lib/components/upload/PostComposeForm.svelte',

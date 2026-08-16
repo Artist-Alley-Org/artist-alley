@@ -98,6 +98,7 @@ type Asset struct {
 	PageCount        *int32  `json:"page_count"`
 	DeletedReason    *string `json:"deleted_reason"`
 	DeletedByUserRef *int64  `json:"deleted_by_user_ref"`
+	Mature           bool    `json:"mature"`
 }
 
 type AssetAlternate struct {
@@ -285,6 +286,8 @@ type Collection struct {
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	DeletedReason    *string            `json:"deleted_reason"`
 	DeletedByUserRef *int64             `json:"deleted_by_user_ref"`
+	// Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer's picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083's exclusion criterion, applied by analogy).
+	CoverAssetID pgtype.UUID `json:"cover_asset_id"`
 }
 
 type CollectionAcl struct {
@@ -420,7 +423,8 @@ type ExtractionFailure struct {
 }
 
 type FeaturedItem struct {
-	ID               pgtype.UUID        `json:"id"`
+	ID pgtype.UUID `json:"id"`
+	// What kind of thing this placement points at: 'asset', 'collection' or 'team' (#1084). There is deliberately no foreign key — the subject is polymorphic — so the read path resolves the subject by joining the matching table and DROPS the placement when that join finds nothing the caller may see. Adding a kind here is never sufficient on its own: the same enumeration is restated in SIX places (enumerated in featured/http.go's AddFeaturedItem) — this CHECK, that handler's validation, its error string, the OpenAPI FeaturedItemInput enum, the FeaturedItem RESPONSE enum, and the admin curation list's title resolution plus the page that renders it. Miss any one and the failure is asymmetric: a 500 instead of a 400, a client that refuses to send the value, or an operator staring at an untitled row with a dead link.
 	SubjectKind      string             `json:"subject_kind"`
 	SubjectID        pgtype.UUID        `json:"subject_id"`
 	Position         int32              `json:"position"`
@@ -428,6 +432,8 @@ type FeaturedItem struct {
 	CreatedByUserRef *int64             `json:"created_by_user_ref"`
 	Scope            string             `json:"scope"`
 	TeamID           pgtype.UUID        `json:"team_id"`
+	// Which surface this placement belongs to (#1118): NULL is the featured rail — every row that existed before this column — and a band id makes the row a card in that promo band. There is no second membership table on purpose (ADR 0065; see migration 00053's header). ⚠️ For a band row the `scope` column is NOT the audience: the BAND carries the audience, and this row's scope keeps its table default. Reading scope on a band row would be a second, stale copy of a visibility input.
+	BandID pgtype.UUID `json:"band_id"`
 }
 
 type FederationDirectory struct {
@@ -780,6 +786,7 @@ type Post struct {
 	SubtitleTrackOverride []byte  `json:"subtitle_track_override"`
 	DeletedReason         *string `json:"deleted_reason"`
 	DeletedByUserRef      *int64  `json:"deleted_by_user_ref"`
+	Mature                bool    `json:"mature"`
 }
 
 type PostAcl struct {
@@ -802,6 +809,22 @@ type PostAsset struct {
 type PostTag struct {
 	PostID pgtype.UUID `json:"post_id"`
 	Tag    string      `json:"tag"`
+}
+
+// Operator-authored full-width promo strips rendered BETWEEN feed pages (#1118). The cards are ordinary featured_items rows carrying this band's id — see featured_items.band_id — so curation, ordering and visibility composition have one home (ADR 0065). `scope` is the whole band's audience, read by featured.ScopeVisibleSQL; the cards' own scope column is not consulted. An empty or disabled band renders nothing at all (ADR 0030's collapse rule, which governs a full-width band; ADR 0079 §2's substitution rule is scoped to in-grid sized slots).
+type PromoBand struct {
+	ID       pgtype.UUID `json:"id"`
+	Title    string      `json:"title"`
+	Blurb    string      `json:"blurb"`
+	CtaLabel string      `json:"cta_label"`
+	CtaUrl   string      `json:"cta_url"`
+	Enabled  bool        `json:"enabled"`
+	// Where the band falls in the feed, counted in whole loaded pages: 1 renders it after the first page. The PAGE SIZE is the client's (the browse feed requests 36), so this is a position in the reader's scroll rather than a row count — deliberately, because it is what the operator can predict without knowing the API's limit.
+	AfterPage        int32              `json:"after_page"`
+	Scope            string             `json:"scope"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CreatedByUserRef *int64             `json:"created_by_user_ref"`
 }
 
 type ResourceRequest struct {
@@ -986,6 +1009,12 @@ type SystemConfig struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TagFollow struct {
+	UserRef   int64              `json:"user_ref"`
+	Tag       string             `json:"tag"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Team struct {
 	ID             pgtype.UUID        `json:"id"`
 	Slug           string             `json:"slug"`
@@ -995,6 +1024,8 @@ type Team struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	// The team's chosen hero picture (#982): a pointer at an ordinary asset, NULL means fall back to the derived initials tile. Admissible only if the asset is sensitivity='public' AND its team_id is this team — validated at SELECTION by the write endpoint and RE-CHECKED AT RENDER, because an asset that qualifies today can be set to 'restricted' tomorrow and must then drop out of the rail rather than linger. This narrows ADR 0088: a team hero is NOT gated per viewer, because a navigation strip that shows some teams' pictures and not others depending on who is looking is noise rather than security. ON DELETE SET NULL so a hard-deleted asset reverts the team to its initials rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083's exclusion criterion, applied by analogy).
+	HeroAssetID pgtype.UUID `json:"hero_asset_id"`
 }
 
 type TeamClosure struct {
@@ -1100,6 +1131,8 @@ type UserPreference struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	EmailCadence         []byte             `json:"email_cadence"`
 	FeedFilters          []byte             `json:"feed_filters"`
+	BrowseRail           []byte             `json:"browse_rail"`
+	MatureContent        []byte             `json:"mature_content"`
 }
 
 type UserProfile struct {

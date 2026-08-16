@@ -267,3 +267,80 @@ func TestLogin_NoStoredPreferencesStillSucceeds(t *testing.T) {
 		}
 	})
 }
+
+// seedTeamRail writes only the browse_rail blob, leaving every other
+// preference at its default. Separate from seedAccountPrefs because the
+// interesting case for #1113 is an account that has curated its RAIL
+// and nothing else — which is also the account whose /auth/me used to
+// carry no preferences object at all.
+func seedTeamRail(t *testing.T, ctx context.Context, fx *fixture, railJSON string) {
+	t.Helper()
+	clearAccountPrefs(t, ctx, fx)
+	if _, err := fx.pool.Exec(ctx, `
+		INSERT INTO user_preferences (user_ref, browse_rail)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (user_ref) DO UPDATE
+		SET browse_rail = EXCLUDED.browse_rail`,
+		fx.userRef, railJSON,
+	); err != nil {
+		t.Fatalf("seed browse_rail: %v", err)
+	}
+}
+
+// The rail's curation has to arrive on the SESSION, before first paint.
+// It decides what the rail draws, so learning it from a later fetch
+// means painting the uncurated rail and rearranging it in front of the
+// reader (#1113) — the same first-paint race #706 closed for
+// default_views, which is why this asserts the same two producers.
+func TestSession_CarriesTeamRailCuration(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		const hidden = "3b6770c6-b35a-90d1-88c7-e35d00136825"
+		const first = "988ed4d0-4b3e-66a9-5606-c056c32bee04"
+		const second = "c0e2652d-65b1-cb0f-8c25-3260a5b8834d"
+		seedTeamRail(t, ctx, fx, `{"hidden_team_ids":["`+hidden+`"],`+
+			`"team_order":["`+first+`","`+second+`"]}`)
+
+		body := openapi.LoginJSONRequestBody{Username: fx.username, Password: fx.password}
+		resp := fx.call(t, http.MethodPost, "/auth/login", body, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, readBody(resp))
+		}
+		var cu openapi.CurrentUser
+		mustDecode(t, resp, &cu)
+		if cu.BrowseRail == nil {
+			t.Fatal("login response omitted browse_rail — the rail paints uncurated and then jumps")
+		}
+		if cu.BrowseRail.HiddenTeamIds == nil || len(*cu.BrowseRail.HiddenTeamIds) != 1 ||
+			(*cu.BrowseRail.HiddenTeamIds)[0].String() != hidden {
+			t.Errorf("hidden_team_ids=%v want [%s]", cu.BrowseRail.HiddenTeamIds, hidden)
+		}
+		// Sequence, not membership: team_order's entire content IS the
+		// order, so a set assertion would pass on a handler that sorted.
+		if cu.BrowseRail.TeamOrder == nil || len(*cu.BrowseRail.TeamOrder) != 2 ||
+			(*cu.BrowseRail.TeamOrder)[0].String() != first ||
+			(*cu.BrowseRail.TeamOrder)[1].String() != second {
+			t.Errorf("team_order=%v want [%s %s]", cu.BrowseRail.TeamOrder, first, second)
+		}
+	})
+}
+
+// Omitted for every account that has not curated its rail — which is
+// every account today. Same "absent means the build's default" contract
+// feed_filters carries, and the reason this change alters no existing
+// session response.
+func TestSession_OmitsTeamRailWhenUncurated(t *testing.T) {
+	withFixture(t, func(ctx context.Context, fx *fixture) {
+		seedTeamRail(t, ctx, fx, `{}`)
+
+		resp := fx.call(t, http.MethodPost, "/auth/login",
+			openapi.LoginJSONRequestBody{Username: fx.username, Password: fx.password}, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, readBody(resp))
+		}
+		var cu openapi.CurrentUser
+		mustDecode(t, resp, &cu)
+		if cu.BrowseRail != nil {
+			t.Errorf("browse_rail should be omitted entirely, got %+v", *cu.BrowseRail)
+		}
+	})
+}

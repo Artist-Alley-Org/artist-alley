@@ -5,7 +5,454 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
-## [Unreleased]
+## [v0.10.0] — 2026-08-16 — The browse experience release: search sealed, the wall rebuilt, every view given its own feel
+
+### Added
+
+- **Operators can run a promo strip in the feed.** A full-width band between feed pages — a
+  title, a short blurb, a call-to-action button, and a row of hand-picked works — curated from
+  the same admin surface as featuring, aimed at whichever audience the operator chooses, and
+  invisible when empty or when nothing in it is visible to you. Scrolling stability is
+  untouched. Featuring in general also now respects the mature-content rules — a featured
+  mature work only shows to people who opted in (#1118).
+
+- **Mature content is fully live.** Artists mark a work with one checkbox at upload (operators
+  can override per asset); each account chooses whether to see mature work; the instance has a
+  master switch. When you're not opted in — or not signed in — mature work is simply absent:
+  from the feed, browsing, search results and counts, suggestions, similar-image results, and
+  previews; a direct link shows a blurred tile and the file itself won't download. Owners always
+  see their own work (#1114-#1117).
+
+- **Thumbnail tiles got shorter and smarter.** Selection, type and the menu share one compact
+  band above the preview (40px shorter per tile), the type icon names itself in a tooltip, and
+  file extensions only show where they mean something (#1144).
+
+- **Mature content support, part one.** The groundwork landed: works can carry a mature flag
+  (posts inherit it from their files automatically), the instance has an operator switch for
+  whether mature content is allowed at all, and each signed-in account has its own opt-in.
+  The browse and viewing surfaces that USE these switches arrive next (#1115, ADR 0090).
+
+- **Thumbnail view got its proper frame.** Type and format sit in a band above the preview, the
+  artwork sits on a colour matte sampled from the image itself — nothing overlaps the picture —
+  and the metadata reads in clean rows below, with selection and actions in a bottom strip. Grid
+  and thumbnail also start at more compact, portfolio-standard sizes for new users; your own
+  saved size is untouched (#1136, #1140).
+
+### Fixed
+
+- **A featured collection appears consistently everywhere it should.** The Collections hub's
+  Featured tab had one extra, stale visibility condition the browse strip didn't have, so the
+  same featured collection could show in one place and not the other. One rule now (#1121).
+- **Hover-scrubbing a video follows your mouse.** Point anywhere on the preview and you see
+  that moment; sweep right to play forward, left to rewind; hold still and it holds the frame
+  (#1142). Phones keep tap-to-open.
+
+- **Annotations respect asset visibility** — reading or writing text annotations now requires
+  being able to see the asset's content, closing the sibling of the comments gap (#1135).
+- **List view works inside collections** — it silently fell back to the grid; now it renders
+  properly with columns and checkboxes (#1137).
+- **Masonry's hover info no longer clips on short, wide tiles** — it compresses to fit or
+  steps aside entirely, with measured thresholds (#1139).
+
+- **Profiles got their three tabs.** Portfolio (the artist's posts — a visitor sees published
+  work, not raw uploads), About (bio, links, location), and Likes (what they've liked, filtered
+  by what YOU are allowed to see). The browse footer's controls come along, so a profile browses
+  like the feed does (#1106).
+
+- **Clicking a post inside a collection opens it now** — on collections, team pages, and
+  profiles alike; four surfaces shared the same missing piece and now share one fix (#1130).
+  Collection tiles also finally show the fields operators mark for cards (#1133).
+
+### Security
+
+- **Mature works stay hidden in every picture, not just every list.** Collection cover mosaics,
+  chosen covers, team pictures, saved searches and document-search all now apply the same
+  mature-content rules as everything else — and a post whose *cover* is mature is treated as
+  mature even when its other files aren't (#1147).
+
+- **Comment threads respect post visibility.** The comments list on a post no longer answers
+  for callers who cannot see the post itself — and five sibling endpoints with the same gap,
+  including two write paths, were closed in the same pass (#1132).
+
+- **Every browse view has its own personality now.** Thumbnail shows the work AND its facts —
+  type icon, artist (clickable), title, plus whichever fields the operator marks for cards;
+  list keeps its image column a steady size; masonry strips down to pure art (with the full
+  info overlay appearing on hover once tiles are large enough to read it); and feed became a
+  proper social view — uniform post size, the description, and the first couple of comments
+  under each post. Grid keeps its hover-reveal. Commenters' names in previews respect the same
+  privacy rules as everywhere else (#1047).
+
+- **Follow a hashtag.** Tags work like teams now: follow one from the strip's manage menu and
+  its posts join your Following feed; a `#tag` chip joins your strip and filters the feed in
+  place like a team chip. Following a tag never shows you anything you couldn't already see (#1123).
+
+- **Select many posts at once.** Drag a selection box across the feed, or Shift-click one post
+  and then another to select everything between them (in feed order); list view gained the
+  checkbox column it was missing, and the column-resize handles are easier to see in both
+  themes (#1127).
+
+- **Cards point at people.** Hovering a grid card, the artist's name and avatar are now a link
+  to their profile; long titles follow your cursor in full; and the card menu visibly reacts
+  when you're over it (#1126).
+
+- **The teams strip filters your feed in place.** Click a team and the page stays put while the
+  feed narrows to that team's work, with the team's name as a heading and a follow button right
+  there; click All teams (or the same chip again) to clear. The strip now shows every team you
+  can see — your followed ones first — stays pinned to the top as you scroll, and pans by
+  drag or arrow buttons with no scrollbar. Its ⋯ menu is a real manager: search teams, follow
+  and unfollow inline, hide teams from your strip, and drag them into your own order — your
+  arrangement follows your account, and hiding a team never hides its posts (#1113).
+
+- **The featured strip is a proper showcase now.** Wide cinematic cards (the shape you'd expect
+  from a portfolio site's top row) with the collection's name and description on the artwork,
+  arrow buttons at the edges, and click-drag panning — no scrollbar. What a card reveals about a
+  collection stays exactly within what you're allowed to see: a withheld title never brings a
+  description or an honest item count along with it (#1110).
+
+- **Grid view cards got the portfolio treatment.** At rest a card is just the artwork. Hovering
+  (or keyboard-focusing) reveals what kind of work it is as an icon — with a count when a post
+  holds several pieces — plus the title, the artist's avatar and name, and the card menu. No more
+  text badges over your art in grid view (#1111).
+
+- **List-view columns are resizable.** Drag the boundary between two column headers to resize,
+  double-click it to reset that column, or use the arrow keys with the handle focused. Your
+  widths are remembered across reloads, per column, alongside your column visibility choices.
+  On touch screens the handles stay out of the way (#1100).
+
+- **The teams strip leads with "All teams" and a manage menu.** The all-teams link moved from
+  the end of the strip to the front where it is always visible, next to a small menu for
+  managing what you follow, and the team chips got bigger — comfortable to read and to tap.
+  Your featured team still comes first among the teams (#1097).
+
+- **Featured collections wear their names on the artwork.** The name used to sit under the
+  card; it now sits on the image itself over a soft dark fade, the way portfolio sites do it.
+  The strip also keeps its own fixed size now — tuning the card-size control resizes the browse
+  grid below without the featured strip jumping around (#1098).
+
+- **Wide artwork gets the room it needs in masonry.** A panorama or a waveform used to be squeezed
+  into one portrait-shaped column and came out a few pixels tall — technically present, practically
+  invisible. About a third of a typical feed here is that wide. Wide pieces now take two columns
+  when one column would render them below a readable height, and the threshold adapts as you change
+  the tile size, so what counts as "too small" tracks what is actually on your screen (#1025).
+
+  Under the hood the masonry wall was rebuilt to make this possible — a tile can now truly straddle
+  columns — and the property that matters most was kept and re-measured: when more work loads in as
+  you scroll, **nothing you are already looking at moves**. The screen-reader experience also
+  improved: tiles now come in feed order again instead of column order (#747).
+
+- **A team can be spotlighted in the teams strip.** Operators could already hand-pick assets and
+  collections for a home surface; teams are now spotlightable the same way, and a spotlighted team
+  leads the strip. The "All teams" link moved into the strip itself rather than sitting on a row
+  of its own (#1084).
+
+  A spotlighted team shows the same picture it shows everywhere else, and if that picture is later
+  made private it falls back to the team's initials rather than breaking.
+
+- **Teams can have a picture.** The followed-teams strip showed nothing but initials and a name.
+  A team's managers can now choose an image to represent it, and it appears in the strip, the
+  team directory, and the team's own page. Teams without one keep the initials tile.
+
+  The picture has to be a public file belonging to that team, and that is re-checked every time
+  it is shown — so if the file is later made private, the picture quietly disappears and the
+  initials come back rather than a stale image lingering. Make it public again and the picture
+  returns on its own; nobody has to re-pick it (#982).
+
+- **Choose the picture on a collection.** A collection's thumbnail was built from whatever was
+  inside it. Now a curator can pick the image that represents it — the one that reads well small,
+  or the one that isn't a spoiler — from "Set cover" on the collection menu, or the cover section
+  when editing it. Leave it unset and the built-from-members mosaic carries on as before; clear it
+  later and the mosaic comes straight back.
+
+  It points at a picture rather than being a separate upload, so anything already in the archive
+  can be a cover — including an image you add for exactly that purpose. If the picture is one a
+  particular viewer isn't allowed to see, they get the mosaic instead of an empty space, and if
+  the picture is deleted the collection quietly goes back to the mosaic (#1027).
+
+- **Search inside a collection.** You could find a collection and then the trail went cold. A
+  collection page now has "Search in this collection", and the search page shows which collection
+  you're inside with a way to step back out. It combines with everything else — a text query, a
+  file type — so "PNGs in the Environment collection mentioning *wall*" is one search.
+
+  A collection you aren't allowed to open returns nothing, even if you know its address, and it
+  returns *nothing* rather than an error — an error would tell you the collection exists. That
+  matters because the items inside might each be things you're allowed to see; what's private is
+  the fact that someone gathered *those particular ones* together (#910).
+
+- **Following means studios too.** The Following tab only ever considered people you follow, so
+  an account that follows studios and no individuals saw an empty feed — with the studios it
+  follows listed directly above it. It now means both (#1048).
+
+
+- **Search filters actually filter.** Every facet beside a search — tag, file type, owner,
+  sensitivity, extension — showed a real count and did nothing when you clicked it. They are
+  controls now: tick one and the results narrow, and the number on the bucket is exactly how many
+  results you get. That equivalence is guaranteed by construction rather than by care — the count
+  and the filter are the same value applied to the same set, so they cannot drift apart (#907).
+
+  Fixing it turned up five older problems that were invisible while the filters were inert: the
+  tag list counted tags on posts but not on files, hiding roughly two thirds of everything tagged;
+  searching by owner silently did nothing for a username and quietly matched the wrong person for
+  a malformed one; "save as collection" saved a fraction of what the page showed; saved-search
+  emails would have contained results the search itself doesn't return; and similarity search
+  ignored the filter you had just set.
+
+  One deliberate behaviour worth knowing: **while a filter is active, files you aren't allowed to
+  open are left out of the results** rather than shown as locked placeholders. Without a filter
+  they still appear, as before. The reason is that a filter asks a question *about* a file's
+  details — "which of these are PNGs" — and answering that about a file whose details are withheld
+  would give away the very thing being withheld.
+
+### Changed
+
+- **The images now run Node 24, the current long-term-support release.** They were on Node 22,
+  which is heading into maintenance. Nothing about the app changes; the part worth stating is that
+  the 3D preview renderer runs on this, and it was checked rather than assumed — every supported
+  3D format re-rendered, and the output compared against the old build image by image (#1039).
+
+- **Published images state the right licence.** They carried a label saying BSD-3-Clause. This
+  project is AGPL-3.0. Release builds happened to report it correctly for an unrelated reason, so
+  the wrong value only reached the rolling `edge` image and anything built from a copy of the
+  source — which is most self-hosted installs. Registry pages, licence scanners and policy tools
+  read that field, so it now says AGPL-3.0 everywhere, and the two build paths were also made to
+  agree on the project's description, which had drifted apart (#1091).
+
+- **Dependency updates.** `@playwright/test` 1.60.0 → 1.62.1 (#1034), `three` 0.169.0 → 0.185.1 in
+  the 3D preview worker (#1035), and a group of four minor/patch bumps in the frontend (#1037).
+
+  The `three` bump is the notable one: the preview worker had been sixteen minor versions behind
+  the web app, and since both now import the *same* model-loading module, they were running one
+  piece of code under two different versions of the library — the exact mismatch that makes a
+  thumbnail disagree with what you see when you open the asset. They are aligned again. The full
+  3D render chain was re-verified against every supported format, textures included.
+
+### Security
+
+- **Type-ahead suggested tags from posts you cannot see.** The search box's tag completions were
+  drawn from every post on the instance — including private ones and drafts — so typing a few
+  letters could reveal that a tag exists inside content you have no access to, and repeating it
+  with different letters could recover the tag word by word. Completions now come only from posts
+  you are allowed to read (#1075).
+
+- **A vulnerable package is out of the published image.** The 3D preview renderer's browser
+  driver pulled in an archive-unpacking library with a known flaw and no fixed release. It was
+  never actually reachable here — the image uses the system browser and skips the download step
+  that would have used it — but dead vulnerable code is still code somebody has to keep
+  explaining, so it is gone. Updating the browser driver dropped it along with 74 other packages
+  it no longer needs (#1070).
+
+- **"Find similar" ranked files you aren't allowed to open.** Visual similarity search — the
+  "more like this" panel, search-by-image, and the `similar to` search term — considered every
+  file on the instance, including ones whose picture you're refused. It never showed them, but the
+  *ranking itself* told you something: supply a picture, watch a locked file come back near the
+  top, and you've learned it looks like yours without ever being shown it.
+
+  It also worked in reverse — you could start *from* a file you can't open and harvest everything
+  that resembles it. Both directions are now closed, on all three places this was reachable
+  (#1066).
+
+- **A name could still escape after its owner asked it not to be shown.** Someone who opts out of
+  appearing to logged-out visitors was still named as the owner of files inside a **public
+  collection or post** — the one route by which a logged-out visitor meets a restricted file at
+  all. The name is now simply absent there, as it already was elsewhere.
+
+  Behind this, the rule for "what do we call this person" had been hand-copied into three separate
+  database queries, each missing the opt-out. There is one copy now, checked against the original
+  by a test (#1023).
+
+- **A restricted file's title could be reconstructed a word at a time through search.** Files you
+  aren't cleared to open are deliberately still *listed* — you can see something is there and ask
+  for access — but their titles and descriptions are hidden. The search index did not know that.
+  Anyone could type a phrase that appears only in a hidden title, watch the result count go from
+  zero to one, and confirm it — then repeat, word by word, until they had reconstructed the whole
+  thing without ever being shown it.
+
+  Search now only matches text you're allowed to read, everywhere it can be searched — the search
+  page, the result count, and browse's search box. The file still appears in an ordinary browse
+  with its blurred thumbnail and lock icon; it simply no longer answers questions about words it
+  doesn't show you. Its owner, and anyone with the right permission, search it exactly as before
+  (#902).
+
+### Fixed
+
+- **The feed's scrollbar no longer hides under the top bar.** Its top segment was painted
+  behind the navbar — worse when the demo or impersonation banner added height. The scroll
+  area now begins exactly where the bars end, in every banner state (#1122).
+
+- **Featuring something now shows it everywhere it should.** A featured collection could appear
+  on the browse page's featured strip but not in the Collections hub's Featured tab — or the
+  other way round — because the two surfaces disagreed about which audience a featured item was
+  for, and the admin screen could only write one of the audiences. All three surfaces now share
+  one rule (signed-in viewers see internal + public featuring, visitors see public only), and an
+  operator can choose the audience when featuring, with "internal" still the default (#1104,
+  #1088). The list view's Author column also shows people's names now instead of an internal
+  number (#1099), search suggestions can no longer omit private collections from the one person
+  allowed to see everything — while deleted collections stay out of everyone's suggestions
+  (#1078) — and the guarantee that search only matches text you may read is now enforced by the
+  build rather than by convention (#1065).
+
+- **Switching between Latest and Following no longer scrambles the masonry wall.** Changing the
+  feed filter could leave tiles overlapping each other with stray holes, because the wall kept
+  drawing the old feed's layout while the new feed's posts streamed in — and the mismatch
+  crashed the very code that would have redrawn it. The wall now only draws tiles whose post is
+  actually the one the layout was computed for, so a feed change redraws cleanly (#1103).
+
+- **Buttons beside an open view panel work again.** With the view switcher open, clicking
+  "Back to top" or the Latest/Following tabs only dismissed the panel and swallowed the click.
+  The aimed button now does its job first, then the panel closes (#1105).
+
+- **The masonry wall no longer opens bands of empty space as you scroll.** Pieces whose files
+  carry no recorded dimensions were reserved a square amount of room, and when the real image
+  arrived taller or shorter, the wall's shared row structure let that one piece push **every**
+  column down — so gaps appeared across the full width, once per loaded page, getting worse the
+  deeper you scrolled. The wall now checks its rendered layout against what it predicted and
+  quietly corrects the difference before each new page, the way large photo-feed sites do it.
+  Measured on a 14-column wall: 137 gaps down to 2, both being the small bounded seams a
+  two-column-wide piece can legitimately leave (#1095).
+
+- **The view switcher closes when you click away.** The panel used to stay open until its button
+  was clicked a second time; it now dismisses on any click or tap outside it — and the click
+  still does whatever you aimed it at — plus Escape, which returns focus to the button (#1096).
+
+- **The admin area now turns away people who don't administer anything.** It let every signed-in
+  account in and showed them a page with two tiles on it. Two of the permissions it recognised —
+  listing teams and listing roles — are ones everyone has, so that they can browse the team
+  directory, and holding either was enough to open the door. Those two now count towards opening
+  a tile but not towards opening the admin area itself, so an ordinary account gets a plain "you
+  don't have permission" page instead of a confusing near-empty one. Nobody's permissions changed
+  and the team directory works exactly as before (#962).
+
+- **The card-size control now resizes the whole page.** Making cards bigger or smaller changed the
+  main grid while the featured strip above it stayed fixed, so one page showed two card sizes. The
+  strip follows the control now — and because its pictures were capped at a small crop, they were
+  also swapped for properly sized ones, so a large tile is a large picture rather than a stretched
+  thumbnail (#909).
+
+- **The followed-teams strip says "teams".** It called them "channels", which is not our word
+  (#1029). The two strips also lost their small headings — the page already says what you are
+  looking at — while keeping their names for screen readers (#1030).
+
+- **An expiry date on a collection could be set but never removed.** Clearing it appeared to work
+  — the request succeeded — and the date stayed. Removing it is now an explicit "clear expiry"
+  action rather than sending an empty value, and the API documentation says so plainly instead of
+  promising something that never worked (#1073).
+
+- **Instance admins saw a collection they could open but could not search inside.** Opening
+  someone else's private collection worked, while "Search in this collection" on that same page
+  came back empty. The two now answer the same question, because they finally ask it in the same
+  place (#1059).
+
+- **Someone allowed to manage a file could not find it while typing, or filter to it.** A person
+  given rights over a colleague's files can read those files' titles — but the search box offered
+  no completions for them, and ticking a filter on the results page quietly dropped them. Both now
+  match what search itself already did (#1064, #1056).
+
+- **A collection of saved posts had no picture on it.** A collection's thumbnail is built from
+  what's inside it, and the builder only ever looked at *files* — so a collection made of saved
+  posts, which became an ordinary thing to have once you could save someone else's post, showed
+  as an empty folder. Posts now contribute too, using the same picture the post shows on a feed
+  card, and the tiles run in the order you added things regardless of which kind they are (#1026).
+
+  Two things improved on the way past. A locked item used to take up one of the four tiles and
+  render as a blank square, so a collection whose first few items were locked came out mostly
+  empty even when there were perfectly good pictures further down — locked items are now skipped
+  rather than reserved a space, and the tiles fill from whatever you can actually see. And the
+  same picture reaching a collection by two routes — pinned directly *and* as a saved post's
+  cover — no longer appears twice.
+
+  The thumbnail is also built on the server now rather than each tile asking separately, so a page
+  of collections is one request instead of one per card, and searched collections show their
+  pictures for the first time.
+
+- **The back button shows the results the address asks for.** Changing a search and pressing Back
+  returned you to the previous address with the *newer* results still on screen — so the page and
+  the address disagreed, and only a reload fixed it. Back and Forward now render what the address
+  describes, and they do it **without re-running the search**, so the position you had scrolled to
+  is still the position you get. Reloading the same address was always correct and still is (#1060).
+
+  ⚠️ **One deliberate change worth knowing:** submitting the *same* query again no longer re-runs
+  it. The address hasn't changed, so nothing is refetched. To pull in results that have appeared
+  since, reload the page. If a dedicated Refresh button would be useful, that's worth asking for —
+  it would be a clearer way to say "get me newer results" than retyping what you already searched.
+
+- **A test that failed at random and mailed a failure notice each time.** The browser check for the
+  search box occasionally clicked it while the top bar had slid out of view, then timed out. It now
+  waits for the bar to actually be back before reaching for it (#1061).
+
+- **You can refine a search on the search page again.** Adjusting your query while already on the
+  search page threw you back to browse, losing your place and your filters — so the one screen
+  built for refining a search was the one screen you couldn't refine one on. It now updates in
+  place, keeping focus and scroll position. Searching from anywhere else still takes you to the
+  results, as before (#1053).
+
+
+- **The check that proves 3D previews actually work now runs when it matters.** Generating a
+  preview for a 3D model is a chain — a headless browser renders the model and saves the picture —
+  and every part of it fails at *render* time, where a successful build proves nothing. The check
+  that exercises it end to end was, by an accident of two separate rules, running nowhere at all
+  for dependency updates: it was switched off for pull requests deliberately (it is expensive),
+  and the automatic merge of an approved update produced no follow-up run either. Three dependency
+  updates reached the mainline that way, one of them moving the 3D library sixteen versions.
+
+  A change that can affect 3D rendering now runs that check on the pull request, and an automatic
+  merge is refused unless it passed. Everything else — a documentation edit, an unrelated fix —
+  still skips the expensive build. Before merging, the check was deliberately broken to confirm it
+  actually fails when the renderer is broken, which the previous arrangement had never
+  demonstrated (#1049).
+
+- **A search test that failed at random, and mailed a failure notice each time.** Typing in the
+  site-wide search box starts a short timer before it acts. The test clicked through to the search
+  page inside that window, the timer then fired and moved the page somewhere else, and the test
+  reported a failure that had nothing wrong behind it. It now waits for the typing to have taken
+  effect before clicking (#1024).
+
+  The behaviour underneath it is a genuine annoyance in its own right and is filed separately:
+  adjusting your search while already on the search page throws you back to browse (#1053).
+
+- **CI can reach a verdict on dependency and release PRs.** Two separate faults had been making
+  the checks lie, and both mailed the owner about failures that were not failures.
+
+  A release PR could not merge because of a *cancelled* run rather than a failing one. The
+  workflow's concurrency key named only the branch, so pushing to `dev` and opening the
+  `dev → main` promotion PR landed in the same group and cancelled each other; whichever one
+  lost left a cancelled result on the required check, and the PR stayed blocked with every real
+  test green. The key now includes the target branch, so a push and its promotion PR are
+  separate. Superseded runs of the same kind are still collapsed, which is what that setting was
+  added for. The manual workaround people reach for — re-running the cancelled half — makes it
+  worse, because the re-run rejoins the group and kills the survivor instead (#1043).
+
+  The browser-based UI check could never pass on a dependency PR at all. It needs a path to the
+  seed dataset, that path comes from a repository secret, and GitHub deliberately withholds
+  secrets from dependency-bot runs — so the job died on an unrelated-looking Docker error every
+  time. It now checks for the dataset up front and **skips** cleanly when it isn't reachable,
+  and the error it raises otherwise names the secret and where to set it (#1040).
+
+### Changed
+
+- **The npm version is pinned.** Nothing said which npm to use, so contributors and the build
+  container disagreed — and an older npm silently drops fields a newer one writes, quietly
+  rewriting the lockfile every time anyone touched it. The project now declares npm 11, and CI
+  runs its npm steps in a container built to match (#948).
+
+- **Dependency updates now cover the two Python sidecar tools.** They were unwatched, because the
+  updater does not search subdirectories on its own and each tool needed to be listed. Both are
+  now checked monthly. They deliberately keep no lockfile: their images install from
+  `pyproject.toml`, so a lockfile nothing reads would only drift from what actually ships (#928).
+
+## [v0.9.1] — 2026-08-11
+
+### Security
+
+- **`js-yaml` 4.3.0 → 4.3.1** in both lockfiles, closing two open high-severity advisories
+  (quadratic CPU consumption when resolving `!!omap`). Neither was covered by an open dependency
+  PR: `js-yaml` arrives transitively via `cosmiconfig`, and the patch was already inside the
+  declared range — so this was a stale lockfile resolution rather than a missing bump, the same
+  shape as `nanoid` in #1001. Refreshed under npm 11 so no `libc` entries were stripped (#1038).
+
+### Changed
+
+- Self-reported version bumped to 0.9.1 in `web/package.json` and `openapi.yaml` (#1041).
+
+No-spec-impact.
 
 ## [v0.9.0] — 2026-08-11 — Permissions made one rule, deletion made reversible, and the surfaces that were only half there
 

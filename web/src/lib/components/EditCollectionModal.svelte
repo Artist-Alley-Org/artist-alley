@@ -16,6 +16,26 @@
     owner_user_ref: number;
     created_at: string;
     updated_at: string;
+    // #1027 — the curator's CHOSEN cover, or null for the derived
+    // mosaic. Read off the collection rather than off `covers`: the two
+    // answer different questions, and `covers` deliberately falls back
+    // to the mosaic for a reader who may not picture the chosen asset,
+    // so a picker seeded from it would show the wrong thing to exactly
+    // the people allowed to change it.
+    cover_asset_id?: string | null;
+  }
+
+  // One choosable picture in the cover picker.
+  //
+  // CollectionResource joins the asset's columns in FLAT, not nested
+  // under an `asset` object — and on a member this reader may not see,
+  // #883 makes every one of them ABSENT rather than null, with
+  // `restricted` as the flag saying which shape the row is. So both
+  // fields below are optional and both have to be checked.
+  interface CoverChoice {
+    asset_id: string;
+    restricted?: boolean;
+    preview_available?: boolean;
   }
 
   interface Props {
@@ -23,9 +43,25 @@
     collection: Collection;
     onclose: () => void;
     onsaved?: (c: Collection) => void;
+    /**
+     * Open with the cover picker scrolled to and focused (#1027).
+     *
+     * The More-actions menu has a "Set cover" entry, which is where a
+     * curator looks first; it opens this same modal rather than a
+     * second one, so there is ONE edit surface and one save path. The
+     * flag only decides where the modal starts, never what it can do —
+     * every field stays editable either way.
+     */
+    focusCover?: boolean;
   }
 
-  let { open, collection, onclose, onsaved }: Props = $props();
+  let { open, collection, onclose, onsaved, focusCover = false }: Props = $props();
+
+  // The scroll target for `focusCover`. Focus moves to the section, not
+  // to the first swatch: a collection can hold hundreds of choices, and
+  // landing keyboard focus on an arbitrary one of them would strand the
+  // caret mid-grid with no indication of where it is.
+  let coverSection = $state<HTMLFieldSetElement | null>(null);
 
   let name = $state('');
   let description = $state('');
@@ -39,16 +75,75 @@
   let baselineUpdatedAt = $state<string>('');
   let conflict = $state<{ updatedAt: string } | null>(null);
 
+  // #1027 — cover choice. `null` means "use the derived mosaic", which
+  // is a real selection the curator can make, not merely the absence of
+  // one, so it is a nullable value rather than an undefined.
+  let coverAssetId = $state<string | null>(null);
+  let coverChoices = $state<CoverChoice[]>([]);
+  let coverLoading = $state(false);
+
   $effect(() => {
     if (open) {
       name = collection.name;
       description = collection.description;
       visibility = collection.visibility as 'private' | 'org-only' | 'followers' | 'explicit-share';
       baselineUpdatedAt = collection.updated_at;
+      coverAssetId = collection.cover_asset_id ?? null;
       error = null;
       conflict = null;
+      void loadCoverChoices(collection.id);
     }
   });
+
+  // Scrolling is deferred to after the choices have loaded, not fired
+  // on open: the cover section is the LAST thing in the form, so before
+  // the grid paints it sits at a scroll offset that stops existing the
+  // moment the pictures arrive. Keyed on `coverLoading` going false so
+  // it runs once the layout is final.
+  $effect(() => {
+    if (open && focusCover && !coverLoading && coverSection) {
+      coverSection.scrollIntoView({ block: 'center' });
+      coverSection.focus();
+    }
+  });
+
+  // The members are the picker's options. The API accepts ANY asset the
+  // curator may picture — that is what lets a cover outlive the member
+  // it was chosen from — but the members are the set that can be shown
+  // as pictures without inventing a whole asset browser in a modal, and
+  // "upload a banner, add it, pick it" reaches the rest.
+  //
+  // A member this reader may not picture is dropped rather than shown
+  // disabled: the server would refuse it, and offering a control that
+  // cannot succeed is worse than not offering it.
+  async function loadCoverChoices(id: string) {
+    coverLoading = true;
+    try {
+      const { data } = await api.GET('/collections/{id}/resources', {
+        params: { path: { id }, query: { limit: 60 } },
+      });
+      coverChoices = ((data?.items ?? []) as unknown as CoverChoice[]).filter(
+        (m) => !m.restricted && m.preview_available === true,
+      );
+    } catch {
+      // A picker that failed to load must not block renaming the
+      // collection, so this is not surfaced as a form error.
+      coverChoices = [];
+    } finally {
+      coverLoading = false;
+    }
+  }
+
+  // A cover chosen from outside the member list still has to be shown as
+  // the current selection, or saving an unrelated edit would silently
+  // look like it cleared the cover.
+  const coverIsExternal = $derived(
+    coverAssetId !== null && !coverChoices.some((c) => c.asset_id === coverAssetId),
+  );
+
+  function coverUrl(assetId: string) {
+    return `/api/v1/assets/${assetId}/variants/col`;
+  }
 
   async function submit() {
     if (!name.trim() || submitting) return;
@@ -62,6 +157,17 @@
           description,
           visibility,
           if_unchanged_since: baselineUpdatedAt || undefined,
+          // The tri-state, spelled out. `cover_asset_id: null` cannot
+          // mean "remove" on a partial update — null is already "leave
+          // alone" for every other property — so removal is the
+          // companion flag, exactly as `clear_default` works on a field
+          // definition. Sending BOTH is a 400, so these are exclusive
+          // branches rather than two independent keys.
+          ...(coverAssetId === null
+            ? collection.cover_asset_id
+              ? { clear_cover: true }
+              : {}
+            : { cover_asset_id: coverAssetId }),
         },
       });
       if (response.status === 409) {
@@ -140,6 +246,77 @@
           </label>
         {/each}
       </div>
+    </fieldset>
+    <!-- tabindex="-1" so `focusCover` has something to move focus to.
+         It is NOT in the tab order: a fieldset is not a control, and
+         adding a stop here would make every keyboard user tab through
+         a wrapper on the way to the swatches. -->
+    <fieldset bind:this={coverSection} tabindex="-1" data-testid="collection-cover-section">
+      <legend class="mb-1 block text-xs font-medium text-fg-muted">{t('collections.cover')}</legend>
+      <p class="mb-2 text-xs text-fg-muted">{t('collections.cover_hint')}</p>
+      {#if coverLoading}
+        <p class="text-xs text-fg-muted">{t('collections.cover_loading')}</p>
+      {:else if coverChoices.length === 0 && !coverIsExternal}
+        <p class="text-xs text-fg-muted">{t('collections.cover_none')}</p>
+      {:else}
+        <!-- The choices SCROLL inside a fixed height. A collection can
+             hold hundreds of members, and letting the grid size itself
+             pushes the modal's Save button below the fold — the control
+             the whole form exists to reach. Its own scroll container
+             keeps the footer where it was for a two-member collection
+             and a two-hundred-member one alike. -->
+        <div class="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-5">
+          <!-- "Use mosaic" is a CHOICE in the same grid as the pictures,
+               not a clear button off to one side: reverting to the
+               derived cover is what the collection does by default, so
+               it reads as one of the options rather than an undo. -->
+          <button
+            type="button"
+            onclick={() => (coverAssetId = null)}
+            aria-pressed={coverAssetId === null}
+            class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
+            class:border-accent={coverAssetId === null}
+            class:border-border={coverAssetId !== null}
+          >
+            <span class="font-medium">{t('collections.cover_derived')}</span>
+            <span class="mt-0.5 opacity-70">{t('collections.cover_derived_hint')}</span>
+          </button>
+
+          {#if coverIsExternal && coverAssetId}
+            <button
+              type="button"
+              aria-pressed="true"
+              title={t('collections.cover_current_external')}
+              class="relative aspect-square overflow-hidden rounded border-2 border-accent"
+            >
+              <img
+                src={coverUrl(coverAssetId)}
+                alt={t('collections.cover_current_external')}
+                loading="lazy"
+                class="h-full w-full object-cover"
+              />
+            </button>
+          {/if}
+
+          {#each coverChoices as choice (choice.asset_id)}
+            <button
+              type="button"
+              onclick={() => (coverAssetId = choice.asset_id)}
+              aria-pressed={coverAssetId === choice.asset_id}
+              class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
+              class:border-accent={coverAssetId === choice.asset_id}
+              class:border-border={coverAssetId !== choice.asset_id}
+            >
+              <img
+                src={coverUrl(choice.asset_id)}
+                alt=""
+                loading="lazy"
+                class="h-full w-full object-cover"
+              />
+            </button>
+          {/each}
+        </div>
+      {/if}
     </fieldset>
     <CollectionFieldsSection collectionId={collection.id} />
   </div>

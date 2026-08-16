@@ -83,7 +83,9 @@ import (
 // DefaultRetentionDays is the fallback grace window when the
 // caller's sysconfig lookup yields nothing or the rotation
 // primitive runs without a sysconfig dependency (test fixtures).
-// 30 days mirrors the migration 00013 system_config default.
+// 30 days is the ONLY default: no migration seeds
+// RetentionDaysSysconfigKey, so this constant is what a fresh install
+// uses until an admin sets the row.
 const DefaultRetentionDays = 30
 
 // RotationResult is the rotation primitive's typed return. The
@@ -123,8 +125,8 @@ type RotateAuditFireFn func(
 //
 // retentionDays controls the demoted row's retained_until grace
 // window. Callers should pass the sysconfig-resolved value
-// (federation.user_keys.retained_until_days, migration 00013
-// default 30); pass DefaultRetentionDays as a fallback when
+// (federation.user_keys.retained_until_days, which no migration
+// seeds); pass DefaultRetentionDays as a fallback when
 // sysconfig isn't reachable (test paths). Values <= 0 are
 // normalised to DefaultRetentionDays so a misconfigured key
 // can't accidentally produce a zero-grace rotation that

@@ -8,7 +8,7 @@
 //   - SetEncryptionKey persistence + change detection
 //   - Cache hit-on-second-read + invalidate-on-write
 //   - CountMissingEncryptionKey backed by the partial index
-//   - Migration 00008's atomic CHECK + 32-byte validation surfaced
+//   - Migration 00001's atomic CHECK + 32-byte validation surfaced
 //     via Handler's ErrEncryptionKeyMalformed
 //
 // Skips when AA_DB_PASSWORD is unset — same convention as the

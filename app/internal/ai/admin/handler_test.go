@@ -300,7 +300,7 @@ func (r *bodyReader) Read(p []byte) (int, error) {
 }
 func (r *bodyReader) Close() error { return nil }
 
-// resetConfigToDefaults restores migration 00009's seeded values
+// resetConfigToDefaults restores migration 00001's seeded values
 // so a test that wrote a custom config doesn't pollute the next
 // run.
 func resetConfigToDefaults(ctx context.Context, pool *pgxpool.Pool) {

@@ -17,7 +17,7 @@
 // whether the delete that grant permits is then findable. So:
 //
 //   - the team hierarchy is real — `team_parents` rows, with
-//     `team_closure` materialised by the 00015 trigger, the pattern
+//     `team_closure` materialised by the 00001 trigger, the pattern
 //     field_plane_test.go established. The seeded database has no
 //     hierarchy at all, so a test that did not build one would be
 //     asserting nothing about scope.
@@ -125,7 +125,7 @@ func (f *fixture) deleteAsset(userRef int64, id uuid.UUID, body string) int {
 }
 
 // team seeds a team, linking it under `parent` through team_parents so
-// the 00015 trigger materialises the closure.
+// the 00001 trigger materialises the closure.
 func (f *fixture) team(label string, parent *uuid.UUID) uuid.UUID {
 	f.t.Helper()
 	id := uuid.New()
@@ -175,7 +175,7 @@ func (f *fixture) grant(userRef int64, code string, team *uuid.UUID) {
 func (f *fixture) liveAsset(owner int64, team *uuid.UUID, title string) uuid.UUID {
 	f.t.Helper()
 	id := uuid.New()
-	// Random hash: the 00016 per-owner dedup index rejects two assets
+	// Random hash: the 00001 per-owner dedup index rejects two assets
 	// from one owner over identical bytes.
 	hb := make([]byte, 16)
 	_, _ = rand.Read(hb)

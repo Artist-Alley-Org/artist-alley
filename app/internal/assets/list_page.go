@@ -63,7 +63,26 @@ type ListAssetsPageGatedParams struct {
 	// still a placeholder for a non-member here — the same placeholder
 	// browse already renders — because the predicate and the field
 	// plane decide that, and neither one reads this field.
-	TeamID          pgtype.UUID
+	TeamID pgtype.UUID
+	// LikedByUserRef scopes the page to assets THIS ref has liked
+	// (#1106) — the profile's Likes tab. NARROWING like every filter
+	// above it: the likes table is written by a third party, so ORing it
+	// into the rule would let anybody put an asset into anybody's view
+	// by liking it. It is a conjunct.
+	//
+	// ⚠️ It ALSO changes what an unreadable row LOOKS like on this page,
+	// and that is the one behavioural difference in this struct. Browse
+	// returns a row the caller cannot read as a PLACEHOLDER — ADR 0064's
+	// answer for a corpus listing, and what #881's "request access" flow
+	// attaches to. A derived listing is a different statement: its rows
+	// are one person's ACTIONS, and a placeholder there says "this
+	// person liked something you cannot see", which discloses a fact
+	// about a third party's behaviour that nothing on the page is
+	// entitled to disclose. So when this is set the page also filters on
+	// visibility.FieldsReadableSQL and a row the viewer cannot read is
+	// ABSENT rather than withheld — see the splice in
+	// ListAssetsPageGated.
+	LikedByUserRef  *int64
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
@@ -78,6 +97,22 @@ type ListAssetsPageGatedParams struct {
 	// picture and no bytes. The zero value denies, so omitting it
 	// fails closed.
 	MutationCaps visibility.AssetMutationCaps
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090 §3). The zero value is the DISQUALIFIED viewer, so a
+	// caller that forgets to set it gets the narrow page rather than
+	// the wide one — visible as "I opted in and still cannot see it",
+	// never as a leak.
+	//
+	// ⚠️ It composes on the ROW plane here, NOT inside the `?q=` match,
+	// and the distinction is the whole reason this is a separate field
+	// rather than an argument to AssetSearchMatchSQL. The text match is
+	// wrapped in `($4 IS NULL OR …)`, so a conjunct placed inside it
+	// applies only when the caller typed something — a disqualified
+	// viewer would stop FINDING a mature asset by name and keep seeing
+	// it listed on unfiltered browse, which is the half-fix ADR 0090 §3
+	// rules out ("the browse feed does not RETURN a disqualified
+	// viewer's mature posts").
+	Mature visibility.MatureViewer
 }
 
 // listAssetsPageColumns mirrors the sqlc query's SELECT list exactly.
@@ -123,17 +158,25 @@ type ListAssetsPageGatedRow struct {
 	// on a restricted asset. False means the handler must replace every
 	// asset column with the placeholder.
 	Readable bool
-	// OwnerDisplayName is the asset owner's display name (or username),
-	// empty when unresolvable. The only asset-derived value the
-	// placeholder is permitted to carry.
+	// OwnerDisplayName is the asset owner's display name per
+	// visibility.OwnerDisplayNameSQL — the SQL twin of
+	// users.PlaceholderOwnerName (#1023). Empty when unresolvable AND
+	// when the owner opted out of anonymous exposure, deliberately
+	// indistinguishable. The only asset-derived value the placeholder is
+	// permitted to carry.
 	OwnerDisplayName string
 }
 
 // ListAssetsPageGated runs the browse query for one caller. `caps` is
-// the caller's capability checker (nil for anonymous), consulted only to
-// short-circuit preview_available for SystemAdmin / content.read.all —
-// it does NOT affect which rows are returned (that stays the predicate's
-// job).
+// the caller's capability checker (nil for anonymous).
+//
+// `caps` short-circuits preview_available for SystemAdmin /
+// content.read.all, and — since #902 — it also reaches the `?q=` text
+// match, which is readability-gated. That is the one way capabilities
+// affect WHICH ROWS come back, and it is confined to the `?q=` branch:
+// with no query text the predicate is still the whole row rule, so an
+// unfiltered browse lists exactly what it always did, placeholders
+// included. See the qMatch fragment below.
 func ListAssetsPageGated(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -158,6 +201,7 @@ func ListAssetsPageGated(
 		p.Ladder,          // $9 — configured preview ladder (#591)
 		p.Tag,             // $10 — optional single-tag filter (#657)
 		p.TeamID,          // $11 — optional single-team filter (#684)
+		p.LikedByUserRef,  // $12 — optional "liked by this ref" filter (#1106)
 	}
 
 	var opts []visibility.Option
@@ -173,6 +217,30 @@ func ListAssetsPageGated(
 	}
 	visFrag, visArgs := pred.ToSQL("", len(args))
 	args = append(args, visArgs...) // predicate args LAST
+
+	// #902 — the `?q=` text match is READABILITY-GATED, and it is gated
+	// by the same visibility.AssetSearchMatchSQL /search composes, not by
+	// a second conjunct written here.
+	//
+	// This is the surface a search-only fix misses. `@@` decides in SQL
+	// whether the row comes back, so before this a caller could type a
+	// phrase from a restricted asset's withheld title into browse and
+	// watch the page go from empty to one placeholder — then recover the
+	// rest of the title token by token, through the field plane #899
+	// closed on the payload.
+	//
+	// It gates ONLY the `?q=` branch, deliberately: with no query text
+	// the conjunct short-circuits at `$4 IS NULL` and every row the
+	// predicate returned is still listed, placeholder and all, which is
+	// what ADR 0064 requires of browse.
+	//
+	// MutationCaps rides along because a team-scoped assets.admin holder
+	// is owed the FIELDS of the assets they administer (#939) — the same
+	// caps this function already hands the per-row FieldsReadable below,
+	// so the rows that match and the rows that render agree.
+	qMatch := visibility.AssetSearchMatchSQL(
+		"assets", `plainto_tsquery('english', $4::TEXT)`, "$8",
+		caller, visibility.ResolveContentCaps(caps), p.MutationCaps)
 
 	// The deleted_at decision now lives entirely in the predicate —
 	// there is deliberately no inline soft-delete clause here, so the
@@ -191,7 +259,7 @@ func ListAssetsPageGated(
 	// Readability is then decided in-Go per row
 	// (visibility.FieldsReadable) from those columns + caps.
 	b.WriteString(`SELECT ` + listAssetsPageColumns + `,
-       ` + visibility.FieldsColumnsSQL("assets", "$8") + `,
+       ` + visibility.FieldsColumnsSQL("assets", "$8", caller) + `,
        ` + pixeldims.SelectColumnsSQL("assets.id") + `,
        (file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
@@ -204,15 +272,56 @@ FROM assets
 WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
   AND ($3::TEXT IS NULL OR status = $3::TEXT)
-  AND ($4::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $4::TEXT))
+  AND ($4::TEXT IS NULL OR ` + qMatch + `)
   AND ($10::TEXT IS NULL
        OR EXISTS (SELECT 1 FROM asset_tag t
                    WHERE t.asset_id = assets.id AND t.tag = $10::TEXT))
   AND ($11::UUID IS NULL OR team_id = $11::UUID)
+  AND ($12::BIGINT IS NULL
+       OR EXISTS (SELECT 1 FROM likes lk
+                   WHERE lk.target_kind = 'asset'
+                     AND lk.target_id = assets.id
+                     AND lk.user_ref = $12::BIGINT))
   AND ($5::TIMESTAMPTZ IS NULL
        OR created_at < $5::TIMESTAMPTZ
        OR (created_at = $5::TIMESTAMPTZ AND id < $6::UUID))`)
 	b.WriteString(visFrag)
+	// #1117 — the mature axis, on the ROW plane (ADR 0090 §3). ANDed
+	// beside the visibility predicate, never merged into it: `sensitivity`
+	// answers who is ALLOWED and this answers who has OPTED IN, and a
+	// single ordered ladder cannot express a product of two independent
+	// values.
+	//
+	// UNCONDITIONAL — outside the `?q=` branch every other readability
+	// conjunct on this query sits inside. That asymmetry is deliberate and
+	// is the difference between the two planes: a restricted asset stays
+	// LISTED as a placeholder because ADR 0064 requires browse to show the
+	// corpus, and #881's request-access flow hangs off those placeholders.
+	// A mature asset has no such flow — there is nothing to request, only
+	// a preference to change — and #921 measured what the placeholder
+	// alternative looks like (a feed of blurred plates nobody asked to be
+	// offered). So the mature row is ABSENT, not withheld.
+	//
+	// `$8` is the caller ref already bound above, so this adds no
+	// placeholder. That matters more than it looks: MatureFilterSQL folds
+	// to "" for a qualified viewer, and a conditionally-referenced NEW
+	// placeholder is exactly the 42P18 "could not determine data type of
+	// parameter" that bit posts/list_page.go's $12.
+	b.WriteString(visibility.MatureFilterSQL(
+		"assets", visibility.MatureOwnerColAsset, "$8",
+		p.Mature, visibility.ResolveContentCaps(caps).SystemAdmin))
+	// #1106 — the derived-listing conjunct. Only when LikedByUserRef is
+	// set, and the branch is the whole argument: browse must keep
+	// listing placeholders (ADR 0064, and #881's request-access flow
+	// hangs off them), while a likes listing must not disclose that
+	// somebody liked a thing this viewer cannot see. Same expression the
+	// per-row FieldsReadable below decides with — its sanctioned SQL twin
+	// — so a row that survives this filter is exactly a row that would
+	// have rendered unredacted, and the two cannot drift.
+	if p.LikedByUserRef != nil {
+		b.WriteString(visibility.FieldsReadableSQL(
+			"assets", "$8", caller, visibility.ResolveContentCaps(caps), p.MutationCaps))
+	}
 	b.WriteString(`
 ORDER BY created_at DESC, id DESC
 LIMIT $7::INTEGER`)

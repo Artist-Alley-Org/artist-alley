@@ -17,6 +17,8 @@ SELECT user_ref,
        default_views,
        email_cadence,
        feed_filters,
+       browse_rail,
+       mature_content,
        origin_server_id,
        created_at,
        updated_at
@@ -31,6 +33,8 @@ type GetUserPreferencesRow struct {
 	DefaultViews         []byte
 	EmailCadence         []byte
 	FeedFilters          []byte
+	BrowseRail           []byte
+	MatureContent        []byte
 	OriginServerID       pgtype.UUID
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
@@ -50,6 +54,8 @@ func (q *Queries) GetUserPreferences(ctx context.Context, userRef int64) (GetUse
 		&i.DefaultViews,
 		&i.EmailCadence,
 		&i.FeedFilters,
+		&i.BrowseRail,
+		&i.MatureContent,
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -63,14 +69,18 @@ INSERT INTO user_preferences (
     notification_channels,
     default_views,
     email_cadence,
-    feed_filters
+    feed_filters,
+    browse_rail,
+    mature_content
 )
-VALUES ($1, $2, $3, $4, $5)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (user_ref) DO UPDATE
 SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
     email_cadence         = EXCLUDED.email_cadence,
     feed_filters          = EXCLUDED.feed_filters,
+    browse_rail           = EXCLUDED.browse_rail,
+    mature_content        = EXCLUDED.mature_content,
     updated_at            = NOW()
 `
 
@@ -80,6 +90,8 @@ type UpsertUserPreferencesParams struct {
 	DefaultViews         []byte
 	EmailCadence         []byte
 	FeedFilters          []byte
+	BrowseRail           []byte
+	MatureContent        []byte
 }
 
 // Idempotent persistence — first save creates the row, subsequent
@@ -94,6 +106,8 @@ func (q *Queries) UpsertUserPreferences(ctx context.Context, arg UpsertUserPrefe
 		arg.DefaultViews,
 		arg.EmailCadence,
 		arg.FeedFilters,
+		arg.BrowseRail,
+		arg.MatureContent,
 	)
 	return err
 }

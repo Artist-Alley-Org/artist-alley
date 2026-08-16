@@ -204,6 +204,49 @@ What this changes concretely:
    disk. The Blender pin-drift gate (#470) is likewise re-pointed at
    the renderer that replaced it rather than deleted.
 
+   ⚠️ *Amended 2026-08-12 (#1049) — **this section names the smoke test
+   as the enforcement mechanism but never says when it runs, and its
+   coverage is narrower than a reader will assume.*** The test lives in
+   `ci.yml`'s `docker-build` job, which carries
+   `if: github.event_name != 'pull_request'` — so it runs on **no pull
+   request at all**. That is deliberate (a full production image build
+   per PR is expensive), and #751 recorded it, prescribing "verify
+   locally with an image build" as the compensating control. What broke
+   on 2026-08-12 is the other half: a PR merged by the Dependabot
+   automerge workflow is merged with `GITHUB_TOKEN`, and GitHub does not
+   trigger workflows on such pushes — so **no push run follows the merge
+   either**. Three dependency PRs, one of them raising the worker's
+   `three` by sixteen minor versions, reached `dev` with this gate having
+   run **nowhere**. The renderer was verified by hand (smoke 10/10 on a
+   freshly built image at `217766f2`) and is fine, but the guarantee this
+   section promises was unenforced for that window. **Do not read "the
+   smoke test survives" as "every change to the render chain is gated."**
+   #1049 tracks closing it.
+
+   ✅ *Closed 2026-08-12 by #1049 (PR #1051), same day.* The gate is now
+   reachable from both directions. `scripts/ci/render-chain-paths.txt` is
+   the single source of truth for "does this change put the render chain
+   at risk?"; `ci.yml`'s `render-chain` detector job gates `docker-build`
+   on it for pull requests, and `dependabot-automerge.yml` refuses to
+   auto-merge a matching PR unless `Verify production image build`
+   concluded `success`. Both readers fail **closed**. The gate was proven
+   in all three states before merging — red on a real PR with a broken
+   `/shared/` import (the failing step was `Assert 3D preview smoke`,
+   every other job green), skipped on a non-matching change, and green on
+   its own PR, where `Verify production image build` passed on a pull
+   request for the first time.
+
+   **The correction that matters for anyone reading this section later:**
+   the release image `docker-build` builds is the **root `Dockerfile`**
+   (`file: Dockerfile`), *not* `infra/docker/app/Dockerfile`. Those are
+   two files whose runtime stages diverging **is** the #470 bug, and the
+   distinction is easy to miss — a hand-verification during this arc built
+   the wrong one. The path list carries both, and says which is which.
+   It also carries `web/src/lib/3d/*`, because `render.html` does not own
+   its loader: it imports `modelLoader.js` and `defaultLighting.js`, which
+   is the seam this ADR's #689 amendment is about, and a gate blind to
+   that directory would miss the exact regression it exists to catch.
+
 `scripts/blender/turntable.py` and `ab_engine_test.py` are deleted with
 this change. They are recoverable from git history, but the plugin
 (#499) should be written against the Blender and worker contracts

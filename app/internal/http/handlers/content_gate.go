@@ -42,7 +42,13 @@ func requireContentAccess(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	} else {
 		caller = visibility.NewCaller(nil)
 	}
-	ok, err := visibility.CanReadContent(r.Context(), pool, caller, caps, assetID)
+	// The mature axis rides the request context (#1116). This is the
+	// single gate every byte-streaming handler shares, so wiring it here
+	// covers asset_file, hls, archive_bundle and archive_entry at once —
+	// and an unwired route yields the disqualified viewer rather than a
+	// widened one (visibility.MatureFromContext).
+	ok, err := visibility.CanReadContent(r.Context(), pool, caller, caps, assetID,
+		visibility.MatureFromContext(r.Context()))
 	if err != nil || !ok {
 		// Fail closed: a lookup error is a denial, never a pass.
 		http.NotFound(w, r)

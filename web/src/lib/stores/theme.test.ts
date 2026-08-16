@@ -35,7 +35,11 @@ function readThemeCookie(): string | null {
 /** A session carrying an account-level theme, with nothing else the
  *  store reads. */
 function signIn(theme: 'light' | 'dark' | 'system' | '' | null) {
-  auth.user = { ref: 1, username: 'tester', theme };
+  // matureContentAllowed is required on AuthUser (#1116): the store's
+  // mapUser always supplies it, and making it required is what stops a
+  // producer from leaving the field on `false` — which would mean "this
+  // install forbids mature content" rather than "unknown".
+  auth.user = { ref: 1, username: 'tester', theme, matureContentAllowed: true };
 }
 
 beforeEach(() => {

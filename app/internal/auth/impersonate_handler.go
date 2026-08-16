@@ -18,7 +18,7 @@ import (
 )
 
 // CapImpersonate is the capability gate for the impersonation
-// surface. Seeded by migration 00017 to the Admin role ONLY;
+// surface. Seeded by migration 00001 to the Admin role ONLY;
 // per project memory it must not appear on any other seeded role.
 const CapImpersonate = "auth.impersonate"
 

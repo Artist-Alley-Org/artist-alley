@@ -97,7 +97,7 @@ func (f *maFixture) user(label string) int64 {
 }
 
 // team seeds a team. Passing a parent inserts the team_parents edge, and
-// the 00015 trigger materialises team_closure from it — which is what
+// the 00001 trigger materialises team_closure from it — which is what
 // makes the descendant case in TestAssetMutation_ScopedGrant real rather
 // than an assertion about a map the test built.
 func (f *maFixture) team(label string, parent *uuid.UUID) uuid.UUID {
@@ -150,7 +150,7 @@ func (f *maFixture) grant(userRef int64, code string, team *uuid.UUID) {
 func (f *maFixture) asset(owner *int64, team *uuid.UUID, status string) uuid.UUID {
 	f.t.Helper()
 	id := uuid.New()
-	// Random hash: the 00016 per-user dedup unique index rejects two
+	// Random hash: the 00001 per-user dedup unique index rejects two
 	// assets from the same owner over identical bytes.
 	hb := make([]byte, 16)
 	_, _ = rand.Read(hb)

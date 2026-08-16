@@ -29,6 +29,42 @@ excerpt: >-
   per the privacy model. A post-by-asset route resolves to the posts
   that feature an asset.
 ---
+## Amendment (2026-08-13, #1023 / PR #1068) — §3 has a SECOND consumer, and the ladder was copied THREE more times
+
+#557 (below) gave the rule one home in `users.ResolveDisplayName`. It did not find the copies
+living in **SQL**. #1023 found three, character-for-character identical, each a two-rung ladder
+(`COALESCE(NULLIF(up.display_name,''), u.username, '')`) that consulted **neither** §3's anonymous
+`fullname` skip **nor** ADR 0024's `hide_from_anonymous` opt-out:
+
+- `app/internal/posts/handler.go`
+- `app/internal/collections/resources_page.go`
+- `app/internal/visibility/fields.go`
+
+⭐ **The reachable leak was through the first two, not the third**, and this is the part worth
+carrying: an anonymous caller is floored to `sensitivity='public'` by the row predicate, so they
+never meet a restricted asset through browse or search — **they meet one through a PUBLIC
+COLLECTION or POST that contains it.** A fix aimed only at the visibility package would have
+patched the copy an attacker cannot reach. *(The planning agent's brief did exactly that; the
+implementing agent found the live path.)*
+
+**Now:** one SQL builder (`visibility.OwnerDisplayNameSQL`) called by all three sites, one Go
+form (`users.PlaceholderOwnerName`), both driven by a single shared ladder and held together by
+`TestOwnerDisplayNameSQL_MatchesGo` — the third instance of ADR 0063's twin discipline, after
+`ContentReadableSQL` and `FieldsReadableSQL`.
+
+- **Authenticated:** `display_name → fullname → username`
+- **Anonymous:** `NULL` if opted out, else `display_name → username` — **`fullname` skipped, which
+  is §3.**
+- Rung 4 (`user {ref}`) is deliberately not transcribed; `withheldAsset` omits `owner_user_ref`.
+
+⚠️ **A widening rode along and is safe only because of the guard:** authenticated callers now get
+the `fullname` rung on placeholders, matching post author headers, where the SQL ladder previously
+had no such rung. Adding it *without* the anonymous skip would have been precisely the #557 leak,
+one layer down.
+
+**Severity, for the record:** the anonymous branch is only reachable on a **public install** — a
+private install `401`s anonymous callers outright.
+
 ## Amendment (2026-08-11, #557) — §3's anonymous rule has ONE home now, and its published description was stale enough to leak
 
 §3 decided that an anonymous viewer never sees a user's real name — *"not directly, and not

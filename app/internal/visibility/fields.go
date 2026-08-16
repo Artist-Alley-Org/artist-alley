@@ -6,6 +6,7 @@ package visibility
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -110,12 +111,23 @@ func (r *FieldsRow) ApplyMutationCaps(m AssetMutationCaps) {
 //
 // # What is deliberately NOT closed
 //
-// EXISTENCE is still disclosed, by design — decision 1 of #899. So is
-// the fact that a restricted asset's indexed text MATCHES a given
-// search query, because the row is still returned by search. A
-// determined caller can probe that oracle word by word. Closing it
-// means dropping restricted rows from results, which contradicts the
-// placeholder decision; it is a product call, not a bug to fix here.
+// EXISTENCE is still disclosed, by design — decision 1 of #899. A
+// caller who can list an asset still learns that it is there, who owns
+// it, and that they may not open it.
+//
+// What used to be open beside it, and is NOT any more (#902): this doc
+// recorded that "a restricted asset's indexed text MATCHES a given
+// search query, because the row is still returned by search — a
+// determined caller can probe that oracle word by word", and called it a
+// product call rather than a bug. It was a bug: every word this function
+// removes from the payload came straight back through the `@@` channel,
+// one token at a time. [FieldsReadableSQL] is the SQL twin that closes
+// it and [AssetSearchMatchSQL] is the single fragment every full-text
+// asset surface matches through. Note what did NOT change: the row is
+// still LISTED by an unfiltered browse, still carrying its owner's name,
+// so ADR 0064's placeholder stands. Only a TEXT QUERY stops matching it
+// — and it stops matching EVERY text query equally, which is why the
+// absence is not itself an oracle.
 //
 // # Fails closed
 //
@@ -217,11 +229,276 @@ func PreviewReadable(row FieldsRow, caller Caller, caps CapabilityChecker) bool 
 	return ContentReadable(row.Sensitivity, row.OwnerUserRef, caller, caps, row.IsTeamMember)
 }
 
+// FieldsReadableSQL is the SQL transcription of [FieldsReadable], as a
+// WHERE-clause conjunct (it starts with " AND ", like
+// [ContentReadableSQL], so a splice site concatenates it with no
+// pre-processing). `alias` is the assets table alias ("" for none) and
+// `callerArg` is the placeholder holding the caller's user_ref.
+//
+// # Why a SQL twin is sanctioned here (#902)
+//
+// [ContentReadableSQL]'s doc states the exception it was created under:
+// a twin exists for the surfaces "which reduce many rows to one number
+// or one string and so have no per-row Go step to decide readability
+// in", and every other surface should keep calling the Go form. A
+// FULL-TEXT MATCH is squarely that case, and more so than an aggregate:
+// the `@@` operator decides in SQL whether the row is returned AT ALL,
+// so a Go step downstream of it never sees the rows it needed to judge.
+// Withholding the columns after the fact — which is all #899 could do —
+// leaves the MATCH itself as a channel, and a matched-or-not answer is
+// one bit of the withheld title per query.
+//
+// It is held to the Go form by TestFieldsReadableSQL_MatchesGo, the
+// exhaustive twin of TestContentReadableSQL_MatchesGo. If you edit
+// [FieldsReadable] or [PreviewReadable] and that test goes red, edit
+// this — that is what it is for.
+//
+// # The three disjuncts, in the order [FieldsReadable] evaluates them
+//
+//  1. The capability short-circuit. system.admin / content.read.all
+//     (from PreviewReadable) and a GLOBAL assets.admin (from the
+//     mutation disjunct) all fold to an empty fragment rather than a
+//     bound TRUE: the caller already resolved them, and a missing
+//     conjunct lets Postgres plan as though the gate were not there.
+//  2. The PREVIEW plane — the content tier, plus the anonymous-only
+//     status conjuncts. The owner branch is not repeated separately:
+//     ContentReadable's own first clause is the same comparison with
+//     the same anonymous-sentinel guard, and stating it twice is how
+//     the NULLIF trap gets fixed in one place and not the other. For an
+//     ANONYMOUS caller the status conjuncts wrap the whole plane, which
+//     matches PreviewReadable's early return — an anonymous caller can
+//     never reach the owner branch there either, because of the
+//     !IsAnonymous guard.
+//  3. The MUTATION disjunct (#939, ADR 0064) — a team-scoped
+//     assets.admin holder is owed the FIELDS of the assets they
+//     administer, so they must keep matching them. The team set is
+//     rendered as UUID LITERALS, not a bound array: these UUIDs came
+//     from the auth resolver inside this process, never from caller
+//     text, and threading an extra placeholder through six splice
+//     sites' arg lists is where an off-by-one lives (the same call the
+//     facet aggregators made for the caller ref). uuid.Nil entries are
+//     DROPPED, mirroring [AssetMutationCaps.MayMutate], which refuses a
+//     nil team scope rather than treating it as "no scope required".
+//
+// A row whose team_id IS NULL makes disjunct 3 evaluate to NULL rather
+// than false; in a WHERE clause NULL and false are indistinguishable, so
+// the SQL still agrees with the Go form's `teamID == nil → false`.
+func FieldsReadableSQL(alias, callerArg string, caller Caller, caps ContentCaps, mut AssetMutationCaps) string {
+	if caps.SystemAdmin || caps.ContentReadAll || mut.Global {
+		return ""
+	}
+	p := columnPrefix(alias)
+
+	disjuncts := []string{previewReadableExpr(p, callerArg, caller)}
+
+	teams := make([]string, 0, len(mut.Teams))
+	for _, t := range mut.Teams {
+		if t == uuid.Nil {
+			continue
+		}
+		teams = append(teams, `'`+t.String()+`'::UUID`)
+	}
+	if len(teams) > 0 {
+		disjuncts = append(disjuncts, p+`team_id IN (`+strings.Join(teams, ", ")+`)`)
+	}
+	return ` AND (` + strings.Join(disjuncts, `
+	       OR `) + `)`
+}
+
+// previewReadableExpr is disjunct 2 of [FieldsReadableSQL] — the SQL
+// body of [PreviewReadable], with no leading " AND " and already
+// parenthesised, so both splice sites use it verbatim. `p` is the
+// already-suffixed column prefix ([columnPrefix]).
+//
+// It is a named function rather than an inline expression because
+// [PreviewReadableSQL] needs exactly this and nothing else; writing it
+// out there too would be a second expression of the picture plane, and
+// the two would drift the first time the anonymous conjuncts changed.
+func previewReadableExpr(p, callerArg string, caller Caller) string {
+	e := `(` + contentReadableCoreSQL(p, callerArg) + `)`
+	if caller.IsAnonymous {
+		e = `(` + p + `status = 'active' AND ` + p + `processing_status = 'ready'
+	       AND ` + e + `)`
+	}
+	return e
+}
+
+// PreviewReadableSQL is the SQL twin of [PreviewReadable] — the PICTURE
+// plane as a WHERE-fragment, beginning with " AND (…)" so callers
+// concatenate it into an existing WHERE clause with no pre-processing.
+// It binds NO placeholders: `callerArg` names one the caller already
+// bound, exactly as [FieldsReadableSQL] and [ContentReadableSQL] do.
+//
+// # Why a twin exists here too (#1026)
+//
+// Same exception the other two were created under, restated for this
+// plane: a surface that has to decide "which of this collection's
+// members can actually RENDER" cannot make that decision in Go, because
+// the decision determines which rows the query returns at all.
+//
+// The collection cover mosaic is that surface. It shows the first four
+// members that produce a picture, and a member the caller may not see
+// must be SKIPPED rather than occupy a slot — otherwise four restricted
+// members at the head of a collection crowd out every renderable one
+// behind them (that was the visible half of #1026). Deciding in Go would
+// mean fetching an unbounded prefix of the membership and filtering it
+// down, per collection, on a hub page that renders fifty of them. In SQL
+// it is a ROW_NUMBER over the already-filtered set with LIMIT 4 — exact,
+// with no candidate cap to be wrong about.
+//
+// # It is the FIELD plane MINUS the mutation disjunct
+//
+// Which is precisely what [PreviewReadable] is to [FieldsReadable], and
+// it is obtained the same way: both fragments render
+// [previewReadableExpr], so there is one expression of the picture plane
+// and [FieldsReadableSQL] adds the mutation disjunct on top of it. Do
+// NOT reach for FieldsReadableSQL with a zero AssetMutationCaps to get
+// this — it happens to render the same text today, and the day a
+// non-mutation disjunct is added there the cover mosaic would silently
+// start handing out pictures ADR 0064 withholds.
+//
+// `mut` is deliberately absent from the signature rather than ignored:
+// ADR 0064 confers the field plane on a mutation holder and explicitly
+// not the binary plane, so there is no value a caller could pass that
+// should change this answer, and a parameter would invite one.
+//
+// Held to the Go form by TestPreviewReadableSQL_MatchesGo.
+func PreviewReadableSQL(alias, callerArg string, caller Caller, caps ContentCaps) string {
+	// The same short-circuit [FieldsReadableSQL] opens with, minus the
+	// mutation half: system.admin and content.read.all admit the picture
+	// (see [PreviewReadable]), and an empty fragment lets Postgres plan
+	// as though the gate were not there.
+	if caps.SystemAdmin || caps.ContentReadAll {
+		return ""
+	}
+	// The outer parentheses mirror [FieldsReadableSQL]'s disjunction
+	// wrapper exactly, so with no mutation scope the two fragments are
+	// TEXTUALLY identical — an equality
+	// TestPreviewReadableSQL_IgnoresMutationScope asserts, and the
+	// cheapest possible proof that this is the same plane and not a
+	// second one.
+	return ` AND (` + previewReadableExpr(columnPrefix(alias), callerArg, caller) + `)`
+}
+
+// AssetSearchMatchSQL is the ONE expression of "this asset's indexed
+// text matches this caller's query", and every full-text surface over
+// `assets` composes its WHERE clause from it (#902).
+//
+// `tsqueryExpr` is the already-built right-hand side of the `@@`
+// operator — `plainto_tsquery('english', $1)`, placeholder and all.
+// Every remaining parameter is what [FieldsReadableSQL] needs.
+//
+// # Why this exists rather than six hand-written conjuncts
+//
+// Because there are six of them. `search_text @@ …` appears in the
+// search hits query, the search COUNT, the browse page's `?q=`, and the
+// facet aggregators, and #902 is precisely what happens when a security
+// rule is spliced into a text match at one of those and not the others:
+// a fix confined to /search leaves the identical word-by-word recovery
+// available through /assets?q=. Six independently-edited copies of one
+// rule is six chances for it to drift, which is ADR 0063's whole
+// argument, so the column choice is made HERE and the splice sites only
+// name their alias and their tsquery.
+//
+// # What the readable-side document is, and why the withheld side is
+// empty
+//
+// The gate is a conjunct on the existing `search_text`, not a second
+// reduced tsvector column, because the reduced document would be EMPTY.
+// `rebuild_asset_search_text` builds the document out of exactly three
+// things — title (weight A), description (B) and the `searchable`
+// active field values (D) — and [FieldsReadable] withholds all three
+// from a caller who fails it. There is no fourth ingredient that
+// survives withholding, so a second column would be an all-empty
+// tsvector, a second GIN index over nothing, and a fourth thing the two
+// rebuild triggers have to keep in sync. `@@ AND readable` and
+// `@@ reduced-document` return the identical row set; only the first
+// costs nothing. If a genuinely public ingredient is ever added to the
+// document (the owner's display name is the obvious candidate, since the
+// placeholder already carries it), it belongs in that reduced column and
+// this is the one function that has to learn about it.
+func AssetSearchMatchSQL(alias, tsqueryExpr, callerArg string, caller Caller, caps ContentCaps, mut AssetMutationCaps) string {
+	return `(` + columnPrefix(alias) + `search_text @@ ` + tsqueryExpr +
+		FieldsReadableSQL(alias, callerArg, caller, caps, mut) + `)`
+}
+
+// OwnerDisplayNameSQL is the SQL transcription of
+// [users.PlaceholderOwnerName], as a scalar SELECT-list expression that
+// resolves the owner's name for a WITHHELD-asset placeholder.
+// `ownerRefExpr` is whatever names the owning ref in the surrounding
+// query (`assets.owner_user_ref`, `a.owner_user_ref`), and `anonymous`
+// is the caller's [Caller.IsAnonymous].
+//
+// It always yields TEXT, never NULL: "" is the single "no name" answer,
+// covering an ownerless asset, an owner row with nothing to render, and
+// an owner who opted out of anonymous exposure alike. Every placeholder
+// builder turns "" into an ABSENT key, so those three cases are
+// indistinguishable on the wire — which is the point, since a client
+// that could tell "withheld" from "empty" could read the opt-out off the
+// difference.
+//
+// # Why a SQL twin is sanctioned here (#1023)
+//
+// Same exception [ContentReadableSQL] and [FieldsReadableSQL] were
+// created under, for a different reason: the name is not a decision, it
+// is a JOIN. Every surface that emits a placeholder is already reading
+// the asset row, and the owner's name is the one asset-derived value the
+// placeholder carries — so resolving it in Go afterwards means a second
+// round trip per page on exactly the pages that have restricted rows,
+// which is the N+1 [users.LookupAuthors] exists to avoid.
+//
+// Before #1023 there were THREE hand-written copies of this ladder — one
+// here, one in posts' preview enrich, one in collections' resources page
+// — and all three had the same two defects, because they were the same
+// text pasted three times:
+//
+//   - they never consulted `hide_from_anonymous`, so an owner who took
+//     ADR 0024's opt-out had their USERNAME rendered to an anonymous
+//     caller on any public post or collection holding one of their
+//     restricted assets. That is the opt-out defeated by a JOIN, which
+//     is the exact wording of the rule in users/author.go; and
+//   - they skipped the `fullname` rung ADR 0070 §3 gives an
+//     AUTHENTICATED caller, so a signed-in caller saw a different name on
+//     a placeholder than on the same user's post header.
+//
+// #557 created [users.ResolveDisplayName] because this rule had been
+// transcribed once before and the copy dropped a rung. This is that
+// again, so the copies are gone and the one that remains is held to the
+// Go form by TestOwnerDisplayNameSQL_MatchesGo, which drives every rung
+// through both. If you edit [users.PlaceholderOwnerName] and that test
+// goes red, edit this.
+//
+// The subquery aliases are deliberately ugly (`odn_u`, `odn_p`): this
+// fragment is spliced into queries that have their own `u` / `up` joins,
+// and an alias collision here would resolve silently to the OUTER row.
+func OwnerDisplayNameSQL(ownerRefExpr string, anonymous bool) string {
+	// Rungs 1–3 of the ladder. `fullname` is rung 2 and is
+	// AUTHENTICATED-ONLY (ADR 0070 §3) — an anonymous caller's ladder
+	// skips straight from display_name to username, which is what stops
+	// this leaking the real name of every user who never set a display
+	// name. NULLIF on each rung so a row storing '' rather than NULL
+	// falls through, matching the Go form's `!= ""` tests.
+	name := `COALESCE(NULLIF(odn_p.display_name, ''), NULLIF(odn_u.fullname, ''), NULLIF(odn_u.username, ''))`
+	if anonymous {
+		// The ADR 0024 opt-out, and the missing rung 2. NULL, not '',
+		// so the outer COALESCE produces the same "" an unresolvable
+		// owner produces.
+		name = `CASE WHEN COALESCE(odn_p.hide_from_anonymous, FALSE) THEN NULL
+	                    ELSE COALESCE(NULLIF(odn_p.display_name, ''), NULLIF(odn_u.username, '')) END`
+	}
+	return `COALESCE((SELECT ` + name + `
+	                   FROM "user" odn_u
+	                   LEFT JOIN user_profiles odn_p ON odn_p.user_ref = odn_u.ref
+	                  WHERE odn_u.ref = ` + ownerRefExpr + `), '')`
+}
+
 // FieldsColumnsSQL is the SELECT-list fragment carrying exactly the
 // columns [FieldsRow] needs, plus the owner's display name for the
-// placeholder. `alias` is the assets table alias ("" for none), and
+// placeholder. `alias` is the assets table alias ("" for none),
 // `callerArg` is the placeholder holding the caller's user_ref for the
-// team-membership EXISTS.
+// team-membership EXISTS, and `caller` is the caller itself — the owner
+// name is resolved differently for an anonymous one, see
+// [OwnerDisplayNameSQL].
 //
 // One fragment rather than five hand-copied column lists: a surface
 // that selects four of the five silently decides the fifth, and the
@@ -239,7 +516,12 @@ func PreviewReadable(row FieldsRow, caller Caller, caps CapabilityChecker) bool 
 // resolver computed at request time from role inheritance, grants,
 // revokes and `team_closure` together. Re-deriving that here would be a
 // second, narrower expression of the capability resolver.
-func FieldsColumnsSQL(alias, callerArg string) string {
+//
+// `caller` is a whole [Caller] and not a bare `anonymous bool` so that a
+// splice site cannot pass the wrong one: every one of them already holds
+// the Caller it hands to [FieldsReadable] on the way back out, and the
+// two answers must be about the same caller.
+func FieldsColumnsSQL(alias, callerArg string, caller Caller) string {
 	p := ""
 	if alias != "" {
 		p = alias + "."
@@ -249,10 +531,7 @@ func FieldsColumnsSQL(alias, callerArg string) string {
 	       (` + p + `team_id IS NOT NULL AND EXISTS (
 	            SELECT 1 FROM team_memberships tm
 	             WHERE tm.team_id = ` + p + `team_id AND tm.user_ref = ` + callerArg + `::BIGINT)) AS is_team_member,
-	       COALESCE((SELECT COALESCE(NULLIF(up.display_name, ''), u.username)
-	                   FROM "user" u
-	                   LEFT JOIN user_profiles up ON up.user_ref = u.ref
-	                  WHERE u.ref = ` + p + `owner_user_ref), '') AS owner_display_name`
+	       ` + OwnerDisplayNameSQL(p+`owner_user_ref`, caller.IsAnonymous) + ` AS owner_display_name`
 }
 
 // FieldsPool is the subset of pgxpool.Pool LoadFieldsRow uses.
@@ -288,7 +567,7 @@ func LoadFieldsRow(
 		ownerName string
 	)
 	err := pool.QueryRow(ctx,
-		`SELECT `+FieldsColumnsSQL("assets", "$2")+` FROM assets WHERE id = $1`,
+		`SELECT `+FieldsColumnsSQL("assets", "$2", caller)+` FROM assets WHERE id = $1`,
 		assetID, caller.UserRef,
 	).Scan(&row.Sensitivity, &row.Status, &row.ProcessingStatus,
 		&row.OwnerUserRef, &row.TeamID, &row.IsTeamMember, &ownerName)

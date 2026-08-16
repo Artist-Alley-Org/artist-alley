@@ -25,23 +25,89 @@ func (q *Queries) DeleteFeaturedItem(ctx context.Context, id pgtype.UUID) (int64
 	return result.RowsAffected(), nil
 }
 
+const deletePromoBand = `-- name: DeletePromoBand :execrows
+DELETE FROM promo_bands WHERE id = $1
+`
+
+// Removes the band. Its cards go with it through
+// featured_items_band_id_fkey's ON DELETE CASCADE rather than being
+// orphaned onto the rail — see migration 00053's Down for the same
+// argument. Returns rows-affected for the 0 → 404 mapping.
+func (q *Queries) DeletePromoBand(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePromoBand, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getPromoBand = `-- name: GetPromoBand :one
+
+SELECT id, title, blurb, cta_label, cta_url, enabled, after_page, scope,
+       created_at, updated_at, created_by_user_ref
+FROM promo_bands
+ORDER BY after_page ASC, created_at ASC, id ASC
+LIMIT 1
+`
+
+// ---------------------------------------------------------------------
+// The operator promo band (#1118)
+// ---------------------------------------------------------------------
+//
+// The band DEFINITION only — its cards are featured_items rows carrying
+// its id, read through ListFeaturedItems (admin) and the hand-built
+// public band query in band.go (readers). See migration 00053 for why
+// there is no second membership table.
+//
+// These are all system.admin surfaces, so none of them gates on
+// audience: `scope` is DATA here, and the only reader that treats it as
+// a predicate is the public one.
+// The band the v1 surfaces operate on, enabled or not.
+//
+// "The band" is singular by PRODUCT decision, not by schema: the table
+// admits several (ADR 0030's slot inventory is plural) and this picks
+// the one the release renders — earliest feed position, then oldest.
+// `id` is the final tiebreak so the choice is total rather than
+// arbitrary under equal timestamps, which a seeded install can produce.
+func (q *Queries) GetPromoBand(ctx context.Context) (PromoBand, error) {
+	row := q.db.QueryRow(ctx, getPromoBand)
+	var i PromoBand
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Blurb,
+		&i.CtaLabel,
+		&i.CtaUrl,
+		&i.Enabled,
+		&i.AfterPage,
+		&i.Scope,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedByUserRef,
+	)
+	return i, err
+}
+
 const insertFeaturedItem = `-- name: InsertFeaturedItem :one
-INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope)
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope, band_id)
 VALUES (
     $1,
     $2,
     COALESCE($3::integer,
-             (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items)),
-    $4::bigint,
-    COALESCE($5::text, 'org')
+             (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items f2
+               WHERE f2.band_id IS NOT DISTINCT FROM $4::uuid)),
+    $5::bigint,
+    COALESCE($6::text, 'org'),
+    $4::uuid
 )
-RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref, scope, team_id
+RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref, scope, team_id, band_id
 `
 
 type InsertFeaturedItemParams struct {
 	SubjectKind      string
 	SubjectID        pgtype.UUID
 	Position         *int32
+	BandID           pgtype.UUID
 	CreatedByUserRef *int64
 	Scope            *string
 }
@@ -50,14 +116,26 @@ type InsertFeaturedItemParams struct {
 // row appends to the end (max existing position + 1). Scope defaults
 // to 'org' — the admin surface curates the internal list, and a
 // public placement is a deliberate act (ADR 0065). The
-// (subject_kind, subject_id, scope, team_id) unique constraint makes
-// a duplicate add WITHIN ONE AUDIENCE a 23505 the handler maps to
-// 409, while still allowing the same subject at another scope.
+// (subject_kind, subject_id, scope, team_id, band_id) unique constraint
+// makes a duplicate add WITHIN ONE AUDIENCE ON ONE SURFACE a 23505 the
+// handler maps to 409, while still allowing the same subject at another
+// scope or in a band.
+//
+// `band_id` NULL is the rail (#1118). The append position is computed
+// WITHIN THE SURFACE — `IS NOT DISTINCT FROM` again — because a global
+// MAX would hand a rail add a position derived from a band's ordering
+// and vice versa. Harmless while ordering is only ever relative, and
+// wrong the moment anything reads a position as a number.
+//
+// ⚠️ `scope` on a BAND row is not the band's audience. The band carries
+// it (promo_bands.scope); this column keeps its default for band rows
+// and no reader consults it there. See migration 00053.
 func (q *Queries) InsertFeaturedItem(ctx context.Context, arg InsertFeaturedItemParams) (FeaturedItem, error) {
 	row := q.db.QueryRow(ctx, insertFeaturedItem,
 		arg.SubjectKind,
 		arg.SubjectID,
 		arg.Position,
+		arg.BandID,
 		arg.CreatedByUserRef,
 		arg.Scope,
 	)
@@ -71,6 +149,56 @@ func (q *Queries) InsertFeaturedItem(ctx context.Context, arg InsertFeaturedItem
 		&i.CreatedByUserRef,
 		&i.Scope,
 		&i.TeamID,
+		&i.BandID,
+	)
+	return i, err
+}
+
+const insertPromoBand = `-- name: InsertPromoBand :one
+INSERT INTO promo_bands (title, blurb, cta_label, cta_url, enabled, after_page, scope, created_by_user_ref)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::bigint)
+RETURNING id, title, blurb, cta_label, cta_url, enabled, after_page, scope,
+          created_at, updated_at, created_by_user_ref
+`
+
+type InsertPromoBandParams struct {
+	Title            string
+	Blurb            string
+	CtaLabel         string
+	CtaUrl           string
+	Enabled          bool
+	AfterPage        int32
+	Scope            string
+	CreatedByUserRef *int64
+}
+
+// Creates the band. Called only when GetPromoBand found none — the
+// admin surface is an upsert over a singleton, and the decision which
+// of the two writes to run is the handler's, inside one transaction.
+func (q *Queries) InsertPromoBand(ctx context.Context, arg InsertPromoBandParams) (PromoBand, error) {
+	row := q.db.QueryRow(ctx, insertPromoBand,
+		arg.Title,
+		arg.Blurb,
+		arg.CtaLabel,
+		arg.CtaUrl,
+		arg.Enabled,
+		arg.AfterPage,
+		arg.Scope,
+		arg.CreatedByUserRef,
+	)
+	var i PromoBand
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Blurb,
+		&i.CtaLabel,
+		&i.CtaUrl,
+		&i.Enabled,
+		&i.AfterPage,
+		&i.Scope,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedByUserRef,
 	)
 	return i, err
 }
@@ -79,7 +207,7 @@ const listFeaturedItems = `-- name: ListFeaturedItems :many
 
 SELECT f.id, f.subject_kind, f.subject_id, f.position,
        f.created_at, f.created_by_user_ref,
-       COALESCE(a.title, c.name, '')::text AS title,
+       COALESCE(a.title, c.name, tm.name, '')::text AS title,
        -- The asset whose col variant renders the tile (#625): the
        -- subject itself for an asset, the hero-card fallback for a
        -- collection. NULL when nothing is servable — the client keys on
@@ -125,6 +253,8 @@ LEFT JOIN assets a
        ON f.subject_kind = 'asset' AND a.id = f.subject_id
 LEFT JOIN collections c
        ON f.subject_kind = 'collection' AND c.id = f.subject_id
+LEFT JOIN teams tm
+       ON f.subject_kind = 'team' AND tm.id = f.subject_id
 LEFT JOIN LATERAL (
        SELECT ca.id, ca.file_hash
          FROM collection_posts cp
@@ -136,8 +266,14 @@ LEFT JOIN LATERAL (
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT 1
 ) cover ON true
+WHERE f.band_id IS NOT DISTINCT FROM $2::uuid
 ORDER BY f.position ASC, f.created_at ASC
 `
+
+type ListFeaturedItemsParams struct {
+	Ladder []string
+	BandID pgtype.UUID
+}
 
 type ListFeaturedItemsRow struct {
 	ID                    pgtype.UUID
@@ -157,12 +293,31 @@ type ListFeaturedItemsRow struct {
 //
 // Naming convention: InsertX / ListX / DeleteX / UpdateX mirrors the
 // existing requests + users packages.
-// Ordered curation list. LEFT JOINs both subject tables so a single
+// Ordered curation list for ONE surface. LEFT JOINs both subject tables so a single
 // read resolves the display title (asset.title or collection.name)
 // plus the asset thumbnail hints, without the handler fanning out a
 // per-row lookup. A dangling reference (subject hard-deleted) yields
 // an empty title rather than dropping the row — the operator prunes
 // stale entries by hand.
+// Team subjects (#1084). Found by adding one and looking at the result:
+// without this join the curation list answered with a row whose title
+// was ” — an operator staring at an unnamed entry they cannot identify
+// and therefore cannot safely remove. Widening subject_kind is not
+// finished until every surface that resolves a subject knows the new
+// kind, and this list is one of them.
+//
+// Deliberately title-only, with no tile: a team's picture is admissible
+// only through the render-time TeamHeroes re-check (#982, migration
+// 00047), and resolving it here would mean a SECOND copy of that rule
+// inside a query whose whole design note is that its gates are weaker
+// than the rail's. The operator gets the name, which is what identifies
+// the row; nothing here can leak a picture because nothing here
+// resolves one.
+//
+// No deleted_at filter, matching the assets/collections joins above and
+// for the same stated reason: a dangling or tombstoned subject yields a
+// row the operator can see and prune, rather than a placement that
+// vanishes from the only surface that could remove it.
 // Hero-card fallback for collection subjects (#625), ported from the
 // public rail's lateral (#559 / ADR 0027): the cover of the most recent
 // eligible post in the collection.
@@ -179,8 +334,21 @@ type ListFeaturedItemsRow struct {
 //     drop them with it; a deleted asset is not a cover for anyone
 //   - a servable col variant — the zero-404 property; a tile must never
 //     build a byte URL that cannot be answered
-func (q *Queries) ListFeaturedItems(ctx context.Context, ladder []string) ([]ListFeaturedItemsRow, error) {
-	rows, err := q.db.Query(ctx, listFeaturedItems, ladder)
+//
+// Which SURFACE's curation list this is (#1118). `IS NOT DISTINCT FROM`
+// rather than a pair of branches: passing NULL selects the rail — every
+// row that existed before band_id — and passing a band id selects that
+// band's cards. One query, because the alternative was a second copy of
+// everything above it, and the two would have drifted on the next change
+// to the cover lateral exactly as the rail and the admin list did before
+// #625.
+//
+// It is NOT a visibility filter and does not pretend to be one: this
+// endpoint is system.admin-gated (see the note on the cover lateral),
+// and band membership is a surface, not an audience. The band's audience
+// lives on promo_bands.scope and is read by the PUBLIC band query.
+func (q *Queries) ListFeaturedItems(ctx context.Context, arg ListFeaturedItemsParams) ([]ListFeaturedItemsRow, error) {
+	rows, err := q.db.Query(ctx, listFeaturedItems, arg.Ladder, arg.BandID)
 	if err != nil {
 		return nil, err
 	}
@@ -229,4 +397,57 @@ func (q *Queries) UpdateFeaturedPosition(ctx context.Context, arg UpdateFeatured
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updatePromoBand = `-- name: UpdatePromoBand :one
+UPDATE promo_bands
+   SET title = $2, blurb = $3, cta_label = $4, cta_url = $5,
+       enabled = $6, after_page = $7, scope = $8, updated_at = now()
+ WHERE id = $1
+RETURNING id, title, blurb, cta_label, cta_url, enabled, after_page, scope,
+          created_at, updated_at, created_by_user_ref
+`
+
+type UpdatePromoBandParams struct {
+	ID        pgtype.UUID
+	Title     string
+	Blurb     string
+	CtaLabel  string
+	CtaUrl    string
+	Enabled   bool
+	AfterPage int32
+	Scope     string
+}
+
+// Replaces the band's definition wholesale. NOT a COALESCE-style PATCH:
+// the admin form posts every field it owns on every save, and a partial
+// write would make "clear the blurb" indistinguishable from "leave the
+// blurb alone" — the failure the COALESCE PATCH convention exists to
+// produce deliberately elsewhere and which is wrong here.
+func (q *Queries) UpdatePromoBand(ctx context.Context, arg UpdatePromoBandParams) (PromoBand, error) {
+	row := q.db.QueryRow(ctx, updatePromoBand,
+		arg.ID,
+		arg.Title,
+		arg.Blurb,
+		arg.CtaLabel,
+		arg.CtaUrl,
+		arg.Enabled,
+		arg.AfterPage,
+		arg.Scope,
+	)
+	var i PromoBand
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Blurb,
+		&i.CtaLabel,
+		&i.CtaUrl,
+		&i.Enabled,
+		&i.AfterPage,
+		&i.Scope,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedByUserRef,
+	)
+	return i, err
 }

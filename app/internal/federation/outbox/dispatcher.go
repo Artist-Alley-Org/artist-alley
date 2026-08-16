@@ -28,7 +28,7 @@
 //
 // # LISTEN/NOTIFY shape
 //
-// The Postgres trigger from migration 00005 fires
+// The Postgres trigger from migration 00001 fires
 // pg_notify('federation_dispatch_pending', NEW.id::text) on
 // every activities INSERT. The dispatcher's LISTEN goroutine
 // just wakes the main loop; the main loop reads from the cursor

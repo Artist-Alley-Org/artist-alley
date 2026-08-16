@@ -20,12 +20,13 @@
 //     and avoids per-query dependency tracking.
 //
 // Ranking uses Postgres native ts_rank_cd against the tsvector
-// columns (assets.search_text + posts.search_text from the 00001
-// baseline; collections.search_text added in 00021). No new
+// columns (assets.search_text, posts.search_text and
+// collections.search_text — all three from the 00001 baseline). No new
 // Postgres extensions required.
 //
-// Ranking is UNWEIGHTED in this phase — see the 00021 migration
-// header for the divergence note. ts_rank_cd's default weight
+// Ranking is UNWEIGHTED in this phase; the divergence note that
+// explained why lived in a pre-fold migration header and did not
+// survive the baseline fold. ts_rank_cd's default weight
 // vector still delivers meaningful cover-density ranking without
 // setweight. Field-weighted retrofit is a clean seam left for a
 // later sub-phase.
@@ -41,16 +42,30 @@
 //     sensitivity='public' + processing_status='ready'. (The earlier
 //     "no visibility gate" note was wrong on both the anonymous and
 //     authenticated halves — #210.)
+//
 //   - assets, authenticated: not-deleted only. The sensitivity rule is
 //     no longer deferred here (#899) — it just does not act on the ROW.
-//     ADR 0064 keeps a restricted asset in the result set, so the
-//     predicate still returns it; what changed is that the PROJECTION
-//     now runs visibility.FieldsReadable per row and a hit the caller
-//     cannot open carries no title, no summary and no thumbhash. Same
-//     rule on /search/suggest (which drops the row outright — a
-//     completion is the title) and on the asset facets (which count
-//     only rows the caller could open).
+//     The PROJECTION runs visibility.FieldsReadable per row, so a hit
+//     the caller cannot open carries no title, no summary and no
+//     thumbhash. Same rule on /search/suggest (which drops the row
+//     outright — a completion is the title) and on the asset facets
+//     (which count only rows the caller could open).
+//
+//     #902 AMENDED THIS LINE. It used to add "ADR 0064 keeps a
+//     restricted asset in the result set, so the predicate still
+//     returns it". The predicate still does — but the TEXT MATCH no
+//     longer does. `search_text @@ …` is itself a disclosure channel:
+//     it answers "does this asset's withheld title contain this word",
+//     and a caller walks the title one token at a time off the total
+//     alone. So every full-text match over `assets` now goes through
+//     visibility.AssetSearchMatchSQL, which ANDs the field plane onto
+//     the `@@`. ADR 0064's placeholder is untouched where it lives —
+//     an unfiltered BROWSE still lists the row with its owner's name.
+//     What no longer happens is a restricted row answering a text
+//     query it was never readable through.
+//
 //   - collections: public OR owner OR a live ACL grant.
+//
 //   - posts: the full post read rule — authored by the caller, OR
 //     public/org-only, OR private with posts.admin, OR followers where
 //     the caller follows the author, OR a live post_acls grant. This

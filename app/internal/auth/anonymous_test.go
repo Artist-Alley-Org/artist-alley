@@ -14,7 +14,7 @@ import (
 )
 
 // TestLoadAnonymousIdentity_SeededHasNoCaps verifies the Anonymous
-// role from migration 00019 exists and starts with zero caps, so
+// role from migration 00001 exists and starts with zero caps, so
 // id.Can("anything") returns false out of the box.
 func TestLoadAnonymousIdentity_SeededHasNoCaps(t *testing.T) {
 	pwd := os.Getenv("AA_DB_PASSWORD")

@@ -14,7 +14,7 @@ import (
 )
 
 // CapUnlock is the capability gate for admin-driven account unlock.
-// Seeded by migration 00025 to the Admin role ONLY. Per-user grants
+// Seeded by migration 00001 to the Admin role ONLY. Per-user grants
 // via user_capability_grants remain available if operators want a
 // scoped helper role.
 const CapUnlock = "auth.unlock"

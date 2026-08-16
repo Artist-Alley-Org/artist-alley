@@ -6,10 +6,10 @@
 //
 // Uses pg_trgm's similarity() function against a corpus of:
 //
-//   - post_tags.tag (any live tag application)
-//   - collections.name (visibility-gated)
-//   - posts.title (visibility-gated)
-//   - assets.title (visibility-gated)
+//   - post_tags.tag (gated by the POST read rule — #1075)
+//   - collections.name (gated by the collection rule)
+//   - posts.title (gated by the POST read rule)
+//   - assets.title (gated by the asset FIELD plane — #1064)
 //
 // Similarity threshold default 0.3 (sysconfig
 // search.suggest_similarity_threshold); ordered by similarity DESC;
@@ -69,7 +69,46 @@ type Request struct {
 	// title completes iff the caller may read the post, which is the
 	// full read rule and not the `public OR author` this surface used
 	// to compose. Zero value = none.
-	PostCaps  visibility.PostCaps
+	//
+	// #1075 — it governs the TAG source too, which used to run
+	// ungated. See [Service.tags].
+	PostCaps visibility.PostCaps
+	// MutationCaps is the caller's asset-mutation scope (#1064, ADR
+	// 0064). A completion is an asset TITLE and a title is a FIELD, so
+	// this surface answers on the field plane: a team-scoped
+	// `assets.admin` holder may already read that title on the asset
+	// page, and /search matches it for them since #902, so refusing to
+	// complete it was the one place the three surfaces disagreed.
+	// Zero value = none, correct for anonymous.
+	MutationCaps visibility.AssetMutationCaps
+	// CollectionCaps is the caller's capability lookup for the
+	// COLLECTION read rule (#1078). Unlike its three neighbours this is
+	// the raw checker rather than a resolved value type, because
+	// [visibility.CanReadCollection] — the rule this surface must agree
+	// with — takes a checker, and resolving it into a new struct here
+	// would be a fourth shape of the same question. Nil = no
+	// capabilities, correct for anonymous.
+	CollectionCaps visibility.CapabilityChecker
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090). Zero value = the DISQUALIFIED viewer, which completes
+	// less rather than more.
+	//
+	// ⚠️ IT GOVERNS THREE OF THE FOUR SOURCES, and the fourth is a
+	// deliberate non-application rather than a gap. `tags`, `postTitles`
+	// and `assetTitles` complete words that ARE fields of the flagged
+	// thing — a tag on a mature post, a mature post's title, a mature
+	// asset's title — so each is a derived copy of content the viewer was
+	// not shown, and each drops the row. `collections` completes a name
+	// an operator or a curator TYPED; it is not derived from any member's
+	// content, and `collections` carries no `mature` column and no
+	// derivation trigger because there is nothing to derive it from. A
+	// collection whose members a viewer may not see already answers
+	// through its own read rule (#1078). Gating the name on the mature
+	// axis would withhold a curator's own words on the strength of what
+	// they happen to have filed, which is a different rule than the one
+	// ADR 0090 states. Recorded here so the next reader does not read the
+	// asymmetry as an oversight.
+	Mature    visibility.MatureViewer
 	Threshold float64
 	Limit     int
 }
@@ -117,25 +156,28 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	// Assemble all four sub-queries + assemble in-memory.
 	all := make([]Suggestion, 0, limit*4)
 
-	tags, err := s.tags(ctx, prefix, threshold)
+	tags, err := s.tags(ctx, prefix, threshold, req.Caller, req.PostCaps,
+		req.Mature, req.Caps.SystemAdmin)
 	if err != nil {
 		return Response{}, err
 	}
 	all = append(all, tags...)
 
-	cols, err := s.collections(ctx, prefix, threshold, req.Caller)
+	cols, err := s.collections(ctx, prefix, threshold, req.Caller, req.CollectionCaps)
 	if err != nil {
 		return Response{}, err
 	}
 	all = append(all, cols...)
 
-	postTitles, err := s.postTitles(ctx, prefix, threshold, req.Caller, req.PostCaps)
+	postTitles, err := s.postTitles(ctx, prefix, threshold, req.Caller, req.PostCaps,
+		req.Mature, req.Caps.SystemAdmin)
 	if err != nil {
 		return Response{}, err
 	}
 	all = append(all, postTitles...)
 
-	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps)
+	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps,
+		req.MutationCaps, req.Mature)
 	if err != nil {
 		return Response{}, err
 	}
@@ -168,33 +210,119 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	return Response{Suggestions: deduped}, nil
 }
 
-// tags queries post_tags via similarity against pg_trgm-indexed tag
-// column. Not visibility-gated on the tag itself — tags are
-// publicly meaningful even when the posts they appear on aren't;
-// the JOIN restricts to posts the caller can see.
-func (s *Service) tags(ctx context.Context, prefix string, threshold float64) ([]Suggestion, error) {
+// tags completes on the tags applied to posts, gated by the POST read
+// rule — the same predicate [Service.postTitles] composes.
+//
+// # What this used to be (#1075)
+//
+// It ran with no caller at all. Its doc claimed the gate was structural
+// — *"tags are publicly meaningful even when the posts they appear on
+// aren't; the JOIN restricts to posts the caller can see"* — and the
+// second half of that sentence was simply false: `JOIN posts p ON p.id =
+// pt.post_id` requires the post to EXIST, not to be readable. There was
+// no predicate on `p` whatsoever, and the function had no `caller`
+// parameter to build one from, while all three of its siblings did.
+//
+// So the tag source drew from every post on the instance — private,
+// draft, and tiers the caller cannot read — and the endpoint takes a
+// PREFIX. That is the #899 asset-title recovery in the shape #902 closed
+// for `@@`: walk the alphabet and read back the tag vocabulary of
+// content you cannot see. Anonymous callers reach /search/suggest on a
+// public install, so it did not even need an account.
+//
+// # Why the post read rule and not something narrower
+//
+// A tag is a FIELD of the post carrying it, which is the same reason the
+// tag facet counts through the post rule (facet.tagAgg) and the same
+// reason [Service.postTitles] widened in #873. Composing anything else
+// here would put a third answer on a question two surfaces already
+// agree on.
+//
+// The alternative — a curated public tag vocabulary, where the corpus is
+// an owned list rather than a projection of live applications — is a
+// defensible product, and it is NOT what the old comment described
+// either: a vocabulary is authored, not leaked. Out of scope for #1075.
+//
+// Note the ASYMMETRY with facet.tagAgg that remains: that aggregator
+// counts `asset_tag` as well as `post_tags`, and this source still does
+// not complete asset tags at all. That is a pre-existing gap in the
+// CORPUS, not in the gate, and widening it is a product change.
+func (s *Service) tags(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.PostCaps,
+	mature visibility.MatureViewer, isSystemAdmin bool,
+) ([]Suggestion, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(caps))
+	if err != nil {
+		return nil, err
+	}
+	// $1=prefix, $2=threshold, the predicate's args continue from $3.
+	// The LIMIT is INLINED rather than bound: it used to be `$3`, which
+	// is the first placeholder the spliced fragment now claims, and
+	// leaving it there would have bound the row limit to the caller ref
+	// (ADR 0063 — a fragment numbers from $N up and the caller does not
+	// renumber it). The siblings all inline it for the same reason.
+	frag, args := pred.ToSQL("p", 2)
+	// #1117 — the mature axis. A tag is a FIELD of the post carrying it,
+	// so a tag that exists only on mature posts is a derived copy of
+	// content this viewer was not shown — and completing it discloses
+	// both that the word is in use and, by the completion's presence,
+	// that something matching it exists. Caller ref inlined as a literal,
+	// matching the sibling sources, so the predicate's numbering above is
+	// untouched (ADR 0063).
+	frag += visibility.MatureFilterSQL("p", visibility.MatureOwnerColPost,
+		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
 	sql := `
 		SELECT pt.tag AS value, similarity(pt.tag, $1) AS sim
 		  FROM post_tags pt
 		  JOIN posts p ON p.id = pt.post_id
-		 WHERE similarity(pt.tag, $1) > $2
+		 WHERE similarity(pt.tag, $1) > $2` + frag + `
 		 GROUP BY pt.tag
 		 ORDER BY sim DESC
-		 LIMIT $3
-	`
-	return s.scanSuggestions(ctx, KindTag, sql, prefix, threshold, MaxResults)
+		 LIMIT ` + itoa(MaxResults)
+	queryArgs := append([]any{prefix, threshold}, args...)
+	return s.scanSuggestionsWith(ctx, KindTag, sql, queryArgs)
 }
 
-func (s *Service) collections(ctx context.Context, prefix string, threshold float64, caller visibility.Caller) ([]Suggestion, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityCollection, caller)
+// collections completes on collection names.
+//
+// #1078 — it composes [visibility.CollectionReadableSQL], the whole
+// collection read rule, rather than `Filter(EntityCollection)` alone.
+// The predicate has no admin disjunct by design (the row plane
+// describes who a collection is SHARED WITH, and an instance admin is
+// on nobody's share list), so this source used to complete nothing for
+// a private collection a system.admin can open from its own page — the
+// collections counterpart of #1064, failing CLOSED in the same way.
+//
+// The rule is #1059's composite, called rather than restated: two hand
+// copies is how an admin ends up able to open a collection and unable
+// to find it, and a third would have been this one.
+//
+// ⚠️ The soft-delete conjunct below is load-bearing and is NOT the
+// #449 defect. CollectionReadableSQL returns an EMPTY fragment for a
+// system.admin — the admin arm deliberately says nothing about
+// tombstones, because GetCollection needs it not to (its Restore branch
+// depends on an admin passing the read check on a deleted row). Without
+// this line an admin's autocomplete would start completing the names of
+// collections in the trash. On the row-plane arm the predicate states
+// the same rule and the two agree; on the admin arm this is the only
+// expression of it, which is why it is here rather than removed as a
+// duplicate. It is a CORPUS constraint — "what may be completed" —
+// not a second copy of the read rule.
+func (s *Service) collections(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.CapabilityChecker,
+) ([]Suggestion, error) {
+	frag, args, err := visibility.CollectionReadableSQL(ctx, "c", caller, caps, 2)
 	if err != nil {
 		return nil, err
 	}
-	frag, args := pred.ToSQL("c", 2)
 	sql := `
 		SELECT c.name AS value, similarity(c.name, $1) AS sim
 		  FROM collections c
-		 WHERE similarity(c.name, $1) > $2` + frag + `
+		 WHERE similarity(c.name, $1) > $2
+		   AND c.deleted_at IS NULL` + frag + `
 		 ORDER BY sim DESC
 		 LIMIT ` + itoa(MaxResults)
 	queryArgs := append([]any{prefix, threshold}, args...)
@@ -211,13 +339,20 @@ func (s *Service) collections(ctx context.Context, prefix string, threshold floa
 // asset rule below — a post you may READ may be completed; what a
 // findable post does NOT do is make its restricted members' fields
 // readable, which FieldsReadable still governs (#899).
-func (s *Service) postTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.PostCaps) ([]Suggestion, error) {
+func (s *Service) postTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.PostCaps,
+	mature visibility.MatureViewer, isSystemAdmin bool) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
 		visibility.WithPostCaps(caps))
 	if err != nil {
 		return nil, err
 	}
 	frag, args := pred.ToSQL("", 2)
+	// #1117 — a completion IS the title, so there is no withheld shape
+	// available here and a mature post must contribute no row at all.
+	// Same drop-rather-than-withhold judgement #899 made for the asset
+	// source below, on the second axis.
+	frag += visibility.MatureFilterSQL("", visibility.MatureOwnerColPost,
+		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM posts
@@ -240,7 +375,31 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 // This surface was the sharpest of the #899 leaks in practice: it takes
 // a PREFIX, so it let any signed-in caller reconstruct a restricted
 // asset's title letter by letter, without ever touching /assets/{id}.
-func (s *Service) assetTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.ContentCaps) ([]Suggestion, error) {
+//
+// # The plane: FIELD, not content (#1064)
+//
+// This composed [visibility.ContentReadableSQL] until #1064 — the plane
+// that governs the BYTES. A title is not bytes; it is a FIELD, and ADR
+// 0064 confers the field plane on a mutation-capability holder. So a
+// team-scoped `assets.admin` holder could open the asset page and read
+// the very title this endpoint refused to complete for them.
+//
+// The decision was not really open. #902 made /search match asset text
+// through [visibility.AssetSearchMatchSQL], which is `search_text @@ q
+// AND FieldsReadableSQL` — the field plane. A completion that used a
+// narrower plane than the search it feeds means typing six letters
+// offers nothing and pressing Enter returns the row, which is the
+// disagreement #1064 was filed about. One plane, both surfaces.
+//
+// The direction is a WIDENING and it stays inside 0064: the holder gets
+// the field they may already read, and nothing here touches the binary
+// plane — [visibility.PreviewReadable] still decides the picture, and
+// this endpoint returns no picture at all.
+func (s *Service) assetTitles(
+	ctx context.Context, prefix string, threshold float64,
+	caller visibility.Caller, caps visibility.ContentCaps,
+	mut visibility.AssetMutationCaps, mature visibility.MatureViewer,
+) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
 		return nil, err
@@ -248,8 +407,15 @@ func (s *Service) assetTitles(ctx context.Context, prefix string, threshold floa
 	frag, args := pred.ToSQL("", 2)
 	// Caller ref inlined as a literal, same reasoning as the facet
 	// aggregators: it is an int64 this package produced, never
-	// caller-supplied text.
-	frag += visibility.ContentReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caps)
+	// caller-supplied text. FieldsReadableSQL likewise renders the team
+	// scope as UUID literals, so neither adds a placeholder and the
+	// predicate's numbering above is untouched (ADR 0063).
+	frag += visibility.FieldsReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caller, caps, mut)
+	// #1117 — and the mature axis beside it, never inside it: a title is
+	// a field and `mature` is a rating, and ADR 0090 §1 keeps the two
+	// ANDed rather than merged. Same literal-ref trick, same reason.
+	frag += visibility.MatureFilterSQL("", visibility.MatureOwnerColAsset,
+		strconv.FormatInt(caller.UserRef, 10), mature, caps.SystemAdmin)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM assets

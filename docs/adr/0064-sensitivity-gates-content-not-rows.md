@@ -183,6 +183,56 @@ equivalent worth testing is *anonymous* denial, not non-owner denial.
 Until the row-level story changes (Phase 1.28 blur-and-reveal, or #210), that asymmetry is the
 design, not a gap.
 
+### Amendment 2026-08-16 (#1135) — the same conjunction gates TEXT ANNOTATIONS, so it is no longer named after attaching
+
+`GET /assets/{id}/text-annotations` and its create + update siblings gated on `assetExists` — a
+bare presence check, the exact shape #1132 had just eliminated from the post surface. Any
+signed-in caller could read and write annotations on an asset whose bytes they were never
+entitled to, and presence made the endpoint a UUID-existence oracle besides.
+
+#1132 left it deliberately, because the asset answer is a **choice between planes**, not a
+transcription of the post rule. #1135 made the choice:
+
+> **A text annotation is governed by the CONTENT plane.** It is not metadata *about* a row — its
+> anchor names a line/column range *inside* the document and its body discusses what stands
+> there. Handing back other people's reading of a document is one container over from handing
+> back the document (the #899/#902 class).
+
+The two planes that were **rejected**, recorded because each would have reviewed as if it worked:
+
+- **Row plane alone** (`CanSee(EntityAsset)`) gates *nothing here*. The authenticated asset
+  predicate is `deleted_at IS NULL` and no more, so it returns true for every signed-in caller
+  against every undeleted asset — a gate that changes no verdict. This is the same trap
+  `collections.mayCollectAsset` already documents.
+- **`FieldsReadable`** is wrong in the other direction: per #939 it admits the field plane to
+  holders of a *mutation* capability, so a team lead entitled to retitle a picture would be
+  admitted to what reviewers said about what is **in** it. That scopes the gate to the caller's
+  editing rights rather than to the payload — the #881 lesson.
+
+**The rule already existed.** "Row ∧ content, for the same caller" is exactly what the attach
+amendment below decided, so #1135 added no expression — it **renamed** the one there is:
+`visibility.CanAttachAsset` → **`visibility.CanSeeAssetContent`** (`visibility/asset_content.go`).
+Three callers now: `collections.mayCollectAsset`, `posts.mayAttachAsset`,
+`social.assetContentReadable`. The name was the only thing that had to change, which is the
+property epic #665 is after — when a second surface asks the same security question, the answer
+should be a call, not a copy. *(References to the old name in dated roadmap entries are left as
+written; they are a record of what shipped when.)*
+
+Also recorded: the **update** endpoint needed the gate most, and its ordering is load-bearing.
+`UpdateTextAnnotation` authorises on author-**or-moderator**, and a `comments.delete.any` holder
+is by construction neither the author nor the owner — so before this fix they could edit, and
+(since the handler echoes the row back) *read*, annotations on documents they were never
+admitted to. The gate runs **before** the author/moderator check, or the refusal would be a
+distinguishable 403 on an asset you cannot reach versus a 404 on one that does not exist,
+re-opening the oracle. The write arms are asserted against the **persisted** row, not the
+handler's own answer (#946).
+
+Two `SELECT EXISTS (... FROM assets ...)` pre-checks survive the sweep and are deliberately kept:
+`assets.SetAITagsForAsset` and `transcribe.Writer.SetAITranscriptForAsset` are AI-pipeline write
+entry points with **no caller identity in scope**. They ask "is there still a row to write to";
+there is no principal to withhold from, and inventing one is how a system job acquires a user's
+permissions.
+
 ### Amendment 2026-08-06 (#922, PR #940) — the ATTACH rule has one home now
 
 The membership amendment below governs what a container **shows**. There is a second, distinct
@@ -192,7 +242,7 @@ answers in two packages.
 > **A caller may attach an asset iff they could have reached it standalone AND are entitled to its
 > content tier** — the row plane and the content plane, conjoined, for the same caller.
 
-That composition now lives in **`visibility.CanAttachAsset`**, beside the two planes it composes,
+That composition now lives in **`visibility.CanSeeAssetContent`**, beside the two planes it composes,
 and both container packages call it through thin identity adapters (`collections.mayCollectAsset`,
 `posts.mayAttachAsset`).
 
@@ -219,7 +269,7 @@ Two things worth recording because both were surprises:
 
 ~~**Still open**: the post's `cover_asset_id` / `cover_thumbnail_asset_id` are **not** routed through
 this rule when supplied explicitly (**#941**).~~ **CLOSED — both columns now route through
-`visibility.CanAttachAsset`.** `cover_asset_id` in **#941** (create and update), and
+`visibility.CanSeeAssetContent`.** `cover_asset_id` in **#941** (create and update), and
 `cover_thumbnail_asset_id` in **#946 / PR #959** (`e4d699ee`).
 
 ⚠️ **They closed nearly three weeks apart, and the gap is the lesson.** #941 gated the column
@@ -271,6 +321,40 @@ Three things worth recording, because each is easy to get backwards:
   For an ANONYMOUS caller, who cannot reach the row at all, it is both. The two converge if and
   when #210 / Phase 1.28 tightens the row plane; until then, do not describe the placeholder as
   making a title unreachable.
+
+  ✅ *Amended 2026-08-13 (#902, PR #1063) — **the sentence above was written as a limitation and is
+  now, for the MATCH channel, closed.*** It said an authenticated non-owner *"can still read that
+  same title from `GET /assets/{id}` and from browse"*, and treated the placeholder as
+  anti-widening rather than secrecy. #902 was the sharper form of that limitation: the title was
+  recoverable **word by word** through search, because `search_text` still contained it and `@@`
+  still matched it — query a phrase only that title holds and the total moves 0→1, then walk the
+  rest of it token by token.
+
+  **Every full-text surface over `assets` now ANDs the field-plane rule onto the match**
+  (`visibility.AssetSearchMatchSQL`, composed by `/search` hits, the `/search` COUNT and browse's
+  `?q=`). A caller who fails `FieldsReadable` matches **none** of that asset's words.
+
+  ⭐ **What this does NOT change, and the distinction matters:** an **unfiltered** browse still
+  lists the row as a placeholder, exactly as this ADR requires. The row did not become invisible —
+  it stopped **answering questions about text it does not expose.** The absence is
+  value-independent (it matches no query, for every query equally), which is the same reasoning
+  ADR 0056 §4b uses and the reason this is not a new oracle.
+
+  So "the row stays listed" now carries two qualifications, and both are deliberate: a filtered
+  search excludes it (§4b), and a text query no longer matches it (this amendment). Neither
+  removes it from the unfiltered listing that "request access" (#881) attaches to.
+
+  ⚠️ *Amended 2026-08-12 (#907, PR #1055) — **"the row stays listed" is now conditional, and a
+  reader of this section must know where.*** Search grew facet **filtering**, and under an
+  **active filter** an asset the caller cannot open is **excluded** from the result set rather
+  than listed as a placeholder. Unfiltered search, `GET /assets/{id}`, browse and collection
+  contents are all unchanged — the guarantee above holds everywhere a caller asks an open
+  question. A *filter* is not an open question: `extension:png` asks about a specific withheld
+  field, and answering it would return exactly what this ADR removes from the payload. The
+  exclusion is **value-independent** (gated on whether any filter is present, never on which),
+  so a withheld row answers nothing for every value and its absence is not an oracle. The full
+  argument — and its cost, a team-scoped `assets.admin` holder being narrower under a filter than
+  unfiltered, tracked as **#1056** — is in **ADR 0056 §4b**.
 
 Two deliberate divergences:
 
@@ -435,6 +519,28 @@ a `restricted` asset. That removes the absurdity — nobody deletes a thing they
 avoided.
 
 Note the thumbnail lands on the **binary** side: the thumbhash is withheld precisely because
+⭐ *Amended 2026-08-13 (#1066, PR #1068) — **the same reasoning reaches the EMBEDDING, and it took
+until now to apply it.*** If a thumbhash is withheld because it is a low-fidelity copy of the image,
+then a **768-dimension CLIP embedding is the same kind of thing** — lossier, but content-bearing,
+and a similarity *score* exposes it a little at a time. Until #1066 the vector path gated on
+`visibility.Filter(EntityAsset)`, which for an authenticated caller is **soft-delete only**, so
+similarity search ranked restricted assets: supply a candidate image, watch one rank, and learn
+that an asset whose picture you are refused resembles it. All three entry points
+(`POST /search/by-image`, the `similar_to:` hybrid path, and `GET /assets/{id}/similar`) now gate
+on `ContentReadableSQL` — the picture plane, deliberately stricter than #902's field plane, because
+an embedding derives from the image and not the metadata.
+
+⚠️ **And the gate has to run in BOTH directions.** Every one of those surfaces also leaked on the
+**anchor** side — you could anchor on an asset you cannot read and harvest its neighbourhood. All
+four anchor gates already carried a comment claiming to prevent exactly that; the row predicate
+could not deliver it. **When gating a derived copy, gate what the query returns AND what it may be
+anchored on.** Refusals are `404`, indistinguishable from "not embedded".
+
+**The full list of derived copies is now closed:** `search_text` (#902), the facet buckets, the
+`thumbhash` (this ADR), and the embedding (#1066). A fifth would be new work; the general rule —
+*a withheld value has derived copies, and every copy must be withheld* — is recorded in ADR 0020's
+three-channels amendment.
+
 *"a thumbhash IS a blur"* (see the amendment above). So the result is a **richer placeholder** —
 real fields, no picture — rather than a blank card. That also discharges the UI obligation the
 orthogonal option would have carried, because the interface stops looking broken on its own.
@@ -484,6 +590,43 @@ must keep, and a `true` flag on gated bytes is a 403 the client walks straight i
 check that the disjunct landed on the right plane — had it gone into `ContentReadable`, keeping
 `TestContentReadableSQL_MatchesGo` green would have required transcribing it into the SQL twin, and
 the bytes would have moved.
+
+##### Amendment 2026-08-13 (#1026, PR #1069) — the PICTURE plane gained a SQL twin, by extraction rather than transcription
+
+The table above gave the picture plane a Go form only. #1026's collection cover mosaic is the
+first surface that cannot use it: the mosaic shows the first four members that produce a picture,
+and **a member the caller may not see must be skipped rather than occupy a slot**. That makes the
+readability decision determine *which rows the query returns at all*, so deciding it in Go would
+mean fetching an unbounded prefix of the membership per collection and filtering it down, on a hub
+page that renders fifty. In SQL it is a `ROW_NUMBER` over the already-filtered set with `LIMIT 4` —
+exact, with no candidate cap to be wrong about.
+
+So `visibility.PreviewReadableSQL` now joins `ContentReadableSQL`, `FieldsReadableSQL`,
+`AssetSearchMatchSQL` and `OwnerDisplayNameSQL` in the twin family, held to its Go form by
+`TestPreviewReadableSQL_MatchesGo`.
+
+⭐ **What makes it a twin rather than a fifth expression of the rule: it was EXTRACTED, not
+written.** `FieldsReadableSQL` already rendered the picture-plane fragment inline as its first
+disjunct; that fragment is now a named `previewReadableExpr` that **both** call. With an empty
+mutation scope the two fragments are textually identical, and a test asserts exactly that — the
+cheapest available proof that this is the same plane and not a parallel one.
+
+⛔ **Do not reach for `FieldsReadableSQL` with a zero `AssetMutationCaps` to get this.** It renders
+the same text *today*. The day a non-mutation disjunct is added there, the cover mosaic would
+silently begin handing out pictures this ADR withholds. `mut` is deliberately absent from
+`PreviewReadableSQL`'s signature rather than ignored: §"a mutation capability confers the FIELD
+plane, never the BYTES" means there is no value a caller could pass that should change this answer,
+and a parameter would invite one.
+
+**One implementation note, because it cost a crash.** The fragment short-circuits to the empty
+string for `system.admin` / `content.read.all` — the callers who see everything — which means the
+caller-ref placeholder it would otherwise have named goes unbound, and Postgres fails the whole
+statement with `42P18` for exactly the two capabilities meant to be unrestricted. The composer
+renders the ref as an `int64` literal instead. (A bound tautology is the other way out and is what
+`search`'s COUNT does; here it would cost a placeholder that means nothing plus a comment on both
+halves explaining why deleting either breaks the other.) **The general shape is worth remembering:
+a gate that compiles to nothing for privileged callers puts those callers on a code path no
+ordinary test exercises.**
 
 **The capability is resolved in Go, not re-derived in SQL.** Computing "does this caller hold
 `assets.admin` over this row's team" as an `EXISTS` against `user_capability_grants` in the SELECT

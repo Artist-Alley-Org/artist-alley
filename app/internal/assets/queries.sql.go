@@ -149,15 +149,15 @@ const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash, team_id
+    state_id, processing_status, thumbhash, team_id, mature
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14
+    $11, $12, $13, $14, $15
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id
+          created_at, updated_at, team_id, mature
 `
 
 type CreateAssetParams struct {
@@ -175,6 +175,7 @@ type CreateAssetParams struct {
 	ProcessingStatus string
 	Thumbhash        []byte
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 type CreateAssetRow struct {
@@ -195,6 +196,7 @@ type CreateAssetRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
@@ -213,6 +215,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.ProcessingStatus,
 		arg.Thumbhash,
 		arg.TeamID,
+		arg.Mature,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -233,6 +236,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TeamID,
+		&i.Mature,
 	)
 	return i, err
 }
@@ -278,7 +282,7 @@ const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id
+       created_at, updated_at, team_id, mature
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -301,6 +305,7 @@ type GetAssetRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 // Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -330,6 +335,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TeamID,
+		&i.Mature,
 	)
 	return i, err
 }
@@ -760,6 +766,8 @@ func (q *Queries) ListAssetCompanions(ctx context.Context, assetID pgtype.UUID) 
 }
 
 const listAssetOrigins = `-- name: ListAssetOrigins :many
+
+
 SELECT a.id AS asset_id, p.id AS peer_id, p.display_name, p.instance_url
   FROM assets a
   JOIN federation_peers p ON p.id = a.origin_server_id
@@ -774,6 +782,16 @@ type ListAssetOriginsRow struct {
 	InstanceUrl string
 }
 
+// Phase 1.14.B embedding queries live under
+// app/internal/ai/embeddings/queries.sql so the writer + reader code
+// can package alongside them. assets package keeps focus on asset
+// CRUD + the bridge read/write surface for AI tags.
+// ListCardFieldValues MOVED to internal/metadata/queries.sql (#1133).
+// The card-field projection is not an assets-package concern: the
+// collection member grid renders the same tiles from the same flag, and
+// `collections` cannot import this package (assets -> posts ->
+// collections is a cycle). It lives beside metadata.DisplayValue, which
+// is the rule it feeds, and both surfaces call metadata.CardFieldsForAssets.
 // Which peer an asset came from, for the card's provenance affordance
 // (#552). Local rows (origin_server_id IS NULL) are simply absent from the
 // result, so "no row" reads as "ours" without a sentinel.
@@ -1009,6 +1027,17 @@ type ListAssetsPageRow struct {
 // by the assets_search_text_gin index. Phase 1.12 will replace this
 // with the proper search DSL (ADR 0010), but for the browse page MVP
 // a plain tsquery match is enough.
+//
+// #902 deliberately did NOT gate this `q` clause on readability, and it
+// is the one asset text match left ungated. It is not reachable: this
+// query has NO caller and NO production caller — it exists only as the
+// oracle TestListAssetsPage_AuthenticatedParity compares the hand-built
+// browse query against, and a static sqlc statement cannot splice a
+// runtime visibility fragment (which is why the browse query stopped
+// being sqlc in the first place, see list_page.go). Gating it would also
+// destroy its value as an oracle, because an oracle that applies the
+// rule under test cannot detect the rule being wrong. Do NOT promote
+// this to handler code: it has no visibility rule of any kind.
 func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]ListAssetsPageRow, error) {
 	rows, err := q.db.Query(ctx, listAssetsPage,
 		arg.IncludeDeleted,
@@ -1047,117 +1076,6 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.DeletedAt,
 			&i.DeletedReason,
 			&i.TeamID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listCardFieldValues = `-- name: ListCardFieldValues :many
-
-SELECT a.id AS asset_id,
-       f.id AS field_id,
-       f.code,
-       f.label,
-       f.type,
-       f.options,
-       f.display_group,
-       f.display_order,
-       -- coalesced to '' rather than left nullable: the two states this
-       -- query can produce for "nothing here" — no asset_field_value row and
-       -- an empty mirrored column — are one answer to the card, which drops
-       -- the entry either way. (It also keeps sqlc from typing a CASE with
-       -- NULL branches as interface{}.)
-       coalesce(
-           CASE WHEN f.mirrors_column IS NOT NULL
-                THEN public.asset_mirror_read(a.id, f.mirrors_column)
-                ELSE v.value_text
-           END, '')::TEXT AS value_text,
-       v.value_num,
-       v.value_date,
-       v.value_options
-  FROM assets a
-  CROSS JOIN field_definition f
-  LEFT JOIN asset_field_value v ON v.asset_id = a.id AND v.field_id = f.id
- WHERE a.id = ANY($1::UUID[])
-   AND a.deleted_at IS NULL
-   AND f.show_on_card
-   AND f.subject_kind = 'asset'
-   AND f.status <> 'archived'
-   AND (cardinality(f.applies_to) = 0 OR a.asset_type = ANY(f.applies_to))
- ORDER BY a.id, f.display_group, f.display_order, f.code
-`
-
-type ListCardFieldValuesRow struct {
-	AssetID      pgtype.UUID
-	FieldID      pgtype.UUID
-	Code         string
-	Label        string
-	Type         string
-	Options      []byte
-	DisplayGroup string
-	DisplayOrder int32
-	ValueText    string
-	ValueNum     *float64
-	ValueDate    pgtype.Timestamptz
-	ValueOptions []string
-}
-
-// Phase 1.14.B embedding queries live under
-// app/internal/ai/embeddings/queries.sql so the writer + reader code
-// can package alongside them. assets package keeps focus on asset
-// CRUD + the bridge read/write surface for AI tags.
-// The at-a-glance field values for a PAGE of assets (#552).
-//
-// One query for the whole page, not one per asset. The card is a browse
-// surface: an N+1 here is 50 round trips per scroll, and the existing
-// per-row ListAssetTags call is the precedent NOT to follow.
-//
-// Both halves of a field's storage are covered, and the caller cannot tell
-// them apart — which is the point of #822's mirror. An ordinary field's
-// value comes from asset_field_value; a MIRRORED field's comes from the
-// column it declares, because it has no row here and the guard trigger
-// guarantees it never will.
-//
-// The flag is a DISPLAY HINT and nothing here treats it otherwise: it
-// SELECTS which fields are candidates and takes no part in deciding which
-// assets or which values a caller may see. Row visibility was already
-// decided by ListAssetsPageGated before this runs, and only readable rows
-// are passed in. Gated fields cannot reach the card at all — the CHECK
-// constraint in migration 00045 refuses `show_on_card` on a field carrying
-// a read_capability, so this query needs no capability argument and cannot
-// acquire one by accident.
-//
-// Typed columns come back raw rather than formatted: metadata.DisplayValue
-// resolves a vocabulary slug to its label, and doing that in SQL would be a
-// second implementation of a rule ADR 0012 keeps in one place.
-func (q *Queries) ListCardFieldValues(ctx context.Context, assetIds []pgtype.UUID) ([]ListCardFieldValuesRow, error) {
-	rows, err := q.db.Query(ctx, listCardFieldValues, assetIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListCardFieldValuesRow
-	for rows.Next() {
-		var i ListCardFieldValuesRow
-		if err := rows.Scan(
-			&i.AssetID,
-			&i.FieldID,
-			&i.Code,
-			&i.Label,
-			&i.Type,
-			&i.Options,
-			&i.DisplayGroup,
-			&i.DisplayOrder,
-			&i.ValueText,
-			&i.ValueNum,
-			&i.ValueDate,
-			&i.ValueOptions,
 		); err != nil {
 			return nil, err
 		}
@@ -1399,12 +1317,16 @@ UPDATE assets SET
     description = COALESCE($2, description),
     status      = COALESCE($3,      status),
     metadata    = COALESCE($4,    metadata),
+    -- #1115. narg, so PATCH semantics hold: absent leaves the flag as
+    -- it is, which is what makes the artist's own edit and the operator
+    -- override the same column on the same endpoint.
+    mature      = COALESCE($5,      mature),
     updated_at  = NOW()
-WHERE id = $5 AND deleted_at IS NULL
+WHERE id = $6 AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id
+          created_at, updated_at, team_id, mature
 `
 
 type UpdateAssetParams struct {
@@ -1412,6 +1334,7 @@ type UpdateAssetParams struct {
 	Description *string
 	Status      *string
 	Metadata    []byte
+	Mature      *bool
 	ID          pgtype.UUID
 }
 
@@ -1433,6 +1356,7 @@ type UpdateAssetRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	TeamID           pgtype.UUID
+	Mature           bool
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -1443,6 +1367,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		arg.Description,
 		arg.Status,
 		arg.Metadata,
+		arg.Mature,
 		arg.ID,
 	)
 	var i UpdateAssetRow
@@ -1464,6 +1389,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TeamID,
+		&i.Mature,
 	)
 	return i, err
 }

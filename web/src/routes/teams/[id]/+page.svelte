@@ -46,20 +46,25 @@
   import { auth } from '$stores/auth.svelte';
   import { site } from '$stores/site.svelte';
   import { browseView } from '$stores/browseView.svelte';
-  import { channels } from '$stores/channels.svelte';
+  import { teamFollows } from '$stores/teamFollows.svelte';
   import { t } from '$stores/lang.svelte';
   import ContentGrid from '$components/ContentGrid.svelte';
   import PostCard from '$components/PostCard.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import AssetCard from '$components/AssetCard.svelte';
   import ViewControls from '$components/ViewControls.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
+  import TeamAvatar from '$components/TeamAvatar.svelte';
 
   interface Team {
     id: string;
     slug: string;
     name: string;
     description: string;
+    /** #982 — the server's re-derived render answer; absent means the
+     *  header falls back to the initials tile. */
+    hero_asset_id?: string | null;
   }
   interface Member {
     user_ref: number;
@@ -151,7 +156,7 @@
 
   onMount(() => {
     browseView.init(); // pick up the user's tile-size + mode preference
-    if (auth.user) void channels.load(); // so the follow pill renders correct on first paint
+    if (auth.user) void teamFollows.load(); // so the follow pill renders correct on first paint
   });
 
   /** Load (or reload) everything when the route's team changes.
@@ -213,13 +218,13 @@
 </script>
 
 <svelte:head>
-  <title>{team ? `${team.name} — ${site.name}` : `${t('channels.directory_title')} — ${site.name}`}</title>
+  <title>{team ? `${team.name} — ${site.name}` : `${t('teams.directory_title')} — ${site.name}`}</title>
 </svelte:head>
 
 {#if guest}
   <div class="mx-auto max-w-2xl px-4 py-16 text-center">
-    <h1 class="text-xl font-semibold text-fg">{t('channels.guest_title')}</h1>
-    <p class="mt-2 text-sm text-fg-muted">{t('channels.guest_hint')}</p>
+    <h1 class="text-xl font-semibold text-fg">{t('teams.guest_title')}</h1>
+    <p class="mt-2 text-sm text-fg-muted">{t('teams.guest_hint')}</p>
     <a
       href="/login"
       class="mt-4 inline-flex items-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent"
@@ -229,10 +234,10 @@
   </div>
 {:else if notFound}
   <div class="mx-auto max-w-2xl px-4 py-16 text-center text-fg-muted">
-    <h1 class="text-xl font-semibold text-fg">{t('channels.not_found')}</h1>
-    <p class="mt-2">{t('channels.not_found_body')}</p>
+    <h1 class="text-xl font-semibold text-fg">{t('teams.not_found')}</h1>
+    <p class="mt-2">{t('teams.not_found_body')}</p>
     <a href="/teams" class="mt-4 inline-block text-sm font-medium text-accent hover:underline">
-      {t('channels.browse_all')}
+      {t('teams.browse_all')}
     </a>
   </div>
 {:else if loadingTeam}
@@ -243,15 +248,24 @@
        page reads as one grid system rather than a narrower island. -->
   <div class="w-full px-4 py-8 sm:px-6" data-testid="team-page">
     <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div class="min-w-0">
-        <p class="text-xs text-fg-muted">
-          <a href="/teams" class="hover:underline">{t('channels.directory_title')}</a>
-        </p>
-        <h1 class="mt-1 truncate text-2xl font-bold text-fg" data-testid="team-name">{team.name}</h1>
-        <p class="text-sm text-fg-muted">@{team.slug}</p>
-        {#if team.description}
-          <p class="mt-2 max-w-2xl whitespace-pre-line text-sm text-fg">{team.description}</p>
-        {/if}
+      <!-- The picture leads the header (#982). It is the same
+           TeamAvatar the rail and the directory use, just larger, so a
+           team that has no hero shows the same initials tile here that
+           the reader followed in from. -->
+      <div class="flex min-w-0 gap-4">
+        <TeamAvatar {team} class="h-16 w-16 rounded-xl sm:h-20 sm:w-20" textClass="text-xl" />
+        <div class="min-w-0">
+          <p class="text-xs text-fg-muted">
+            <a href="/teams" class="hover:underline">{t('teams.directory_title')}</a>
+          </p>
+          <h1 class="mt-1 truncate text-2xl font-bold text-fg" data-testid="team-name">
+            {team.name}
+          </h1>
+          <p class="text-sm text-fg-muted">@{team.slug}</p>
+          {#if team.description}
+            <p class="mt-2 max-w-2xl whitespace-pre-line text-sm text-fg">{team.description}</p>
+          {/if}
+        </div>
       </div>
       <div class="shrink-0">
         <TeamFollowButton {team} />
@@ -264,7 +278,7 @@
            renders what the endpoint actually returns rather than firing
            a profile request per member. -->
       <section class="mt-5" aria-labelledby="team-members-heading">
-        <h2 id="team-members-heading" class="sr-only">{t('channels.members')}</h2>
+        <h2 id="team-members-heading" class="sr-only">{t('teams.members')}</h2>
         <ul class="flex flex-wrap gap-2">
           {#each members as m (m.user_ref)}
             <li>
@@ -287,7 +301,7 @@
 
     <!-- Tabs -->
     <div class="mt-6 flex gap-1 border-b border-border" role="tablist">
-      {#each [{ id: 'posts' as Tab, label: t('channels.tab_posts') }, { id: 'assets' as Tab, label: t('channels.tab_assets') }] as tb (tb.id)}
+      {#each [{ id: 'posts' as Tab, label: t('teams.tab_posts') }, { id: 'assets' as Tab, label: t('teams.tab_assets') }] as tb (tb.id)}
         <button
           type="button"
           role="tab"
@@ -309,7 +323,7 @@
       {#if tab === 'posts'}
         {#if postsLoaded && posts.length === 0}
           <p class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-            {t('channels.no_posts')}
+            {t('teams.no_posts')}
           </p>
         {:else}
           <ContentGrid mode={browseView.mode} items={posts} tileMin={browseView.tileMin} loading={loadingContent}>
@@ -328,14 +342,14 @@
                 onclick={() => void loadPosts(postsCursor)}
                 disabled={loadingContent}
               >
-                {loadingContent ? t('common.loading') : t('channels.load_more')}
+                {loadingContent ? t('common.loading') : t('teams.load_more')}
               </button>
             </div>
           {/if}
         {/if}
       {:else if assetsLoaded && assets.length === 0}
         <p class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-          {t('channels.no_assets')}
+          {t('teams.no_assets')}
         </p>
       {:else}
         <ContentGrid mode={browseView.mode} items={sortedAssets} tileMin={browseView.tileMin} loading={loadingContent}>
@@ -351,7 +365,7 @@
               onclick={() => void loadAssets(assetsCursor)}
               disabled={loadingContent}
             >
-              {loadingContent ? t('common.loading') : t('channels.load_more')}
+              {loadingContent ? t('common.loading') : t('teams.load_more')}
             </button>
           </div>
         {/if}
@@ -364,3 +378,18 @@
        that's browse-only. -->
   <ViewControls />
 {/if}
+
+<!-- #1130's sweep. This page renders PostCard, whose primary click
+     writes `?post=` onto this url, and nothing here consumed it — the
+     same silent dead-end the collection route was filed for. Outside
+     the `{#if team}` block so the host's lifetime is the route's, not
+     the team fetch's.
+
+     `ordered` is the loaded team feed; `onEndReached` pages it, the
+     same contract browse uses. -->
+<PostParamHost
+  ordered={() => posts.map((p) => (p as { id: string }).id)}
+  onEndReached={() => {
+    if (postsCursor && !loadingContent) void loadPosts(postsCursor);
+  }}
+/>

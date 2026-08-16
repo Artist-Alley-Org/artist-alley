@@ -445,7 +445,7 @@ func composeEmbeddingText(asset ai.AssetForAI) string {
 // derivedKey produces the SHA-256 hex digest of
 // `<jobType>|<asset_id>|<prompt_version>`. Stable across binaries
 // + across re-enqueues; the partial UNIQUE INDEX on
-// (type, idempotency_key) (migration 00009) does the dedup.
+// (type, idempotency_key) (migration 00001) does the dedup.
 func derivedKey(jobType string, assetID uuid.UUID, promptVersion string) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", jobType, assetID, promptVersion)))
 	return hex.EncodeToString(h[:])

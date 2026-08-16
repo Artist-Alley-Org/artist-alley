@@ -19,7 +19,7 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref;
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
@@ -27,7 +27,7 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -38,30 +38,42 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections
 WHERE id = $1;
 
 -- name: UpdateCollection :one
 -- Partial update via COALESCE — NULL args keep current values.
+--
+-- cover_asset_id (#1027) and expires_at (#1073) each need a THIRD state
+-- the other columns do not: "remove the value that is there". COALESCE
+-- cannot express it, because NULL already means "leave alone" for every
+-- column above. The way out is metadata's UpdateFieldDefinition
+-- `clear_default`: a companion BOOLEAN and a CASE, in THIS statement
+-- rather than a second one, so the write stays inside the single
+-- activity-emitting transaction and `updated_at` advances exactly once.
+--
+-- expires_at wore the COALESCE for three releases and so silently kept
+-- the TTL a caller asked to remove; the dedicated ClearCollectionExpiresAt
+-- statement that was supposed to cover it was never called by anything
+-- and is now gone. Two mechanisms for one job is how the working one
+-- ends up being the one nobody wired.
 UPDATE collections SET
     name        = COALESCE(sqlc.narg('name'),        name),
     description = COALESCE(sqlc.narg('description'), description),
     visibility  = COALESCE(sqlc.narg('visibility'),  visibility),
     membership  = COALESCE(sqlc.narg('membership'),  membership),
     purpose     = COALESCE(sqlc.narg('purpose'),     purpose),
-    expires_at  = COALESCE(sqlc.narg('expires_at'),  expires_at),
+    expires_at  = CASE WHEN sqlc.arg('clear_expires_at')::BOOLEAN THEN NULL
+                       ELSE COALESCE(sqlc.narg('expires_at'), expires_at) END,
+    cover_asset_id = CASE WHEN sqlc.arg('clear_cover')::BOOLEAN THEN NULL
+                          ELSE COALESCE(sqlc.narg('cover_asset_id'), cover_asset_id) END,
     updated_at  = NOW()
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref;
-
--- name: ClearCollectionExpiresAt :exec
--- Separate query because COALESCE can't express "explicitly set to NULL".
--- Callers use this when the admin removes a TTL.
-UPDATE collections SET expires_at = NULL, updated_at = NOW() WHERE id = $1;
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id;
 
 -- name: DeleteCollection :exec
 -- Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
@@ -108,7 +120,7 @@ SELECT deleted_by_user_ref
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
@@ -118,7 +130,14 @@ WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
          SELECT 1 FROM featured_items fi
           WHERE fi.subject_kind = 'collection'
             AND fi.subject_id   = c.id
-            AND fi.scope        = 'org'
+            -- The SIGNED-IN arm of featured.ScopeVisibleSQL (#1104).
+            -- This is the parity oracle and sqlc queries are static
+            -- strings, so it cannot splice the Go helper; the signed-in
+            -- arm is the one the parity test exercises. Written
+            -- byte-for-byte as the helper renders it, and
+            -- TestScopeVisibleSQL_PinnedInStaticQueries fails the build
+            -- if the two ever drift.
+            AND fi.scope IN ('org', 'public')
        ))
   AND (sqlc.narg('q_name')::TEXT            IS NULL OR name ILIKE '%' || sqlc.narg('q_name')::TEXT || '%')
   AND (sqlc.narg('shared_with_user')::BIGINT IS NULL OR EXISTS (

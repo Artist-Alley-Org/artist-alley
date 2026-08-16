@@ -12,7 +12,6 @@
 -- otherwise make this file differ on every regeneration.
 --
 --
---
 -- PostgreSQL database dump
 --
 
@@ -312,6 +311,28 @@ $$;
 
 
 --
+-- Name: assets_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assets_mature_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    r record;
+BEGIN
+    IF NEW.mature IS NOT DISTINCT FROM OLD.mature
+       AND (NEW.deleted_at IS NULL) IS NOT DISTINCT FROM (OLD.deleted_at IS NULL) THEN
+        RETURN NULL;
+    END IF;
+    FOR r IN SELECT DISTINCT post_id FROM public.post_assets WHERE asset_id = NEW.id LOOP
+        PERFORM public.recompute_post_mature(r.post_id);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: collections_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -463,6 +484,25 @@ $$;
 
 
 --
+-- Name: post_assets_mature_sync(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.post_assets_mature_sync() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        PERFORM public.recompute_post_mature(OLD.post_id);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        PERFORM public.recompute_post_mature(NEW.post_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: post_assets_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -567,6 +607,42 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
      WHERE id = p_post_id;
 END; $$;
+
+
+--
+-- Name: recompute_post_mature(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.recompute_post_mature(p_post_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_post_id IS NULL THEN
+        RETURN;
+    END IF;
+    UPDATE public.posts p
+       SET mature = EXISTS (
+               SELECT 1
+                 FROM public.post_assets pa
+                 JOIN public.assets a ON a.id = pa.asset_id
+                WHERE pa.post_id = p_post_id
+                  AND a.deleted_at IS NULL
+                  AND a.mature
+           )
+     WHERE p.id = p_post_id
+       -- Write only on a real change. Without this every membership
+       -- edit touches the post row, which invalidates caches and
+       -- bumps nothing anybody asked to bump.
+       AND p.mature IS DISTINCT FROM EXISTS (
+               SELECT 1
+                 FROM public.post_assets pa
+                 JOIN public.assets a ON a.id = pa.asset_id
+                WHERE pa.post_id = p_post_id
+                  AND a.deleted_at IS NULL
+                  AND a.mature
+           );
+END;
+$$;
 
 
 --
@@ -1059,6 +1135,7 @@ CREATE TABLE public.assets (
     page_count integer,
     deleted_reason text,
     deleted_by_user_ref bigint,
+    mature boolean DEFAULT false NOT NULL,
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -1264,6 +1341,7 @@ CREATE TABLE public.collections (
     deleted_at timestamp with time zone,
     deleted_reason text,
     deleted_by_user_ref bigint,
+    cover_asset_id uuid,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
@@ -1274,6 +1352,13 @@ CREATE TABLE public.collections (
 --
 
 COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.';
+
+
+--
+-- Name: COLUMN collections.cover_asset_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.cover_asset_id IS 'Curator-chosen cover picture (#1027): any asset the curator may PICTURE, not necessarily a member. NULL means compose the derived mosaic from members instead. Read path (collections.ComposeCovers) re-checks the viewer''s picture plane and falls back to the mosaic when the override is unrenderable for them — a withheld cover must never render blank. ON DELETE SET NULL so a hard-deleted asset reverts the collection to its mosaic rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
 
 
 --
@@ -1412,10 +1497,25 @@ CREATE TABLE public.featured_items (
     created_by_user_ref bigint,
     scope text DEFAULT 'org'::text NOT NULL,
     team_id uuid,
+    band_id uuid,
     CONSTRAINT featured_items_scope_check CHECK ((scope = ANY (ARRAY['public'::text, 'org'::text, 'team'::text]))),
-    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
+    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text, 'team'::text]))),
     CONSTRAINT featured_items_team_scope_check CHECK ((((scope = 'team'::text) AND (team_id IS NOT NULL)) OR ((scope <> 'team'::text) AND (team_id IS NULL))))
 );
+
+
+--
+-- Name: COLUMN featured_items.subject_kind; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.featured_items.subject_kind IS 'What kind of thing this placement points at: ''asset'', ''collection'' or ''team'' (#1084). There is deliberately no foreign key — the subject is polymorphic — so the read path resolves the subject by joining the matching table and DROPS the placement when that join finds nothing the caller may see. Adding a kind here is never sufficient on its own: the same enumeration is restated in SIX places (enumerated in featured/http.go''s AddFeaturedItem) — this CHECK, that handler''s validation, its error string, the OpenAPI FeaturedItemInput enum, the FeaturedItem RESPONSE enum, and the admin curation list''s title resolution plus the page that renders it. Miss any one and the failure is asymmetric: a 500 instead of a 400, a client that refuses to send the value, or an operator staring at an untitled row with a dead link.';
+
+
+--
+-- Name: COLUMN featured_items.band_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.featured_items.band_id IS 'Which surface this placement belongs to (#1118): NULL is the featured rail — every row that existed before this column — and a band id makes the row a card in that promo band. There is no second membership table on purpose (ADR 0065; see migration 00053''s header). ⚠️ For a band row the `scope` column is NOT the audience: the BAND carries the audience, and this row''s scope keeps its table default. Reading scope on a band row would be a second, stale copy of a visibility input.';
 
 
 --
@@ -1880,7 +1980,7 @@ CREATE TABLE public.goose_db_version (
     id integer NOT NULL,
     version_id bigint NOT NULL,
     is_applied boolean NOT NULL,
-    tstamp timestamp without time zone DEFAULT now()
+    tstamp timestamp without time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1888,20 +1988,14 @@ CREATE TABLE public.goose_db_version (
 -- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.goose_db_version_id_seq
-    AS integer
+ALTER TABLE public.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.goose_db_version_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: goose_db_version_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.goose_db_version_id_seq OWNED BY public.goose_db_version.id;
+    CACHE 1
+);
 
 
 --
@@ -2097,6 +2191,7 @@ CREATE TABLE public.posts (
     subtitle_track_override jsonb,
     deleted_reason text,
     deleted_by_user_ref bigint,
+    mature boolean DEFAULT false NOT NULL,
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text, 'public'::text])))
 );
 
@@ -2106,6 +2201,43 @@ CREATE TABLE public.posts (
 --
 
 COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for the parent asset''s subtitle tracks. NULL means use the asset''s intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.';
+
+
+--
+-- Name: promo_bands; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promo_bands (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    blurb text DEFAULT ''::text NOT NULL,
+    cta_label text DEFAULT ''::text NOT NULL,
+    cta_url text DEFAULT ''::text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    after_page integer DEFAULT 1 NOT NULL,
+    scope text DEFAULT 'org'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_user_ref bigint,
+    CONSTRAINT promo_bands_after_page_check CHECK ((after_page >= 1)),
+    CONSTRAINT promo_bands_cta_pair_check CHECK ((((cta_label = ''::text) AND (cta_url = ''::text)) OR ((cta_label <> ''::text) AND (cta_url <> ''::text)))),
+    CONSTRAINT promo_bands_cta_url_check CHECK (((cta_url = ''::text) OR (cta_url ~ '^(https?://[^/]|/[^/])'::text))),
+    CONSTRAINT promo_bands_scope_check CHECK ((scope = ANY (ARRAY['public'::text, 'org'::text])))
+);
+
+
+--
+-- Name: TABLE promo_bands; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promo_bands IS 'Operator-authored full-width promo strips rendered BETWEEN feed pages (#1118). The cards are ordinary featured_items rows carrying this band''s id — see featured_items.band_id — so curation, ordering and visibility composition have one home (ADR 0065). `scope` is the whole band''s audience, read by featured.ScopeVisibleSQL; the cards'' own scope column is not consulted. An empty or disabled band renders nothing at all (ADR 0030''s collapse rule, which governs a full-width band; ADR 0079 §2''s substitution rule is scoped to in-grid sized slots).';
+
+
+--
+-- Name: COLUMN promo_bands.after_page; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promo_bands.after_page IS 'Where the band falls in the feed, counted in whole loaded pages: 1 renders it after the first page. The PAGE SIZE is the client''s (the browse feed requests 36), so this is a position in the reader''s scroll rather than a row count — deliberately, because it is what the operator can predict without knowing the API''s limit.';
 
 
 --
@@ -2402,6 +2534,18 @@ CREATE TABLE public.system_config (
 
 
 --
+-- Name: tag_follows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tag_follows (
+    user_ref bigint NOT NULL,
+    tag text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tag_follows_tag_length CHECK (((length(tag) > 0) AND (length(tag) <= 200)))
+);
+
+
+--
 -- Name: team_closure; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2458,8 +2602,16 @@ CREATE TABLE public.teams (
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    hero_asset_id uuid
 );
+
+
+--
+-- Name: COLUMN teams.hero_asset_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.teams.hero_asset_id IS 'The team''s chosen hero picture (#982): a pointer at an ordinary asset, NULL means fall back to the derived initials tile. Admissible only if the asset is sensitivity=''public'' AND its team_id is this team — validated at SELECTION by the write endpoint and RE-CHECKED AT RENDER, because an asset that qualifies today can be set to ''restricted'' tomorrow and must then drop out of the rail rather than linger. This narrows ADR 0088: a team hero is NOT gated per viewer, because a navigation strip that shows some teams'' pictures and not others depending on who is looking is noise rather than security. ON DELETE SET NULL so a hard-deleted asset reverts the team to its initials rather than dangling. Does NOT federate: a local asset id names something that exists only on this server (ADR 0083''s exclusion criterion, applied by analogy).';
 
 
 --
@@ -2577,7 +2729,9 @@ CREATE TABLE public.user_preferences (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL,
-    feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL
+    feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL,
+    browse_rail jsonb DEFAULT '{}'::jsonb NOT NULL,
+    mature_content jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
 
@@ -2703,13 +2857,6 @@ CREATE TABLE public.workflow_transitions (
     required_capability text,
     requires_team_scope boolean DEFAULT false NOT NULL
 );
-
-
---
--- Name: goose_db_version id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.goose_db_version ALTER COLUMN id SET DEFAULT nextval('public.goose_db_version_id_seq'::regclass);
 
 
 --
@@ -3013,7 +3160,7 @@ ALTER TABLE ONLY public.featured_items
 --
 
 ALTER TABLE ONLY public.featured_items
-    ADD CONSTRAINT featured_items_placement_unique UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id);
+    ADD CONSTRAINT featured_items_placement_unique UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id, band_id);
 
 
 --
@@ -3257,6 +3404,14 @@ ALTER TABLE ONLY public.posts
 
 
 --
+-- Name: promo_bands promo_bands_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promo_bands
+    ADD CONSTRAINT promo_bands_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: resource_request resource_request_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3422,6 +3577,14 @@ ALTER TABLE ONLY public.storage_variants
 
 ALTER TABLE ONLY public.system_config
     ADD CONSTRAINT system_config_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: tag_follows tag_follows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tag_follows
+    ADD CONSTRAINT tag_follows_pkey PRIMARY KEY (user_ref, tag);
 
 
 --
@@ -3791,6 +3954,13 @@ CREATE INDEX assets_file_hash_idx ON public.assets USING btree (file_hash) WHERE
 
 
 --
+-- Name: assets_mature_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX assets_mature_idx ON public.assets USING btree (id) WHERE mature;
+
+
+--
 -- Name: assets_metadata_gin; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3973,6 +4143,13 @@ CREATE INDEX collection_resources_sort_idx ON public.collection_resources USING 
 
 
 --
+-- Name: collections_cover_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_cover_asset_id_idx ON public.collections USING btree (cover_asset_id) WHERE (cover_asset_id IS NOT NULL);
+
+
+--
 -- Name: collections_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4096,6 +4273,13 @@ CREATE INDEX comments_whiteboards_idx ON public.comments USING btree (target_kin
 --
 
 CREATE INDEX digest_queue_pending_idx ON public.digest_queue USING btree (cadence, user_ref) WHERE (sent_at IS NULL);
+
+
+--
+-- Name: featured_items_band_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX featured_items_band_order_idx ON public.featured_items USING btree (band_id, "position", created_at);
 
 
 --
@@ -4785,6 +4969,13 @@ CREATE INDEX posts_deleted_at_idx ON public.posts USING btree (deleted_at) WHERE
 
 
 --
+-- Name: posts_mature_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_mature_idx ON public.posts USING btree (id) WHERE mature;
+
+
+--
 -- Name: posts_public_feed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5002,6 +5193,13 @@ CREATE INDEX storage_variants_updated_at_idx ON public.storage_variants USING bt
 
 
 --
+-- Name: tag_follows_tag_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tag_follows_tag_idx ON public.tag_follows USING btree (tag, created_at DESC);
+
+
+--
 -- Name: team_closure_descendant_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5034,6 +5232,13 @@ CREATE INDEX team_parents_parent_idx ON public.team_parents USING btree (parent_
 --
 
 CREATE INDEX teams_active_idx ON public.teams USING btree (id) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: teams_hero_asset_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX teams_hero_asset_id_idx ON public.teams USING btree (hero_asset_id) WHERE (hero_asset_id IS NOT NULL);
 
 
 --
@@ -5268,6 +5473,13 @@ CREATE TRIGGER asset_type_acl_sweep_after_team_delete AFTER DELETE ON public.tea
 
 
 --
+-- Name: assets assets_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER assets_mature_sync_trg AFTER UPDATE ON public.assets FOR EACH ROW EXECUTE FUNCTION public.assets_mature_sync();
+
+
+--
 -- Name: assets assets_member_post_search_text; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5349,6 +5561,13 @@ CREATE TRIGGER likes_maintain_counter_delete AFTER DELETE ON public.likes FOR EA
 --
 
 CREATE TRIGGER likes_maintain_counter_insert AFTER INSERT ON public.likes FOR EACH ROW EXECUTE FUNCTION public.likes_after_insert();
+
+
+--
+-- Name: post_assets post_assets_mature_sync_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER post_assets_mature_sync_trg AFTER INSERT OR DELETE OR UPDATE ON public.post_assets FOR EACH ROW EXECUTE FUNCTION public.post_assets_mature_sync();
 
 
 --
@@ -5640,6 +5859,14 @@ ALTER TABLE ONLY public.collection_resources
 
 
 --
+-- Name: collections collections_cover_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collections
+    ADD CONSTRAINT collections_cover_asset_id_fkey FOREIGN KEY (cover_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
+
+
+--
 -- Name: comments comments_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5709,6 +5936,14 @@ ALTER TABLE ONLY public.email_verification_token
 
 ALTER TABLE ONLY public.extraction_failure
     ADD CONSTRAINT extraction_failure_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: featured_items featured_items_band_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_band_id_fkey FOREIGN KEY (band_id) REFERENCES public.promo_bands(id) ON DELETE CASCADE;
 
 
 --
@@ -6056,6 +6291,14 @@ ALTER TABLE ONLY public.storage_variants
 
 
 --
+-- Name: tag_follows tag_follows_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tag_follows
+    ADD CONSTRAINT tag_follows_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
 -- Name: team_closure team_closure_ancestor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6109,6 +6352,14 @@ ALTER TABLE ONLY public.team_parents
 
 ALTER TABLE ONLY public.team_parents
     ADD CONSTRAINT team_parents_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: teams teams_hero_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.teams
+    ADD CONSTRAINT teams_hero_asset_id_fkey FOREIGN KEY (hero_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL;
 
 
 --

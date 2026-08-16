@@ -6,7 +6,9 @@ package featured
 import (
 	"context"
 	"fmt"
+	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -21,6 +23,16 @@ type RailRow struct {
 	SubjectID   pgtype.UUID
 	Position    int32
 	Title       string
+	// Subtitle is the wide card's second line (#1110) — a COLLECTION
+	// subject's own description, "" when it has none and "" for every
+	// other subject kind. See the SQL for why it is read from the same
+	// join as Title and why assets deliberately do not contribute one.
+	Subtitle string
+	// ItemCount is the subtitle's fallback: how many members of a
+	// collection subject THIS caller can see. nil for any other subject
+	// kind, which is not the same answer as 0 — an asset has no
+	// membership, an empty collection has one and it is empty.
+	ItemCount *int32
 	// CoverAssetID is the asset whose col variant renders the tile: the
 	// subject itself for an asset, ADR 0027's hero-card fallback for a
 	// collection. Invalid (NULL) when nothing is servable to the caller.
@@ -34,10 +46,77 @@ type RailRow struct {
 	// AssetPreviewAvailable (#591). Computed against sysconfig's ladder,
 	// never a hardcoded rung list.
 	AssetLadderAvailable bool
+	// OwnerUserRef is the subject's owner: the asset's for an asset
+	// subject, the collection's for a collection. Nil when the subject
+	// did not resolve to one (an asset may have no owner).
+	//
+	// It exists for the promo band's author chip (#1118) and is
+	// deliberately a REF rather than a name: resolving a display name is
+	// users.ResolveDisplayName's job and its ladder has an anonymous arm
+	// (ADR 0024's opt-out). Transcribing it here would be the fifth copy
+	// of the rule #1023 was filed for. The band handler hands these refs
+	// to users.LookupAuthors — the one home — and the rail asks for
+	// nothing, so nothing here decides what a name is.
+	OwnerUserRef *int64
 }
 
-// ListPublicRail returns the public featured rail for one caller
-// (#417, ADR 0065).
+// PlacementQuery is the input to [ListPlacements] — everything the one
+// placement read needs to answer for one caller on one surface.
+//
+// A struct rather than nine positional parameters because two of the
+// nine (Mature, MatureAdmin) arrived after the rest and a positional
+// list of that length is how a caller silently passes the wrong bool.
+type PlacementQuery struct {
+	Caller   visibility.Caller
+	PostCaps visibility.PostCaps
+	// Mature is the caller's resolved mature-content axis (ADR 0090),
+	// read once at the HTTP edge from visibility.MatureFromContext. Its
+	// zero value is the DISQUALIFIED viewer, which is the safe default
+	// for a caller that forgets to set it.
+	Mature visibility.MatureViewer
+	// MatureAdmin is the system.admin exemption from the mature rule —
+	// separate from the axis itself because ADR 0090 checks it BEFORE
+	// qualification, so it survives the instance switch being off.
+	MatureAdmin bool
+	Limit       int32
+	Ladder      []string
+	// BandID selects the SURFACE (#1118):
+	//
+	//   nil        the featured rail — every placement written before
+	//              bands existed, and the only surface GET /featured
+	//              serves.
+	//   a band id  that promo band's cards, in curation order.
+	//
+	// ⚠️ The two surfaces gate their AUDIENCE differently, and the
+	// difference is not a second rule — it is the same rule applied to
+	// whichever row carries the audience. A rail placement carries its
+	// own `scope`; a band card does not, because the BAND carries one
+	// for the whole strip (migration 00053). So the rail arm splices
+	// ScopeVisibleSQL over `f` and the band arm does not splice it at
+	// all: [GetRenderableBand] has already applied it to the band, and
+	// applying it again over a column that is not the audience would be
+	// reading a stale copy.
+	BandID *uuid.UUID
+}
+
+// ListPlacements returns the resolved placements for one surface and one
+// caller (#417, #1118, ADR 0065).
+//
+// ONE QUERY SERVES THE RAIL AND EVERY BAND, and that is the point rather
+// than an economy. What follows this comment is five splices of the
+// ADR 0063 predicate, a per-asset sensitivity gate, the ADR 0090 mature
+// conjunct, a cover lateral and a member count — and a band that
+// resolved its cards through a second copy of all that would be a second
+// chance to get one of them wrong. It is the same argument migration
+// 00010 makes about two sources of truth for "what is featured", one
+// layer up.
+//
+// The former entry point was ListPublicRail. "Public" named the
+// ENDPOINT — GET /featured is the
+// unauthenticated route — not the audience: since #1104 the audience is
+// chosen per viewer by ScopeVisibleSQL, so an anonymous request sees
+// exactly the `public` placements it always saw and a signed-in one
+// also sees `org`.
 //
 // FEATURING NEVER WIDENS ACCESS. That is the whole invariant, and it is
 // enforced structurally here rather than by a second copy of the
@@ -80,17 +159,119 @@ type RailRow struct {
 // asset predicate's args, then the collection predicate's. Each
 // ToSQL call is given the running length, so the two fragments never
 // collide.
-func ListPublicRail(
+//
+// # The subtitle and its count (#1110)
+//
+// The wide card prints a second line under the name. Its source is the
+// collection's own `description`, and its fallback is how many members
+// the caller can see. Both are computed HERE rather than by a second
+// request, and both are subject to one rule stated twice below because
+// they arrive by different routes:
+//
+//   - The DESCRIPTION rides the `c` join. That join already carries the
+//     collection predicate in its ON clause, so a collection this
+//     caller cannot see contributes no name AND no description, and the
+//     row is dropped by the same WHERE that has always dropped it. The
+//     subtitle is therefore withheld exactly when the title is, by
+//     construction rather than by a matching pair of conditions that a
+//     later edit could unmatch.
+//
+//   - The COUNT is a fresh traversal into two membership tables, so it
+//     gets no such protection for free and each half is gated
+//     explicitly. Counting the whole membership would publish the size
+//     of the part this caller is not allowed to look at — a public
+//     collection of 400 posts of which a stranger may open 3 would
+//     announce "400 items". That is the derived-copy defect class:
+//     #902 (search text), #1066 (embeddings), and Elastic documents the
+//     same leak as a known limit of document-level security. The
+//     membership counted is the one ComposeCovers draws its mosaic from
+//     — pinned, unexpired, posts + resources — so the tile's picture
+//     and the tile's number describe the same set.
+//
+// postCaps is the caller's resolved post capabilities, needed by the
+// post half of that count and by nothing else in this query. Omitting
+// it yields the NARROWER answer (see visibility.WithPostCaps), so the
+// failure direction is a moderator's count reading low, never a
+// stranger's reading high.
+//
+// # The mature axis (#1118, ADR 0090)
+//
+// ⚠️ THIS QUERY DID NOT COMPOSE IT UNTIL #1118, and the omission was
+// live: an operator who featured a mature asset published it to every
+// reader, including one who had never opted in and one on an install
+// whose operator had switched mature content off. `visibility.Filter`
+// answers "who is ALLOWED" and says nothing about "who has OPTED IN" —
+// the two axes are independent by ADR 0090 §1 — so composing the tier
+// predicate was never enough, and the rail is not exempt from a rule
+// every other list surface applies.
+//
+// It is spliced on the ROW plane (the placement is dropped) rather than
+// the picture plane (the cover is blurred), matching what #921 chose for
+// the feed. A curated strip whose tiles blur out is an operator's
+// curation rendered as a wall of frosted glass; a curated strip that is
+// simply shorter is the same strip.
+//
+// FOUR SPLICES, one per table this query renders or counts from:
+//
+//	a   the asset subject          — the tile itself
+//	ca  the collection cover       — a mature cover is a mature picture,
+//	                                 and `collections` carries no mature
+//	                                 column of its own, so the cover is
+//	                                 where the rule can act
+//	ia  the counted resources      — so the number matches the set
+//	ip  the counted posts          — likewise, with the POST owner column
+//
+// All four take the same viewer, so they are all empty or all present
+// together, which is why one bound argument serves them and why it is
+// bound conditionally (see the note at the binding site).
+func ListPlacements(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	caller visibility.Caller,
-	limit int32,
-	ladder []string,
+	q PlacementQuery,
 ) ([]RailRow, error) {
+	caller := q.Caller
 	// $2 must be bound BEFORE the predicate fragments splice, so their
 	// placeholders start above it (the ADR 0063 discipline this file
 	// already follows for $1).
-	args := []any{limit, ladder} // $1, $2
+	args := []any{q.Limit, q.Ladder} // $1, $2
+
+	// The mature conjunct's owner placeholder. ⚠️ BOUND ONLY WHEN THE
+	// FRAGMENT REFERENCES IT — MatureFilterSQL returns the empty string
+	// for a qualified viewer and for an admin, and a parameter no
+	// statement mentions is 42P18 ("could not determine data type of
+	// parameter"), on every request by a QUALIFIED reader. That is the
+	// exact bug posts/list_page.go records at its own splice site; the
+	// note is repeated rather than referenced because the failure only
+	// shows on the arm a single-viewer test does not exercise.
+	//
+	// 0 is the anonymous sentinel and it is load-bearing: MatureFilterSQL
+	// wraps this in NULLIF(…, 0) so an anonymous caller cannot match a
+	// row whose owner column holds 0 as ITS OWNER.
+	matureOwner := int64(0)
+	if !caller.IsAnonymous {
+		matureOwner = caller.UserRef
+	}
+	matureArg := "$" + strconv.Itoa(len(args)+1)
+	matureAsset := visibility.MatureFilterSQL(
+		"a", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
+	matureCover := visibility.MatureFilterSQL(
+		"ca", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
+	matureCountAsset := visibility.MatureFilterSQL(
+		"ia", visibility.MatureOwnerColAsset, matureArg, q.Mature, q.MatureAdmin)
+	matureCountPost := visibility.MatureFilterSQL(
+		"ip", visibility.MatureOwnerColPost, matureArg, q.Mature, q.MatureAdmin)
+	if matureAsset != "" {
+		args = append(args, matureOwner)
+	}
+
+	// The surface. See PlacementQuery.BandID for why the two arms gate
+	// their audience on different rows and why that is one rule rather
+	// than two.
+	surfaceFrag := "f.band_id IS NULL AND " + ScopeVisibleSQL("f", caller)
+	if q.BandID != nil {
+		args = append(args, *q.BandID)
+		surfaceFrag = "f.band_id = $" + strconv.Itoa(len(args)) + "::uuid"
+	}
 
 	assetPred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
@@ -114,10 +295,60 @@ func ListPublicRail(
 	coverFrag, coverArgs := assetPred.ToSQL("ca", len(args))
 	args = append(args, coverArgs...)
 
+	// Fourth and fifth splices, for the two halves of the member count
+	// (#1110). The resource half is the SAME asset predicate a third
+	// time, aliased for the count's own join; the post half is the post
+	// read rule, which this query did not need before — a collection's
+	// cover comes from a post but the cover lateral gates the ASSET, and
+	// counting members means asking whether the caller may see each
+	// MEMBER.
+	countAssetFrag, countAssetArgs := assetPred.ToSQL("ia", len(args))
+	args = append(args, countAssetArgs...)
+
+	postPred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(q.PostCaps))
+	if err != nil {
+		return nil, fmt.Errorf("featured: post visibility filter: %w", err)
+	}
+	// Soft-delete NOT waived: a deleted post is not a member. Same shape
+	// collections.ComposeCovers splices for the same membership.
+	countPostFrag, countPostArgs := postPred.ToSQL("ip", len(args))
+	args = append(args, countPostArgs...)
+
 	// The predicate fragments arrive as " AND (...)", which is exactly
 	// what an ON clause wants appended.
 	sql := `SELECT f.id, f.subject_kind, f.subject_id, f.position,
        COALESCE(a.title, c.name, '')::text AS title,
+       -- The subject's owner, for the promo band's author chip (#1118).
+       -- A REF, never a name — see RailRow.OwnerUserRef. It rides the
+       -- same predicate-gated joins as the title, so a subject this
+       -- caller cannot see contributes no owner either; there is no
+       -- separate gate to keep in step.
+       COALESCE(a.owner_user_ref, c.owner_user_ref) AS owner_user_ref,
+       -- The subtitle, from the SAME join as the name above (#1110).
+       -- Read the header note before adding an ` + "`a.description`" + ` arm here:
+       -- an embargo asset is title-only on this surface by ADR 0020, and
+       -- its own join is the one that surfaces it, so an asset arm would
+       -- print the withheld half of a tile whose pixels are suppressed
+       -- three lines down.
+       COALESCE(c.description, '')::text AS subtitle,
+       -- The subtitle's fallback: members THIS caller can see. NULL —
+       -- not 0 — for an asset subject, because "no membership" and "an
+       -- empty membership" are different tiles.
+       CASE WHEN c.id IS NOT NULL THEN (
+              (SELECT count(*)
+                 FROM collection_posts icp
+                 JOIN posts ip ON ip.id = icp.post_id` + countPostFrag + matureCountPost + `
+                WHERE icp.collection_id = c.id
+                  AND icp.pinned = TRUE
+                  AND (icp.expires_at IS NULL OR icp.expires_at > NOW()))
+            + (SELECT count(*)
+                 FROM collection_resources icr
+                 JOIN assets ia ON ia.id = icr.asset_id` + countAssetFrag + matureCountAsset + `
+                WHERE icr.collection_id = c.id
+                  AND icr.pinned = TRUE
+                  AND (icr.expires_at IS NULL OR icr.expires_at > NOW()))
+       ) END::INTEGER AS item_count,
        -- Kept in lockstep with asset_file_hash: an id without a servable
        -- hash would have the client build a URL that 404s.
        CASE f.subject_kind
@@ -151,7 +382,7 @@ func ListPublicRail(
        END, false)::boolean AS asset_ladder_available
 FROM featured_items f
 LEFT JOIN assets a
-       ON f.subject_kind = 'asset' AND a.id = f.subject_id` + assetFrag + `
+       ON f.subject_kind = 'asset' AND a.id = f.subject_id` + assetFrag + matureAsset + `
 LEFT JOIN collections c
        ON f.subject_kind = 'collection' AND c.id = f.subject_id` + collFrag + `
 -- Hero-card fallback (ADR 0027): "falls back to the most-recent post in
@@ -178,7 +409,7 @@ LEFT JOIN LATERAL (
        SELECT ca.id, ca.file_hash
          FROM collection_posts cp
          JOIN posts p   ON p.id = cp.post_id
-         JOIN assets ca ON ca.id = p.cover_asset_id` + coverFrag + `
+         JOIN assets ca ON ca.id = p.cover_asset_id` + coverFrag + matureCover + `
         WHERE cp.collection_id = c.id
           AND ca.sensitivity = 'public'
           AND EXISTS (SELECT 1 FROM storage_variants sv
@@ -186,7 +417,21 @@ LEFT JOIN LATERAL (
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT 1
 ) cover ON true
-WHERE f.scope = 'public'
+-- The SURFACE, and for the rail arm its audience too (#1118). See
+-- PlacementQuery.BandID: the rail's own rows are the ones with no band,
+-- and leaving the band_id IS NULL conjunct off would have published every
+-- band card on the anonymous landing page the moment a band was
+-- curated — band rows carry the table's default scope, which the
+-- signed-in arm of ScopeVisibleSQL admits.
+WHERE ` + surfaceFrag + `
+  -- A 'team' placement (#1084) resolves neither join and is therefore
+  -- dropped here, which is the correct outcome and is stated so nobody
+  -- reads it as an oversight: a team tile belongs to the signed-in
+  -- teams rail (GET /featured/teams). Adding team subjects to this
+  -- query would put studio names on a surface that has never shown them
+  -- to logged-out readers — a visibility decision, not a rendering one,
+  -- and not one this change makes. ScopeVisibleSQL never admits the
+  -- 'team' scope either, so this holds for both arms.
   AND (a.id IS NOT NULL OR c.id IS NOT NULL)
 ORDER BY f.position ASC, f.created_at ASC
 LIMIT $1::INTEGER`
@@ -202,7 +447,7 @@ LIMIT $1::INTEGER`
 		var r RailRow
 		if err := rows.Scan(
 			&r.ID, &r.SubjectKind, &r.SubjectID, &r.Position,
-			&r.Title, &r.CoverAssetID,
+			&r.Title, &r.OwnerUserRef, &r.Subtitle, &r.ItemCount, &r.CoverAssetID,
 			&r.AssetFileHash, &r.AssetPreviewAvailable,
 			&r.AssetLadderAvailable,
 		); err != nil {

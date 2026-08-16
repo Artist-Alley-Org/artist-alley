@@ -27,6 +27,22 @@ embargo card reading *"this content is embargoed until YYYY-MM-DD"*. Every one
 of those describes what the tile LOOKS LIKE. None of them says anything about
 what the JSON carries, and for three releases the answer was "everything".
 
+⭐ *Further amended 2026-08-13 (#902, PR #1063).* The #899 narrowing above fixed what the
+**payload** carried. It left a third channel open, and "listed and identifiable" turned out to
+promise something on that channel too: the asset's own withheld title was still in its
+`search_text`, so **any caller could recover it word by word** — query a phrase only that title
+holds, watch the result total move 0→1, then walk the remaining tokens. Identifiable to the
+*reader* had quietly meant identifiable to the *index*.
+
+Every full-text surface over `assets` now ANDs the field-plane rule onto the match
+(`visibility.AssetSearchMatchSQL`; see ADR 0056 §4c). A `restricted` asset **still appears in an
+unfiltered browse with its blurred thumbnail and lock icon**, exactly as this section requires —
+it simply no longer answers text queries about words it does not show you.
+
+**The general form, worth carrying to the next tier decision:** a tier that *displays* something
+withheld has at least three channels to close — what the tile renders, what the JSON carries, and
+**what the index answers.** This ADR governed the first, #899 the second, #902 the third.
+
 Verified on a live build on 2026-08-04, signed in as a user with
 `capabilities: []` who owned none of the assets involved:
 `GET /api/v1/assets/{id}` on someone else's `restricted` asset returned **200**

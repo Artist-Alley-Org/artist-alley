@@ -35,7 +35,8 @@ import (
 //   - Provider != nil (sysconfig enabled + sidecar reachable): accepts
 //     the multipart upload, calls provider.EmbedImage → gets a CLIP
 //     visual query vector, queries asset_visual_embedding via cosine
-//     similarity, applies visibility.Filter, returns ranked results.
+//     similarity, applies the row AND content planes
+//     (filterVisibleAssetIDs), returns ranked results.
 //
 // Phase 1.16.B-3-followup — closes #183.
 type ByImageHandler struct {
@@ -170,10 +171,10 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Visibility floor. Anonymous callers see only public assets;
-	// authenticated callers see everything the identity can access.
-	identity := auth.IdentityFromContext(ctx)
-	visible, err := filterVisibleAssetIDs(ctx, h.Pool, identity, extractIDs(rows))
+	// Visibility floor — the row plane AND the content plane, for every
+	// caller (#1066). See filterVisibleAssetIDs.
+	caller, caps := byImageCaller(ctx)
+	visible, err := filterVisibleAssetIDs(ctx, h.Pool, caller, caps, extractIDs(rows))
 	if err != nil {
 		if h.Logger != nil {
 			h.Logger.LogAttrs(ctx, slog.LevelWarn, "search.by_image.visibility_failed",
@@ -241,64 +242,116 @@ func readAll(f interface {
 	return total, nil
 }
 
+// byImageCaller resolves the request identity into the pair the
+// visibility floor below needs. One place, so a future branch here
+// cannot quietly hand the filter a zero ContentCaps for a caller who
+// holds content.read.all and turn their reverse-image search into an
+// empty page.
+func byImageCaller(ctx context.Context) (visibility.Caller, visibility.ContentCaps) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return visibility.NewCaller(nil), visibility.ContentCaps{}
+	}
+	ref := id.UserRef
+	return visibility.NewCaller(&ref),
+		visibility.ResolveContentCaps(func(code string) bool { return id.Can(code) })
+}
+
 // filterVisibleAssetIDs applies the shared visibility floor to a
-// set of candidate asset IDs.
+// set of candidate asset IDs — ONE query, for every caller.
 //
-// The anonymous branch now delegates to visibility.Filter (#210,
-// closing the #185 follow-up). It used to hand-roll
+// # The row plane (#210)
+//
+// The anonymous floor delegates to visibility.Filter, closing the #185
+// follow-up. It used to hand-roll
 // `deleted_at IS NULL AND sensitivity = 'public'` inline — a genuine
 // second expression of the anonymous asset floor, the exact class
 // ADR 0063's single predicate exists to eliminate.
 //
-// Delegating also TIGHTENS this path. The predicate's anonymous asset
+// Delegating also TIGHTENED this path: the predicate's anonymous asset
 // branch requires status='active' AND processing_status='ready' on top
 // of the two conjuncts this file checked, so a public-but-draft or a
-// public-but-still-processing asset now correctly drops out of
-// reverse-image results, matching every other anonymous read path. That
-// is a behaviour change, not a pure refactor — see the PR.
+// public-but-still-processing asset correctly drops out of reverse-image
+// results, matching every other anonymous read path.
 //
-// The authenticated branch is unchanged: it returns every candidate id
-// and lets the downstream asset-detail lookup filter, which is the
-// deliberately-deferred authenticated sensitivity rule (#288 / ADR
-// 0064), out of scope here.
-func filterVisibleAssetIDs(ctx context.Context, pool *pgxpool.Pool, identity *auth.Identity, ids []uuid.UUID) (map[uuid.UUID]struct{}, error) {
+// # The content plane (#1066)
+//
+// There used to be a second branch here that returned EVERY candidate id
+// for an authenticated caller, with a comment saying row-level checks
+// happen downstream, "same as the text-search handler". Both halves were
+// wrong by the time #1066 was filed. #902 made the text handler gate the
+// MATCH itself, so the parity that comment asserted no longer held; and
+// the downstream check it deferred to withholds the asset's FIELDS,
+// which was never the disclosure — the RANKING is.
+//
+// Reverse-image search hands the caller a candidate picture and asks
+// which assets resemble it. An asset coming back at 0.94 for a picture
+// the caller supplied tells them what that asset looks like, and it
+// tells them exactly as much whether or not its title, thumbhash and
+// bytes were withheld from the payload. An embedding is a derived copy
+// of the image (see vector.Query for the long form), so the gate is
+// visibility.ContentReadableSQL — the same plane that decides the bytes
+// and the blur.
+//
+// Anonymous behaviour is unchanged by that addition: for a caller with
+// no ref and no caps the content plane reduces to `sensitivity='public'`,
+// which the row predicate's anonymous branch already demanded. It is
+// composed for every caller anyway rather than branching, because a
+// branch is what let the authenticated path sit ungated for two phases.
+func filterVisibleAssetIDs(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	caller visibility.Caller,
+	caps visibility.ContentCaps,
+	ids []uuid.UUID,
+) (map[uuid.UUID]struct{}, error) {
 	visible := make(map[uuid.UUID]struct{}, len(ids))
 	if len(ids) == 0 {
 		return visible, nil
 	}
-	if identity == nil {
-		// $1 is the id set; the predicate's own args start at $2. Its
-		// anonymous asset branch binds none, but composing on the
-		// offset keeps this correct if that ever changes.
-		pred, err := visibility.Filter(ctx, visibility.EntityAsset, visibility.NewCaller(nil))
-		if err != nil {
-			return nil, fmt.Errorf("visibility filter: %w", err)
-		}
-		visFrag, visArgs := pred.ToSQL("", 1)
-		sql := `SELECT id FROM assets WHERE id = ANY($1::uuid[])` + visFrag
-		args := append([]any{ids}, visArgs...)
-
-		rows, err := pool.Query(ctx, sql, args...)
-		if err != nil {
-			return nil, fmt.Errorf("visibility filter: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id uuid.UUID
-			if err := rows.Scan(&id); err != nil {
-				return nil, err
-			}
-			visible[id] = struct{}{}
-		}
-		return visible, rows.Err()
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
+	if err != nil {
+		return nil, fmt.Errorf("visibility filter: %w", err)
 	}
-	// Authenticated caller — return all requested IDs. Row-level
-	// checks happen downstream when the frontend fetches the
-	// asset-detail projections. Same as the text-search handler.
-	for _, id := range ids {
+	// $1 is the id set. $2 is the caller ref and is bound ONLY when the
+	// readability fragment names it — ContentReadableSQL folds to empty
+	// for a system.admin / content.read.all caller, and pgx rejects a
+	// statement bound with more args than it names. The predicate's own
+	// args follow at whatever offset that leaves.
+	args := []any{ids}
+	readFrag := visibility.ContentReadableSQL("", "$2", caps)
+	// #1117 — the mature axis. Reverse image search is the sharpest form
+	// of the derived-copy problem on this axis: the caller supplies a
+	// picture and the endpoint answers with how close the catalogue comes
+	// to it, so a mature asset surfacing here has had its APPEARANCE
+	// disclosed to a viewer who never opted in. Same drop-not-withhold
+	// shape #1066 chose for the restricted case one line up.
+	//
+	// Shares $2, appended when EITHER fragment names it — both fold
+	// independently, so binding on one alone would leave the other's
+	// placeholder unbound.
+	matureFrag := visibility.MatureFilterSQL("", visibility.MatureOwnerColAsset,
+		"$2", visibility.MatureFromContext(ctx), caps.SystemAdmin)
+	if readFrag != "" || matureFrag != "" {
+		args = append(args, caller.UserRef)
+	}
+	visFrag, visArgs := pred.ToSQL("", len(args))
+	sql := `SELECT id FROM assets WHERE id = ANY($1::uuid[])` + readFrag + matureFrag + visFrag
+	args = append(args, visArgs...)
+
+	rows, err := pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("visibility filter: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
 		visible[id] = struct{}{}
 	}
-	return visible, nil
+	return visible, rows.Err()
 }
 
 func extractIDs(rows []visualstore.SearchByVisualEmbeddingRow) []uuid.UUID {

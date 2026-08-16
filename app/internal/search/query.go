@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
@@ -89,6 +90,26 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	types := q.Types
 	if len(types) == 0 {
 		types = AllHitTypes()
+	}
+
+	// #910 — the PARENT gate for a container-scoped search.
+	//
+	// `collection:<id>` names an entity with its own read rule, unlike
+	// the five dimensions that describe the row. Checked here rather than
+	// at the handler edge because this is the single door every execution
+	// goes through — /search, save-as-collection and the saved-search
+	// notifier all land on Run — and a grant that lapsed between saving a
+	// search and running it must stop the scoped query the same way it
+	// stops a direct read. See [facet.Selection.Authorize] for why the
+	// answer is an empty page rather than a 403, and why an unscoped
+	// search pays nothing for this.
+	allowed, err := q.Filters.Authorize(ctx, e.Pool,
+		visibility.NewCaller(q.CallerUserRef), q.Caps.Checker())
+	if err != nil {
+		return QueryResult{}, fmt.Errorf("search: authorize filters: %w", err)
+	}
+	if !allowed {
+		return QueryResult{Hits: []Hit{}, TypesMatched: types}, nil
 	}
 
 	// The per-entity queries each pull `limit * some multiplier`
@@ -258,7 +279,20 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 		Model:    q.SimilarityHintModel,
 		Modality: q.SimilarityHintModality,
 	}
-	vecHits, err := vector.Query(ctx, e.Pool, anchor, visibility.NewCaller(q.CallerUserRef), threshold, limit*VectorOverfetchMultiplier)
+	// #1066 — q.Caps, not just the ref. The kNN is gated at the CONTENT
+	// plane as well as the row plane, so a content.read.all holder still
+	// gets a ranked catalogue and a stranger stops ranking assets whose
+	// picture they may not read. Caps travel on the Query for the same
+	// reason the other two capability sets do: the result cache keys on
+	// the Query value alone, and a capability the key cannot see is a
+	// stale unredacted page after a revoke (cache.go).
+	// #1117 — and q.Mature, for the identical reason one rung up: the
+	// embedding is a derived copy of the picture, so a disqualified
+	// viewer must not rank against it. It rides the Query and therefore
+	// the cache key, which is what keeps an opted-in reader's warm
+	// ranking from being served to an opted-out one.
+	vecHits, err := vector.Query(ctx, e.Pool, anchor,
+		visibility.NewCaller(q.CallerUserRef), q.Caps, q.Mature, threshold, limit*VectorOverfetchMultiplier)
 	if err != nil {
 		return err
 	}
@@ -291,11 +325,19 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 
 	// Enrich vector-only hits with their asset row projection so
 	// the response body carries titles + timestamps.
+	//
+	// #907 — this is also where the facet selection reaches the vector
+	// path. A kNN pass is ranked by embedding proximity and knows
+	// nothing about tags or extensions, so without the filter on the
+	// enrich query a `similar_to:` search would quietly re-admit every
+	// row the caller had just filtered out. The BM25 half needs no such
+	// care: those rows came back from runAssets, already filtered.
 	if len(newRows) > 0 {
-		if err := e.enrichAssetHits(ctx, q, newRows); err != nil {
+		kept, err := e.enrichAssetHits(ctx, q, newRows)
+		if err != nil {
 			return err
 		}
-		*hits = append(*hits, newRows...)
+		*hits = append(*hits, kept...)
 	}
 
 	// For BM25-hits WITHOUT vector match (VectorScore=0), rescale
@@ -330,13 +372,37 @@ func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
 // asset hits that arrived via the vector path (no BM25 row scan).
 // One IN-clause query keeps the round-trip bounded regardless of
 // how many vector-only hits arrived.
-func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error {
+//
+// Returns the SURVIVING hits: a row the projection query did not hand
+// back is dropped rather than emitted half-filled. Before #907 that
+// could only happen when an asset was deleted between the two queries
+// (and produced a blank card); now it is also how the facet selection
+// removes a vector candidate, so the drop is load-bearing.
+func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) ([]Hit, error) {
 	if len(hits) == 0 {
-		return nil
+		return nil, nil
 	}
 	ids := make([][16]byte, 0, len(hits))
 	for _, h := range hits {
 		ids = append(ids, h.ID)
+	}
+	// $1=ids, $2=caller ref, $3=ladder; the selection continues at $4.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityAsset, "assets", 3)
+	if !satisfiable {
+		return nil, nil
+	}
+	if !q.Filters.Empty() {
+		// The same readability conjunct runAssets applies under a
+		// filter, for the same reason — see the long comment there.
+		//
+		// #1056 — and on the same PLANE as it, which is why this moved in
+		// the same change. The vector/hybrid path reaches the projection
+		// with rows the BM25 path never text-matched, so a narrower
+		// conjunct here would drop a filtered hit for the one caller the
+		// facet rail had just counted: the team-scoped assets.admin
+		// holder. Three clauses, one plane.
+		selFrag += visibility.FieldsReadableSQL("assets", "$2",
+			visibility.NewCaller(q.CallerUserRef), q.Caps, mutCapsOf(q))
 	}
 	// The readability columns ride along in the same pass (#899). This
 	// query has no visibility predicate of its own — it trusts
@@ -350,14 +416,14 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 	rows, err := e.Pool.Query(ctx, `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
-		       `+visibility.FieldsColumnsSQL("assets", "$2")+`,
+		       `+visibility.FieldsColumnsSQL("assets", "$2", caller)+`,
 		       `+assetCardColumnsSQL("assets", "$3")+`
 		  FROM assets
 		 WHERE id = ANY($1::UUID[])
-		   AND deleted_at IS NULL
-	`, ids, callerRefOf(q), e.ladder(ctx))
+		   AND deleted_at IS NULL`+selFrag+`
+	`, append([]any{ids, callerRefOf(q), e.ladder(ctx)}, selArgs...)...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 	byID := make(map[[16]byte]Hit, len(hits))
@@ -381,7 +447,7 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 			&fr.TeamID, &fr.IsTeamMember, &ownerName,
 		}, card.scanDest()...)
 		if err := rows.Scan(dest...); err != nil {
-			return err
+			return nil, err
 		}
 		fr.ApplyMutationCaps(mut)
 		if !visibility.FieldsReadable(fr, caller, caps) {
@@ -408,18 +474,22 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
+	kept := make([]Hit, 0, len(hits))
 	for i, h := range hits {
 		enriched, ok := byID[h.ID]
 		if !ok {
+			// Not in the projection: soft-deleted between the two
+			// queries, or excluded by the facet selection above. Either
+			// way this hit has no row behind it.
 			continue
 		}
 		if enriched.Restricted {
 			// Replace the WHOLE hit rather than copying the readable
 			// fields across — the scores are carried over explicitly by
 			// withheldHit and nothing else is.
-			hits[i] = withheldHit(hits[i], enriched.OwnerDisplayName)
+			kept = append(kept, withheldHit(hits[i], enriched.OwnerDisplayName))
 			continue
 		}
 		hits[i].Title = enriched.Title
@@ -429,8 +499,9 @@ func (e *Engine) enrichAssetHits(ctx context.Context, q Query, hits []Hit) error
 		hits[i].CreatedAt = enriched.CreatedAt
 		hits[i].UpdatedAt = enriched.UpdatedAt
 		hits[i].ExtraJSON = enriched.ExtraJSON
+		kept = append(kept, hits[i])
 	}
-	return nil
+	return kept, nil
 }
 
 // DefaultHybridWeight is the fallback when the caller doesn't
@@ -500,51 +571,155 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 		return nil, 0, err
 	}
 	// $1=query, $2=limit, $3=caller ref, $4=configured ladder,
-	// predicate args start at $5.
+	// predicate args start at $5, and the facet selection's args
+	// continue after those.
 	visFrag, visArgs := pred.ToSQL("", 4)
+	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityAsset, "assets", 4+len(visArgs))
+	if !satisfiable {
+		return nil, 0, nil
+	}
+	// #907 — THE FILTER READABILITY CONJUNCT, and it applies ONLY under
+	// an active filter.
+	//
+	// A FILTER asks a question about a COLUMN. `extension:png` asks
+	// "which of these is a png", and answering it about a row whose
+	// columns are withheld hands over the very field #899 removed from
+	// that row's payload — with a narrow enough selection, the filter IS
+	// the item. It is the same judgement the facet counts already make
+	// one level up (see facet.buildAssetVisibilityAppendedSQL), and it
+	// must be the same one, or the count on the rail would stop equalling
+	// the result set that ticking it returns.
+	//
+	// The FIELD plane, matching the aggregators' clause exactly (#1056).
+	//
+	// It was ContentCaps only until then, and the note here recorded why:
+	// a team-scoped `assets.admin` holder is owed the FIELDS of assets
+	// they administer (#939, ADR 0064), so the conjunct was narrower than
+	// the holder's actual rights — deliberately, because widening it
+	// alone would have made this clause disagree with the facet counts,
+	// and the rail's number must equal the size of the set that ticking
+	// it returns. #1056 put MutationCaps on facet.Request and moved BOTH
+	// clauses to FieldsReadableSQL in one change. They must keep moving
+	// together: a filter that admits a row the count excluded shows
+	// `png 7` and returns 8.
+	//
+	// The MATCH conjunct below has carried the mutation disjunct since
+	// #902, so this brings the filter into line with it too — all three
+	// asset clauses on one plane.
+	if !q.Filters.Empty() {
+		selFrag += visibility.FieldsReadableSQL("assets", "$3", caller, q.Caps, mut)
+	}
+
+	// #902 — THE MATCH CONJUNCT, and it applies ALWAYS.
+	//
+	// The text match is itself a disclosure channel: `@@` decides in SQL
+	// whether the row comes back, so a caller who searches a phrase that
+	// occurs only in a restricted asset's title watches total_count move
+	// 0→1 and has recovered a word #899 withheld — then walks the rest of
+	// the title one token at a time. Withholding the payload after the
+	// fact cannot close that; only the match can. visibility's
+	// AssetSearchMatchSQL is the single place the rule lives, and browse
+	// (`/assets?q=`) composes its `?q=` from the SAME fragment, because a
+	// fix confined to this package would leave the identical recovery
+	// available one endpoint over.
+	//
+	// What does NOT change: ADR 0064 keeps the restricted row LISTED, and
+	// an unfiltered browse still renders it as a placeholder with its
+	// owner's name. total_count keeps its policy of counting every row
+	// the query MATCHED, whether or not the caller can open it — it is
+	// what "matched" means that narrowed, and it narrowed identically for
+	// the hits and the count, so the number and the array still agree.
+	// The absence is not a fresh oracle: a row the caller cannot read
+	// matches no query, for EVERY query equally, which is the same
+	// value-independence argument the filter conjunct above rests on.
+	matchFrag := visibility.AssetSearchMatchSQL(
+		"assets", `plainto_tsquery('english', $1)`, "$3",
+		caller, q.Caps, mut)
+
+	// #1117 — THE MATURE CONJUNCT, and it is DELIBERATELY NOT INSIDE
+	// matchFrag.
+	//
+	// Folding it into AssetSearchMatchSQL would have been the tidier
+	// diff and it is the wrong shape twice over. First, that fragment is
+	// shared with browse (`/assets?q=`), where it is wrapped in
+	// `($4 IS NULL OR …)` — so a mature conjunct riding inside it would
+	// apply only when the caller typed something, and a disqualified
+	// viewer would stop FINDING mature work by name while still being
+	// handed it on unfiltered browse. Second, ADR 0090 §1 is explicit
+	// that the two axes are ANDed and never merged: `sensitivity` answers
+	// who is ALLOWED and `mature` answers who has OPTED IN, and putting
+	// the second inside the function named for the first is how a reader
+	// six months from now concludes there is one combined rule.
+	//
+	// So it is a sibling term, appended beside visFrag in BOTH statements
+	// below. Both, not one: the count and the hits must narrow together
+	// or `total_count` becomes an oracle the array is not — a
+	// disqualified viewer would see the number move 0→1 for a phrase that
+	// occurs only in a mature asset's title, which is #902's recovery
+	// attack with a different withheld value.
+	//
+	// `$3` is the caller ref, already bound and already referenced as a
+	// tautology by the count statement, so this adds no placeholder and
+	// no renumbering.
+	matureFrag := visibility.MatureFilterSQL(
+		"assets", visibility.MatureOwnerColAsset, "$3",
+		q.Mature, q.Caps.SystemAdmin)
 
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score,
-		       ` + visibility.FieldsColumnsSQL("assets", "$3") + `,
+		       ` + visibility.FieldsColumnsSQL("assets", "$3", caller) + `,
 		       ` + assetCardColumnsSQL("assets", "$4") + `
 		  FROM assets
-		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+		 WHERE ` + matchFrag + visFrag + matureFrag + selFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM assets
-			 WHERE search_text @@ plainto_tsquery('english', $1)
+			 WHERE ` + matchFrag + `
 			   -- $3 is the caller ref and $4 the configured preview
-			   -- ladder, read only by the hits query's readability and
-			   -- card columns. Both are REFERENCED here (as tautologies)
-			   -- rather than dropped, because pgx rejects a statement
-			   -- bound with more args than it names and the alternative —
-			   -- renumbering the shared predicate fragment per statement —
-			   -- is exactly the off-by-one ADR 0063's placeholder
-			   -- discipline exists to avoid.
+			   -- ladder. $4 is read only by the hits query's card
+			   -- columns; $3 is read by the match fragment above — but
+			   -- ONLY when that fragment renders a readability conjunct
+			   -- at all, and it renders NOTHING for a system.admin /
+			   -- content.read.all / global assets.admin caller (#902).
+			   -- So both are REFERENCED here as tautologies rather than
+			   -- dropped, because pgx rejects a statement bound with more
+			   -- args than it names and the alternative — renumbering the
+			   -- shared predicate fragment per statement — is exactly the
+			   -- off-by-one ADR 0063's placeholder discipline exists to
+			   -- avoid. Do not "clean these up": for the caps-holding
+			   -- caller they are the only mention $3 gets.
 			   AND ($3::BIGINT IS NULL OR TRUE)
-			   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + `
+			   AND ($4::TEXT[] IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`
 	// Compose args: $1=query text, $2=limit, $3=caller ref, then
-	// visibility args. The COUNT does not read $3 but still binds it, so
-	// the shared predicate fragment's placeholder indexes line up in
-	// both statements (ADR 0063 placeholder discipline).
+	// visibility args. Both statements bind $3 whether or not they name
+	// it, so the shared predicate fragment's placeholder indexes line up
+	// in both (ADR 0063 placeholder discipline).
 	//
-	// total_count deliberately counts rows the caller cannot open. ADR
-	// 0064 keeps those rows in the result set as placeholders, so a
-	// total that excluded them would disagree with the array beside it
-	// and would make the count itself a readability oracle — "the total
-	// dropped by one, so that row is restricted". Existence is already
-	// disclosed by decision 1; the count discloses nothing further.
+	// total_count counts every row the query MATCHED, readable or not —
+	// it does not second-guess the match. That is the same policy it has
+	// always had; what #902 changed is the definition of "matched", and
+	// it changed it in the SAME fragment for the hits and the count, so
+	// the number and the array still agree and the count still cannot
+	// become an oracle the array is not already.
+	//
+	// #907 — the selection's args ride on the END of both lists, after
+	// the predicate's, because selFrag numbered its placeholders from
+	// 4+len(visArgs). Both statements splice the SAME two fragments in
+	// the SAME order, which is what keeps the indexes aligned across
+	// them; the tautologies above are load-bearing for exactly that
+	// reason and must not be "cleaned up".
 	ladder := e.ladder(ctx)
-	hitsArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q), ladder}, visArgs...)
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	hitsArgs := append([]any{q.Text, limit, callerRefOf(q), ladder}, predArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1, callerRefOf(q), ladder}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -643,6 +818,22 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	if err != nil {
 		return nil, 0, err
 	}
+	// #907 — a collection carries none of the five facet dimensions: no
+	// file extension, no asset type, no sensitivity tier, and its tags
+	// live on the assets inside it rather than on the row. So ANY active
+	// selection makes this entity unsatisfiable and it drops out of the
+	// page entirely — zero hits AND zero count, never "no constraint".
+	//
+	// This is the seam #910 (search inside a collection) opens: that
+	// feature is a `collection` DIMENSION on the asset and post
+	// branches, not a special case here. Immich models exactly that —
+	// `albumIds` is an ordinary filter predicate beside the rest —
+	// while ResourceSpace writes a `!collection<id>` parser special to
+	// reach the same place. One FacetType const and one case in
+	// facet.dimensionSQL, and nothing in this function moves.
+	if _, _, ok := q.Filters.SQL(visibility.EntityCollection, "c", 0); !ok {
+		return nil, 0, nil
+	}
 	visFrag, visArgs := pred.ToSQL("c", 2) // $1=query, $2=limit index reserved for hits query
 
 	sqlHits := `
@@ -669,6 +860,7 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	}
 	defer rows.Close()
 	hits := make([]Hit, 0, limit)
+	visByID := make(map[uuid.UUID]string, limit)
 	for rows.Next() {
 		var (
 			id      uuid.UUID
@@ -694,15 +886,48 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 			CreatedAt:      created,
 			UpdatedAt:      updated,
 			RawScore:       score,
-			// #850 — the one field CollectionCard reads that the hit did
-			// not already carry. Safe to ship unconditionally: the
-			// predicate above already decided this caller may see the
-			// collection, and its visibility tier is the reason why.
-			ExtraJSON: collectionCardExtra(vis),
+			// The `extra` bag is built AFTER this loop, once the whole
+			// page's ids are known — its covers half is one query for
+			// the page (#1026) and cannot be answered per row. The
+			// visibility tier this hit contributes to it is parked in
+			// visByID below.
+			ExtraJSON: nil,
 		})
+		visByID[id] = vis
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
+	}
+	// The mosaic covers for the whole page in ONE query (#1026), after
+	// the row loop rather than inside it: composing per hit would be a
+	// round trip per card on a surface that already runs five entity
+	// queries in parallel. Same caller inputs the predicate above used,
+	// and every part of it is already in the result cache key.
+	//
+	// #1147 — q.Mature is the FOURTH, and it has to come from the Query
+	// rather than the context: this runs inside the Engine, which is
+	// reached from the saved-search executor and the IIIF content-search
+	// handler as well as the HTTP edge, and visibility.MatureFromContext
+	// would answer "disqualified" for the ones that carry no request
+	// context. Query.Mature is also already a component of the result
+	// cache key (visibility.MatureViewer.CacheKey via keyForQuery), so a
+	// mosaic composed under one viewer cannot be replayed to another.
+	if len(hits) > 0 {
+		ids := make([]uuid.UUID, 0, len(hits))
+		for _, h := range hits {
+			ids = append(ids, h.ID)
+		}
+		covers, err := collections.ComposeCovers(ctx, e.Pool,
+			visibility.NewCaller(q.CallerUserRef), q.Caps, q.PostCaps, q.Mature, ids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for i := range hits {
+			// #850's visibility tier is safe to ship unconditionally:
+			// the predicate above already decided this caller may see
+			// the collection, and its tier is the reason why.
+			hits[i].ExtraJSON = collectionCardExtra(visByID[hits[i].ID], covers[hits[i].ID])
+		}
 	}
 	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
@@ -724,7 +949,31 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	if err != nil {
 		return nil, 0, err
 	}
-	visFrag, visArgs := pred.ToSQL("", 2)
+	// $1=query text, $2=limit, $3=caller ref (bound for the mature
+	// conjunct below), predicate args from $4.
+	visFrag, visArgs := pred.ToSQL("", 3)
+	// #907 — a post satisfies exactly one facet dimension, `tag`, via
+	// post_tags. Any selection naming another one drops posts from the
+	// page. No content-plane conjunct here: the post read rule the
+	// predicate above composes IS the post plane, and unlike an asset a
+	// post has no separate field-withholding tier for its tags.
+	selFrag, selArgs, satisfiable := q.Filters.SQL(visibility.EntityPost, "posts", 3+len(visArgs))
+	if !satisfiable {
+		return nil, 0, nil
+	}
+	// #1117 — the mature axis on the post row plane (ADR 0090 §3). The
+	// column is `posts.mature`, DERIVED by trigger from the members (a
+	// post is mature iff any member asset is), so this reads a maintained
+	// value rather than correlating a subquery per row — ADR 0090 §4.
+	//
+	// The owner column is `author_user_ref` here and `owner_user_ref` on
+	// assets, which is exactly why MatureFilterSQL takes it as a
+	// parameter: hardcoding either would have produced a conjunct
+	// referencing a column the other table does not have, and the surface
+	// wired second would have found it at runtime.
+	matureFrag := visibility.MatureFilterSQL(
+		"posts", visibility.MatureOwnerColPost, "$3",
+		q.Mature, q.Caps.SystemAdmin)
 
 	// #850 — the card fields. `cover_asset_id` alone was never enough to
 	// render a tile: a post with no explicit cover shows its FIRST member,
@@ -751,19 +1000,37 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 		         WHERE pa.post_id = posts.id) AS member_count,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM posts
-		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+		 WHERE search_text @@ plainto_tsquery('english', $1)
+		   -- $3 is the caller ref, read ONLY by the mature conjunct, and
+		   -- that conjunct renders NOTHING for a qualified viewer or a
+		   -- system.admin. Referenced as a tautology so the statement
+		   -- names every argument it is bound with — pgx rejects the
+		   -- alternative, and renumbering the shared predicate fragment
+		   -- per statement is the off-by-one ADR 0063's placeholder
+		   -- discipline exists to avoid.
+		   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM posts
-			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 WHERE search_text @@ plainto_tsquery('english', $1)
+			   AND ($3::BIGINT IS NULL OR TRUE)` + visFrag + matureFrag + selFrag + `
 			 LIMIT $2
 		) x
 	`
-	hitsArgs := append([]any{q.Text, limit}, visArgs...)
-	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	predArgs := append(append([]any{}, visArgs...), selArgs...)
+	// The caller ref, or 0 for anonymous. ZERO IS THE SENTINEL AND IT IS
+	// LOAD-BEARING: MatureFilterSQL wraps it in NULLIF(…, 0) so an
+	// anonymous caller cannot match a row whose author column happens to
+	// hold 0 as its owner.
+	var matureOwner int64
+	if q.CallerUserRef != nil {
+		matureOwner = *q.CallerUserRef
+	}
+	hitsArgs := append([]any{q.Text, limit, matureOwner}, predArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1, matureOwner}, predArgs...)
 	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err

@@ -38,7 +38,7 @@
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { DEFAULT_TILE_SIZES } from '$stores/browseView.svelte';
   import { clampRatio, MASONRY_MIN_TILE_REM } from './cardAsset';
-  import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
+  import { isDocExt } from './viewers/controller';
   import {
     loadSpriteCues,
     cueBackgroundStyle,
@@ -155,6 +155,23 @@
      *  tile with full chrome, and reading the mode in here is what
      *  #640 deliberately avoided. */
     compact?: boolean;
+    /** A CSS colour to paint the letterbox matte with, instead of the
+     *  neutral `bg-thumb-matte` token (#1136).
+     *
+     *  Thumbnail view passes a colour SAMPLED FROM THE IMAGE (see
+     *  `thumbhashMatteColor`), which is the reference panel's own
+     *  treatment and the detail the prior-art notes flagged as worth
+     *  taking: on a shelf of mixed-aspect work it is the difference
+     *  between a wall of grey rectangles containing pictures and a wall
+     *  that reads as the pictures.
+     *
+     *  ⚠️ It paints the FRAME only, never the fallback plates inside it.
+     *  The typed-doc card, the icon placeholder and the restricted plate
+     *  are GENERATED artwork with their own designed backgrounds; tinting
+     *  those would colour a thing that is not a photograph after a
+     *  photograph it is not. Null / undefined ⇒ the neutral, which is
+     *  every other mode and every asset with no thumbhash. */
+    matteColor?: string | null;
     /** Recorded SOURCE dimensions for this asset, or null (#640). These
      *  are what let `variableAspect` reserve the tile's height before a
      *  single byte is requested — the difference between a wall that is
@@ -207,6 +224,7 @@
     variableAspect = false,
     ratioFloor = null,
     compact = false,
+    matteColor = null,
     pixelWidth = null,
     pixelHeight = null,
     titleAdjacent = false,
@@ -265,8 +283,6 @@
   });
 
   const isDoc = $derived(isDocExt(fileExtension));
-  const isVideo = $derived(isVideoExt(fileExtension));
-  const is3D = $derived(is3DExt(fileExtension));
 
   // Render the <img> only when the server confirms a servable col for
   // this caller (preview_available, #471) and the asset actually has
@@ -458,6 +474,13 @@
 
   let cues = $state<SpriteCue[]>([]);
   let spriteFrame = $state(0);
+  /** The frame box the pointer's x is measured against (#1142). The
+   *  CARD's box, not the scrub layer's: the scrub layer is sized to the
+   *  cue's aspect and can be narrower or wider than the tile, so
+   *  measuring against it would make the mapping depend on the clip's
+   *  shape — a 2.35:1 cell in a square tile would reach its last frame
+   *  before the pointer reached the tile's edge. */
+  let frameEl = $state<HTMLDivElement | null>(null);
   // The sheet's own pixel size, measured off the bytes we are about to
   // paint. Needed because a cue's rect is in SHEET pixels and CSS
   // background percentages are relative to the whole image; measuring
@@ -514,18 +537,75 @@
   // rotated phone clip, the same trap the backend avoids.
   const spriteCellRatio = $derived(spriteCue ? spriteCue.w / spriteCue.h : 16 / 9);
 
-  // Run the scrub only while the card is hovered. The effect owns the
-  // interval so it is torn down on unhover / unmount.
+  // ── Position-based scrub (#1142) ─────────────────────────────────
+  //
+  // THE POINTER'S X POSITION IS THE TIMELINE. `fraction = x / width`
+  // picks the frame, so moving left-to-right plays forward,
+  // right-to-left plays in reverse, holding still shows that frame, and
+  // entering at 75% starts at 75% — all four behaviours from one
+  // mapping rather than four cases.
+  //
+  // What this REPLACES is a 120ms `setInterval` that advanced
+  // `spriteFrame` and wrapped. That is why the old scrub played one
+  // direction only, ignored where the pointer was, and kept moving when
+  // it stopped: the animation had no input.
+  //
+  // ⚠️ THE SOURCE IS A SPRITE SHEET, NOT A `<video>`, AND THAT ANSWERS
+  // THE ISSUE'S OPEN QUESTION. #1142 asks which source the scrub drives
+  // and says to throttle seeks if it is a video element, because
+  // Chromium queues seek storms. It is neither: this layer paints ONE
+  // `background-position` over `sprites.jpg`, with the cell rects coming
+  // from `sprites.vtt` (see spriteCues.ts). So
+  //
+  //   * position maps to the NEAREST CUE and snapping is correct rather
+  //     than a compromise — there are only `cues.length` frames and no
+  //     intermediate state to interpolate toward;
+  //   * there is no seek to throttle. There is no decoder, no buffering
+  //     and no async work of any kind on the hot path — the whole cost
+  //     of a pointer move is one integer compare and, at most, one
+  //     reactive assignment.
+  //
+  // rAF coalescing is therefore NOT used, and its absence is deliberate
+  // rather than an omission. A pointermove burst already collapses here:
+  // `spriteFrame` is only ASSIGNED when the computed index actually
+  // changes, so a sweep across a 265px tile with 60 cues writes at most
+  // 60 times no matter how many events fire, and Svelte does the rest.
+  // Adding rAF would defer the paint by a frame to save nothing.
+  function scrubTo(clientX: number) {
+    const n = cues.length;
+    if (n === 0 || !frameEl) return;
+    const rect = frameEl.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    // Clamp before scaling. A pointer can sit a fraction of a pixel
+    // outside the box during a fast sweep, and an unclamped fraction
+    // would index past the end of the cue list.
+    const f = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    // `n - 1` so the right EDGE lands on the last frame rather than one
+    // past it, and `round` so the middle of the card is the middle
+    // frame — the issue's stated acceptance. With `floor`, frame 0 would
+    // own twice the width of every other frame and the centre would sit
+    // one frame early.
+    const idx = Math.round(f * (n - 1));
+    if (idx !== spriteFrame) spriteFrame = idx;
+  }
+
+  // TOUCH AND PEN ARE EXCLUDED AT THE SOURCE (#1142: "touch: no scrub").
+  // A touch drag emits `pointermove` with `pointerType === 'touch'`, so
+  // without this a scroll gesture over a card would scrub it. Tap-to-open
+  // is unchanged because this handler never calls preventDefault.
+  function onPointerMove(e: PointerEvent) {
+    if (e.pointerType !== 'mouse') return;
+    scrubTo(e.clientX);
+  }
+
+  // Reset when the pointer leaves, so the next hover starts from the
+  // position it enters at rather than inheriting the last one. Keyboard
+  // focus never sets `hovering`, so a focused card still shows the
+  // poster frame — the existing behaviour the issue asks to preserve.
   $effect(() => {
     if (!hovering || cues.length === 0 || reducedMotion) {
       spriteFrame = 0;
-      return;
     }
-    const n = cues.length;
-    const iv = setInterval(() => {
-      spriteFrame = (spriteFrame + 1) % n;
-    }, 120);
-    return () => clearInterval(iv);
   });
 </script>
 
@@ -579,10 +659,31 @@
   tests and the layout measurements address it by this rather than by a
   Tailwind class that a refactor is free to rename.
 -->
+<!--
+  a11y: this div carries `onpointermove` and no role, and that is
+  correct rather than an oversight (#1142).
+
+  The handler drives the hover SCRUB — a decorative preview over a card
+  whose actual interactive element is the stretched `<a>` that covers
+  it. There is no role that describes "the box a mouse position is
+  measured against": `button` would announce a control that does not
+  exist, and `img` would announce the still underneath, which already
+  has its own `<img>` with alt text. Adding either would make the card
+  read WORSE to a screen reader in exchange for silencing a lint.
+
+  Nothing is lost by not having one. The scrub is mouse-only by
+  construction (`pointerType !== 'mouse'` returns early), so no keyboard
+  or touch user can reach this behaviour, and for them the card is
+  exactly the link it has always been — a focused card shows the poster
+  frame, which is the documented behaviour #1142 preserves.
+-->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   data-card-thumb
-  style={frameStyle}
-  class="relative overflow-hidden bg-thumb-matte
+  bind:this={frameEl}
+  onpointermove={onPointerMove}
+  style={matteColor ? `${frameStyle ?? ''} background-color: ${matteColor};` : frameStyle}
+  class="relative overflow-hidden {matteColor ? '' : 'bg-thumb-matte'}
          {tileRatio ? '' : 'aspect-square'}
          after:pointer-events-none after:absolute after:inset-0 after:ring-1 after:ring-inset
          {fill ? 'rounded-[2px] after:rounded-[2px]' : ''}
@@ -631,6 +732,17 @@
       rest of the sizes list is not consulted — measured. Making this
       eager would turn the slot hint into "the whole viewport" on every
       card, with no other visible symptom.
+
+      #1047 — a VARIABLE-ASPECT tile drops the `p-1.5` matte inset too.
+      Not for symmetry with `fill`: the inset exists to letterbox art on
+      a matte when the box and the picture are different shapes, and a
+      variable-aspect tile IS the shape of its picture, so the padding
+      can only shrink the art and draw a frame around it. On masonry —
+      "maximum art per page" — that was 6px of chrome per side on every
+      tile of the wall. The one case where the shapes still disagree is
+      a tile clamped by the #652 floor or by `ratioFloor`, and there the
+      art letterboxes onto the matte exactly as before, just without the
+      extra ring.
     -->
     <img
       src={imgSrc}
@@ -640,7 +752,7 @@
       loading="lazy"
       decoding="async"
       class="absolute inset-0 h-full w-full transition-opacity duration-200 group-hover:scale-[1.02]
-             {fill ? 'object-cover' : 'object-contain p-1.5'}"
+             {fill ? 'object-cover' : variableAspect ? 'object-contain' : 'object-contain p-1.5'}"
       class:opacity-0={!imgLoaded}
       class:opacity-100={imgLoaded}
       onload={onLoad}
@@ -710,21 +822,14 @@
         ></div>
       </div>
     {/if}
-    <!-- Media-type badge. Suppressed under `compact` (#652): it lives at
-         `left-2 top-2`, which is exactly where the selection checkbox
-         goes, and on a 60px masonry tile the two are the whole tile.
-         The type is in the hover tooltip there instead. -->
-    {#if isVideo && !compact}
-      <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
-        video
-      </div>
-    {:else if is3D && !compact}
-      <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
-        3D
-      </div>
-    {/if}
+    <!-- The media-type chip that used to live here is gone (#1047). It
+         was two hardcoded English words — `video` and `3D` — covering
+         two of thirteen ViewKinds, so a PDF, an audiobook and a sprite
+         sheet were all unlabelled, and #1111 had already replaced it
+         with an icon in grid. The replacement is CardKindBadge, drawn by
+         the CARD in the children slot: the caller knows the density and
+         therefore the corner, and CardThumb is handed a presentation
+         rather than inferring one. -->
   {:else if !placeholder}
     <!-- No servable preview AND no thumbhash — nothing of the asset can
          be shown, so the plate states what it is instead (#558). This

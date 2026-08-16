@@ -98,7 +98,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: scripts/dogfood/ui/package-lock.json
 
@@ -240,6 +240,27 @@ jobs:
           # to exercise pagination, but cuts seed wall time to well
           # under a minute. Full fidelity is only useful for manual
           # human-review runs; CI / dogfood just need coverage.
+          #
+          # Precondition, not a skip (#1040). ui-pr.yml SKIPS its suite
+          # when the dataset path is unavailable, because Dependabot and
+          # fork runs legitimately cannot see repository secrets. This
+          # workflow only ever runs from `schedule` or
+          # `workflow_dispatch`, both of which DO get secrets — so an
+          # empty value here means the secret is missing or misnamed,
+          # and a nightly that quietly skipped its seed would be a lost
+          # signal. Fail, and name the variable: an empty path reaches
+          # docker as `-v ":/seed/site:ro"` and comes back as
+          # `invalid spec: empty section between colons`, which names
+          # neither the variable nor the secret behind it.
+          if [ -z "${SITE_A_PATH}" ]; then
+            echo "::error title=Seed dataset path missing::SITE_A_PATH is empty — it comes from the SEED_SITE_A_PATH repository secret. Set it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          if [ -z "${SITE_B_PATH}" ]; then
+            echo "::error title=Seed dataset path missing::SITE_B_PATH is empty — it comes from the SEED_SITE_B_PATH repository secret. Set it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
           ( docker compose run --rm --no-deps \
               -v "$SITE_A_PATH:/seed/site:ro" \
               -v "$PWD/seed/profiles:/seed/profiles:ro" \

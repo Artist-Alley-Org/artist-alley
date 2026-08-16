@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// The channels rail's state: which teams the signed-in user follows
+// The teams rail's state: which teams the signed-in user follows
 // (#577).
+//
+// Named for what it holds — the caller's team FOLLOWS — not for the
+// competitor's word this shipped under (#1029). `teams` alone would
+// have been the wrong rename: this is not every team on the instance,
+// it is the subset one reader bookmarked, and the directory page
+// fetches the full list separately.
 //
 // # Why a shared store and not per-component fetches
 //
@@ -32,21 +38,43 @@
 //
 // # No counts, no unread
 //
-// Deliberately absent. Channels are not notifications (#520 owns that
-// arc), and there is no follower count on the wire to cache.
+// Deliberately absent. A followed team is not a notification feed
+// (#520 owns that arc), and there is no follower count on the wire to
+// cache.
 
 import { api } from '$api/client';
 
-export interface Channel {
+export interface TeamSummary {
   id: string;
   slug: string;
   name: string;
   description: string;
+  /** The team's picture (#982), or absent for the initials tile. This is
+   *  the server's RENDER ANSWER, re-derived per read — it goes away on
+   *  its own when the chosen asset stops being public, so the client
+   *  never has to decide whether a hero is still allowed. */
+  hero_asset_id?: string | null;
 }
 
-class Channels {
+class TeamFollows {
   /** Teams the caller follows, ordered by name (the server's order). */
-  items = $state<Channel[]>([]);
+  items = $state<TeamSummary[]>([]);
+  /**
+   * The operator-curated slot that renders first in the rail (#1084), in
+   * curation order.
+   *
+   * DELIBERATELY NOT MERGED INTO `items`, and this is the whole reason
+   * it is a second array rather than a prepend. `items` is the FOLLOW
+   * SET: `isFollowing` reads it, and three surfaces render their
+   * follow/unfollow button from that answer. Prepending a featured team
+   * the caller does not follow would make the team page and the
+   * directory card both claim it is followed, and the first
+   * unfollow-click would fire a DELETE for a row that never existed.
+   *
+   * A featured team the caller DOES follow appears in both arrays; the
+   * rail dedupes at render so it is not drawn twice.
+   */
+  featured = $state<TeamSummary[]>([]);
   /** True once a load has completed — lets the rail tell "empty" from
    *  "not asked yet" and skip rendering an empty state during boot. */
   loaded = $state(false);
@@ -67,13 +95,20 @@ class Channels {
    *  out, or no teams.read) empties the rail rather than erroring:
    *  there is nothing for a guest to be told here. */
   async load(): Promise<void> {
-    const { data, error } = await api.GET('/auth/me/followed-teams', {});
-    if (error || !data) {
-      this.items = [];
-      this.loaded = true;
-      return;
-    }
-    this.items = data as Channel[];
+    // Both halves of the rail in one await, and `loaded` flips ONCE at
+    // the end. Two independent loads with two flags would let the rail
+    // paint the follow set and then jolt as the featured slot arrived —
+    // a layout shift on every page load, which is the exact failure the
+    // single `loaded` gate was introduced to avoid.
+    const [follows, featured] = await Promise.all([
+      api.GET('/auth/me/followed-teams', {}),
+      api.GET('/featured/teams', {}),
+    ]);
+    // Each half fails independently: a 403 on the curated slot must not
+    // empty the reader's own follows, and vice versa. Neither is an
+    // error state worth showing — the rail simply renders what it has.
+    this.items = follows.error || !follows.data ? [] : (follows.data as TeamSummary[]);
+    this.featured = featured.error || !featured.data ? [] : (featured.data as TeamSummary[]);
     this.loaded = true;
   }
 
@@ -87,7 +122,7 @@ class Channels {
    *
    * Returns the resulting state, or the unchanged state on failure.
    */
-  async toggle(team: Channel): Promise<boolean> {
+  async toggle(team: TeamSummary): Promise<boolean> {
     if (this.pending.has(team.id)) return this.isFollowing(team.id);
     const wasFollowing = this.isFollowing(team.id);
     const before = this.items;
@@ -124,9 +159,10 @@ class Channels {
    *  inherit the previous one's rail. */
   reset(): void {
     this.items = [];
+    this.featured = [];
     this.loaded = false;
     this.pending = new Set();
   }
 }
 
-export const channels = new Channels();
+export const teamFollows = new TeamFollows();

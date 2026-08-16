@@ -641,7 +641,7 @@ Plus:
 - `users.InvalidateProfile(ctx, registry, userRef)` — cross-package helper other domains call when they need to bust a user's profile view (e.g., post-create bumps post_count).
 - `iiif/presentation.InvalidateAssetOn` / `InvalidateCollectionOn` — cross-package IIIF manifest invalidators.
 - `metadata.Handler.InvalidateCollectionValues(ctx, collectionID)` — collection field-value cache buster from collections handler.
-- `requests.InvalidatePendingCount{All,For}` — resource-request pending-count cache buster.
+- ~~`requests.InvalidatePendingCount{All,For}`~~ — deleted (#947). Never had a caller and could not have one: `pending` is entered only by `Submit` and left only by `Grant`/`Deny`, all in-package, all already calling `Handler.invalidateCount`.
 
 **Summary count:** 30 distinct cache domain constants, plus 4 dedicated Cache types (search, iiif presentation, iiif disk-usage, ai_caches wrapper). ~35 cache surfaces total.
 

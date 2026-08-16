@@ -7,7 +7,7 @@
   // post-by-asset lookup — renders modes identically instead of forking
   // the switch per page:
   //   grid / thumbnail → auto-fill TileGrid (tiles ≥ --tile-min)
-  //   masonry          → append-stable column buckets (MasonryColumns)
+  //   masonry          → append-stable explicitly-placed grid (MasonryColumns)
   //   feed             → single column, image full-bleed (a `measure` cap)
   //   list             → the caller's table (`list` snippet); posts only,
   //                       so anything without one falls back to the grid
@@ -18,6 +18,7 @@
   // renders `items` in the order given.
   import type { Snippet } from 'svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
+  import { t } from '$stores/lang.svelte';
   import TileGrid from '$components/TileGrid.svelte';
   import MasonryColumns from '$components/MasonryColumns.svelte';
 
@@ -33,11 +34,49 @@
      *  Collection), and each caller passes the row straight to its card. */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     card: Snippet<[any, ViewMode]>;
-    /** Whole-list table for `list` mode. Absent ⇒ list falls back to grid
-     *  (assets/collections have no list table today). */
+    /** Whole-list table for `list` mode. Absent ⇒ list falls back to the
+     *  grid AND SAYS SO — see `listUnavailable` below (#1137). */
     list?: Snippet;
+    /** Where `items[0]` sits in the whole feed, and the feed's length
+     *  (#1118). Only masonry consumes them today — it is the one mode
+     *  that publishes `aria-posinset`/`aria-setsize` — but they belong
+     *  on this contract rather than on that component's, because it is
+     *  THIS switch a caller renders twice when a promo band splits the
+     *  feed. Defaults reproduce the single-wall behaviour. */
+    posOffset?: number;
+    setSize?: number;
   }
-  let { mode, items, tileMin = '22rem', loading = false, card, list }: Props = $props();
+  let {
+    mode,
+    items,
+    tileMin = '22rem',
+    loading = false,
+    card,
+    list,
+    posOffset = 0,
+    setSize,
+  }: Props = $props();
+
+  /** The caller asked for `list` and supplied no table (#1137).
+   *
+   *  This was already the behaviour — the switch fell through to the
+   *  grid branch — and it was SILENT, which is the whole bug the owner
+   *  reported as "list view doesn't work inside a collection". Nothing
+   *  errored and nothing was empty: the control said LIST, the surface
+   *  drew tiles, and there was no way to tell a broken mode from an
+   *  unsupported one.
+   *
+   *  A silent fallback is a control that lies. #1137's acceptance allows
+   *  a mode to be "deliberately absent per-surface with the choice
+   *  stated", and a code comment is not where a user reads a choice, so
+   *  the fallback states itself on the page.
+   *
+   *  It is answered HERE rather than by hiding the button, because the
+   *  button is one shared `ViewControls` for a page that can hold BOTH
+   *  kinds at once — a collection with posts and assets renders a real
+   *  table for its posts and this notice for its assets, and a switcher
+   *  that removed `list` would have taken the working half away too. */
+  const listUnavailable = $derived(mode === 'list' && !list && items.length > 0);
 </script>
 
 {#if mode === 'list' && list}
@@ -46,9 +85,11 @@
   <!-- Masonry is no longer a CSS multi-column flow (#651). Multicol
        BALANCES across the whole flow, so every infinite-scroll append
        re-sorted tiles the user was already looking at into different
-       columns. MasonryColumns owns the replacement mechanism and the
-       full argument. -->
-  <MasonryColumns {items} {tileMin} {loading} {card} />
+       columns. It is no longer N sibling column boxes either (#747):
+       those had no shared coordinate space, so nothing could straddle
+       two columns. MasonryColumns owns the replacement mechanism and
+       the full argument. -->
+  <MasonryColumns {items} {tileMin} {loading} {card} {posOffset} {setSize} />
 {:else if mode === 'feed'}
   <div class="posts-feed gap-4">
     {#each items as item (item.id)}{@render card(item, 'feed')}{/each}
@@ -73,6 +114,15 @@
        strongest separation. Two adjacent white-artwork tiles are divided
        by a hairline instead of by empty space. Don't restore a gutter
        here without checking that case first. -->
+  {#if listUnavailable}
+    <p
+      class="mb-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-fg-muted"
+      data-testid="list-unavailable"
+      role="status"
+    >
+      {t('browse.view.list_unavailable')}
+    </p>
+  {/if}
   <TileGrid {tileMin} class={mode === 'grid' ? 'gap-0' : 'gap-2'}>
     {#each items as item (item.id)}{@render card(item, mode)}{/each}
     {#if loading}

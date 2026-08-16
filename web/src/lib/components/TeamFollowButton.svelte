@@ -7,9 +7,9 @@
   // gesture: same pill, same hover→"Unfollow" flip, same tokens. Two
   // deliberate differences:
   //
-  //   1. State comes from the shared `channels` store rather than from
-  //      a per-component fetch. Following here has to move the rail on
-  //      browse, and it does, because they read the same $state.
+  //   1. State comes from the shared `teamFollows` store rather than
+  //      from a per-component fetch. Following here has to move the
+  //      rail on browse, and it does, because they read the same $state.
   //   2. It is OPTIMISTIC. A user relationship has states the client
   //      cannot predict (the target may have blocked you), so that
   //      button re-fetches. A team follow is a bookmark with two
@@ -19,12 +19,12 @@
   // Renders nothing for a signed-out visitor: /teams is members-only
   // this sprint (teams.read is Base-gated and anonymous holds nothing),
   // so there is no follow to offer.
-  import { channels, type Channel } from '$stores/channels.svelte';
+  import { teamFollows, type TeamSummary } from '$stores/teamFollows.svelte';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
-    team: Channel;
+    team: TeamSummary;
     /** Compact mode for directory cards (smaller padding). */
     compact?: boolean;
   }
@@ -32,15 +32,15 @@
 
   let hovering = $state(false);
 
-  const following = $derived(channels.isFollowing(team.id));
-  const pending = $derived(channels.isPending(team.id));
+  const following = $derived(teamFollows.isFollowing(team.id));
+  const pending = $derived(teamFollows.isPending(team.id));
 
   const sizeClass = $derived(compact ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm');
 
   // "Following" flips to "Unfollow" under the cursor, so the click's
   // destructive meaning is visible before it happens.
   const label = $derived(
-    following ? (hovering ? t('channels.unfollow') : t('channels.following')) : t('channels.follow'),
+    following ? (hovering ? t('teams.unfollow') : t('teams.following')) : t('teams.follow'),
   );
 
   const variantClass = $derived(
@@ -57,7 +57,7 @@
     type="button"
     data-testid="team-follow-button"
     class={`inline-flex items-center gap-1.5 rounded-full border font-medium transition-colors disabled:opacity-60 ${sizeClass} ${variantClass}`}
-    onclick={() => void channels.toggle(team)}
+    onclick={() => void teamFollows.toggle(team)}
     onmouseenter={() => (hovering = true)}
     onmouseleave={() => (hovering = false)}
     disabled={pending}

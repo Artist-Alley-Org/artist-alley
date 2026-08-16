@@ -25,10 +25,32 @@ const (
 	FacetSensitivity FacetType = "sensitivity"
 	FacetOwner       FacetType = "owner"
 	FacetExtension   FacetType = "extension"
+
+	// FacetCollection scopes a search to one collection's members
+	// (#910). It is a FILTER-ONLY dimension: there is deliberately no
+	// [Aggregator] for it and it is NOT in [AllFacets].
+	//
+	// A bucket list for this dimension would enumerate collection names
+	// beside every search and cost a COUNT per collection, and it would
+	// answer a question nobody asked — scoping arrives from a collection
+	// page or a found collection tile, carrying an id, not from a rail
+	// the caller browses. The dimension is also unlike the other five in
+	// kind: `extension` describes the row, while `collection` names
+	// another entity with its own read rule, which is why
+	// [Selection.Authorize] exists and the other dimensions need no
+	// equivalent.
+	//
+	// Being absent from AllFacets means `?facets=collection` resolves
+	// (ParseFacetType accepts it, so `filter=collection:…` parses) and
+	// then produces no bucket, which is [Dispatcher.Run]'s existing
+	// behaviour for any unregistered type.
+	FacetCollection FacetType = "collection"
 )
 
 // AllFacets returns the set of aggregators the dispatcher runs when
 // the caller doesn't restrict via ?facets=...
+//
+// FacetCollection is deliberately absent — see its doc.
 func AllFacets() []FacetType {
 	return []FacetType{FacetAssetType, FacetTag, FacetSensitivity, FacetOwner, FacetExtension}
 }
@@ -47,6 +69,8 @@ func ParseFacetType(s string) (FacetType, bool) {
 		return FacetOwner, true
 	case "extension", "ext":
 		return FacetExtension, true
+	case "collection":
+		return FacetCollection, true
 	}
 	return "", false
 }
@@ -81,6 +105,18 @@ type Request struct {
 	// Facets is the subset to compute. Empty = all seeded types.
 	Facets []FacetType
 
+	// Selection is the caller's ACTIVE facet filter (#907). Every
+	// aggregator narrows its population by [Selection.ForFacet] of its
+	// own type before grouping, so the counts describe the result set
+	// the caller is actually looking at.
+	//
+	// A count that ignores the active filter is the same defect as a
+	// facet that cannot filter, one level up: the rail would keep
+	// reporting the unfiltered corpus while the grid showed a subset,
+	// and every number on it would be a lie about the page it sits
+	// beside.
+	Selection Selection
+
 	// Caller drives visibility.Filter. Anonymous callers see facet
 	// counts from the public subset only (via the same shared
 	// helper the Engine uses).
@@ -97,6 +133,32 @@ type Request struct {
 	// rule in full and needs the capability that opens its `private`
 	// tier. Zero value = none.
 	PostCaps visibility.PostCaps
+
+	// MutationCaps is the caller's asset-mutation scope (#1056, ADR
+	// 0064). The asset aggregators count on the FIELD plane, and a
+	// team-scoped `assets.admin` holder is owed the fields of the
+	// assets they administer — so they must be COUNTED for them too.
+	//
+	// This field is the reason #1056 existed: without it the
+	// aggregators could only compose the content plane, and the
+	// Engine's filter conjunct was pinned to the content plane to
+	// match them (see runAssets). Both widened together, because
+	// widening either alone makes the rail's number disagree with the
+	// result set ticking it returns — #907's defect in a subtler form.
+	// Zero value = none, correct for anonymous.
+	MutationCaps visibility.AssetMutationCaps
+
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090). Zero value = the DISQUALIFIED viewer, so a Request
+	// built without it counts the narrower population — the direction
+	// that under-reports rather than the one that leaks.
+	//
+	// It must move in lockstep with search.Query.Mature: the rail's
+	// number has to equal the size of the result set that ticking the
+	// bucket returns, and these are the two places that population is
+	// expressed. Widening one alone shows `png 7` beside a filter that
+	// returns 8 (#907's defect, on a second axis).
+	Mature visibility.MatureViewer
 
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
@@ -176,6 +238,29 @@ func (d *Dispatcher) Run(ctx context.Context, req Request) Response {
 		mu      sync.Mutex
 		results = make(map[FacetType]Result, len(types))
 	)
+
+	// #910 — the same parent gate the Engine runs, for the same reason
+	// one level up. A rail computed inside a collection the caller may
+	// not open would answer "how many pngs are in it" without ever
+	// listing a row, which is the count-as-oracle failure #883 pinned
+	// wearing a different hat. Empty buckets, not an error: the response
+	// must not distinguish "not yours" from "nothing in it".
+	if ok, err := req.Selection.Authorize(
+		ctx, d.Pool, req.Caller, req.Caps.Checker(),
+	); err != nil || !ok {
+		if err != nil && d.Logger != nil {
+			d.Logger.LogAttrs(ctx, slog.LevelWarn,
+				"search.facet.authorize_error",
+				slog.String("err", err.Error()),
+			)
+		}
+		for _, ft := range types {
+			if _, registered := d.aggregators[ft]; registered {
+				results[ft] = Result{Type: ft}
+			}
+		}
+		return Response{Facets: results}
+	}
 
 	for _, ft := range types {
 		agg, ok := d.aggregators[ft]

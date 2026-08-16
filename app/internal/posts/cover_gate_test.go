@@ -5,7 +5,7 @@
 //
 // # What was wrong
 //
-// #922 gated post MEMBERS on visibility.CanAttachAsset. It did not gate
+// #922 gated post MEMBERS on visibility.CanSeeAssetContent. It did not gate
 // the cover. An explicitly-supplied `cover_asset_id` /
 // `cover_thumbnail_asset_id` was copied straight into the INSERT, and
 // PATCH /posts/{id} did the same for `cover_asset_id` — so the asset
@@ -429,7 +429,7 @@ func TestUpdatePost_CoverGate(t *testing.T) {
 //
 // # Why it cannot just be wired
 //
-// #941 gated `cover_asset_id` on visibility.CanAttachAsset precisely so
+// #941 gated `cover_asset_id` on visibility.CanSeeAssetContent precisely so
 // an unreadable asset could not be pinned to a post. Connecting the
 // thumbnail without the same gate re-opens that hole on the one column
 // nobody was watching — and this column has its own FK
@@ -501,7 +501,7 @@ func TestUpdatePost_CoverThumbnail(t *testing.T) {
 				name:  "stranger's restricted asset",
 				asset: strangerRestricted,
 				why: "THE discriminating case: row-visible, not content-readable. Wiring " +
-					"this column without visibility.CanAttachAsset re-opens exactly the " +
+					"this column without visibility.CanSeeAssetContent re-opens exactly the " +
 					"hole #941 closed on cover_asset_id",
 			},
 			{

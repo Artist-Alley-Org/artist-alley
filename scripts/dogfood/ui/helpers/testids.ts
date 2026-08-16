@@ -92,6 +92,21 @@ export const testIds = {
     shortcutGroupPrefix: 'shortcut-group-', // suffix with the group id
   },
 
+  // Browse surfaces ------------------------------------------
+  //
+  // The three `nativeDrag` consumers (#1138). They are grouped rather
+  // than scattered because the drag guard drives all three in one
+  // sweep — a consumer that loses its id here is a consumer that
+  // silently stops being covered.
+  browse: {
+    wall:                'browse-wall',
+    marqueeBand:         'marquee-band',
+    featuredRailScroller:'featured-rail-scroller',
+    featuredRailItem:    'featured-rail-item',
+    teamsRailScroller:   'teams-rail-scroller',
+    teamsRailChip:       'teams-rail-chip',
+  },
+
   // Generic page surfaces ------------------------------------
   page: {
     errorBoundary:    'page-error-boundary',

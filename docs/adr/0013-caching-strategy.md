@@ -316,6 +316,30 @@ changes a value package B serves, the invalidation belongs on A's write path, an
 constant belongs somewhere neither owns.** A test asserting the constants match is cheap and was
 mutation-tested here.
 
+#### Applied again, unchanged, 2026-08-13 (#1026, PR #1069) — and the two paths took different answers
+
+The collection cover mosaic is the second value to meet rule 1, and the *shape* of the answer is
+worth recording because it was not uniform across the surfaces that carry it:
+
+- `GET /collections/{id}` is served from the by-id LRU. A cover set **is** caller-dependent — a
+  member the caller may not picture is absent from it — so the covers are composed in an
+  **enrichment pass after the cache read**, exactly as #557's author identity is. Nothing
+  caller-dependent enters the cached `Collection`.
+- `GET /collections` is **query-served, not cache-served**, so its covers compose beside the query
+  with no enrichment seam at all.
+
+⭐ **The generalisable part: "does this value belong in the cache entry?" is not a property of the
+value, it is a property of the PATH.** The same covers are safe inline on one surface and forbidden
+inline on the other, and a reviewer who checks only "is this caller-dependent?" gets the second
+half wrong. Ask what serves the payload first.
+
+The `/search` collection hit is a third case and passes on different grounds: its result cache key
+already includes the caller ref plus the content and post capability sets, which is precisely the
+triple the cover composer reads — so the entry is not cross-caller to begin with. That is the same
+argument `keyForQuery`'s own comment makes in general form: **every input the Engine reads is a
+component of the key.** A value added to a cached payload must either be caller-independent or have
+all of its inputs in the key; there is no third option.
+
 ---
 
 ### Amendment 2026-08-08 (#887, PR #971) — a declined cache: scratch buffers under a cgroup ceiling

@@ -36,13 +36,14 @@
   import { upload } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
-  import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import AssetCard from '$components/AssetCard.svelte';
   import PostCard from '$components/PostCard.svelte';
   import type { CardAsset, CardCoverAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
+  import PostListTable from '$components/PostListTable.svelte';
   import ViewControls from '$components/ViewControls.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import Menu from '$components/Menu.svelte';
   import EditCollectionModal from '$components/EditCollectionModal.svelte';
   import ShareEntityModal from '$components/ShareEntityModal.svelte';
@@ -61,6 +62,11 @@
     updated_at: string;
     deleted_at?: string | null;
     deleted_reason?: string | null;
+    // #1027 — the curator's chosen cover. Carried on this page's own
+    // Collection so the edit modal opens with the current choice
+    // already selected rather than reading "use mosaic" and clearing it
+    // on the next unrelated save.
+    cover_asset_id?: string | null;
   }
 
   // #883 — every asset-derived field is OPTIONAL because a member the
@@ -99,6 +105,11 @@
      *  ratio, carried by the CollectionResource row. */
     pixel_width?: number | null;
     pixel_height?: number | null;
+    /** The at-a-glance `show_on_card` strip (#552), server-resolved to
+     *  display strings (#1133). Absent until this page's API row
+     *  started carrying it, which is why the flag rendered on browse
+     *  and on nothing here for a year. */
+    card_fields?: Array<{ code: string; label: string; value: string }> | null;
   }
 
   // #882 — a post pinned in this collection. The API returns the FULL
@@ -124,14 +135,33 @@
     restricted?: boolean;
     owner_display_name?: string;
   }
+  /** A post pinned in this collection.
+   *
+   *  ⚠️ WIDENED IN #1137, and the reason is the #1099 lesson rather than
+   *  a new requirement. `GET /collections/{id}/posts` returns
+   *  `PostList` — the SAME schema the browse feed reads — so every field
+   *  below has always been on the wire. This interface simply declared
+   *  the subset the card happened to render, and the moment the list
+   *  table (which reads the rest) was pointed at these rows, TypeScript
+   *  called it a shape mismatch. It was not: it was a local type that
+   *  under-described real data, which is exactly how #1099's surface
+   *  ended up unable to use a component it was already compatible with.
+   *
+   *  Add fields here from the schema, not from what the current card
+   *  reads. */
   interface PostRow {
     id: string;
     title: string;
+    description: string;
+    visibility: string;
     author_user_ref: number;
     cover_asset_id?: string | null;
+    posted_at: string;
     created_at: string;
+    updated_at: string;
     like_count: number;
     comment_count: number;
+    tags: string[];
     members: PostMemberRow[];
   }
 
@@ -147,6 +177,11 @@
   // the same to a visitor.
   let notFound = $state(false);
   let editOpen = $state(false);
+  // #1027 — which part of the edit modal to land on. Reset on close
+  // rather than on open, so "Edit details" after "Set cover" starts at
+  // the top of the form again instead of inheriting the last entry
+  // point.
+  let editFocusCover = $state(false);
   let shareOpen = $state(false);
   let copyFeedback = $state(false);
 
@@ -230,6 +265,11 @@
             pixel_width: m.pixel_width ?? null,
             pixel_height: m.pixel_height ?? null,
             restricted: false,
+            // #1133 — the at-a-glance strip. Passed through rather than
+            // reconstructed: the server already resolved every slug to
+            // its label (ADR 0012's rule, one home), so there is nothing
+            // for this page to format.
+            card_fields: m.card_fields ?? null,
           },
     ),
   );
@@ -337,7 +377,6 @@
 
   function handleSaved(updated: Collection) {
     collection = updated;
-    invalidateCovers(updated.id);
   }
 
   // ── Delete (#981) ─────────────────────────────────────────────────
@@ -370,9 +409,6 @@
     }
     const deletedId = collection.id;
     deleteOpen = false;
-    // The cover cache keys on the collection id and is now stale — the
-    // same invalidation `handleSaved` does after an edit.
-    invalidateCovers(deletedId);
     toasts.push({
       message: t('delete_confirm.deleted_collection'),
       href: '/account/trash',
@@ -397,7 +433,6 @@
       });
       return;
     }
-    invalidateCovers(collectionId);
     toasts.push({ message: t('delete_confirm.undone'), href: `/collections/${collectionId}` });
   }
 
@@ -544,6 +579,31 @@
         </button>
       {/if}
 
+      <!-- #910 — the end of the dead end. You could find a collection and
+           then there was nowhere to go: no way to search within it.
+           Ungated for the same reason Copy link is — anyone who can read
+           this page can search inside it, and the server re-checks both
+           the collection AND every member anyway.
+
+           An <a>, not a fetch: the destination is a real, shareable
+           address (`/search?filter=collection:<id>`), the scope is one
+           more term in the same `filter=` vocabulary the facet chips
+           use, and search has no new parameter to learn. It lands with
+           the scope chip already showing and the query box empty, which
+           is the honest state — a collection scope is not itself a
+           query. -->
+      <a
+        href="/search?filter=collection:{collection.id}"
+        data-testid="collection-detail-search-within"
+        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        {t('collections.search_within')}
+      </a>
+
       <button
         type="button"
         onclick={copyLink}
@@ -598,12 +658,22 @@
             >
               {t('collections.manage_members')}
             </button>
+            <!-- #1027 — live as of the cover picker. This entry was a
+                 disabled "coming soon" stub placed here in anticipation;
+                 leaving it disabled in the same release that ships the
+                 picker would tell a curator the feature does not exist
+                 while the working control sat behind "Edit details".
+                 It opens the SAME modal, focused on the cover section,
+                 so there is one edit surface and one save path. -->
             <button
               type="button"
               role="menuitem"
-              disabled
-              class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-              title={t('collections.set_cover_soon')}
+              onclick={() => {
+                editFocusCover = true;
+                editOpen = true;
+              }}
+              data-testid="collection-detail-set-cover-menuitem"
+              class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
             >
               {t('collections.set_cover')}
             </button>
@@ -667,6 +737,16 @@
             {#snippet card(item, mode)}
               <PostCard post={item as PostRow} {mode} tileSizes={browseView.tileSizes} />
             {/snippet}
+            {#snippet list()}
+              <!-- #1137. This snippet was simply MISSING, and its absence
+                   is the whole of the reported bug for the posts half: a
+                   collection's posts are the same rows the browse feed
+                   passes to this exact table, so `list` mode fell through
+                   to the grid branch and drew tiles while the control said
+                   LIST. Not a payload problem and not a shape mismatch —
+                   an omission. -->
+              <PostListTable items={posts} loading={false} />
+            {/snippet}
           </ContentGrid>
         </div>
       {/if}
@@ -676,8 +756,13 @@
           <h2 class="mb-2 mt-6 text-sm font-medium text-fg-muted">{t('collections.assets_heading')}</h2>
         {/if}
         <!-- Shared grid (#511/#582), so mode + tile size + sort match
-             browse. Assets carry no list table, so `list` falls back to the
-             grid here exactly as it does in UserProfile's asset section. -->
+             browse. Assets still carry no list table — PostListTable's row
+             type is the posts-feed shape and an asset is not one — so
+             `list` falls back to the grid here, exactly as it does in
+             UserProfile's and the team page's asset sections. Since #1137
+             that fallback STATES ITSELF on the page instead of silently
+             drawing tiles under a control that says LIST; an asset list
+             table is the follow-up, not a thing to fake with a cast. -->
         <div data-testid="collection-assets">
           <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
             {#snippet card(item, mode)}
@@ -689,6 +774,25 @@
     {/if}
   {/if}
 </div>
+
+<!-- #1130 — the `?post=` viewer host. A post card's primary click writes
+     the param onto THIS url and expects something here to overlay the
+     post; nothing did, so clicking a pinned post inside a collection
+     changed the address bar and nothing else. Never a regression: the
+     post grid arrived in #882 without a host and the gap shipped with
+     it.
+
+     Declared at the route's top level, NOT inside the `{#if collection}`
+     block below with the edit / share / delete dialogs. Those are
+     `<dialog>`s, and ADR 0067's amendment records what happens to a
+     viewer declared inside one: `Modal` portals to the nearest open
+     dialog resolved from where it is DECLARED, so it would render
+     underneath their top layer — in the DOM, invisible on screen.
+
+     `ordered` is the pinned posts in the curator's order, so ← / → walk
+     the collection. No `onEndReached`: the whole membership arrives in
+     one request (limit 200), so there is no next page to spill into. -->
+<PostParamHost ordered={() => posts.map((p) => p.id)} />
 
 {#if collection}
   <!-- The shared floating view controls (mode switcher + tile size +
@@ -704,7 +808,11 @@
   <EditCollectionModal
     open={editOpen}
     collection={collection}
-    onclose={() => (editOpen = false)}
+    focusCover={editFocusCover}
+    onclose={() => {
+      editOpen = false;
+      editFocusCover = false;
+    }}
     onsaved={handleSaved}
   />
   <ShareEntityModal

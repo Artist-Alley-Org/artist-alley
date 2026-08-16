@@ -70,7 +70,7 @@ import (
 type DeliveryConfig struct {
 	// Interval is the ticker-backstop period. The primary wake
 	// signal is LISTEN/NOTIFY on federation_outbox INSERT per
-	// migration 00006; the ticker catches missed notifications
+	// migration 00001; the ticker catches missed notifications
 	// under load. Default 30s per 1.22.D-b-6 G1 — same
 	// "correctness backstop only" pattern as the dispatchers.
 	Interval time.Duration
@@ -894,7 +894,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 	// Phase 1.22.I-e + I-g — per-recipient encryption + sender-
 	// refusal policy. tryEncryptFor consults policy.ChoosePathFor
 	// against the row's sensitivity tier (denormalized at INSERT
-	// time per migration 00012) + the peer's e2e capability +
+	// time per migration 00001) + the peer's e2e capability +
 	// the recipient's pubkey availability. Three paths:
 	//
 	//   EmissionEncrypted — env mutates to encrypted shape; we
@@ -945,7 +945,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 //     EncryptionBlock.RecipientKeyID.
 //   - sensitivityFromRow        — federation_outbox.sensitivity
 //     denormalized at INSERT time
-//     (1.22.I-g, migration 00012);
+//     (1.22.I-g, migration 00001);
 //     NULL → conservative-public.
 //   - senderKeyVersion +
 //     senderPrivateEnc          — buildEnvelope's JOIN against

@@ -157,6 +157,57 @@ free and proves the primitive, and the masonry layout rework is separate
 work that inherits it. Wiring ads and premium onto the primitive comes
 after, as consumers.
 
+**Amendment 2026-08-15 (#747/#1025, PR #1094): the masonry rework landed
+first, and correctly so — this section's ordering governs a narrower thing
+than its title suggests.** §5's reason is about de-risking the
+**sized-slot model**, and that reason stands: slots still ship grid-first
+(#746). But the masonry rework turned out to have a **second consumer that
+never touches the slot model** — naturally wide artwork spanning columns
+because it is wide (#1025; a third of the dev feed renders at 5.33:1 or
+wider). That consumer needed only §4's placement rule, so the rework
+shipped with it and did not wait for #746. When #746 lands, it inherits a
+masonry that can already place spanning tiles; the dependency in this
+section was always slots-on-masonry, not masonry-on-slots.
+
+Two of §4's claims are now **measured** rather than argued, on the landed
+implementation (explicit per-tile placement in one CSS grid — sparse
+auto-flow was rejected because its forward-only cursor strands holes below
+a spanning tile, and `dense` reorders, which §3 forbids):
+
+- Residual gap above a spanning tile: **7.8–9.5px on near-level fixture
+  walls** — under one grid gap. On a live feed the bound is what §4
+  states, the pair's height difference at placement time, and a wall with
+  one very tall tile can show a visibly larger (still bounded) gap. "A
+  fraction of a tile" describes the levelled steady state, not a
+  guarantee.
+- Re-levelling: confirmed exactly — both columns of the pair resume from
+  the slot's bottom edge, measured to the pixel.
+
+The rework also **retired a documented cost from #651**: DOM order matches
+feed order again (placement is per-tile grid coordinates, not bucketed
+column boxes), so the `role="presentation"` column-box compensation is
+gone. `aria-posinset`/`aria-setsize` stay explicit, because slots will
+make DOM order and feed position diverge again when they arrive.
+
+**Correction 2026-08-15 (#1095, PR #1101): the rework's anti-drift deletion
+did not survive contact with real content.** The #651 implementation read
+each column's true rendered height back from the DOM before every append;
+the rework dropped that on the argument "the reservation IS the position,
+so estimator error cannot accumulate." That argument missed a CSS fact
+worth recording for any future grid layout here: **a grid's row tracks are
+shared by every column**, so with `grid-auto-rows: minmax(unit, auto)` a
+single tile that renders taller than its reservation (an asset with no
+recorded dimensions settles from its square placeholder into its real
+ratio on image load) stretches the tracks it spans and displaces the
+**whole wall** at that depth — measured at up to 951px of accumulated
+displacement, appearing as a full-width band per appended page. The
+reconciliation mechanism is back (`reconcile`: re-solve row lines against
+measured heights before each append and on tile resize, never touching
+column, span or order), which is also how production masonry does it:
+positions derive from known sizes, and the rendered DOM is the authority
+the layout re-anchors to. Append-stability is unaffected — reconciliation
+runs *before* new placements and cannot reorder.
+
 ## What this explicitly rejects
 
 - **Building ad placement and premium placement separately.** They are one

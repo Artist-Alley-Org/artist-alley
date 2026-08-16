@@ -61,6 +61,7 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 
 	anchorID := uuid.UUID(req.Id)
 	caller := callerFromContext(ctx)
+	_, anchorCaps := contentCaller(ctx)
 
 	// #661 — the anchor must be VISIBLE to this caller, not merely
 	// present. The check here used to be a bare existence probe with no
@@ -75,6 +76,26 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 		return nil, fmt.Errorf("ListSimilarAssets: anchor visibility: %w", err)
 	}
 	if !visible {
+		return openapi.ListSimilarAssets404JSONResponse{}, nil
+	}
+	// #1066 — and the anchor's CONTENT must be readable, which CanSee
+	// does not decide. The row plane admits a restricted asset to any
+	// authenticated caller by design (ADR 0064 keeps it listed), so
+	// #661's gate stopped an ANONYMOUS caller anchoring on one and left
+	// every signed-in stranger able to. Anchoring is a read of the
+	// asset's embedding, and the embedding is a derived copy of its
+	// image — the same argument that puts the thumbhash on the binary
+	// side. CanReadContent is the shared gate the byte handlers use, so
+	// the rule is not restated here.
+	//
+	// Same 404, deliberately: a distinguishable refusal would tell the
+	// caller that the id exists and is restricted.
+	readable, err := visibility.CanReadContent(ctx, h.Pool, caller, anchorCaps, anchorID,
+		visibility.MatureFromContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("ListSimilarAssets: anchor content: %w", err)
+	}
+	if !readable {
 		return openapi.ListSimilarAssets404JSONResponse{}, nil
 	}
 
@@ -158,7 +179,7 @@ func (h *Handler) ListSimilarAssets(ctx context.Context, req openapi.ListSimilar
 }
 
 // defaultEmbeddingModel reads system_config.ai.embedding.default_model.
-// Falls back to "nomic-embed-text" (the migration 00011 seed value)
+// Falls back to "nomic-embed-text" (the migration 00001 seed value)
 // when the row is absent — keeps the response useful even on a
 // fresh DB before the seed has propagated.
 func (h *Handler) defaultEmbeddingModel(ctx context.Context) (string, error) {
@@ -201,6 +222,34 @@ func (h *Handler) defaultEmbeddingModel(ctx context.Context) (string, error) {
 // visible. So this path applies BOTH planes — the predicate decides
 // which neighbours are listed, FieldsReadable decides what each listing
 // says.
+//
+// # …except on the SIMILARITY axis (#1066)
+//
+// That is still true of a LIST. It is not true of a RANKING, and this is
+// a ranking: every id reaching this function got here by scoring close
+// to the anchor's embedding, so a withheld neighbour still announces
+// "an asset you may not open closely resembles the one you are looking
+// at". The placeholder withholds the title and the blur and discloses
+// the very thing the blur was withheld to protect — ADR 0064 puts the
+// thumbhash on the binary side because "a thumbhash IS a blur", and an
+// embedding is a lossier copy of the same picture read out through the
+// distance.
+//
+// So visibility.ContentReadableSQL is composed here too, and a neighbour
+// that fails it is DROPPED — the caller's own ordering loop skips an id
+// this query did not hand back. It stops being a similarity candidate
+// for EVERY anchor equally, which is what keeps the absence from being
+// an oracle in its own right; the same argument #902 used when a
+// restricted asset stopped matching text queries. The row is not hidden:
+// browse still lists it, with its owner's name, and #881's request-access
+// still attaches to it.
+//
+// The FieldsReadable branch below is deliberately KEPT rather than
+// deleted as unreachable. It is what makes the payload safe if this
+// query is ever given ids from somewhere else, and it is the branch a
+// team-scoped assets.admin holder would take — they hold the field
+// plane, never the binary one, so this query drops their restricted
+// neighbours even though FieldsReadable would have admitted the columns.
 func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller, caps visibility.CapabilityChecker, ids []pgtype.UUID) ([]openapi.Asset, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -211,8 +260,33 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 	}
 	// Two bound placeholders so far ($1 = the id array, $2 = the caller
 	// ref the readability fragment binds); the predicate fragment owns
-	// everything above them and its args append LAST.
+	// everything above them and its args append LAST. $2 is referenced
+	// unconditionally by FieldsColumnsSQL's membership EXISTS, so the
+	// content conjunct can name it without the bind-count care the
+	// search-side splice sites need.
 	frag, predArgs := pred.ToSQL("", 2)
+	readFrag := visibility.ContentReadableSQL("assets", "$2", visibility.ResolveContentCaps(caps))
+	// #1117 — the mature axis on the NEIGHBOURS.
+	//
+	// #1066 already refuses a restricted neighbour here, and the ANCHOR
+	// side of this endpoint is already mature-gated (CanReadContent takes
+	// the viewer). This closes the remaining half: without it a
+	// disqualified viewer anchored on an ordinary asset would still be
+	// handed mature ones as its nearest neighbours — ranked, titled, and
+	// with a thumbhash, which is the derived-copy leak ADR 0090 §5 names.
+	//
+	// A DROP, not a withhold, and the drop happens because the row simply
+	// does not come back — the ordering loop above skips any neighbour
+	// this query did not return. That is #1066's chosen shape and it
+	// stays value-independent: a mature neighbour is dropped for every
+	// anchor equally, so its absence is not a fresh oracle.
+	//
+	// $2 is referenced unconditionally by FieldsColumnsSQL's membership
+	// EXISTS, so this fragment can name it without the bind-count care
+	// the search-side splice sites need.
+	readFrag += visibility.MatureFilterSQL("assets", visibility.MatureOwnerColAsset,
+		"$2", visibility.MatureFromContext(ctx),
+		visibility.ResolveContentCaps(caps).SystemAdmin)
 	// Build a $1, $2, ... placeholder list. pgx5 supports ANY($1::uuid[])
 	// when passing the slice directly; that's the cleanest path.
 	rows, err := h.Pool.Query(ctx, `
@@ -220,9 +294,9 @@ func (h *Handler) fetchAssetsByIDs(ctx context.Context, caller visibility.Caller
 		       file_hash, file_extension, file_size_bytes, metadata,
 		       origin_server_id, state_id, processing_status, thumbhash,
 		       created_at, updated_at, team_id,
-		       `+visibility.FieldsColumnsSQL("assets", "$2")+`
+		       `+visibility.FieldsColumnsSQL("assets", "$2", caller)+`
 		FROM assets
-		WHERE id = ANY($1)`+frag,
+		WHERE id = ANY($1)`+readFrag+frag,
 		append([]any{ids, caller.UserRef}, predArgs...)...)
 	if err != nil {
 		return nil, err

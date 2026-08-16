@@ -11,7 +11,7 @@
 // kind × since × cursor) so memoising on filter signature would
 // blow the working set for low hit rate. The underlying query is
 // indexed by every column the filters use (type, source, actor,
-// object_kind) via the partial indexes set up in migration 00049,
+// object_kind) via the partial indexes set up in migration 00001,
 // so cold reads are sub-ms in practice.
 
 package activities

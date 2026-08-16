@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -104,11 +105,47 @@ type Query struct {
 	// visibility.AssetMutationCaps.CacheKey.
 	MutationCaps visibility.AssetMutationCaps
 
-	// Advanced is a placeholder for the B-2 advanced DSL
-	// (field:value, phrases, AND/OR/NOT). Nil in B-1; the engine
-	// ignores it. Kept here so the outer shape stays stable
-	// when the DSL parser lands.
-	Advanced *AdvancedQuery
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090). Three booleans — signed in, opted in, instance allows
+	// — resolved once at the HTTP edge and carried, exactly like the
+	// three caps structs above and for the same reasons: the inputs come
+	// from three different stores, and the answer has to reach both a
+	// SQL fragment and the CACHE KEY.
+	//
+	// ⚠️ THE ZERO VALUE IS THE DISQUALIFIED VIEWER. A Query built without
+	// this field searches as an opted-out reader does, which returns
+	// FEWER rows. That direction is deliberate (visibility.MatureViewer):
+	// a gate that loses its inputs must refuse rather than widen, and the
+	// visible symptom is a reader saying "I opted in and still cannot
+	// find it" rather than an invisible leak.
+	//
+	// ⚠️ AND IT MUST BE IN THE CACHE KEY. Without that, an opted-in
+	// reader's cached result page is served verbatim to an opted-out one
+	// — a leak no single-caller test can see, because it needs two
+	// callers and a warm cache to exist at all. See
+	// visibility.MatureViewer.CacheKey and keyForQuery.
+	Mature visibility.MatureViewer
+
+	// Filters is the caller's facet selection — the tag, asset type,
+	// owner, sensitivity or extension they narrowed to (#907).
+	//
+	// This field replaces the `Advanced *AdvancedQuery` placeholder that
+	// sat here through five releases saying "nil in B-1; the engine
+	// ignores it". It was true: the DSL compiled a Filters struct, the
+	// aggregators counted every bucket correctly, and nothing anywhere
+	// applied one, so ticking a facet had never once changed a result
+	// set. The placeholder is gone rather than kept beside the real
+	// field — a struct with both would leave the next reader guessing
+	// which one the engine reads.
+	//
+	// Populated from TWO sources that produce the same type: the
+	// repeated `filter=` query parameter (the rail) and the compiled
+	// DSL's field:value nodes (the typed query). Both compose; neither
+	// is privileged.
+	//
+	// An entity that cannot satisfy the selection contributes no hits
+	// and no count — see [facet.Selection.SQL].
+	Filters facet.Selection
 
 	// SimilarityHint is the pgvector-formatted embedding literal
 	// ('[a,b,c,...]') the Engine's hybrid path treats as the
@@ -150,9 +187,6 @@ type Query struct {
 	// merge; a pure-BM25 query bypasses the threshold entirely.
 	SimilarityThreshold float64
 }
-
-// AdvancedQuery is the B-2 placeholder. B-1 never populates it.
-type AdvancedQuery struct{}
 
 // Cursor is the opaque pagination cursor. Serialised to base64-
 // encoded JSON before it crosses the wire so clients treat it as
@@ -216,11 +250,12 @@ type Hit struct {
 	// to be wrong.
 	Restricted bool
 
-	// OwnerDisplayName is the asset owner's display name, carried
-	// ONLY on a restricted hit so the placeholder card can say
-	// whose work it is and #881 can address the request. Empty
-	// when unresolvable, and then omitted from the wire rather
-	// than sent empty.
+	// OwnerDisplayName is the asset owner's display name per
+	// visibility.OwnerDisplayNameSQL, carried ONLY on a restricted
+	// hit so the placeholder card can say whose work it is and #881
+	// can address the request. Empty when unresolvable and when the
+	// owner opted out of anonymous exposure (#1023), and then
+	// omitted from the wire rather than sent empty.
 	OwnerDisplayName string
 
 	// OriginServerID is set for federated rows so the frontend

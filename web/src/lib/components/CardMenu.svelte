@@ -97,6 +97,34 @@
      *  itself re-answers it authoritatively, so a card that guesses
      *  generously costs a page, not a silent failure. */
     editPath?: string | null;
+    /** The CALLER already reveals this control, so skip the built-in
+     *  hover/focus fade (#1111).
+     *
+     *  The grid post card's overlay renders this menu INSIDE a block
+     *  that is itself hidden at rest and revealed on hover-or-focus.
+     *  Two reveal rules multiply: the outer one turns the block on, the
+     *  inner `opacity-0` keeps the button off, and the ⋯ is simply
+     *  missing from an overlay that is otherwise fully drawn — which is
+     *  how it shipped for exactly one screenshot. Handing the decision
+     *  to the parent means one rule decides, and it is the rule that
+     *  knows about the block.
+     *
+     *  Every other caller leaves this false and keeps the behaviour
+     *  #578 specified: hidden at rest on fine pointers, revealed on
+     *  hover / focus, always shown on touch. */
+    revealed?: boolean;
+    /** Where the trigger sits (#1136).
+     *
+     *  `overlay` — the historical placement: absolutely positioned at
+     *  the artwork's top-right on a dark translucent disc, hidden at
+     *  rest. Designed to survive an unknown photograph underneath it.
+     *
+     *  `inline` — an ordinary flow element in a chrome band OUTSIDE the
+     *  preview, for thumbnail's frame layout. Always visible (it is not
+     *  covering anything, and `revealed` is about artwork), and it wears
+     *  the theme's own colours: the black disc is camouflage for a
+     *  photograph, and on a solid panel it reads as a sticker. */
+    placement?: 'overlay' | 'inline';
   }
 
   let {
@@ -105,6 +133,8 @@
     detailPath,
     manageAccess = null,
     editPath = null,
+    revealed = false,
+    placement = 'overlay',
   }: Props = $props();
 
   // What this card would put in a collection, and which endpoint that
@@ -264,8 +294,13 @@
   stretched nav link + the title overlay.
 -->
 <div
-  class="pointer-events-none absolute right-2 top-2 z-20 opacity-0 transition-opacity duration-150
-         group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100
+  class="pointer-events-none transition-opacity duration-150
+         {placement === 'inline'
+    ? 'opacity-100'
+    : 'absolute right-2 top-2 z-20 ' +
+      (revealed
+        ? 'opacity-100'
+        : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100')}
          {open ? 'opacity-100' : ''}"
 >
   <button
@@ -277,12 +312,34 @@
     aria-label={t('card.tools.menu_label')}
     title={t('card.tools.menu_label')}
     data-testid="card-menu-trigger"
-    class="pointer-events-auto group/tool inline-flex h-11 w-11 items-center justify-center focus-visible:outline-none"
+    class="pointer-events-auto group/tool inline-flex h-11 w-11 cursor-pointer items-center
+           justify-center focus-visible:outline-none"
   >
+    <!-- #1126: the hover state, made visible.
+         `cursor-pointer` first, because there was none — a `<button>`
+         computes `cursor: default` (measured), and Tailwind's preflight
+         does not change it, so the one control on the card that IS a
+         button was the one that did not look clickable.
+
+         The chip's hover step was `bg-black/60` → `bg-black/80`, which
+         over artwork is a 20% alpha change on an already-dark disc:
+         present in the stylesheet, invisible on screen. It now brightens
+         to a near-opaque disc AND takes a hairline ring, so the state
+         reads by two channels rather than one — the same reason the rail
+         chips pair a border change with a background change. Scaling was
+         the alternative and is wrong here: the ⋯ sits 8px from the tile
+         corner, and a control that grows on hover would cross the edge. -->
     <span
-      class="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm
-             transition-colors group-hover/tool:bg-black/80 group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80
-             {open ? 'bg-black/80' : ''}"
+      class="flex h-9 w-9 items-center justify-center rounded-full ring-1 ring-transparent
+             transition-colors
+             {placement === 'inline'
+        ? 'text-fg-muted hover:bg-state-hover group-hover/tool:bg-state-hover group-hover/tool:text-fg ' +
+          'group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-ring ' +
+          (open ? 'bg-state-hover text-fg' : '')
+        : 'bg-black/60 text-white backdrop-blur-sm ' +
+          'group-hover/tool:bg-black/85 group-hover/tool:ring-white/40 ' +
+          'group-focus-visible/tool:ring-2 group-focus-visible/tool:ring-white/80 ' +
+          (open ? 'bg-black/85 ring-white/40' : '')}"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <circle cx="12" cy="5" r="1.75" />

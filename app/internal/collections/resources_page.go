@@ -59,6 +59,25 @@ type ListCollectionResourcesPageGatedParams struct {
 	// (#939). Widens the FIELD plane only — never the picture, never
 	// the bytes. The zero value denies, so omitting it fails closed.
 	MutationCaps visibility.AssetMutationCaps
+	// Mature is the caller's resolved mature-content axis (#1147).
+	//
+	// ⚠️ IT NARROWS ROWS, unlike every other field on this struct. This
+	// query's whole shape is "list the member, redact what the caller may
+	// not see", and the mature axis is the one rule that does not fit it:
+	// a mature member is ABSENT, not placeheld.
+	//
+	// The argument is assets.ListAssetsPageGated's, verbatim, because it
+	// is the same list of assets reached through a different door. A
+	// restricted member stays listed because ADR 0064 requires browse to
+	// show the corpus and #881's request-access flow hangs off the
+	// placeholder. A mature member has no such flow — there is nothing to
+	// request, only a preference to change — and #921 measured what the
+	// placeholder alternative looks like: a grid of blurred plates nobody
+	// asked to be offered.
+	//
+	// The zero value is the DISQUALIFIED viewer, so a caller that forgets
+	// this field shows too little rather than leaking.
+	Mature visibility.MatureViewer
 }
 
 // ListCollectionResourcesPageGatedRow is a contents row plus the derived
@@ -84,10 +103,13 @@ type ListCollectionResourcesPageGatedRow struct {
 	// serialises such a row as a placeholder: no asset column at all,
 	// only the collection_resources columns plus OwnerDisplayName.
 	Restricted bool
-	// OwnerDisplayName is the asset owner's display name, the ONE
-	// asset-derived value a placeholder is permitted to carry. Empty when
-	// the asset is unowned or the owner has no resolvable name — the
-	// handler then omits the field rather than sending "".
+	// OwnerDisplayName is the asset owner's display name per
+	// visibility.OwnerDisplayNameSQL, the ONE asset-derived value a
+	// placeholder is permitted to carry. Empty when the asset is
+	// unowned, when the owner has no resolvable name, and when the owner
+	// opted out of anonymous exposure and this caller is anonymous
+	// (#1023) — the handler then omits the field rather than sending "",
+	// so those three cases are one answer on the wire.
 	OwnerDisplayName string
 }
 
@@ -110,23 +132,44 @@ func ListCollectionResourcesPageGated(
 		p.Ladder,          // $6 — configured preview ladder (#591)
 	}
 
+	// #1147 — the mature axis, on the ROW plane. See the field's doc for
+	// why this one narrows rows in a query built to redact them instead.
+	//
+	// It reuses $5, the caller ref already bound above for the
+	// team-membership probe, so it adds NO placeholder. That is not a
+	// tidiness point: MatureFilterSQL folds to the empty string for a
+	// qualified viewer and for an admin, and a NEW placeholder referenced
+	// only by a fragment that sometimes vanishes is the 42P18 ("could not
+	// determine data type of parameter") that bit posts/list_page.go —
+	// an error on every request by exactly the readers who qualify.
+	// assets/list_page.go reuses its $8 for the same reason.
+	matureFrag := visibility.MatureFilterSQL("a", visibility.MatureOwnerColAsset,
+		"$5", p.Mature, visibility.ResolveContentCaps(caps).SystemAdmin)
+
 	// Derived columns join preview_available's inputs in the same pass —
 	// no per-asset round-trips (#471). Readability is decided in-Go per
 	// row (visibility.FieldsReadable) from a.sensitivity + a.status +
 	// a.processing_status + a.owner + membership + caps.
 	//
-	// The owner's display name is resolved in this pass too, from the
-	// same LEFT JOINs the users package uses (users/queries.sql). It is
-	// the one asset-derived value a placeholder carries, so fetching it
+	// The owner's display name is resolved in this pass too. It is the
+	// one asset-derived value a placeholder carries, so fetching it
 	// per-restricted-row afterwards would be an N+1 on exactly the path
 	// that needs it most.
+	//
+	// #1023 — it comes from visibility.OwnerDisplayNameSQL rather than
+	// from LEFT JOINs written here. What used to sit here was
+	// `COALESCE(NULLIF(up.display_name,''), u.username, '')` — the same
+	// text as posts' preview enrich, and with the same defect: it never
+	// consulted `hide_from_anonymous`, so a public collection holding a
+	// restricted asset disclosed the username of an owner who had taken
+	// ADR 0024's opt-out to an anonymous caller.
 	sql := `SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
        a.title, a.asset_type, a.status, a.file_hash,
        a.file_extension, a.thumbhash,
        a.created_at AS asset_created_at,
        a.sensitivity, a.processing_status, a.owner_user_ref,
-       COALESCE(NULLIF(up.display_name, ''), u.username, '') AS owner_display_name,
+       ` + visibility.OwnerDisplayNameSQL("a.owner_user_ref", caller.IsAnonymous) + ` AS owner_display_name,
        ` + pixeldims.SelectColumnsSQL("a.id") + `,
        (a.file_hash IS NOT NULL AND EXISTS (
             SELECT 1 FROM storage_variants sv
@@ -141,11 +184,9 @@ func ListCollectionResourcesPageGated(
        a.team_id
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
-LEFT JOIN "user" u          ON u.ref = a.owner_user_ref
-LEFT JOIN user_profiles up  ON up.user_ref = a.owner_user_ref
 WHERE cr.collection_id = $1
   AND cr.pinned = TRUE
-  AND a.deleted_at IS NULL
+  AND a.deleted_at IS NULL` + matureFrag + `
   AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
   AND ($2::INTEGER IS NULL
        OR cr.sort_order > $2::INTEGER

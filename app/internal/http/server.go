@@ -45,6 +45,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/tenancy"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -371,6 +372,16 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// records the security requirements; codegen-enforced
 		// authorization comes in Phase 1.3).
 		r.Use(resolver.ResolveIdentity)
+		// #1116 — the mature axis, resolved once per request and carried
+		// on the context. STRICTLY AFTER ResolveIdentity: its first
+		// conjunct is "is this caller signed in", which does not exist
+		// until the line above has run.
+		r.Use(matureViewerMiddleware(func() visibility.MatureResolver {
+			if impl == nil {
+				return nil
+			}
+			return impl.matureResolver
+		}))
 
 		// HLS variants live at multi-segment keys like
 		// `hls/master.m3u8`, `hls/720p/seg00012.ts`. chi's default
@@ -691,6 +702,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	if iiifRootHandler != nil {
 		r.Group(func(r chi.Router) {
 			r.Use(resolver.ResolveIdentity)
+			// The IIIF root mount is a SECOND entry point to the same
+			// byte gate (iiif/http.go calls CanReadContent directly), so
+			// it needs the same middleware — a route that skips it would
+			// serve tiles with the disqualified viewer and quietly refuse
+			// opted-in readers.
+			r.Use(matureViewerMiddleware(func() visibility.MatureResolver {
+				if impl == nil {
+					return nil
+				}
+				return impl.matureResolver
+			}))
 			iiifRootHandler.Mount(r)
 			if impl != nil {
 				if impl.iiifPresHandler != nil {
@@ -871,7 +893,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Federation OUTBOX dispatcher (Phase 1.22.D-b). LISTEN/
 	// NOTIFY-driven fan-out from activities → federation_outbox.
-	// Sub-100ms latency via the trigger from migration 00005;
+	// Sub-100ms latency via the trigger from migration 00001;
 	// 30s ticker is correctness backstop only.
 	if s.api != nil && s.api.outboxDispatcher != nil {
 		go s.api.outboxDispatcher.Run(ctx)

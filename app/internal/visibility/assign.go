@@ -28,7 +28,7 @@ import (
 //
 // Two call sites need the identical question, so it gets exactly one
 // home (epic #665; #892 and #904 each spent a sprint deleting a second
-// copy of a security rule). It sits beside [CanAttachAsset], the other
+// copy of a security rule). It sits beside [CanSeeAssetContent], the other
 // write-side gate in this package, for the same reason that one does.
 //
 // # The rule
@@ -89,7 +89,7 @@ import (
 // boolean so the caller can answer them all with the SAME response.
 // Callers MUST do so. Any difference turns the endpoint into a
 // team-existence probe across every studio on the instance, the same
-// discipline [CanAttachAsset] documents for assets.
+// discipline [CanSeeAssetContent] documents for assets.
 func CanAssignToTeam(
 	ctx context.Context,
 	pool Pool,

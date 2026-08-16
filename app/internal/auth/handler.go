@@ -65,6 +65,12 @@ type Handler struct {
 	// haven't configured one.
 	Policy passwordPolicySource
 
+	// MatureAllowed answers "does this install allow mature content"
+	// for the session response (#1116, ADR 0090 §2). Nil is safe and
+	// answers TRUE — see SetMatureAllowedReader for why this one field
+	// fails OPEN while every viewing rule on the same axis fails closed.
+	MatureAllowed MatureAllowedReader
+
 	// Providers is the identity-provider registry consulted by Login()
 	// to dispatch credentials to the right backend (password vs LDAP
 	// vs ...). Nil-safe — when nil, Login falls back to the legacy
@@ -141,6 +147,62 @@ func (h *Handler) SetPasswordPolicySource(p passwordPolicySource) {
 // NewHandler signature stays stable.
 func (h *Handler) SetProviderRegistry(r *Registry) {
 	h.Providers = r
+}
+
+// MatureAllowedReader answers the third conjunct of ADR 0090 §2 — does
+// this INSTALL allow mature content — for the session response (#1116).
+//
+// # A function type, not the sysconfig store
+//
+// Package auth cannot import sysconfig: sysconfig's handler imports auth
+// for RequestFromContext and the capability helpers, so the arrow only
+// goes one way. Taking the answer as a one-line function keeps it that
+// way, and keeps this package from learning that `system_config` exists
+// at all.
+//
+// # It is the SAME switch the predicate reads, not a copy of it
+//
+// The value on the session response is a RENDER HINT and nothing else.
+// Nothing server-side consults it: visibility.QualifiesForMature ANDs
+// the operator's switch in on every request regardless of what any
+// session response said, so a client that ignores this — or a stale one
+// that cached yesterday's answer — can still not be shown a single
+// mature byte. That is why it is safe to serve it best-effort.
+type MatureAllowedReader func(ctx context.Context) (bool, error)
+
+// SetMatureAllowedReader wires the install-wide mature switch into the
+// session response. Same post-construction pattern as the setters above.
+//
+// Unwired, [Handler.matureAllowed] answers TRUE — matching
+// sysconfig.KeyMatureContent's own absent-means-allowed default rather
+// than the fail-closed direction the VIEWING rules take. The two
+// directions are right for their own questions: refusing to widen is
+// correct for a gate over content, and this is not one. It decides
+// whether an account is offered a checkbox, and answering false here
+// would hide the opt-in control on every install that has never
+// configured the setting — which is all of them — while disclosing
+// nothing either way.
+func (h *Handler) SetMatureAllowedReader(r MatureAllowedReader) {
+	h.MatureAllowed = r
+}
+
+// matureAllowed resolves the flag for a session response, best-effort.
+//
+// An ERROR resolves to TRUE, same as unwired, and for the same reason:
+// this field offers a control, it does not grant anything. A config-read
+// blip that hid the mature opt-in from every signed-in account would be
+// a bug report ("the setting vanished") caused by a transient, and the
+// opposite failure — showing a checkbox on an install that disallows —
+// costs the user one tick that the server then declines to honour.
+func (h *Handler) matureAllowed(ctx context.Context) bool {
+	if h.MatureAllowed == nil {
+		return true
+	}
+	allowed, err := h.MatureAllowed(ctx)
+	if err != nil {
+		return true
+	}
+	return allowed
 }
 
 // auditRecorder is the subset of audit.Recorder that the auth handler
@@ -795,7 +857,17 @@ func (h *Handler) GetCurrentUser(
 // new field on CurrentUser belongs behind this call, not at the call
 // sites.
 func (h *Handler) hydrateSessionUser(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
-	if h.Pool == nil || cu == nil {
+	if cu == nil {
+		return
+	}
+	// ABOVE the pool guard, deliberately. This one is not a per-account
+	// lookup — it is an install-wide switch with a permissive default,
+	// and a handler constructed without a pool (tests, boot order) must
+	// still answer it rather than leave the required field on Go's
+	// `false`, which would mean "this install forbids mature content"
+	// and hide the opt-in control everywhere.
+	cu.MatureContentAllowed = h.matureAllowed(ctx)
+	if h.Pool == nil {
 		return
 	}
 	h.hydrateAccountPrefs(ctx, userRef, cu)
@@ -949,17 +1021,19 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 // carried the meaning.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	var lang, theme string
-	var viewsJSON, filtersJSON []byte
+	var viewsJSON, filtersJSON, browseRailJSON, matureJSON []byte
 	err := h.Pool.QueryRow(ctx, `
 		SELECT COALESCE(p.language, ''),
 		       COALESCE(p.theme, ''),
 		       COALESCE(up.default_views, '{}'::jsonb),
-		       COALESCE(up.feed_filters, '{}'::jsonb)
+		       COALESCE(up.feed_filters, '{}'::jsonb),
+		       COALESCE(up.browse_rail, '{}'::jsonb),
+		       COALESCE(up.mature_content, '{}'::jsonb)
 		FROM (SELECT $1::bigint AS user_ref) k
 		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
 		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
 		userRef,
-	).Scan(&lang, &theme, &viewsJSON, &filtersJSON)
+	).Scan(&lang, &theme, &viewsJSON, &filtersJSON, &browseRailJSON, &matureJSON)
 	if err != nil {
 		// pgx.ErrNoRows is fine; we leave the fields nil.
 		return
@@ -978,6 +1052,94 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 	if f, ok := decodeFeedFilters(filtersJSON); ok {
 		cu.FeedFilters = &f
 	}
+	if r, ok := decodeBrowseRail(browseRailJSON); ok {
+		cu.BrowseRail = &r
+	}
+	if m, ok := decodeMatureContent(matureJSON); ok {
+		cu.MatureContent = &m
+	}
+}
+
+// decodeMatureContent parses the user_preferences.mature_content blob
+// into the wire type (#1115).
+//
+// Reports false when the opt-in is OFF, so /auth/me omits the object
+// for every account that has not opted in — the same "omit when it says
+// nothing" rule decodeFeedFilters applies to its boolean, and the same
+// consequence: this changes no existing session response.
+//
+// A malformed blob is treated as "not opted in", which is both the safe
+// direction and the only one available: hydrateAccountPrefs has no
+// error channel, being a best-effort enrichment of a session response
+// that must not fail because a preference did. Failing /auth/me — the
+// call that gates the entire app — over an unreadable preferences
+// column would lock a user out of the page where they could fix it.
+//
+// Decoded into the GENERATED type rather than userprefs.MatureContent,
+// for the reason decodeDefaultViews records: importing userprefs is an
+// import cycle (userprefs depends on this package for
+// IdentityFromContext). The two structs are the same one field, and
+// openapi.yaml is the shared source both are generated or written from.
+func decodeMatureContent(raw []byte) (openapi.UserPreferencesMatureContent, bool) {
+	var m openapi.UserPreferencesMatureContent
+	if len(raw) == 0 {
+		return m, false
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return openapi.UserPreferencesMatureContent{}, false
+	}
+	if m.Show == nil || !*m.Show {
+		return openapi.UserPreferencesMatureContent{}, false
+	}
+	return m, true
+}
+
+// decodeBrowseRail parses the user_preferences.browse_rail blob into
+// the wire type (#1113, widened for tag chips by #1123). Reports false
+// when every list is empty, so /auth/me omits the object for every
+// account that has not curated its rail — the same "omit when it says
+// nothing" rule decodeFeedFilters applies to its boolean.
+//
+// Why it rides the session response at all, rather than the browse page
+// fetching /account/preferences: the rail's order and hide-list decide
+// WHAT IT DRAWS, so learning them after first paint means the rail
+// paints the uncurated list and then rearranges itself in front of the
+// reader — the layout shift the single `loaded` gate in teamFollows
+// exists to avoid, reintroduced one level up. #706 is the precedent and
+// the same argument: /auth/me is awaited before any page renders.
+//
+// Same "render hint, never fail the call" posture as its two
+// neighbours. A malformed blob decodes to "no curation", which is the
+// default rail — every visible team — rather than an empty one. That
+// direction matters: failing open here shows the reader more than they
+// asked for, failing closed would show them nothing and look like their
+// teams had been deleted.
+func decodeBrowseRail(raw []byte) (openapi.UserPreferencesBrowseRail, bool) {
+	var r openapi.UserPreferencesBrowseRail
+	if len(raw) == 0 {
+		return openapi.UserPreferencesBrowseRail{}, false
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return openapi.UserPreferencesBrowseRail{}, false
+	}
+	// Any ONE non-empty list is enough to send the object. Written as a
+	// loop over all four rather than a chain of ORs so that #1123's tag
+	// lists cannot be the pair someone forgets to add: a new list added
+	// to the wire type without a line here would silently make a reader
+	// who curated ONLY that list look uncurated to /auth/me, and the
+	// rail would paint the default and then rearrange — the exact
+	// first-paint shift this function exists to prevent.
+	for _, l := range []*[]string{r.HiddenTags, r.TagOrder} {
+		if l != nil && len(*l) > 0 {
+			return r, true
+		}
+	}
+	hidden := r.HiddenTeamIds != nil && len(*r.HiddenTeamIds) > 0
+	ordered := r.TeamOrder != nil && len(*r.TeamOrder) > 0
+	if !hidden && !ordered {
+		return openapi.UserPreferencesBrowseRail{}, false
+	}
+	return r, true
 }
 
 // decodeFeedFilters parses the user_preferences.feed_filters blob into
@@ -1259,7 +1421,7 @@ func (h *Handler) GetMyCapabilities(
 
 	q := New(h.Pool)
 	// The API surface currently exposes a single "role" field; with the
-	// multi-role model (00016) we surface the user's first GLOBAL role
+	// multi-role model (00001) we surface the user's first GLOBAL role
 	// assignment for that field — team-scoped assignments aren't
 	// representable here. The 1.7.B-7 OpenAPI widening will switch this
 	// to a roles[] list with optional team scope per entry.

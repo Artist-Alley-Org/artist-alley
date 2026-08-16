@@ -26,8 +26,26 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ADMIN_SECTIONS, ADMIN_TILE_CAPS, sectionBySlug } from './sections';
+import { ADMIN_ENTRY_CAPS, ADMIN_SECTIONS, sectionBySlug } from './sections';
 import { auth } from '$stores/auth.svelte';
+
+// The seeded `Base` role's ten capabilities, resolved (it has no
+// parent). Mirrored from 00001_baseline_v0_1.sql's role_capabilities
+// inserts for role 80ec6003-…-d26d39169d42, and from 00039's own prose
+// listing of the same ten. Every ordinary signed-in account holds at
+// least these.
+const BASE_CAPS = [
+  'ai.use',
+  'assets.submit',
+  'caps.read',
+  'comments.delete.own',
+  'mcp.client.use',
+  'posts.comment',
+  'posts.like',
+  'profile.update_self',
+  'roles.read',
+  'teams.read',
+];
 
 // Exactly what migration 00039 + 00040 resolve for a user holding only
 // the Auditor role (its own nine, plus Base's ten through parent_id).
@@ -137,11 +155,85 @@ describe('asset_types tile (#961)', () => {
     // ...and the hand-out is enough to reach the admin shell, or the
     // tile would be visible on a page they cannot open.
     expect(auth.canSeeAdmin).toBe(true);
-    expect(ADMIN_TILE_CAPS).toContain('system.asset_types.admin');
+    expect(ADMIN_ENTRY_CAPS).toContain('system.asset_types.admin');
   });
 
   it('is still visible to system.admin (the wildcard short-circuits)', () => {
     auth.caps = ['system.admin'];
     expect(auth.canSeeTile(tile())).toBe(true);
+  });
+});
+
+// #962 — admin ENTRY is narrower than tile visibility.
+//
+// The failure this encodes: `canSeeAdmin` used to be "holds any cap
+// that any live tile names". The seeded `Base` role carries
+// `roles.read` and `teams.read`, and those are exactly the caps of the
+// /admin/roles and /admin/teams tiles — so the test was true for every
+// authenticated account on a stock install, and the `{:else if
+// !canSeeAdmin}` refusal branch in routes/admin/+layout.svelte could
+// not execute for a signed-in user at all.
+//
+// Two properties, and both matter:
+//   entry  — a Base cap set does NOT open the shell
+//   tiles  — narrowing entry did NOT hide a tile from anyone who was
+//            already entitled to it (the regression control)
+describe('admin entry vs tile visibility (#962)', () => {
+  it('does not let an ordinary Base account into the admin shell', () => {
+    auth.caps = BASE_CAPS;
+    auth.capsStatus = 'resolved';
+    // This is the assertion that makes the layout's refusal branch
+    // reachable: without it that branch is dead code with a comment
+    // claiming otherwise.
+    expect(auth.canSeeAdmin).toBe(false);
+  });
+
+  it('keeps roles.read / teams.read out of the entry set but on their tiles', () => {
+    // Guard the premise: these really are the two tiles' caps, so a
+    // future rename cannot make this test pass vacuously.
+    const roles = liveTiles('identity').find((t) => t.key === 'roles');
+    const groups = liveTiles('identity').find((t) => t.key === 'groups');
+    expect(roles?.cap).toBe('roles.read');
+    expect(groups?.cap).toBe('teams.read');
+
+    expect(ADMIN_ENTRY_CAPS).not.toContain('roles.read');
+    expect(ADMIN_ENTRY_CAPS).not.toContain('teams.read');
+
+    // …and a Base holder inside the shell still sees both tiles. The
+    // fix is a gate change, not a permission change.
+    auth.caps = BASE_CAPS;
+    auth.capsStatus = 'resolved';
+    expect(auth.canSeeTile(roles!)).toBe(true);
+    expect(auth.canSeeTile(groups!)).toBe(true);
+  });
+
+  it('still admits every admin-standing cap', () => {
+    // The regression control, as a set: exactly the two flagged tiles
+    // are withheld from entry, and nothing else was swept up with them.
+    const liveCaps = new Set(
+      ADMIN_SECTIONS.flatMap((s) => s.tiles)
+        .filter((t) => t.status === 'live' && t.cap)
+        .map((t) => t.cap as string),
+    );
+    const withheld = [...liveCaps].filter((c) => !ADMIN_ENTRY_CAPS.includes(c));
+    expect(withheld.sort()).toEqual(['roles.read', 'teams.read']);
+
+    // Each remaining cap, held alone, opens the shell — a visible tile
+    // on a page nobody can reach would be the mirror-image bug.
+    for (const cap of ADMIN_ENTRY_CAPS) {
+      auth.caps = [cap];
+      auth.capsStatus = 'resolved';
+      expect(auth.canSeeAdmin, cap).toBe(true);
+    }
+  });
+
+  it('still admits an Auditor and a system.admin', () => {
+    auth.caps = AUDITOR_CAPS;
+    auth.capsStatus = 'resolved';
+    expect(auth.canSeeAdmin).toBe(true);
+
+    auth.caps = ['system.admin'];
+    auth.capsStatus = 'resolved';
+    expect(auth.canSeeAdmin).toBe(true);
   });
 });

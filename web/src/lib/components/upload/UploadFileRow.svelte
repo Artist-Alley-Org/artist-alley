@@ -22,6 +22,7 @@
   import type { UploadRow, PendingFieldValue, FieldDef } from '$stores/upload.svelte';
   import { upload, fieldsForAssetType } from '$stores/upload.svelte';
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import { is3DExt } from '../viewers/controller';
   import {
     decodeBoolean,
@@ -295,6 +296,30 @@
         </svg>
       </button>
     </div>
+
+    <!-- #1116, ADR 0090 — the artist's own mature label.
+         ONE checkbox, default off. It sits here, directly under the
+         title, rather than inside the "Metadata" disclosure: a label
+         nobody opens is a label nobody sets, and the whole feature is
+         inert without it. It is deliberately NOT a second sensitivity
+         control — sensitivity answers who is ALLOWED to see this and
+         this answers what the work IS, so a public piece can carry it.
+
+         Hidden entirely when the operator has switched mature content
+         off for this install: the server refuses `mature: true` with a
+         400 there, so rendering the box would offer the artist a choice
+         that fails on save. -->
+    {#if auth.user?.matureContentAllowed}
+      <label class="inline-flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          bind:checked={row.mature}
+          data-testid="upload-mature"
+          class="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+        />
+        <span class="text-fg-muted">{t('upload.file_row.mature')}</span>
+      </label>
+    {/if}
 
     <!-- Progress bar + size -->
     {#if row.state === 'uploading' || row.state === 'asset-creating' || row.state === 'queued'}

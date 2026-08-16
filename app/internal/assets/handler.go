@@ -409,6 +409,19 @@ func (h *Handler) CreateAsset(
 	// is born with the placeholder. Failure here is soft: log + keep
 	// thumbhash=NULL. The feed card just won't have a blurred
 	// placeholder; the original /file URL still works.
+	// #1115 — the mature self-label, refused when the instance
+	// disallows it. Checked BEFORE any storage or thumbhash work: a
+	// request that is going to be refused should not first spend a
+	// synchronous image decode on it.
+	mature := in.Mature != nil && *in.Mature
+	if ok, err := h.matureWriteAllowed(ctx, mature); err != nil {
+		return nil, fmt.Errorf("assets: mature policy: %w", err)
+	} else if !ok {
+		return openapi.CreateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: errMatureNotAllowed.Error()},
+		}, nil
+	}
+
 	var thumbhashBytes []byte
 	if fileHashPtr != nil && isImageExt(in.FileExtension) {
 		hCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -428,7 +441,7 @@ func (h *Handler) CreateAsset(
 	//     per-user partial index for now (which still fires the
 	//     constraint for the same user uploading twice).
 	//
-	// The DB-side partial unique index from migration 00016
+	// The DB-side partial unique index from migration 00001
 	// provides the load-bearing concurrency guarantee — even if
 	// the pre-check passes, two concurrent uploads of the same
 	// file by the same user can still race; one wins the unique
@@ -475,6 +488,7 @@ func (h *Handler) CreateAsset(
 		ProcessingStatus: processingStatus,
 		Thumbhash:        thumbhashBytes,
 		TeamID:           teamID,
+		Mature:           mature,
 	})
 	if err != nil {
 		// The team gate above already refused every team this caller
@@ -1614,12 +1628,28 @@ func (h *Handler) UpdateAsset(
 		}
 	}
 
+	// #1115. narg, so an absent field leaves the flag alone — the same
+	// PATCH contract every other column here honours, and what lets the
+	// artist's own edit and the operator's override be one endpoint.
+	var maturePtr *bool
+	if req.Body != nil && req.Body.Mature != nil {
+		if ok, merr := h.matureWriteAllowed(ctx, *req.Body.Mature); merr != nil {
+			return nil, fmt.Errorf("assets: mature policy: %w", merr)
+		} else if !ok {
+			return openapi.UpdateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: errMatureNotAllowed.Error()},
+			}, nil
+		}
+		maturePtr = req.Body.Mature
+	}
+
 	row, err := q.UpdateAsset(ctx, UpdateAssetParams{
 		ID:          pgID,
 		Title:       titlePtr,
 		Description: descPtr,
 		Status:      statusPtr,
 		Metadata:    metaJSON,
+		Mature:      maturePtr,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1940,6 +1970,16 @@ func (h *Handler) ListAssets(
 	if req.Params.OwnerRef != nil {
 		ownerRef = req.Params.OwnerRef
 	}
+	// ?liked_by= scopes the page to one user's likes (#1106). Narrowing
+	// only, and no authorization decision here — the predicate and the
+	// field plane still decide every row, and neither one reads `likes`.
+	// See ListAssetsPageGatedParams.LikedByUserRef for the one thing it
+	// DOES change: on this page an unreadable row is absent rather than
+	// a placeholder.
+	var likedBy *int64
+	if req.Params.LikedBy != nil {
+		likedBy = req.Params.LikedBy
+	}
 	var resType *int64
 	if req.Params.AssetType != nil {
 		resType = req.Params.AssetType
@@ -2012,11 +2052,17 @@ func (h *Handler) ListAssets(
 		Q:               qText,
 		Tag:             tagFilter,
 		TeamID:          teamFilter,
+		LikedByUserRef:  likedBy,
 		CursorCreatedAt: cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
 		Ladder:          h.ladder(ctx),
 		MutationCaps:    mutationCaps(ctx),
+		// #1117 — read off the request context, resolved once by the
+		// mature middleware. An absent value is the DISQUALIFIED viewer,
+		// so a route that somehow skips the middleware narrows this page
+		// rather than widening it (visibility.MatureFromContext).
+		Mature: visibility.MatureFromContext(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assets: list: %w", err)
@@ -2146,7 +2192,8 @@ func (h *Handler) DownloadAssetFile(
 	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
 	// plane does not confirm that a restricted asset exists.
 	caller, caps := contentCaller(ctx)
-	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id))
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id),
+		visibility.MatureFromContext(ctx))
 	if err != nil || !allowed {
 		return openapi.DownloadAssetFile404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
@@ -2184,7 +2231,8 @@ func (h *Handler) DownloadAssetVariant(
 	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
 	// plane does not confirm that a restricted asset exists.
 	caller, caps := contentCaller(ctx)
-	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id))
+	allowed, err := visibility.CanReadContent(ctx, h.Pool, caller, caps, uuid.UUID(req.Id),
+		visibility.MatureFromContext(ctx))
 	if err != nil || !allowed {
 		return openapi.DownloadAssetVariant404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
@@ -2472,6 +2520,11 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 		CreatedAt:        &row.CreatedAt.Time,
 		UpdatedAt:        &row.UpdatedAt.Time,
 		Tags:             &tags,
+		// #1115. A LABEL, not a gate: whether this viewer receives the
+		// row at all, and whether its preview is blurred, are decided
+		// server-side (ADR 0090 §3). This is here so a client can say
+		// what it was given.
+		Mature: &row.Mature,
 	}
 	if len(details) > 0 {
 		td := make([]openapi.AssetTagDetail, 0, len(details))
@@ -2579,9 +2632,37 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		Thumbhash:        r.Thumbhash,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
+		// #1116 — MISSING UNTIL NOW, and the omission was invisible in
+		// exactly the way #946 warns about.
+		//
+		// UpdateAsset's RETURNING has carried `mature` since #1115 and
+		// this converter dropped it, so a PATCH that SET the flag came
+		// back saying `mature: false` for a row the database had just
+		// stored as true. A response-body assertion cannot catch that —
+		// the handler echoes its own wrong value consistently, so the
+		// test and the bug agree. It was found by asserting the
+		// PERSISTED value instead, straight out of Postgres.
+		//
+		// The web edit form happens not to show the symptom — it
+		// navigates away and re-reads through GET, whose projection was
+		// always correct — but that is luck, not insulation. The comment
+		// at the rowToAsset call site above records that "a client that
+		// renders straight from the PATCH response" is a real pattern
+		// this endpoint is held to, and every such client was being told
+		// an asset it had just marked mature was not.
+		Mature: r.Mature,
 	}
 }
 
+// listRowToGetRow — note that ListAssetsPageRow carries no `mature`
+// column, so a browse-list projection reports the field's zero value.
+// That is a LABEL omission and not a gate: the row plane
+// (ListAssetsPageGated's MatureFilterSQL conjunct) has already decided
+// whether a mature row reaches this caller at all, so the only viewer
+// who sees the wrong label is one entitled to the row. Closing it means
+// adding the column to ListAssetsPage's RETURNING, which is the parity
+// ORACLE the #1065 guard's allowlist depends on staying rule-free —
+// worth doing deliberately rather than as a drive-by.
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 	return GetAssetRow{
 		TeamID:           r.TeamID,
@@ -2618,7 +2699,7 @@ func isImageExt(ext *string) bool {
 // category. Returns 0 (unset) when we don't have a strong opinion —
 // the caller's explicit choice still wins.
 //
-// Type refs (seeded in migrations 00027 + 00031 + 00033 + 00034):
+// Type refs (all fourteen seeded in migration 00001):
 //
 //	1 Image · 2 Document · 3 Video · 4 Audio · 5 3D Object · 6 Archive
 //	7 Font · 8 Comic · 10 Ebook · 11 Audiobook · 12 Texture

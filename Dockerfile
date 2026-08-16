@@ -21,7 +21,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG GO_VERSION=1.26
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 # ---- web-build ------------------------------------------------------------
 #
@@ -112,7 +112,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 #
 # The headless three.js preview worker's node_modules (puppeteer + three)
 # for preview.model's 3D renderer (#498, ADR 0069). Multi-arch: buildx
-# resolves node:22-bookworm-slim per TARGETPLATFORM, so the node binary +
+# resolves node:24-bookworm-slim per TARGETPLATFORM, so the node binary +
 # modules copied into the runtime below match the target arch. Puppeteer's
 # bundled Chromium download is skipped — the runtime uses the apt
 # `chromium` package, which exists on amd64 AND arm64. That is why arm64
@@ -135,10 +135,16 @@ RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM debian:bookworm-slim AS runtime
 
+# These four are what an image built straight from this tree carries, and
+# what `edge.yml` inherits for any key it does not pass as a `--label`.
+# `release.yml` runs docker/metadata-action, whose `--label` args override
+# a Dockerfile LABEL of the same key — so keep these in sync with the
+# GitHub repo's own name/description, or edge and tagged images disagree
+# about what they are (#1091).
 LABEL org.opencontainers.image.title="artist-alley"
-LABEL org.opencontainers.image.description="Self-hosted art review and archival platform for artists, curators, and small studios."
-LABEL org.opencontainers.image.licenses="BSD-3-Clause"
-LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
+LABEL org.opencontainers.image.description="Self-hosted art review and archive for game studios — artist-first, AGPL-3.0 (commercial license available), Go + Postgres + SvelteKit."
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
+LABEL org.opencontainers.image.source="https://github.com/Artist-Alley-Org/artist-alley"
 
 # chromium: headless renderer for the three.js preview worker (#498). The
 # apt package pulls its full runtime dep tree (nss, gtk, fonts, libgbm, …)

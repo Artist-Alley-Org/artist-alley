@@ -73,7 +73,7 @@ const (
 )
 
 // PollStatus mirrors federation_directories.last_poll_status CHECK
-// per migration 00053.
+// per migration 00001.
 type PollStatus string
 
 const (

@@ -61,6 +61,7 @@ const STORAGE_MODE = 'aa_browse_mode';
 const STORAGE_SIZE_LEGACY = 'aa_browse_size';
 const STORAGE_TILE = 'aa_browse_tile_min';
 const STORAGE_COLS = 'aa_browse_list_cols';
+const STORAGE_COL_WIDTHS = 'aa_browse_list_col_widths';
 const STORAGE_SORT = 'aa_browse_list_sort';
 const STORAGE_FILTER = 'aa_browse_filter';
 const STORAGE_FEED_DIR = 'aa_browse_feed_dir';
@@ -86,25 +87,66 @@ const TILE_STEPS_REM = [10, 12, 13.5, 16, 18, 22, 28, 38, 57] as const;
 const TILE_MIN_IDX = 0;
 const TILE_MAX_IDX = TILE_STEPS_REM.length - 1;
 
-/** Index 5 → 22rem → 1 column at 390px, 5 at 1920px, 10 at 3840px.
- *  Both ends fall out of the one number: 5-at-1920 preserves exactly
- *  what the old default rendered (no regression on the width that
- *  matters most), and 1-at-390 is the explicit product call. Neither
- *  is written down as a rule — they're consequences. */
-const DEFAULT_TILE_IDX = 5;
-
-/** thumbnail is the same ladder, one rung ROOMIER than grid — at the
- *  default that is 28rem → 4 columns at 1920px, against grid's 22rem → 5.
+/** Index 3 → 16rem (#1140, owner direction with reference DOM).
  *
- *  This inverts the previous -2 ("a dense preview wall", 16rem → 7
- *  columns), and the inversion is the point (#556). thumbnail is the
- *  DETAILS view: it carries a title header, the thumb, and a metadata
- *  footer, and the owner's ask is "info at a glance". A details tile
- *  that is denser than the plain grid tile is a contradiction — it was
- *  why the metadata read as a cramped caption strip. Roomier than grid
- *  is the product intent now; do not "restore" the dense wall without
- *  re-reading #556. */
-const THUMBNAIL_RUNG_OFFSET = 1;
+ *  MEASURED, NOT CHOSEN. The owner's target is "the reference discovery
+ *  wall's compact card — ~240-260px tiles at 1920, ≈7 columns". Driving
+ *  every rung at 1920 and reading the rendered tile:
+ *
+ *      rung 2 (13.5rem)  232px   8 columns
+ *      rung 3 (16rem)    265px   7 columns   ← this one
+ *      rung 4 (18rem)    306px   6 columns
+ *      rung 5 (22rem)    367px   5 columns   ← the old default
+ *
+ *  ⚠️ NO RUNG PRODUCES 250px, AND NONE CAN. A 1920 viewport's content
+ *  row is ~1844px, so seven columns ARE 265px and eight ARE 232px —
+ *  the two constraints in the target ("240-260px" and "≈7 columns") name
+ *  different rungs, because a column count is an integer. Adding a rung
+ *  was checked and does nothing: 15rem also resolves to 7 columns of
+ *  265px, since the clamp is a MINIMUM and the columns divide what is
+ *  left. So the column count is the half that was honoured — it is the
+ *  one the owner can see — and the tile lands 5px over the stated band.
+ *
+ *  At 2560 the same rung gives 273px across 9 columns.
+ *
+ *  Stored preferences are untouched: `readTileIdx` returns the stored
+ *  rung when there is one and only falls back to this constant when
+ *  there is not (#709's rule — preserve, never overwrite). */
+const DEFAULT_TILE_IDX = 3;
+
+/** thumbnail is the same ladder, two rungs TIGHTER than grid — at the
+ *  default that is 12rem → ~197px previews across 9 columns at 1920,
+ *  against grid's 16rem → 265px across 7.
+ *
+ *  ⚠️ THIS REVERSES #556'S SIGN, DELIBERATELY AND ON OWNER DIRECTION
+ *  (#1140, with reference DOM). The note that stood here said the
+ *  opposite in as many words — "roomier than grid is the product intent
+ *  now; do not restore the dense wall without re-reading #556" — so the
+ *  reversal is recorded rather than quietly applied.
+ *
+ *  What changed is not the reasoning, it is the SHAPE the reasoning was
+ *  about. #556's argument was that a details tile denser than a grid
+ *  tile is a contradiction, "which was why the metadata read as a
+ *  cramped caption strip". The caption strip is gone: #1136 rebuilt this
+ *  density as an info PANEL — a format band above the preview, the
+ *  metadata stacked one fact per row below it, a control band under
+ *  that. A panel states its facts in rows and does not need the width a
+ *  caption needed to avoid truncating; what it needs is to be small
+ *  enough that a shelf of them fits on a screen. The owner's reference
+ *  panel is exactly that: a ~200px preview in a ~336px-tall card.
+ *
+ *  MEASURED at 1920 (the offset resolves the stored rung 3 to effective
+ *  rung 1): 197px preview, 199px card, 378px tall, 9 columns. At 2560:
+ *  199px preview, 12 columns. Both on the ~200px target; our card runs
+ *  ~40px taller than the reference's 336 because our stack carries the
+ *  artist row the reference panel does not.
+ *
+ *  The offset is CLAMPED at both ends by `activeRem`, so the two lowest
+ *  grid rungs resolve to the same 10rem floor in thumbnail rather than
+ *  underflowing — the stepper's bottom two steps do nothing in this
+ *  mode, which is the cost of one shared index and is preferable to a
+ *  second stored preference for the same control. */
+const THUMBNAIL_RUNG_OFFSET = -2;
 
 // ── The tile-size clamp, in one place (#639) ─────────────────────────
 //
@@ -131,26 +173,77 @@ const ROOT_PX = 16;
 /** The viewport width below which the clamp sits on its floor. */
 const FLOOR_BELOW_PX = CEIL_AT_PX * FLOOR_RATIO;
 
-/** The clamp's three zones for a rung, as numbers. */
-function clampZones(rem: number): { floorRem: number; vw: number; ceilRem: number } {
+/** The small-viewport floor for THUMBNAIL mode (#1140 rider).
+ *
+ *  MEASURED, and it exists because the shared floor is wrong for this
+ *  mode alone. `FLOOR_RATIO · R` is calibrated for a mode whose tile is
+ *  a picture: at the thumbnail default (effective rung 1 = 12rem) it
+ *  resolves to 4.8rem = 77px, and 390px fits FOUR of those. A 77px
+ *  "preview" in a panel that also carries a format band, a stacked
+ *  metadata list and a control band is not a small card — it is a card
+ *  whose picture has become an icon, with three bands of text under it.
+ *
+ *  9.5rem = 152px puts TWO columns across a 390px phone, which is the
+ *  planning call recorded when #1140 shipped.
+ *
+ *  ⚠️ MEASURED, AND THE OBVIOUS NUMBER WAS WRONG BY A WHOLE COLUMN —
+ *  the trap TILE_STEPS_REM's own comment warns about, walked into again
+ *  on the first attempt. The browse grid at a 390px viewport is 328px
+ *  wide with an 8px gap, so two columns need a floor of at most
+ *  (328 - 8) / 2 = 160px. 11rem = 176px was the round number that
+ *  "obviously" gives two, and it gives ONE — a 326px full-width tile,
+ *  which is worse than the four it replaced and the opposite of what
+ *  was asked for. Driven in a real browser at 390 and read off the
+ *  computed grid, not derived.
+ *
+ *  9.5rem rather than the exact 10rem the arithmetic permits, because
+ *  10rem lands on 328px EXACTLY — two columns with zero slack, one
+ *  rounding change in the shell's padding away from collapsing to one.
+ *  152px leaves 16px of room and still cannot reach three (three would
+ *  need 3 x 152 + 16 = 472px, well over 328).
+ *
+ *  ⚠️ IT IS A FLOOR, NOT A PIN, and that distinction keeps the stepper
+ *  alive. The clamp still takes the LARGER of this and the rung's own
+ *  vw zone, so stepping up from the default still widens the tile on a
+ *  phone; what it can no longer do is go below two columns' worth. Only
+ *  the rungs at or under the default are affected, which is exactly the
+ *  band the complaint was about.
+ *
+ *  ⚠️ OVERRIDABLE — this is a planning call, not an owner ruling. If the
+ *  owner wants 3 columns at 390px, this constant is the single knob:
+ *  ~7.3rem gives 3, ~5.5rem gives 4 (today's behaviour). Nothing else
+ *  moves, because `tileSizesFor` reads the same number. */
+const THUMBNAIL_FLOOR_REM = 9.5;
+
+/** The clamp's three zones for a rung, as numbers.
+ *
+ *  `floorMinRem` raises the floor without touching the other two zones,
+ *  so a mode can set a small-viewport minimum and leave desktop exactly
+ *  as it was. It is a MAX rather than a replacement: a rung whose own
+ *  floor is already higher keeps it, which is what stops the override
+ *  from SHRINKING a large rung on a phone. */
+function clampZones(
+  rem: number,
+  floorMinRem = 0,
+): { floorRem: number; vw: number; ceilRem: number } {
   return {
-    floorRem: +(rem * FLOOR_RATIO).toFixed(2),
+    floorRem: +Math.max(rem * FLOOR_RATIO, floorMinRem).toFixed(2),
     vw: +((rem * ROOT_PX * 100) / CEIL_AT_PX).toFixed(2),
     ceilRem: rem,
   };
 }
 
 /** `--tile-min` for a rung: the CSS lever the layout actually uses. */
-export function tileMinFor(rem: number): string {
-  const { floorRem, vw, ceilRem } = clampZones(rem);
+export function tileMinFor(rem: number, floorMinRem = 0): string {
+  const { floorRem, vw, ceilRem } = clampZones(rem, floorMinRem);
   return `clamp(${floorRem}rem, ${vw}vw, ${ceilRem}rem)`;
 }
 
 /** The `<img sizes>` list for a rung — see `BrowseViewState.tileSizes`
  *  for the full argument. Exported so a card that renders outside a
  *  browse surface has one honest default instead of a literal `22rem`. */
-export function tileSizesFor(rem: number): string {
-  const { floorRem, vw, ceilRem } = clampZones(rem);
+export function tileSizesFor(rem: number, floorMinRem = 0): string {
+  const { floorRem, vw, ceilRem } = clampZones(rem, floorMinRem);
   return (
     `auto, (max-width: ${FLOOR_BELOW_PX}px) ${floorRem}rem, ` +
     `(max-width: ${CEIL_AT_PX}px) ${vw}vw, ${ceilRem}rem`
@@ -162,6 +255,18 @@ export function tileSizesFor(rem: number): string {
  *  ladder the way the literal `'22rem'` it replaces did — that literal
  *  survived two rung recalibrations without moving. */
 export const DEFAULT_TILE_SIZES = tileSizesFor(TILE_STEPS_REM[DEFAULT_TILE_IDX]);
+
+/** `--tile-min`'s value at the default rung — the width a surface uses
+ *  when it wants the app's standard tile and NOT the browse stepper's
+ *  current one (#1098's featured strip).
+ *
+ *  The matched other half of `DEFAULT_TILE_SIZES`, and derived from the
+ *  same rung for the same reason: a fixed size written as a literal
+ *  `clamp(8.8rem, 18.33vw, 22rem)` would silently stop being "the
+ *  default tile" the first time the ladder is recalibrated, and the
+ *  drift would show up as the strip and the grid disagreeing at the
+ *  default — the exact complaint #909 was filed about. */
+export const DEFAULT_TILE_MIN = tileMinFor(TILE_STEPS_REM[DEFAULT_TILE_IDX]);
 
 const DEFAULT_MODE: ViewMode = 'grid';
 /** Phones default to `feed` — but only when nothing is stored, and only
@@ -263,23 +368,84 @@ export interface ListColumnDef {
   defaultVisible: boolean;
   sortable: boolean;
   align?: 'left' | 'right' | 'center';
-  /** CSS width for the <col>. Concrete widths give the table a
-   *  predictable rhythm without enabling drag-to-resize yet. */
+  /** CSS width for the column's grid track — the DEFAULT the table
+   *  starts from and the value double-clicking a resize handle returns
+   *  to (#1100). A user's dragged width overrides it per column; see
+   *  `columnWidths`. */
   width?: string;
+  /** Floor for a dragged width, in px. Below this the column stops
+   *  being a column: its header label clips to nothing and the cell
+   *  content underneath has no room to ellipsize into.
+   *
+   *  Per-column rather than one global number because the columns are
+   *  not the same kind of thing. `thumbnail` renders a 32px square and
+   *  nothing else, so 48px is a legitimate size for it and a global
+   *  floor of 80 would make the narrowest column in the table the one
+   *  you cannot narrow. Defaults to COLUMN_MIN_PX. */
+  minPx?: number;
+  /** May the reader drag this column's trailing edge (#1127)? Defaults
+   *  to true, which is every column #1100 shipped.
+   *
+   *  FALSE FOR THE FIXED-CONTROL COLUMNS, and the rule is one rule: a
+   *  column whose cell renders a control or a preview at a size of its
+   *  own is not a column of DATA. There is nothing inside it that more
+   *  width would reveal and nothing that less width would ellipsize, so
+   *  a handle there offers a gesture whose only possible outcome is
+   *  whitespace — and it sits 8px from a tab stop, so every near-miss
+   *  lands on a drag target instead.
+   *
+   *  Two columns qualify and they share this ONE flag rather than each
+   *  getting a special case (#1047, owner's list amendment):
+   *
+   *    select     one 24px checkbox (#1127)
+   *    thumbnail  one 32px preview square (#1047)
+   *
+   *  Both already had the other half of the symptom — a `labelKey` that
+   *  resolves to an empty string, because there is no field name to put
+   *  over a control. */
+  resizable?: boolean;
+  /** Can the reader turn this column off in the ColumnPicker? Defaults
+   *  to true.
+   *
+   *  False for the selection column: it is the list view's only
+   *  selection affordance, and a picker entry that removes the ability
+   *  to select is a setting whose "off" state breaks a feature rather
+   *  than hiding a field. The other four views have no equivalent
+   *  because their checkbox lives on the card and was never optional. */
+  hideable?: boolean;
 }
 
+/** The floor a column may be dragged to when its def names no other.
+ *  Roughly a header label plus its padding — narrower and the column
+ *  reads as a rendering fault rather than a choice. */
+export const COLUMN_MIN_PX = 80;
+
 export const LIST_COLUMNS: ListColumnDef[] = [
-  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem' },
+  // The selection column (#1127). FIRST, fixed, unresizable, unhideable
+  // — the desktop-list idiom, and the one column whose width is decided
+  // by the control inside it rather than by its content.
+  { id: 'select',       labelKey: 'browse.col.select',    defaultVisible: true,  sortable: false, align: 'center', width: '2.75rem', minPx: 44, resizable: false, hideable: false },
+  // The preview column (#1047). FIXED, like `select` above it and for
+  // the same stated reason: its cell is a 32px square whatever the track
+  // is, so dragging it only ever padded a picture with whitespace. Still
+  // HIDEABLE — unlike selection, a reader who wants a denser text table
+  // can turn the pictures off without losing a capability.
+  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem', minPx: 48, resizable: false },
   { id: 'title',        labelKey: 'browse.col.title',     defaultVisible: true,  sortable: true,  align: 'left',  width: 'minmax(16rem, 2fr)' },
   { id: 'author',       labelKey: 'browse.col.author',    defaultVisible: true,  sortable: true,  align: 'left',  width: '10rem' },
   { id: 'visibility',   labelKey: 'browse.col.visibility',defaultVisible: false, sortable: true,  align: 'left',  width: '7rem' },
   { id: 'tags',         labelKey: 'browse.col.tags',      defaultVisible: true,  sortable: false, align: 'left',  width: 'minmax(10rem, 1fr)' },
-  { id: 'members',      labelKey: 'browse.col.members',   defaultVisible: true,  sortable: true,  align: 'right', width: '5rem' },
-  { id: 'likes',        labelKey: 'browse.col.likes',     defaultVisible: true,  sortable: true,  align: 'right', width: '5rem' },
-  { id: 'comments',     labelKey: 'browse.col.comments',  defaultVisible: false, sortable: true,  align: 'right', width: '5rem' },
+  { id: 'members',      labelKey: 'browse.col.members',   defaultVisible: true,  sortable: true,  align: 'right', width: '5rem',  minPx: 64 },
+  { id: 'likes',        labelKey: 'browse.col.likes',     defaultVisible: true,  sortable: true,  align: 'right', width: '5rem',  minPx: 64 },
+  { id: 'comments',     labelKey: 'browse.col.comments',  defaultVisible: false, sortable: true,  align: 'right', width: '5rem',  minPx: 64 },
   { id: 'posted_at',    labelKey: 'browse.col.posted_at', defaultVisible: true,  sortable: true,  align: 'right', width: '9rem' },
   { id: 'description',  labelKey: 'browse.col.description', defaultVisible: false, sortable: false, align: 'left', width: 'minmax(12rem, 2fr)' },
 ];
+
+/** The floor for one column, resolved. */
+export function columnMinPx(id: string): number {
+  return LIST_COLUMNS.find((c) => c.id === id)?.minPx ?? COLUMN_MIN_PX;
+}
 
 const DEFAULT_VISIBLE_COLS = LIST_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.id);
 
@@ -300,6 +466,45 @@ function readColumns(): string[] {
 function writeColumns(ids: string[]): void {
   if (!browser) return;
   try { localStorage.setItem(STORAGE_COLS, JSON.stringify(ids)); } catch { /* */ }
+}
+
+/** Dragged column widths in px, keyed by column id (#1100).
+ *
+ *  A SEPARATE key from the visible-column list, not a richer value in
+ *  it, and that split is deliberate: visibility and width are set by
+ *  different controls and answer different questions, and a column
+ *  hidden through the picker has to come back at the width its owner
+ *  left it at. Two records means "hide, re-show" is not a reset. It
+ *  also means a width for a column this build no longer has is inert
+ *  rather than corrupting the visible set.
+ *
+ *  Unknown ids and non-finite / sub-floor numbers are dropped on read
+ *  rather than repaired. A width that cannot be honoured is not a
+ *  preference, and the alternative — clamping it up to the floor — puts
+ *  a value on screen that nobody chose. */
+function readColumnWidths(): Record<string, number> {
+  if (!browser) return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_COL_WIDTHS);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const known = new Set(LIST_COLUMNS.map((c) => c.id));
+    const out: Record<string, number> = {};
+    for (const [id, px] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!known.has(id)) continue;
+      if (typeof px !== 'number' || !Number.isFinite(px)) continue;
+      if (px < columnMinPx(id)) continue;
+      out[id] = Math.round(px);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeColumnWidths(w: Record<string, number>): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_COL_WIDTHS, JSON.stringify(w)); } catch { /* */ }
 }
 
 /** The stored list-view sort, or null when this device has never set
@@ -422,6 +627,9 @@ class BrowseViewState {
   tileIdx = $state<number>(DEFAULT_TILE_IDX);
   /** Visible list-view columns, in the order they appear. */
   listColumns = $state<string[]>(DEFAULT_VISIBLE_COLS);
+  /** Dragged list-view column widths in px, keyed by column id (#1100).
+   *  A column absent from here is on its registry default. */
+  columnWidths = $state<Record<string, number>>({});
   /** Sort key + direction for the list view. */
   sort = $state<{ col: string; dir: SortDir }>({ col: 'posted_at', dir: 'desc' });
   /** Which feed segment is active (latest / following). */
@@ -465,7 +673,18 @@ class BrowseViewState {
    *  the column count — it's a property of the viewport, and the only
    *  thing qualified to compute it is the layout engine. */
   get tileMin(): string {
-    return tileMinFor(this.activeRem);
+    return tileMinFor(this.activeRem, this.floorMinRem);
+  }
+
+  /** The small-viewport floor for the ACTIVE mode (#1140 rider).
+   *
+   *  Thumbnail only. It is read by BOTH `tileMin` and `tileSizes` — the
+   *  two have to agree or the browser picks a preview rung for a width
+   *  the layout never gives the tile, which is the defect #639's shared
+   *  `clampZones` exists to prevent, and a mode-specific floor applied
+   *  to one of them would reintroduce it. */
+  private get floorMinRem(): number {
+    return this.mode === 'thumbnail' ? THUMBNAIL_FLOOR_REM : 0;
   }
 
   /** The slot width to advertise in `<img sizes>`.
@@ -520,7 +739,7 @@ class BrowseViewState {
    *  per-engine bet, while media-conditioned lengths are the original
    *  `sizes` grammar and resolve to the identical number. */
   get tileSizes(): string {
-    return tileSizesFor(this.activeRem);
+    return tileSizesFor(this.activeRem, this.floorMinRem);
   }
 
   /** Whether dec / inc are currently meaningful. list + feed lock both:
@@ -575,6 +794,7 @@ class BrowseViewState {
     if (this.hydrated) return;
     this.tileIdx = readTileIdx();
     this.listColumns = readColumns();
+    this.columnWidths = readColumnWidths();
     this.applyAccountDefaults(defaults);
     this.hydrated = true;
   }
@@ -701,12 +921,31 @@ class BrowseViewState {
     writeFeedDir(this.feedDir);
   }
 
-  /** Resolve visible column defs in the user's chosen order. */
+  /** Resolve visible column defs in the user's chosen order.
+   *
+   *  UNHIDEABLE COLUMNS ARE FORCED IN, in the catalogue's canonical
+   *  position, whatever the stored list says. Without this the selection
+   *  column (#1127) would be missing for every reader who has ever
+   *  opened the ColumnPicker: their `listColumns` was written before the
+   *  column existed, `readColumns` keeps only ids it recognises, and the
+   *  new one is simply not in their array. The alternative — a
+   *  migration that rewrites everyone's localStorage on first load — has
+   *  to run exactly once and be right, and re-derives on every read what
+   *  this expresses as a rule. */
   get visibleColumns(): ListColumnDef[] {
     const byId = new Map(LIST_COLUMNS.map((c) => [c.id, c]));
-    return this.listColumns
-      .map((id) => byId.get(id))
-      .filter((c): c is ListColumnDef => !!c);
+    const chosen = new Set(this.listColumns);
+    for (const c of LIST_COLUMNS) {
+      if (c.hideable === false) chosen.add(c.id);
+    }
+    // Ordered by the reader's list, then anything forced in slotted back
+    // into catalogue order — which for `select` means first, where the
+    // idiom puts it.
+    const ordered = LIST_COLUMNS.filter((c) => chosen.has(c.id) && c.hideable === false).map(
+      (c) => c.id,
+    );
+    for (const id of this.listColumns) if (!ordered.includes(id)) ordered.push(id);
+    return ordered.map((id) => byId.get(id)).filter((c): c is ListColumnDef => !!c);
   }
 
   toggleColumn(id: string): void {
@@ -722,9 +961,53 @@ class BrowseViewState {
     writeColumns(this.listColumns);
   }
 
+  /** The grid track for one column: the user's dragged width if there
+   *  is one, otherwise the registry default (#1100).
+   *
+   *  A dragged width is a FIXED `px` track, and it replaces a flexible
+   *  default (`minmax(16rem, 2fr)`) rather than being clamped inside
+   *  it. That is what dragging means: the moment a column is given a
+   *  size by hand, it stops taking a share of the leftover. Columns
+   *  nobody has touched keep their `fr` and absorb the remainder, so
+   *  the table still fills its container. */
+  columnTrack(c: ListColumnDef): string {
+    const px = this.columnWidths[c.id];
+    return px ? `${px}px` : (c.width ?? '1fr');
+  }
+
+  /** Set one column's width, clamped up to its floor. Clamping rather
+   *  than refusing: a drag past the floor should PARK the column at the
+   *  minimum and keep tracking the pointer back out, not freeze the
+   *  handle and lose the gesture. */
+  setColumnWidth(id: string, px: number): void {
+    if (!Number.isFinite(px)) return;
+    const next = Math.max(columnMinPx(id), Math.round(px));
+    if (this.columnWidths[id] === next) return;
+    this.columnWidths = { ...this.columnWidths, [id]: next };
+    writeColumnWidths(this.columnWidths);
+  }
+
+  /** Drop one column's width so it falls back to the registry default. */
+  resetColumnWidth(id: string): void {
+    if (!(id in this.columnWidths)) return;
+    const next = { ...this.columnWidths };
+    delete next[id];
+    this.columnWidths = next;
+    writeColumnWidths(this.columnWidths);
+  }
+
+  /** Put the table back the way it shipped — which is BOTH halves.
+   *
+   *  Widths go too, deliberately. "Reset columns" that restored the
+   *  default set of columns at whatever widths the last drag left them
+   *  is a half reset, and the state it produces — the default columns,
+   *  none of them the default size — is one the user cannot get out of
+   *  except by dragging each one back by hand. */
   resetColumns(): void {
     this.listColumns = DEFAULT_VISIBLE_COLS;
     writeColumns(this.listColumns);
+    this.columnWidths = {};
+    writeColumnWidths(this.columnWidths);
   }
 
   /** Cycle the sort for a column: asc → desc → keep desc. Clicking a

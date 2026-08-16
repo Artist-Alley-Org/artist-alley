@@ -17,8 +17,8 @@ import (
 // Ebook / Audiobook / Texture / Sprite / Code recognition on top of
 // the bare Image / Video / Audio / 3D / Archive primitives.
 //
-// Type refs are seeded by migrations 00027 + 00031 + 00033 + 00034
-// and the constants here mirror those:
+// Type refs are seeded by migration 00001 (the v0.1 baseline fold
+// carries all fourteen) and the constants here mirror those:
 const (
 	typeImage     = 1
 	typeDocument  = 2

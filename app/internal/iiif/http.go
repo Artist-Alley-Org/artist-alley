@@ -244,7 +244,8 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 	// plane never confirms a restricted asset exists. Mirrors
 	// handlers.requireContentAccess / assets.contentCaller.
 	caller, caps := contentCaller(r)
-	if allowed, cerr := visibility.CanReadContent(ctx, h.Content, caller, caps, id); cerr != nil || !allowed {
+	if allowed, cerr := visibility.CanReadContent(ctx, h.Content, caller, caps, id,
+		visibility.MatureFromContext(ctx)); cerr != nil || !allowed {
 		if cerr != nil {
 			h.warn(ctx, "iiif.image.content_gate_error", "id", idStr, "err", cerr.Error())
 		}

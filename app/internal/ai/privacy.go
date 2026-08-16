@@ -14,7 +14,7 @@ package ai
 //   ai.privacy.lock_sensitive_to_local — bool
 //       When true, restricted + embargo assets are clamped to
 //       local providers. Default true on fresh install (see
-//       migration 00009). Operator can disable via the admin UI
+//       migration 00001). Operator can disable via the admin UI
 //       with a confirm dialog (admin_ai_privacy page).
 //
 //   ai.privacy.local_providers — []string

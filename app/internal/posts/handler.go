@@ -163,6 +163,10 @@ type Handler struct {
 	// (#891) — today just "hide restricted members". See
 	// feed_filters.go for the seam and why nil means "filter nothing".
 	feedFilters feedFilterReader
+	// matureResolver answers the mature-content axis for a caller
+	// (#1116). Nil until wired, and a nil resolver DISQUALIFIES rather
+	// than widens — see visibility.ResolveMatureOr.
+	matureResolver visibility.MatureResolver
 }
 
 // notifier is the notifications.Writer slice this package needs.
@@ -280,7 +284,7 @@ func (h *Handler) CreatePost(
 	// indistinguishable, or POST /posts becomes a UUID-existence probe.
 	//
 	// The covers are here rather than in a check of their own because
-	// the rule has exactly one home (visibility.CanAttachAsset, ADR
+	// the rule has exactly one home (visibility.CanSeeAssetContent, ADR
 	// 0064) and consolidating it there was the whole point of #922.
 	// Only the EXPLICIT covers are added: the implicit cover is
 	// members[0], already in this list, and re-gating it would just
@@ -670,7 +674,7 @@ func (h *Handler) UpdatePost(
 	// member and carries its own FK, so it is a second door into the
 	// same room #941 just locked — connecting it ungated would re-open
 	// that hole on the one column nobody was watching. Same adapter,
-	// same rule, one home (visibility.CanAttachAsset, ADR 0064).
+	// same rule, one home (visibility.CanSeeAssetContent, ADR 0064).
 	//
 	// The refusal is byte-identical to the cover's, and to the FK
 	// backstop below, so an unreadable thumbnail and a nonexistent one
@@ -991,6 +995,20 @@ func (h *Handler) ListPosts(
 		visPtr = &v
 	case req.Params.AuthorRef != nil && *req.Params.AuthorRef == caller.UserRef:
 		visPtr = nil
+	case req.Params.LikedBy != nil:
+		// #1106 — the Likes tab drops the default for the same reason
+		// the own-author case does: it is not the browse feed. "What
+		// this person liked" means every tier of it THIS caller may
+		// read, and pinning the display filter to org-only would answer
+		// a question nobody asked ("what they liked in the walled-garden
+		// tier") while looking like a complete list.
+		//
+		// This widens the DISPLAY filter and nothing else. The read rule
+		// is spliced below and is untouched, so the extra tiers a caller
+		// sees here are exactly the ones they could already read — their
+		// own posts, posts by authors they follow, posts shared with
+		// them. A tier they cannot read stays absent.
+		visPtr = nil
 	default:
 		v := "org-only"
 		visPtr = &v
@@ -998,6 +1016,18 @@ func (h *Handler) ListPosts(
 	var authorPtr *int64
 	if req.Params.AuthorRef != nil {
 		authorPtr = req.Params.AuthorRef
+	}
+
+	// ?liked_by= scopes the page to one user's likes (#1106). No
+	// authorization decision here, for the same reason ?team_id= has
+	// none: the conjunct NARROWS, the read rule below still decides
+	// every row, and it never consults `likes`. So this cannot be a
+	// probe either — an unknown ref, a ref who liked nothing, and a ref
+	// whose likes are all on posts this caller cannot read produce the
+	// same empty page.
+	var likedByPtr *int64
+	if req.Params.LikedBy != nil {
+		likedByPtr = req.Params.LikedBy
 	}
 
 	var qText *string
@@ -1035,12 +1065,20 @@ func (h *Handler) ListPosts(
 		teamID = pgtype.UUID{Bytes: *req.Params.TeamId, Valid: true}
 	}
 
-	// feed=following (Phase 1.17.G2) restricts the page to authors
-	// the caller follows. Anonymous callers can never satisfy this
-	// (the 401 path above returns first); for authenticated callers
-	// who don't follow anyone, the EXISTS subquery yields an empty
-	// page rather than a 4xx — matches every social platform's
-	// "your following tab is empty" UX.
+	// feed=following (Phase 1.17.G2) restricts the page to what the
+	// caller follows — authors AND teams, as one union (#1048).
+	// Anonymous callers can never satisfy this (the 401 path above
+	// returns first); for authenticated callers who follow nothing, the
+	// EXISTS subqueries yield an empty page rather than a 4xx — matches
+	// every social platform's "your following tab is empty" UX.
+	//
+	// Both graphs, because there is one control. The rail above the grid
+	// lists the teams the caller follows and the filter beside it says
+	// "Following", so an account that follows four studios and no people
+	// clicking it got an empty feed while the studios' posts sat one tab
+	// away. Splitting the control in two (People / Studios) was
+	// considered and rejected: it doubles a control that already competes
+	// for room, to expose a distinction nobody asked for.
 	var followerPtr *int64
 	if req.Params.Feed != nil && *req.Params.Feed == openapi.Following {
 		ref := caller.UserRef
@@ -1084,10 +1122,16 @@ func (h *Handler) ListPosts(
 		Tag:             tagPtr,
 		FeedFollowerRef: followerPtr,
 		TeamID:          teamID,
+		LikedByUserRef:  likedByPtr,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
 		Ascending:       ascending,
+		// The mature axis (#1116, ADR 0090 §3 row plane). Resolved ONCE
+		// here and carried into the query, never consulted per row —
+		// the answer is a property of the request, not of a post.
+		Mature:      h.resolveMature(ctx, caller),
+		MatureAdmin: caller != nil && caller.Can(CapSystemAdmin),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("posts: list: %w", err)
@@ -1234,7 +1278,8 @@ func (h *Handler) ListPostsSharedWithMe(
 		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
 
-	rows, err := h.ListSharedWithMeGated(ctx, caller.UserRef, cursorTs, cursorID, limit+1)
+	rows, err := h.ListSharedWithMeGated(ctx, caller.UserRef, cursorTs, cursorID, limit+1,
+		h.resolveMature(ctx, caller), caller.Can(CapSystemAdmin))
 	if err != nil {
 		return nil, fmt.Errorf("posts: shared with me: %w", err)
 	}
@@ -1295,7 +1340,10 @@ func (h *Handler) GetPostsByAsset(
 	ctx context.Context,
 	req openapi.GetPostsByAssetRequestObject,
 ) (openapi.GetPostsByAssetResponseObject, error) {
-	ids, err := h.ListPostsByAssetGated(ctx, auth.IdentityFromContext(ctx), req.Id)
+	byAssetCaller := auth.IdentityFromContext(ctx)
+	ids, err := h.ListPostsByAssetGated(ctx, byAssetCaller, req.Id,
+		h.resolveMature(ctx, byAssetCaller),
+		byAssetCaller != nil && byAssetCaller.Can(CapSystemAdmin))
 	if err != nil {
 		return nil, err
 	}
@@ -1820,7 +1868,7 @@ func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 //
 // # Why it is not a second rule
 //
-// The two-plane conjunction lives in visibility.CanAttachAsset, which
+// The two-plane conjunction lives in visibility.CanSeeAssetContent, which
 // the collection surface calls through collections.mayCollectAsset
 // (#882). This is the posts-side adapter over the same function, not a
 // second readability notion — epic #665, and the sprints #892 and #904
@@ -1829,12 +1877,13 @@ func (h *Handler) mayAttachAsset(ctx context.Context, id *auth.Identity, assetID
 	if id == nil {
 		return false, nil
 	}
-	return visibility.CanAttachAsset(
+	return visibility.CanSeeAssetContent(
 		ctx,
 		h.Pool,
 		visibility.NewCaller(&id.UserRef),
 		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
 		assetID,
+		visibility.MatureFromContext(ctx),
 	)
 }
 
@@ -1960,9 +2009,13 @@ func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi
 }
 
 // validVisibility checks against the 4-tier closed catalogue
-// per the 1.22.C design proposal §1. `public` was removed at
-// migration 00056 (reserved for a future public-fediverse phase).
-// Writes attempting `public` get the clear "tier reserved" error.
+// per the 1.22.C design proposal §1. `public` was removed before the
+// v0.1 baseline fold — 00001_baseline_v0_1.sql's posts_visibility_check
+// lists the four tiers below and not `public` — and reserved for a
+// future public-fediverse phase. Migration 00008 later re-admitted the
+// value at the DB level (#414) for the READ rule; this WRITE gate still
+// refuses it, so writes attempting `public` get the clear "tier
+// reserved" error.
 func validVisibility(s string) bool {
 	switch s {
 	case "private", "org-only", "followers", "explicit-share":
@@ -2129,11 +2182,20 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 	// a.status + a.processing_status feed visibility.FieldsReadable's
 	// row-plane conjuncts, and the owner display name is the ONE
 	// asset-derived value a #883 placeholder carries. Both ride this
-	// query rather than a second round-trip — the LEFT JOINs mirror
-	// users/queries.sql's projection.
+	// query rather than a second round-trip.
+	//
+	// #1023 — the name comes from visibility.OwnerDisplayNameSQL, not
+	// from a pair of LEFT JOINs written here. The joins that used to sit
+	// in this FROM clause resolved
+	// `COALESCE(NULLIF(up.display_name,''), u.username, '')`, a copy of
+	// the display-name ladder that never consulted
+	// `hide_from_anonymous` — so THIS query is where an owner who took
+	// ADR 0024's opt-out had their username handed to an anonymous
+	// caller, on any public post carrying one of their restricted
+	// assets. It is also the only reason those joins existed.
 	rows, err := h.Pool.Query(ctx, `
 		SELECT a.id, a.sensitivity, a.status, a.processing_status, a.owner_user_ref,
-		       COALESCE(NULLIF(up.display_name, ''), u.username, '') AS owner_display_name,
+		       `+visibility.OwnerDisplayNameSQL("a.owner_user_ref", caller.IsAnonymous)+` AS owner_display_name,
 		       (a.file_hash IS NOT NULL AND EXISTS (
 		            SELECT 1 FROM storage_variants sv
 		             WHERE sv.object_hash = a.file_hash AND sv.variant_key = 'col')) AS has_col,
@@ -2148,8 +2210,6 @@ func (h *Handler) enrichPreview(ctx context.Context, posts ...*openapi.Post) err
 		       a.thumbhash,
 		       `+pixeldims.SelectColumnsSQL("a.id")+`
 		FROM assets a
-		LEFT JOIN "user" u         ON u.ref = a.owner_user_ref
-		LEFT JOIN user_profiles up ON up.user_ref = a.owner_user_ref
 		WHERE a.id = ANY($1::uuid[])`,
 		ids, caller.UserRef, ladder)
 	if err != nil {

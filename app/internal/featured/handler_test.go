@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/featured"
@@ -84,7 +85,7 @@ func TestList_ResolvesTitles_InOrder(t *testing.T) {
 		t.Fatalf("Add asset: %v", err)
 	}
 
-	rows, err := h.List(context.Background())
+	rows, err := h.List(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestReorder_RewritesPositions(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Reorder: %v", err)
 	}
-	rows, err := h.List(context.Background())
+	rows, err := h.List(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -228,4 +229,141 @@ func seedCollectionF(t *testing.T, pool *pgxpool.Pool, name string) uuid.UUID {
 func cleanupFeatured(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, _ = pool.Exec(context.Background(), `DELETE FROM featured_items`)
+}
+
+// ---------------------------------------------------------------------------
+// #1104 / #1088 — the write path can name an audience
+// ---------------------------------------------------------------------------
+
+// scopeOf reads the PERSISTED audience of one placement.
+//
+// Deliberately not the scope on the row Add returns. That row is the
+// INSERT's RETURNING, which is close enough to a handler echo to be
+// worth avoiding on principle: this asserts what is in the table.
+func scopeOf(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) string {
+	t.Helper()
+	var got string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT scope FROM featured_items WHERE id = $1`, id).Scan(&got); err != nil {
+		t.Fatalf("read persisted scope: %v", err)
+	}
+	return got
+}
+
+// TestAdd_ScopeDefaultsToOrgAndAcceptsPublic is #1088's answer: the
+// audience is now expressible, `org` is still what an omitted scope
+// writes, and `public` — previously reachable only by a direct database
+// write — goes through the API.
+func TestAdd_ScopeDefaultsToOrgAndAcceptsPublic(t *testing.T) {
+	pool := openPoolF(t)
+	defer cleanupFeatured(t, pool)
+	h := featured.NewHandler(pool, discardLoggerF())
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"omitted stays org", "", featured.ScopeOrg},
+		{"explicit org", featured.ScopeOrg, featured.ScopeOrg},
+		{"explicit public", featured.ScopePublic, featured.ScopePublic},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := seedAssetF(t, pool, "scope-"+c.name)
+			row, err := h.Add(ctx, featured.AddInput{
+				SubjectKind: "asset", SubjectID: a, Scope: c.in,
+			})
+			if err != nil {
+				t.Fatalf("Add: %v", err)
+			}
+			if got := scopeOf(t, pool, uuid.UUID(row.ID.Bytes)); got != c.want {
+				t.Errorf("persisted scope = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestAdd_RefusesUnwritableScopes: `team` is a real value of the column
+// and is not offered on the write path (it would need a team_id this
+// payload cannot name), and an unknown string must not reach Postgres
+// as a 23514 the caller sees as a 500.
+func TestAdd_RefusesUnwritableScopes(t *testing.T) {
+	pool := openPoolF(t)
+	defer cleanupFeatured(t, pool)
+	h := featured.NewHandler(pool, discardLoggerF())
+
+	for _, scope := range []string{featured.ScopeTeam, "everyone", "ORG"} {
+		a := seedAssetF(t, pool, "bad-scope-"+scope)
+		_, err := h.Add(context.Background(), featured.AddInput{
+			SubjectKind: "asset", SubjectID: a, Scope: scope,
+		})
+		if !errors.Is(err, featured.ErrScopeNotWritable) {
+			t.Errorf("Add(scope=%q) err = %v, want ErrScopeNotWritable", scope, err)
+		}
+		var n int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM featured_items WHERE subject_id = $1`, a).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("Add(scope=%q) was refused but wrote %d row(s)", scope, n)
+		}
+	}
+}
+
+// TestFeaturedItemsTeamScopeCheck exercises featured_items_team_scope_
+// check, which #1088 called "currently decorative" because nothing in
+// the tree could produce a row that tests it. It is not decorative — it
+// is the reason `team` stays off the write path — so it gets an
+// assertion rather than a comment.
+//
+// The constraint is an equivalence, not an implication, so both
+// directions are asserted: scope='team' REQUIRES a team_id, and every
+// other scope FORBIDS one. The second half is the one that matters for
+// the audience predicate: without it a `public` row could carry a
+// team_id and read as scoped to a team it is not scoped to.
+func TestFeaturedItemsTeamScopeCheck(t *testing.T) {
+	pool := openPoolF(t)
+	defer cleanupFeatured(t, pool)
+	ctx := context.Background()
+
+	a := seedAssetF(t, pool, "team-scope-check")
+
+	var team uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO teams (slug, name) VALUES ($1, 'team scope check') RETURNING id`,
+		"tsc-"+uuid.New().String()[:8],
+	).Scan(&team); err != nil {
+		t.Fatalf("seed team: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM teams WHERE id = $1`, team) })
+
+	insert := func(scope string, teamID *uuid.UUID) error {
+		_, err := pool.Exec(ctx, `
+			INSERT INTO featured_items (subject_kind, subject_id, position, scope, team_id)
+			VALUES ('asset', $1, 900, $2, $3)`, a, scope, teamID)
+		return err
+	}
+	violates := func(err error) bool {
+		var pgErr *pgconn.PgError
+		return errors.As(err, &pgErr) &&
+			pgErr.Code == "23514" &&
+			pgErr.ConstraintName == "featured_items_team_scope_check"
+	}
+
+	if err := insert(featured.ScopeTeam, nil); !violates(err) {
+		t.Errorf("scope='team' with a NULL team_id was accepted (err=%v); that placement is an "+
+			"audience of nobody that still occupies a uniqueness slot", err)
+	}
+	if err := insert(featured.ScopePublic, &team); !violates(err) {
+		t.Errorf("scope='public' with a team_id was accepted (err=%v); a non-team audience must "+
+			"not carry a team", err)
+	}
+	if err := insert(featured.ScopeTeam, &team); err != nil {
+		t.Errorf("scope='team' with a team_id was REJECTED (%v); the constraint is meant to permit "+
+			"exactly this pairing", err)
+	}
+	_, _ = pool.Exec(ctx, `DELETE FROM featured_items WHERE subject_id = $1`, a)
 }

@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// #210 — the by_image anonymous floor delegates to the shared
-// predicate (ADR 0063).
+// #210 / #1066 — the by_image floor.
+//
+// #210: the anonymous floor delegates to the shared predicate (ADR
+// 0063). The load-bearing assertion there is the TIGHTENING: the old
+// inline SQL admitted any non-deleted public asset, so a
+// public-but-DRAFT or public-but-still-PROCESSING asset used to surface
+// in anonymous reverse-image results.
+//
+// #1066: the AUTHENTICATED floor is the content plane, not "everything".
+// Reverse-image search ranks the catalogue against a picture the caller
+// supplied, so a restricted asset coming back with a similarity score
+// discloses what that asset looks like — the thing the withheld
+// thumbhash and the withheld bytes exist to protect. The tests below
+// state that as two callers reaching OPPOSITE verdicts on ONE row: a
+// test where both get the same answer proves nothing.
 //
 // This is an in-package test (package search) because
 // filterVisibleAssetIDs is unexported, and it seeds real rows because
-// the point is which assets the query actually returns. The load-
-// bearing assertion is the TIGHTENING: the old inline SQL admitted any
-// non-deleted public asset, so a public-but-DRAFT or public-but-still-
-// PROCESSING asset used to surface in anonymous reverse-image results.
-// Routing through visibility.Filter drops them, matching every other
-// anonymous read path.
+// the point is which assets the query actually returns.
 //
 // Skips without AA_DB_PASSWORD.
 
@@ -25,7 +33,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 func byImagePool(t *testing.T) *pgxpool.Pool {
@@ -104,8 +112,9 @@ func TestByImageAnonymousFloor_MatchesFullPredicate(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id = ANY($1::uuid[])`, ids)
 	})
 
-	// identity == nil is the anonymous branch under test.
-	got, err := filterVisibleAssetIDs(ctx, pool, nil, ids)
+	// The anonymous caller under test.
+	got, err := filterVisibleAssetIDs(ctx, pool,
+		visibility.NewCaller(nil), visibility.ContentCaps{}, ids)
 	if err != nil {
 		t.Fatalf("filterVisibleAssetIDs: %v", err)
 	}
@@ -118,34 +127,116 @@ func TestByImageAnonymousFloor_MatchesFullPredicate(t *testing.T) {
 	}
 }
 
-// TestByImageAuthenticatedFloor_Unchanged pins acceptance 3: the
-// authenticated branch still returns every candidate id (row checks
-// happen downstream). Delegating the anonymous branch must not touch
-// this.
-func TestByImageAuthenticatedFloor_Unchanged(t *testing.T) {
+// TestByImageAuthenticatedFloor_ContentPlane is the #1066 regression
+// test, and it is written as a POSITIVE CONTROL: one restricted asset,
+// three callers, opposite verdicts.
+//
+// The assertion is on the RESULT SET, not on any field. The fields of a
+// restricted asset are withheld from the payload either way (#899), so a
+// field assertion passes on the bug — what leaks is that the asset RANKED
+// at all, which is a property of the picture the caller supplied.
+//
+// It fails on the pre-fix build, where the authenticated branch returned
+// every candidate id it was handed.
+func TestByImageAuthenticatedFloor_ContentPlane(t *testing.T) {
+	pool := byImagePool(t)
+	ctx := context.Background()
+
+	const owner int64 = 4210002
+	const stranger int64 = 4210003
+
+	// A restricted asset, and a public one beside it. The public asset is
+	// the non-vacuity control: if the stranger sees NEITHER, the filter
+	// is simply returning nothing and the restricted assertion is empty.
+	restricted, public := uuid.New(), uuid.New()
+	for _, s := range []struct {
+		id          uuid.UUID
+		title       string
+		sensitivity string
+	}{
+		{restricted, "byimg-restricted", "restricted"},
+		{public, "byimg-public", "public"},
+	} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status)
+			VALUES ($1,$2,$3,(SELECT MIN(ref) FROM asset_types),'active',$4,'ready')`,
+			s.id, s.title, owner, s.sensitivity); err != nil {
+			t.Fatalf("seed %s: %v", s.title, err)
+		}
+	}
+	ids := []uuid.UUID{restricted, public}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id = ANY($1::uuid[])`, ids)
+	})
+
+	ask := func(t *testing.T, caller visibility.Caller, caps visibility.ContentCaps) map[uuid.UUID]struct{} {
+		t.Helper()
+		got, err := filterVisibleAssetIDs(ctx, pool, caller, caps, ids)
+		if err != nil {
+			t.Fatalf("filterVisibleAssetIDs: %v", err)
+		}
+		return got
+	}
+
+	ownerRef, strangerRef := owner, stranger
+	for _, tc := range []struct {
+		name           string
+		caller         visibility.Caller
+		caps           visibility.ContentCaps
+		wantRestricted bool
+	}{
+		// The verdict #1066 is about.
+		{"authenticated stranger", visibility.NewCaller(&strangerRef), visibility.ContentCaps{}, false},
+		// The counterweights. Without these, "return nothing" passes.
+		{"owner", visibility.NewCaller(&ownerRef), visibility.ContentCaps{}, true},
+		{"content.read.all", visibility.NewCaller(&strangerRef), visibility.ContentCaps{ContentReadAll: true}, true},
+		{"system.admin", visibility.NewCaller(&strangerRef), visibility.ContentCaps{SystemAdmin: true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ask(t, tc.caller, tc.caps)
+			if _, ok := got[public]; !ok {
+				t.Fatal("the PUBLIC asset was filtered out — the floor over-narrowed and every " +
+					"assertion below would pass vacuously")
+			}
+			if _, ok := got[restricted]; ok != tc.wantRestricted {
+				if tc.wantRestricted {
+					t.Errorf("restricted asset absent: %s must still rank it — gating reverse-image "+
+						"search must not take the catalogue away from a caller entitled to it", tc.name)
+				} else {
+					t.Errorf("restricted asset RANKED for %s: an asset whose picture this caller may "+
+						"not read scored against a picture they supplied, which discloses what it "+
+						"looks like (#1066)", tc.name)
+				}
+			}
+		})
+	}
+}
+
+// TestByImageAnonymousFloor_Unchanged_ByContentPlane pins acceptance 4:
+// composing the content plane for EVERY caller rather than branching must
+// not move the anonymous answer. For a caller with no ref and no caps the
+// content plane reduces to sensitivity='public', which the predicate's
+// anonymous branch already demanded.
+func TestByImageAnonymousFloor_Unchanged_ByContentPlane(t *testing.T) {
 	pool := byImagePool(t)
 	ctx := context.Background()
 
 	id := uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets (id, title, owner_user_ref, asset_type, status, sensitivity, processing_status)
-		VALUES ($1,'byimg-auth',4210002,(SELECT MIN(ref) FROM asset_types),'draft','team','processing')`,
+		VALUES ($1,'byimg-anon-public',4210004,(SELECT MIN(ref) FROM asset_types),'active','public','ready')`,
 		id); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id) })
 
-	ref := int64(4210002)
-	identity := &auth.Identity{UserRef: ref, AuthMethod: "session"}
-	got, err := filterVisibleAssetIDs(ctx, pool, identity, []uuid.UUID{id})
+	got, err := filterVisibleAssetIDs(ctx, pool,
+		visibility.NewCaller(nil), visibility.ContentCaps{}, []uuid.UUID{id})
 	if err != nil {
 		t.Fatalf("filterVisibleAssetIDs: %v", err)
 	}
-	// A draft/team/processing asset that the anonymous floor would drop
-	// must STILL be returned to an authenticated caller — the branch
-	// returns all ids and defers to downstream row checks.
 	if _, ok := got[id]; !ok {
-		t.Error("authenticated caller: candidate id was filtered out; the authenticated branch " +
-			"must return all ids and let the asset-detail lookup gate them")
+		t.Error("anonymous caller lost a public/active/ready asset — the #1066 conjunct narrowed " +
+			"the anonymous path, which it must not")
 	}
 }

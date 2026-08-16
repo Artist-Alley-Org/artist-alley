@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -357,6 +358,17 @@ func collectionCaller(ctx context.Context) visibility.Caller {
 	return visibility.NewCaller(nil)
 }
 
+// collectionCaps adapts an auth.Identity to the capability half of the
+// visibility helpers' caller pair. Nil identity yields a nil checker,
+// which every helper reads as "holds nothing" — an anonymous caller
+// must not be handed a checker that could accidentally answer true.
+func collectionCaps(id *auth.Identity) visibility.CapabilityChecker {
+	if id == nil {
+		return nil
+	}
+	return func(code string) bool { return id.Can(code) }
+}
+
 func (h *Handler) GetCollection(
 	ctx context.Context,
 	req openapi.GetCollectionRequestObject,
@@ -365,18 +377,25 @@ func (h *Handler) GetCollection(
 	// a real check. Before this, ANY authenticated caller could fetch ANY
 	// collection by id; the only gate was "is there an identity".
 	id := auth.IdentityFromContext(ctx)
-	visible, visErr := visibility.CanSee(ctx, h.Pool, visibility.EntityCollection,
-		collectionCaller(ctx), uuid.UUID(req.Id))
-	if visErr != nil || !visible {
-		// Fail closed. The superadmin soft-deleted branch below is
-		// reached via the ErrNoRows path, so it stays intact for admins,
-		// who CanSee admits.
-		if id == nil || !id.Can(auth.SuperAdminCapability) {
-			return openapi.GetCollection404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-			}, nil
-		}
+	// #1059 — the read rule is visibility.CanReadCollection, which is
+	// the row plane OR system.admin. That admin disjunct used to be
+	// spelled out right here, and again in facet.Selection.Authorize for
+	// the "Search in this collection" button on the very page this
+	// endpoint renders; two copies of one rule is how an admin ends up
+	// able to open a collection and unable to search inside it.
+	readable, readErr := visibility.CanReadCollection(ctx, h.Pool,
+		collectionCaller(ctx), collectionCaps(id), uuid.UUID(req.Id))
+	if readErr != nil || !readable {
+		// Fail closed, including on error — a 500 here would be
+		// distinguishable from a 404 and so would answer "does this id
+		// exist" for a collection the caller may not read.
+		return openapi.GetCollection404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+		}, nil
 	}
+	// An admin passes the line above without the row plane agreeing, so
+	// the soft-deleted branch below is still reached via ErrNoRows and
+	// the Restore button still has something to render.
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	row, err := h.getByIDCached(ctx, pgID)
 	if err != nil {
@@ -388,7 +407,11 @@ func (h *Handler) GetCollection(
 			// to them.
 			if id != nil && id.Can(auth.SuperAdminCapability) {
 				if adminRow, adminErr := New(h.Pool).GetCollectionIncludingDeleted(ctx, pgID); adminErr == nil {
-					return openapi.GetCollection200JSONResponse(rowToAPI(adminRow)), nil
+					out := rowToAPI(adminRow)
+					if err := h.attachCovers(ctx, &out); err != nil {
+						return nil, err
+					}
+					return openapi.GetCollection200JSONResponse(out), nil
 				}
 			}
 			return openapi.GetCollection404JSONResponse{
@@ -397,7 +420,16 @@ func (h *Handler) GetCollection(
 		}
 		return nil, err
 	}
-	return openapi.GetCollection200JSONResponse(rowToAPI(row)), nil
+	// The mosaic cover (#1026) is an ENRICHMENT PASS after the cache
+	// read, never a field inside the cached Collection: which members a
+	// caller may picture depends on who is asking, and ADR 0013's
+	// 2026-08-11 amendment is exact about where such a value may live.
+	// See attachCovers.
+	out := rowToAPI(row)
+	if err := h.attachCovers(ctx, &out); err != nil {
+		return nil, err
+	}
+	return openapi.GetCollection200JSONResponse(out), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -421,8 +453,14 @@ func (h *Handler) UpdateCollection(
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 
-	// Load current row first to enforce ownership and to give
-	// ClearCollectionExpiresAt the right id.
+	// Load current row first to enforce ownership (canMutateCollection
+	// reads owner_user_ref) and to answer the if_unchanged_since check
+	// below against a real updated_at.
+	//
+	// #1073: this used to claim it also fed "ClearCollectionExpiresAt
+	// the right id". No such call was ever made from here — the comment
+	// asserted a guarantee the code did not provide, and it is why a
+	// TTL that could not be cleared survived three releases of review.
 	q := New(h.Pool)
 	cur, err := q.GetCollection(ctx, pgID)
 	if err != nil {
@@ -482,12 +520,69 @@ func (h *Handler) UpdateCollection(
 		memPtr = &s
 	}
 
-	// expires_at is a tri-state: omitted = keep; non-nil = set;
-	// explicit null = clear. The generated CollectionUpdate struct
-	// uses `omitempty` so we can't distinguish "absent" from "null"
-	// via the Go struct alone — the convention here is that a
-	// non-nil pointer means "set to this", and clearing the TTL
-	// goes through the dedicated query.
+	// #1027 — the chosen cover. Mutually exclusive with its clear flag,
+	// refused rather than resolved: if a client sends both it has two
+	// intentions and the server has no basis for preferring either, and
+	// silently discarding one is how a "clear" that never happened gets
+	// shipped. Same shape as metadata's default_value / clear_default.
+	clearCover := in.ClearCover != nil && *in.ClearCover
+	if clearCover && in.CoverAssetId != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either cover_asset_id or clear_cover, not both",
+			},
+		}, nil
+	}
+	var coverPtr *uuid.UUID
+	if in.CoverAssetId != nil {
+		want := uuid.UUID(*in.CoverAssetId)
+		// The PICTURE plane, not the field plane: a cover IS a picture,
+		// and ADR 0064 hands a scoped `assets.admin` holder an asset's
+		// fields while explicitly withholding its image. Gating on
+		// readability instead would let such a holder pin a picture they
+		// are not allowed to look at onto a collection other people read.
+		//
+		// The caller triple comes from the same helper the read path
+		// uses, so "may point at" and "may see painted" are one rule
+		// evaluated twice rather than two rules.
+		cCaller, cCaps, _, cMature := CoverCallerFromContext(ctx)
+		mayPicture, err := CallerMayPictureAsset(ctx, h.Pool, cCaller, cCaps, cMature, want)
+		if err != nil {
+			return nil, err
+		}
+		if !mayPicture {
+			// ONE response for "no such asset" and "not yours to look
+			// at". Distinguishing them turns this endpoint into an
+			// existence oracle: a curator could enumerate asset ids and
+			// read the difference between 400-missing and 403-forbidden
+			// as "this id exists and is hidden from me", which is the
+			// fact the picture plane withholds in the first place.
+			return openapi.UpdateCollection400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "cover_asset_id is not an asset you can use as a cover",
+				},
+			}, nil
+		}
+		coverPtr = &want
+	}
+
+	// #1073 — expires_at is a tri-state, and the third state needs a
+	// flag. `CollectionUpdate.ExpiresAt` is a *time.Time with
+	// `omitempty`, so by the time a body reaches here "absent" and
+	// "explicit null" are the SAME value: a nil pointer. The old
+	// COALESCE read that nil as "keep", which meant a caller who sent
+	// `{"expires_at": null}` to remove a TTL got a 200 and an unchanged
+	// column — the clear silently did not happen. Same wall, same fix,
+	// and the same 400, as clear_cover directly above.
+	clearExpiresAt := in.ClearExpiresAt != nil && *in.ClearExpiresAt
+	if clearExpiresAt && in.ExpiresAt != nil {
+		return openapi.UpdateCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+				Error: "send either expires_at or clear_expires_at, not both",
+			},
+		}, nil
+	}
+
 	// Gold-standard path: UpdateCollection + Update activity in
 	// the same tx. WithEmissionFn so the post-write row drives
 	// the activity payload. 1.22.B-cleanup made activities required.
@@ -500,7 +595,14 @@ func (h *Handler) UpdateCollection(
 			Visibility:  visPtr,
 			Membership:  memPtr,
 			Purpose:     in.Purpose,
-			ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
+			// Each CASE in the query reads its clear flag first, so a
+			// value and its clear flag cannot both take effect; the two
+			// 400s above are what make those combinations unreachable
+			// rather than merely ordered.
+			ExpiresAt:      pgTimestamptzFromPtr(in.ExpiresAt),
+			ClearExpiresAt: clearExpiresAt,
+			ClearCover:     clearCover,
+			CoverAssetID:   pgUUIDFromPtr(coverPtr),
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
@@ -727,36 +829,91 @@ func (h *Handler) ListCollections(
 	var sharedWithPtr *int64
 	caller := auth.IdentityFromContext(ctx)
 	if req.Params.Tab != nil && caller != nil {
-		// oapi-codegen drops the type-name prefix on enum constants
-		// when there are no collisions — 'Public' / 'Shared' /
-		// 'Featured' / 'All' / 'Mine' are now globally unique after
-		// the 1.22.C-a visibility-enum cleanup, so the prefixed
-		// ListCollectionsParamsTabXxx names are gone.
+		// ⚠️ `hubPublicTier` is `public`, not `org-only`, and that is a
+		// FIX (#1104), not a restatement.
+		//
+		// Both tabs below pinned `visibility = 'org-only'` from v0.1.0
+		// until now, under a comment claiming the Public tab "maps to
+		// org-only at the storage layer". That was true when it was
+		// written: the baseline CHECK admitted private | org-only |
+		// followers | explicit-share and there was no public tier at
+		// all. Migration 00008 then ADDED `public` as a new, higher
+		// tier ABOVE org-only, and nothing came back to this switch.
+		//
+		// So the Public tab — "every install-public collection" per the
+		// OpenAPI description — has been returning exactly the
+		// collections that are NOT install-public, and the Featured tab
+		// has been ANDing a featured filter onto that same wrong set. On
+		// this dev database that is 2 rows of 6, and 0 of the 6 featured
+		// ones. #1104's report ("no featured collections in
+		// collections") had TWO causes stacked on it; the scope split
+		// was the one that was looked for, and this was underneath.
+		//
+		// The comment about oapi-codegen dropping the type-name prefix
+		// went stale in the same commit that found this: adding an
+		// org/public enum to FeaturedItemInput reintroduced the
+		// collision, so the constants are prefixed again.
+		const hubPublicTier = "public"
+
 		switch *req.Params.Tab {
-		case openapi.Mine:
+		case openapi.ListCollectionsParamsTabMine:
 			ownerPtr = &caller.UserRef
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.Featured:
-			vis := "org-only"
-			visPtr = &vis
+		case openapi.ListCollectionsParamsTabFeatured:
+			// NO TIER PIN (#1121). The question the comment that stood
+			// here left open — "whether the tier pin belongs here AT
+			// ALL" — is answered: it does not.
+			//
+			// The Featured tab means "featured collections THIS VIEWER
+			// MAY SEE", and every read on this list is already gated by
+			// the row predicate spliced in below (`visibility.Filter`
+			// over EntityCollection: owner OR live ACL OR
+			// `visibility='public'`, AND not soft-deleted). A
+			// `visibility = 'public'` equality on top of that is a
+			// SECOND, NARROWER rule for the same question — and a
+			// second rule is free to disagree with the first, which is
+			// exactly what it did.
+			//
+			// It disagreed with the RAIL. `featured.ListPublicRail`
+			// gates its collection arm on the row predicate and nothing
+			// else, so since #1104 made org-scoped featuring reachable,
+			// an admin who featured an `org-only` collection saw it on
+			// the rail and never on this tab. Two surfaces answering
+			// one question differently is the divergence #1104 had just
+			// finished eliminating for SCOPE; this is the same medicine
+			// on the same table.
+			//
+			// ⚠️ THIS DOES NOT WIDEN ACCESS, and the reason is
+			// structural rather than a promise. Featuring is a
+			// PLACEMENT, not a grant (the "FEATURING NEVER WIDENS
+			// ACCESS" line on `GET /featured`) — dropping the pin
+			// removes a conjunct from a predicate whose remaining
+			// conjuncts still have to admit the caller. A viewer who
+			// cannot read the collection could not read it with the pin
+			// either; the pin was only ever hiding rows from viewers
+			// who WERE entitled to them.
+			//
+			// The Public tab below keeps its pin, and that is not an
+			// inconsistency: `public` is that tab's whole CONTRACT
+			// ("every install-public collection"), so there the tier is
+			// the question rather than an extra answer.
+			visPtr = nil
 			f := true
 			featuredPtr = &f
 			ownerPtr = nil
-		case openapi.Public:
-			// "Public" tab kept as the user-facing label but now
-			// maps to org-only at the storage layer (1.22.C-a).
-			vis := "org-only"
+		case openapi.ListCollectionsParamsTabPublic:
+			vis := hubPublicTier
 			visPtr = &vis
 			ownerPtr = nil
 			featuredPtr = nil
-		case openapi.Shared:
+		case openapi.ListCollectionsParamsTabShared:
 			sharedWithPtr = &caller.UserRef
 			excludeOwnerPtr = &caller.UserRef
 			ownerPtr = nil
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.All:
+		case openapi.ListCollectionsParamsTabAll:
 			// no overrides — the listing already enforces visibility
 			// at the row level via the existing filter.
 		}
@@ -815,6 +972,18 @@ func (h *Handler) ListCollections(
 		items = append(items, c)
 		lastCreatedAt = r.CreatedAt.Time
 		lastID = uuid.UUID(r.ID.Bytes)
+	}
+	// The mosaic covers for the whole page in ONE query (#1026). The
+	// hub renders up to 200 of these cards; a per-card composition
+	// would be the N+1 the deleted client-side store existed to soften.
+	// Pointers INTO `items`, taken after the slice is fully built so no
+	// append can move the backing array under them.
+	ptrs := make([]*openapi.Collection, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := h.attachCovers(ctx, ptrs...); err != nil {
+		return nil, err
 	}
 	resp := openapi.CollectionList{Items: items}
 	if len(rows) > int(limit) {
@@ -904,6 +1073,10 @@ func (h *Handler) ListCollectionResources(
 			RowLimit:        fetch,
 			Ladder:          h.ladder(ctx),
 			MutationCaps:    mutCaps,
+			// #1147 — the mature axis off the request context, where the
+			// middleware left it. An absent value is the DISQUALIFIED
+			// viewer, never a permissive default.
+			Mature: visibility.MatureFromContext(ctx),
 		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)
@@ -919,6 +1092,23 @@ func (h *Handler) ListCollectionResources(
 		items = append(items, resourceRowToAPI(r))
 		lastSort = r.SortOrder
 		lastAdded = r.AddedAt.Time
+	}
+	// #1133 — the at-a-glance field strip, from the SAME projection the
+	// browse page decorates its tiles with. A member renders through the
+	// same card as a browse tile, and `show_on_card` had simply never
+	// reached this surface: the decoration lived in `assets`, which this
+	// package cannot import (assets → posts → collections is a cycle), so
+	// the flag worked everywhere except here from the day #552 shipped.
+	//
+	// It runs AFTER the gated page query above and decorates only the
+	// rows that query already admitted; ADR 0012 puts the flag in
+	// `display_order`'s class, so it takes no part in choosing rows and
+	// takes none here. Restricted placeholders are excluded BY ID before
+	// the call, not filtered after — #883's allow-list is that a withheld
+	// member carries the membership row's own columns and nothing from
+	// `assets`, and a field strip is something from `assets`.
+	if err := decorateMemberCardFields(ctx, h.Pool, items); err != nil {
+		return nil, fmt.Errorf("collections: list resources: card fields: %w", err)
 	}
 	resp := openapi.CollectionResourceList{Items: items}
 	if len(rows) > int(limit) {
@@ -1051,7 +1241,7 @@ var errAssetMissing = errors.New("collections: asset row absent")
 // # The rule
 //
 // The two-plane conjunction that answers it — CanSee(EntityAsset) AND
-// CanReadContent — lives in visibility.CanAttachAsset, which carries the
+// CanReadContent — lives in visibility.CanSeeAssetContent, which carries the
 // full reasoning: why each plane is load-bearing on its own account, why
 // the SystemAdmin / ContentReadAll short-circuits are inherited, and why
 // it fails closed. #922 needed the identical question on the post
@@ -1066,12 +1256,13 @@ func (h *Handler) mayCollectAsset(ctx context.Context, id *auth.Identity, assetI
 	if id == nil {
 		return false, nil
 	}
-	return visibility.CanAttachAsset(
+	return visibility.CanSeeAssetContent(
 		ctx,
 		h.Pool,
 		visibility.NewCaller(&id.UserRef),
 		visibility.CapabilityChecker(func(code string) bool { return id.Can(code) }),
 		assetID,
+		visibility.MatureFromContext(ctx),
 	)
 }
 
@@ -1432,7 +1623,69 @@ func rowToAPI(r Collection) openapi.Collection {
 		v := openapi_types.UUID(r.OriginServerID.Bytes)
 		c.OriginServerId = &v
 	}
+	// #1027 — the curator's SETTING, shipped unconditionally. It is not
+	// the render answer and carries no picture: `covers` is what a client
+	// paints, and ComposeCovers re-runs the viewer's picture plane over
+	// this id before it appears there. What this exposes is that a cover
+	// was chosen and which asset id it is, to a caller who has already
+	// passed the collection's own read gate — the same class of fact as
+	// the member ids /collections/{id}/resources hands that caller, where
+	// a member they may not picture is returned as a VISIBLE placeholder
+	// precisely so #881's "request access" has something to attach to.
+	// Withholding it here would instead break the edit form, which needs
+	// it to show the curator what is currently set.
+	if r.CoverAssetID.Valid {
+		v := openapi_types.UUID(r.CoverAssetID.Bytes)
+		c.CoverAssetId = &v
+	}
 	return c
+}
+
+// decorateMemberCardFields attaches `card_fields` to a page of
+// collection members (#1133), in one query for the whole page.
+//
+// A per-row lookup here would be 200 round trips on a full member grid,
+// which is the same reason the browse page batches it — and the reason
+// the projection is shared rather than re-derived: see
+// [metadata.CardFieldsForAssets].
+//
+// Restricted members are skipped BY ID rather than cleared afterwards.
+// That is the #883 allow-list direction: a placeholder is built as a
+// complete literal carrying only the membership row's own columns, so a
+// key added to CollectionResource later is absent from it by
+// construction. Attaching a strip and then removing it would put this
+// key on the deny-list side, where the next reader has to remember.
+func decorateMemberCardFields(
+	ctx context.Context,
+	db metadata.DBTX,
+	items []openapi.CollectionResource,
+) error {
+	ids := make([]pgtype.UUID, 0, len(items))
+	index := make(map[uuid.UUID]int, len(items))
+	for i := range items {
+		if items[i].Restricted {
+			continue
+		}
+		id := uuid.UUID(items[i].AssetId)
+		if id == uuid.Nil {
+			continue
+		}
+		ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
+		index[id] = i
+	}
+	fields, err := metadata.CardFieldsForAssets(ctx, db, ids)
+	if err != nil {
+		return err
+	}
+	for id, vals := range fields {
+		i, ok := index[id]
+		if !ok {
+			continue
+		}
+		v := vals
+		items[i].CardFields = &v
+	}
+	return nil
 }
 
 // resourceRowToAPI serialises ONE membership row.
@@ -1610,6 +1863,16 @@ func pgTimestamptzFromPtr(t *time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// pgUUIDFromPtr is pgTimestamptzFromPtr for a UUID: nil becomes the
+// invalid (SQL NULL) value, which every COALESCE partial update in
+// queries.sql reads as "leave this column alone".
+func pgUUIDFromPtr(u *uuid.UUID) pgtype.UUID {
+	if u == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *u, Valid: true}
 }
 
 // ---------------------------------------------------------------------------

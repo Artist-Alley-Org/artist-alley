@@ -2,15 +2,15 @@
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
-    state_id, processing_status, thumbhash, team_id
+    state_id, processing_status, thumbhash, team_id, mature
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14
+    $11, $12, $13, $14, $15
 )
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id;
+          created_at, updated_at, team_id, mature;
 
 -- name: GetAsset :one
 -- Pixel dimensions are deliberately NOT selected here (#640). sqlc types
@@ -22,7 +22,7 @@ RETURNING id, title, description, asset_type, owner_user_ref, status,
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at, team_id
+       created_at, updated_at, team_id, mature
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -49,12 +49,16 @@ UPDATE assets SET
     description = COALESCE(sqlc.narg('description'), description),
     status      = COALESCE(sqlc.narg('status'),      status),
     metadata    = COALESCE(sqlc.narg('metadata'),    metadata),
+    -- #1115. narg, so PATCH semantics hold: absent leaves the flag as
+    -- it is, which is what makes the artist's own edit and the operator
+    -- override the same column on the same endpoint.
+    mature      = COALESCE(sqlc.narg('mature'),      mature),
     updated_at  = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
-          created_at, updated_at, team_id;
+          created_at, updated_at, team_id, mature;
 
 -- name: MergeAssetMetadata :exec
 -- Shallow-merge an incoming JSONB blob into the existing metadata
@@ -121,6 +125,17 @@ SELECT deleted_by_user_ref
 -- by the assets_search_text_gin index. Phase 1.12 will replace this
 -- with the proper search DSL (ADR 0010), but for the browse page MVP
 -- a plain tsquery match is enough.
+--
+-- #902 deliberately did NOT gate this `q` clause on readability, and it
+-- is the one asset text match left ungated. It is not reachable: this
+-- query has NO caller and NO production caller — it exists only as the
+-- oracle TestListAssetsPage_AuthenticatedParity compares the hand-built
+-- browse query against, and a static sqlc statement cannot splice a
+-- runtime visibility fragment (which is why the browse query stopped
+-- being sqlc in the first place, see list_page.go). Gating it would also
+-- destroy its value as an oracle, because an oracle that applies the
+-- rule under test cannot detect the rule being wrong. Do NOT promote
+-- this to handler code: it has no visibility rule of any kind.
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
@@ -448,62 +463,12 @@ SELECT EXISTS (
 -- can package alongside them. assets package keeps focus on asset
 -- CRUD + the bridge read/write surface for AI tags.
 
--- name: ListCardFieldValues :many
--- The at-a-glance field values for a PAGE of assets (#552).
---
--- One query for the whole page, not one per asset. The card is a browse
--- surface: an N+1 here is 50 round trips per scroll, and the existing
--- per-row ListAssetTags call is the precedent NOT to follow.
---
--- Both halves of a field's storage are covered, and the caller cannot tell
--- them apart — which is the point of #822's mirror. An ordinary field's
--- value comes from asset_field_value; a MIRRORED field's comes from the
--- column it declares, because it has no row here and the guard trigger
--- guarantees it never will.
---
--- The flag is a DISPLAY HINT and nothing here treats it otherwise: it
--- SELECTS which fields are candidates and takes no part in deciding which
--- assets or which values a caller may see. Row visibility was already
--- decided by ListAssetsPageGated before this runs, and only readable rows
--- are passed in. Gated fields cannot reach the card at all — the CHECK
--- constraint in migration 00045 refuses `show_on_card` on a field carrying
--- a read_capability, so this query needs no capability argument and cannot
--- acquire one by accident.
---
--- Typed columns come back raw rather than formatted: metadata.DisplayValue
--- resolves a vocabulary slug to its label, and doing that in SQL would be a
--- second implementation of a rule ADR 0012 keeps in one place.
-SELECT a.id AS asset_id,
-       f.id AS field_id,
-       f.code,
-       f.label,
-       f.type,
-       f.options,
-       f.display_group,
-       f.display_order,
-       -- coalesced to '' rather than left nullable: the two states this
-       -- query can produce for "nothing here" — no asset_field_value row and
-       -- an empty mirrored column — are one answer to the card, which drops
-       -- the entry either way. (It also keeps sqlc from typing a CASE with
-       -- NULL branches as interface{}.)
-       coalesce(
-           CASE WHEN f.mirrors_column IS NOT NULL
-                THEN public.asset_mirror_read(a.id, f.mirrors_column)
-                ELSE v.value_text
-           END, '')::TEXT AS value_text,
-       v.value_num,
-       v.value_date,
-       v.value_options
-  FROM assets a
-  CROSS JOIN field_definition f
-  LEFT JOIN asset_field_value v ON v.asset_id = a.id AND v.field_id = f.id
- WHERE a.id = ANY(sqlc.arg('asset_ids')::UUID[])
-   AND a.deleted_at IS NULL
-   AND f.show_on_card
-   AND f.subject_kind = 'asset'
-   AND f.status <> 'archived'
-   AND (cardinality(f.applies_to) = 0 OR a.asset_type = ANY(f.applies_to))
- ORDER BY a.id, f.display_group, f.display_order, f.code;
+-- ListCardFieldValues MOVED to internal/metadata/queries.sql (#1133).
+-- The card-field projection is not an assets-package concern: the
+-- collection member grid renders the same tiles from the same flag, and
+-- `collections` cannot import this package (assets -> posts ->
+-- collections is a cycle). It lives beside metadata.DisplayValue, which
+-- is the rule it feeds, and both surfaces call metadata.CardFieldsForAssets.
 
 -- name: ListAssetOrigins :many
 -- Which peer an asset came from, for the card's provenance affordance

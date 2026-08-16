@@ -15,7 +15,7 @@
 // the stable cross-instance handle for this user.
 //
 // Lazy generation: existing users (created before migration
-// 00048) and any user not yet involved in federation has NULL key
+// 00001) and any user not yet involved in federation has NULL key
 // columns. EnsureActorKeyMaterial generates a fresh keypair set,
 // encrypts the private bits, and persists. It is idempotent —
 // callers that don't know whether keys exist yet can call it

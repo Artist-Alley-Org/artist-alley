@@ -30,10 +30,28 @@
 //
 // The counterweight is TestSimilar_AuthenticatedNotNarrowed: the
 // EntityAsset predicate for an authenticated caller is `deleted_at IS
-// NULL` and nothing more (ADR 0063 — listed but blurred, gated at the
-// content plane per ADR 0064). Tightening the anonymous path must not
-// tighten theirs; signing in may never remove access, which is the
-// inversion #451 had to undo for collections.
+// NULL` and nothing more (ADR 0063), so tightening the anonymous path
+// must not tighten theirs; signing in may never remove access, which is
+// the inversion #451 had to undo for collections.
+//
+// # What #1066 changed here
+//
+// That counterweight used to include `n-restricted` and `n-team`, and
+// those two were never a row-plane question. This endpoint RANKS: a
+// restricted neighbour arriving with a distance discloses that an asset
+// the caller may not open closely resembles the one they are looking at,
+// which is the picture leaking through its derived copy — the same
+// reason ADR 0064 withholds the thumbhash. The gate is now the CONTENT
+// plane on both the anchor and the neighbours, so the tests split:
+//
+//   - TestSimilar_AuthenticatedNotNarrowed keeps the row-plane half;
+//   - TestSimilar_ContentPlaneEntitledCallers is the other verdict on
+//     the same two rows (owner / content.read.all / system.admin);
+//   - TestSimilar_RestrictedAnchorIs404ForAStranger covers the anchor.
+//
+// The #451 invariant survives intact: an anonymous caller never received
+// those two tiers either, so the authenticated view is still a superset
+// of the anonymous one.
 //
 // Skips without AA_DB_PASSWORD, same convention as the sibling suites.
 
@@ -60,6 +78,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 const (
@@ -134,7 +153,7 @@ func seedSimilarAssets(t *testing.T, pool *pgxpool.Pool) map[string]uuid.UUID {
 	})
 
 	// The dim registry + default model live in system_config; a fresh
-	// test database has migration 00011's seed values, but pin them
+	// test database has migration 00001's seed values, but pin them
 	// here so the fixture does not depend on a seed staying put.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO system_config (key, value) VALUES
@@ -369,11 +388,28 @@ func TestSimilar_SubsetOfBrowse(t *testing.T) {
 	}
 }
 
-// TestSimilar_AuthenticatedNotNarrowed is the counterweight. The
-// EntityAsset predicate for an authenticated caller is soft-delete only
-// — a signed-in non-owner still LISTS draft and restricted rows, gated
-// at the content plane instead (ADR 0020 / ADR 0064). Fixing the
-// anonymous leak must not narrow that, or signing in removes access.
+// TestSimilar_AuthenticatedNotNarrowed is the counterweight, and #1066
+// corrected what it counterweighs.
+//
+// It used to require that an authenticated stranger still received
+// `n-restricted` and `n-team`, on the reasoning that the EntityAsset
+// predicate is soft-delete only for a signed-in caller and narrowing it
+// would mean signing in removes access (#451). The predicate half is
+// still true and still asserted below — a stranger keeps every ROW-plane
+// neighbour, draft and archived and still-processing included.
+//
+// The two sensitivity tiers were never a row-plane question. A kNN
+// ranking is not a listing: a restricted neighbour arriving with a
+// distance says "an asset you may not open closely resembles the one you
+// are looking at", which is the picture disclosed through its derived
+// copy, and the placeholder that withholds its title and its blur
+// discloses it anyway. So they are gated at the CONTENT plane now, and
+// the #451 invariant is untouched by that — an anonymous caller never
+// received them either, so the authenticated view is still a superset of
+// the anonymous one.
+//
+// The entitled verdicts on the SAME rows live in
+// TestSimilar_ContentPlaneEntitledCallers.
 func TestSimilar_AuthenticatedNotNarrowed(t *testing.T) {
 	pool := byTagPool(t)
 	ids := seedSimilarAssets(t, pool)
@@ -387,10 +423,22 @@ func TestSimilar_AuthenticatedNotNarrowed(t *testing.T) {
 	for _, r := range got.Results {
 		byID[r.Asset.Id] = true
 	}
-	for _, label := range []string{"n-public", "n-draft", "n-archived", "n-processing", "n-restricted", "n-team"} {
+	// The ROW plane, unchanged: a signed-in stranger still sees every
+	// neighbour the anonymous predicate would have dropped for a reason
+	// that is not sensitivity.
+	for _, label := range []string{"n-public", "n-draft", "n-archived", "n-processing"} {
 		if !byID[ids[label]] {
 			t.Errorf("authenticated /similar dropped %q — the anonymous fix narrowed the authenticated path; "+
 				"signing in must never remove access (#451)", label)
+		}
+	}
+	// The CONTENT plane (#1066): a stranger does not rank assets whose
+	// picture they may not read.
+	for _, label := range []string{"n-restricted", "n-team"} {
+		if byID[ids[label]] {
+			t.Errorf("authenticated /similar ranked %q for a stranger — an embedding is a derived copy "+
+				"of the image, so an asset whose picture is withheld must not come back with a "+
+				"distance attached (#1066)", label)
 		}
 	}
 	// Soft-deleted stays out on every path.
@@ -398,8 +446,84 @@ func TestSimilar_AuthenticatedNotNarrowed(t *testing.T) {
 		t.Error("authenticated /similar returned a soft-deleted asset")
 	}
 	// And a draft anchor is reachable for an authenticated caller,
-	// because the authenticated predicate admits it.
+	// because the authenticated predicate admits it and a draft is
+	// public-tier, so the content plane admits it too.
 	if s, _ := getSimilar(t, router, ids["anchor-draft"]); s != http.StatusOK {
 		t.Errorf("authenticated /similar on a draft anchor: status=%d, want 200", s)
+	}
+}
+
+// TestSimilar_ContentPlaneEntitledCallers is the positive control for
+// #1066 on this endpoint: the SAME two neighbours the stranger above
+// stopped ranking must still rank for the callers entitled to their
+// picture. Without it, "drop every restricted neighbour" passes.
+func TestSimilar_ContentPlaneEntitledCallers(t *testing.T) {
+	pool := byTagPool(t)
+	ids := seedSimilarAssets(t, pool)
+
+	for _, tc := range []struct {
+		name string
+		id   *auth.Identity
+	}{
+		// The owner of every seeded asset.
+		{"owner", &auth.Identity{UserRef: simOwner, AuthMethod: "session"}},
+		// The demo-viewer shape: content.read.all over a
+		// mostly-restricted catalogue (#474).
+		{"content.read.all", &auth.Identity{
+			UserRef: simOwner + 2, AuthMethod: "session",
+			Capabilities: []string{visibility.ContentReadAll},
+		}},
+		{"system.admin", &auth.Identity{
+			UserRef: simOwner + 3, AuthMethod: "session",
+			Capabilities: []string{visibility.SystemAdmin},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := simRouter(t, pool, tc.id)
+			status, got := getSimilar(t, router, ids["anchor-public"])
+			if status != http.StatusOK {
+				t.Fatalf("similar: status=%d, want 200", status)
+			}
+			byID := make(map[uuid.UUID]bool, len(got.Results))
+			for _, r := range got.Results {
+				byID[r.Asset.Id] = true
+			}
+			if !byID[ids["n-public"]] {
+				t.Fatal("the public neighbour did not come back — vacuous")
+			}
+			for _, label := range []string{"n-restricted", "n-team"} {
+				if !byID[ids[label]] {
+					t.Errorf("%s lost neighbour %q — gating the similarity channel must not take the "+
+						"catalogue away from a caller entitled to its pictures", tc.name, label)
+				}
+			}
+		})
+	}
+}
+
+// TestSimilar_RestrictedAnchorIs404ForAStranger is the ANCHOR half of
+// #1066. #661 stopped an anonymous caller anchoring on a hidden asset;
+// the row predicate it used admits a restricted asset to any signed-in
+// caller, so a stranger could still seed a neighbour list from one — the
+// exact thing that gate's comment said it prevented.
+//
+// 404, not 403, for the same reason as #661: a distinguishable refusal
+// tells the caller the id exists and is restricted.
+func TestSimilar_RestrictedAnchorIs404ForAStranger(t *testing.T) {
+	pool := byTagPool(t)
+	ids := seedSimilarAssets(t, pool)
+
+	stranger := simRouter(t, pool, &auth.Identity{UserRef: simOwner + 1, AuthMethod: "session"})
+	if s, got := getSimilar(t, stranger, ids["n-restricted"]); s != http.StatusNotFound {
+		t.Errorf("authenticated stranger anchoring on a RESTRICTED asset: status=%d (%d results), "+
+			"want 404 — the anchor's embedding is the anchor's picture in derived form (#1066)",
+			s, len(got.Results))
+	}
+	// The owner anchors on their own restricted asset unchanged, or the
+	// gate has broken the feature for the person it belongs to.
+	owner := simRouter(t, pool, &auth.Identity{UserRef: simOwner, AuthMethod: "session"})
+	if s, got := getSimilar(t, owner, ids["n-restricted"]); s != http.StatusOK || len(got.Results) == 0 {
+		t.Errorf("the OWNER anchoring on their own restricted asset: status=%d results=%d, "+
+			"want 200 with neighbours", s, len(got.Results))
 	}
 }

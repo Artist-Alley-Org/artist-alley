@@ -83,7 +83,7 @@ import (
 // If this test fails, do NOT tune the intervals to make it
 // pass — that would silently lower the gold-standard guarantee.
 // Instead: investigate the LISTEN/NOTIFY chain (triggers in
-// migration 00005 + 00006, SetRawPool wiring in api.go,
+// migration 00001, SetRawPool wiring in api.go,
 // dispatcher/delivery wake-channel plumbing).
 func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 	pwd := os.Getenv("AA_DB_PASSWORD")
@@ -263,7 +263,7 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 	t.Cleanup(aOutboxReg.Stop)
 	aResolver := outbox.NewResolver(pool, aOutboxReg, func(context.Context) bool { return false })
 	// PRODUCTION DEFAULTS. LISTEN/NOTIFY on activities
-	// (migration 00005) is the primary wake signal; 30s ticker
+	// (migration 00001) is the primary wake signal; 30s ticker
 	// is correctness backstop only.
 	aOutboxDispatcher := outbox.NewDispatcher(
 		outbox.DefaultDispatcherConfig(),
@@ -275,7 +275,7 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 	go aOutboxDispatcher.Run(ctx)
 
 	// Delivery worker on A — PRODUCTION DEFAULTS. LISTEN/NOTIFY
-	// on federation_outbox (migration 00006) is the primary
+	// on federation_outbox (migration 00001) is the primary
 	// wake signal; 30s ticker is correctness backstop only.
 	aSigner := &outbox.IdentitySigner{PrivateKey: aPriv, KeyURL: aKeyURL}
 	aDelivery := outbox.NewWorker(

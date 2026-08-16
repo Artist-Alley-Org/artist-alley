@@ -129,7 +129,7 @@ Label your runner `self-hosted,artist-alley`. The runner needs:
 
 - Docker (with `buildx` and `qemu` plugins for cross-arch builds)
 - Go (matches `app/go.mod`'s declared version)
-- Node 22
+- Node 24 (Active LTS)
 - `goreleaser` (the `goreleaser-action` will install if missing)
 - `cosign` (the `cosign-installer` action will install if missing)
 

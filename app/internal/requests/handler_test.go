@@ -564,3 +564,103 @@ func TestSubmit_UnknownCapabilityRejected(t *testing.T) {
 		t.Errorf("Submit rejected a real capability: %v", err)
 	}
 }
+
+// The live property #947's deletion had to leave untouched: the pending
+// count is evicted by the transitions that change it, in-process, with
+// no restart and no external invalidator.
+//
+// This asserts the OBSERVED COUNT, not that some function was called. A
+// call-assertion passes on a cache that broadcasts and then serves the
+// stale number anyway; the only evidence that matters is what the next
+// reader gets back. Each step therefore reads CountPending through the
+// same cache-fronted path the badge uses, and compares it to the value
+// a fresh COUNT(*) sees at that moment — so a missed eviction shows up
+// as the PREVIOUS number, which is exactly the badge bug.
+//
+// Deltas rather than absolutes: other packages seed resource_request
+// rows, and scripts/test.sh runs packages with -p 1, so the baseline is
+// stable within this test but is not zero.
+func TestPendingCount_EvictedOnSubmitAndOnDecide(t *testing.T) {
+	pool := openPoolE(t)
+	defer cleanupRequests(t, pool)
+	ctx := context.Background()
+
+	requester := seedUserForRequests(t, pool)
+	approver := seedUserForRequests(t, pool)
+	h := newHandlerE(t, pool, newAuditRec(), newNoter())
+
+	dbCount := func() int64 {
+		t.Helper()
+		var n int64
+		if err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM resource_request WHERE state = 'pending'`).Scan(&n); err != nil {
+			t.Fatalf("direct count: %v", err)
+		}
+		return n
+	}
+	cached := func(step string) int64 {
+		t.Helper()
+		n, err := h.CountPending(ctx, approver)
+		if err != nil {
+			t.Fatalf("CountPending after %s: %v", step, err)
+		}
+		if want := dbCount(); n != want {
+			t.Fatalf("after %s: CountPending = %d, want %d (the cache served a stale count)", step, n, want)
+		}
+		return n
+	}
+	submit := func() uuid.UUID {
+		t.Helper()
+		row, _, err := h.Submit(ctx, nil, requests.SubmitInput{
+			RequesterUserRef:    requester,
+			TargetKind:          requests.TargetKindAsset,
+			TargetID:            uuid.New(),
+			RequestedCapability: "posts.publish",
+		})
+		if err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+		return uuid.UUID(row.ID.Bytes)
+	}
+
+	// Warm the cache first — without a populated entry there is nothing
+	// to go stale and every assertion below would pass vacuously.
+	base := cached("warm-up")
+
+	// pending++ …
+	rid := submit()
+	if got := cached("Submit"); got != base+1 {
+		t.Errorf("after Submit: count = %d, want %d", got, base+1)
+	}
+
+	// …and pending-- on the grant decision.
+	if _, err := h.Grant(ctx, nil, requests.DecideInput{
+		RequestID:      rid,
+		ApproverRef:    approver,
+		DecisionReason: "ok",
+		ExpiresAt:      time.Now().Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if got := cached("Grant"); got != base {
+		t.Errorf("after Grant: count = %d, want %d", got, base)
+	}
+
+	// Deny is the other pending exit and is invalidated separately —
+	// asserting only the grant half would leave that call site
+	// untested.
+	rid2 := submit()
+	if got := cached("second Submit"); got != base+1 {
+		t.Errorf("after second Submit: count = %d, want %d", got, base+1)
+	}
+	if _, err := h.Deny(ctx, nil, requests.DecideInput{
+		RequestID:      rid2,
+		ApproverRef:    approver,
+		DecisionReason: "no",
+	}); err != nil {
+		t.Fatalf("Deny: %v", err)
+	}
+	if got := cached("Deny"); got != base {
+		t.Errorf("after Deny: count = %d, want %d", got, base)
+	}
+}

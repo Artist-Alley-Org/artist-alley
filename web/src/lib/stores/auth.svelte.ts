@@ -19,7 +19,7 @@
 
 import { api } from '$api/client';
 import { lang, t } from '$stores/lang.svelte';
-import { ADMIN_TILE_CAPS } from '$lib/admin/sections';
+import { ADMIN_ENTRY_CAPS } from '$lib/admin/sections';
 
 /** The account's default-view selections, as `/auth/me` reports them
  *  (`CurrentUser.default_views`). Snake_case because it is the wire
@@ -52,6 +52,33 @@ export interface AccountFeedFilters {
   show_restricted?: boolean | null;
 }
 
+/**
+ * The account's browse-rail curation (#1113, widened by #1123), joined
+ * onto the session response from `user_preferences.browse_rail`.
+ *
+ * The rail lists every team the caller can see, plus the tags they
+ * follow. This is the reader's
+ * edit of that list — the chips they took out, and the order they
+ * dragged the rest into — and unlike `feedFilters` it is applied HERE
+ * rather than by the server. That is the point of the split: hiding a
+ * team from your rail must not hide its work from your feed.
+ *
+ * It rides the session for the same first-paint reason `defaultViews`
+ * does, and for a more visible one: these lists decide WHAT THE RAIL
+ * DRAWS, so learning them a round-trip later means painting the
+ * uncurated rail and then rearranging it in front of the reader.
+ *
+ * Absent for every account that has not curated its rail — read an
+ * absent object as "the default rail" (every visible team,
+ * followed-first, then name order), never as "an empty rail".
+ */
+export interface AccountBrowseRail {
+  hidden_team_ids?: string[] | null;
+  team_order?: string[] | null;
+  hidden_tags?: string[] | null;
+  tag_order?: string[] | null;
+}
+
 export interface AuthUser {
   ref: number;
   username: string;
@@ -72,6 +99,31 @@ export interface AuthUser {
   /** Account-level browse-feed content preferences (#891/#921). Absent —
    *  not an object of falses — for every account on the defaults. */
   feedFilters?: AccountFeedFilters | null;
+  /** Account-level browse-rail curation — team chips (#1113) and
+   *  followed-tag chips (#1123). Absent — not an object of empty
+   *  lists — for every account that has not curated it. */
+  browseRail?: AccountBrowseRail | null;
+  /**
+   * Whether the INSTANCE allows mature content at all (#1116, ADR 0090
+   * §2) — the operator's switch, not this account's opt-in.
+   *
+   * ⚠️ NOT THE SAME QUESTION as "does this reader see mature content".
+   * That answer is three conjuncts ANDed: signed in, opted in
+   * (`user_preferences.mature_content.show`), and this. A surface that
+   * renders "mature is on for you" from either one alone will be wrong.
+   *
+   * What it is FOR is deciding whether to draw a control at all. When
+   * false, the account opt-in and the upload self-label are not
+   * rendered — not rendered disabled — because a control the server will
+   * not honour is a control that lies.
+   *
+   * Defaults to TRUE when the session response does not carry it, which
+   * is the unconfigured install's answer and the only safe guess: false
+   * would hide the opt-in on every install that has never touched the
+   * setting. Nothing is disclosed either way — the server ANDs the same
+   * switch into every request regardless of what this says.
+   */
+  matureContentAllowed: boolean;
   /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
@@ -147,6 +199,14 @@ class AuthState {
    * surface in the UI instead of the old binary `system.admin` gate
    * hiding admin entirely from read-only roles.
    *
+   * "Can open at least one admin surface" is narrower than "names any
+   * live tile's cap" (#962). `roles.read` and `teams.read` are ordinary
+   * read capabilities the seeded `Base` role carries — `teams.read`
+   * gates the public /teams surfaces — so counting them made this
+   * getter true for every signed-in account and the /admin refusal
+   * panel unreachable. `ADMIN_ENTRY_CAPS` excludes them; the roles and
+   * groups tiles are still visible to anyone already in the shell.
+   *
    * A getter, not a $derived: it reads `this.caps` ($state), so callers
    * that reference it inside their own $derived/effect stay reactive.
    */
@@ -154,7 +214,7 @@ class AuthState {
     // Unknown rights are no rights (#956) — same rule as can().
     if (this.capsUnavailable) return false;
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
-    return ADMIN_TILE_CAPS.some((c) => this.caps.includes(c));
+    return ADMIN_ENTRY_CAPS.some((c) => this.caps.includes(c));
   }
 
   /**
@@ -336,6 +396,11 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     theme: (u.theme ?? null) as 'light' | 'dark' | 'system' | '' | null,
     defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
     feedFilters: (u.feed_filters ?? null) as AccountFeedFilters | null,
+    browseRail: (u.browse_rail ?? null) as AccountBrowseRail | null,
+    // Absent → true. Required on the wire since #1116, so absence means
+    // a producer that predates it (only /setup/complete ever did), and
+    // a fresh install allows mature content by default.
+    matureContentAllowed: u.mature_content_allowed !== false,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

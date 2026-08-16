@@ -1,16 +1,24 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // Hub tile for a single collection. Composes a 2×2 mosaic cover
-  // from the collection's first 4 assets, with graceful fallbacks
-  // (1 = full bleed, 2 = side-by-side, 3 = big + 2 small, 0 = icon).
+  // Hub tile for a single collection. Lays out a 2×2 mosaic cover from
+  // the collection's `covers`, with graceful fallbacks (1 = full bleed,
+  // 2 = side-by-side, 3 = big + 2 small, 0 = icon).
   //
-  // Thumbnail asset ids come from the shared collectionCovers store
-  // so toggling tabs on the hub doesn't re-fetch every card.
+  // The covers RIDE THE ROW (#1026). They used to come from a
+  // client-side store that fetched /collections/{id}/resources per card,
+  // which had two defects no amount of caching fixed: it could not see
+  // POST members at all — so a collection of saved posts rendered as an
+  // empty folder — and it slotted a member the caller may not picture as
+  // a blank tile, crowding out renderable members behind it. Both are
+  // decisions the server has to make, so the server makes them; every
+  // entry here is renderable and there is nothing to probe or branch on.
 
-  import { onMount } from 'svelte';
-  import { fetchCovers } from '$stores/collectionCovers.svelte';
   import { t } from '$stores/lang.svelte';
+
+  interface CoverEntry {
+    asset_id: string;
+  }
 
   interface Collection {
     id: string;
@@ -19,6 +27,9 @@
     visibility: string;
     owner_user_ref: number;
     created_at: string;
+    // Absent on a surface that did not compose covers; an empty array
+    // is the honest "this collection has nothing to show".
+    covers?: CoverEntry[];
   }
 
   interface Props {
@@ -27,22 +38,10 @@
 
   let { collection }: Props = $props();
 
-  interface CoverAsset {
-    id: string;
-    file_hash: string | null;
-    preview_available?: boolean;
-  }
+  const covers = $derived(collection.covers ?? []);
 
-  let covers = $state<CoverAsset[]>([]);
-  let loaded = $state(false);
-
-  onMount(async () => {
-    covers = await fetchCovers(collection.id);
-    loaded = true;
-  });
-
-  function colUrl(a: CoverAsset): string {
-    return `/api/v1/assets/${a.id}/variants/col`;
+  function colUrl(a: CoverEntry): string {
+    return `/api/v1/assets/${a.asset_id}/variants/col`;
   }
 
   const visibilityLabel = $derived(
@@ -54,14 +53,10 @@
   );
 </script>
 
-<!-- One mosaic cover: the confirmed-available image, or a neutral tile
-     while probing / when unavailable (keeps the mosaic grid intact). -->
-{#snippet cover(a: CoverAsset, cls: string)}
-  {#if a.preview_available}
-    <img src={colUrl(a)} alt="" class={cls} loading="lazy" />
-  {:else}
-    <div class="{cls} bg-surface"></div>
-  {/if}
+<!-- One mosaic tile. No availability branch: the server only sends
+     entries this caller can render. -->
+{#snippet cover(a: CoverEntry, cls: string)}
+  <img src={colUrl(a)} alt="" class={cls} loading="lazy" />
 {/snippet}
 
 <a
@@ -69,9 +64,7 @@
   class="group block overflow-hidden rounded-xl border border-border bg-surface-elevated transition-colors hover:border-fg-muted/60"
 >
   <div class="relative aspect-[4/3] bg-surface">
-    {#if !loaded}
-      <div class="absolute inset-0 animate-pulse bg-surface"></div>
-    {:else if covers.length === 0}
+    {#if covers.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -81,7 +74,7 @@
       {@render cover(covers[0], 'absolute inset-0 h-full w-full object-cover')}
     {:else if covers.length === 2}
       <div class="absolute inset-0 grid grid-cols-2 gap-0.5">
-        {#each covers as a (a.id)}
+        {#each covers as a (a.asset_id)}
           {@render cover(a, 'h-full w-full object-cover')}
         {/each}
       </div>
@@ -93,7 +86,7 @@
       </div>
     {:else}
       <div class="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-0.5">
-        {#each covers.slice(0, 4) as a (a.id)}
+        {#each covers.slice(0, 4) as a (a.asset_id)}
           {@render cover(a, 'h-full w-full object-cover')}
         {/each}
       </div>

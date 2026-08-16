@@ -1,4 +1,5 @@
-# Dependabot — keeps deps current across the four ecosystems we ship.
+# Dependabot — keeps deps current across every ecosystem in the tree.
+# Most of them ship; the two `pip` entries do not (see their block).
 # All PRs target `dev` so CI gates them and the manual dev → main
 # merge stays the promotion path.
 #
@@ -172,6 +173,99 @@ updates:
     labels:
       - deps
       - npm
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
+
+  # ── Python sidecar tools (#928). Two of them, each with its own
+  # pyproject.toml + Dockerfile, and `pip` does not recurse any more
+  # than `docker` or `npm` do — so both need their own entry:
+  #   tools/aa-clip-visual-local  — CLIP visual encoder sidecar
+  #   tools/comfyui-mcp-bridge    — MCP bridge for ComfyUI
+  #
+  # NEITHER SHIPS IN THE RUNTIME IMAGE. They build into their own
+  # optional sidecar images that an operator runs (or doesn't) beside
+  # the app, so this is hygiene, not the supply-chain hole that #905
+  # was: nothing here rides into the published artifact. Sized to
+  # match — monthly, one PR at a time, grouped.
+  #
+  # ── Range-only, deliberately: there is no lockfile and we are not
+  # adding one.
+  #
+  # Dependabot therefore updates the DECLARED RANGES in pyproject.toml
+  # and nothing else, which means two builds of the same commit can
+  # resolve different transitive versions. That is a real cost and it
+  # is accepted here rather than overlooked:
+  #
+  #   - Both Dockerfiles `pip install` from pyproject.toml (build a
+  #     wheel, install the wheel). A uv.lock or a compiled
+  #     requirements.txt would be installed by nothing, so it would
+  #     drift from what the images actually contain — a lockfile that
+  #     no build consumes is decoration, and decoration rots.
+  #   - The reproducible artifact for these tools is the IMAGE, which
+  #     is built deliberately and pinned by digest where it is used.
+  #   - aa-clip-visual-local's dependency floors were already chosen
+  #     against this exact model — read its `torch>=2.13` comment: the
+  #     floor is set to exclude an advisory's affected range precisely
+  #     because Dependabot evaluates the declared range with no
+  #     lockfile. Adding a lockfile now would not make that reasoning
+  #     redundant, it would give it a second, divergent source.
+  #
+  # What would change the answer: either tool becoming part of the
+  # runtime image, or getting published to an index. At that point add
+  # a compiled requirements.txt AND make the Dockerfile install from
+  # it, in one change — not the lockfile alone.
+  #
+  # `versioning-strategy` is left at the ecosystem default on purpose;
+  # the defaults raise the declared floor, which is the behaviour those
+  # advisory-driven floors depend on.
+  - package-ecosystem: pip
+    directory: /tools/aa-clip-visual-local
+    schedule:
+      interval: monthly
+    target-branch: dev
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "chore"
+      include: scope
+    labels:
+      - deps
+      - python
+    # Same minor+patch / majors split as every other ecosystem here
+    # (#353): fetch-metadata reports a grouped PR's update-type as the
+    # HIGHEST bump in it, so folding majors into the routine group
+    # would flag the whole PR major-review and stall the routine bumps.
+    #
+    # Note what auto-merge means for these two: CI does not exercise
+    # either tool (no workflow builds or tests tools/**), so a green
+    # check on one of these PRs says the Go + web suites still pass,
+    # not that the sidecar still works. That is tolerable only because
+    # neither is in the runtime path. If either ever gets a CI job,
+    # revisit this comment, not just the workflow.
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
+
+  - package-ecosystem: pip
+    directory: /tools/comfyui-mcp-bridge
+    schedule:
+      interval: monthly
+    target-branch: dev
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "chore"
+      include: scope
+    labels:
+      - deps
+      - python
     groups:
       minor-and-patch:
         patterns: ["*"]

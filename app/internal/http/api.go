@@ -48,6 +48,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/tags"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
 	"github.com/mscrnt/artist-alley/app/internal/trash"
 
@@ -107,6 +108,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
 
@@ -139,8 +141,13 @@ type apiServer struct {
 	collections  *collections.Handler
 	posts        *posts.Handler
 	teams        *teams.Handler
-	users        *users.Handler
-	social       *social.Handler
+	// #1123 — tag follows. Separate from `posts` (which owns post_tags)
+	// because the follow is a bookmark rather than a post fact, and
+	// separate from `teams` for the reason team follows are separate
+	// from memberships: the shapes rhyme, the tables do not.
+	tags   *tags.Handler
+	users  *users.Handler
+	social *social.Handler
 	// #937 — GET /account/trash. Reads across assets/posts/collections
 	// but owns none of them; see the package doc for why it is one
 	// endpoint and not three.
@@ -207,7 +214,11 @@ type apiServer struct {
 	jobsAdmin          *jobs.AdminHandler
 	storageAdmin       *storage.AdminHandler
 	sysCfg             *sysconfig.Store
-	seedAdmin          *seed.AdminHandler
+	// matureResolver is the request-scoped mature-content lookup
+	// (#1116). Held here so server.go can mount it as middleware beside
+	// ResolveIdentity; nothing else should read it.
+	matureResolver visibility.MatureResolver
+	seedAdmin      *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
 	// minimal server without the search subsystem).
@@ -301,6 +312,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:      collections.NewHandler(pool, logger, cacheReg),
 		posts:            posts.NewHandler(pool, logger, cacheReg),
 		teams:            teams.NewHandler(pool, logger, cacheReg),
+		tags:             tags.NewHandler(pool, logger),
 		users:            usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
 		social:           social.NewHandler(pool, logger, cacheReg),
 		trash:            trash.NewHandler(pool, sysCfg, logger),
@@ -663,12 +675,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Logger:     logger,
 	}
 	s.iiifContentSearchHandler = &contentsearch.Handler{
-		Pool:        pool,
-		Engine:      s.searchService.Engine(),
+		Pool: pool,
+		// Assigned BELOW rather than here, because Handler.Engine became
+		// an interface in #1147 and a typed nil inside an interface is
+		// not nil. Writing `Engine: s.searchService.Engine()` unchecked
+		// would turn the handler's own `h.Engine != nil` guard into a
+		// tautology and its nil-engine path into a nil-receiver panic.
 		Pairs:       iiifPairAdapter{loader: s.iiifLoader},
 		SiteBaseURL: savedSiteURL(context.Background(), sysCfg),
 		Counter:     s.iiifCounter,
 		Logger:      logger,
+	}
+	if eng := s.searchService.Engine(); eng != nil {
+		s.iiifContentSearchHandler.Engine = eng
 	}
 	s.iiifRedirectHandler = &iiifredirect.Handler{
 		Counter: s.iiifCounter,
@@ -687,7 +706,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// Phase 1.14.C — register the whisper_local transcription
 	// provider. Same shape as clip_local: a sibling container per
 	// ADR 0034; the operator's enabled=false default in the
-	// system_config registration (migration 00012) means the
+	// system_config registration (migration 00001) means the
 	// admin UI gates the runtime call until the operator flips it.
 	s.aiRouter.Register(aiwhisperlocal.NewProvider(aiwhisperlocal.Config{}, aiCallAuditor))
 
@@ -776,7 +795,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// extract→chunk→route→stitch→VTT→subtitle pipeline lives in
 		// transcribe.Handler; the job handler is a thin wrapper that
 		// parses the payload + classifies errors. Operator's
-		// chunker config (system_config seeds from 00012) flows in
+		// chunker config (system_config seeds from 00001) flows in
 		// via the Config struct.
 		transcribeOrch := aitranscribe.NewHandler(
 			transcribeStorage, // same storage adapter as the Writer
@@ -1066,6 +1085,46 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// to /account/preferences invalidates it process-wide + across peers.
 	s.posts.SetFeedFilters(userprefsFeedFilterAdapter{h: s.userprefs})
 
+	// #1116 — the mature-content axis (ADR 0090). ONE adapter, wired
+	// into every surface that composes the predicate, so the three
+	// conjuncts are resolved by one piece of code rather than by each
+	// domain's idea of them. A handler left unwired disqualifies every
+	// caller rather than widening — visibility.ResolveMatureOr — so the
+	// failure mode of forgetting a line here is a surface that shows too
+	// LITTLE, which is visible, rather than one that leaks, which is not.
+	matureRes := matureResolverAdapter{prefs: s.userprefs, sys: sysCfg}
+	s.posts.SetMatureResolver(matureRes)
+	// #1147 — the saved-search executor is the one consumer that cannot
+	// use the middleware: it runs on a job timer with no request and no
+	// context to read a viewer off, so it holds the resolver directly and
+	// resolves for the search's OWNER at execution time. Left unwired it
+	// keeps the pre-#1147 behaviour (every saved search runs as the
+	// disqualified viewer), which is the visible failure rather than the
+	// silent one.
+	if s.savedSearchExecutor != nil {
+		s.savedSearchExecutor.SetMatureResolver(matureRes)
+	}
+	// The CONTENT plane reaches the same resolver through the request
+	// context instead of a per-package field — see
+	// visibility.MatureFromContext for why ten wiring lines became one
+	// middleware. s.matureResolver is what server.go mounts.
+	s.matureResolver = matureRes
+	// The session response carries the OPERATOR's conjunct so a
+	// signed-in surface can decide whether to draw the opt-in at all
+	// (CurrentUser.mature_content_allowed). A render hint only — the
+	// predicate above re-reads the same switch on every request, so a
+	// client that ignores this cannot be shown anything by doing so.
+	s.auth.SetMatureAllowedReader(func(ctx context.Context) (bool, error) {
+		if sysCfg == nil {
+			return true, nil
+		}
+		cfg, err := sysCfg.GetMatureContent(ctx)
+		if err != nil {
+			return false, err
+		}
+		return cfg.Allowed(), nil
+	})
+
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
 	// injected post-construction.
@@ -1251,7 +1310,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.inboxDispatcher.SetAudit(auditRec)
 	// Phase 1.22.I-i — activates the I-h receiver-side
 	// encryption policy gate. The lookup resolves "asset"-kind
-	// objects to their sensitivity tier (migration 00014); other
+	// objects to their sensitivity tier (migration 00001); other
 	// kinds pass through (SensitivityNotFound). When the gate
 	// fires (plaintext envelope + restricted/embargo target),
 	// the dispatcher marks the row rejected with reason
@@ -2124,6 +2183,77 @@ type userprefsFeedFilterAdapter struct{ h *userprefs.Handler }
 
 func (a userprefsFeedFilterAdapter) ShowRestrictedFeedMembers(ctx context.Context, ref int64) (bool, error) {
 	return a.h.ShowRestrictedFeedMembers(ctx, ref)
+}
+
+// matureResolverAdapter satisfies visibility.MatureResolver (#1116).
+//
+// It is the ONE place the three conjuncts of ADR 0090 §2 meet, and it
+// lives here rather than in either store because neither store can see
+// the other: `user_preferences` holds the reader's answer and
+// `system_config` holds the operator's, and the rule is their
+// conjunction with the session.
+//
+// # Order of evaluation is a cost decision, not a correctness one
+//
+// An anonymous caller short-circuits before either read. That is the
+// common case on a public install's browse feed, and it is also the
+// case where BOTH reads would be pointless: there is no preferences row
+// to find, and the instance switch cannot rescue a viewer who fails the
+// signed-in conjunct anyway. Every remaining caller pays one cached
+// preferences lookup and one config read.
+//
+// # THE CONFIG READ IS NOT CACHED, AND THAT IS SYSCONFIG'S DECISION
+//
+// sysconfig.GetMatureContent documents why (a stale TRUE keeps serving
+// mature content on an install whose operator has just switched it
+// off), and ADR 0013's invalidation would have to be wired there, not
+// here. This adapter must not "helpfully" memoise it — doing so would
+// move the staleness window into a file that says nothing about it.
+//
+// # Errors travel; the failing-closed decision is at ONE seam
+//
+// Both halves propagate. visibility.ResolveMatureOr is where a failed
+// lookup becomes the disqualified viewer, and it is the only place that
+// conversion happens — an adapter that swallowed its own errors would
+// make a config outage indistinguishable from an install that has
+// switched the feature off, and only one of those is worth an alert.
+type matureResolverAdapter struct {
+	prefs *userprefs.Handler
+	sys   *sysconfig.Store
+}
+
+func (a matureResolverAdapter) ResolveMature(
+	ctx context.Context,
+	caller visibility.Caller,
+) (visibility.MatureViewer, error) {
+	// Anonymous fails the first conjunct outright. Returning the zero
+	// value rather than a partially-filled struct keeps the "zero value
+	// is the disqualified viewer" property MatureViewer documents.
+	if caller.IsAnonymous || caller.UserRef == 0 {
+		return visibility.AnonymousMatureViewer, nil
+	}
+	v := visibility.MatureViewer{SignedIn: true}
+	if a.prefs != nil {
+		show, err := a.prefs.ShowMatureContent(ctx, caller.UserRef)
+		if err != nil {
+			return visibility.AnonymousMatureViewer, err
+		}
+		v.OptedIn = show
+	}
+	// A nil config store resolves to ALLOWED, matching
+	// sysconfig.KeyMatureContent's own absent-means-allowed default.
+	// It is permissive about the OPERATOR's intent only: the reader
+	// still had to opt in above, so this cannot widen anything on its
+	// own.
+	v.InstanceAllows = true
+	if a.sys != nil {
+		cfg, err := a.sys.GetMatureContent(ctx)
+		if err != nil {
+			return visibility.AnonymousMatureViewer, err
+		}
+		v.InstanceAllows = cfg.Allowed()
+	}
+	return v, nil
 }
 
 // socialNotifyAdapter satisfies the social package's Notifier
@@ -3169,6 +3299,9 @@ func (s *apiServer) UpdateTeam(ctx context.Context, req openapi.UpdateTeamReques
 func (s *apiServer) DeleteTeam(ctx context.Context, req openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
 	return s.teams.DeleteTeam(ctx, req)
 }
+func (s *apiServer) SetTeamHero(ctx context.Context, req openapi.SetTeamHeroRequestObject) (openapi.SetTeamHeroResponseObject, error) {
+	return s.teams.SetTeamHero(ctx, req)
+}
 func (s *apiServer) ListTeamParents(ctx context.Context, req openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
 	return s.teams.ListTeamParents(ctx, req)
 }
@@ -3196,8 +3329,24 @@ func (s *apiServer) UnfollowTeam(ctx context.Context, req openapi.UnfollowTeamRe
 func (s *apiServer) GetMyFollowedTeams(ctx context.Context, req openapi.GetMyFollowedTeamsRequestObject) (openapi.GetMyFollowedTeamsResponseObject, error) {
 	return s.teams.GetMyFollowedTeams(ctx, req)
 }
+func (s *apiServer) FollowTag(ctx context.Context, req openapi.FollowTagRequestObject) (openapi.FollowTagResponseObject, error) {
+	return s.tags.FollowTag(ctx, req)
+}
+func (s *apiServer) UnfollowTag(ctx context.Context, req openapi.UnfollowTagRequestObject) (openapi.UnfollowTagResponseObject, error) {
+	return s.tags.UnfollowTag(ctx, req)
+}
+func (s *apiServer) GetMyFollowedTags(ctx context.Context, req openapi.GetMyFollowedTagsRequestObject) (openapi.GetMyFollowedTagsResponseObject, error) {
+	return s.tags.GetMyFollowedTags(ctx, req)
+}
 func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	return s.teams.GetMyTeams(ctx, req)
+}
+
+// The featured-team slot in the teams rail (#1084). Pathed under
+// /featured but handled here: it returns TEAMS, and a team is only
+// correct once teams.attachHeroes has re-derived its picture.
+func (s *apiServer) ListFeaturedTeams(ctx context.Context, req openapi.ListFeaturedTeamsRequestObject) (openapi.ListFeaturedTeamsResponseObject, error) {
+	return s.teams.ListFeaturedTeams(ctx, req)
 }
 
 // --- users -----------------------------------------------------------------
@@ -3294,6 +3443,24 @@ func (s *apiServer) RemoveFeaturedItem(ctx context.Context, req openapi.RemoveFe
 }
 func (s *apiServer) ReorderFeaturedItems(ctx context.Context, req openapi.ReorderFeaturedItemsRequestObject) (openapi.ReorderFeaturedItemsResponseObject, error) {
 	return s.featuredHTTP.ReorderFeaturedItems(ctx, req)
+}
+
+// --- the operator promo band (GitHub #1118) --------------------------------
+
+func (s *apiServer) GetPromoBand(ctx context.Context, req openapi.GetPromoBandRequestObject) (openapi.GetPromoBandResponseObject, error) {
+	return s.featuredHTTP.GetPromoBand(ctx, req)
+}
+func (s *apiServer) GetAdminPromoBand(ctx context.Context, req openapi.GetAdminPromoBandRequestObject) (openapi.GetAdminPromoBandResponseObject, error) {
+	return s.featuredHTTP.GetAdminPromoBand(ctx, req)
+}
+func (s *apiServer) SavePromoBand(ctx context.Context, req openapi.SavePromoBandRequestObject) (openapi.SavePromoBandResponseObject, error) {
+	return s.featuredHTTP.SavePromoBand(ctx, req)
+}
+func (s *apiServer) DeletePromoBand(ctx context.Context, req openapi.DeletePromoBandRequestObject) (openapi.DeletePromoBandResponseObject, error) {
+	return s.featuredHTTP.DeletePromoBand(ctx, req)
+}
+func (s *apiServer) AddPromoBandItem(ctx context.Context, req openapi.AddPromoBandItemRequestObject) (openapi.AddPromoBandItemResponseObject, error) {
+	return s.featuredHTTP.AddPromoBandItem(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------
@@ -3424,6 +3591,16 @@ func (s *apiServer) UpdateBrowseViews(ctx context.Context, req openapi.UpdateBro
 }
 func (s *apiServer) GetPublicBrowseViews(ctx context.Context, req openapi.GetPublicBrowseViewsRequestObject) (openapi.GetPublicBrowseViewsResponseObject, error) {
 	return s.sysconfigH.GetPublicBrowseViews(ctx, req)
+}
+
+// #1116 — the install's mature switch. NO public counterpart: every
+// consumer is signed in, so the answer rides the session response
+// (CurrentUser.mature_content_allowed) instead of being published.
+func (s *apiServer) GetMatureContentConfig(ctx context.Context, req openapi.GetMatureContentConfigRequestObject) (openapi.GetMatureContentConfigResponseObject, error) {
+	return s.sysconfigH.GetMatureContentConfig(ctx, req)
+}
+func (s *apiServer) UpdateMatureContentConfig(ctx context.Context, req openapi.UpdateMatureContentConfigRequestObject) (openapi.UpdateMatureContentConfigResponseObject, error) {
+	return s.sysconfigH.UpdateMatureContentConfig(ctx, req)
 }
 
 // --- audit viewer (Phase 1.17.K) ------------------------------------------

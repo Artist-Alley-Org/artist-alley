@@ -26,8 +26,13 @@
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
+  import { masonryLayout, masonryOverlayTier } from '$stores/masonryLayout.svelte';
   import { api } from '$api/client';
   import type { CardCoverAsset, ContentOrigin } from '$components/cardAsset';
+  import { kindForAsset } from './viewers/controller';
+  import { thumbhashMatteColor } from '$lib/util/thumbhash';
+  import CardKindBadge from './CardKindBadge.svelte';
+  import CardAuthorLink from './CardAuthorLink.svelte';
 
   // Cover-asset shape is the shared card feed contract (#595) — its
   // presentation fields are REQUIRED so a surface cannot hand-map a
@@ -68,6 +73,19 @@
      *  for the whole page, so the heart is right on first paint without
      *  a request per card. */
     liked?: boolean;
+    /** The head of the thread — the newest few top-level comments, in
+     *  the order the thread shows them (#1047). Server-resolved for the
+     *  whole page like `author` and `liked`, and for the same reason: a
+     *  card that fetched its own comments would be one request per post
+     *  on a browse surface.
+     *
+     *  Optional and possibly empty, and the feed card renders nothing
+     *  when it is. A commenter's `author` is absent when they are not
+     *  disclosed to this reader (ADR 0024) — see PostAuthor and the
+     *  server's `enrichTopComments`; the card draws the words with no
+     *  name rather than a placeholder identity, which is the same
+     *  answer the post's own header gives for a withheld author. */
+    comments_preview?: PostCommentPreview[];
     cover_asset_id?: string | null;
     created_at: string;
     like_count: number;
@@ -80,6 +98,20 @@
     username: string;
     display_name: string;
     avatar_url?: string | null;
+  }
+
+  /** One comment as the feed card shows it — a name, a line of text and
+   *  when. The server's allow-list shape (#1047), not a trimmed
+   *  `Comment`: threading, reactions and annotations are what opening
+   *  the post is for. */
+  interface PostCommentPreview {
+    id: string;
+    body: string;
+    created_at: string;
+    author?: PostAuthorSummary | null;
+    /** A comment that arrived from a paired peer has no local user; the
+     *  cached remote name rides here instead of in `author`. */
+    remote_display_name?: string | null;
   }
 
   interface Props {
@@ -108,6 +140,9 @@
      *  Undefined ⇒ the array IS the membership, which is the case on
      *  every list endpoint. */
     memberCount?: number;
+    /** Feed-order ids for range selection (#1127). A thunk — see
+     *  CardCheckbox's prop of the same name. */
+    orderedIds?: () => string[];
   }
 
   let {
@@ -116,17 +151,49 @@
     tileSizes = DEFAULT_TILE_SIZES,
     mode = 'grid',
     memberCount: memberCountProp,
+    orderedIds,
   }: Props = $props();
 
-  // Grid reads clean/dense (no frame, hover-only title); the other modes
-  // keep the gallery frame + a persistent footer in thumbnail.
-  const framed = $derived(mode !== 'grid');
+  /** Selection is gated exactly as CardCheckbox gates it — same two
+   *  conditions, because a shift-click that selected on a surface with
+   *  no visible checkbox would be an invisible mode. */
+  const canSelect = $derived(!!auth.user && !site.demoMode);
+
+  // ── Per-density posture (#1047) ──────────────────────────────────
+  //
+  // The two WALL densities — grid and masonry — wear no card chrome, and
+  // masonry joined grid in this pass. See the twin in AssetCard for the
+  // argument: a rounded, bordered, elevated panel is metadata about a
+  // card, on a surface whose stated identity is "maximum art per page".
+  const framed = $derived(mode !== 'grid' && mode !== 'masonry');
   const detailed = $derived(mode === 'thumbnail');
 
-  // Masonry only (#652) — the tile can be as short as the 60px control
-  // floor, so the overlay carries the ⋮ menu and the checkbox and
-  // nothing else. See the twin in AssetCard.
-  const compact = $derived(mode === 'masonry');
+  // ── Masonry's two postures (#652, split by scale in #1047) ────────
+  //
+  // MASONRY IS MINIMAL WHEN ITS TILES ARE SMALL AND FULL WHEN THEY ARE
+  // BIG, and the switch is the tile's RENDERED BOX, not the rung the
+  // reader picked (owner amendment; #1025's lesson — a rung is a clamp,
+  // and the same clamp yields different sizes at different viewports).
+  // `masonryLayout` carries the measured box and the calibration notes
+  // for all three thresholds.
+  //
+  // THREE POSTURES, NOT TWO (#1139). Width alone was the gate and it let
+  // through the one shape it could not describe: a wide tile is SHORT by
+  // construction, so a two-column 5.33:1 piece cleared 280px easily and
+  // then cut the artist's avatar and name off at its bottom edge. Height
+  // now qualifies too, and between the two heights the overlay
+  // COMPRESSES to the title alone rather than clipping — a clipped
+  // identity row states less than the tooltip it replaced while still
+  // covering the art.
+  //
+  // Below both, the tile can be as short as the 60px control floor, so
+  // it holds the ⋮ menu and the checkbox and nothing else and its facts
+  // live in the hover tooltip.
+  const overlayTier = $derived(
+    mode === 'masonry' ? masonryOverlayTier(masonryLayout.box(post.id)) : 'minimal',
+  );
+  const masonryWide = $derived(mode === 'masonry' && overlayTier !== 'minimal');
+  const compact = $derived(mode === 'masonry' && !masonryWide);
 
   // ── Feed: the social card (#557) ─────────────────────────────────
   //
@@ -157,6 +224,26 @@
   }
 
   const origin = $derived(post.origin ?? null);
+
+  // The head of the thread (#1047). Rendered only in the social view —
+  // the other four densities are walls of artwork where a conversation
+  // is a count at most.
+  const commentsPreview = $derived(post.comments_preview ?? []);
+
+  /** The commenter's name, or "" when there is none to print.
+   *
+   *  THREE CASES, and only the first two produce a name: a local
+   *  commenter the server disclosed, a remote one whose peer has
+   *  shipped a display hint, and a commenter who is NOT disclosed to
+   *  this reader (the ADR 0024 opt-out, a deleted account, or a peer
+   *  with no hint yet). The third renders the comment with no name —
+   *  never a placeholder, never the actor URI's host, because both
+   *  would be this client inventing an identity the server declined to
+   *  send (#1023). */
+  function commenterName(c: PostCommentPreview): string {
+    if (c.author) return c.author.display_name;
+    return c.remote_display_name ?? '';
+  }
 
   // Like state. Seeded from the payload (#557) so the heart is correct
   // on first paint — no per-card `GET /posts/{id}/like`, which on a
@@ -293,12 +380,27 @@
   const FEED_SIZES = 'auto, (max-width: 46rem) 100vw, 46rem';
   const sizesHint = $derived(feed || social ? FEED_SIZES : tileSizes);
 
-  // The tallest a feed image may render, as width/height — 4:5, the cap
-  // every social feed converges on. At the 46rem measure a genuine 1:4
-  // portrait would otherwise be ~3000px and the reader would scroll
-  // three screens past one post. CardThumb LETTERBOXES to it rather
-  // than cropping, which is slice 1's rule wherever `fill` is off.
-  const FEED_PORTRAIT_FLOOR = 0.8;
+  // ── Uniform feed sizing (#1047) ──────────────────────────────────
+  //
+  // THE FEED'S MEDIA BOX IS THE SAME SHAPE ON EVERY POST. #557 sized it
+  // from the cover's own aspect ratio with a 4:5 portrait cap, which is
+  // right for a wall and wrong for a column: scrolling a single-column
+  // feed whose every card is a different height means the like button,
+  // the caption and the comments land somewhere new on every post, and
+  // the reader re-finds them each time. The owner's density table asks
+  // for "uniform post sizing (thumbnail-view-like), not aspect-driven",
+  // and that is what a social feed's grid of controls needs.
+  //
+  // A SQUARE, and letterboxed rather than cropped, so the whole work is
+  // still shown — CardThumb's rule everywhere `fill` is off. The
+  // alternative, cropping to the box, is what the commercial feeds do
+  // and what this codebase deliberately does not do outside grid's
+  // contact sheet.
+  //
+  // `variableAspect` and `ratioFloor` are therefore both off in feed
+  // now, and the 4:5 cap they existed to apply here goes with them: a
+  // fixed box needs no floor. CardThumb's `aspect-square` default is
+  // the box.
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub animation.
@@ -327,6 +429,40 @@
 
   const memberCount = $derived(memberCountProp ?? post.members.length);
 
+  // ── #1111: the grid card's overlay ──────────────────────────────────
+  //
+  // At rest a grid tile is IMAGE ONLY — the reference's discovery-wall
+  // posture. Everything below appears on hover AND on keyboard focus,
+  // over the same gradient scrim the title already used.
+  //
+  // What moves, and where:
+  //   top-left     the asset KIND, as an icon. Multi-asset posts show
+  //                the count then the Shapes glyph instead.
+  //   bottom-left  the title, then a 40px avatar + the author's name.
+  //   right of it  the ⋯ menu, relocated out of the top-right corner.
+  //   top-right    the select checkbox, which inherits the corner ⋯
+  //                vacated (see CardCheckbox.corner).
+  //
+  // The kind icon replaces CardThumb's `video` / `3D` TEXT chip, which
+  // is switched off for this mode only (`kindBadge` below) — #1111 is
+  // explicit that no text kind badges survive in grid.
+
+  /** The cover's kind, resolved through the SAME function CardFallback
+   *  and the viewer router use. Not a second extension table: a PNG
+   *  uploaded as a sprite atlas is a sprite sheet, and only
+   *  `kindForAsset` knows that. */
+  const coverKind = $derived(
+    kindForAsset({ asset_type: coverAsset?.asset_type ?? null, file_extension: coverFileExtension }),
+  );
+
+  /** Grid, and a WIDE masonry tile (#1047) — the two discovery-wall
+   *  postures, which the owner's amendment makes one language at scale.
+   *
+   *  Only when the tile is a real card: a restricted cover states its
+   *  own restriction and must not also be labelled by kind, since the
+   *  kind of something you may not see is not yours to know. */
+  const showOverlay = $derived((mode === 'grid' || masonryWide) && !coverRestricted);
+
   // The corner conflict was a THREE-way fight, not the two the brief
   // described (#578). Top-left already hosts the select checkbox AND
   // CardThumb's persistent video/3D media-type badge; top-right now hosts
@@ -334,6 +470,12 @@
   // the type badge on every video/3D multi-asset tile (measured). So it
   // goes BOTTOM-left — the one persistently-clear corner — still always
   // visible, still the single piece of resting chrome.
+
+  /** The letterbox matte's colour in THUMBNAIL only (#1136) — sampled
+   *  from the cover's thumbhash, which the card already holds for its
+   *  loading placeholder. Null everywhere else and for any cover with
+   *  no hash, and CardThumb then paints its neutral token. */
+  const matteColor = $derived(detailed ? thumbhashMatteColor(coverThumbhash) : null);
 
   const created = $derived(new Date(post.created_at));
   const createdShort = $derived(
@@ -355,21 +497,74 @@
     ].filter((v): v is string => !!v),
   );
 
+  // ── #1126: the grid overlay's full-title tooltip ────────────────────
+  //
+  // ONLY WHEN THE TITLE IS ACTUALLY CLIPPED. A tooltip that repeats a
+  // title already legible on the card is noise on every hover, so the
+  // gate is the DOM's own answer — `scrollWidth > clientWidth` on the
+  // truncating element — rather than a character count, which cannot
+  // know the rendered font, the tile width or the reader's zoom.
+  //
+  // Measured at hover time, not cached: the tile's width changes with
+  // the `--tile-min` slider and the viewport, so a value taken at mount
+  // would be stale for the whole session. One layout read per hover on
+  // one element is not a cost worth caching against.
+  let titleEl = $state<HTMLElement | null>(null);
+  function titleIsClipped(): boolean {
+    return !!titleEl && titleEl.scrollWidth > titleEl.clientWidth;
+  }
+
+  const tipTitle = $derived(post.title || 'Untitled');
+
   function tipEnter(e: MouseEvent) {
     hovering = true;
     if (compact) {
-      cardTooltip.enter(post.id, { title: post.title || 'Untitled', meta: tipMeta }, e);
+      cardTooltip.enter(post.id, { title: tipTitle, meta: tipMeta }, e);
+    } else if (showOverlay && titleIsClipped()) {
+      // No meta line: masonry's tooltip exists to carry the facts its
+      // stripped overlay dropped, this one exists to finish a sentence
+      // the card started. Adding dimensions here would answer a
+      // question the reader did not ask.
+      cardTooltip.enter(post.id, { title: tipTitle, meta: [], placement: 'follow' }, e);
     }
   }
   function tipMove(e: MouseEvent) {
-    if (compact) cardTooltip.move(post.id, e);
+    if (compact || showOverlay) cardTooltip.move(post.id, e);
   }
   function tipLeave() {
     hovering = false;
-    if (compact) cardTooltip.leave(post.id);
+    if (compact || showOverlay) cardTooltip.leave(post.id);
+  }
+
+  /** The keyboard arm. Focusing the card shows the same full title
+   *  pinned under the tile — see CardTooltip for why this is not also an
+   *  `aria-describedby` (the stretched link's accessible name already
+   *  carries the untruncated string; truncation is pixels, not
+   *  semantics). */
+  function tipFocus(e: FocusEvent) {
+    if (!showOverlay || !titleIsClipped()) return;
+    cardTooltip.showFor(post.id, { title: tipTitle, meta: [] }, e.currentTarget as HTMLElement);
+  }
+  function tipBlur() {
+    if (showOverlay) cardTooltip.leave(post.id);
   }
 
   async function handleClick(e: MouseEvent) {
+    // SHIFT IS NOW A SELECTION GESTURE, not a browser one (#1127).
+    // Shift+click used to fall through to the native href, which opens
+    // a new WINDOW — a behaviour nobody reaches for on a wall of art,
+    // and the modifier every file manager reserves for range selection.
+    // ctrl/cmd (new tab) and alt (download) are untouched, so nothing
+    // people actually use is taken away.
+    //
+    // preventDefault FIRST: without it the navigation happens whatever
+    // the selection does, which is the trap #1127 names explicitly.
+    if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.button === 0 && canSelect) {
+      e.preventDefault();
+      e.stopPropagation();
+      selection.extendTo(post.id, orderedIds ? orderedIds() : [post.id]);
+      return;
+    }
     // Modifier-key / non-primary clicks fall through to the native
     // <a href>. Standard browser behavior: new tab, new window,
     // download — all preserved.
@@ -392,7 +587,12 @@
   keeps the /?post={id} modal intercept (handleClick) with /posts/{id} as
   the modifier-click / new-tab fallback.
 -->
+<!-- `data-select-id` is what the marquee hit-tests against (#1127). It
+     rides the CARD ROOT rather than the checkbox because the band
+     selects a card when it touches the card, not when it happens to
+     clip a 24px control in one corner. -->
 <div
+  data-select-id={post.id}
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if social}
@@ -468,18 +668,66 @@
   {/if}
 
   {#if detailed}
-    <!-- Details HEADER (#556) — the title leads the card. See the twin in
-         AssetCard for the reasoning; actions stay in the overlay ⋮ menu. -->
-    <div class="border-b border-border px-3 py-2">
-      <a
-        href="/posts/{post.id}"
-        onclick={handleClick}
-        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>
-          {post.title || 'Untitled'}
-        </p>
-      </a>
+    <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
+         THE OWNER'S PLACEMENT GRAMMAR, top row: format on the left, type
+         icon on the right — above the preview, never over it.
+
+         This REPLACES #556's title header, and the swap is the point of
+         the issue rather than a casualty of it. #556 put the title up
+         here on "there should be a top to the thumbnail cards"; the
+         reference panel answers that same request with a FORMAT band and
+         puts the title with the rest of the metadata below the picture,
+         where the one-fact-per-row stack reads as a record. The card
+         still has a top; it now says what KIND of thing this is, which
+         is the question a working shelf asks first and the one the
+         filename half-answers.
+
+         The extension is drawn UPPERCASE and without its dot — it is a
+         format label here, not a filename fragment. Absent for a post
+         whose cover has none (a restricted member, a
+         no-file placeholder), and the band then carries the kind alone
+         rather than an empty cell. -->
+    <div
+      class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
+      data-testid="thumb-band-top"
+    >
+      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
+      {#if !coverRestricted}
+        <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
+      {/if}
+      <!-- #1144: the extension is MEANINGLESS ON A MULTI-ASSET POST —
+           "which file's extension?" has no answer, and the one we were
+           drawing was the COVER's, which is an arbitrary member. So a
+           multi-asset tile drops it and keeps the count + shapes icon,
+           which say the true thing (how many, and that they are mixed).
+
+           A single-asset tile KEEPS it, and that is the stated choice:
+           there the label is unambiguous and it is the fact a working
+           shelf sorts on — PNG next to PSD next to MP4 — which is why
+           #1136 put a format band up here in the first place. -->
+      {#if memberCount <= 1 && coverFileExtension}
+        <!-- #1144: HIDDEN BELOW `sm`, and that is the "only where
+             meaningful" half of the rule applied to width rather than to
+             cardinality. At 390px the thumbnail grid is two-up, so a tile
+             is ~157px and the band's three 44px-tall controls leave the
+             format label about 30px — enough to render "M.." and nothing
+             else. A truncated format label is not a shorter fact, it is
+             noise that reads as a bug, so the label is dropped and the
+             kind icon (which is exact at any width) carries the answer
+             alone. Same judgement as the multi-asset case one branch up:
+             say the true thing or say nothing. -->
+        <span class="hidden truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted sm:inline">
+          {coverFileExtension.replace(/^\./, '')}
+        </span>
+      {/if}
+      <span class="flex-1"></span>
+      <CardMenu
+        assetId={coverAssetId}
+        postId={post.id}
+        detailPath="/posts/{post.id}"
+        manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+        placement="inline"
+      />
     </div>
   {/if}
 
@@ -496,12 +744,12 @@
     {hovering}
     framed={framed && !social}
     fill={mode === 'grid'}
-    variableAspect={mode === 'masonry' || social}
-    ratioFloor={social ? FEED_PORTRAIT_FLOOR : null}
+    variableAspect={mode === 'masonry'}
     {compact}
     pixelWidth={coverPixelWidth}
     pixelHeight={coverPixelHeight}
     titleAdjacent={detailed}
+    {matteColor}
     restricted={coverRestricted}
     restrictedOwnerName={coverOwnerName}
   >
@@ -514,45 +762,224 @@
       onmouseenter={tipEnter}
       onmousemove={tipMove}
       onmouseleave={tipLeave}
+      onfocus={tipFocus}
+      onblur={tipBlur}
       class="absolute inset-0 z-[1]"
       aria-label={post.title || 'Untitled'}
+      data-marquee-passthrough
     ></a>
 
-    <!-- Multi-select checkbox (top-left). -->
-    <CardCheckbox id={post.id} />
+    <!-- Multi-select checkbox. Top-left everywhere except the #1111
+         grid overlay, where top-left carries the kind icon and the ⋯
+         menu has vacated top-right.
+         NOT IN THUMBNAIL (#1136): that density's chrome lives in the
+         frame, so the checkbox is an inline control in the bottom band
+         below and nothing at all sits over the preview. -->
+    {#if !detailed}
+      <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} {orderedIds} />
+    {/if}
 
-    <!-- Multi-asset "stacked" indicator (#578). BOTTOM-right, PERSISTENT —
-         the one piece of chrome that stays at rest, so a wall of art
-         still signals which posts hold a set. Every other corner is
-         claimed: checkbox + CardThumb's video/3D type badge top-left, ⋮
-         menu top-right. Bottom-right is also clear of the hover title
-         overlay, which is bottom-LEFT-aligned. Only shown when the post
-         bundles more than one asset.
+    <!-- Kind / multi-asset indicator. BOTTOM-right, PERSISTENT — the one
+         piece of chrome that stays at rest outside grid, so a wall of art
+         still signals what each tile IS and which posts hold a set. Every
+         other corner is claimed: checkbox top-left, ⋮ menu top-right,
+         and the hover title overlay is bottom-LEFT-aligned.
+
+         ONE BADGE, ONE NOTATION (#1047). This was two: a hand-rolled
+         stacked-squares SVG here for the non-grid densities, and #1111's
+         Shapes glyph in the grid overlay — the same fact drawn two ways
+         in two corners, which is half of what PR #1124 flagged. And it
+         said nothing at all about a SINGLE-asset post, whose kind was
+         left to CardThumb's two-of-thirteen text chip. CardKindBadge
+         answers both: the count plus Shapes for a set, the kind glyph
+         for one.
 
          Suppressed under `compact` (#652). On a 60px masonry tile
          "bottom-right" and "top-right" are the same 44px band, so the
          badge and the ⋮ menu sit on top of each other — the owner's
          "only keep the options and checkbox" resolves that collision.
-         The count is in the hover tooltip there instead, so the signal
-         is still available, just not at rest. This is the one place
-         #580's "persistent at rest" property is traded away; if the
-         owner wants it back in masonry, the tile floor has to grow. -->
-    {#if memberCount > 1 && !compact}
-      <div
-        class="pointer-events-none absolute bottom-2 right-2 z-[2] inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm"
-        aria-label={t('card.multi.badge_label', { count: String(memberCount) })}
-        title={t('card.multi.badge_label', { count: String(memberCount) })}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="8" y="8" width="12" height="12" rx="2" />
-          <path d="M4 16V6a2 2 0 0 1 2-2h10" />
-        </svg>
-        {memberCount}
-      </div>
+         The facts are in the hover tooltip there instead. This is the
+         one place #580's "persistent at rest" property is traded away;
+         if the owner wants it back in masonry, the tile floor has to
+         grow.
+
+         NOT IN THUMBNAIL (#1136): the same badge draws in the top
+         chrome band instead, which is where the reference panel puts
+         its type indicator and which leaves the artwork untouched. -->
+    {#if !compact && !showOverlay && !coverRestricted && !detailed}
+      <CardKindBadge
+        kind={coverKind}
+        count={memberCount}
+        class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} />
     {/if}
 
-    {#if !detailed && !compact && !social}
-      <!-- Grid: hover-only title overlay (clicks fall to the link).
+    {#if showOverlay}
+      <!-- ═══ #1111: the grid overlay ═══════════════════════════════
+           Two corner blocks and a BOTTOM-ONLY scrim, revealed together.
+
+           NO GRADIENT ACROSS THE ARTWORK (owner correction, 2026-08-15).
+           This shipped for one screenshot as a single full-card gradient
+           — `from-black/85 via-transparent to-black/45` over `inset-0` —
+           and on a flat saturated field like a flag it STEPPED visibly:
+           an 8-bit alpha ramp stretched over 378px is roughly one level
+           every two rows, and flat colour is exactly where that reads as
+           horizontal scanlines. It looked like a filter and was a
+           gradient over too long a run.
+
+           The tint itself is fine — the owner's follow-up allows a
+           subtle uniform darkening, and it earns its place by making the
+           corner icon read against a light cover. What it must be is
+           FLAT. A single-alpha fill has one value and therefore cannot
+           band, at any card size, over any artwork; the moment it
+           becomes a ramp the length of the card, it can. That is the
+           rule this file is keeping, not a particular opacity.
+
+           So: one flat wash over the whole card, plus a short gradient
+           scrim confined to the bottom band where the type actually
+           sits. The scrim is a ramp too, but over ~45% of the height and
+           ending in a region already going black, which is a short
+           enough run for its steps to fall below the eye's threshold —
+           the same treatment the featured rail and the old grid overlay
+           have always used without complaint.
+
+           HOVER **AND** FOCUS. Hover alone leaves a keyboard reader
+           tabbing through a wall of unlabelled pictures — at rest this
+           card shows NOTHING but the image, so without the focus arm
+           the keyboard path has no title at all. The card's stretched
+           `<a>` is the focus target and lives inside this same `.group`,
+           so the rule is "the group contains a focus-visible element".
+
+           WHY THE RULE IS IN <style> AND NOT IN THE CLASS LIST.
+           `group-focus-within:` is the obvious spelling and is the
+           WRONG one: `:focus-within` fires for a MOUSE click too, so
+           clicking a card would pin its overlay open after the pointer
+           left — the #1020 regression, exactly. `:focus-visible` is the
+           keyboard-only half, and the ancestor form of it
+           (`:has(:focus-visible)`) has no Tailwind variant that is
+           guaranteed to compile; a variant that silently fails to
+           compile leaves an overlay a keyboard reader can never see,
+           which no type check and no DOM assertion would catch. So the
+           two selectors are written out, where they cannot half-apply.
+
+           `pointer-events-none` on the overlay, `pointer-events-auto`
+           re-enabled only on the ⋯ trigger (CardMenu does that itself)
+           and, since #1126, on the AUTHOR LINK.
+
+           THE AUTHOR IS NOW A LINK, reversing #1111's call (owner
+           direction, 2026-08-15). The old note read: "the card is one
+           stretched anchor to the post, and nesting a profile link
+           inside it would put two targets in one tile". The nesting
+           half was right and is still obeyed — this anchor is a SIBLING
+           of the card's stretched link, not a descendant of it, exactly
+           as the ⋯ menu already was. Nested anchors are invalid HTML and
+           unreachable by keyboard; two SIBLING anchors in one tile are
+           the ordinary card pattern the feed card has always used.
+
+           Stacking is what makes a sibling work: the card's stretched
+           `<a>` is `absolute inset-0` at z-[1], this overlay is z-[2],
+           and the identity block inside it is z-[1] of that stacking
+           context — so the author link sits ON TOP of the card link and
+           takes the click in its own box, while every other pixel of
+           the tile still falls through to "open this post". -->
+      <div
+        class="grid-overlay pointer-events-none absolute inset-0 z-[2] flex flex-col justify-between
+               bg-black/20 p-2.5 opacity-0 transition-opacity duration-200"
+        data-testid="post-card-overlay"
+      >
+        <!-- The bottom scrim. `-m-2.5` cancels the container's padding:
+             a scrim that stops 10px short of the edges is a dark
+             rectangle sitting on the picture instead of the bottom of
+             the picture going dark. -->
+        <div
+          class="pointer-events-none absolute inset-x-0 bottom-0 -m-2.5 h-[45%]
+                 bg-gradient-to-t from-black/80 via-black/40 to-transparent"
+          aria-hidden="true"
+          data-testid="post-card-scrim"
+        ></div>
+        <!-- TOP-LEFT: the kind, as an icon and never as a word.
+             A multi-asset post states the SET instead of any one
+             member's kind, with the count to the LEFT of the glyph —
+             #1111's spelling, and the right way round: the number is
+             read first and the glyph qualifies it.
+
+             `memberCount` is the truth rule from the props block: a
+             search hit ships one member and carries its real size
+             beside it, so this never becomes `members.length` and never
+             becomes an unbounded query for a badge. -->
+        <div class="relative flex items-start justify-between gap-2">
+          <CardKindBadge kind={coverKind} count={memberCount} tooltipKey={post.id} />
+        </div>
+
+        <!-- BOTTOM-LEFT: identity. Title, then the author.
+             `relative` + `pr-11` are load-bearing exactly as they are on
+             the feed header: CardMenu anchors `absolute right-2 top-2`
+             to the nearest positioned ancestor and reserves no flex
+             space, so without both the ⋯ escapes to the card and a long
+             display name runs underneath it. -->
+        <!-- `min-h-11` is the ⋯ menu's own tap target, and it is
+             load-bearing rather than cosmetic (#1139). CardMenu is
+             `absolute right-2 top-2` inside this block and reserves NO
+             flex space, so on the compressed tier — where the block is
+             one 20px title line — a 44px control would hang 32px below
+             the picture. That is the same clipping bug this issue is
+             about, one element smaller. On the full tier the block is
+             67px and this changes nothing. -->
+        <div
+          class="relative z-[1] flex min-h-11 items-end pr-11"
+          data-testid="post-card-identity"
+          data-overlay-tier={overlayTier}
+        >
+          <div class="min-w-0 flex-1">
+            <!-- No `title` attribute: the styled tooltip replaces the
+                 native one for this element (#1126), and keeping both
+                 would show two tooltips a second apart saying the same
+                 thing. The full string is still on the card link's
+                 `aria-label`, which is where a screen reader reads it.
+                 `bind:this` is what lets the hover handler ask whether
+                 this element is actually clipped. -->
+            <p bind:this={titleEl} class="truncate text-sm font-semibold text-white">
+              {post.title || 'Untitled'}
+            </p>
+            {#if author && overlayTier !== 'compressed'}
+              <!-- DROPPED ON THE COMPRESSED TIER (#1139), which is the
+                   whole point of that tier: a wide, short tile has room
+                   for a caption and not for a 40px avatar under it. The
+                   choice is not "identity or nothing" — it is "a title
+                   that reads, or an identity row cut in half by the
+                   bottom of the picture". The artist is still one hover
+                   away in the tooltip, exactly as on the minimal tier.
+
+                   The identity block now lives in CardAuthorLink (#1047)
+                   so grid, thumbnail and AssetCard draw ONE artist block
+                   rather than three that drift. Everything that made it
+                   work here is carried there: the `w-fit` that stops the
+                   anchor swallowing clicks meant for the post, the
+                   `pointer-events-auto` that revives it inside a
+                   `pointer-events-none` overlay, the initials fallback
+                   (the common case on a fresh install), and printing the
+                   server's `display_name` verbatim (#1023). -->
+              <div class="mt-1">
+                <CardAuthorLink {author} variant="overlay" />
+              </div>
+            {/if}
+          </div>
+          <!-- ⋯ right of the identity block. NOT a second menu: the
+               top-right instance below is skipped in this mode, so the
+               card still has exactly one. -->
+          <CardMenu
+            assetId={coverAssetId}
+            postId={post.id}
+            detailPath="/posts/{post.id}"
+            manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+            revealed
+          />
+        </div>
+      </div>
+    {:else if !detailed && !compact && !social}
+      <!-- List: hover-only title overlay (clicks fall to the link).
+           Grid takes the #1111 overlay above; a grid tile whose cover is
+           RESTRICTED also lands here, because that plate states its own
+           restriction and must not be captioned by kind as well.
            Thumbnail shows a persistent footer below instead; masonry
            shows the hover tooltip instead (#652); feed prints the title
            as a PERSISTENT caption under the media (#557) — a social card
@@ -569,9 +996,13 @@
       </div>
     {/if}
 
-    {#if !social}
+    {#if !social && !showOverlay && !detailed}
       <!-- Overflow menu. ONE affordance in every mode, including
-           thumbnail — owner amendment 2026-07-25 to #556.
+           thumbnail — owner amendment 2026-07-25 to #556. Thumbnail now
+           renders it INLINE in the bottom band (#1136) rather than over
+           the artwork; it is still exactly one per card. Skipped under
+           the #1111 grid overlay, which renders the same component
+           beside the identity block instead — one ⋯ per card, always.
            add-to-collection targets the cover asset.
 
            Feed renders the SAME component in its header instead, so the
@@ -657,30 +1088,147 @@
           <p class="mt-0.5 line-clamp-3 whitespace-pre-wrap text-sm text-fg-muted">{post.description}</p>
         {/if}
       </a>
+
+      {#if commentsPreview.length > 0}
+        <!-- ── The comments snippet (#1047) ──────────────────────────
+             The HEAD OF THE THREAD, not a summary: the same top-level
+             rows in the same order `GET /posts/{id}/comments` returns,
+             so what is under the picture is literally the top of what
+             opening the post shows.
+
+             Two, and never a scrollable list: a feed card's comments
+             are a signal that a conversation exists, and the
+             conversation itself is a click away. `TopCommentsPerPost`
+             on the server is what decides; this renders what arrived.
+
+             NO NAME IS NOT A MISSING NAME. `author` is absent when the
+             commenter is not disclosed to this reader (ADR 0024) —
+             the same absence the post's own header answers by drawing
+             no author — so the words render on their own rather than
+             beside a placeholder identity. A remote comment carries a
+             cached peer name instead and takes the same shape. -->
+        <ul class="mt-1.5 space-y-0.5 px-2" data-testid="feed-comments">
+          {#each commentsPreview as c (c.id)}
+            <li class="line-clamp-2 text-sm text-fg-muted">
+              {#if commenterName(c)}
+                <span class="font-medium text-fg" data-testid="feed-comment-author"
+                  >{commenterName(c)}</span
+                >
+                <span> </span>
+              {/if}<span data-testid="feed-comment-body">{c.body}</span>
+            </li>
+          {/each}
+        </ul>
+        {#if post.comment_count > commentsPreview.length}
+          <!-- The link the count has always been able to draw, now that
+               there is something above it to be "all" of. Same
+               navigation the card itself performs — the modal, with the
+               thread in it. -->
+          <a
+            href="/posts/{post.id}"
+            onclick={handleClick}
+            class="mt-0.5 block px-2 text-xs text-fg-subtle hover:text-fg focus-visible:outline-none
+                   focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            data-testid="feed-comments-all"
+          >
+            {t('card.feed.view_all_comments', { count: String(post.comment_count) })}
+          </a>
+        {/if}
+      {/if}
     </div>
   {/if}
 
   {#if detailed}
-    <!-- Details FOOTER: the secondary at-a-glance fields — date +
-         like/comment counts. The title moved to the header (#556).
-         #552 will make this field set operator-configurable; kept
-         self-contained so that swap is local. -->
-    <a href="/posts/{post.id}" onclick={handleClick} class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      <p class="flex items-center gap-2 text-xs text-fg-muted">
-        <span>{createdShort}</span>
-        {#if post.like_count > 0}
-          <span class="inline-flex items-center gap-1" title={t('card.footer.likes', { count: String(post.like_count) })}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-6.7-4.35-9.33-8.24C.9 10.06 1.6 6.5 4.6 5.4c2-.73 3.9.2 4.9 1.7l.5.75.5-.75c1-1.5 2.9-2.43 4.9-1.7 3 1.1 3.7 4.66 1.93 7.36C18.7 16.65 12 21 12 21z"/></svg>
-            {post.like_count}
-          </span>
-        {/if}
-        {#if post.comment_count > 0}
-          <span class="inline-flex items-center gap-1" title={t('card.footer.comments', { count: String(post.comment_count) })}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            {post.comment_count}
-          </span>
-        {/if}
-      </p>
-    </a>
+    <!-- Details FOOTER — thumbnail's PERSISTENT chrome (#1047).
+         "Information at a glance, preview still clear" (owner's density
+         table): grid's #1111 vocabulary, drawn AROUND the image instead
+         of over it, and never hover-gated. The kind icon is already
+         persistent bottom-right on the thumb above; this row carries the
+         artist and the engagement facts.
+
+         The ARTIST is the addition, and it is the same component grid's
+         overlay uses. A thumbnail is where someone works through a shelf
+         of other people's work, so "whose is this" belongs at rest here
+         even though grid hides it until hover.
+
+         The title stays in the header, where #556 put it. -->
+    <div class="space-y-1 px-3 py-2" data-testid="thumb-metadata">
+      <!-- ROW 1 — the title. Moved down from #556's header (see the top
+           band's note): one fact per row, in the reference panel's own
+           order, reads as a record rather than as a caption strip. -->
+      <a href="/posts/{post.id}" onclick={handleClick} class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <p class="truncate text-sm font-medium text-fg" title={post.title || 'Untitled'}>
+          {post.title || 'Untitled'}
+        </p>
+      </a>
+      {#if author}
+        <!-- ROW 2 — the artist. SIBLING link, not nested in the card's
+             anchor (#1126). -->
+        <CardAuthorLink {author} size="sm" />
+      {/if}
+      <!-- ROW 3 — the date and the engagement facts. One row rather than
+           one per fact: they are a single "how has this been received"
+           reading, and four rows of one number each would push the
+           preview off a 200px card. -->
+      <a href="/posts/{post.id}" onclick={handleClick} class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <p class="flex items-center gap-2 text-xs text-fg-muted">
+          <span>{createdShort}</span>
+          {#if post.like_count > 0}
+            <span class="inline-flex items-center gap-1" title={t('card.footer.likes', { count: String(post.like_count) })}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-6.7-4.35-9.33-8.24C.9 10.06 1.6 6.5 4.6 5.4c2-.73 3.9.2 4.9 1.7l.5.75.5-.75c1-1.5 2.9-2.43 4.9-1.7 3 1.1 3.7 4.66 1.93 7.36C18.7 16.65 12 21 12 21z"/></svg>
+              {post.like_count}
+            </span>
+          {/if}
+          {#if post.comment_count > 0}
+            <span class="inline-flex items-center gap-1" title={t('card.footer.comments', { count: String(post.comment_count) })}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              {post.comment_count}
+            </span>
+          {/if}
+          {#if origin}
+            <!-- Provenance rides EVERY density (#552) — see the feed
+                 header and AssetCard's footer for the same line. -->
+            <span class="inline-flex items-center gap-1 truncate" data-testid="card-origin" title={t('card.origin_label')}>
+              <span aria-hidden="true">↗</span>
+              <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
+            </span>
+          {/if}
+        </p>
+      </a>
+    </div>
+
   {/if}
 </div>
+
+<style>
+  /* The #1111 grid overlay's reveal rule. See the markup comment for why
+     it is here and not in the class list.
+
+     `:global` on the ancestor because `.group` is the card wrapper's
+     class in this same file but Tailwind-authored — Svelte's scoper does
+     not stamp it, so the compiler would prune the rule as unmatched.
+     The `.grid-overlay` half stays scoped, so this cannot reach any
+     other component's overlay. */
+  :global(.group:hover) .grid-overlay,
+  :global(.group:has(:focus-visible)) .grid-overlay {
+    opacity: 1;
+  }
+
+  /* Touch has neither of those. A coarse-pointer device cannot hover and
+     is not tabbing, so both selectors above are dead there — and this
+     overlay now CONTAINS the ⋯ menu, which used to carry its own
+     `[@media(hover:none)]:opacity-100` and was therefore always
+     reachable. Without this arm, moving the menu inside the overlay
+     would have taken every grid card's only action affordance away from
+     every phone, silently.
+
+     So on touch the overlay is PERSISTENT rather than revealed. That is
+     the same trade #578 made for the same reason, and it is the honest
+     one: "revealed on hover" is not a design a device without a pointer
+     can express. */
+  @media (hover: none) {
+    .grid-overlay {
+      opacity: 1;
+    }
+  }
+</style>

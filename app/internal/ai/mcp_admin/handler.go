@@ -13,7 +13,7 @@
 //   DELETE /admin/ai/mcp-clients/{id}/tools/{tool}  → remove grant
 //
 // Every endpoint gates on `mcp.client.admin` (seeded for Admin in
-// migration 00013). Business logic lives in mcp_registry; this
+// migration 00001). Business logic lives in mcp_registry; this
 // package handles auth + OpenAPI shape mapping only.
 //
 // `auth_secret_ref` is WRITE-ONLY on this surface (#711): reads

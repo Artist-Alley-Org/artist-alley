@@ -1,0 +1,143 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
+<script lang="ts">
+  // THE kind indicator on a card, in every density (#1047, extracted
+  // from #1111's grid overlay).
+  //
+  // #1111 established the notation — a lucide glyph for a single asset,
+  // the count then the Shapes glyph for a set, never a word — and wrote
+  // it inline in PostCard's grid overlay. The density pass needs the
+  // SAME notation in three more places (thumbnail's persistent chrome,
+  // AssetCard's tile in every mode, and every non-grid PostCard density
+  // that until now drew CardThumb's `video` / `3D` TEXT chip). Three
+  // copies of a pill is how the two notations diverged in the first
+  // place, which is what PR #1124 flagged, so it is one component.
+  //
+  // WHAT THIS REPLACED, and why the replacement is not like-for-like:
+  // CardThumb's chip covered exactly two of the thirteen ViewKinds
+  // (`video`, `3D`) with hardcoded English strings, so a PDF, an
+  // audiobook and a sprite sheet were all indistinguishable at rest. The
+  // icon map is exhaustive over ViewKind by type, so every kind is
+  // labelled and a new kind cannot ship unlabelled.
+  //
+  // The accessible name is the i18n kind label — the icon is the visual
+  // notation, not the semantics, so a screen reader still hears
+  // "Sprite sheet" and never "no text".
+
+  import type { ViewKind } from './viewers/controller';
+  import { iconForKind, MultiAssetIcon } from './kindIcon';
+  import { t } from '$stores/lang.svelte';
+  import { cardTooltip } from '$stores/cardTooltip.svelte';
+
+  interface Props {
+    /** The asset's kind, resolved through `kindForAsset` — never
+     *  inferred from the extension alone, which cannot tell a sprite
+     *  atlas from an ordinary PNG. */
+    kind: ViewKind;
+    /** How many assets the card stands for. > 1 states the SET instead
+     *  of any one member's kind: picking one member's icon for a mixed
+     *  bundle says something untrue about the others (#1111). */
+    count?: number;
+    /** Extra positioning classes from the caller. The badge owns its own
+     *  look — pill, scrim, backdrop blur — and the caller owns where it
+     *  sits, because that differs per density. */
+    class?: string;
+    /** Which surface the badge sits on (#1136).
+     *
+     *  `overlay` — over artwork. The black pill and the backdrop blur
+     *  are camouflage: they have to survive an unknown photograph
+     *  underneath, at any brightness.
+     *
+     *  `inline` — in a chrome band, on the card's own surface, where
+     *  that camouflage reads as a sticker. Same glyph, same notation,
+     *  same accessible name; theme colours instead of the scrim. */
+    variant?: 'overlay' | 'inline';
+    /** Identifies the CARD this badge sits on, for the tooltip store
+     *  (#1144). The store keys its timers so a stale one from a tile the
+     *  pointer already left cannot commit; two badges sharing a key
+     *  would make a swap between them look like a flicker. Defaults to
+     *  the kind, which is right for the one-badge-per-page cases and
+     *  wrong nowhere, because a wall always passes the row id. */
+    tooltipKey?: string;
+  }
+
+  let {
+    kind,
+    count = 1,
+    class: klass = '',
+    variant = 'overlay',
+    tooltipKey = '',
+  }: Props = $props();
+
+  const multi = $derived(count > 1);
+  const KindIcon = $derived(iconForKind(kind));
+  const label = $derived(
+    multi ? t('card.multi.badge_label', { count: String(count) }) : t(`card.fallback.kind.${kind}`),
+  );
+
+  // #1144 — the icon gets a tooltip NAMING the type, on hover and on
+  // focus, everywhere this component renders.
+  //
+  // # Why the store and not the `title` attribute it replaces
+  //
+  // `title` was doing the job badly in three ways this component cares
+  // about: it is ~1s late, it is unstyled OS chrome that reads as a
+  // browser artefact over a card's own chrome, and it never appears on
+  // keyboard focus at all. #1126 built the mechanism for exactly this
+  // and PostCard's clipped title already uses it — this is the third
+  // caller, not a third mechanism. The `title` attribute is REMOVED
+  // rather than left as a fallback, because two tooltips for one element
+  // is what a double-render looks like.
+  //
+  // # Why it becomes a BUTTON, and what that costs
+  //
+  // A visual tooltip on FOCUS needs something focusable, and the first
+  // spelling — a <span role="img" tabindex="0"> — is the wrong one:
+  // svelte's a11y pass flags it (a11y_no_noninteractive_tabindex) and it
+  // is right to. A non-interactive element in the tab order is a stop a
+  // keyboard reader cannot act on and cannot predict. The WAI-ARIA
+  // tooltip pattern puts the trigger on a real interactive element, so
+  // this is a <button type="button"> with no click handler: it exists to
+  // be focusable and to carry a name, which is exactly what a tooltip
+  // trigger is.
+  //
+  // The cost is real and accepted rather than worked around — one extra
+  // tab stop per card. The icon is the only thing on a thumbnail tile
+  // that states what KIND of file this is, and a keyboard reader who
+  // could not reach it had no way to learn it.
+  //
+  // It also stops being pointer-events-none, which puts it in front of
+  // the marquee's `onControl` bail-out (a press starting on a <button>
+  // does not start a selection band). `data-marquee-passthrough` opts
+  // back out — the same escape hatch the stretched card link uses — so
+  // dragging a band across a wall still works when the drag happens to
+  // start on a badge. Without it, a strip of every card would have been
+  // dead to the marquee (#1127).
+  const tipKey = $derived(`kind:${tooltipKey || kind}`);
+  const tip = $derived({ title: label, meta: [], placement: 'anchored' as const });
+</script>
+
+<button
+  type="button"
+  class="inline-flex cursor-default items-center rounded-full
+         focus-visible:ring-2 focus-visible:ring-ring focus:outline-none
+         {variant === 'inline' ? 'text-fg-muted' : 'bg-black/60 text-white backdrop-blur-sm'}
+         {multi ? 'gap-1 px-2 py-1 text-xs font-semibold' : 'p-1.5'} {klass}"
+  data-testid={multi ? 'card-kind-multi' : 'card-kind'}
+  data-marquee-passthrough
+  aria-label={label}
+  onmouseenter={(e) => cardTooltip.enter(tipKey, tip, e)}
+  onmousemove={(e) => cardTooltip.move(tipKey, e)}
+  onmouseleave={() => cardTooltip.leave(tipKey)}
+  onfocus={(e) => cardTooltip.showFor(tipKey, tip, e.currentTarget as HTMLElement)}
+  onblur={() => cardTooltip.leave(tipKey)}
+>
+  {#if multi}
+    <!-- Count to the LEFT of the glyph (#1111's spelling): the number is
+         read first and the glyph qualifies it. -->
+    <span class="tabular-nums">{count}</span>
+    <MultiAssetIcon size={14} strokeWidth={2.25} aria-hidden="true" />
+  {:else}
+    <KindIcon size={15} strokeWidth={2} aria-hidden="true" />
+  {/if}
+</button>

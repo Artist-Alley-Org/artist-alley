@@ -47,6 +47,15 @@
   ];
 
   let expanded = $state(false);
+  /** The switcher cluster — the expanded view row, the size steppers and
+   *  the toggle that opens them. "Outside" is measured against this and
+   *  not against `root`: the sort toggle at the far end of the bar is
+   *  outside the switcher, and clicking it should dismiss the switcher
+   *  like anything else would. */
+  let switcherEl = $state<HTMLDivElement | null>(null);
+  /** The toggle, so Escape can hand focus back to the control that
+   *  opened the panel rather than dropping it on <body>. */
+  let toggleEl = $state<HTMLButtonElement | null>(null);
 
   $effect(() => chromeScroll.attach());
 
@@ -206,7 +215,9 @@
   }
 
   // Escape collapses the expanded switcher so keyboard users can dismiss
-  // without picking. Click-outside is handled by the floating wrapper.
+  // without picking, and hands focus back to the toggle that opened it —
+  // dropping focus on <body> would send the next Tab back to the top of
+  // the page. Pointer dismissal is `onWindowPointerDown` below.
   //
   // With nothing expanded, Escape instead dismisses a pointer reveal:
   // WCAG 2.2 §1.4.13 wants hover-revealed content that overlays other
@@ -219,6 +230,7 @@
     if (e.key !== 'Escape') return;
     if (expanded) {
       expanded = false;
+      toggleEl?.focus();
       return;
     }
     if (pointerNear) hoverDismissed = true;
@@ -228,6 +240,85 @@
     if (!expanded && !pointerNear) return;
     window.addEventListener('keydown', onWindowKey);
     return () => window.removeEventListener('keydown', onWindowKey);
+  });
+
+  /** Light dismiss (#1096): pressing anywhere outside the switcher
+   *  closes it. Until #1096 the only way back out was to re-press the
+   *  toggle, so the panel followed you around the page.
+   *
+   *  ⭐ IT DISMISSES ON `click`, NOT ON `pointerdown` (#1105).
+   *
+   *  #1096 shipped this on `pointerdown` so the dismissal would feel
+   *  like part of the press that caused it. That is fine for a press
+   *  that lands on the FEED — the tiles do not move when the panel
+   *  collapses, which is why the #1096 review passed — and it is broken
+   *  for a press that lands on the bar's own siblings. Collapsing the
+   *  panel removes the view row and the size steppers, the left cluster
+   *  narrows by about 50px, and everything anchored to it slides left
+   *  BETWEEN pointerdown and pointerup. The pointer is then over empty
+   *  space, no click is generated, and the control the user aimed at
+   *  never fires. Measured: Back to top and both feed-filter tabs did
+   *  nothing; only the sort toggle worked, because `ml-auto` pins it to
+   *  the right edge where the reflow cannot reach it.
+   *
+   *  Dismissing on `click` puts the collapse after pointerup by
+   *  construction — there is no layout change left to race — and it is
+   *  the behaviour the shared `Menu` primitive already has, verified in
+   *  sprint 20 (open a menu, press the chip beside it: the chip
+   *  navigates AND the menu closes). Ordering still works out: a capture
+   *  listener on `window` runs before the target's own handler, but
+   *  Svelte applies the resulting DOM change in a microtask, so the
+   *  click finishes propagating to the control first.
+   *
+   *  THREE THINGS REMAIN LOAD-BEARING.
+   *
+   *  Nothing is prevented or stopped, so THE CLICK STILL LANDS. Choosing
+   *  a tile through an open panel opens that tile; it does not cost a
+   *  throwaway click to close the panel first.
+   *
+   *  Capture phase, so a surface that stops propagation on its own click
+   *  — a card, a canvas — cannot leave the panel stuck open.
+   *
+   *  A DRAG OUT OF THE PANEL IS NOT A DISMISSAL. This was #1096's stated
+   *  reason for preferring `pointerdown`, and it is the one thing the
+   *  move costs, so it is paid for rather than dropped: a click's own
+   *  target is the common ancestor of the down and up targets, so a
+   *  press that started on a control inside the panel and ended outside
+   *  it would otherwise read as a press outside. `pressedInside` is that
+   *  memory, and nothing else — it never dismisses on its own.
+   *
+   *  ⛔ Not `:focus-within`, and not a focusout: a mouse click focuses
+   *  whatever it lands on, so either would pin the panel open exactly
+   *  when the user is trying to leave (#1020's class). The bar's own
+   *  keyboard-reveal already went through that and uses
+   *  `:focus-visible`; this is the pointer half of the same rule. */
+  let pressedInside = false;
+
+  function onWindowPointerDown(e: PointerEvent) {
+    const target = e.target;
+    pressedInside = target instanceof Node && switcherEl?.contains(target) === true;
+  }
+
+  function onWindowClick(e: MouseEvent) {
+    const target = e.target;
+    const inside = pressedInside || (target instanceof Node && switcherEl?.contains(target));
+    // Consumed: a keyboard-activated click has no pointerdown before it,
+    // so a stale `true` here would swallow the next Escape-less
+    // dismissal.
+    pressedInside = false;
+    if (inside) return;
+    expanded = false;
+  }
+
+  $effect(() => {
+    if (!expanded) return;
+    pressedInside = false;
+    window.addEventListener('pointerdown', onWindowPointerDown, true);
+    window.addEventListener('click', onWindowClick, true);
+    return () => {
+      window.removeEventListener('pointerdown', onWindowPointerDown, true);
+      window.removeEventListener('click', onWindowClick, true);
+    };
   });
 
   /** Keyboard parity — `:focus-visible`, not `:focus-within`.
@@ -275,7 +366,7 @@
 >
   <!-- LEFT cluster: view switcher + back-to-top -->
   <div class="flex items-end gap-3">
-  <div class="pointer-events-auto flex flex-col items-center gap-1.5">
+  <div bind:this={switcherEl} class="pointer-events-auto flex flex-col items-center gap-1.5">
     {#if expanded}
       <div class="flex items-center gap-1.5">
       {#each otherViews as v (v.id)}
@@ -349,6 +440,7 @@
       {/if}
 
       <button
+        bind:this={toggleEl}
         type="button"
         onclick={toggle}
         disabled={!canSwitch}

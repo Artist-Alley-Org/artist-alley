@@ -3,7 +3,7 @@
 
 // Package social implements the likes + comments HTTP surface on top
 // of the polymorphic data plane from Phase 1.13.D-4. The schema and
-// triggers are in migration 00020; this file is the handler layer.
+// triggers are in migration 00001; this file is the handler layer.
 //
 // Endpoints (rooted under /api/v1):
 //
@@ -14,7 +14,7 @@
 //	POST   /posts/{id}/comments          — create (optionally a reply)
 //	DELETE /comments/{id}                — soft-delete (own or moderator)
 //
-// Capability gates (seeded in 00020):
+// Capability gates (seeded in 00001):
 //   - posts.like           — Base default
 //   - posts.comment        — Base default
 //   - comments.delete.own  — Base default (gates the own-delete branch)
@@ -232,9 +232,9 @@ func (h *Handler) GetPostLike(
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	// Confirm the post exists so we can return a proper 404 rather
 	// than silently saying "not liked" for a missing target.
-	if exists, err := h.postExists(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.GetPostLike404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -266,9 +266,9 @@ func (h *Handler) LikePost(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.LikePost404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -426,9 +426,9 @@ func (h *Handler) ListPostComments(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.ListPostComments404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -537,9 +537,9 @@ func (h *Handler) CreatePostComment(
 		}, nil
 	}
 	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgPostID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgPostID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.CreatePostComment404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -731,7 +731,7 @@ var errCommentAbsent = errors.New("social: comment row absent")
 //
 // Whiteboards are stored as comments so they inherit threading (reply
 // to a sketch), likes, soft-delete, federation, and audit for free.
-// Migration 00029 extended the comments.annotation_type CHECK to
+// Migration 00001 extended the comments.annotation_type CHECK to
 // include 'whiteboard'; this is the HTTP surface that drives it.
 //
 // Capability: posts.comment (same gate as a regular comment).
@@ -750,9 +750,9 @@ func (h *Handler) ListPostWhiteboards(
 		}, nil
 	}
 	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgPostID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgPostID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.ListPostWhiteboards404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -809,9 +809,9 @@ func (h *Handler) CreatePostWhiteboard(
 	}
 
 	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.postExists(ctx, pgPostID); err != nil {
-		return nil, fmt.Errorf("social: post check: %w", err)
-	} else if !exists {
+	if ok, err := h.postReadablePG(ctx, caller, pgPostID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.CreatePostWhiteboard404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
@@ -898,9 +898,9 @@ func (h *Handler) ListAssetTextAnnotations(
 		}, nil
 	}
 	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.assetExists(ctx, pgAssetID); err != nil {
-		return nil, fmt.Errorf("social: asset check: %w", err)
-	} else if !exists {
+	if ok, err := h.assetContentReadablePG(ctx, caller, pgAssetID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.ListAssetTextAnnotations404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
@@ -937,9 +937,9 @@ func (h *Handler) CreateAssetTextAnnotation(
 		}, nil
 	}
 	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	if exists, err := h.assetExists(ctx, pgAssetID); err != nil {
-		return nil, fmt.Errorf("social: asset check: %w", err)
-	} else if !exists {
+	if ok, err := h.assetContentReadablePG(ctx, caller, pgAssetID); err != nil {
+		return nil, err
+	} else if !ok {
 		return openapi.CreateAssetTextAnnotation404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
@@ -1010,6 +1010,30 @@ func (h *Handler) UpdateTextAnnotation(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "not a text-range annotation"},
 		}, nil
 	}
+	// The asset gate (#1135), and it runs BEFORE the author/moderator
+	// check on purpose. This handler echoes the stored row back, so an
+	// update is also a read; the moderator disjunct below is exactly the
+	// principal who would otherwise edit — and read — annotations on a
+	// document they were never admitted to. Placing the gate after it
+	// would also make the refusal distinguishable (403 "not the author"
+	// on an asset you cannot reach vs 404 on one that does not exist),
+	// which is the oracle #1132 closed.
+	//
+	// A row whose target is not an asset is not this endpoint's object
+	// at all; it collapses into the same 404 rather than reaching a gate
+	// that would ask the assets table about a post id.
+	if existing.TargetKind != "asset" {
+		return openapi.UpdateTextAnnotation404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+		}, nil
+	}
+	if ok, gerr := h.assetContentReadablePG(ctx, caller, existing.TargetID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return openapi.UpdateTextAnnotation404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+		}, nil
+	}
 	// Author can always update; moderators (comments.delete.any holders)
 	// can also update — we treat the moderator cap as "manage any
 	// comment" for now since we don't have a separate update gate.
@@ -1056,26 +1080,6 @@ func (h *Handler) UpdateTextAnnotation(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-func (h *Handler) postExists(ctx context.Context, id pgtype.UUID) (bool, error) {
-	var exists bool
-	err := h.Pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NULL)`, id,
-	).Scan(&exists)
-	return exists, err
-}
-
-// assetExists mirrors postExists for the text-annotation handlers —
-// asserts the target asset row is present and not soft-deleted before
-// we accept a write. Returns false (not an error) on a clean miss so
-// the caller can surface a 404.
-func (h *Handler) assetExists(ctx context.Context, id pgtype.UUID) (bool, error) {
-	var exists bool
-	err := h.Pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1)`, id,
-	).Scan(&exists)
-	return exists, err
-}
 
 // commentRowToAPI converts the sqlc-generated Comment model (used by
 // both ListThreadForTarget and CreateComment — sqlc returns the same
