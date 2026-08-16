@@ -22,6 +22,13 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **A featured collection appears consistently everywhere it should.** The Collections hub's
+  Featured tab had one extra, stale visibility condition the browse strip didn't have, so the
+  same featured collection could show in one place and not the other. One rule now (#1121).
+- **Hover-scrubbing a video follows your mouse.** Point anywhere on the preview and you see
+  that moment; sweep right to play forward, left to rewind; hold still and it holds the frame
+  (#1142). Phones keep tap-to-open.
+
 - **Annotations respect asset visibility** — reading or writing text annotations now requires
   being able to see the asset's content, closing the sibling of the comments gap (#1135).
 - **List view works inside collections** — it silently fell back to the grid; now it renders
