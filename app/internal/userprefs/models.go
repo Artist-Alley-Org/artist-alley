@@ -989,6 +989,12 @@ type SystemConfig struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type TagFollow struct {
+	UserRef   int64
+	Tag       string
+	CreatedAt pgtype.Timestamptz
+}
+
 type Team struct {
 	ID             pgtype.UUID
 	Slug           string
@@ -1105,7 +1111,7 @@ type UserPreference struct {
 	UpdatedAt            pgtype.Timestamptz
 	EmailCadence         []byte
 	FeedFilters          []byte
-	TeamRail             []byte
+	BrowseRail           []byte
 }
 
 type UserProfile struct {

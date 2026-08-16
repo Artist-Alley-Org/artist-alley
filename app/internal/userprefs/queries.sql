@@ -9,7 +9,7 @@ SELECT user_ref,
        default_views,
        email_cadence,
        feed_filters,
-       team_rail,
+       browse_rail,
        origin_server_id,
        created_at,
        updated_at
@@ -29,7 +29,7 @@ INSERT INTO user_preferences (
     default_views,
     email_cadence,
     feed_filters,
-    team_rail
+    browse_rail
 )
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_ref) DO UPDATE
@@ -37,5 +37,5 @@ SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
     email_cadence         = EXCLUDED.email_cadence,
     feed_filters          = EXCLUDED.feed_filters,
-    team_rail             = EXCLUDED.team_rail,
+    browse_rail           = EXCLUDED.browse_rail,
     updated_at            = NOW();

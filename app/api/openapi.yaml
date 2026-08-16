@@ -7638,6 +7638,138 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /tags/{tag}/follow:
+    parameters:
+      - name: tag
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 200 }
+        description: |
+          The tag itself, URL-encoded. Tags are a CORPUS rather than an
+          entity — `post_tags` has no id to address one by — so the
+          string is the identifier.
+
+          Matching against the corpus is EXACT, because `GET /posts`'s
+          `tag` filter is exact. The server trims surrounding whitespace
+          (the same normalisation `post_tags` writes apply) and does
+          nothing else: folding case here would give the reader a rail
+          chip whose `?tag=` filter finds nothing while their Following
+          feed fills with differently-cased posts. Unifying case across
+          the corpus is the #789 vocabulary arc's decision.
+    post:
+      operationId: followTag
+      summary: Follow a tag (bookmark it into your browse rail)
+      description: |
+        Adds the caller to `tag_follows` (#1123). Authentication is the
+        only gate.
+
+        ## A follow is a BOOKMARK, not a grant
+
+        It grants nothing. It is never read by any authorization rule,
+        and following a tag does not widen one row of what you can see.
+        What it does is put a `#` chip in your browse rail and add a
+        third source to the Following feed — posts carrying a tag you
+        follow, INTERSECTED with what you could already read, never
+        unioned with it.
+
+        That distinction is sharper for tags than for teams and users,
+        because a tag's other side is written by whoever authored the
+        post: anyone may tag their own restricted post `fantasy`. The
+        Following filter is therefore ANDed beside the post read rule
+        rather than ORed into it, so a restricted post carrying a tag
+        you follow stays exactly as invisible as it was.
+
+        ## No capability, and no existence check
+
+        Team follows require `teams.read` because that is what lets you
+        see a team at all. A tag needs no such gate: it is a free
+        string, and the feed it feeds is already gated by the post read
+        rule.
+
+        There is deliberately no "does this tag exist" probe either —
+        following a tag nobody has used is legal and inert until
+        somebody uses it. A probe would have to answer from a corpus
+        spanning posts the caller cannot read, which would make this
+        endpoint an oracle enumerating the tags of private work one
+        guess at a time.
+
+        ## Idempotent
+
+        Following a tag you already follow is a no-op `204`, not a
+        `409`.
+      tags: [tags]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Followed (or already following)
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: unfollowTag
+      summary: Unfollow a tag
+      description: |
+        Removes the caller's `tag_follows` row (#1123). Idempotent:
+        unfollowing a tag you do not follow is a `204`, not a `404`.
+
+        The tag is trimmed on the way in exactly as it is on the write
+        path, so a follow and its unfollow normalise to the same key. No
+        length refusal here, unlike `POST`: an over-long tag cannot be
+        in the table, so the delete simply matches nothing — which is
+        the right answer to "make sure I am not following this".
+      tags: [tags]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unfollowed (or was not following)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/me/followed-tags:
+    get:
+      operationId: getMyFollowedTags
+      summary: Tags the caller follows (the rail's # chips)
+      description: |
+        The caller's `tag_follows` rows (#1123), most recently followed
+        first.
+
+        Recency rather than alphabetical, unlike
+        `GET /auth/me/followed-teams`. A team chip carries an avatar and
+        a name the reader recognises by shape, so alphabetical order is
+        findable; a row of `#` chips is visually uniform, and recency is
+        the only ordering that puts a reader's newest interest where
+        they will look for it. The reader's own `tag_order` preference
+        is a partial override of this order.
+
+        No liveness filter, because a tag has no liveness: one with no
+        posts left matches nothing and the chip stays until the reader
+        removes it. Returns `[]`, never `null`.
+      tags: [tags, auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tags the caller follows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FollowedTag" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /users/{ref}:
     parameters:
       - name: ref
@@ -12505,12 +12637,13 @@ components:
             OMITTED when every filter is off, which is every account
             that has not opted in — so this changes no existing session
             response.
-        team_rail:
+        browse_rail:
           allOf:
-            - $ref: "#/components/schemas/UserPreferencesTeamRail"
+            - $ref: "#/components/schemas/UserPreferencesBrowseRail"
           description: |
-            The account's teams-rail curation (#1113), joined from
-            user_preferences at /auth/me time.
+            The account's browse-rail curation — team chips (#1113) and
+            followed-tag chips (#1123) — joined from user_preferences at
+            /auth/me time.
 
             Here rather than behind a second fetch because these lists
             decide WHAT THE RAIL DRAWS. Learning them after first paint
@@ -12519,7 +12652,7 @@ components:
             single `loaded` gate exists to avoid, reintroduced one level
             up. Same first-paint argument as `default_views` (#706).
 
-            OMITTED when both lists are empty, which is every account
+            OMITTED when every list is empty, which is every account
             that has not curated its rail — so this changes no existing
             session response.
         capabilities:
@@ -15521,34 +15654,72 @@ components:
             model, so both were labels over the default order.
           enum: ["", newest, oldest]
 
-    UserPreferencesTeamRail:
+    FollowedTag:
       type: object
       description: |
-        The browse page's teams-rail curation (#1113).
+        One tag the caller follows (#1123).
+
+        An object rather than a bare string, even though `tag` is the
+        only field the rail draws. `followed_at` is what the server
+        orders by, and a client that receives the order but not the key
+        it was sorted on cannot merge a newly-followed tag into the list
+        without a refetch — which is exactly what the rail's optimistic
+        follow does. There is deliberately no follower count and no post
+        count: both are per-caller-visibility questions this endpoint
+        would have to answer against the read rule, and neither is drawn.
+      required: [tag, followed_at]
+      properties:
+        tag:
+          type: string
+          description: |
+            The tag, exactly as stored — trimmed, case preserved. This
+            is the value to pass as `?tag=` to `GET /posts`; the two
+            match exactly, which is the point.
+        followed_at:
+          type: string
+          format: date-time
+          description: When the caller followed it.
+
+    UserPreferencesBrowseRail:
+      type: object
+      description: |
+        The browse page's rail curation — team chips (#1113) and
+        followed-tag chips (#1123).
+
+        ONE BAG FOR ONE PIECE OF FURNITURE. The rail is a single strip
+        with a single manage panel and a single save; a team chip and a
+        `#fantasy` chip differ in what they filter by (`?team=` /
+        `?tag=`), which is a difference between two rows of one list,
+        not between two concerns. A sibling `tag_rail` object would have
+        split one save across two bags with nothing but convention
+        keeping them consistent, and would have foreclosed a future
+        single order interleaving both kinds. (This object was
+        `team_rail` until #1123; migration 00051 renamed the column and
+        carries the full argument.)
 
         The rail lists every team the caller can see, followed-first
-        then name order. This object is the READER'S EDIT of that list:
-        which chips they took out, and which ones they pulled to the
-        front. Both members are lists whose EMPTY value is the build's
-        default rail — the same "the zero value is what this build does
-        by default" contract `feed_filters` states for its booleans,
-        applied to lists.
+        then name order, plus the tags the caller follows. This object
+        is the READER'S EDIT of that list: which chips they took out,
+        and which ones they pulled to the front. Every member is a list
+        whose EMPTY value is the build's default rail — the same "the
+        zero value is what this build does by default" contract
+        `feed_filters` states for its booleans, applied to lists.
 
         CLIENT-APPLIED, and that is the load-bearing difference from
         `feed_filters`. Feed filters are read by `GET /posts` and remove
         rows before they reach the browser. Nothing here is ever
-        consulted to decide which POSTS a caller sees: hiding a team
-        from your rail must not hide that team's work from your feed.
-        The rail is navigation furniture; the feed is content. Anything
-        that starts reading this object server-side to shape a result
-        set has crossed that line.
+        consulted to decide which POSTS a caller sees: hiding a team or
+        a tag from your rail must not hide that team's or tag's work
+        from your feed. The rail is navigation furniture; the feed is
+        content. Anything that starts reading this object server-side to
+        shape a result set has crossed that line.
 
-        Ids are NOT validated against the team table on write. A team
-        can be deleted or leave the caller's visibility between a save
-        and the next read, and refusing the write would strand the
-        reader in a rail they cannot edit. Unknown ids are inert — the
-        rail intersects both lists with the teams the server returned,
-        so a dead id is dropped at render.
+        Entries are NOT validated on write, in either notation. A team
+        can be deleted or leave the caller's visibility, and a tag can
+        be unfollowed, between a save and the next read; refusing the
+        write would strand the reader in a rail they cannot edit.
+        Unknown entries are inert — the rail intersects these lists with
+        what the server returned, so a dead one is dropped at render.
       properties:
         hidden_team_ids:
           type: array
@@ -15579,6 +15750,29 @@ components:
             lets "drag one team to the top" persist one id rather than a
             full snapshot that the next follow would immediately make
             stale.
+        hidden_tags:
+          type: array
+          items:
+            type: string
+          description: |
+            Followed tags whose chip the reader removed from their rail
+            (#1123). Empty = nothing hidden.
+
+            HIDING IS NOT UNFOLLOWING, and the two verbs sit next to
+            each other in the manage panel precisely so the difference
+            is visible. Unfollowing drops the `tag_follows` row and
+            changes what the Following feed CONTAINS. Hiding only takes
+            the chip off the strip; the tag's posts keep reaching the
+            feed exactly as before.
+        tag_order:
+          type: array
+          items:
+            type: string
+          description: |
+            The reader's explicit ordering of their followed-tag chips.
+            Empty = the server's order (most recently followed first).
+
+            Partial lists are legal and normal, exactly as `team_order`.
 
     UserPreferencesFeedFilters:
       type: object
@@ -15703,15 +15897,16 @@ components:
             inside it, means the filter is OFF — there is no third state
             for a boolean to fall back to, so this follows the
             full-object-replacement contract like everything else here.
-        team_rail:
+        browse_rail:
           allOf:
-            - $ref: "#/components/schemas/UserPreferencesTeamRail"
+            - $ref: "#/components/schemas/UserPreferencesBrowseRail"
           description: |
-            Teams-rail curation. Full-object replacement like everything
-            else on this endpoint: an absent object clears the curation
-            back to the default rail, and an absent list inside it
-            clears that list. The manage panel always sends both, which
-            is what makes "unhide the last hidden team" expressible.
+            Browse-rail curation (teams + followed tags). Full-object
+            replacement like everything else on this endpoint: an absent
+            object clears the curation back to the default rail, and an
+            absent list inside it clears that list. The manage panel
+            always sends all four, which is what makes "unhide the last
+            hidden chip" expressible.
 
     UserPreferencesResponse:
       type: object
@@ -15726,7 +15921,7 @@ components:
         - notification_channels
         - default_views
         - feed_filters
-        - team_rail
+        - browse_rail
         - known_event_types
         - known_channels
         - default_channels_by_event
@@ -15753,11 +15948,11 @@ components:
             default" are different states the UI renders differently, a
             boolean filter has no third value, so omitting it would only
             make the client guess `false` rather than read it.
-        team_rail:
+        browse_rail:
           allOf:
-            - $ref: "#/components/schemas/UserPreferencesTeamRail"
+            - $ref: "#/components/schemas/UserPreferencesBrowseRail"
           description: |
-            Teams-rail curation, always present with both lists
+            Browse-rail curation, always present with every list
             materialised even when empty. Same argument as
             `feed_filters` above, for the list case: "no curation" and
             "an empty curation" are the same rail, so omitting it would

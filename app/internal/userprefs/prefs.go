@@ -43,42 +43,56 @@ type Preferences struct {
 	// (#891). Distinct from DefaultViews, which only rearranges the same
 	// set.
 	FeedFilters FeedFilters `json:"feed_filters"`
-	// TeamRail is the browse teams rail's per-user curation (#1113).
-	// Distinct from FeedFilters, which subtracts CONTENT server-side;
-	// this curates NAVIGATION FURNITURE and is applied by the client.
-	TeamRail TeamRail `json:"team_rail"`
+	// BrowseRail is the browse rail's per-user curation — team chips
+	// (#1113) and followed-tag chips (#1123). Distinct from FeedFilters,
+	// which subtracts CONTENT server-side; this curates NAVIGATION
+	// FURNITURE and is applied by the client.
+	BrowseRail BrowseRail `json:"browse_rail"`
 }
 
-// TeamRail is the browse page's teams-rail curation (#1113).
+// BrowseRail is the browse page's rail curation (#1113, widened by
+// #1123).
 //
-// The rail lists every team the caller can see. This is the reader's
-// edit of that list: which chips they took out of it, and which ones
-// they pulled to the front. Both members are LISTS, and the same
-// naming contract the booleans in FeedFilters carry applies: the ZERO
-// VALUE — a user with no preferences row, an empty `{}` blob, or a key
-// this build has never heard of — is THE BUILD'S DEFAULT RAIL, which is
-// every visible team, followed-first, then name order.
+// The rail lists every team the caller can see, plus the tags they
+// follow. This is the reader's edit of that list: which chips they took
+// out of it, and which ones they pulled to the front. Every member is a
+// LIST, and the same naming contract the booleans in FeedFilters carry
+// applies: the ZERO VALUE — a user with no preferences row, an empty
+// `{}` blob, or a key this build has never heard of — is THE BUILD'S
+// DEFAULT RAIL: every visible team, followed-first then name order,
+// followed by every followed tag, most recent first.
+//
+// # One bag, because the rail is one piece of furniture
+//
+// The tag half joined this struct rather than getting a sibling because
+// a `#fantasy` chip and a team chip are two rows of one strip, edited in
+// one panel and saved in one write — not two concerns. Migration 00051
+// carries the full argument, including why the column was renamed off
+// `team_rail` rather than growing tag keys under a name that denies
+// they exist.
 //
 // # It never reaches the feed
 //
 // Nothing here is ever consulted to decide which POSTS a caller sees.
 // That is the difference from FeedFilters, which the posts handler
 // reads, and it is a requirement rather than an accident: #1113 says
-// hiding a team from your rail must not hide its posts from your feed.
-// So this struct has no server-side consumer at all — it is persisted,
-// returned on /auth/me, and applied in the rail component. If a future
-// change ever wants a server-side reader, that is a product decision to
-// argue in an issue, not a convenience to reach for here.
+// hiding a team from your rail must not hide its posts from your feed,
+// and #1123 says the same of a tag. So this struct has no server-side
+// consumer at all — it is persisted, returned on /auth/me, and applied
+// in the rail component. If a future change ever wants a server-side
+// reader, that is a product decision to argue in an issue, not a
+// convenience to reach for here.
 //
-// # Why the ids are not validated against `teams`
+// # Why the entries are not validated against `teams` / `tag_follows`
 //
-// A team can be deleted, or stop being visible to this caller, between
-// the save and the next read. A 400 on "your own list mentions a team
-// that no longer exists" would strand the reader in a rail they cannot
-// edit. Unknown ids are inert instead: the client intersects both lists
-// with the teams the server returned, so a dead id is dropped at render.
-// See ValidatePreferences for what IS enforced (shape and size).
-type TeamRail struct {
+// A team can be deleted, or stop being visible to this caller, and a tag
+// can be unfollowed, between the save and the next read. A 400 on "your
+// own list mentions something that no longer exists" would strand the
+// reader in a rail they cannot edit. Unknown entries are inert instead:
+// the client intersects these lists with what the server returned, so a
+// dead one is dropped at render. See ValidatePreferences for what IS
+// enforced (shape and size).
+type BrowseRail struct {
 	// HiddenTeamIDs are teams the reader removed from their rail.
 	// Empty = nothing hidden, which is the default rail.
 	//
@@ -98,34 +112,94 @@ type TeamRail struct {
 	// the top" persist one id rather than a full snapshot the next
 	// follow would immediately make stale.
 	TeamOrder []string `json:"team_order,omitempty"`
+
+	// HiddenTags are followed tags whose chip the reader removed from
+	// their rail (#1123). Empty = nothing hidden.
+	//
+	// HIDING IS NOT UNFOLLOWING. Unfollowing deletes the `tag_follows`
+	// row and changes what the Following feed contains; this only takes
+	// the chip off the strip. The manage panel puts both verbs on every
+	// row for exactly that reason.
+	HiddenTags []string `json:"hidden_tags,omitempty"`
+
+	// TagOrder is the reader's explicit ordering of their followed-tag
+	// chips. Empty = the server's order (most recently followed first).
+	// Partial lists are legal, exactly as TeamOrder.
+	TagOrder []string `json:"tag_order,omitempty"`
 }
 
-// MaxTeamRailIDs caps each list in TeamRail.
+// MaxBrowseRailIDs caps each list in BrowseRail.
 //
 // A cap exists because this blob is joined onto /auth/me — the call
 // that gates the entire app — so an unbounded list is a session
 // response an authenticated user can inflate at will. 1000 is far past
 // any real instance's team count (the reference install has 11) and far
 // below a payload anyone would notice.
-const MaxTeamRailIDs = 1000
+const MaxBrowseRailIDs = 1000
 
-// Sanitized drops entries a rail cannot use: blanks, non-UUIDs,
-// duplicates, and anything past the cap.
+// MaxRailTagLen bounds one entry in the tag lists, mirroring the CHECK
+// constraint migration 00050 puts on `tag_follows.tag`.
+//
+// The UUID lists need no such bound — `uuid.Parse` is itself a length
+// check — but a tag is free text, and 1000 entries of unbounded length
+// is the same /auth/me inflation the count cap exists to prevent, just
+// spent on width instead of depth. A tag longer than this cannot be
+// followed, so a rail entry naming one could never have matched a chip.
+const MaxRailTagLen = 200
+
+// Sanitized drops entries a rail cannot use: blanks, duplicates,
+// non-UUIDs in the id lists, over-long strings in the tag lists, and
+// anything past the cap.
 //
 // Read-side counterpart to ValidatePreferences, and the same division
 // of labour DefaultViews.Sanitized uses — reject a bad write, but never
 // fail a read over a row that is already on disk. Unknown-but-wellformed
-// ids are deliberately kept: see the type's note on why they are inert
-// rather than invalid. UNPARSEABLE ones are not, and that is a
+// entries are deliberately kept: see the type's note on why they are
+// inert rather than invalid. UNPARSEABLE ones are not, and that is a
 // different judgement rather than an inconsistency: the wire type
-// declares these `format: uuid`, so a non-UUID cannot arrive through
-// the API at all and one on disk is tampering or a bug. Keeping it
-// would break the projection back onto the wire; dropping it costs a
+// declares the id lists `format: uuid`, so a non-UUID cannot arrive
+// through the API at all and one on disk is tampering or a bug. Keeping
+// it would break the projection back onto the wire; dropping it costs a
 // reader nothing, because no team was ever identified by it.
-func (r TeamRail) Sanitized() TeamRail {
+//
+// The tag lists are NOT UUID-parsed, which is why they get their own
+// pass rather than sharing dedupeIDs. A tag is the string itself, so
+// "wellformed" means only "non-empty and not absurdly long" — running
+// them through the id sanitiser would have silently deleted every tag
+// chip a reader ever curated.
+func (r BrowseRail) Sanitized() BrowseRail {
 	r.HiddenTeamIDs = dedupeIDs(r.HiddenTeamIDs)
 	r.TeamOrder = dedupeIDs(r.TeamOrder)
+	r.HiddenTags = dedupeRailTags(r.HiddenTags)
+	r.TagOrder = dedupeRailTags(r.TagOrder)
 	return r
+}
+
+// dedupeRailTags is dedupeIDs for free-text tag entries: same blank,
+// duplicate and cap handling, with a length bound in place of the UUID
+// parse. Entries are compared and stored verbatim — the corpus matches
+// tags exactly (see tags.normalizeTag), so folding case here would make
+// a reader's hidden chip stop matching the chip it hides.
+func dedupeRailTags(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, tag := range in {
+		if tag == "" || len(tag) > MaxRailTagLen || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+		if len(out) == MaxBrowseRailIDs {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func dedupeIDs(in []string) []string {
@@ -143,7 +217,7 @@ func dedupeIDs(in []string) []string {
 		}
 		seen[id] = true
 		out = append(out, id)
-		if len(out) == MaxTeamRailIDs {
+		if len(out) == MaxBrowseRailIDs {
 			break
 		}
 	}
@@ -495,16 +569,42 @@ func ValidatePreferences(p Preferences) error {
 			return fmt.Errorf("unknown email cadence %q for event %q", cad, event)
 		}
 	}
-	// The team rail's two lists are checked for SIZE, not for
-	// membership. An id naming a team that no longer exists is inert at
-	// render (see TeamRail); an id list long enough to bloat every
+	// The browse rail's four lists are checked for SIZE, not for
+	// membership. An entry naming a team or tag that no longer exists is
+	// inert at render (see BrowseRail); a list long enough to bloat every
 	// /auth/me response is not, and this is the only place a client can
 	// write one.
-	if n := len(p.TeamRail.HiddenTeamIDs); n > MaxTeamRailIDs {
-		return fmt.Errorf("hidden_team_ids holds %d entries, max %d", n, MaxTeamRailIDs)
+	//
+	// The tag lists are checked for WIDTH as well as depth: they hold
+	// free text rather than uuids, so 1000 legal-count entries can still
+	// be an arbitrarily large payload. Refused rather than truncated,
+	// because this is the write path and a silently shortened tag is a
+	// chip that will never match the tag it names.
+	for _, l := range []struct {
+		name string
+		ids  []string
+	}{
+		{"hidden_team_ids", p.BrowseRail.HiddenTeamIDs},
+		{"team_order", p.BrowseRail.TeamOrder},
+		{"hidden_tags", p.BrowseRail.HiddenTags},
+		{"tag_order", p.BrowseRail.TagOrder},
+	} {
+		if n := len(l.ids); n > MaxBrowseRailIDs {
+			return fmt.Errorf("%s holds %d entries, max %d", l.name, n, MaxBrowseRailIDs)
+		}
 	}
-	if n := len(p.TeamRail.TeamOrder); n > MaxTeamRailIDs {
-		return fmt.Errorf("team_order holds %d entries, max %d", n, MaxTeamRailIDs)
+	for _, l := range []struct {
+		name string
+		tags []string
+	}{
+		{"hidden_tags", p.BrowseRail.HiddenTags},
+		{"tag_order", p.BrowseRail.TagOrder},
+	} {
+		for _, tag := range l.tags {
+			if len(tag) > MaxRailTagLen {
+				return fmt.Errorf("%s holds a %d-character tag, max %d", l.name, len(tag), MaxRailTagLen)
+			}
+		}
 	}
 	return nil
 }
@@ -544,12 +644,12 @@ func MarshalFeedFilters(f FeedFilters) ([]byte, error) {
 	return json.Marshal(f)
 }
 
-// MarshalTeamRail produces the team_rail JSONB payload (#1113). Both
-// members are `omitempty`, so an untouched rail persists as `{}` — the
-// same bytes the column defaults to, which keeps a saved-but-default
-// preference indistinguishable from a never-saved one, exactly as
-// MarshalFeedFilters does for the boolean bag.
-func MarshalTeamRail(r TeamRail) ([]byte, error) {
+// MarshalBrowseRail produces the browse_rail JSONB payload (#1113,
+// #1123). Every member is `omitempty`, so an untouched rail persists as
+// `{}` — the same bytes the column defaults to, which keeps a
+// saved-but-default preference indistinguishable from a never-saved
+// one, exactly as MarshalFeedFilters does for the boolean bag.
+func MarshalBrowseRail(r BrowseRail) ([]byte, error) {
 	return json.Marshal(r.Sanitized())
 }
 
@@ -557,7 +657,7 @@ func MarshalTeamRail(r TeamRail) ([]byte, error) {
 // into the typed struct. A malformed column (only possible via direct
 // DB tampering) surfaces as a loud error rather than a silently-zeroed
 // value.
-func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, teamRailJSON []byte) (Preferences, error) {
+func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, browseRailJSON []byte) (Preferences, error) {
 	var p Preferences
 	if len(channelsJSON) > 0 {
 		if err := json.Unmarshal(channelsJSON, &p.NotificationChannels); err != nil {
@@ -589,13 +689,13 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON, filtersJSON, 
 			return Preferences{}, fmt.Errorf("feed_filters: %w", err)
 		}
 	}
-	if len(teamRailJSON) > 0 {
-		if err := json.Unmarshal(teamRailJSON, &p.TeamRail); err != nil {
-			return Preferences{}, fmt.Errorf("team_rail: %w", err)
+	if len(browseRailJSON) > 0 {
+		if err := json.Unmarshal(browseRailJSON, &p.BrowseRail); err != nil {
+			return Preferences{}, fmt.Errorf("browse_rail: %w", err)
 		}
 		// Same read-side neutralisation DefaultViews gets above: a row
 		// on disk is never a reason to fail a preferences read.
-		p.TeamRail = p.TeamRail.Sanitized()
+		p.BrowseRail = p.BrowseRail.Sanitized()
 	}
 	return p, nil
 }

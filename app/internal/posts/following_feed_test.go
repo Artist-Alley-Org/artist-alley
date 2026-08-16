@@ -34,6 +34,7 @@ package posts
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -359,5 +360,267 @@ func TestFollowingFeed_FollowingNothingIsAnEmptyPage(t *testing.T) {
 	if got := folFeed(t, h, follower, ""); len(got) != 0 {
 		t.Errorf("a caller following nothing got %d posts on feed=following, want an "+
 			"empty page: %v", len(got), got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #1123 — the THIRD source: followed tags
+// ---------------------------------------------------------------------------
+
+// folFollowTag bookmarks a tag for the caller. Like team_follows and
+// unlike a post's author, tag_follows.user_ref carries an FK to
+// "user"(ref), so the follower must be a real row — but the TAG side has
+// no FK at all, which is the structural difference from the other two
+// tables and the reason a tag nobody has used is a legal follow.
+func folFollowTag(t *testing.T, pool *pgxpool.Pool, ref int64, tag string) {
+	t.Helper()
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO tag_follows (user_ref, tag) VALUES ($1, $2)`, ref, tag); err != nil {
+		t.Fatalf("follow tag %q: %v", tag, err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM tag_follows WHERE user_ref = $1 AND tag = $2`, ref, tag)
+	})
+}
+
+// folTagPost plants a post carrying the given tags.
+func folTagPost(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	author int64,
+	visibility string,
+	minutesOld int,
+	tags ...string,
+) uuid.UUID {
+	t.Helper()
+	id := folPost(t, pool, author, nil, visibility, minutesOld)
+	for _, tag := range tags {
+		if _, err := pool.Exec(t.Context(),
+			`INSERT INTO post_tags (post_id, tag) VALUES ($1, $2)`, id, tag); err != nil {
+			t.Fatalf("tag post %s with %q: %v", id, tag, err)
+		}
+	}
+	// post_tags rows go with the post: folPost's cleanup deletes it and
+	// nothing here outlives that.
+	return id
+}
+
+// folTag returns a tag string unique to this test run. Tags are a
+// corpus, not a table, so there is no id to isolate on — two tests
+// sharing the literal "fantasy" would share each other's posts. Every
+// fixture below therefore invents its own tag.
+func folTag(label string) string {
+	return "fol_" + label + "_" + uuid.New().String()[:12]
+}
+
+// TestFollowingFeed_TagFollowAloneReturnsTaggedPosts is #1123's core
+// case, built the way #1048's was: the follower follows ONE TAG and
+// zero users and zero teams, so any row that appears got there through
+// the tag arm and nothing else.
+//
+// The decoys prove the new arm NARROWS. An identically-shaped post
+// carrying a DIFFERENT tag, and one carrying no tags at all, must both
+// stay off the page — a join written against post_tags without the
+// tag equality, or one that let a NULL through, would return them.
+func TestFollowingFeed_TagFollowAloneReturnsTaggedPosts(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	follower := folFollower(t, pool)
+	followed := folTag("followed")
+	other := folTag("other")
+	folFollowTag(t, pool, follower, followed)
+
+	match := folTagPost(t, pool, folAuthor, "org-only", 1, followed)
+	wrongTag := folTagPost(t, pool, folAuthor, "org-only", 2, other)
+	noTag := folPost(t, pool, folAuthor, nil, "org-only", 3)
+
+	got := folFeed(t, h, follower, "")
+
+	if _, found := indexOf(got, match); !found {
+		t.Errorf("a post carrying the followed tag %q is missing from feed=following "+
+			"(got %v) — the tag arm is the only thing that can put it there", followed, got)
+	}
+	for _, id := range []uuid.UUID{wrongTag, noTag} {
+		if _, found := indexOf(got, id); found {
+			t.Errorf("post %s does not carry the followed tag but appeared on "+
+				"feed=following — the tag arm must narrow, not widen", id)
+		}
+	}
+}
+
+// TestFollowingFeed_TagFollowDoesNotMultiplyRows — a post carrying TWO
+// followed tags is one post, not two.
+//
+// This is the join's own hazard rather than a repeat of the union test
+// above: the tag arm is the only one of the three that joins a
+// MANY-ROW table (post_tags) inside its EXISTS. Rewritten as a plain
+// join in the FROM clause — the obvious "simplification" — it would
+// duplicate the row once per matching tag, and the duplicate would
+// carry a real id so nothing downstream would flag it.
+func TestFollowingFeed_TagFollowDoesNotMultiplyRows(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	follower := folFollower(t, pool)
+	first := folTag("first")
+	second := folTag("second")
+	folFollowTag(t, pool, follower, first)
+	folFollowTag(t, pool, follower, second)
+
+	both := folTagPost(t, pool, folAuthor, "org-only", 1, first, second)
+
+	got := folFeed(t, h, follower, "")
+	count := 0
+	for _, id := range got {
+		if id == both {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("a post carrying TWO followed tags appeared %d times on "+
+			"feed=following, want exactly 1 — the tag EXISTS must not multiply rows "+
+			"(got %v)", count, got)
+	}
+}
+
+// ⛔ TestFollowingFeed_TagFollowDoesNotWidenVisibility is THE acceptance
+// for #1123, and the reason the tag arm needed its own copy of
+// TestFollowingFeed_ReadRuleStillNarrows rather than inheriting it.
+//
+// A team follow's other side is a team row that an operator controls.
+// A TAG's other side is written by whoever authored the post — anybody
+// may tag their own private work with a popular tag. So this is the one
+// follow source where a caller can be made to "follow" something an
+// adversary attaches to content at will, and the question "does the
+// follow widen the selection or the permission" has teeth.
+//
+// The SAME ITEM, OPPOSITE VERDICTS: one post, carrying a tag the
+// follower follows, at a tier the follower may not read. It must be
+// absent for them and present for the author, who may read it. Asking
+// both halves is what makes this a test of the read rule rather than of
+// the fixture — an assertion of absence alone passes just as well when
+// the post was never created.
+//
+// Each tier is asked for with an explicit `?visibility=` so the
+// handler's org-only display default is not what produces the absence.
+// Without that this test would pass on a build where tag_follows HAD
+// been spliced into the read rule.
+func TestFollowingFeed_TagFollowDoesNotWidenVisibility(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	follower := folFollower(t, pool)
+	tag := folTag("gated")
+	folFollowTag(t, pool, follower, tag)
+
+	readable := folTagPost(t, pool, folAuthor, "org-only", 1, tag)
+	private := folTagPost(t, pool, folAuthor, "private", 2, tag)
+	followersOnly := folTagPost(t, pool, folAuthor, "followers", 3, tag)
+
+	// REACHABLE FIRST: the tag arm returns something at all, so the two
+	// absences below are about the read rule and not about a fixture
+	// that never reached the query.
+	if got := folFeed(t, h, follower, ""); len(got) == 0 {
+		t.Fatalf("REACHABILITY: the followed tag's readable post did not appear — " +
+			"this fixture proves nothing about the read rule")
+	} else if _, found := indexOf(got, readable); !found {
+		t.Fatalf("REACHABILITY: post %s carries the followed tag and is readable but "+
+			"absent — fix that before reading the assertions below", readable)
+	}
+
+	if got := folFeed(t, h, follower, "private"); len(got) != 0 {
+		t.Errorf("feed=following&visibility=private returned %d posts for a caller who "+
+			"only FOLLOWS THE TAG — tagging a private post with a followed tag must not "+
+			"publish it (got %v, private post is %s)", len(got), got, private)
+	}
+	if got := folFeed(t, h, follower, "followers"); len(got) != 0 {
+		t.Errorf("feed=following&visibility=followers returned %d posts — the followers "+
+			"tier resolves through user_follows in the read rule, and a TAG follow is "+
+			"not a user follow (got %v, followers-only post is %s)",
+			len(got), got, followersOnly)
+	}
+
+	// THE OTHER HALF OF THE PAIR. The same two posts, asked for by the
+	// AUTHOR, who may read both. If these come back empty the assertions
+	// above are satisfied by the posts being unreachable to everyone,
+	// which would make this whole test a tautology.
+	//
+	// The author does not follow the tag, so the query is run WITHOUT
+	// the following filter: the subject here is the read rule's verdict
+	// on the item, not the feed's selection of it.
+	authorCtx := auth.WithIdentity(t.Context(),
+		&auth.Identity{UserRef: folAuthor, AuthMethod: "session"})
+	for _, tc := range []struct {
+		vis  string
+		want uuid.UUID
+	}{
+		{"private", private},
+		{"followers", followersOnly},
+	} {
+		limit := 100
+		v := openapi.ListPostsParamsVisibility(tc.vis)
+		author := folAuthor
+		resp, err := h.ListPosts(authorCtx, openapi.ListPostsRequestObject{
+			Params: openapi.ListPostsParams{
+				Limit: &limit, Visibility: &v, AuthorRef: &author,
+			},
+		})
+		if err != nil {
+			t.Fatalf("ListPosts as author (visibility=%s): %v", tc.vis, err)
+		}
+		ok, is := resp.(openapi.ListPosts200JSONResponse)
+		if !is {
+			t.Fatalf("ListPosts as author (visibility=%s) returned %T, want 200", tc.vis, resp)
+		}
+		found := false
+		for _, p := range ok.Items {
+			if uuid.UUID(p.Id) == tc.want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("OPPOSITE VERDICT MISSING: the %s post %s is invisible to its own "+
+				"AUTHOR too, so the absence asserted above proves nothing about the tag "+
+				"follow — fix the fixture", tc.vis, tc.want)
+		}
+	}
+}
+
+// TestFollowingFeed_TagFollowMatchesExactlyAndNotByCase pins the
+// matching rule the corpus actually has.
+//
+// `post_tags` stores tags trimmed but case-preserved and `?tag=` matches
+// with `=`, so `tags.normalizeTag` trims and does nothing else. A
+// well-meaning `lower()` on either side of the join would make the
+// Following feed disagree with the rail chip that sits beside it: the
+// chip's `?tag=` would find nothing while the feed filled up.
+//
+// This asserts the CURRENT contract, not an ideal one. If #789's
+// vocabulary arc folds case across the corpus, this test should be
+// changed deliberately and together with post_tags and `?tag=`, rather
+// than discovered as a failure.
+func TestFollowingFeed_TagFollowMatchesExactlyAndNotByCase(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	follower := folFollower(t, pool)
+	lower := folTag("case")
+	upper := strings.ToUpper(lower)
+	folFollowTag(t, pool, follower, lower)
+
+	exact := folTagPost(t, pool, folAuthor, "org-only", 1, lower)
+	cased := folTagPost(t, pool, folAuthor, "org-only", 2, upper)
+
+	got := folFeed(t, h, follower, "")
+	if _, found := indexOf(got, exact); !found {
+		t.Errorf("the exactly-matching post %s is missing from feed=following (got %v)",
+			exact, got)
+	}
+	if _, found := indexOf(got, cased); found {
+		t.Errorf("post %s carries %q while the follow is %q, and it appeared — the "+
+			"corpus matches tags EXACTLY (post_tags + ?tag= both do), so the Following "+
+			"feed must too or the rail chip beside it will disagree", cased, upper, lower)
 	}
 }

@@ -949,18 +949,18 @@ func (h *Handler) hydrateCapabilities(ctx context.Context, userRef int64, cu *op
 // carried the meaning.
 func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *openapi.CurrentUser) {
 	var lang, theme string
-	var viewsJSON, filtersJSON, teamRailJSON []byte
+	var viewsJSON, filtersJSON, browseRailJSON []byte
 	err := h.Pool.QueryRow(ctx, `
 		SELECT COALESCE(p.language, ''),
 		       COALESCE(p.theme, ''),
 		       COALESCE(up.default_views, '{}'::jsonb),
 		       COALESCE(up.feed_filters, '{}'::jsonb),
-		       COALESCE(up.team_rail, '{}'::jsonb)
+		       COALESCE(up.browse_rail, '{}'::jsonb)
 		FROM (SELECT $1::bigint AS user_ref) k
 		LEFT JOIN user_profiles    p  ON p.user_ref  = k.user_ref
 		LEFT JOIN user_preferences up ON up.user_ref = k.user_ref`,
 		userRef,
-	).Scan(&lang, &theme, &viewsJSON, &filtersJSON, &teamRailJSON)
+	).Scan(&lang, &theme, &viewsJSON, &filtersJSON, &browseRailJSON)
 	if err != nil {
 		// pgx.ErrNoRows is fine; we leave the fields nil.
 		return
@@ -979,16 +979,16 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 	if f, ok := decodeFeedFilters(filtersJSON); ok {
 		cu.FeedFilters = &f
 	}
-	if r, ok := decodeTeamRail(teamRailJSON); ok {
-		cu.TeamRail = &r
+	if r, ok := decodeBrowseRail(browseRailJSON); ok {
+		cu.BrowseRail = &r
 	}
 }
 
-// decodeTeamRail parses the user_preferences.team_rail blob into the
-// wire type (#1113). Reports false when both lists are empty, so
-// /auth/me omits the object for every account that has not curated its
-// rail — the same "omit when it says nothing" rule decodeFeedFilters
-// applies to its boolean.
+// decodeBrowseRail parses the user_preferences.browse_rail blob into
+// the wire type (#1113, widened for tag chips by #1123). Reports false
+// when every list is empty, so /auth/me omits the object for every
+// account that has not curated its rail — the same "omit when it says
+// nothing" rule decodeFeedFilters applies to its boolean.
 //
 // Why it rides the session response at all, rather than the browse page
 // fetching /account/preferences: the rail's order and hide-list decide
@@ -1004,18 +1004,30 @@ func (h *Handler) hydrateAccountPrefs(ctx context.Context, userRef int64, cu *op
 // direction matters: failing open here shows the reader more than they
 // asked for, failing closed would show them nothing and look like their
 // teams had been deleted.
-func decodeTeamRail(raw []byte) (openapi.UserPreferencesTeamRail, bool) {
-	var r openapi.UserPreferencesTeamRail
+func decodeBrowseRail(raw []byte) (openapi.UserPreferencesBrowseRail, bool) {
+	var r openapi.UserPreferencesBrowseRail
 	if len(raw) == 0 {
-		return openapi.UserPreferencesTeamRail{}, false
+		return openapi.UserPreferencesBrowseRail{}, false
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return openapi.UserPreferencesTeamRail{}, false
+		return openapi.UserPreferencesBrowseRail{}, false
+	}
+	// Any ONE non-empty list is enough to send the object. Written as a
+	// loop over all four rather than a chain of ORs so that #1123's tag
+	// lists cannot be the pair someone forgets to add: a new list added
+	// to the wire type without a line here would silently make a reader
+	// who curated ONLY that list look uncurated to /auth/me, and the
+	// rail would paint the default and then rearrange — the exact
+	// first-paint shift this function exists to prevent.
+	for _, l := range []*[]string{r.HiddenTags, r.TagOrder} {
+		if l != nil && len(*l) > 0 {
+			return r, true
+		}
 	}
 	hidden := r.HiddenTeamIds != nil && len(*r.HiddenTeamIds) > 0
 	ordered := r.TeamOrder != nil && len(*r.TeamOrder) > 0
 	if !hidden && !ordered {
-		return openapi.UserPreferencesTeamRail{}, false
+		return openapi.UserPreferencesBrowseRail{}, false
 	}
 	return r, true
 }

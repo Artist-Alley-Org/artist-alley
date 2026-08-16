@@ -168,8 +168,9 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //   - q: plain-text TSVECTOR search across post search_text
 //   - tag: single-tag filter (intersects with q if both given)
 //   - feed_follower_ref: restrict to what the given ref follows
-//     (?feed=following) — authors OR teams. Two EXISTS, hitting the
-//     user_follows PK and the team_follows PK respectively.
+//     (?feed=following) — authors OR teams OR tags. Three EXISTS,
+//     hitting the user_follows PK, the team_follows PK and the
+//     tag_follows PK respectively (#1123).
 //   - team_id: restrict to one team's posts (#684)
 //
 // Every one of those NARROWS. The read rule is ANDed onto the result,
@@ -177,6 +178,24 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 // could not already read — least obviously `team_id`, which looks like
 // it ought to mean "the team's space" and does not. It means "the part
 // of the team's space this caller can already see".
+//
+// ⚠️ The tag arm is where that sentence stops being an abstraction.
+// A post's author chooses its tags, so `tag_follows` is the one follow
+// source whose matching side is written by the party the read rule is
+// protecting against: anybody may tag their own restricted post
+// `fantasy` and every follower of `fantasy` would then have it in
+// their Following feed — IF this disjunction were ORed with the read
+// rule. It is not. The three EXISTS are ORed with EACH OTHER inside a
+// single conjunct, and `ruleFrag` is appended as a separate ANDed
+// conjunct below, so the follow set can only ever remove rows from a
+// page the caller could already see. The acceptance test for #1123 is
+// exactly that pair: one restricted post carrying a followed tag,
+// visible to the caller who may read it and absent for the one who may
+// not.
+//
+// The tag EXISTS joins `post_tags` on the tag STRING because that is
+// what the corpus is keyed by — see migration 00050 for why there is no
+// id to join on, and why matching is exact rather than case-folded.
 //
 // Placeholder discipline (ADR 0063): the builder binds $1–$10, the rule's
 // fragment owns everything above, and its args are appended LAST.
@@ -221,7 +240,11 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
                       AND ff.followee_user_ref = posts.author_user_ref)
        OR EXISTS (SELECT 1 FROM team_follows tf
                     WHERE tf.user_ref = $6::BIGINT
-                      AND tf.team_id = posts.team_id))
+                      AND tf.team_id = posts.team_id)
+       OR EXISTS (SELECT 1 FROM tag_follows gf
+                    JOIN post_tags pgt ON pgt.tag = gf.tag
+                    WHERE gf.user_ref = $6::BIGINT
+                      AND pgt.post_id = posts.id))
   AND ($10::UUID IS NULL OR team_id = $10::UUID)
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(ruleFrag)

@@ -2,8 +2,30 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   /**
-   * The teams rail (#577) — now a FEED FILTER over the browse page
-   * (#1113), not a navigation strip.
+   * The browse rail (#577) — a FEED FILTER over the browse page
+   * (#1113), not a navigation strip; carrying TEAM chips and, since
+   * #1123, followed-`#tag` chips.
+   *
+   * # Two chip kinds, ONE selection
+   *
+   * The strip is single-select and stays that way with tags in it:
+   * exactly one chip is pressed, or none. Picking a tag clears any team
+   * filter and the reverse, which the browse page implements by owning
+   * both params in the URL.
+   *
+   * `GET /posts` would happily intersect `team_id` with `tag` — they are
+   * independent parameters — so this is a UI decision rather than a
+   * limitation. Two simultaneously-pressed chips would need a second
+   * clear affordance per kind, would make "All teams" ambiguous about
+   * what it clears, and would leave the heading with two subjects. The
+   * strip reads as one control because it is one.
+   *
+   * # Tag chips are the FOLLOW SET; team chips are everything visible
+   *
+   * Deliberate asymmetry, argued in browseRail.svelte.ts: there is no
+   * bounded "all tags" list to draw, and inventing one would be both
+   * enormous and a disclosure of tags used only on unreadable posts. A
+   * tag reaches the strip by being followed, from the manage panel.
    *
    * # The reversal, and what it changes
    *
@@ -31,8 +53,9 @@
    * only offer what you had already subscribed to. Follows survive as
    * the SORT — followed teams lead, then the rest by name — and the
    * featured team keeps first position among teams (#1084). See
-   * `teamRail.railTeams` for the ordering and why the featured slot is
-   * deduped rather than merged.
+   * `browseRail.railLeadTeams` for the ordering, why the featured slot
+   * is deduped rather than merged, and why the followed TAGS sit
+   * between the two team runs rather than after both.
    *
    * Curation (hide a chip, reorder the followed group) lives in the ⋯
    * panel and is CLIENT-APPLIED: hiding a team removes its chip and
@@ -76,11 +99,14 @@
    * by this issue.
    */
   import { teamFollows } from '$stores/teamFollows.svelte';
-  import { teamRail } from '$stores/teamRail.svelte';
+  import { browseRail } from '$stores/browseRail.svelte';
+  import { tagFollows } from '$stores/tagFollows.svelte';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import TeamAvatar from '$components/TeamAvatar.svelte';
-  import TeamRailManageMenu from '$components/TeamRailManageMenu.svelte';
+  import type { TeamSummary } from '$stores/teamFollows.svelte';
+  import BrowseRailManageMenu from '$components/BrowseRailManageMenu.svelte';
+  import Hash from '@lucide/svelte/icons/hash';
   import {
     createRailScroll,
     RAIL_ARROW_CLASS,
@@ -95,10 +121,16 @@
      *  with the address bar the first time someone used the back
      *  button. */
     activeTeamId?: string | null;
+    /** The tag the feed is filtered to, or null. Same URL ownership,
+     *  and mutually exclusive with `activeTeamId` — see the note above
+     *  on why the strip is single-select across both kinds. */
+    activeTag?: string | null;
     /** Called with the team to filter to, or null to clear. */
     onselect?: (id: string | null) => void;
+    /** Called with the tag to filter to, or null to clear. */
+    onselecttag?: (tag: string | null) => void;
   }
-  let { activeTeamId = null, onselect }: Props = $props();
+  let { activeTeamId = null, activeTag = null, onselect, onselecttag }: Props = $props();
 
   // One effect, no onMount beside it. This component used to run both,
   // which fired every load twice on first paint — an `$effect` already
@@ -110,14 +142,22 @@
   $effect(() => {
     if (auth.user) {
       void teamFollows.load();
-      teamRail.init();
+      void tagFollows.load();
+      browseRail.init();
     } else {
       teamFollows.reset();
-      teamRail.reset();
+      tagFollows.reset();
+      browseRail.reset();
     }
   });
 
-  const teams = $derived(teamRail.railTeams);
+  // Three runs, in one strip: the featured slot + followed teams, then
+  // the followed tags, then everything else visible. "Things you chose
+  // come first" is the rule, applied to both chip kinds — see
+  // browseRail.railLeadTeams for the measurement that produced it.
+  const leadTeams = $derived(browseRail.railLeadTeams);
+  const restTeams = $derived(browseRail.railRestTeams);
+  const tags = $derived(browseRail.railTags);
   const featuredIds = $derived(new Set(teamFollows.featured.map((c) => c.id)));
 
   /** Is there anything for this reader to filter BY?
@@ -127,20 +167,33 @@
    *  way to unhide one and a rail that deletes its own manage button is
    *  a trap.
    *
-   *  When both are empty there is nothing at all: the instance has no
+   *  When all are empty there is nothing at all: the instance has no
    *  teams, or this caller holds no `teams.read` and `/teams` answered
    *  403 (an impersonated Base account, measured — the seeded
-   *  non-admins do not hold it). Both render NOTHING rather than a
+   *  non-admins do not hold it). All render NOTHING rather than a
    *  strip of two controls over an empty strip. That is the same
    *  judgement the guest arm has always made, now that the rail's
    *  source is the whole directory rather than the caller's follows:
    *  the old "you aren't following any teams yet — find some" empty
-   *  state pointed at a page these readers cannot open either. */
-  const hasTeams = $derived(teamRail.teams.length > 0 || teamFollows.featured.length > 0);
+   *  state pointed at a page these readers cannot open either.
+   *
+   *  Followed tags count too (#1123): a reader with no visible teams but
+   *  three followed tags has a rail worth drawing, and — more to the
+   *  point — the ⋯ panel is the only place to unfollow one, so a strip
+   *  that vanished when the last team did would strand them. */
+  const hasChips = $derived(
+    browseRail.teams.length > 0 ||
+      teamFollows.featured.length > 0 ||
+      tagFollows.items.length > 0,
+  );
 
   let scroller = $state<HTMLDivElement | null>(null);
   const rail = createRailScroll(() => scroller, {
-    itemSelector: '[data-testid="teams-rail-chip"]',
+    // BOTH chip kinds, so the chevrons step over a tag chip the same
+    // way they step over a team's. A selector naming only the team
+    // chips would page correctly until the first tag, then jump the
+    // whole tag run in one press.
+    itemSelector: '[data-rail-chip]',
     // 8px — `gap-2` in the markup below. One number in two places, and
     // the step reads the RENDERED chip's width so a mismatch costs a
     // few px of overshoot rather than a broken control.
@@ -148,21 +201,38 @@
     fallbackWidth: 160,
   });
 
-  // Re-measure when the strip's contents or box change. Reading the
-  // length is what re-runs this once the teams land.
+  // Re-measure when the strip's contents or box change. Reading BOTH
+  // lengths is what re-runs this once either kind lands — reading only
+  // the teams would leave the chevrons sized for a strip that has since
+  // grown a run of tag chips.
   $effect(() => {
-    void teams.length;
+    void leadTeams.length;
+    void restTeams.length;
+    void tags.length;
     return rail.attach();
   });
 
   /** Toggle semantics: clicking the active chip clears the filter.
-   *  Single-select, so there is never more than one to clear. */
+   *  Single-select, so there is never more than one to clear.
+   *
+   *  Picking a TEAM clears any tag filter and vice versa. The page owns
+   *  both params, so each handler is told only about its own and the
+   *  page drops the other — see `selectTeam` / `selectTag` there. */
   function pick(id: string) {
     onselect?.(activeTeamId === id ? null : id);
   }
+
+  function pickTag(tag: string) {
+    onselecttag?.(activeTag === tag ? null : tag);
+  }
+
+  /** The clear-filter chip is pressed only when NOTHING is filtered.
+   *  Reading just `activeTeamId` would light it up beside a pressed tag
+   *  chip, i.e. two pressed chips in a single-select strip. */
+  const unfiltered = $derived(activeTeamId === null && activeTag === null);
 </script>
 
-{#if auth.user && teamRail.loaded && hasTeams}
+{#if auth.user && browseRail.loaded && hasChips}
   <!-- `aria-label` rather than `aria-labelledby`: the heading it used
        to point at is gone (#1030). The string is the same one, so the
        region's name in the accessibility tree is unchanged.
@@ -185,7 +255,7 @@
          anyone who can see more than a handful of teams. -->
     <div class="flex items-center gap-2">
       <div class="shrink-0">
-        <TeamRailManageMenu />
+        <BrowseRailManageMenu />
       </div>
 
       <!-- "All teams" — the CLEAR-FILTER control, at the head of the
@@ -202,10 +272,13 @@
            unchanged at every width. -->
       <button
         type="button"
-        onclick={() => onselect?.(null)}
-        aria-pressed={activeTeamId === null}
+        onclick={() => {
+          onselect?.(null);
+          onselecttag?.(null);
+        }}
+        aria-pressed={unfiltered}
         class="flex min-h-12 shrink-0 items-center gap-2.5 rounded-full border py-1 pl-1 pr-1
-               text-sm font-medium transition-colors sm:pr-4 {activeTeamId === null
+               text-sm font-medium transition-colors sm:pr-4 {unfiltered
           ? 'border-accent bg-accent-container text-on-accent-container'
           : 'border-border bg-surface-elevated text-fg hover:border-border-strong hover:bg-state-hover'}"
         data-testid="teams-rail-browse-all"
@@ -262,7 +335,7 @@
             : 'cursor-grab'}"
           data-testid="teams-rail-scroller"
         >
-          {#each teams as team (team.id)}
+          {#snippet teamChip(team: TeamSummary)}
             {@const active = activeTeamId === team.id}
             {@const featured = featuredIds.has(team.id)}
             <!-- Chip size (#1097): the avatar is 40px and the chip
@@ -276,6 +349,7 @@
               aria-pressed={active}
               title={team.description || team.name}
               data-testid="teams-rail-chip"
+              data-rail-chip
               data-team-id={team.id}
               class="flex min-h-12 shrink-0 items-center gap-2.5 rounded-full border py-1 pl-1 pr-4
                      text-sm transition-colors {active
@@ -294,7 +368,60 @@
                 <span class="sr-only">({t('teams.featured')})</span>
               {/if}
             </button>
+          {/snippet}
+
+          <!-- Run 1: the featured slot and the teams the reader
+               follows. -->
+          {#each leadTeams as team (team.id)}{@render teamChip(team)}{/each}
+
+          <!-- ═══ #1123: followed-tag chips ══════════════════════════
+               After the teams, in the SAME scroller, so the strip stays
+               one control with one selection and one set of chevrons.
+
+               The hash glyph takes the initials-tile slot — the same
+               40px disc a team's avatar or initials sit in — so the two
+               chip kinds are the same object at the same size, and the
+               difference between them is one glyph rather than a
+               different shape. That is what lets a reader tell "team"
+               from "tag" at a glance without a label saying so.
+
+               THE `#` IS DRAWN, NOT STORED. The corpus holds `fantasy`
+               and `?tag=fantasy` is what matches it; the hash is this
+               strip's notation for "this chip is a tag". The accessible
+               name spells it out in words instead, because a screen
+               reader announcing "hash fantasy" from a decorative glyph
+               would be reading the notation rather than the thing. -->
+          {#each tags as tag (tag)}
+            {@const active = activeTag === tag}
+            <button
+              type="button"
+              onclick={() => pickTag(tag)}
+              aria-pressed={active}
+              title={'#' + tag}
+              data-testid="browse-rail-tag-chip"
+              data-rail-chip
+              data-tag={tag}
+              class="flex min-h-12 shrink-0 items-center gap-2.5 rounded-full border py-1 pl-1 pr-4
+                     text-sm transition-colors {active
+                ? 'border-accent bg-accent-container font-medium text-on-accent-container'
+                : 'border-border bg-surface-elevated text-fg hover:border-border-strong hover:bg-state-hover'}"
+            >
+              <span
+                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                       bg-state-hover text-fg-muted"
+                aria-hidden="true"
+              >
+                <Hash size={18} strokeWidth={2} />
+              </span>
+              <span class="max-w-[12rem] truncate font-medium">{tag}</span>
+              <span class="sr-only">({t('tags.chip_label', { tag })})</span>
+            </button>
           {/each}
+
+          <!-- Run 3: every other team the reader can see. Last, because
+               these are the ones they have not chosen — the strip's
+               discovery tail rather than its subscriptions. -->
+          {#each restTeams as team (team.id)}{@render teamChip(team)}{/each}
         </div>
 
         <!-- Edge chevrons (#1113's addition — #1097 confirmed the rail

@@ -53,10 +53,11 @@ export interface AccountFeedFilters {
 }
 
 /**
- * The account's teams-rail curation (#1113), joined onto the session
- * response from `user_preferences.team_rail`.
+ * The account's browse-rail curation (#1113, widened by #1123), joined
+ * onto the session response from `user_preferences.browse_rail`.
  *
- * The rail lists every team the caller can see. This is the reader's
+ * The rail lists every team the caller can see, plus the tags they
+ * follow. This is the reader's
  * edit of that list — the chips they took out, and the order they
  * dragged the rest into — and unlike `feedFilters` it is applied HERE
  * rather than by the server. That is the point of the split: hiding a
@@ -71,9 +72,11 @@ export interface AccountFeedFilters {
  * absent object as "the default rail" (every visible team,
  * followed-first, then name order), never as "an empty rail".
  */
-export interface AccountTeamRail {
+export interface AccountBrowseRail {
   hidden_team_ids?: string[] | null;
   team_order?: string[] | null;
+  hidden_tags?: string[] | null;
+  tag_order?: string[] | null;
 }
 
 export interface AuthUser {
@@ -96,9 +99,10 @@ export interface AuthUser {
   /** Account-level browse-feed content preferences (#891/#921). Absent —
    *  not an object of falses — for every account on the defaults. */
   feedFilters?: AccountFeedFilters | null;
-  /** Account-level teams-rail curation (#1113). Absent — not an object
-   *  of empty lists — for every account that has not curated it. */
-  teamRail?: AccountTeamRail | null;
+  /** Account-level browse-rail curation — team chips (#1113) and
+   *  followed-tag chips (#1123). Absent — not an object of empty
+   *  lists — for every account that has not curated it. */
+  browseRail?: AccountBrowseRail | null;
   /**
    * Non-null when the session was minted via
    * POST /admin/users/{ref}/impersonate. Drives the persistent
@@ -371,7 +375,7 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     theme: (u.theme ?? null) as 'light' | 'dark' | 'system' | '' | null,
     defaultViews: (u.default_views ?? null) as AccountViewDefaults | null,
     feedFilters: (u.feed_filters ?? null) as AccountFeedFilters | null,
-    teamRail: (u.team_rail ?? null) as AccountTeamRail | null,
+    browseRail: (u.browse_rail ?? null) as AccountBrowseRail | null,
     impersonatedBy: ib && ib.ref != null && ib.username != null
       ? { ref: ib.ref, username: ib.username }
       : null,

@@ -2571,6 +2571,19 @@
     "rail_explore": "Explore all teams",
     "rail_hidden_note": "Hidden from your rail. Their work still appears in your feed."
   },
+  "tags": {
+    "follow": "Follow",
+    "following": "Following",
+    "chip_label": "tag {tag}",
+    "rail_section": "Following tags",
+    "rail_follow_placeholder": "Follow a hashtag",
+    "rail_follow_label": "Follow a hashtag",
+    "rail_follow_submit": "Follow this hashtag",
+    "rail_already_following": "You already follow #{tag}",
+    "rail_unfollow": "Unfollow #{tag}",
+    "rail_reorder": "Reorder #{tag}",
+    "rail_empty": "Follow a hashtag to add it to your rail."
+  },
   "messages": {
     "title": "Messages",
     "empty": "No conversations yet.",

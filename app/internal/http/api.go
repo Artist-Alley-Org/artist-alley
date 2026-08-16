@@ -48,6 +48,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/tags"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
 	"github.com/mscrnt/artist-alley/app/internal/trash"
 
@@ -139,7 +140,12 @@ type apiServer struct {
 	collections  *collections.Handler
 	posts        *posts.Handler
 	teams        *teams.Handler
-	users        *users.Handler
+	// #1123 — tag follows. Separate from `posts` (which owns post_tags)
+	// because the follow is a bookmark rather than a post fact, and
+	// separate from `teams` for the reason team follows are separate
+	// from memberships: the shapes rhyme, the tables do not.
+	tags  *tags.Handler
+	users *users.Handler
 	social       *social.Handler
 	// #937 — GET /account/trash. Reads across assets/posts/collections
 	// but owns none of them; see the package doc for why it is one
@@ -301,6 +307,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:      collections.NewHandler(pool, logger, cacheReg),
 		posts:            posts.NewHandler(pool, logger, cacheReg),
 		teams:            teams.NewHandler(pool, logger, cacheReg),
+		tags:             tags.NewHandler(pool, logger),
 		users:            usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
 		social:           social.NewHandler(pool, logger, cacheReg),
 		trash:            trash.NewHandler(pool, sysCfg, logger),
@@ -3198,6 +3205,15 @@ func (s *apiServer) UnfollowTeam(ctx context.Context, req openapi.UnfollowTeamRe
 }
 func (s *apiServer) GetMyFollowedTeams(ctx context.Context, req openapi.GetMyFollowedTeamsRequestObject) (openapi.GetMyFollowedTeamsResponseObject, error) {
 	return s.teams.GetMyFollowedTeams(ctx, req)
+}
+func (s *apiServer) FollowTag(ctx context.Context, req openapi.FollowTagRequestObject) (openapi.FollowTagResponseObject, error) {
+	return s.tags.FollowTag(ctx, req)
+}
+func (s *apiServer) UnfollowTag(ctx context.Context, req openapi.UnfollowTagRequestObject) (openapi.UnfollowTagResponseObject, error) {
+	return s.tags.UnfollowTag(ctx, req)
+}
+func (s *apiServer) GetMyFollowedTags(ctx context.Context, req openapi.GetMyFollowedTagsRequestObject) (openapi.GetMyFollowedTagsResponseObject, error) {
+	return s.tags.GetMyFollowedTags(ctx, req)
 }
 func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	return s.teams.GetMyTeams(ctx, req)

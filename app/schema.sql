@@ -2439,6 +2439,18 @@ CREATE TABLE public.team_follows (
 
 
 --
+-- Name: tag_follows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tag_follows (
+    user_ref bigint NOT NULL,
+    tag text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tag_follows_tag_length CHECK (((length(tag) > 0) AND (length(tag) <= 200)))
+);
+
+
+--
 -- Name: team_memberships; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2601,7 +2613,7 @@ CREATE TABLE public.user_preferences (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL,
     feed_filters jsonb DEFAULT '{}'::jsonb NOT NULL,
-    team_rail jsonb DEFAULT '{}'::jsonb NOT NULL
+    browse_rail jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
 
@@ -3462,6 +3474,14 @@ ALTER TABLE ONLY public.team_closure
 
 ALTER TABLE ONLY public.team_follows
     ADD CONSTRAINT team_follows_pkey PRIMARY KEY (user_ref, team_id);
+
+
+--
+-- Name: tag_follows tag_follows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tag_follows
+    ADD CONSTRAINT tag_follows_pkey PRIMARY KEY (user_ref, tag);
 
 
 --
@@ -5047,6 +5067,13 @@ CREATE INDEX team_follows_team_idx ON public.team_follows USING btree (team_id, 
 
 
 --
+-- Name: tag_follows_tag_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tag_follows_tag_idx ON public.tag_follows USING btree (tag, created_at DESC);
+
+
+--
 -- Name: team_memberships_user_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6131,6 +6158,14 @@ ALTER TABLE ONLY public.team_follows
 
 ALTER TABLE ONLY public.team_follows
     ADD CONSTRAINT team_follows_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
+-- Name: tag_follows tag_follows_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tag_follows
+    ADD CONSTRAINT tag_follows_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
 
 
 --

@@ -1,37 +1,60 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kenneth Blossom
 
-// The browse teams rail's contents and the reader's edit of them
-// (#1113).
+// The browse rail's contents and the reader's edit of them (#1113,
+// widened to followed tags by #1123).
 //
 // # What this store owns, and what it deliberately does not
 //
 // It owns the ALL-TEAMS list (`listTeams`) and the CURATION — which
 // chips the reader hid, and the order they dragged the followed ones
-// into. It does NOT own follows: `teamFollows` already does, three
-// surfaces read from it, and a second copy of the follow set is how a
-// follow made on a team page stops moving the rail (that store's own
-// note explains the bill). So the rail composes the two.
+// into, for BOTH chip kinds. It does NOT own follows: `teamFollows` and
+// `tagFollows` already do, several surfaces read from them, and a second
+// copy of a follow set is how a follow made on a team page stops moving
+// the rail (teamFollows' own note explains the bill). So the rail
+// composes them.
 //
-// # The rail lists every visible team, not the follow set
+// # Two chip kinds, one strip, one curation bag
 //
-// This is the #1113 reversal. Until now the rail WAS the follow set,
-// which made a reader's first visit an empty strip and a pointer at the
-// directory. It is now a filter control over the feed, and a filter
-// with only the things you already subscribed to cannot introduce you
-// to anything. Follows survive as the SORT — followed teams lead — and
-// as the "Following" feed tab's input, which is untouched.
+// Team chips and `#tag` chips are the same furniture: one strip, one
+// manage panel, one save. That is why the persisted shape is a single
+// `browse_rail` object rather than two, and why this file holds four
+// lists instead of two stores holding two each. Migration 00051 carries
+// the argument.
+//
+// They are NOT interleaved: teams lead, tags follow. A single mixed
+// order would need one identifier space across uuids and free strings,
+// and the two groups are told apart at a glance anyway — every tag chip
+// wears a hash glyph. If a mixed order is ever wanted, the bag can grow
+// a `rail_order` key without a migration, which is the other half of
+// why it is one bag.
+//
+// # The rail lists every visible team, but only the FOLLOWED tags
+//
+// The team half is #1113's reversal: the rail lists every team the
+// caller can see, because a filter strip holding only what you already
+// subscribed to cannot introduce you to anything.
+//
+// The tag half CANNOT do that and does not try. There is no bounded
+// "all tags" list to draw — the corpus is unbounded, author-written and
+// spans posts the caller cannot read, so an "every tag" strip would be
+// both enormous and a disclosure. Followed tags are therefore the whole
+// tag population of the rail, and discovery happens through the manage
+// panel's follow-a-hashtag field instead. This asymmetry is deliberate;
+// it is not a team-half feature the tag half is missing.
 //
 // # Curation is applied HERE, on the client
 //
-// `user_preferences.team_rail` is never read by the server. Hiding a
-// team from your rail must not hide its posts from your feed, and the
-// cheapest guarantee of that is that no server-side query has the list
-// available to consult. See the openapi schema for the full argument.
+// `user_preferences.browse_rail` is never read by the server. Hiding a
+// team or a tag from your rail must not hide its posts from your feed,
+// and the cheapest guarantee of that is that no server-side query has
+// the lists available to consult. See the openapi schema for the full
+// argument.
 
 import { api } from '$api/client';
 import { auth } from '$stores/auth.svelte';
 import { teamFollows, type TeamSummary } from '$stores/teamFollows.svelte';
+import { tagFollows } from '$stores/tagFollows.svelte';
 
 /** One page is plenty: the directory itself pages at 100 and an
  *  instance with more teams than this has a rail nobody scrolls
@@ -39,7 +62,7 @@ import { teamFollows, type TeamSummary } from '$stores/teamFollows.svelte';
  *  drag it would re-order under the cursor. */
 const TEAM_LIMIT = 200;
 
-class TeamRailState {
+class BrowseRailState {
   /** Every team the caller can see, in the server's name order. */
   teams = $state<TeamSummary[]>([]);
   /** True once the teams list has resolved. The rail renders nothing
@@ -47,12 +70,17 @@ class TeamRailState {
    *  on every page load. */
   loaded = $state(false);
 
-  /** Ids the reader removed from their rail. */
+  /** Team ids the reader removed from their rail. */
   hidden = $state<string[]>([]);
-  /** The reader's explicit ordering, applied to the FOLLOWED group.
+  /** The reader's explicit team ordering, applied to the FOLLOWED group.
    *  Partial lists are normal: what is named here leads, in this order,
    *  and everything else keeps its previous relative position. */
   order = $state<string[]>([]);
+  /** Followed tags whose chip the reader removed. Hiding is not
+   *  unfollowing — the tag keeps feeding the Following feed. */
+  hiddenTags = $state<string[]>([]);
+  /** The reader's explicit tag ordering, same partial-list rule. */
+  tagOrder = $state<string[]>([]);
 
   /** True while a curation write is in flight or queued. Lets the panel
    *  avoid claiming a save landed before it did. */
@@ -81,13 +109,15 @@ class TeamRailState {
     }
     if (!this.#seeded) {
       this.#seeded = true;
-      const rail = auth.user.teamRail;
-      // Absent means THE DEFAULT RAIL — every visible team, in the
-      // server's order — not an empty one. Reading it as "hide
-      // everything" would blank the rail for every account that has
-      // never opened the manage panel, which is all of them.
+      const rail = auth.user.browseRail;
+      // Absent means THE DEFAULT RAIL — every visible team and every
+      // followed tag, in the server's order — not an empty one. Reading
+      // it as "hide everything" would blank the rail for every account
+      // that has never opened the manage panel, which is all of them.
       this.hidden = [...(rail?.hidden_team_ids ?? [])];
       this.order = [...(rail?.team_order ?? [])];
+      this.hiddenTags = [...(rail?.hidden_tags ?? [])];
+      this.tagOrder = [...(rail?.tag_order ?? [])];
     }
     void this.load();
   }
@@ -117,12 +147,18 @@ class TeamRailState {
     this.teams = [];
     this.hidden = [];
     this.order = [];
+    this.hiddenTags = [];
+    this.tagOrder = [];
     this.loaded = false;
     this.#seeded = false;
   }
 
   isHidden(id: string): boolean {
     return this.hidden.includes(id);
+  }
+
+  isTagHidden(tag: string): boolean {
+    return this.hiddenTags.includes(tag);
   }
 
   /**
@@ -144,6 +180,26 @@ class TeamRailState {
    * an un-hideable chip would be the one piece of it they cannot edit.
    */
   get railTeams(): TeamSummary[] {
+    return [...this.railLeadTeams, ...this.railRestTeams];
+  }
+
+  /**
+   * The teams that render BEFORE the tag chips: the featured slot, then
+   * the teams the caller follows in their own order.
+   *
+   * The split exists because of where the `#tag` chips go (#1123). They
+   * are FOLLOWS, and the rail's existing sort already says follows lead
+   * — so drawing them after every team on the instance would have put
+   * the reader's own subscriptions behind a list they never subscribed
+   * to. Measured on the seeded instance: with 11 visible teams the tag
+   * chip landed off the right edge of a 1920px strip, reachable only by
+   * scrolling, which is the opposite of what following a tag is for.
+   *
+   * So the strip reads: featured · followed teams · followed tags ·
+   * everything else. One rule — "things you chose come first" — applied
+   * to both chip kinds, rather than two rules that happen to disagree.
+   */
+  get railLeadTeams(): TeamSummary[] {
     const hidden = new Set(this.hidden);
     const featured = teamFollows.featured.filter((c) => !hidden.has(c.id));
     const featuredIds = new Set(featured.map((c) => c.id));
@@ -151,8 +207,18 @@ class TeamRailState {
 
     const rest = this.teams.filter((c) => !hidden.has(c.id) && !featuredIds.has(c.id));
     const followed = rest.filter((c) => followedIds.has(c.id));
-    const unfollowed = rest.filter((c) => !followedIds.has(c.id));
-    return [...featured, ...this.sortByUserOrder(followed), ...unfollowed];
+    return [...featured, ...this.sortByUserOrder(followed)];
+  }
+
+  /** The teams that render AFTER the tag chips — everything visible the
+   *  caller has not followed, in the server's name order. */
+  get railRestTeams(): TeamSummary[] {
+    const hidden = new Set(this.hidden);
+    const featuredIds = new Set(teamFollows.featured.map((c) => c.id));
+    const followedIds = new Set(teamFollows.items.map((c) => c.id));
+    return this.teams.filter(
+      (c) => !hidden.has(c.id) && !featuredIds.has(c.id) && !followedIds.has(c.id),
+    );
   }
 
   /**
@@ -180,12 +246,76 @@ class TeamRailState {
     return [...lead, ...byId.values()];
   }
 
+  /**
+   * The rail's TAG chips, in render order: the reader's own order
+   * first, then the server's (most recently followed first), minus
+   * anything hidden.
+   *
+   * Sourced from `tagFollows`, not from a copy here — same rule the
+   * team half follows, and same bill for breaking it: a tag followed
+   * from the manage panel has to move the strip on the next paint with
+   * nothing plumbed between them.
+   */
+  get railTags(): string[] {
+    const hidden = new Set(this.hiddenTags);
+    return this.sortTagsByUserOrder(tagFollows.tags).filter((t) => !hidden.has(t));
+  }
+
+  /** `sortByUserOrder` for tag strings. A separate function rather than
+   *  a generic over both, because the two read different `$state` lists
+   *  and the id version's callers pass objects while this one passes
+   *  bare strings — a shared implementation would need a key extractor
+   *  at every call site to save nine lines here. */
+  sortTagsByUserOrder(list: string[]): string[] {
+    if (this.tagOrder.length === 0) return list;
+    const remaining = new Set(list);
+    const lead: string[] = [];
+    for (const tag of this.tagOrder) {
+      if (remaining.has(tag)) {
+        lead.push(tag);
+        remaining.delete(tag);
+      }
+    }
+    return [...lead, ...list.filter((t) => remaining.has(t))];
+  }
+
   /** Hide / un-hide a team's chip. Never touches the feed: the browse
    *  page's query is driven by the ACTIVE chip, not by this list. */
   toggleHidden(id: string): void {
     this.hidden = this.hidden.includes(id)
       ? this.hidden.filter((x) => x !== id)
       : [...this.hidden, id];
+    this.persist();
+  }
+
+  /** Hide / un-hide a followed tag's chip.
+   *
+   *  ⚠️ NOT an unfollow. The `tag_follows` row is untouched, so the
+   *  tag keeps contributing to the Following feed — the panel offers
+   *  both verbs on every row precisely so the reader can pick. */
+  toggleTagHidden(tag: string): void {
+    this.hiddenTags = this.hiddenTags.includes(tag)
+      ? this.hiddenTags.filter((x) => x !== tag)
+      : [...this.hiddenTags, tag];
+    this.persist();
+  }
+
+  /** Move a followed tag one place up (-1) or down (+1).
+   *
+   *  Rewrites the stored order from the CURRENT rendered sequence for
+   *  `move`'s reason: a partial stored list plus a move is ambiguous,
+   *  and materialising what the reader just saw makes the result exactly
+   *  that. Hidden tags are included in the sequence so a hidden chip
+   *  keeps its place rather than being re-sorted to the end when it
+   *  comes back. */
+  moveTag(tag: string, delta: -1 | 1): void {
+    const seq = this.sortTagsByUserOrder(tagFollows.tags);
+    const from = seq.indexOf(tag);
+    if (from < 0) return;
+    const to = from + delta;
+    if (to < 0 || to >= seq.length) return;
+    seq.splice(to, 0, ...seq.splice(from, 1));
+    this.tagOrder = seq;
     this.persist();
   }
 
@@ -225,13 +355,18 @@ class TeamRailState {
    * Persist the curation, debounced.
    *
    * ⚠️ PATCH /account/preferences is FULL-OBJECT REPLACEMENT — the
-   * endpoint says so and the handler means it. Sending `{team_rail}`
+   * endpoint says so and the handler means it. Sending `{browse_rail}`
    * alone would clear this reader's notification channels, email
    * cadence, default views and feed filters in one keystroke. So every
    * write reads the current object first and sends it back with the
    * rail swapped in. That is a round trip per save, and it is not
    * negotiable at this contract; the debounce is what keeps a drag from
    * spending one per frame.
+   *
+   * The same trap applies INSIDE the bag now that it holds four lists:
+   * `browse_rail` is replaced whole, so a write naming only the team
+   * lists would clear the reader's tag curation. All four go every
+   * time — see #write.
    */
   persist(): void {
     if (!auth.user) return;
@@ -270,7 +405,12 @@ class TeamRailState {
           email_cadence: p.email_cadence ?? {},
           default_views: p.default_views ?? {},
           feed_filters: p.feed_filters ?? {},
-          team_rail: { hidden_team_ids: this.hidden, team_order: this.order },
+          browse_rail: {
+            hidden_team_ids: this.hidden,
+            team_order: this.order,
+            hidden_tags: this.hiddenTags,
+            tag_order: this.tagOrder,
+          },
         } as never,
       });
     } finally {
@@ -279,4 +419,4 @@ class TeamRailState {
   }
 }
 
-export const teamRail = new TeamRailState();
+export const browseRail = new BrowseRailState();
