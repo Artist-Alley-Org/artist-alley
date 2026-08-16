@@ -110,6 +110,9 @@
      *  Undefined ⇒ the array IS the membership, which is the case on
      *  every list endpoint. */
     memberCount?: number;
+    /** Feed-order ids for range selection (#1127). A thunk — see
+     *  CardCheckbox's prop of the same name. */
+    orderedIds?: () => string[];
   }
 
   let {
@@ -118,7 +121,13 @@
     tileSizes = DEFAULT_TILE_SIZES,
     mode = 'grid',
     memberCount: memberCountProp,
+    orderedIds,
   }: Props = $props();
+
+  /** Selection is gated exactly as CardCheckbox gates it — same two
+   *  conditions, because a shift-click that selected on a surface with
+   *  no visible checkbox would be an invisible mode. */
+  const canSelect = $derived(!!auth.user && !site.demoMode);
 
   // Grid reads clean/dense (no frame, hover-only title); the other modes
   // keep the gallery frame + a persistent footer in thumbnail.
@@ -444,6 +453,21 @@
   }
 
   async function handleClick(e: MouseEvent) {
+    // SHIFT IS NOW A SELECTION GESTURE, not a browser one (#1127).
+    // Shift+click used to fall through to the native href, which opens
+    // a new WINDOW — a behaviour nobody reaches for on a wall of art,
+    // and the modifier every file manager reserves for range selection.
+    // ctrl/cmd (new tab) and alt (download) are untouched, so nothing
+    // people actually use is taken away.
+    //
+    // preventDefault FIRST: without it the navigation happens whatever
+    // the selection does, which is the trap #1127 names explicitly.
+    if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.button === 0 && canSelect) {
+      e.preventDefault();
+      e.stopPropagation();
+      selection.extendTo(post.id, orderedIds ? orderedIds() : [post.id]);
+      return;
+    }
     // Modifier-key / non-primary clicks fall through to the native
     // <a href>. Standard browser behavior: new tab, new window,
     // download — all preserved.
@@ -466,7 +490,12 @@
   keeps the /?post={id} modal intercept (handleClick) with /posts/{id} as
   the modifier-click / new-tab fallback.
 -->
+<!-- `data-select-id` is what the marquee hit-tests against (#1127). It
+     rides the CARD ROOT rather than the checkbox because the band
+     selects a card when it touches the card, not when it happens to
+     clip a 24px control in one corner. -->
 <div
+  data-select-id={post.id}
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if social}
@@ -593,12 +622,13 @@
       onblur={tipBlur}
       class="absolute inset-0 z-[1]"
       aria-label={post.title || 'Untitled'}
+      data-marquee-passthrough
     ></a>
 
     <!-- Multi-select checkbox. Top-left everywhere except the #1111
          grid overlay, where top-left carries the kind icon and the ⋯
          menu has vacated top-right. -->
-    <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} />
+    <CardCheckbox id={post.id} corner={showOverlay ? 'right' : 'left'} {orderedIds} />
 
     <!-- Multi-asset "stacked" indicator (#578). BOTTOM-right, PERSISTENT —
          the one piece of chrome that stays at rest, so a wall of art

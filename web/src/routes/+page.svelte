@@ -22,6 +22,7 @@
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
+  import { createMarquee } from '$lib/util/marquee.svelte';
 
   onMount(() => { browseView.init(); });
 
@@ -323,6 +324,22 @@
     return () => observer.disconnect();
   });
 
+  // ── Marquee drag-select (#1127) ───────────────────────────────────
+  //
+  // Attached to the WALL, not to <main>: the band should not start from
+  // the rail, the featured strip or the page gutters, all of which are
+  // chrome with their own gestures. `orderedIds` is the loaded feed in
+  // feed order — the same array the grid renders from — which is what
+  // makes a range "everything between these two posts" rather than
+  // "everything between these two positions in some column".
+  //
+  // LOADED POSTS ONLY, and that falls out of using `items` rather than
+  // asking the server: a range can only ever name rows the reader can
+  // see, so there is no phantom selection of an unfetched page.
+  let wallEl = $state<HTMLElement | null>(null);
+  const orderedIds = () => items.map((p) => p.id);
+  const marquee = createMarquee(() => wallEl, { ordered: orderedIds });
+
   const hasMore = $derived(nextCursor !== null);
   // guestFeed has its own empty state below; without this the generic
   // "nothing here yet" block would render underneath it.
@@ -552,15 +569,35 @@
       token — it changes per interaction, so it can't be a class.
       Column COUNT is never computed: see browseView.svelte.ts.
     -->
-    <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
-      {#snippet card(item, mode)}
-        {@const post = item as Post}
-        <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} />
-      {/snippet}
-      {#snippet list()}
-        <PostListTable {items} {loading} />
-      {/snippet}
-    </ContentGrid>
+    <!-- The marquee's surface. `relative` is what the band positions
+         against; `select-none` stops a drag across the wall painting a
+         browser text selection over every title it crosses, which is
+         the one visual artefact a rubber band must not have. -->
+    <div bind:this={wallEl} {...marquee.handlers} class="relative select-none">
+      <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
+        {#snippet card(item, mode)}
+          {@const post = item as Post}
+          <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} {orderedIds} />
+        {/snippet}
+        {#snippet list()}
+          <PostListTable {items} {loading} {orderedIds} />
+        {/snippet}
+      </ContentGrid>
+
+      {#if marquee.rect}
+        <!-- Fixed, not absolute: the rect is computed in viewport space
+             for painting (the store keeps document space for the maths),
+             so it stays put while edge-autoscroll moves the wall
+             underneath it. pointer-events-none or the band would
+             hit-test itself and swallow the pointerup. -->
+        <div
+          aria-hidden="true"
+          data-testid="marquee-band"
+          class="pointer-events-none fixed z-30 rounded-sm border border-accent bg-accent/20"
+          style="left:{marquee.rect.left}px; top:{marquee.rect.top}px; width:{marquee.rect.width}px; height:{marquee.rect.height}px;"
+        ></div>
+      {/if}
+    </div>
 
     {#if hasMore}
       <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>

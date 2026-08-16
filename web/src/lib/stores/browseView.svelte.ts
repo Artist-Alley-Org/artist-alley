@@ -291,6 +291,26 @@ export interface ListColumnDef {
    *  floor of 80 would make the narrowest column in the table the one
    *  you cannot narrow. Defaults to COLUMN_MIN_PX. */
   minPx?: number;
+  /** May the reader drag this column's trailing edge (#1127)? Defaults
+   *  to true, which is every column #1100 shipped.
+   *
+   *  False for the selection column, and the reason is that it is not a
+   *  column of DATA: its content is one 24px control at a fixed size,
+   *  so there is nothing inside it that more width would reveal and
+   *  nothing that less width would ellipsize. A handle there offers a
+   *  gesture whose only possible outcome is whitespace beside a
+   *  checkbox — and it sits 8px from the row's first tab stop, so every
+   *  near-miss lands on a drag target instead. */
+  resizable?: boolean;
+  /** Can the reader turn this column off in the ColumnPicker? Defaults
+   *  to true.
+   *
+   *  False for the selection column: it is the list view's only
+   *  selection affordance, and a picker entry that removes the ability
+   *  to select is a setting whose "off" state breaks a feature rather
+   *  than hiding a field. The other four views have no equivalent
+   *  because their checkbox lives on the card and was never optional. */
+  hideable?: boolean;
 }
 
 /** The floor a column may be dragged to when its def names no other.
@@ -299,6 +319,10 @@ export interface ListColumnDef {
 export const COLUMN_MIN_PX = 80;
 
 export const LIST_COLUMNS: ListColumnDef[] = [
+  // The selection column (#1127). FIRST, fixed, unresizable, unhideable
+  // — the desktop-list idiom, and the one column whose width is decided
+  // by the control inside it rather than by its content.
+  { id: 'select',       labelKey: 'browse.col.select',    defaultVisible: true,  sortable: false, align: 'center', width: '2.75rem', minPx: 44, resizable: false, hideable: false },
   { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem', minPx: 48 },
   { id: 'title',        labelKey: 'browse.col.title',     defaultVisible: true,  sortable: true,  align: 'left',  width: 'minmax(16rem, 2fr)' },
   { id: 'author',       labelKey: 'browse.col.author',    defaultVisible: true,  sortable: true,  align: 'left',  width: '10rem' },
@@ -779,12 +803,31 @@ class BrowseViewState {
     writeFeedDir(this.feedDir);
   }
 
-  /** Resolve visible column defs in the user's chosen order. */
+  /** Resolve visible column defs in the user's chosen order.
+   *
+   *  UNHIDEABLE COLUMNS ARE FORCED IN, in the catalogue's canonical
+   *  position, whatever the stored list says. Without this the selection
+   *  column (#1127) would be missing for every reader who has ever
+   *  opened the ColumnPicker: their `listColumns` was written before the
+   *  column existed, `readColumns` keeps only ids it recognises, and the
+   *  new one is simply not in their array. The alternative — a
+   *  migration that rewrites everyone's localStorage on first load — has
+   *  to run exactly once and be right, and re-derives on every read what
+   *  this expresses as a rule. */
   get visibleColumns(): ListColumnDef[] {
     const byId = new Map(LIST_COLUMNS.map((c) => [c.id, c]));
-    return this.listColumns
-      .map((id) => byId.get(id))
-      .filter((c): c is ListColumnDef => !!c);
+    const chosen = new Set(this.listColumns);
+    for (const c of LIST_COLUMNS) {
+      if (c.hideable === false) chosen.add(c.id);
+    }
+    // Ordered by the reader's list, then anything forced in slotted back
+    // into catalogue order — which for `select` means first, where the
+    // idiom puts it.
+    const ordered = LIST_COLUMNS.filter((c) => chosen.has(c.id) && c.hideable === false).map(
+      (c) => c.id,
+    );
+    for (const id of this.listColumns) if (!ordered.includes(id)) ordered.push(id);
+    return ordered.map((id) => byId.get(id)).filter((c): c is ListColumnDef => !!c);
   }
 
   toggleColumn(id: string): void {

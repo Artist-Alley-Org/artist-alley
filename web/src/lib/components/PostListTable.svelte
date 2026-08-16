@@ -12,6 +12,9 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { browseView, columnMinPx, type ListColumnDef } from '$stores/browseView.svelte';
+  import { selection } from '$stores/selection.svelte';
+  import { auth } from '$stores/auth.svelte';
+  import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
   import ColumnPicker from '$components/ColumnPicker.svelte';
 
@@ -68,6 +71,16 @@
   interface Props {
     items: Post[];
     loading?: boolean;
+    /** Feed-order ids for range selection (#1127).
+     *
+     *  ⚠️ Deliberately NOT used as this table's range order. The list
+     *  view SORTS client-side, so the sequence on screen is
+     *  `sortedItems`, not the feed — and "everything between these two
+     *  rows" has to mean the rows between them, or Shift+click selects
+     *  things the reader cannot see between the two they clicked.
+     *  Accepted so the browse page can hand one prop to both branches
+     *  of ContentGrid; see `rangeOrder` below. */
+    orderedIds?: () => string[];
   }
   let { items, loading = false }: Props = $props();
 
@@ -249,6 +262,74 @@
     target.searchParams.set('post', id);
     await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
   }
+
+  // ── Selection (#1127) ──────────────────────────────────────────────
+  //
+  // The list gains the checkbox column the other four views have had
+  // since #515, plus the desktop-list keyboard idiom: Space toggles the
+  // focused row, Shift+Space extends from the anchor, arrows walk.
+  //
+  // THE RANGE ORDER IS THE SORTED ORDER, not the feed's. This is the one
+  // view where the two differ: click "Title" and the wall re-orders
+  // client-side, so a Shift+click range computed against feed order
+  // would select rows scattered through the table rather than the block
+  // the reader dragged across. Everywhere else the two are identical and
+  // the distinction never comes up.
+  const rangeOrder = () => sortedItems.map((p) => p.id);
+
+  const canSelect = $derived(!!auth.user && !site.demoMode);
+
+  function toggleRow(id: string, shift: boolean) {
+    if (shift) {
+      selection.extendTo(id, rangeOrder());
+      return;
+    }
+    selection.toggle(id);
+    selection.setAnchor(id);
+  }
+
+  /** Move focus by `delta` rows, wrapping at neither end.
+   *
+   *  Focus moves WITHOUT changing the selection, which is the
+   *  desktop-list convention the issue names: arrows navigate, Space
+   *  commits. (The other convention — arrows also select — makes it
+   *  impossible to reach a row without selecting everything on the way,
+   *  and there is no modifier here to escape it with.) */
+  function moveFocus(from: string, delta: number, el: HTMLElement) {
+    const order = rangeOrder();
+    const i = order.indexOf(from);
+    const next = i + delta;
+    if (i < 0 || next < 0 || next >= order.length) return;
+    const root = el.closest('[data-list-rows]');
+    root?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(order[next])}"]`)?.focus();
+  }
+
+  function onRowKey(e: KeyboardEvent, id: string) {
+    const el = e.currentTarget as HTMLElement;
+    switch (e.key) {
+      case ' ':
+      case 'Spacebar':
+        // Space is the SELECT key on a grid row, not the activate key —
+        // that is Enter. Prevented because Space on a focusable div also
+        // scrolls the page.
+        if (!canSelect) return;
+        e.preventDefault();
+        toggleRow(id, e.shiftKey);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        void openPost(id);
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        moveFocus(id, 1, el);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        moveFocus(id, -1, el);
+        break;
+    }
+  }
 </script>
 
 <div class="space-y-2">
@@ -264,7 +345,15 @@
        needing colgroup math. Header is sticky to the section scroll
        container. -->
   <div class="overflow-hidden rounded-lg border border-border bg-surface-elevated">
-    <div class="overflow-x-auto">
+    <!-- `role="grid"`, added with #1127's selection column. The rows
+         below are focusable `role="row"` elements with `aria-selected`,
+         and `row` is only valid inside a table/grid/treegrid — this
+         markup carried `role="row"` and `role="cell"` with NO such
+         ancestor, so the roles were being dropped. Naming the container
+         is what makes the whole keyboard idiom (arrows, Space,
+         Shift+Space) legible to a screen reader rather than a set of
+         divs that happen to respond to keys. -->
+    <div class="overflow-x-auto" role="grid" aria-rowcount={sortedItems.length}>
       <!-- Header row -->
       <div
         class="sticky top-0 z-10 grid border-b border-border bg-surface-elevated text-xs font-semibold text-fg-muted uppercase tracking-wide"
@@ -307,7 +396,15 @@
               </button>
             {:else}
               <div class={`flex min-w-0 flex-1 items-center px-3 py-2.5 ${alignClass(col)}`}>
-                <span class="truncate">{t(col.labelKey)}</span>
+                <!-- The selection column's label is VISUALLY HIDDEN, not
+                     absent (#1127). At its fixed 44px "Select" renders
+                     as "S…", which is noise where a column of checkboxes
+                     needs no caption — the convention in every desktop
+                     list is a blank header there. The string stays in the
+                     accessibility tree, because `role="columnheader"`
+                     with no accessible name is a column a screen reader
+                     cannot announce when walking the row. -->
+                <span class={col.id === 'select' ? 'sr-only' : 'truncate'}>{t(col.labelKey)}</span>
               </div>
             {/if}
 
@@ -330,7 +427,7 @@
 
                  `-right-1` centres the grab zone ON the border rather
                  than beside it, which is where the pointer aims. -->
-            {#if i < visibleColumns.length - 1}
+            {#if i < visibleColumns.length - 1 && col.resizable !== false}
               <!-- The two suppressions are the ARIA "window splitter"
                    pattern, which svelte-check does not model: a
                    `separator` is non-interactive UNTIL it is focusable,
@@ -348,10 +445,9 @@
                 aria-valuenow={browseView.columnWidths[col.id]}
                 aria-valuemin={columnMinPx(col.id)}
                 tabindex="0"
-                class="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none
-                       hover:bg-accent/50 focus-visible:bg-accent focus-visible:outline-none
+                class="group/handle absolute inset-y-0 -right-1 z-20 flex w-2 cursor-col-resize
+                       touch-none items-stretch justify-center focus-visible:outline-none
                        [@media(pointer:coarse)]:hidden"
-                class:bg-accent={drag?.id === col.id}
                 data-testid={`list-col-resize-${col.id}`}
                 onpointerdown={(e) => startResize(e, col)}
                 onpointermove={moveResize}
@@ -359,27 +455,129 @@
                 onpointercancel={endResize}
                 ondblclick={() => browseView.resetColumnWidth(col.id)}
                 onkeydown={(e) => onHandleKey(e, col)}
-              ></div>
+              >
+                <!-- ⛔ THE RESTING GRIP (owner rider on #1127).
+                     The handle used to paint NOTHING at rest — no
+                     background, no rule — so the only thing marking a
+                     draggable edge was the cell's own
+                     `border-border-subtle`, the quietest divider in the
+                     system. Measured in dark mode that is
+                     oklch(22%) against an oklch(~20%) header: a line you
+                     can find with the cursor and not with the eye. The
+                     report named dark mode; light was the same defect at
+                     oklch(92% vs 97%), which is why both are fixed here
+                     rather than only the half that was reported.
+
+                     `border-strong` is the correct token and app.css
+                     says why: it is the AFFORDANCE tier, the boundary
+                     that IS a control, specified to clear 3:1 against
+                     every surface in BOTH themes — which is exactly what
+                     a drag target is under WCAG 1.4.11. `border` and
+                     `border-subtle` are explicitly documented as
+                     carrying no information, and are therefore the wrong
+                     tier for the one line in the header that does.
+
+                     A 1px rule rather than washing the whole 8px zone:
+                     the grab area is deliberately wider than the visual
+                     edge (it straddles the border so the pointer can aim
+                     at what it sees), and painting all 8px at rest would
+                     put a fat bar between every pair of columns. -->
+                <span
+                  aria-hidden="true"
+                  class="w-px self-stretch transition-colors
+                         {drag?.id === col.id
+                    ? 'bg-accent'
+                    : 'bg-border-strong group-hover/handle:bg-accent group-focus-visible/handle:bg-accent'}"
+                ></span>
+              </div>
             {/if}
           </div>
         {/each}
       </div>
 
-      <!-- Body rows -->
+      <!-- Body rows.
+           ⚠️ THE ROW IS NO LONGER A <button> (#1127). It could not stay
+           one: the selection column puts a checkbox inside every row,
+           and interactive content inside a button is invalid HTML and
+           unreachable by keyboard — the very trap the `author` cell's
+           own comment names as the reason it has no profile link.
+
+           So the row is a focusable `role="row"` inside a `role="grid"`,
+           which is the ARIA pattern for a tabular widget whose rows are
+           both activatable and selectable, and the pattern the keyboard
+           idiom (#1127 asks for Space / Shift+Space / arrows) is defined
+           against. Enter opens, matching what the button did on Enter
+           and Space; Space now selects instead, which is the grid
+           convention and the reason the row had to stop being a button
+           rather than an accident of it. -->
+      <div data-list-rows>
       {#each sortedItems as post (post.id)}
-        <button
-          type="button"
-          onclick={() => openPost(post.id)}
-          class="grid w-full border-b border-border-subtle text-left text-sm transition-colors hover:bg-state-hover focus-visible:bg-state-hover focus-visible:outline-none"
-          style="grid-template-columns: {gridTemplate}"
+        {@const selected = selection.has(post.id)}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div
           role="row"
+          tabindex="0"
+          data-row-id={post.id}
+          data-select-id={post.id}
+          aria-selected={canSelect ? selected : undefined}
+          onclick={(e) => {
+            // Shift+click selects rather than opens, exactly as it does
+            // on a card (#1127). Checked before the open, or the modal
+            // would be halfway up before the selection landed.
+            if (e.shiftKey && canSelect) {
+              e.preventDefault();
+              toggleRow(post.id, true);
+              return;
+            }
+            void openPost(post.id);
+          }}
+          onkeydown={(e) => onRowKey(e, post.id)}
+          class="grid w-full cursor-pointer border-b border-border-subtle text-left text-sm transition-colors
+                 hover:bg-state-hover focus-visible:bg-state-hover focus-visible:outline-none
+                 {selected ? 'bg-accent-container/40' : ''}"
+          style="grid-template-columns: {gridTemplate}"
         >
           {#each visibleColumns as col (col.id)}
             <div
               class={`flex items-center border-r border-border-subtle px-3 py-2 ${alignClass(col)} ${col.align === 'right' ? 'font-mono-tabular tabular-nums' : ''} truncate`}
-              role="cell"
+              role="gridcell"
             >
-              {#if col.id === 'thumbnail'}
+              {#if col.id === 'select'}
+                <!-- Gated exactly as CardCheckbox is — same two
+                     conditions, so the list cannot offer a selection the
+                     other four views withhold. The cell stays (the grid
+                     template reserves its track either way) so the
+                     columns still line up with the header. -->
+                {#if canSelect}
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={selected}
+                    tabindex="-1"
+                    aria-label={selected ? t('card.select.deselect') : t('card.select.label')}
+                    data-testid="list-row-checkbox"
+                    onclick={(e) => {
+                      // The row's own onclick would open the post
+                      // underneath this one.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleRow(post.id, e.shiftKey);
+                    }}
+                    class="grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded border-2
+                           transition-colors {selected
+                      ? 'border-accent bg-accent text-on-accent'
+                      : 'border-border-strong bg-surface text-transparent hover:border-accent'}"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </button>
+                {/if}
+                <!-- `tabindex="-1"`: the ROW is the tab stop, and the
+                     checkbox is reached with Space from it. Two stops per
+                     row would double the length of the tab path through
+                     a 36-row table to reach the same two actions. -->
+              {:else if col.id === 'thumbnail'}
                 {@const url = thumbUrl(post)}
                 <!-- Cell renders a sized placeholder square; the <img>
                      sits on top and either fills it on load or hides
@@ -434,8 +632,9 @@
               {/if}
             </div>
           {/each}
-        </button>
+        </div>
       {/each}
+      </div>
 
       {#if loading}
         {#each Array(4) as _, i (i)}
