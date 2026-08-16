@@ -9,6 +9,26 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Mature content support, part one.** The groundwork landed: works can carry a mature flag
+  (posts inherit it from their files automatically), the instance has an operator switch for
+  whether mature content is allowed at all, and each signed-in account has its own opt-in.
+  The browse and viewing surfaces that USE these switches arrive next (#1115, ADR 0090).
+
+- **Thumbnail view got its proper frame.** Type and format sit in a band above the preview, the
+  artwork sits on a colour matte sampled from the image itself — nothing overlaps the picture —
+  and the metadata reads in clean rows below, with selection and actions in a bottom strip. Grid
+  and thumbnail also start at more compact, portfolio-standard sizes for new users; your own
+  saved size is untouched (#1136, #1140).
+
+### Fixed
+
+- **Annotations respect asset visibility** — reading or writing text annotations now requires
+  being able to see the asset's content, closing the sibling of the comments gap (#1135).
+- **List view works inside collections** — it silently fell back to the grid; now it renders
+  properly with columns and checkboxes (#1137).
+- **Masonry's hover info no longer clips on short, wide tiles** — it compresses to fit or
+  steps aside entirely, with measured thresholds (#1139).
+
 - **Profiles got their three tabs.** Portfolio (the artist's posts — a visitor sees published
   work, not raw uploads), About (bio, links, location), and Likes (what they've liked, filtered
   by what YOU are allowed to see). The browse footer's controls come along, so a profile browses
