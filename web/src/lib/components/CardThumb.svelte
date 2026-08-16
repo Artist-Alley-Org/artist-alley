@@ -659,6 +659,25 @@
   tests and the layout measurements address it by this rather than by a
   Tailwind class that a refactor is free to rename.
 -->
+<!--
+  a11y: this div carries `onpointermove` and no role, and that is
+  correct rather than an oversight (#1142).
+
+  The handler drives the hover SCRUB — a decorative preview over a card
+  whose actual interactive element is the stretched `<a>` that covers
+  it. There is no role that describes "the box a mouse position is
+  measured against": `button` would announce a control that does not
+  exist, and `img` would announce the still underneath, which already
+  has its own `<img>` with alt text. Adding either would make the card
+  read WORSE to a screen reader in exchange for silencing a lint.
+
+  Nothing is lost by not having one. The scrub is mouse-only by
+  construction (`pointerType !== 'mouse'` returns early), so no keyboard
+  or touch user can reach this behaviour, and for them the card is
+  exactly the link it has always been — a focused card shows the poster
+  frame, which is the documented behaviour #1142 preserves.
+-->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   data-card-thumb
   bind:this={frameEl}

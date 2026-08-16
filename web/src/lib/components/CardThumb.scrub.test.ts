@@ -136,6 +136,67 @@ async function unhoverCard(container: HTMLElement) {
   await fireEvent.mouseLeave(link!);
 }
 
+/** The scrub frame's width, in the fake layout these tests impose.
+ *  Any value works — the mapping is a FRACTION of the box — but it has
+ *  to be non-zero, because `scrubTo` bails on a zero-width rect and
+ *  jsdom returns all-zero rects for everything by default. Without the
+ *  stub below the scrub silently never moves and every assertion here
+ *  would read "1 distinct position", which is exactly how the real
+ *  behaviour and a completely broken component look identical. */
+const FRAME_W = 200;
+
+/** Give the scrub frame a real box. jsdom does no layout, so
+ *  `getBoundingClientRect` is all zeros and the pointer→timeline
+ *  mapping has nothing to divide by. */
+function stubFrameBox(container: HTMLElement): HTMLElement {
+  const frame = container.querySelector<HTMLElement>('[data-card-thumb]');
+  expect(frame, 'card should expose the scrub frame').toBeTruthy();
+  frame!.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: 0,
+      right: FRAME_W,
+      bottom: FRAME_W,
+      width: FRAME_W,
+      height: FRAME_W,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  return frame!;
+}
+
+/** Put the pointer at `fraction` across the frame (#1142).
+ *
+ *  THE SCRUB IS DRIVEN BY POSITION, NOT BY TIME. These tests used to
+ *  advance a faked `setInterval` and read whatever frame the animation
+ *  had reached; there is no animation now, so the pointer is the input
+ *  and this is the only way to move the scrub. `pointerType: 'mouse'`
+ *  is required — the component ignores touch and pen deliberately, so
+ *  omitting it reproduces the "no scrub" reading rather than a frame. */
+async function scrubTo(frame: HTMLElement, fraction: number) {
+  await fireEvent.pointerMove(frame, {
+    pointerType: 'mouse',
+    clientX: fraction * FRAME_W,
+    clientY: FRAME_W / 2,
+  });
+  await tick();
+}
+
+/** Sweep the pointer across `n` evenly spaced stops and collect the
+ *  distinct cells painted. `i / (n - 1)` is the exact inverse of the
+ *  component's `round(fraction * (n - 1))`, so an n-cue sheet swept at n
+ *  stops visits cue i at stop i — every cue exactly once, by
+ *  construction rather than by luck. */
+async function sweep(frame: HTMLElement, layer: () => HTMLElement, n: number): Promise<Set<string>> {
+  const positions = new Set<string>();
+  for (let i = 0; i < n; i++) {
+    await scrubTo(frame, i / (n - 1));
+    positions.add(layer().style.backgroundPosition);
+  }
+  return positions;
+}
+
 /** Let the cue fetch, the stubbed image load, and the resulting state
  *  updates all land. The scrub layer is deliberately NOT painted until
  *  both halves have arrived (see CardThumb) — there is no sheet to show
@@ -221,23 +282,18 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
     // the hover preview was blank. The sheet is unchanged — 2400x1340,
     // a full 10x10 grid — and only the cue count says otherwise.
     //
-    // Only the interval is faked: the card's cue fetch and sheet
-    // measurement are promise-based, and faking microtasks would stall
-    // the very state this test needs to arrive.
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    // No fake timers since #1142: there is no interval to advance. The
+    // pointer's x position IS the timeline, so the sweep below is what
+    // used to be `advanceTimersByTime`.
     stubCueFetch(vtt(25, 10, 240, 134, 0.2));
     stubSpriteSheetSize(2400, 1340);
 
     const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
     await hoverCard(container);
     await flushScrub();
+    const frame = stubFrameBox(container);
 
-    const positions = new Set<string>();
-    for (let i = 0; i < 25; i++) {
-      positions.add(spriteLayer(container)!.style.backgroundPosition);
-      vi.advanceTimersByTime(120);
-      await tick();
-    }
+    const positions = await sweep(frame, () => spriteLayer(container)!, 25);
     // 25 cues over a 10-wide grid = rows 0..2, so cell 24 is at column 4
     // of row 2 and NOTHING may address row 3 or beyond.
     expect(positions.size, 'every declared cue should be visited exactly once').toBe(25);
@@ -247,8 +303,12 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
       const row = Math.round(((yPct / 100) * (1340 - 134)) / 134);
       expect(row, `cue at ${p} addresses row ${row}, past the last populated row`).toBeLessThan(3);
     }
-    // Having visited all 25 it must wrap to the first, not walk into
-    // the padding.
+    // The left EDGE is the first cue, and going back to it returns
+    // there. This replaces the old "having visited all 25 it must wrap
+    // to the first": a position-driven scrub never wraps — it follows
+    // the pointer back, which is the #1142 behaviour and a stronger
+    // statement than wrapping was.
+    await scrubTo(frame, 0);
     expect(spriteLayer(container)!.style.backgroundPosition).toBe('0% 0%');
   });
 
@@ -259,7 +319,6 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
     // first padding cell. Every sheet already on an install has this.
     // Dropping it client-side is what makes the fix deployable with no
     // re-render at all.
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const good = vtt(25, 10, 240, 134, 0.2);
     const degenerate = '00:00:05.000 --> 00:00:05.000\nsprites.jpg#xywh=1200,268,240,134\n\n';
     stubCueFetch(good + degenerate);
@@ -268,14 +327,25 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
     const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
     await hoverCard(container);
     await flushScrub();
+    const frame = stubFrameBox(container);
 
-    const positions = new Set<string>();
-    for (let i = 0; i < 26; i++) {
-      positions.add(spriteLayer(container)!.style.backgroundPosition);
-      vi.advanceTimersByTime(120);
-      await tick();
-    }
+    const positions = await sweep(frame, () => spriteLayer(container)!, 25);
     expect(positions.size, 'the empty-window cue must not be cycled').toBe(25);
+
+    // THE SHARPER ASSERTION, and the one position-based scrubbing makes
+    // possible. The count above is necessary but weak: a 26-cue list
+    // swept at 25 stops also yields 25 distinct cells, just the wrong
+    // ones. The RIGHT EDGE of the frame addresses the LAST cue, so if
+    // the degenerate cue survived parsing it is what sits there.
+    //
+    // Cue 24 is column 4 of row 2 → x = 960 of a 2160 span = 44.44%.
+    // The degenerate cell is column 5 → x = 1200 of 2160 = 55.56%.
+    await scrubTo(frame, 1);
+    const endX = parseFloat(spriteLayer(container)!.style.backgroundPosition.split(' ')[0]);
+    expect(endX, 'the end of the timeline must be the last REAL cue, not the padding cell').toBeCloseTo(
+      (960 / 2160) * 100,
+      4,
+    );
   });
 
   it('tears the sprite layer down when the pointer leaves', async () => {
@@ -512,10 +582,9 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
       expect(fetch, 'no scrub means no cue fetch').not.toHaveBeenCalled();
     });
 
-    it('still cycles when motion is not reduced', async () => {
+    it('still scrubs when motion is not reduced', async () => {
       // The control. Without it the test above passes just as well
       // against a card whose scrub is broken outright.
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       stubReducedMotion(false);
       stubCueFetch(vtt(100, 10, 240, 134));
       stubSpriteSheetSize(2400, 1340);
@@ -523,13 +592,10 @@ describe('CardThumb sprite scrub (#595, #835)', () => {
       const { container } = render(AssetCard, { asset: asset({ file_extension: 'mp4' }) });
       await hoverCard(container);
       await flushScrub();
+      const frame = stubFrameBox(container);
 
-      const positions = new Set<string>();
-      for (let i = 0; i < 20; i++) {
-        positions.add(spriteLayer(container)!.style.backgroundPosition);
-        vi.advanceTimersByTime(120);
-        await tick();
-      }
+      // 20 stops across a 100-cue sheet land on 20 different cells.
+      const positions = await sweep(frame, () => spriteLayer(container)!, 20);
       expect(positions.size).toBe(20);
     });
   });
