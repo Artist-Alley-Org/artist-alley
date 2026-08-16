@@ -880,8 +880,10 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	return hits, total, nil
 }
 
-// runCollections queries collections. Visibility gate composed via
-// visibility.Predicate — see the shared package (Phase 1.16.B-2).
+// runCollections queries collections. The visibility gate is
+// [visibility.CollectionReadableSQL] — the whole collection read rule,
+// the same authority the autocomplete source composes (#1078/#1164),
+// which is the row-plane predicate for everyone plus an admin arm.
 // Anonymous callers get the public floor (`deleted_at IS NULL AND
 // visibility = 'public'`), not the always-false predicate this comment
 // used to claim — that stopped being true when #445/#448 opened the
@@ -904,7 +906,35 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 // ListCollectionsPage already uses for its ?featured= filter — added
 // then, against a real consumer.
 func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	pred, err := visibility.Filter(ctx, visibility.EntityCollection, visibility.NewCaller(q.CallerUserRef))
+	// #1164 — the WHOLE collection read rule, not the row plane alone.
+	//
+	// This used to compose `Filter(EntityCollection)`, which has no
+	// admin disjunct by design: the row plane describes who a collection
+	// is SHARED WITH, and an instance admin is on nobody's share list.
+	// The autocomplete source beside it composes
+	// [visibility.CollectionReadableSQL] (#1078), whose admin arm is the
+	// empty fragment. Two rules for one question, so a system.admin was
+	// COMPLETED the name of a private collection and then handed a
+	// result page that did not contain it — #1155's class, on the gate
+	// rather than the corpus.
+	//
+	// The direction is widen-the-run, ratified rather than inferred, and
+	// the argument is that search grants no reach here: an admin can
+	// already open any collection directly (#1078 / CanReadCollection),
+	// so returning one they searched for adds no row they could not
+	// already read. One readability authority for collections, not two.
+	//
+	// `q.Caps.Checker()` rather than `q.CapChecker`, and that choice is
+	// load-bearing twice over. It answers `system.admin` — the only code
+	// this rule asks for — and unlike the raw checker it is a RESOLVED
+	// value that `keyForQuery` folds into the cache key
+	// (ContentCaps.CacheKey). A widening keyed on something outside the
+	// cache key would serve an admin's page to the next caller who asked
+	// the same question, which is the leak this fix must not introduce.
+	visFrag, visArgs, err := visibility.CollectionReadableSQL(
+		ctx, "c", visibility.NewCaller(q.CallerUserRef), q.Caps.Checker(),
+		2, // $1=query text, $2=limit
+	)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -924,21 +954,31 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	if _, _, ok := q.Filters.SQL(visibility.EntityCollection, "c", 0); !ok {
 		return nil, 0, nil
 	}
-	visFrag, visArgs := pred.ToSQL("c", 2) // $1=query, $2=limit index reserved for hits query
+	// ⚠️ THE SOFT-DELETE CONJUNCT IS LOAD-BEARING AND IS NOT A DUPLICATE
+	// OF THE PREDICATE (#1164). CollectionReadableSQL's admin arm is the
+	// EMPTY fragment — deliberately, because GetCollection's Restore
+	// branch depends on an admin passing the read check on a deleted row
+	// — so without this line the widening would start returning
+	// TOMBSTONED collections to an admin's search. On the row-plane arm
+	// the predicate states the same rule and the two agree; on the admin
+	// arm this is its only expression. It is a CORPUS constraint ("what
+	// may be searched"), which is exactly how the autocomplete source
+	// beside it handles the same hole.
+	const notDeleted = ` AND c.deleted_at IS NULL`
 
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
 		       c.created_at, c.updated_at, c.visibility,
 		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM collections c
-			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + notDeleted + visFrag + `
 			 LIMIT $2
 		) x
 	`
