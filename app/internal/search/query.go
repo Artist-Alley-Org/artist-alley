@@ -103,8 +103,14 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 	// stops a direct read. See [facet.Selection.Authorize] for why the
 	// answer is an empty page rather than a 403, and why an unscoped
 	// search pays nothing for this.
+	// #1157 — the checker passed here is the RAW one when the handler
+	// supplied it, falling back to the resolved content caps.
+	// ContentCaps.Checker answers only `system.admin` and
+	// `content.read.all`, which is everything the collection arm needs
+	// (CanReadCollection checks system.admin alone) and nowhere near
+	// enough for the field arm, whose capability code is data.
 	allowed, err := q.Filters.Authorize(ctx, e.Pool,
-		visibility.NewCaller(q.CallerUserRef), q.Caps.Checker())
+		visibility.NewCaller(q.CallerUserRef), authorizeChecker(q))
 	if err != nil {
 		return QueryResult{}, fmt.Errorf("search: authorize filters: %w", err)
 	}
@@ -230,6 +236,25 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 }
 
 // containsHitType is a tiny lookup helper used by the hybrid gate.
+// authorizeChecker returns the capability lookup [facet.Selection.Authorize]
+// should use for this query.
+//
+// The raw checker is a SUPERSET of the resolved one — it is the same
+// identity the resolved values were computed from — so ORing them costs
+// nothing and cannot narrow. The fallback matters for the internal
+// callers that build a Query without going through the HTTP edge (the
+// saved-search notifier, save-as-collection, tests): they keep exactly
+// the collection-arm behaviour they had before #1157, rather than
+// silently losing the admin disjunct to a nil checker.
+func authorizeChecker(q Query) visibility.CapabilityChecker {
+	resolved := q.Caps.Checker()
+	if q.CapChecker == nil {
+		return resolved
+	}
+	raw := q.CapChecker
+	return func(code string) bool { return raw(code) || resolved(code) }
+}
+
 func containsHitType(types []HitType, want HitType) bool {
 	for _, t := range types {
 		if t == want {

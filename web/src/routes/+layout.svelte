@@ -376,21 +376,29 @@
                 scope={searchScope}
               />
             </div>
-            <!-- The entry point to the search SURFACE (#850).
-                 It used to read "Advanced search" and it pointed here
-                 already — the label named a page (`/search/advanced`)
-                 that no longer exists, and the destination it actually
-                 opens is now just search: one result grid, with the kind
-                 filter, the facet counts and the query builder inside
-                 it. So the control is named after where it goes.
+            <!-- The entry point to the ADVANCED SEARCH page (#1157).
+                 It read "Search" and opened the result surface, which is
+                 where the nav box already goes — so beside a search
+                 input it named nothing the caller could not already do.
+                 #1157 gives it a destination of its own again: a form
+                 with the conditional search, a filter per searchable
+                 metadata field, and the search-by-image arm.
+
+                 (The label "Advanced search" pointed at a
+                 `/search/advanced` route once before and #850 deleted
+                 it, because at the time the builder had moved into a
+                 panel and the route was an empty shell. The route is
+                 back because there is now a page's worth of form to put
+                 on it, not because the old one is being restored.)
 
                  It CARRIES whatever is in the box beside it. A control
-                 labelled "Search" sitting next to a search input, that
-                 navigates away and silently drops what you typed, is a
-                 trap — and renaming it without wiring it would have
-                 built one. Empty box ⇒ plain `/search`. -->
+                 sitting next to a search input that navigates away and
+                 silently drops what you typed is a trap. Empty box ⇒
+                 plain `/search/advanced`. -->
             <a
-              href={searchValue.trim() ? `/search?q=${encodeURIComponent(searchValue.trim())}` : '/search'}
+              href={searchValue.trim()
+                ? `/search/advanced?q=${encodeURIComponent(searchValue.trim())}`
+                : '/search/advanced'}
               title={t('nav.search_page')}
               aria-label={t('nav.search_page')}
               data-testid="nav-search-page"

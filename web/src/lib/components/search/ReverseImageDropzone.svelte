@@ -25,6 +25,21 @@
   import AssetCard from '$components/AssetCard.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
+  interface Props {
+    /** Reports what this component LEARNED about the instance's visual
+     *  search channel (#1157): `false` once a request came back 501
+     *  (`search.visual.enabled` is off), `true` once one did not.
+     *
+     *  There is no client-readable flag for this — see the note above —
+     *  so the only place the answer exists on the frontend is the
+     *  response this component already inspects. Handing it to the host
+     *  lets a page HIDE its search-by-image section outright rather than
+     *  render a heading over a "not configured" message; the panel host
+     *  passes nothing and keeps the explanatory state. */
+    oncapability?: (enabled: boolean) => void;
+  }
+  let { oncapability }: Props = $props();
+
   // Cap the hydrate fan-out — reverse-image is a deliberate action, so
   // a top-30 grid is plenty and bounds the per-hit GET /assets/{id}.
   const TOP_K = 30;
@@ -127,6 +142,7 @@
 
       if (resp.status === 501) {
         notConfigured = true;
+        oncapability?.(false);
         searched = true;
         return;
       }

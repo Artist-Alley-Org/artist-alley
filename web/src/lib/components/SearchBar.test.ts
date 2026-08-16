@@ -43,11 +43,11 @@ function settle() {
 }
 
 describe('SearchBar (#1156 — no live refine)', () => {
-  let onsearch: ReturnType<typeof vi.fn>;
+  let onsearch: ReturnType<typeof vi.fn> & ((q: string) => void);
   let fetchSpy: ReturnType<typeof stubSuggest>;
 
   beforeEach(() => {
-    onsearch = vi.fn();
+    onsearch = vi.fn() as unknown as ReturnType<typeof vi.fn> & ((q: string) => void);
     fetchSpy = stubSuggest(['sculpture']);
     vi.stubGlobal('fetch', fetchSpy);
     localStorage.clear();
@@ -78,7 +78,7 @@ describe('SearchBar (#1156 — no live refine)', () => {
     await settle();
 
     expect(fetchSpy).toHaveBeenCalled();
-    const url = String(fetchSpy.mock.calls[0][0]);
+    const url = String((fetchSpy.mock.calls[0] as unknown[])[0]);
     expect(url).toContain('/search/suggest');
     // #1155 — the corpus the commit will be executed against rides along.
     expect(url).toContain('scope=browse');
@@ -93,7 +93,7 @@ describe('SearchBar (#1156 — no live refine)', () => {
     await typeChars(input, 'scul');
     await settle();
 
-    expect(String(fetchSpy.mock.calls[0][0])).toContain('scope=search');
+    expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain('scope=search');
   });
 
   it('fires exactly ONE feed query on Enter', async () => {

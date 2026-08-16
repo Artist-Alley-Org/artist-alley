@@ -121,6 +121,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the `private` tier in the post read rule, which search now
 		// composes in full instead of a narrower copy of it.
 		query.PostCaps = visibility.ResolvePostCaps(func(code string) bool { return id.Can(code) })
+		// #1157 — the raw checker, for `field_definition.read_capability`.
+		// Unlike its three neighbours there is nothing to resolve it into:
+		// the capability code is data an operator typed into a field
+		// definition. Same shape and same reason as
+		// suggest.Request.CollectionCaps (#1078).
+		query.CapChecker = func(code string) bool { return id.Can(code) }
 	}
 
 	// Phase 1.16.B-3 — if the caller supplied a `dsl=` param
