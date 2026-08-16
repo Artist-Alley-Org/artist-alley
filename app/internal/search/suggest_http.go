@@ -24,7 +24,7 @@ type SuggestHandler struct {
 //
 // Wire shape:
 //
-//	GET /search/suggest?prefix=sub&limit=10
+//	GET /search/suggest?prefix=sub&limit=10&scope=browse
 //
 // Response:
 //
@@ -91,7 +91,13 @@ func (h *SuggestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// identity branch for the reason its siblings on /search and
 		// /search/facets are.
 		Mature: visibility.MatureFromContext(r.Context()),
-		Limit:  limit,
+		// #1155 — which corpus the caller's commit will be executed
+		// against. The nav box derives it from the same predicate that
+		// decides where a commit navigates; an absent or unknown value
+		// means the wider /search corpus, which is the pre-#1155
+		// behaviour and never withholds a completion silently.
+		Scope: suggest.ParseScope(r.URL.Query().Get("scope")),
+		Limit: limit,
 	}
 	resp, err := h.Service.Suggest(r.Context(), req)
 	if err != nil {
