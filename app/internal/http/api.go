@@ -675,12 +675,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Logger:     logger,
 	}
 	s.iiifContentSearchHandler = &contentsearch.Handler{
-		Pool:        pool,
-		Engine:      s.searchService.Engine(),
+		Pool: pool,
+		// Assigned BELOW rather than here, because Handler.Engine became
+		// an interface in #1147 and a typed nil inside an interface is
+		// not nil. Writing `Engine: s.searchService.Engine()` unchecked
+		// would turn the handler's own `h.Engine != nil` guard into a
+		// tautology and its nil-engine path into a nil-receiver panic.
 		Pairs:       iiifPairAdapter{loader: s.iiifLoader},
 		SiteBaseURL: savedSiteURL(context.Background(), sysCfg),
 		Counter:     s.iiifCounter,
 		Logger:      logger,
+	}
+	if eng := s.searchService.Engine(); eng != nil {
+		s.iiifContentSearchHandler.Engine = eng
 	}
 	s.iiifRedirectHandler = &iiifredirect.Handler{
 		Counter: s.iiifCounter,
@@ -1087,6 +1094,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// LITTLE, which is visible, rather than one that leaks, which is not.
 	matureRes := matureResolverAdapter{prefs: s.userprefs, sys: sysCfg}
 	s.posts.SetMatureResolver(matureRes)
+	// #1147 — the saved-search executor is the one consumer that cannot
+	// use the middleware: it runs on a job timer with no request and no
+	// context to read a viewer off, so it holds the resolver directly and
+	// resolves for the search's OWNER at execution time. Left unwired it
+	// keeps the pre-#1147 behaviour (every saved search runs as the
+	// disqualified viewer), which is the visible failure rather than the
+	// silent one.
+	if s.savedSearchExecutor != nil {
+		s.savedSearchExecutor.SetMatureResolver(matureRes)
+	}
 	// The CONTENT plane reaches the same resolver through the request
 	// context instead of a per-package field — see
 	// visibility.MatureFromContext for why ten wiring lines became one

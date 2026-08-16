@@ -46,6 +46,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // Synthetic refs, disjoint from every other set in this package.
@@ -341,7 +342,13 @@ func TestCollectionPost_OriginDeleteRemovesTheReference(t *testing.T) {
 			"belt-and-braces rather than the thing doing the work", n)
 	}
 	// …and the reference is nonetheless gone from the curator's view.
-	ids, err := h.ListCollectionPostsGated(ctx, &auth.Identity{UserRef: cpCurator, AuthMethod: "session"}, col, 50)
+	// The DISQUALIFIED viewer + no admin waiver (#1147). Every fixture in
+	// this file is non-mature, and MatureItemVisible's first branch says a
+	// non-mature item is visible on this axis to everybody — so the axis
+	// is inert here and these assertions are about the read rule alone.
+	ids, err := h.ListCollectionPostsGated(ctx,
+		&auth.Identity{UserRef: cpCurator, AuthMethod: "session"}, col, 50,
+		visibility.MatureViewer{}, false)
 	if err != nil {
 		t.Fatalf("ListCollectionPostsGated: %v", err)
 	}
@@ -458,7 +465,8 @@ func TestListCollectionPosts_MembershipNeverWidens(t *testing.T) {
 	got := func(caller int64) map[uuid.UUID]bool {
 		t.Helper()
 		ids, err := h.ListCollectionPostsGated(ctx,
-			&auth.Identity{UserRef: caller, AuthMethod: "session"}, col, 50)
+			&auth.Identity{UserRef: caller, AuthMethod: "session"}, col, 50,
+			visibility.MatureViewer{}, false)
 		if err != nil {
 			t.Fatalf("ListCollectionPostsGated(%d): %v", caller, err)
 		}
@@ -497,7 +505,7 @@ func TestListCollectionPosts_MembershipNeverWidens(t *testing.T) {
 	// AUTHENTICATED branch and sees the org-only post. Asserting against
 	// that would have been asserting against a fixture nobody can
 	// construct at runtime.
-	anon, err := h.ListCollectionPostsGated(ctx, nil, col, 50)
+	anon, err := h.ListCollectionPostsGated(ctx, nil, col, 50, visibility.MatureViewer{}, false)
 	if err != nil {
 		t.Fatalf("ListCollectionPostsGated(anon): %v", err)
 	}
@@ -520,7 +528,7 @@ func TestListCollectionPosts_MembershipNeverWidens(t *testing.T) {
 		 VALUES ($1,$2,2,TRUE)`, col, pub); err != nil {
 		t.Fatalf("seed public membership: %v", err)
 	}
-	anon, err = h.ListCollectionPostsGated(ctx, nil, col, 50)
+	anon, err = h.ListCollectionPostsGated(ctx, nil, col, 50, visibility.MatureViewer{}, false)
 	if err != nil {
 		t.Fatalf("ListCollectionPostsGated(anon, public): %v", err)
 	}
@@ -575,5 +583,75 @@ func TestListCollectionPosts_ParentGate(t *testing.T) {
 	}
 	if len(list.Items) != 1 || uuid.UUID(list.Items[0].Id) != post {
 		t.Errorf("owner sees %d items, want the 1 post they pinned", len(list.Items))
+	}
+}
+
+// TestListCollectionPosts_MatureMemberIsAbsent — #1147's sweep find in
+// this file.
+//
+// The two sibling listings, ListSharedWithMeGated and
+// ListPostsByAssetGated, both took the mature conjunct in #1116. This
+// one is the same rule reached through a collection and it was missed,
+// which mattered more than either of theirs: the ids it returns go on to
+// fetchFullPost + enrichForCaller, so a disqualified viewer got the
+// mature post's cover ids AND its members' thumbhashes. A thumbhash is a
+// blur — that is a picture, not a listing.
+//
+// The post is PUBLIC, so no read-rule conjunct is what hides it, and it
+// is authored by somebody other than the caller so the owner exemption
+// is not what shows it. The only difference between the two legs is the
+// reader's opt-in.
+func TestListCollectionPosts_MatureMemberIsAbsent(t *testing.T) {
+	h := wireWriteHandler(t)
+	pool := h.Pool
+	ctx := context.Background()
+
+	col := cpSeedCollection(t, pool, cpCurator, "cp_mature_listing")
+	plain := cpSeedPost(t, pool, "public", "cp plain")
+	adult := cpSeedPost(t, pool, "public", "cp adult")
+	// Set through the column the trigger maintains, so this asserts
+	// against the value the product produces rather than a hand-written
+	// one. (The trigger's own coverage lives with the migration.)
+	if _, err := pool.Exec(ctx, `UPDATE posts SET mature = TRUE WHERE id = $1`, adult); err != nil {
+		t.Fatalf("mark post mature: %v", err)
+	}
+	for i, p := range []uuid.UUID{plain, adult} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO collection_posts (collection_id, post_id, sort_order, pinned)
+			 VALUES ($1,$2,$3,TRUE)`, col, p, i); err != nil {
+			t.Fatalf("seed membership: %v", err)
+		}
+	}
+
+	list := func(v visibility.MatureViewer) map[uuid.UUID]bool {
+		t.Helper()
+		ids, err := h.ListCollectionPostsGated(ctx,
+			&auth.Identity{UserRef: cpCurator, AuthMethod: "session"}, col, 50, v, false)
+		if err != nil {
+			t.Fatalf("ListCollectionPostsGated: %v", err)
+		}
+		out := map[uuid.UUID]bool{}
+		for _, id := range ids {
+			out[uuid.UUID(id.Bytes)] = true
+		}
+		return out
+	}
+
+	out := list(visibility.MatureViewer{})
+	if out[adult] {
+		t.Errorf("the mature post is listed for a viewer who never opted in. It is "+
+			"PUBLIC, so the read rule was never going to catch it — and the caller "+
+			"goes on to enrich each id with its cover and its members' thumbhashes "+
+			"(post=%s)", adult)
+	}
+	if !out[plain] {
+		t.Error("the non-mature post vanished too — the conjunct is filtering the whole " +
+			"listing rather than the mature rows")
+	}
+
+	in := list(visibility.MatureViewer{SignedIn: true, OptedIn: true, InstanceAllows: true})
+	if !in[adult] || !in[plain] {
+		t.Errorf("qualified listing = %v, want both posts — the withholding above has to "+
+			"be the mature axis and not an outage", in)
 	}
 }

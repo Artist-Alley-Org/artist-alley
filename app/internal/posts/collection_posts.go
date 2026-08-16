@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -134,7 +135,14 @@ func (h *Handler) ListCollectionPosts(
 		limit = l
 	}
 
-	ids, err := h.ListCollectionPostsGated(ctx, id, uuid.UUID(req.Id), limit)
+	// #1147 — the mature axis, resolved ONCE for this request and handed
+	// down, the way every other listing in this package does it. The
+	// admin waiver is read off the identity here rather than inside the
+	// query for the reason ADR 0090 gives: the exemption is checked
+	// BEFORE qualification, so it has to be an input to the rule and not
+	// a branch within it.
+	ids, err := h.ListCollectionPostsGated(ctx, id, uuid.UUID(req.Id), limit,
+		h.resolveMature(ctx, id), id != nil && id.Can(CapSystemAdmin))
 	if err != nil {
 		return nil, err
 	}
@@ -191,11 +199,30 @@ const maxCollectionPostsPage int32 = 200
 // The expired-membership conjunct is the resources query's, restated
 // here because it is a property of `collection_posts` and not of the
 // read rule: a membership row past its `expires_at` is not a member.
+// # The mature axis (#1147)
+//
+// This was the THIRD of the three sibling listings and the one #1116
+// missed. [Handler.ListSharedWithMeGated] and
+// [Handler.ListPostsByAssetGated] both carry the conjunct with an
+// argument written out at each; this one is the same rule reached
+// through a collection, and the gap was worth more than either of theirs
+// because the rows it returns go on to `fetchFullPost` +
+// `enrichForCaller` — so a disqualified viewer got the mature post's
+// cover ids AND its members' thumbhashes, which is a picture rather than
+// a listing.
+//
+// The conjunct is on the ROW plane, not the picture plane: absent, not
+// placeheld. `assets.ListAssetsPageGated` states the argument in full —
+// a restricted asset stays listed because #881's request-access flow
+// hangs off the placeholder, and a mature one has no such flow, only a
+// preference to change.
 func (h *Handler) ListCollectionPostsGated(
 	ctx context.Context,
 	id *auth.Identity,
 	collectionID uuid.UUID,
 	limit int32,
+	mature visibility.MatureViewer,
+	matureAdmin bool,
 ) ([]pgtype.UUID, error) {
 	args := []any{collectionID, limit} // $1, $2
 	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "p", len(args))
@@ -204,13 +231,25 @@ func (h *Handler) ListCollectionPostsGated(
 	}
 	args = append(args, ruleArgs...)
 
+	// The owner placeholder goes on the END, above whatever the read rule
+	// bound, and ONLY when the conjunct names it: MatureFilterSQL folds
+	// to "" for a qualified viewer and for an admin, and a bound
+	// parameter no statement mentions is 42P18 — an error on every
+	// request by exactly the readers who qualify. Same trap
+	// posts/list_page.go documents at its own splice.
+	matureFrag := visibility.MatureFilterSQL("p", visibility.MatureOwnerColPost,
+		"$"+strconv.Itoa(len(args)+1), mature, matureAdmin)
+	if matureFrag != "" {
+		args = append(args, matureOwnerArg(id))
+	}
+
 	sql := `SELECT p.id
 FROM collection_posts cp
 JOIN posts p ON p.id = cp.post_id
 WHERE cp.collection_id = $1::UUID
   AND cp.pinned = TRUE
   AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
-  AND p.deleted_at IS NULL` + ruleFrag + `
+  AND p.deleted_at IS NULL` + ruleFrag + matureFrag + `
 ORDER BY cp.sort_order ASC, cp.added_at ASC
 LIMIT $2::INTEGER`
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/search"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // Counter is the health-hook interface. Nil-safe. Latency is the
@@ -42,6 +43,23 @@ type Pair struct {
 	Value string
 }
 
+// EngineRunner is the narrow slice of *search.Engine the collection
+// scope consumes, declared as an interface for the reason
+// AssetPairSource above is: so a test can see what this handler ASKS
+// FOR without standing up the whole search stack.
+//
+// That is not a testing convenience here, it is the only way to pin
+// #1147. The bug was a FIELD LEFT UNSET on the Query — the handler built
+// `search.Query` with no `Mature`, so every IIIF content search on the
+// install ran as the disqualified viewer, permanently and with nothing
+// logged. An end-to-end assertion sees the same "no hit" either way; the
+// only thing that distinguishes a working gate from an absent one is the
+// value handed to the Engine. `search.saved.EngineRunner` exists for the
+// identical reason, one leak over.
+type EngineRunner interface {
+	Run(ctx context.Context, q search.Query) (search.QueryResult, error)
+}
+
 // Handler serves both asset-scope + collection-scope Content Search
 // endpoints. SiteBaseURL is a boot-time default; the per-request
 // origin is derived from publicBaseURL(r) so the emitted IDs match
@@ -49,7 +67,7 @@ type Pair struct {
 // X-Forwarded-{Proto,Host}).
 type Handler struct {
 	Pool        *pgxpool.Pool
-	Engine      *search.Engine
+	Engine      EngineRunner
 	Pairs       AssetPairSource
 	SiteBaseURL string
 	Counter     Counter
@@ -158,6 +176,22 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 				Types:         []search.HitType{search.HitTypeAsset},
 				Limit:         50,
 				CallerUserRef: callerRef,
+				// #1147 — the mature axis, resolved once at the HTTP edge
+				// and carried. Without it this Query ran with the ZERO
+				// MatureViewer, which is the DISQUALIFIED viewer: an
+				// opted-in reader searching inside a collection they can
+				// see got no hit for a mature member, permanently and
+				// with nothing logged. Fail-closed, so not a leak — but a
+				// gate whose inputs are missing is a gate nobody is
+				// maintaining, and the next widening of the default would
+				// have made it one.
+				//
+				// Both mounts of this handler run
+				// matureViewerMiddleware (the /api/v1 group and the IIIF
+				// root group in http/server.go), so the context always
+				// carries a resolved viewer here; MatureFromContext's
+				// absent-means-disqualified is the belt, not the plan.
+				Mature: visibility.MatureFromContext(r.Context()),
 			})
 			if sErr == nil {
 				for i, hit := range result.Hits {

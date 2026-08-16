@@ -545,8 +545,8 @@ func (h *Handler) UpdateCollection(
 		// The caller triple comes from the same helper the read path
 		// uses, so "may point at" and "may see painted" are one rule
 		// evaluated twice rather than two rules.
-		cCaller, cCaps, _ := CoverCallerFromContext(ctx)
-		mayPicture, err := CallerMayPictureAsset(ctx, h.Pool, cCaller, cCaps, want)
+		cCaller, cCaps, _, cMature := CoverCallerFromContext(ctx)
+		mayPicture, err := CallerMayPictureAsset(ctx, h.Pool, cCaller, cCaps, cMature, want)
 		if err != nil {
 			return nil, err
 		}
@@ -1073,6 +1073,10 @@ func (h *Handler) ListCollectionResources(
 			RowLimit:        fetch,
 			Ladder:          h.ladder(ctx),
 			MutationCaps:    mutCaps,
+			// #1147 — the mature axis off the request context, where the
+			// middleware left it. An absent value is the DISQUALIFIED
+			// viewer, never a permissive default.
+			Mature: visibility.MatureFromContext(ctx),
 		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)

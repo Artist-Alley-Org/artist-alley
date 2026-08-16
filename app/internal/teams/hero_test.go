@@ -50,6 +50,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // ---------------------------------------------------------------------------
@@ -700,5 +701,191 @@ func TestTeamHero_AcceptedBeforeItsRenditionExists(t *testing.T) {
 	if got := f.heroOnGet(ctx, team); got != nil {
 		t.Errorf("hero on the wire = %s with no col rendition, want absent so the "+
 			"client paints initials instead of a broken image", *got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #1147 — the mature axis on the hero picture
+// ---------------------------------------------------------------------------
+//
+// The hero was found by the sweep #1147 asked for, not by the issue: it
+// is the same construction as the collection cover mosaic one table
+// over. A team row holds a pointer and the client paints that asset's
+// `col` rendition, so the hero is a DERIVED PICTURE and has to compose
+// the axis — and `teams` has no `mature` column of its own, so the hero
+// asset is the only place the rule can act.
+//
+// The fixtures are PUBLIC assets, which is what makes this a real leak
+// rather than a rounding error: the sensitivity ladder was never going
+// to catch them (ADR 0090 §1 — a rating is not a clearance), and a
+// team's hero renders in a navigation strip that ANONYMOUS readers see.
+//
+// The re-check being per-viewer now is the one structural change. It was
+// already computed after the by-id LRU, for the staleness reason
+// TestTeamHero_FlipToRestrictedDropsOutThroughTheCache pins, which is
+// exactly where ADR 0013's amendment puts a viewer-dependent value — so
+// the cached twin below is asserting the same placement from the other
+// direction.
+
+// withMature carries a resolved viewer on a context, which is what
+// matureViewerMiddleware does in http/server.go after ResolveIdentity.
+//
+// The plain `admin` / `plain` contexts above carry NONE, and
+// visibility.MatureFromContext answers that with the DISQUALIFIED
+// viewer. That is why every test above this section keeps working
+// unchanged: their assets are not mature, and a non-mature item is
+// visible on this axis to everybody.
+func (f *thFixture) withMature(ctx context.Context, v visibility.MatureViewer) context.Context {
+	f.t.Helper()
+	return visibility.WithMatureViewer(ctx, v)
+}
+
+// thQualified has cleared all three of ADR 0090 §2's conjuncts.
+var thQualified = visibility.MatureViewer{SignedIn: true, OptedIn: true, InstanceAllows: true}
+
+func (f *thFixture) markMature(asset uuid.UUID, mature bool) {
+	f.t.Helper()
+	tag, err := f.pool.Exec(f.ctx,
+		`UPDATE assets SET mature = $2 WHERE id = $1`, asset, mature)
+	if err != nil {
+		f.t.Fatalf("set mature: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		f.t.Fatalf("set mature: %d rows affected, want 1", tag.RowsAffected())
+	}
+}
+
+// TestTeamHero_MatureHeroDropsOutForADisqualifiedViewer is #1147's
+// sweep find, as a pair, on all three surfaces the hero renders on.
+//
+// All three matter and they are three code paths: getTeam reads through
+// the by-id LRU, listTeams runs a query, and the follows rail is a third
+// caller of the same enrichment. #982 already found that the first two
+// can disagree.
+//
+// The stored pointer must SURVIVE, exactly as it does when an asset is
+// flipped to restricted: dropping out is a render decision about one
+// reader, not a destructive one about the team. Otherwise an operator
+// switching the instance toggle would silently un-pick every mature
+// hero on the install.
+func TestTeamHero_MatureHeroDropsOutForADisqualifiedViewer(t *testing.T) {
+	f := newHeroFixture(t)
+	team := f.team("hero_mature")
+	ref := f.user("admin")
+	admin := f.admin(ref, team)
+	asset := f.asset(team, "public")
+	f.follow(ref, team)
+
+	f.mustSetHero(admin, team, asset)
+	f.markMature(asset, true)
+
+	out := f.withMature(admin, visibility.MatureViewer{})
+	for name, got := range map[string]*uuid.UUID{
+		"getTeam":            f.heroOnGet(out, team),
+		"listTeams":          f.heroOnList(out, team),
+		"getMyFollowedTeams": f.heroOnRail(out, team),
+	} {
+		if got != nil {
+			t.Errorf("%s: hero_asset_id = %s for a viewer who never opted in. The asset "+
+				"is PUBLIC, so no sensitivity conjunct was ever going to catch it — a "+
+				"team's hero is a derived picture and must compose the mature axis "+
+				"itself (#1147)", name, *got)
+		}
+	}
+
+	// The pointer is a setting, not a render answer.
+	if stored := f.storedHero(team); stored == nil || *stored != asset.String() {
+		t.Errorf("stored hero_asset_id = %v after the reader was refused, want %s — "+
+			"withholding a picture from one viewer must not un-pick the team's hero",
+			stored, asset)
+	}
+
+	// CONTROL. Same team, same asset, opposite viewer. Without this leg
+	// an implementation that dropped every hero passes the whole test.
+	in := f.withMature(admin, thQualified)
+	for name, got := range map[string]*uuid.UUID{
+		"getTeam":            f.heroOnGet(in, team),
+		"listTeams":          f.heroOnList(in, team),
+		"getMyFollowedTeams": f.heroOnRail(in, team),
+	} {
+		if got == nil || *got != asset {
+			t.Errorf("%s: hero_asset_id = %v for a QUALIFIED viewer, want %s — the "+
+				"withholding above has to be the mature axis and not an outage",
+				name, got, asset)
+		}
+	}
+}
+
+// TestTeamHero_MatureHeroDropsOutThroughTheCache is not a duplicate of
+// the test above, and the reason is the reason its #982 twin exists.
+//
+// fetchTeam reads through an LRU. The axis is per-viewer, so an
+// implementation that composed it on the cache-MISS branch only would
+// serve the first reader's answer to every later reader — the exact
+// defect ADR 0013's 2026-08-11 amendment names ("a shared entry may hold
+// only what every caller may see"). This warms the entry as a QUALIFIED
+// reader first, which is the ordering that makes that bug visible; the
+// test above happens to warm it the safe way round.
+func TestTeamHero_MatureHeroDropsOutThroughTheCache(t *testing.T) {
+	f := newHeroFixtureWith(t, true)
+	team := f.team("hero_mature_cached")
+	ref := f.user("admin")
+	admin := f.admin(ref, team)
+	asset := f.asset(team, "public")
+
+	f.mustSetHero(admin, team, asset)
+	f.markMature(asset, true)
+
+	// Warm the entry as somebody who may see it.
+	if got := f.heroOnGet(f.withMature(admin, thQualified), team); got == nil || *got != asset {
+		t.Fatalf("qualified read = %v, want %s — the cache was never warmed with the "+
+			"picture, so the assertion below proves nothing", got, asset)
+	}
+
+	if got := f.heroOnGet(f.withMature(admin, visibility.MatureViewer{}), team); got != nil {
+		t.Errorf("hero_asset_id = %s served to a disqualified viewer FROM A WARM CACHE. "+
+			"The hero is per-viewer now, so it must be computed after the cache — an "+
+			"entry that carries one lets the first reader decide what every later "+
+			"reader sees", *got)
+	}
+}
+
+// TestTeamHero_MatureSelectionIsRefusedForADisqualifiedAdmin mirrors the
+// read gate on the write side, which is what keeps "may point at" and
+// "may see painted" one rule.
+//
+// Not because pinning a mature hero would leak — the re-check withholds
+// it per viewer regardless. It is the existence oracle this endpoint
+// already spends a paragraph avoiding: a disqualified admin cannot see
+// their own team's mature assets in ANY listing, so a write gate that
+// accepted one would confirm by id exactly what every listing withholds
+// from them.
+//
+// The refusal asserts the PERSISTED pointer, not the status: a 400 whose
+// write went through anyway is not a refusal.
+func TestTeamHero_MatureSelectionIsRefusedForADisqualifiedAdmin(t *testing.T) {
+	f := newHeroFixture(t)
+	team := f.team("hero_mature_write")
+	ref := f.user("admin")
+	admin := f.admin(ref, team)
+	asset := f.asset(team, "public")
+	f.markMature(asset, true)
+
+	id := openapi_types.UUID(asset)
+	resp := f.setHero(f.withMature(admin, visibility.MatureViewer{}),
+		team, openapi.TeamHeroUpdate{AssetId: &id})
+	if _, ok := resp.(openapi.SetTeamHero400JSONResponse); !ok {
+		t.Errorf("setting a mature hero as a disqualified admin: response=%T, want 400", resp)
+	}
+	if stored := f.storedHero(team); stored != nil {
+		t.Errorf("hero_asset_id persisted as %q after a refused write, want NULL", *stored)
+	}
+
+	// CONTROL: the same admin, opted in, may pick it — and then it
+	// renders for them. A gate that refused everybody passes the leg
+	// above on its own.
+	f.mustSetHero(f.withMature(admin, thQualified), team, asset)
+	if got := f.heroOnGet(f.withMature(admin, thQualified), team); got == nil || *got != asset {
+		t.Errorf("qualified admin's hero = %v, want %s", got, asset)
 	}
 }
