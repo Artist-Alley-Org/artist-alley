@@ -498,7 +498,16 @@
     and the browse page's SelectionBar stops pinning underneath the
     navbar as a side effect.
   -->
+  <!-- `data-testid` because `main` alone is not a unique handle on this
+       app. /admin/integrations/api embeds Scalar's API reference, a Vue
+       app that renders `<main class="references-rendered">` of its own,
+       so `locator('main')` there resolves to more than one element and
+       any strict-mode assertion on it throws. We do not author Scalar's
+       DOM and cannot fix its landmarks; what we can do is give OUR shell
+       a name, so "did the app shell render" is asked of the app shell.
+       See helpers/assertions.ts. -->
   <main
+    data-testid="app-shell-main"
     class="flex flex-1 flex-col overflow-y-auto"
     style={showChrome ? `margin-top:${chromeBottom}px` : undefined}
   >

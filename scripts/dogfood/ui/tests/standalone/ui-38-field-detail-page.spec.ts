@@ -216,47 +216,90 @@ test.describe('UI-38 the per-field page', () => {
     // nothing on its own; the card is where it means something, so
     // this is driven all the way to a rendered tile rather than
     // stopping at the column.
-    const assets = await page.request.get('/api/v1/assets?limit=24');
-    expect(assets.ok(), await assets.text()).toBe(true);
-    const list = (await assets.json()) as {
-      items?: Array<{ id: string; owner_user_ref?: number | null; restricted?: boolean }>;
-    };
-    const owned = (list.items ?? []).find((a) => !a.restricted && a.owner_user_ref);
-    expect(owned, 'the seeded stack has an owned, readable asset').toBeTruthy();
-    const ownerRef = owned!.owner_user_ref!;
+    //
+    // ⚠️ THE SURFACE MOVED, and not because the pipeline changed.
+    //
+    // This used to drive `/users/by-ref/{ownerRef}` — the owner's
+    // profile — because that page rendered a grid of the owner's raw
+    // UPLOADS, which was the easiest place to find an asset tile for an
+    // asset that is in no post. #1106 took that grid off the VISITOR
+    // view of a profile ("a profile is a portfolio, not a file
+    // manager"; the author's own view keeps it), so on a profile this
+    // suite's admin does not own there are no asset tiles left to find,
+    // and the assertion below had nothing to match. That is the product
+    // change working, not a regression in the decoration.
+    //
+    // The replacement is the COLLECTION MEMBER GRID, which is a better
+    // target than the old one was: it renders the same AssetCard for
+    // every viewer, and since #1133 it is fed by the same card-field
+    // projection browse uses (metadata.CardFieldsForAssets, called from
+    // both `assets.decorateCards` and the collection handler). So the
+    // two server assertions below now cover BOTH splices of the one
+    // projection, and the browser assertion covers the surface where
+    // #552's flag had silently never worked until #1133.
+    const collections = await page.request.get('/api/v1/collections?limit=50');
+    expect(collections.ok(), await collections.text()).toBe(true);
+    const cols = (await collections.json()) as { items?: Array<{ id: string }> };
 
-    // Take the asset from the OWNER's own page rather than the global
-    // one, so the tile is guaranteed to be in the 24 the profile grid
-    // renders — the global newest is not necessarily this owner's.
-    const ownerFirst = await page.request.get(`/api/v1/assets?owner_ref=${ownerRef}&limit=24`);
-    const ownerRows = (await ownerFirst.json()) as { items?: Array<{ id: string }> };
-    const assetId = (ownerRows.items ?? [])[0]?.id;
-    expect(assetId, 'the owner has at least one asset').toBeTruthy();
+    // Find a collection with a member this caller can actually read.
+    // Scanned rather than assumed: a collection with only posts pinned
+    // in it has no asset tiles, and picking the first one blindly is
+    // how this test becomes seed-shape-dependent.
+    let collectionId = '';
+    let assetId = '';
+    for (const c of cols.items ?? []) {
+      const res = await page.request.get(`/api/v1/collections/${c.id}/resources?limit=24`);
+      if (!res.ok()) continue;
+      const body = (await res.json()) as {
+        items?: Array<{ asset_id: string; restricted?: boolean }>;
+      };
+      const member = (body.items ?? []).find((m) => !m.restricted);
+      if (member) {
+        collectionId = c.id;
+        assetId = member.asset_id;
+        break;
+      }
+    }
+    expect(collectionId, 'the seeded stack has a collection with a readable member').toBeTruthy();
 
     const put = await page.request.put(`/api/v1/assets/${assetId}/fields/${f.id}`, {
       data: { value_text: 'on the card' },
     });
     expect(put.ok(), await put.text()).toBe(true);
 
-    // The server side of the hint: the list endpoint resolves the flag
-    // into a display string on the row itself (#552's decorateCards).
-    const decorated = await page.request.get(`/api/v1/assets?owner_ref=${ownerRef}&limit=24`);
-    const rows = (await decorated.json()) as {
-      items?: Array<{ id: string; card_fields?: Array<{ code: string; value: string }> | null }>;
+    // Server side, splice 1 — the ASSET payload. `GET /assets/{id}`
+    // resolves the flag into a display string through
+    // `assets.decorateCards` (#552). This is the assertion that says
+    // the browse pipeline still works after #1133 moved the projection
+    // out of that package.
+    const detail = await page.request.get(`/api/v1/assets/${assetId}`);
+    expect(detail.ok(), await detail.text()).toBe(true);
+    const asset = (await detail.json()) as {
+      card_fields?: Array<{ code: string; value: string }> | null;
     };
-    const row = (rows.items ?? []).find((a) => a.id === assetId);
-    expect(row?.card_fields?.find((c) => c.code === f.code)?.value).toBe('on the card');
+    expect(asset.card_fields?.find((c) => c.code === f.code)?.value).toBe('on the card');
 
-    // The browser side: the owner's profile grid is the shipped
-    // consumer of that decoration. The at-a-glance strip lives in the
-    // details footer, which AssetCard renders in `thumbnail` mode —
-    // a stored browse preference, set here the same way the view
-    // control sets it, so this drives the real card and not a
-    // hand-built one.
+    // Server side, splice 2 — the COLLECTION MEMBER row (#1133). The
+    // member grid renders the same card from a different handler in a
+    // package that cannot import `assets`; before #1133 it carried no
+    // strip at all. Both assertions run against the same asset and the
+    // same field, so a projection that drifts between the two fails
+    // here rather than in a screenshot nobody reads.
+    const members = await page.request.get(`/api/v1/collections/${collectionId}/resources?limit=24`);
+    const memberBody = (await members.json()) as {
+      items?: Array<{ asset_id: string; card_fields?: Array<{ code: string; value: string }> | null }>;
+    };
+    const member = (memberBody.items ?? []).find((m) => m.asset_id === assetId);
+    expect(member?.card_fields?.find((c) => c.code === f.code)?.value).toBe('on the card');
+
+    // The browser side. The at-a-glance strip lives in the details
+    // footer, which AssetCard renders in `thumbnail` mode — a stored
+    // browse preference, set here the same way the view control sets
+    // it, so this drives the real card and not a hand-built one.
     await page.addInitScript(() => {
       window.localStorage.setItem('aa_browse_mode', 'thumbnail');
     });
-    await page.goto(`/users/by-ref/${ownerRef}`);
+    await page.goto(`/collections/${collectionId}`);
     const cardValue = page.getByTestId(`card-field-${f.code}`).first();
     await expect(cardValue).toHaveText('on the card', { timeout: 15_000 });
     await page.screenshot({ path: testInfo.outputPath('card-field.png'), fullPage: true });

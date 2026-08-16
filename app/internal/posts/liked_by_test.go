@@ -232,7 +232,7 @@ func TestLikedBy_LikingDoesNotWiden(t *testing.T) {
 	if ok, is200 := resp.(openapi.ListPosts200JSONResponse); is200 {
 		for _, p := range ok.Items {
 			if uuid.UUID(p.Id) == postID {
-				t.Errorf("the private post is on the stranger's plain feed too — the fixture "+
+				t.Errorf("the private post is on the stranger's plain feed too — the fixture " +
 					"does not test what this file claims")
 			}
 		}

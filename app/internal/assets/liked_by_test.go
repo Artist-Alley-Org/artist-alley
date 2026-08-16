@@ -145,8 +145,8 @@ func TestLikedByAssets_UnreadableIsAbsentNotPlaceholdered(t *testing.T) {
 	browse := albPage(t, router, "/assets?limit=200")
 	raw, present := browse[withheld.String()]
 	if !present {
-		t.Fatalf("the withheld asset is missing from BROWSE too — #883/#899 require a "+
-			"placeholder there, so this change tightened the corpus listing as well and "+
+		t.Fatalf("the withheld asset is missing from BROWSE too — #883/#899 require a " +
+			"placeholder there, so this change tightened the corpus listing as well and " +
 			"took #881's request-access affordance with it")
 	}
 	var m map[string]json.RawMessage
