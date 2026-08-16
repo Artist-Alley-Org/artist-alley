@@ -583,8 +583,7 @@ func (h *HTTPHandler) SavePromoBand(
 	if req.Body.Scope != nil {
 		in.Scope = string(*req.Body.Scope)
 	}
-	row, err := h.domain.SaveBand(ctx, in)
-	if err != nil {
+	if _, err := h.domain.SaveBand(ctx, in); err != nil {
 		if errors.Is(err, ErrBadCTA) || errors.Is(err, ErrBadAfterPage) || errors.Is(err, ErrBandScopeNotWritable) {
 			return openapi.SavePromoBand400JSONResponse{
 				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
@@ -592,14 +591,13 @@ func (h *HTTPHandler) SavePromoBand(
 		}
 		return nil, err
 	}
-	// The saved band comes back WITH its cards, so the admin page does
-	// not need a second request to repaint after a save — and cannot
-	// repaint from a stale copy of them.
+	// Re-read rather than mapping SaveBand's RETURNING row: the response
+	// carries the band WITH ITS CARDS, so the admin page repaints from
+	// one round trip and cannot repaint from a stale copy of them.
 	band, items, err := h.adminBand(ctx)
 	if err != nil {
 		return nil, err
 	}
-	_ = row
 	band.Items = items
 	return openapi.SavePromoBand200JSONResponse(band), nil
 }
