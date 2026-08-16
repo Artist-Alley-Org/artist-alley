@@ -9,6 +9,21 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Added
 
+- **Profiles got their three tabs.** Portfolio (the artist's posts — a visitor sees published
+  work, not raw uploads), About (bio, links, location), and Likes (what they've liked, filtered
+  by what YOU are allowed to see). The browse footer's controls come along, so a profile browses
+  like the feed does (#1106).
+
+- **Clicking a post inside a collection opens it now** — on collections, team pages, and
+  profiles alike; four surfaces shared the same missing piece and now share one fix (#1130).
+  Collection tiles also finally show the fields operators mark for cards (#1133).
+
+### Security
+
+- **Comment threads respect post visibility.** The comments list on a post no longer answers
+  for callers who cannot see the post itself — and five sibling endpoints with the same gap,
+  including two write paths, were closed in the same pass (#1132).
+
 - **Every browse view has its own personality now.** Thumbnail shows the work AND its facts —
   type icon, artist (clickable), title, plus whichever fields the operator marks for cards;
   list keeps its image column a steady size; masonry strips down to pure art (with the full
