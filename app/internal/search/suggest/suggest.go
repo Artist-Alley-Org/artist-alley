@@ -89,8 +89,28 @@ type Request struct {
 	// would be a fourth shape of the same question. Nil = no
 	// capabilities, correct for anonymous.
 	CollectionCaps visibility.CapabilityChecker
-	Threshold      float64
-	Limit          int
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090). Zero value = the DISQUALIFIED viewer, which completes
+	// less rather than more.
+	//
+	// ⚠️ IT GOVERNS THREE OF THE FOUR SOURCES, and the fourth is a
+	// deliberate non-application rather than a gap. `tags`, `postTitles`
+	// and `assetTitles` complete words that ARE fields of the flagged
+	// thing — a tag on a mature post, a mature post's title, a mature
+	// asset's title — so each is a derived copy of content the viewer was
+	// not shown, and each drops the row. `collections` completes a name
+	// an operator or a curator TYPED; it is not derived from any member's
+	// content, and `collections` carries no `mature` column and no
+	// derivation trigger because there is nothing to derive it from. A
+	// collection whose members a viewer may not see already answers
+	// through its own read rule (#1078). Gating the name on the mature
+	// axis would withhold a curator's own words on the strength of what
+	// they happen to have filed, which is a different rule than the one
+	// ADR 0090 states. Recorded here so the next reader does not read the
+	// asymmetry as an oversight.
+	Mature    visibility.MatureViewer
+	Threshold float64
+	Limit     int
 }
 
 // Response is the ordered result set.
@@ -136,7 +156,8 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	// Assemble all four sub-queries + assemble in-memory.
 	all := make([]Suggestion, 0, limit*4)
 
-	tags, err := s.tags(ctx, prefix, threshold, req.Caller, req.PostCaps)
+	tags, err := s.tags(ctx, prefix, threshold, req.Caller, req.PostCaps,
+		req.Mature, req.Caps.SystemAdmin)
 	if err != nil {
 		return Response{}, err
 	}
@@ -148,13 +169,15 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	}
 	all = append(all, cols...)
 
-	postTitles, err := s.postTitles(ctx, prefix, threshold, req.Caller, req.PostCaps)
+	postTitles, err := s.postTitles(ctx, prefix, threshold, req.Caller, req.PostCaps,
+		req.Mature, req.Caps.SystemAdmin)
 	if err != nil {
 		return Response{}, err
 	}
 	all = append(all, postTitles...)
 
-	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps, req.MutationCaps)
+	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps,
+		req.MutationCaps, req.Mature)
 	if err != nil {
 		return Response{}, err
 	}
@@ -227,6 +250,7 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 func (s *Service) tags(
 	ctx context.Context, prefix string, threshold float64,
 	caller visibility.Caller, caps visibility.PostCaps,
+	mature visibility.MatureViewer, isSystemAdmin bool,
 ) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
 		visibility.WithPostCaps(caps))
@@ -240,6 +264,15 @@ func (s *Service) tags(
 	// (ADR 0063 — a fragment numbers from $N up and the caller does not
 	// renumber it). The siblings all inline it for the same reason.
 	frag, args := pred.ToSQL("p", 2)
+	// #1117 — the mature axis. A tag is a FIELD of the post carrying it,
+	// so a tag that exists only on mature posts is a derived copy of
+	// content this viewer was not shown — and completing it discloses
+	// both that the word is in use and, by the completion's presence,
+	// that something matching it exists. Caller ref inlined as a literal,
+	// matching the sibling sources, so the predicate's numbering above is
+	// untouched (ADR 0063).
+	frag += visibility.MatureFilterSQL("p", visibility.MatureOwnerColPost,
+		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
 	sql := `
 		SELECT pt.tag AS value, similarity(pt.tag, $1) AS sim
 		  FROM post_tags pt
@@ -306,13 +339,20 @@ func (s *Service) collections(
 // asset rule below — a post you may READ may be completed; what a
 // findable post does NOT do is make its restricted members' fields
 // readable, which FieldsReadable still governs (#899).
-func (s *Service) postTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.PostCaps) ([]Suggestion, error) {
+func (s *Service) postTitles(ctx context.Context, prefix string, threshold float64, caller visibility.Caller, caps visibility.PostCaps,
+	mature visibility.MatureViewer, isSystemAdmin bool) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
 		visibility.WithPostCaps(caps))
 	if err != nil {
 		return nil, err
 	}
 	frag, args := pred.ToSQL("", 2)
+	// #1117 — a completion IS the title, so there is no withheld shape
+	// available here and a mature post must contribute no row at all.
+	// Same drop-rather-than-withhold judgement #899 made for the asset
+	// source below, on the second axis.
+	frag += visibility.MatureFilterSQL("", visibility.MatureOwnerColPost,
+		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM posts
@@ -358,7 +398,7 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 func (s *Service) assetTitles(
 	ctx context.Context, prefix string, threshold float64,
 	caller visibility.Caller, caps visibility.ContentCaps,
-	mut visibility.AssetMutationCaps,
+	mut visibility.AssetMutationCaps, mature visibility.MatureViewer,
 ) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
@@ -371,6 +411,11 @@ func (s *Service) assetTitles(
 	// scope as UUID literals, so neither adds a placeholder and the
 	// predicate's numbering above is untouched (ADR 0063).
 	frag += visibility.FieldsReadableSQL("", strconv.FormatInt(caller.UserRef, 10), caller, caps, mut)
+	// #1117 — and the mature axis beside it, never inside it: a title is
+	// a field and `mature` is a rating, and ADR 0090 §1 keeps the two
+	// ANDed rather than merged. Same literal-ref trick, same reason.
+	frag += visibility.MatureFilterSQL("", visibility.MatureOwnerColAsset,
+		strconv.FormatInt(caller.UserRef, 10), mature, caps.SystemAdmin)
 	sql := `
 		SELECT title AS value, similarity(title, $1) AS sim
 		  FROM assets

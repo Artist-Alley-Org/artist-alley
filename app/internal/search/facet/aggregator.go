@@ -148,6 +148,18 @@ type Request struct {
 	// Zero value = none, correct for anonymous.
 	MutationCaps visibility.AssetMutationCaps
 
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090). Zero value = the DISQUALIFIED viewer, so a Request
+	// built without it counts the narrower population — the direction
+	// that under-reports rather than the one that leaks.
+	//
+	// It must move in lockstep with search.Query.Mature: the rail's
+	// number has to equal the size of the result set that ticking the
+	// bucket returns, and these are the two places that population is
+	// expressed. Widening one alone shows `png 7` beside a filter that
+	// returns 8 (#907's defect, on a second axis).
+	Mature visibility.MatureViewer
+
 	// Timeout caps EACH aggregator's runtime independently.
 	// Zero = DefaultAggregatorTimeout.
 	Timeout time.Duration

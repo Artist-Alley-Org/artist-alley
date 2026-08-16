@@ -86,11 +86,26 @@ import (
 // Nothing here reaches the binary plane. FieldsReadableSQL is
 // PreviewReadable OR the mutation disjunct; the picture stays on
 // PreviewReadable, and a facet count is not a picture.
+//
+// # The mature axis is a SIXTH conjunct, not a sixth dimension (#1117)
+//
+// `mature` is appended here rather than being given its own facet,
+// deliberately. A `mature` bucket on the rail would be a count of the
+// very rows the axis exists to withhold — "mature 12" tells a
+// disqualified viewer exactly what they were not shown, which is the
+// derived-copy leak in its purest form (ADR 0090 §5).
+//
+// It goes in this function rather than in each aggregator because the
+// rail's invariant is that its number equals the size of the set that
+// ticking it returns: search.runAssets composes the same conjunct, and
+// the two must keep moving together the way #1056 moved the field plane
+// on both sides in one change.
 func buildAssetVisibilityAppendedSQL(
 	ctx context.Context,
 	caller visibility.Caller,
 	caps visibility.ContentCaps,
 	mut visibility.AssetMutationCaps,
+	mature visibility.MatureViewer,
 	offset int,
 ) (string, []any, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
@@ -106,6 +121,13 @@ func buildAssetVisibilityAppendedSQL(
 	// FieldsReadableSQL for the same reason, so the selection's args
 	// still number from offset+len(args) exactly as before (ADR 0063).
 	frag += visibility.FieldsReadableSQL("a", strconv.FormatInt(caller.UserRef, 10), caller, caps, mut)
+	// #1117 — the mature conjunct, inlining the caller ref as a literal
+	// for the identical reason the line above does. A separate term, ANDed
+	// on: ADR 0090 §1 forbids merging the two axes, and MatureFilterSQL
+	// folds to "" for a qualified viewer so the common path carries no
+	// extra predicate at all.
+	frag += visibility.MatureFilterSQL("a", visibility.MatureOwnerColAsset,
+		strconv.FormatInt(caller.UserRef, 10), mature, caps.SystemAdmin)
 	return frag, args, nil
 }
 
@@ -128,7 +150,7 @@ func buildAssetPopulationSQL(
 	own FacetType,
 	offset int,
 ) (string, []any, bool, error) {
-	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, req.MutationCaps, offset)
+	frag, args, err := buildAssetVisibilityAppendedSQL(ctx, req.Caller, req.Caps, req.MutationCaps, req.Mature, offset)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -356,6 +378,17 @@ func (tagAgg) Aggregate(ctx context.Context, pool *pgxpool.Pool, req Request) ([
 		visibility.EntityPost, "p", postOffset+len(postArgs))
 	postFrag += postSelFrag
 	postArgs = append(postArgs, postSelArgs...)
+	// #1117 — the mature conjunct on the POST half, reading the derived
+	// `posts.mature` column (ADR 0090 §4). Without it a tag applied only
+	// to mature posts keeps its bucket on a disqualified viewer's rail,
+	// and the count IS the disclosure: the tag's existence and its size
+	// are both facts about content that viewer was not shown. The owner
+	// column is `author_user_ref` here, which is why MatureFilterSQL
+	// takes it as a parameter rather than assuming the asset spelling.
+	//
+	// Caller ref inlined as a literal, matching the asset half.
+	postFrag += visibility.MatureFilterSQL("p", visibility.MatureOwnerColPost,
+		strconv.FormatInt(req.Caller.UserRef, 10), req.Mature, req.Caps.SystemAdmin)
 
 	branches := make([]string, 0, 2)
 	queryArgs := []any{req.QueryText}

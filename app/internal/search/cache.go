@@ -162,6 +162,25 @@ func keyForQuery(q Query) string {
 	// whole rule: every input the Engine READS is a component of the key.
 	sb.WriteString(q.Filters.CacheKey())
 	sb.WriteByte('|')
+	// #1117 — and the MATURE AXIS, which is a third kind of argument
+	// again: two of its three conjuncts are not properties of the caller
+	// at all.
+	//
+	// `show_mature` is a PREFERENCE, so it moves without any capability
+	// changing and without the caller changing — the same ref, the same
+	// caps, the same query, two different result sets. And the instance
+	// switch is the OPERATOR's, so it moves for every caller at once: an
+	// operator who disallows mature content would otherwise keep serving
+	// every warm entry's mature rows until the TTL expired, which is the
+	// staleness sysconfig.SetMatureContent refuses to allow at the read
+	// and would have reintroduced here.
+	//
+	// Three characters, one per conjunct, fixed-width — so a missing
+	// conjunct cannot alias with a present one. See
+	// visibility.MatureViewer.CacheKey, whose doc names this function as
+	// its consumer.
+	sb.WriteString(q.Mature.CacheKey())
+	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')
 	// Phase 1.16.B-3 — vector-hint identifier folds into the key

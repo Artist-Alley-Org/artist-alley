@@ -97,6 +97,22 @@ type ListAssetsPageGatedParams struct {
 	// picture and no bytes. The zero value denies, so omitting it
 	// fails closed.
 	MutationCaps visibility.AssetMutationCaps
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090 §3). The zero value is the DISQUALIFIED viewer, so a
+	// caller that forgets to set it gets the narrow page rather than
+	// the wide one — visible as "I opted in and still cannot see it",
+	// never as a leak.
+	//
+	// ⚠️ It composes on the ROW plane here, NOT inside the `?q=` match,
+	// and the distinction is the whole reason this is a separate field
+	// rather than an argument to AssetSearchMatchSQL. The text match is
+	// wrapped in `($4 IS NULL OR …)`, so a conjunct placed inside it
+	// applies only when the caller typed something — a disqualified
+	// viewer would stop FINDING a mature asset by name and keep seeing
+	// it listed on unfiltered browse, which is the half-fix ADR 0090 §3
+	// rules out ("the browse feed does not RETURN a disqualified
+	// viewer's mature posts").
+	Mature visibility.MatureViewer
 }
 
 // listAssetsPageColumns mirrors the sqlc query's SELECT list exactly.
@@ -270,6 +286,30 @@ WHERE ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
        OR created_at < $5::TIMESTAMPTZ
        OR (created_at = $5::TIMESTAMPTZ AND id < $6::UUID))`)
 	b.WriteString(visFrag)
+	// #1117 — the mature axis, on the ROW plane (ADR 0090 §3). ANDed
+	// beside the visibility predicate, never merged into it: `sensitivity`
+	// answers who is ALLOWED and this answers who has OPTED IN, and a
+	// single ordered ladder cannot express a product of two independent
+	// values.
+	//
+	// UNCONDITIONAL — outside the `?q=` branch every other readability
+	// conjunct on this query sits inside. That asymmetry is deliberate and
+	// is the difference between the two planes: a restricted asset stays
+	// LISTED as a placeholder because ADR 0064 requires browse to show the
+	// corpus, and #881's request-access flow hangs off those placeholders.
+	// A mature asset has no such flow — there is nothing to request, only
+	// a preference to change — and #921 measured what the placeholder
+	// alternative looks like (a feed of blurred plates nobody asked to be
+	// offered). So the mature row is ABSENT, not withheld.
+	//
+	// `$8` is the caller ref already bound above, so this adds no
+	// placeholder. That matters more than it looks: MatureFilterSQL folds
+	// to "" for a qualified viewer, and a conditionally-referenced NEW
+	// placeholder is exactly the 42P18 "could not determine data type of
+	// parameter" that bit posts/list_page.go's $12.
+	b.WriteString(visibility.MatureFilterSQL(
+		"assets", visibility.MatureOwnerColAsset, "$8",
+		p.Mature, visibility.ResolveContentCaps(caps).SystemAdmin))
 	// #1106 — the derived-listing conjunct. Only when LikedByUserRef is
 	// set, and the branch is the whole argument: browse must keep
 	// listing placeholders (ADR 0064, and #881's request-access flow

@@ -91,6 +91,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Limit:   limit,
 		Cursor:  cursor,
 		Filters: selection,
+		// #1117 — the mature axis, read off the context the mature
+		// middleware resolved it onto. OUTSIDE the identity branch below,
+		// unlike the three capability sets: those are meaningless for an
+		// anonymous caller, whereas this one has a definite answer for
+		// them (the disqualified viewer) and the middleware has already
+		// computed it. Reading it here rather than inside the branch is
+		// what makes an anonymous /search narrow rather than accidentally
+		// wide — MatureFromContext's absent value disqualifies, so even a
+		// route that skipped the middleware lands on the safe side.
+		Mature: visibility.MatureFromContext(r.Context()),
 	}
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
@@ -288,14 +298,28 @@ func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
 	// content.read.all caller).
 	args := []any{assetID}
 	readFrag := visibility.ContentReadableSQL("", "$2", query.Caps)
-	if readFrag != "" {
+	// #1117 — the mature axis on the ANCHOR. `similar_to:<uuid>` names an
+	// asset, so this is the deep-link case ADR 0090 §3 puts on the
+	// content plane: a disqualified viewer may not use a mature asset as
+	// a ranking anchor any more than they may open it. Refusing here
+	// keeps that refusal indistinguishable from "not embedded", which is
+	// the whole point of the shape above — a distinguishable refusal
+	// would confirm the id exists and is mature.
+	//
+	// Same $2, appended when EITHER fragment names it, for the reason
+	// vector.Query records: two independently-folding fragments sharing
+	// one placeholder is one boolean of offset arithmetic, not two.
+	matureFrag := visibility.MatureFilterSQL(
+		"", visibility.MatureOwnerColAsset, "$2",
+		query.Mature, query.Caps.SystemAdmin)
+	if readFrag != "" || matureFrag != "" {
 		args = append(args, caller.UserRef)
 	}
 	frag, predArgs := pred.ToSQL("", len(args))
 	args = append(args, predArgs...)
 	var visible bool
 	if err := h.Service.Pool().QueryRow(r.Context(), `
-		SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1`+readFrag+frag+`)
+		SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1`+readFrag+matureFrag+frag+`)
 	`, args...).Scan(&visible); err != nil {
 		return err
 	}

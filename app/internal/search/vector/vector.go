@@ -181,12 +181,25 @@ func EncodeFloat32Slice(vec []float32) string {
 // Cursor pagination is NOT implemented here — the search Engine's
 // hybrid path merges vector hits with BM25 hits in memory and
 // emits a unified cursor. This function is the raw kNN primitive.
+// # A THIRD gate since #1117: the mature axis
+//
+// The two above answer "who is ALLOWED"; `mature` answers "who has OPTED
+// IN" (ADR 0090), and the derived-copy argument that put the embedding
+// behind the content plane applies to it unchanged — a disqualified
+// viewer who can rank a candidate image against the catalogue and watch
+// a mature asset come back at 0.94 has been shown what it looks like.
+//
+// It is ANDed as its own conjunct rather than folded into either gate
+// above, because the two axes are independent in both directions: a
+// public artwork can be mature and a restricted one need not be, so
+// there is no single ordered rule for either fragment to carry.
 func Query(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	anchor Anchor,
 	caller visibility.Caller,
 	caps visibility.ContentCaps,
+	mature visibility.MatureViewer,
 	threshold float64,
 	limit int,
 ) ([]Hit, error) {
@@ -219,9 +232,19 @@ func Query(
 	// gate were not there — and pgx rejects a statement bound with more
 	// args than it names. So the predicate's own offset moves with it
 	// rather than a tautology being spliced in to keep $7 referenced.
+	//
+	// #1117 — the mature conjunct binds the SAME $7. Both fragments fold
+	// to "" independently (one for a caps-holder, the other for a
+	// qualified viewer), so the argument is appended when EITHER names
+	// it, and appended exactly once. Giving mature its own placeholder
+	// would have made the offset depend on two booleans instead of one,
+	// which is the arithmetic that produces a silently misaligned
+	// predicate fragment.
 	readFrag := visibility.ContentReadableSQL("a", "$7", caps)
+	matureFrag := visibility.MatureFilterSQL(
+		"a", visibility.MatureOwnerColAsset, "$7", mature, caps.SystemAdmin)
 	argOffset := len(args)
-	if readFrag != "" {
+	if readFrag != "" || matureFrag != "" {
 		args = append(args, caller.UserRef)
 		argOffset = len(args)
 	}
@@ -235,7 +258,7 @@ func Query(
 		 WHERE ae.provider = $2
 		   AND ae.model    = $3
 		   AND ae.modality = $4
-		   AND 1 - (ae.embedding <=> $1::vector) >= $5` + readFrag + visFrag + `
+		   AND 1 - (ae.embedding <=> $1::vector) >= $5` + readFrag + matureFrag + visFrag + `
 		 ORDER BY ae.embedding <=> $1::vector ASC
 		 LIMIT $6
 	`

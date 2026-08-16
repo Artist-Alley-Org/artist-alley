@@ -105,6 +105,27 @@ type Query struct {
 	// visibility.AssetMutationCaps.CacheKey.
 	MutationCaps visibility.AssetMutationCaps
 
+	// Mature is the caller's resolved mature-content axis (#1117,
+	// ADR 0090). Three booleans — signed in, opted in, instance allows
+	// — resolved once at the HTTP edge and carried, exactly like the
+	// three caps structs above and for the same reasons: the inputs come
+	// from three different stores, and the answer has to reach both a
+	// SQL fragment and the CACHE KEY.
+	//
+	// ⚠️ THE ZERO VALUE IS THE DISQUALIFIED VIEWER. A Query built without
+	// this field searches as an opted-out reader does, which returns
+	// FEWER rows. That direction is deliberate (visibility.MatureViewer):
+	// a gate that loses its inputs must refuse rather than widen, and the
+	// visible symptom is a reader saying "I opted in and still cannot
+	// find it" rather than an invisible leak.
+	//
+	// ⚠️ AND IT MUST BE IN THE CACHE KEY. Without that, an opted-in
+	// reader's cached result page is served verbatim to an opted-out one
+	// — a leak no single-caller test can see, because it needs two
+	// callers and a warm cache to exist at all. See
+	// visibility.MatureViewer.CacheKey and keyForQuery.
+	Mature visibility.MatureViewer
+
 	// Filters is the caller's facet selection — the tag, asset type,
 	// owner, sensitivity or extension they narrowed to (#907).
 	//
