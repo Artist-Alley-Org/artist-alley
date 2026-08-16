@@ -15,7 +15,7 @@
     "collections": "Collections",
     "review": "Review",
     "upload_button_title": "Upload (or drop files anywhere)",
-    "search_page": "Search"
+    "search_page": "Advanced search"
   },
   "search": {
     "facets_heading": "Facets",
@@ -113,6 +113,19 @@
       "owner": "Owner",
       "extension": "File type",
       "collection": "In collection"
+    },
+    "advanced_page": {
+      "title": "Advanced search",
+      "intro": "Build a query from typed conditions and metadata fields. Everything here composes into one search — the results open on the normal search page with the query in the address.",
+      "conditions_heading": "Conditions",
+      "fields_heading": "Metadata fields",
+      "fields_loading": "Loading fields…",
+      "fields_empty": "No searchable vocabulary fields are available to you.",
+      "fields_error": "Could not load field definitions.",
+      "by_image_heading": "Search by image",
+      "submit": "Search",
+      "reset": "Reset",
+      "active_filters": "{count} field filters active"
     }
   },
   "blogs": {

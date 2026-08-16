@@ -84,7 +84,31 @@ func NewService(engine *Engine, cache *Cache, counter *Counter) *Service {
 func (s *Service) Execute(ctx context.Context, q Query) (QueryResult, error) {
 	start := time.Now()
 
-	if s.cache != nil {
+	// #1157 — a `field:` selection is UNCACHEABLE, in both directions.
+	//
+	// Every other component of a result's access story is folded into
+	// keyForQuery: the caller ref, the three resolved capability value
+	// types, the mature axis, and the selection. A field filter's is not,
+	// because `field_definition.read_capability` names a capability an
+	// operator typed at runtime — an open set, which a pure key function
+	// cannot enumerate and cannot query the database to resolve.
+	//
+	// The gate that decides it, [facet.Selection.Authorize], lives inside
+	// Engine.Run — deliberately, because Run is the single door every
+	// execution goes through (#910). But the cache is consulted HERE,
+	// before Run, so a cache hit never reaches that gate. Leaving these
+	// queries cacheable would mean a caller who ran a gated field filter
+	// while holding its capability kept receiving that page for the rest
+	// of the TTL after the capability was revoked, which is the direction
+	// [Cache.keyForQuery]'s doc calls out as the one that matters.
+	//
+	// Skipping the cache is the honest fix rather than the cheap one: the
+	// alternative is resolving the field verdicts before the key is built,
+	// which makes keyForQuery impure and puts a query on the cache-hit
+	// path — paying most of the cost the cache exists to avoid. Advanced-
+	// page field filters are a small share of traffic, and every other
+	// search keeps its cache untouched.
+	if s.cache != nil && !q.Filters.NamesFieldDimension() {
 		if cached, ok := s.cache.Get(q); ok {
 			s.record(ResultCacheHit, time.Since(start))
 			return cached, nil
@@ -101,7 +125,9 @@ func (s *Service) Execute(ctx context.Context, q Query) (QueryResult, error) {
 		return QueryResult{}, err
 	}
 
-	if s.cache != nil {
+	// Same reasoning as the Get above: never STORE what can never be
+	// safely served back.
+	if s.cache != nil && !q.Filters.NamesFieldDimension() {
 		s.cache.Put(q, res)
 	}
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
@@ -227,14 +228,91 @@ func (t FacetType) conjunctive() bool { return t == FacetTag }
 // spelling reaches the SQL, and `{X}` and `X` share a [CacheKey] instead
 // of paying for the same query twice.
 func (t FacetType) canonicalValue(v string) (string, bool) {
-	if t != FacetCollection {
-		return v, true
+	switch t {
+	case FacetCollection:
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return "", false
+		}
+		return id.String(), true
+	case FacetField:
+		// #1157 — `<code>=<value>`. The SECOND dimension with a value
+		// grammar, and the first whose value is compound.
+		//
+		// `=` rather than `:` because [ParseSelection] cuts the wire
+		// token at the FIRST colon, so a nested colon would be
+		// ambiguous with the dimension separator the moment a field
+		// value contained one. `=` appears in no field CODE (codes are
+		// slugs), and a `=` inside the VALUE is harmless because only
+		// the first one separates.
+		code, value, found := strings.Cut(v, "=")
+		if !found {
+			return "", false
+		}
+		code = strings.ToLower(strings.TrimSpace(code))
+		value = strings.TrimSpace(value)
+		if code == "" || value == "" || !validFieldCode(code) {
+			return "", false
+		}
+		return code + "=" + value, true
 	}
-	id, err := uuid.Parse(v)
-	if err != nil {
-		return "", false
+	return v, true
+}
+
+// validFieldCode reports whether s is a well-formed field-definition
+// code: the slug shape `[a-z0-9_-]+`.
+//
+// It is a SHAPE check, not an existence check, and the difference
+// matters. Rejecting an unknown code here would turn this dimension
+// into an existence oracle for field definitions — the caller supplies
+// the string, and a 400 would separate "no such field" from "a field
+// you may not read". A well-formed code for a field that does not
+// exist (or that this caller may not read) matches no rows, which is
+// the same answer for both and the fail-closed direction the rest of
+// the file takes.
+func validFieldCode(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
 	}
-	return id.String(), true
+	return s != ""
+}
+
+// NamesFieldDimension reports whether the selection carries a
+// [FacetField] term — i.e. whether its result depends on a capability
+// from an OPEN set that no cache key can enumerate (#1157).
+//
+// Every other dimension's access story is fully described by the
+// components already folded into the search cache key: the caller ref,
+// the three resolved capability value types, the mature axis and the
+// selection itself. `field:` is the first one that is not, because
+// `field_definition.read_capability` holds a code an operator typed at
+// runtime.
+//
+// The search cache is consulted BEFORE Engine.Run, so [Selection.Authorize]
+// cannot defend a cache hit: a caller who ran a gated field filter while
+// holding its capability would keep being served that narrowed page for
+// the rest of the TTL after the capability was revoked — the exact
+// revoke-direction failure [Selection.CacheKey]'s doc warns about, and
+// the one that matters, since it serves MORE than the caller is owed.
+func (s Selection) NamesFieldDimension() bool {
+	for _, t := range s.terms {
+		if t.Type == FacetField {
+			return true
+		}
+	}
+	return false
+}
+
+// SplitFieldTerm splits a canonical [FacetField] value into its code
+// and value halves. Exported because [Selection.Authorize] needs the
+// code to look the field up, and the frontend's chip labels need both.
+func SplitFieldTerm(v string) (code, value string, ok bool) {
+	code, value, ok = strings.Cut(v, "=")
+	return code, value, ok
 }
 
 // ForFacet returns the subset of the selection that should be applied
@@ -328,24 +406,85 @@ func (s Selection) Authorize(
 	caps visibility.CapabilityChecker,
 ) (bool, error) {
 	for _, t := range s.terms {
-		if t.Type != FacetCollection {
-			continue
-		}
-		id, err := uuid.Parse(t.Value)
-		if err != nil {
-			// Cannot arrive via ParseSelection; fail closed for the same
-			// reason SQL() does.
-			return false, nil
-		}
-		ok, err := visibility.CanReadCollection(ctx, pool, caller, caps, id)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			return false, nil
+		switch t.Type {
+		case FacetCollection:
+			id, err := uuid.Parse(t.Value)
+			if err != nil {
+				// Cannot arrive via ParseSelection; fail closed for the
+				// same reason SQL() does.
+				return false, nil
+			}
+			ok, err := visibility.CanReadCollection(ctx, pool, caller, caps, id)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				return false, nil
+			}
+		case FacetField:
+			// #1157 — the FIELD's own read gate.
+			//
+			// Unlike `collection:`, what needs authorizing here is the
+			// DIMENSION rather than the value: `field_definition.
+			// read_capability` names a capability without which a caller
+			// may not read that field at all, and #907 established that a
+			// filter must not answer a question about a column the caller
+			// cannot read ("with a narrow enough selection, the filter IS
+			// the item"). A `material=steel` filter on a capability-gated
+			// field would let a caller without the capability partition
+			// the corpus by a value they are refused — one bit at a time,
+			// which is the #902 recovery shape on the field plane.
+			//
+			// Same fail-closed direction and same no-oracle reasoning as
+			// the collection arm: refusing yields an EMPTY result set, not
+			// a 403, so "this field is gated" and "no such field" are
+			// indistinguishable on a code the caller supplied.
+			code, _, ok := SplitFieldTerm(t.Value)
+			if !ok {
+				return false, nil
+			}
+			allowed, err := fieldReadable(ctx, pool, caps, code)
+			if err != nil {
+				return false, err
+			}
+			if !allowed {
+				return false, nil
+			}
 		}
 	}
 	return true, nil
+}
+
+// fieldReadable answers "may this caller read the field definition with
+// this code" — the same question metadata's collection handler asks per
+// row (`canReadField`), asked once per selected dimension here.
+//
+// A field with a NULL read_capability is readable by everyone, which is
+// the overwhelmingly common case, so the lookup is one indexed read on
+// a small table and only for a selection that names a field at all.
+//
+// An unknown code returns (false, nil): it cannot be read because it
+// does not exist, and reporting that distinctly is the oracle
+// [Selection.Authorize]'s doc refuses.
+func fieldReadable(
+	ctx context.Context, pool visibility.Pool,
+	caps visibility.CapabilityChecker, code string,
+) (bool, error) {
+	var readCap *string
+	err := pool.QueryRow(ctx, `
+		SELECT read_capability FROM field_definition
+		 WHERE code = $1 AND status = 'active' AND searchable = TRUE`,
+		code).Scan(&readCap)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if readCap == nil || *readCap == "" {
+		return true, nil
+	}
+	return caps != nil && caps(*readCap), nil
 }
 
 // SQL renders the selection as a WHERE-clause suffix for entity e.
@@ -461,6 +600,54 @@ func dimensionSQL(e visibility.EntityType, dim FacetType, a string, idx int) (st
 		if e == visibility.EntityAsset {
 			return `LOWER(` + a + `file_extension) = LOWER(` + p + `::TEXT)`, true
 		}
+	case FacetField:
+		// #1157 — one metadata field's value, as an ordinary predicate.
+		//
+		// ONE PLACEHOLDER, carrying `<code>=<value>`, and the split
+		// happens in SQL. That is deliberate rather than lazy: this
+		// function's contract is that every term renders exactly one
+		// placeholder, and [Selection.SQL] appends exactly one arg per
+		// term. Taking two here would change the arity for every
+		// dimension — the same objection [Selection.Authorize]'s doc
+		// records against threading the caller through. `split_part`
+		// takes the code, and `substr(… position('=' …))` takes
+		// everything after the FIRST `=`, so a value containing `=`
+		// survives intact.
+		//
+		// The value is matched against BOTH storage columns because a
+		// vocabulary field's storage depends on its type
+		// (web/src/lib/fieldOptions.ts VALUE_COLUMN): `select` and
+		// `tree` write one slug into `value_text`, `multi_select`
+		// writes an array into `value_options`. A caller ticking
+		// "steel" does not know or care which, and asking both is one
+		// expression rather than a type lookup per term.
+		//
+		// `searchable` and `status='active'` are conjuncts, not
+		// conveniences: `searchable` is the operator's statement that a
+		// field participates in search at all, and the advanced page
+		// renders its rows from exactly that set, so the backend has to
+		// agree or the page would offer a filter the engine ignores.
+		//
+		// ⛔ read_capability is NOT here. It is caller-dependent and
+		// this function is caller-blind by design — see
+		// [Selection.Authorize], which refuses the whole search when a
+		// term names a field this caller may not read.
+		if e == visibility.EntityAsset {
+			return `EXISTS (SELECT 1 FROM asset_field_value ffv
+			                 JOIN field_definition ffd ON ffd.id = ffv.field_id
+			                WHERE ffv.asset_id = ` + a + `id
+			                  AND ffd.code = split_part(` + p + `::TEXT, '=', 1)
+			                  AND ffd.searchable = TRUE
+			                  AND ffd.status = 'active'
+			                  AND (ffv.value_text = substr(` + p + `::TEXT, position('=' IN ` + p + `::TEXT) + 1)
+			                       OR substr(` + p + `::TEXT, position('=' IN ` + p + `::TEXT) + 1)
+			                          = ANY(ffv.value_options)))`, true
+		}
+		// Posts and collections carry no asset_field_value rows, so a
+		// field filter makes them unsatisfiable — zero hits AND zero
+		// count, the same fall-through FacetCollection relies on. That
+		// is correct rather than lossy: "assets whose material is
+		// steel" is a question about assets.
 	case FacetCollection:
 		// #910 — "search inside this collection", as an ordinary
 		// predicate rather than a second query path.

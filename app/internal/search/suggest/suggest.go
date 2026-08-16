@@ -38,6 +38,69 @@ const DefaultSimilarityThreshold = 0.3
 // typeahead widgets.
 const MaxResults = 10
 
+// Scope names the corpus the caller's COMMIT will be executed against,
+// so this endpoint can complete only terms that would return a result
+// there (#1155).
+//
+// # Why a suggestion needs to know where it will be executed
+//
+// A suggestion is a promise. Completing a term the search then cannot
+// match is worse than no suggestion — and until #1155 this endpoint made
+// that promise about a corpus it never consulted.
+//
+// The four sources draw from four places: `post_tags.tag`,
+// `collections.name`, `posts.title` and `assets.title`. The nav box's
+// commit, though, lands on ONE of two surfaces. `/search` runs the
+// Engine over assets, posts and collections — near enough the union of
+// the four sources. Browse runs `GET /posts`, which matches
+// `posts.search_text` and NOTHING else.
+//
+// Those two corpora are disjoint in a place that is not an accident.
+// Migration 00034 (#883) deliberately excludes a member asset's words
+// from its containing post's document unless that member is
+// `public/active/ready`, because `search_text` is one stored column
+// shared by every caller. So an asset titled "Animal dog" on a `team`
+// asset inside a readable post IS completable — its own row is readable
+// on the field plane — and its words are, by design, in no post document
+// anywhere. Type "anima", pick "Animal dog", and browse returns nothing.
+// Measured on the dev seed: 9 of 25 completions across six prefixes
+// returned zero rows on browse, every one of them an asset title, while
+// all 25 returned rows on `/search`.
+//
+// That is a CORPUS mismatch, the same class as #1077, and neither a
+// wider gate nor a narrower one fixes it. What fixes it is asking the
+// executing surface's own question before offering the word.
+type Scope string
+
+const (
+	// ScopeSearch is the /search surface: the Engine over assets, posts
+	// and collections. Each source is checked against the rule the
+	// Engine applies to ITS OWN entity.
+	ScopeSearch Scope = "search"
+	// ScopeBrowse is the browse feed, `GET /posts`. Every source is
+	// checked against the POST match rule, because that is the only rule
+	// browse runs — an asset title reaches browse only through a post
+	// document that contains it.
+	ScopeBrowse Scope = "browse"
+)
+
+// ParseScope maps the wire value to a Scope, defaulting to ScopeSearch.
+//
+// The default is the WIDER corpus deliberately. An unrecognised or absent
+// scope means "an API client we know nothing about", and the failure
+// modes are asymmetric: defaulting to browse would silently withhold
+// completions from a caller executing against the Engine, which looks
+// like missing data and has no error to trace. Defaulting to search
+// restores exactly the pre-#1155 behaviour for such a caller — no worse
+// than what shipped — and the two surfaces that matter both pass the
+// parameter explicitly.
+func ParseScope(s string) Scope {
+	if Scope(s) == ScopeBrowse {
+		return ScopeBrowse
+	}
+	return ScopeSearch
+}
+
 // Kind identifies what the suggestion came from so the frontend
 // can badge it in the dropdown.
 type Kind string
@@ -108,7 +171,11 @@ type Request struct {
 	// they happen to have filed, which is a different rule than the one
 	// ADR 0090 states. Recorded here so the next reader does not read the
 	// asymmetry as an oversight.
-	Mature    visibility.MatureViewer
+	Mature visibility.MatureViewer
+	// Scope is the corpus the caller's commit will be executed against
+	// (#1155). Zero value is ScopeSearch — see [ParseScope] for why the
+	// wider corpus is the safe default.
+	Scope     Scope
 	Threshold float64
 	Limit     int
 }
@@ -152,6 +219,11 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	if limit <= 0 || limit > MaxResults {
 		limit = MaxResults
 	}
+	// #1155 — zero value is ScopeSearch, the wider corpus. See [ParseScope].
+	scope := req.Scope
+	if scope != ScopeBrowse {
+		scope = ScopeSearch
+	}
 
 	// Assemble all four sub-queries + assemble in-memory.
 	all := make([]Suggestion, 0, limit*4)
@@ -163,7 +235,8 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	}
 	all = append(all, tags...)
 
-	cols, err := s.collections(ctx, prefix, threshold, req.Caller, req.CollectionCaps)
+	cols, err := s.collections(ctx, prefix, threshold, req.Caller, req.CollectionCaps,
+		scope, req.PostCaps, req.Mature, req.Caps.SystemAdmin)
 	if err != nil {
 		return Response{}, err
 	}
@@ -177,7 +250,7 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 	all = append(all, postTitles...)
 
 	assetTitles, err := s.assetTitles(ctx, prefix, threshold, req.Caller, req.Caps,
-		req.MutationCaps, req.Mature)
+		req.MutationCaps, req.Mature, scope, req.PostCaps)
 	if err != nil {
 		return Response{}, err
 	}
@@ -208,6 +281,78 @@ func (s *Service) Suggest(ctx context.Context, req Request) (Response, error) {
 		s.Counter.RecordSuggestion()
 	}
 	return Response{Suggestions: deduped}, nil
+}
+
+// executableOnPosts renders the conjunct "executing this value against
+// the browse feed returns at least one row for this viewer" (#1155).
+//
+// Browse is `GET /posts`, whose match is
+//
+//	posts.search_text @@ plainto_tsquery('english', $q)
+//	  AND <post read rule>  AND <mature axis>
+//
+// — the three clauses [search.Engine.runPosts] composes. This renders the
+// SAME three, COMPOSED rather than transcribed: `Filter(EntityPost)` and
+// `MatureFilterSQL` are the same functions the Engine calls, so a change
+// to either moves both surfaces at once. ADR 0070's lesson (#1023) is
+// that a rule expressed twice is a rule that will disagree with itself,
+// and an existence check that drifted from the query it is predicting
+// would be exactly that — a promise about a result set, computed from a
+// stale copy of the rule that produces it.
+//
+// `valueExpr` is the SQL expression yielding the candidate string. It is
+// always a COLUMN of the outer query, never caller text, so it composes
+// as an identifier and binds nothing.
+//
+// # Cost, measured
+//
+// One GIN probe per surviving candidate. The similarity filter runs
+// first, so the semi join sees only the rows that already cleared the
+// trigram threshold — 25 rows for prefix "anima" on the dev seed. Plan:
+// Nested Loop Semi Join over `posts_search_text_gin`, 0.004ms per loop,
+// 3.71ms total against 4.89ms for the unconjuncted query (it sorts fewer
+// rows, so it can come out ahead); shared buffers 1148 vs 973, +18%.
+// That is the cost #1155 asked to see before this shape was accepted.
+func executableOnPosts(
+	ctx context.Context, valueExpr string, argOffset int,
+	caller visibility.Caller, caps visibility.PostCaps,
+	mature visibility.MatureViewer, isSystemAdmin bool,
+) (string, []any, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, caller,
+		visibility.WithPostCaps(caps))
+	if err != nil {
+		return "", nil, err
+	}
+	frag, args := pred.ToSQL("xp", argOffset)
+	frag += visibility.MatureFilterSQL("xp", visibility.MatureOwnerColPost,
+		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
+	sql := ` AND EXISTS (SELECT 1 FROM posts xp
+		 WHERE xp.search_text @@ plainto_tsquery('english', ` + valueExpr + `)` +
+		frag + `)`
+	return sql, args, nil
+}
+
+// executableAsSelf renders the conjunct "executing this value against
+// THIS row's own entity matches THIS row" (#1155).
+//
+// On the /search surface every source's value is drawn from a column the
+// Engine indexes into that same row's `search_text`: an asset title at
+// weight A, a post title at weight A, a tag at weight C of its post, a
+// collection name at weight A. So the existence question degenerates —
+// there is no subquery, only the Engine's own `@@` clause applied to the
+// row already in hand.
+//
+// It is not a no-op. `plainto_tsquery` can return the EMPTY query, and
+// `search_text @@ ”` is false for every row, so a value made entirely of
+// stopwords is completable and unmatchable on every surface at once. The
+// dev seed happens to contain none; the class is real and this closes it
+// for all four sources in one clause.
+func executableAsSelf(alias, valueExpr string) string {
+	col := "search_text"
+	if alias != "" {
+		col = alias + "." + col
+	}
+	return ` AND ` + col + ` @@ plainto_tsquery('english', ` + valueExpr + `)`
 }
 
 // tags completes on the tags applied to posts, gated by the POST read
@@ -273,6 +418,13 @@ func (s *Service) tags(
 	// untouched (ADR 0063).
 	frag += visibility.MatureFilterSQL("p", visibility.MatureOwnerColPost,
 		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
+	// #1155 — the executability conjunct. Both surfaces execute a tag as a
+	// POST query (a tag is indexed at weight C of its post's document), so
+	// the two scopes agree here and the self-form is the cheaper spelling
+	// of the same question: this tag's own post must match it. That is not
+	// vacuous — a tag made of stopwords produces an empty tsquery and
+	// matches nothing anywhere.
+	frag += executableAsSelf("p", "pt.tag")
 	sql := `
 		SELECT pt.tag AS value, similarity(pt.tag, $1) AS sim
 		  FROM post_tags pt
@@ -310,13 +462,54 @@ func (s *Service) tags(
 // expression of it, which is why it is here rather than removed as a
 // duplicate. It is a CORPUS constraint — "what may be completed" —
 // not a second copy of the read rule.
+//
+// # The executability conjunct (#1155)
+//
+// Browse never runs a collection query, so on that surface a collection
+// name has to reach the caller through a POST document or not at all —
+// [executableOnPosts]. On /search the Engine matches
+// `collections.search_text`, which carries the name at weight A, so the
+// row answers for itself.
+//
+// ⚠️ A GATE ASYMMETRY SURVIVES THIS AND IS REPORTED, NOT CLOSED HERE.
+// This source composes [visibility.CollectionReadableSQL], whose admin
+// arm returns the EMPTY fragment (#1078); the Engine's runCollections
+// composes `Filter(EntityCollection)`, which has no admin disjunct at
+// all. So a system.admin can be completed the name of a private
+// collection they neither own nor hold a grant on, and /search will not
+// return it — #1155's class, on the gate rather than the corpus.
+//
+// The self-conjunct below does not close it, deliberately: closing it
+// means choosing a direction, and both directions are product calls
+// somebody has to make rather than a bug to fix quietly. Narrowing this
+// source back to `Filter` re-breaks #1078's acceptance (an admin got no
+// completions for collections they can open). Widening runCollections to
+// CollectionReadableSQL decides the question predicate.go explicitly
+// leaves open — "whether an admin may browse OTHER people's PRIVATE
+// collections … nobody has asked it" — which is an escalation of an
+// admin's read, not a consistency fix. The dev seed cannot exhibit it
+// (every collection is owned by ref 1), so this is a read of the two
+// code paths, and it is written down here rather than acted on.
 func (s *Service) collections(
 	ctx context.Context, prefix string, threshold float64,
 	caller visibility.Caller, caps visibility.CapabilityChecker,
+	scope Scope, postCaps visibility.PostCaps, mature visibility.MatureViewer,
+	isSystemAdmin bool,
 ) ([]Suggestion, error) {
 	frag, args, err := visibility.CollectionReadableSQL(ctx, "c", caller, caps, 2)
 	if err != nil {
 		return nil, err
+	}
+	if scope == ScopeBrowse {
+		ex, exArgs, err := executableOnPosts(ctx, "c.name", 2+len(args),
+			caller, postCaps, mature, isSystemAdmin)
+		if err != nil {
+			return nil, err
+		}
+		frag += ex
+		args = append(args, exArgs...)
+	} else {
+		frag += executableAsSelf("c", "c.name")
 	}
 	sql := `
 		SELECT c.name AS value, similarity(c.name, $1) AS sim
@@ -353,10 +546,13 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 	// source below, on the second axis.
 	frag += visibility.MatureFilterSQL("", visibility.MatureOwnerColPost,
 		strconv.FormatInt(caller.UserRef, 10), mature, isSystemAdmin)
+	// #1155 — same reasoning as the tag source: a post title is executed
+	// as a post query on BOTH surfaces, so the row must match itself.
+	frag += executableAsSelf("posts", "posts.title")
 	sql := `
-		SELECT title AS value, similarity(title, $1) AS sim
+		SELECT posts.title AS value, similarity(posts.title, $1) AS sim
 		  FROM posts
-		 WHERE similarity(title, $1) > $2` + frag + `
+		 WHERE similarity(posts.title, $1) > $2` + frag + `
 		 ORDER BY sim DESC
 		 LIMIT ` + itoa(MaxResults)
 	queryArgs := append([]any{prefix, threshold}, args...)
@@ -395,10 +591,36 @@ func (s *Service) postTitles(ctx context.Context, prefix string, threshold float
 // the field they may already read, and nothing here touches the binary
 // plane — [visibility.PreviewReadable] still decides the picture, and
 // this endpoint returns no picture at all.
+//
+// # The executability conjunct, and why this source needs the SCOPE (#1155)
+//
+// This is the source the owner's zero-result completion came from, and
+// the one place the two surfaces genuinely disagree.
+//
+// On /search the Engine matches `assets.search_text`, into which this
+// title is indexed at weight A, so the row matches itself and
+// [executableAsSelf] is the whole check.
+//
+// On BROWSE there is no asset query at all — `GET /posts` matches
+// `posts.search_text`, and migration 00034 (#883) keeps a member's words
+// out of that document unless the member is `public/active/ready`. A
+// `team` or `draft` asset is therefore perfectly readable here, on the
+// field plane, and absent from every post document on the instance. It
+// completed, and browse returned nothing.
+//
+// So on browse this source is checked against the POST rule
+// ([executableOnPosts]) instead of its own. Note what that does NOT do:
+// it does not drop asset titles from browse's completions wholesale.
+// Two thirds of them are members of a post that does carry their words,
+// and those stay — the conjunct removes exactly the ones browse cannot
+// answer. Narrowing the source instead would be #1077's option 2, which
+// that issue argues against for the same reason: the rail (here, the
+// corpus) describes real results.
 func (s *Service) assetTitles(
 	ctx context.Context, prefix string, threshold float64,
 	caller visibility.Caller, caps visibility.ContentCaps,
 	mut visibility.AssetMutationCaps, mature visibility.MatureViewer,
+	scope Scope, postCaps visibility.PostCaps,
 ) ([]Suggestion, error) {
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
@@ -416,11 +638,23 @@ func (s *Service) assetTitles(
 	// ANDed rather than merged. Same literal-ref trick, same reason.
 	frag += visibility.MatureFilterSQL("", visibility.MatureOwnerColAsset,
 		strconv.FormatInt(caller.UserRef, 10), mature, caps.SystemAdmin)
+	// #1155 — see the doc above. The scope picks which corpus answers.
+	if scope == ScopeBrowse {
+		ex, exArgs, err := executableOnPosts(ctx, "assets.title", 2+len(args),
+			caller, postCaps, mature, caps.SystemAdmin)
+		if err != nil {
+			return nil, err
+		}
+		frag += ex
+		args = append(args, exArgs...)
+	} else {
+		frag += executableAsSelf("assets", "assets.title")
+	}
 	sql := `
-		SELECT title AS value, similarity(title, $1) AS sim
+		SELECT assets.title AS value, similarity(assets.title, $1) AS sim
 		  FROM assets
-		 WHERE similarity(title, $1) > $2
-		   AND title <> ''` + frag + `
+		 WHERE similarity(assets.title, $1) > $2
+		   AND assets.title <> ''` + frag + `
 		 ORDER BY sim DESC
 		 LIMIT ` + itoa(MaxResults)
 	queryArgs := append([]any{prefix, threshold}, args...)
