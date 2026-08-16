@@ -65,6 +65,11 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Security
 
+- **Mature works stay hidden in every picture, not just every list.** Collection cover mosaics,
+  chosen covers, team pictures, saved searches and document-search all now apply the same
+  mature-content rules as everything else — and a post whose *cover* is mature is treated as
+  mature even when its other files aren't (#1147).
+
 - **Comment threads respect post visibility.** The comments list on a post no longer answers
   for callers who cannot see the post itself — and five sibling endpoints with the same gap,
   including two write paths, were closed in the same pass (#1132).
