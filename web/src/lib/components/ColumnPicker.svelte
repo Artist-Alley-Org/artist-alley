@@ -31,8 +31,12 @@
     </span>
   {/snippet}
 
+  <!-- Unhideable columns are omitted rather than shown disabled
+       (#1127). A greyed-out row invites the reader to work out why it
+       cannot be turned off; the selection column has no "off" state
+       worth explaining, so it is simply not a setting. -->
   <div class="w-56 py-1">
-    {#each LIST_COLUMNS as col (col.id)}
+    {#each LIST_COLUMNS.filter((c) => c.hideable !== false) as col (col.id)}
       <label
         class="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-fg hover:bg-state-hover"
       >

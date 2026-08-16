@@ -268,7 +268,7 @@ func TestLogin_NoStoredPreferencesStillSucceeds(t *testing.T) {
 	})
 }
 
-// seedTeamRail writes only the team_rail blob, leaving every other
+// seedTeamRail writes only the browse_rail blob, leaving every other
 // preference at its default. Separate from seedAccountPrefs because the
 // interesting case for #1113 is an account that has curated its RAIL
 // and nothing else — which is also the account whose /auth/me used to
@@ -277,13 +277,13 @@ func seedTeamRail(t *testing.T, ctx context.Context, fx *fixture, railJSON strin
 	t.Helper()
 	clearAccountPrefs(t, ctx, fx)
 	if _, err := fx.pool.Exec(ctx, `
-		INSERT INTO user_preferences (user_ref, team_rail)
+		INSERT INTO user_preferences (user_ref, browse_rail)
 		VALUES ($1, $2::jsonb)
 		ON CONFLICT (user_ref) DO UPDATE
-		SET team_rail = EXCLUDED.team_rail`,
+		SET browse_rail = EXCLUDED.browse_rail`,
 		fx.userRef, railJSON,
 	); err != nil {
-		t.Fatalf("seed team_rail: %v", err)
+		t.Fatalf("seed browse_rail: %v", err)
 	}
 }
 
@@ -307,19 +307,19 @@ func TestSession_CarriesTeamRailCuration(t *testing.T) {
 		}
 		var cu openapi.CurrentUser
 		mustDecode(t, resp, &cu)
-		if cu.TeamRail == nil {
-			t.Fatal("login response omitted team_rail — the rail paints uncurated and then jumps")
+		if cu.BrowseRail == nil {
+			t.Fatal("login response omitted browse_rail — the rail paints uncurated and then jumps")
 		}
-		if cu.TeamRail.HiddenTeamIds == nil || len(*cu.TeamRail.HiddenTeamIds) != 1 ||
-			(*cu.TeamRail.HiddenTeamIds)[0].String() != hidden {
-			t.Errorf("hidden_team_ids=%v want [%s]", cu.TeamRail.HiddenTeamIds, hidden)
+		if cu.BrowseRail.HiddenTeamIds == nil || len(*cu.BrowseRail.HiddenTeamIds) != 1 ||
+			(*cu.BrowseRail.HiddenTeamIds)[0].String() != hidden {
+			t.Errorf("hidden_team_ids=%v want [%s]", cu.BrowseRail.HiddenTeamIds, hidden)
 		}
 		// Sequence, not membership: team_order's entire content IS the
 		// order, so a set assertion would pass on a handler that sorted.
-		if cu.TeamRail.TeamOrder == nil || len(*cu.TeamRail.TeamOrder) != 2 ||
-			(*cu.TeamRail.TeamOrder)[0].String() != first ||
-			(*cu.TeamRail.TeamOrder)[1].String() != second {
-			t.Errorf("team_order=%v want [%s %s]", cu.TeamRail.TeamOrder, first, second)
+		if cu.BrowseRail.TeamOrder == nil || len(*cu.BrowseRail.TeamOrder) != 2 ||
+			(*cu.BrowseRail.TeamOrder)[0].String() != first ||
+			(*cu.BrowseRail.TeamOrder)[1].String() != second {
+			t.Errorf("team_order=%v want [%s %s]", cu.BrowseRail.TeamOrder, first, second)
 		}
 	})
 }
@@ -339,8 +339,8 @@ func TestSession_OmitsTeamRailWhenUncurated(t *testing.T) {
 		}
 		var cu openapi.CurrentUser
 		mustDecode(t, resp, &cu)
-		if cu.TeamRail != nil {
-			t.Errorf("team_rail should be omitted entirely, got %+v", *cu.TeamRail)
+		if cu.BrowseRail != nil {
+			t.Errorf("browse_rail should be omitted entirely, got %+v", *cu.BrowseRail)
 		}
 	})
 }

@@ -965,6 +965,11 @@ func (*PanicShim) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRe
 	panic("PanicShim: GetMyCapabilities called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetMyFollowedTags panics by default; test shims override.
+func (*PanicShim) GetMyFollowedTags(context.Context, openapi.GetMyFollowedTagsRequestObject) (openapi.GetMyFollowedTagsResponseObject, error) {
+	panic("PanicShim: GetMyFollowedTags called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetMyFollowedTeams panics by default; test shims override.
 func (*PanicShim) GetMyFollowedTeams(context.Context, openapi.GetMyFollowedTeamsRequestObject) (openapi.GetMyFollowedTeamsResponseObject, error) {
 	panic("PanicShim: GetMyFollowedTeams called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -1393,6 +1398,16 @@ func (*PanicShim) DownloadStorageObject(context.Context, openapi.DownloadStorage
 // DownloadStorageObjectVariant panics by default; test shims override.
 func (*PanicShim) DownloadStorageObjectVariant(context.Context, openapi.DownloadStorageObjectVariantRequestObject) (openapi.DownloadStorageObjectVariantResponseObject, error) {
 	panic("PanicShim: DownloadStorageObjectVariant called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UnfollowTag panics by default; test shims override.
+func (*PanicShim) UnfollowTag(context.Context, openapi.UnfollowTagRequestObject) (openapi.UnfollowTagResponseObject, error) {
+	panic("PanicShim: UnfollowTag called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// FollowTag panics by default; test shims override.
+func (*PanicShim) FollowTag(context.Context, openapi.FollowTagRequestObject) (openapi.FollowTagResponseObject, error) {
+	panic("PanicShim: FollowTag called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListTeams panics by default; test shims override.

@@ -32,29 +32,29 @@ const (
 	teamC = "c0e2652d-65b1-cb0f-8c25-3260a5b8834d"
 )
 
-func readTeamRailColumn(t *testing.T, h *Handler, ref int64) TeamRail {
+func readBrowseRailColumn(t *testing.T, h *Handler, ref int64) BrowseRail {
 	t.Helper()
 	var raw []byte
 	if err := h.pool.QueryRow(context.Background(),
-		`SELECT team_rail FROM user_preferences WHERE user_ref = $1`, ref,
+		`SELECT browse_rail FROM user_preferences WHERE user_ref = $1`, ref,
 	).Scan(&raw); err != nil {
-		t.Fatalf("read team_rail column: %v", err)
+		t.Fatalf("read browse_rail column: %v", err)
 	}
-	var got TeamRail
+	var got BrowseRail
 	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("decode team_rail %q: %v", raw, err)
+		t.Fatalf("decode browse_rail %q: %v", raw, err)
 	}
 	return got
 }
 
-func TestSavePreferences_PersistsTeamRailToTheColumn(t *testing.T) {
+func TestSavePreferences_PersistsBrowseRailToTheColumn(t *testing.T) {
 	pool := unsubTestPool(t)
 	h := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref := seedUnsubUser(t, pool)
 	ctx := context.Background()
 
 	if err := h.savePreferences(ctx, ref, Preferences{
-		TeamRail: TeamRail{
+		BrowseRail: BrowseRail{
 			HiddenTeamIDs: []string{teamA},
 			TeamOrder:     []string{teamC, teamB},
 		},
@@ -62,7 +62,7 @@ func TestSavePreferences_PersistsTeamRailToTheColumn(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	got := readTeamRailColumn(t, h, ref)
+	got := readBrowseRailColumn(t, h, ref)
 	if len(got.HiddenTeamIDs) != 1 || got.HiddenTeamIDs[0] != teamA {
 		t.Errorf("hidden_team_ids=%v want [%s]", got.HiddenTeamIDs, teamA)
 	}
@@ -78,7 +78,7 @@ func TestSavePreferences_PersistsTeamRailToTheColumn(t *testing.T) {
 // indistinguishable on disk. Same guarantee MarshalFeedFilters carries
 // for the boolean bag, and it is what lets the /auth/me decoder omit
 // the object for the overwhelming majority of accounts.
-func TestSavePreferences_DefaultTeamRailPersistsAsEmptyObject(t *testing.T) {
+func TestSavePreferences_DefaultBrowseRailPersistsAsEmptyObject(t *testing.T) {
 	pool := unsubTestPool(t)
 	h := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref := seedUnsubUser(t, pool)
@@ -88,12 +88,12 @@ func TestSavePreferences_DefaultTeamRailPersistsAsEmptyObject(t *testing.T) {
 	}
 	var raw []byte
 	if err := h.pool.QueryRow(context.Background(),
-		`SELECT team_rail FROM user_preferences WHERE user_ref = $1`, ref,
+		`SELECT browse_rail FROM user_preferences WHERE user_ref = $1`, ref,
 	).Scan(&raw); err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if string(raw) != "{}" {
-		t.Errorf("team_rail=%s want {}", raw)
+		t.Errorf("browse_rail=%s want {}", raw)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestSavePreferences_DefaultTeamRailPersistsAsEmptyObject(t *testing.T) {
 // unrelated write must not reset a preference it does not mention. The
 // one-click unsubscribe link is the write a user takes without thinking
 // about their rail, and it goes through the same savePreferences.
-func TestUnsubscribeEmail_PreservesTeamRail(t *testing.T) {
+func TestUnsubscribeEmail_PreservesBrowseRail(t *testing.T) {
 	pool := unsubTestPool(t)
 	h := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ref := seedUnsubUser(t, pool)
@@ -109,7 +109,7 @@ func TestUnsubscribeEmail_PreservesTeamRail(t *testing.T) {
 
 	if err := h.savePreferences(ctx, ref, Preferences{
 		NotificationChannels: NotificationChannels{EventMentionOfMe: {ChannelInApp, ChannelEmail}},
-		TeamRail:             TeamRail{HiddenTeamIDs: []string{teamA}, TeamOrder: []string{teamB}},
+		BrowseRail:           BrowseRail{HiddenTeamIDs: []string{teamA}, TeamOrder: []string{teamB}},
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -117,14 +117,14 @@ func TestUnsubscribeEmail_PreservesTeamRail(t *testing.T) {
 		t.Fatalf("unsubscribe: %v", err)
 	}
 
-	got := readTeamRailColumn(t, h, ref)
+	got := readBrowseRailColumn(t, h, ref)
 	if len(got.HiddenTeamIDs) != 1 || len(got.TeamOrder) != 1 {
 		t.Fatalf("unsubscribing reset the reader's rail curation: %+v", got)
 	}
 }
 
-func TestTeamRailSanitized_DropsUnusableEntries(t *testing.T) {
-	in := TeamRail{
+func TestBrowseRailSanitized_DropsUnusableEntries(t *testing.T) {
+	in := BrowseRail{
 		HiddenTeamIDs: []string{teamA, "", teamA, "not-a-uuid", teamB},
 		TeamOrder:     []string{"also-not-a-uuid"},
 	}
@@ -150,23 +150,23 @@ func TestTeamRailSanitized_DropsUnusableEntries(t *testing.T) {
 // see, is KEPT. It is inert at render (the rail intersects with what the
 // server returned) and dropping it here would silently un-hide a team
 // the moment it briefly left the reader's visibility.
-func TestTeamRailSanitized_KeepsUnknownButWellformedIDs(t *testing.T) {
+func TestBrowseRailSanitized_KeepsUnknownButWellformedIDs(t *testing.T) {
 	const ghost = "00000000-0000-0000-0000-0000000000ff"
-	got := TeamRail{HiddenTeamIDs: []string{ghost}}.Sanitized()
+	got := BrowseRail{HiddenTeamIDs: []string{ghost}}.Sanitized()
 	if len(got.HiddenTeamIDs) != 1 || got.HiddenTeamIDs[0] != ghost {
 		t.Errorf("hidden_team_ids=%v want [%s]", got.HiddenTeamIDs, ghost)
 	}
 }
 
-func TestValidatePreferences_RejectsOversizedTeamRailLists(t *testing.T) {
-	long := make([]string, MaxTeamRailIDs+1)
+func TestValidatePreferences_RejectsOversizedBrowseRailLists(t *testing.T) {
+	long := make([]string, MaxBrowseRailIDs+1)
 	for i := range long {
 		long[i] = teamA
 	}
-	if err := ValidatePreferences(Preferences{TeamRail: TeamRail{HiddenTeamIDs: long}}); err == nil {
+	if err := ValidatePreferences(Preferences{BrowseRail: BrowseRail{HiddenTeamIDs: long}}); err == nil {
 		t.Error("a hidden_team_ids list past the cap was accepted")
 	}
-	if err := ValidatePreferences(Preferences{TeamRail: TeamRail{TeamOrder: long}}); err == nil {
+	if err := ValidatePreferences(Preferences{BrowseRail: BrowseRail{TeamOrder: long}}); err == nil {
 		t.Error("a team_order list past the cap was accepted")
 	}
 }

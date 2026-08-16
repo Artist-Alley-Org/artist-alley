@@ -42,9 +42,18 @@
      *  every hover — the same corner collision #578 resolved for the
      *  multi-asset badge by moving it, not by shrinking it. */
     corner?: 'left' | 'right';
+    /** The feed-order id list this card sits in, for Shift+click range
+     *  selection (#1127). A THUNK rather than an array so the card does
+     *  not re-render every time the feed appends a page — it is only
+     *  read at the moment of a shift-click.
+     *
+     *  Absent on surfaces that have not adopted range selection; the
+     *  checkbox then falls back to a plain toggle, which is what it has
+     *  always done. */
+    orderedIds?: () => string[];
   }
 
-  let { id, corner = 'left' }: Props = $props();
+  let { id, corner = 'left', orderedIds }: Props = $props();
 
   const canSelect = $derived(!!auth.user && !site.demoMode);
   const selected = $derived(selection.has(id));
@@ -54,7 +63,19 @@
   function toggle(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    // Shift on the CHECKBOX extends too, not just Shift on the card
+    // (#1127). A reader who has started selecting is aiming at
+    // checkboxes; making the range gesture work only on the artwork
+    // would mean the two targets 6px apart do different things.
+    if (e.shiftKey && orderedIds) {
+      selection.extendTo(id, orderedIds());
+      return;
+    }
     selection.toggle(id);
+    // A plain toggle re-pivots, so the next Shift+click ranges from
+    // here. Dropping the anchor when UNchecking would strand the next
+    // range on a stale pivot several screens away.
+    selection.setAnchor(id);
   }
 </script>
 

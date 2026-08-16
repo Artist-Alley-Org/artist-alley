@@ -989,6 +989,12 @@ type SystemConfig struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TagFollow struct {
+	UserRef   int64              `json:"user_ref"`
+	Tag       string             `json:"tag"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Team struct {
 	ID             pgtype.UUID        `json:"id"`
 	Slug           string             `json:"slug"`
@@ -1105,7 +1111,7 @@ type UserPreference struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	EmailCadence         []byte             `json:"email_cadence"`
 	FeedFilters          []byte             `json:"feed_filters"`
-	TeamRail             []byte             `json:"team_rail"`
+	BrowseRail           []byte             `json:"browse_rail"`
 }
 
 type UserProfile struct {

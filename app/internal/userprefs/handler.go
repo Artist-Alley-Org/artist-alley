@@ -139,7 +139,7 @@ func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, 
 	case err != nil:
 		return Preferences{}, err
 	default:
-		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters, row.TeamRail)
+		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence, row.FeedFilters, row.BrowseRail)
 		if err != nil {
 			return Preferences{}, err
 		}
@@ -245,14 +245,16 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		ShowRestricted: &p.FeedFilters.ShowRestricted,
 	}
 
-	// Always present, with both lists materialised even when empty
-	// (#1113). Same argument as feed_filters one line up, for the list
-	// case: "no curation" and "an empty curation" are the same rail, so
-	// an omitted object would only make the client re-derive `[]`.
-	rail := p.TeamRail.Sanitized()
-	teamRail := openapi.UserPreferencesTeamRail{
+	// Always present, with every list materialised even when empty
+	// (#1113, #1123). Same argument as feed_filters one line up, for the
+	// list case: "no curation" and "an empty curation" are the same rail,
+	// so an omitted object would only make the client re-derive `[]`.
+	rail := p.BrowseRail.Sanitized()
+	browseRail := openapi.UserPreferencesBrowseRail{
 		HiddenTeamIds: toWireIDs(rail.HiddenTeamIDs),
 		TeamOrder:     toWireIDs(rail.TeamOrder),
+		HiddenTags:    toWireTags(rail.HiddenTags),
+		TagOrder:      toWireTags(rail.TagOrder),
 	}
 
 	return openapi.UserPreferencesResponse{
@@ -260,7 +262,7 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		EmailCadence:           &cadence,
 		DefaultViews:           views,
 		FeedFilters:            filters,
-		TeamRail:               teamRail,
+		BrowseRail:             browseRail,
 		KnownEventTypes:        append([]string(nil), KnownEventTypes...),
 		KnownChannels:          append([]string(nil), KnownChannels...),
 		DefaultChannelsByEvent: defaults,
@@ -304,21 +306,23 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 		filters.ShowRestricted = *body.FeedFilters.ShowRestricted
 	}
 	// Full-object replacement, like everything else on this endpoint: an
-	// absent `team_rail` clears the curation back to the default rail,
+	// absent `browse_rail` clears the curation back to the default rail,
 	// and an absent list inside it clears that list. The manage panel
-	// always sends both, which is what makes "unhide the last hidden
-	// team" expressible at all.
-	rail := TeamRail{}
-	if body.TeamRail != nil {
-		rail.HiddenTeamIDs = fromWireIDs(body.TeamRail.HiddenTeamIds)
-		rail.TeamOrder = fromWireIDs(body.TeamRail.TeamOrder)
+	// always sends all four, which is what makes "unhide the last hidden
+	// chip" expressible at all.
+	rail := BrowseRail{}
+	if body.BrowseRail != nil {
+		rail.HiddenTeamIDs = fromWireIDs(body.BrowseRail.HiddenTeamIds)
+		rail.TeamOrder = fromWireIDs(body.BrowseRail.TeamOrder)
+		rail.HiddenTags = fromWireTags(body.BrowseRail.HiddenTags)
+		rail.TagOrder = fromWireTags(body.BrowseRail.TagOrder)
 	}
 	return Preferences{
 		NotificationChannels: channels,
 		DefaultViews:         views,
 		EmailCadence:         cadence,
 		FeedFilters:          filters,
-		TeamRail:             rail.Sanitized(),
+		BrowseRail:           rail.Sanitized(),
 	}
 }
 
@@ -359,6 +363,30 @@ func fromWireIDs(in *[]openapi_types.UUID) []string {
 		out = append(out, u.String())
 	}
 	return out
+}
+
+// toWireTags / fromWireTags are the tag-list counterparts (#1123).
+//
+// Separate from the id pair rather than generic over both, because the
+// id pair's whole substance is the uuid parse — the thing a tag must
+// NOT be put through. A `[]string` → `*[]string` helper that shared a
+// body with the uuid one would either drop every tag or stop rejecting
+// malformed ids; keeping them apart makes each one's rule visible.
+//
+// Non-nil slice for the same reason toWireIDs returns one: an empty
+// list marshals as `[]`, so the response shape does not change
+// depending on whether the reader has ever hidden a chip.
+func toWireTags(in []string) *[]string {
+	out := make([]string, 0, len(in))
+	out = append(out, in...)
+	return &out
+}
+
+func fromWireTags(in *[]string) []string {
+	if in == nil {
+		return nil
+	}
+	return append([]string(nil), *in...)
 }
 
 // CadenceFor returns the caller's email cadence for a verb via the
@@ -433,7 +461,7 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 	if err != nil {
 		return err
 	}
-	teamRailJSON, err := MarshalTeamRail(prefs.TeamRail)
+	browseRailJSON, err := MarshalBrowseRail(prefs.BrowseRail)
 	if err != nil {
 		return err
 	}
@@ -443,7 +471,7 @@ func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferen
 		DefaultViews:         viewsJSON,
 		EmailCadence:         cadenceJSON,
 		FeedFilters:          filtersJSON,
-		TeamRail:             teamRailJSON,
+		BrowseRail:           browseRailJSON,
 	}); err != nil {
 		return err
 	}

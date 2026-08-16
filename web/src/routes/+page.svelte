@@ -8,9 +8,10 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import FeaturedRail from '$components/FeaturedRail.svelte';
-  import TeamsRail from '$components/TeamsRail.svelte';
+  import BrowseRail from '$components/BrowseRail.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
-  import { teamRail } from '$stores/teamRail.svelte';
+  import { browseRail } from '$stores/browseRail.svelte';
+  import { tagFollows } from '$stores/tagFollows.svelte';
   import PostCard from '$components/PostCard.svelte';
   import type { CardCoverAsset } from '$components/cardAsset';
   import PostHost from '$components/PostHost.svelte';
@@ -21,6 +22,7 @@
   import { browseView } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
+  import { createMarquee } from '$lib/util/marquee.svelte';
 
   onMount(() => { browseView.init(); });
 
@@ -89,16 +91,42 @@
    *  outside this reader's visible set — the heading falls back to the
    *  unfiltered title rather than printing a raw uuid. */
   const activeTeam = $derived(
-    activeTeamId ? (teamRail.teams.find((c) => c.id === activeTeamId) ?? null) : null,
+    activeTeamId ? (browseRail.teams.find((c) => c.id === activeTeamId) ?? null) : null,
   );
+
+  /** The tag the feed is filtered to (#1123), or null.
+   *
+   *  Same URL ownership as `?team=`, and the same deliberate absence of
+   *  client-side validation: a `?tag=` naming something nobody has used
+   *  comes back as an empty feed from the server, which is the honest
+   *  answer and costs no round trip to decide here. Unlike `?team=` it
+   *  cannot leak anything either — a tag is a string, not a row whose
+   *  existence is worth hiding. */
+  const activeTag = $derived(page.url.searchParams.get('tag'));
 
   /** Apply or clear the team filter. `noScroll` + `keepFocus` because
    *  this is a filter, not a navigation: the reader stays where they
-   *  are and the feed changes underneath the rail they just clicked. */
+   *  are and the feed changes underneath the rail they just clicked.
+   *
+   *  Picking a team CLEARS any tag filter, and `selectTag` clears the
+   *  team. The rail is a single-select strip (see its component note),
+   *  and this page owning both params is what makes that true — a rail
+   *  that only set its own would leave the other pressed chip live in
+   *  the URL with nothing on screen saying so. */
   async function selectTeam(id: string | null) {
     const target = new URL(page.url);
+    target.searchParams.delete('tag');
     if (id) target.searchParams.set('team', id);
     else target.searchParams.delete('team');
+    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+  }
+
+  /** Apply or clear the tag filter. Mirror of `selectTeam`. */
+  async function selectTag(tag: string | null) {
+    const target = new URL(page.url);
+    target.searchParams.delete('team');
+    if (tag) target.searchParams.set('tag', tag);
+    else target.searchParams.delete('tag');
     await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
   }
 
@@ -128,7 +156,13 @@
 
   let generation = 0;
 
-  async function fetchPage(q: string, team: string | null, cursor: string | null, reset: boolean) {
+  async function fetchPage(
+    q: string,
+    team: string | null,
+    tag: string | null,
+    cursor: string | null,
+    reset: boolean,
+  ) {
     loading = true;
     error = null;
     guestFeed = false;
@@ -141,6 +175,11 @@
       // so it composes with the feed pill, the sort direction and the
       // visibility predicate without this page arranging anything.
       if (team) params.team_id = team;
+      // #1123 — `?tag=` has been a /posts parameter since the tag filter
+      // shipped; the rail chip just gives it a control. It intersects
+      // with `q` and the feed pill server-side for the same reason
+      // `team_id` does: they are all parameters of one query.
+      if (tag) params.tag = tag;
       if (!reset && cursor) params.cursor = cursor;
       // Feed filter + direction from the BrowseFooter store.
       //
@@ -205,7 +244,8 @@
   // diff rendered as "Binary file not shown" (#925). Do not put a raw
   // control byte back in here.
   const feedKey = () =>
-    `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}`;
+    `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}` +
+    `\u001f${activeTag ?? ''}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —
@@ -223,7 +263,7 @@
       items = [];
       nextCursor = null;
       initialLoaded = false;
-      void fetchPage(query, activeTeamId, null, true);
+      void fetchPage(query, activeTeamId, activeTag, null, true);
     });
   });
 
@@ -272,7 +312,7 @@
           if (entry.isIntersecting) {
             untrack(() => {
               if (nextCursor && !loading) {
-                void fetchPage(query, activeTeamId, nextCursor, false);
+                void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
               }
             });
           }
@@ -283,6 +323,22 @@
     observer.observe(node);
     return () => observer.disconnect();
   });
+
+  // ── Marquee drag-select (#1127) ───────────────────────────────────
+  //
+  // Attached to the WALL, not to <main>: the band should not start from
+  // the rail, the featured strip or the page gutters, all of which are
+  // chrome with their own gestures. `orderedIds` is the loaded feed in
+  // feed order — the same array the grid renders from — which is what
+  // makes a range "everything between these two posts" rather than
+  // "everything between these two positions in some column".
+  //
+  // LOADED POSTS ONLY, and that falls out of using `items` rather than
+  // asking the server: a range can only ever name rows the reader can
+  // see, so there is no phantom selection of an unfetched page.
+  let wallEl = $state<HTMLElement | null>(null);
+  const orderedIds = () => items.map((p) => p.id);
+  const marquee = createMarquee(() => wallEl, { ordered: orderedIds });
 
   const hasMore = $derived(nextCursor !== null);
   // guestFeed has its own empty state below; without this the generic
@@ -324,7 +380,7 @@
       // the fetch resolves), so this only matters when the user
       // presses → again after the page lands.
       if (nextCursor && !loading) {
-        void fetchPage(query, activeTeamId, nextCursor, false);
+        void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
       }
       return;
     }
@@ -395,9 +451,9 @@
        it again — the filter would be live, in the URL, and unreachable.
        Keeping it also makes "search inside this team" a thing the page
        can express. -->
-  <TeamsRail {activeTeamId} onselect={selectTeam} />
+  <BrowseRail {activeTeamId} {activeTag} onselect={selectTeam} onselecttag={selectTag} />
 
-  {#if !query || activeTeam}
+  {#if !query || activeTeam || activeTag}
     <!-- The feed's own heading (#1113). It names what the wall below
          IS — the filtered team, or "All Teams" when nothing is picked —
          and it belongs to the FEED rather than to the rail: it scrolls
@@ -413,12 +469,52 @@
          `activeTeam` is null while the rail is still loading and for a
          `?team=` this reader cannot see, and both fall back to the
          unfiltered heading rather than printing a raw uuid. -->
+    <!-- Three states, one heading (#1123 adds the third): the filtered
+         team's name, the filtered tag in its `#fantasy` form, or the
+         unfiltered title. The hash is PRINTED HERE and not stored —
+         `?tag=fantasy` is what the corpus matches, and the heading is
+         the one place the reader should see the notation the rail chip
+         draws with a glyph.
+
+         `activeTag` is used raw rather than resolved through a store,
+         unlike `activeTeam`. There is nothing to resolve: a tag IS its
+         string, so there is no id-to-name lookup that could fail and no
+         raw-uuid fallback to guard against. -->
     <div class="flex flex-wrap items-center gap-3">
       <h2 class="text-2xl font-semibold text-fg" data-testid="browse-feed-heading">
-        {activeTeam ? activeTeam.name : t('teams.rail_all_heading')}
+        {#if activeTeam}
+          {activeTeam.name}
+        {:else if activeTag}
+          #{activeTag}
+        {:else}
+          {t('teams.rail_all_heading')}
+        {/if}
       </h2>
       {#if activeTeam}
         <TeamFollowButton team={activeTeam} />
+      {:else if activeTag}
+        <!-- The tag's own follow toggle, beside its heading, for the
+             same reason the team one is: a reader who filtered to a tag
+             from a link or a post's tag list should be able to keep it
+             without hunting for the ⋯ panel. Following here moves the
+             rail on the next paint because both read `tagFollows`. -->
+        <button
+          type="button"
+          onclick={() => void tagFollows.toggle(activeTag)}
+          disabled={tagFollows.isPending(activeTag)}
+          aria-pressed={tagFollows.isFollowing(activeTag)}
+          data-testid="browse-tag-follow"
+          class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm
+                 font-medium transition-colors disabled:opacity-60 {tagFollows.isFollowing(
+            activeTag,
+          )
+            ? 'border-accent bg-accent-container text-on-accent-container'
+            : 'border-border bg-surface-elevated text-fg hover:border-border-strong hover:bg-state-hover'}"
+        >
+          {tagFollows.isFollowing(activeTag)
+            ? t('tags.following')
+            : t('tags.follow')}
+        </button>
       {/if}
     </div>
   {/if}
@@ -473,15 +569,35 @@
       token — it changes per interaction, so it can't be a class.
       Column COUNT is never computed: see browseView.svelte.ts.
     -->
-    <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
-      {#snippet card(item, mode)}
-        {@const post = item as Post}
-        <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} />
-      {/snippet}
-      {#snippet list()}
-        <PostListTable {items} {loading} />
-      {/snippet}
-    </ContentGrid>
+    <!-- The marquee's surface. `relative` is what the band positions
+         against; `select-none` stops a drag across the wall painting a
+         browser text selection over every title it crosses, which is
+         the one visual artefact a rubber band must not have. -->
+    <div bind:this={wallEl} {...marquee.handlers} class="relative select-none">
+      <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
+        {#snippet card(item, mode)}
+          {@const post = item as Post}
+          <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} {orderedIds} />
+        {/snippet}
+        {#snippet list()}
+          <PostListTable {items} {loading} {orderedIds} />
+        {/snippet}
+      </ContentGrid>
+
+      {#if marquee.rect}
+        <!-- Fixed, not absolute: the rect is computed in viewport space
+             for painting (the store keeps document space for the maths),
+             so it stays put while edge-autoscroll moves the wall
+             underneath it. pointer-events-none or the band would
+             hit-test itself and swallow the pointerup. -->
+        <div
+          aria-hidden="true"
+          data-testid="marquee-band"
+          class="pointer-events-none fixed z-30 rounded-sm border border-accent bg-accent/20"
+          style="left:{marquee.rect.left}px; top:{marquee.rect.top}px; width:{marquee.rect.width}px; height:{marquee.rect.height}px;"
+        ></div>
+      {/if}
+    </div>
 
     {#if hasMore}
       <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
