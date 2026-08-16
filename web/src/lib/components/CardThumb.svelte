@@ -474,6 +474,13 @@
 
   let cues = $state<SpriteCue[]>([]);
   let spriteFrame = $state(0);
+  /** The frame box the pointer's x is measured against (#1142). The
+   *  CARD's box, not the scrub layer's: the scrub layer is sized to the
+   *  cue's aspect and can be narrower or wider than the tile, so
+   *  measuring against it would make the mapping depend on the clip's
+   *  shape — a 2.35:1 cell in a square tile would reach its last frame
+   *  before the pointer reached the tile's edge. */
+  let frameEl = $state<HTMLDivElement | null>(null);
   // The sheet's own pixel size, measured off the bytes we are about to
   // paint. Needed because a cue's rect is in SHEET pixels and CSS
   // background percentages are relative to the whole image; measuring
@@ -530,18 +537,75 @@
   // rotated phone clip, the same trap the backend avoids.
   const spriteCellRatio = $derived(spriteCue ? spriteCue.w / spriteCue.h : 16 / 9);
 
-  // Run the scrub only while the card is hovered. The effect owns the
-  // interval so it is torn down on unhover / unmount.
+  // ── Position-based scrub (#1142) ─────────────────────────────────
+  //
+  // THE POINTER'S X POSITION IS THE TIMELINE. `fraction = x / width`
+  // picks the frame, so moving left-to-right plays forward,
+  // right-to-left plays in reverse, holding still shows that frame, and
+  // entering at 75% starts at 75% — all four behaviours from one
+  // mapping rather than four cases.
+  //
+  // What this REPLACES is a 120ms `setInterval` that advanced
+  // `spriteFrame` and wrapped. That is why the old scrub played one
+  // direction only, ignored where the pointer was, and kept moving when
+  // it stopped: the animation had no input.
+  //
+  // ⚠️ THE SOURCE IS A SPRITE SHEET, NOT A `<video>`, AND THAT ANSWERS
+  // THE ISSUE'S OPEN QUESTION. #1142 asks which source the scrub drives
+  // and says to throttle seeks if it is a video element, because
+  // Chromium queues seek storms. It is neither: this layer paints ONE
+  // `background-position` over `sprites.jpg`, with the cell rects coming
+  // from `sprites.vtt` (see spriteCues.ts). So
+  //
+  //   * position maps to the NEAREST CUE and snapping is correct rather
+  //     than a compromise — there are only `cues.length` frames and no
+  //     intermediate state to interpolate toward;
+  //   * there is no seek to throttle. There is no decoder, no buffering
+  //     and no async work of any kind on the hot path — the whole cost
+  //     of a pointer move is one integer compare and, at most, one
+  //     reactive assignment.
+  //
+  // rAF coalescing is therefore NOT used, and its absence is deliberate
+  // rather than an omission. A pointermove burst already collapses here:
+  // `spriteFrame` is only ASSIGNED when the computed index actually
+  // changes, so a sweep across a 265px tile with 60 cues writes at most
+  // 60 times no matter how many events fire, and Svelte does the rest.
+  // Adding rAF would defer the paint by a frame to save nothing.
+  function scrubTo(clientX: number) {
+    const n = cues.length;
+    if (n === 0 || !frameEl) return;
+    const rect = frameEl.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    // Clamp before scaling. A pointer can sit a fraction of a pixel
+    // outside the box during a fast sweep, and an unclamped fraction
+    // would index past the end of the cue list.
+    const f = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    // `n - 1` so the right EDGE lands on the last frame rather than one
+    // past it, and `round` so the middle of the card is the middle
+    // frame — the issue's stated acceptance. With `floor`, frame 0 would
+    // own twice the width of every other frame and the centre would sit
+    // one frame early.
+    const idx = Math.round(f * (n - 1));
+    if (idx !== spriteFrame) spriteFrame = idx;
+  }
+
+  // TOUCH AND PEN ARE EXCLUDED AT THE SOURCE (#1142: "touch: no scrub").
+  // A touch drag emits `pointermove` with `pointerType === 'touch'`, so
+  // without this a scroll gesture over a card would scrub it. Tap-to-open
+  // is unchanged because this handler never calls preventDefault.
+  function onPointerMove(e: PointerEvent) {
+    if (e.pointerType !== 'mouse') return;
+    scrubTo(e.clientX);
+  }
+
+  // Reset when the pointer leaves, so the next hover starts from the
+  // position it enters at rather than inheriting the last one. Keyboard
+  // focus never sets `hovering`, so a focused card still shows the
+  // poster frame — the existing behaviour the issue asks to preserve.
   $effect(() => {
     if (!hovering || cues.length === 0 || reducedMotion) {
       spriteFrame = 0;
-      return;
     }
-    const n = cues.length;
-    const iv = setInterval(() => {
-      spriteFrame = (spriteFrame + 1) % n;
-    }, 120);
-    return () => clearInterval(iv);
   });
 </script>
 
@@ -597,6 +661,8 @@
 -->
 <div
   data-card-thumb
+  bind:this={frameEl}
+  onpointermove={onPointerMove}
   style={matteColor ? `${frameStyle ?? ''} background-color: ${matteColor};` : frameStyle}
   class="relative overflow-hidden {matteColor ? '' : 'bg-thumb-matte'}
          {tileRatio ? '' : 'aspect-square'}
