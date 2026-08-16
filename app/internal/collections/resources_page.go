@@ -59,6 +59,25 @@ type ListCollectionResourcesPageGatedParams struct {
 	// (#939). Widens the FIELD plane only — never the picture, never
 	// the bytes. The zero value denies, so omitting it fails closed.
 	MutationCaps visibility.AssetMutationCaps
+	// Mature is the caller's resolved mature-content axis (#1147).
+	//
+	// ⚠️ IT NARROWS ROWS, unlike every other field on this struct. This
+	// query's whole shape is "list the member, redact what the caller may
+	// not see", and the mature axis is the one rule that does not fit it:
+	// a mature member is ABSENT, not placeheld.
+	//
+	// The argument is assets.ListAssetsPageGated's, verbatim, because it
+	// is the same list of assets reached through a different door. A
+	// restricted member stays listed because ADR 0064 requires browse to
+	// show the corpus and #881's request-access flow hangs off the
+	// placeholder. A mature member has no such flow — there is nothing to
+	// request, only a preference to change — and #921 measured what the
+	// placeholder alternative looks like: a grid of blurred plates nobody
+	// asked to be offered.
+	//
+	// The zero value is the DISQUALIFIED viewer, so a caller that forgets
+	// this field shows too little rather than leaking.
+	Mature visibility.MatureViewer
 }
 
 // ListCollectionResourcesPageGatedRow is a contents row plus the derived
@@ -113,6 +132,20 @@ func ListCollectionResourcesPageGated(
 		p.Ladder,          // $6 — configured preview ladder (#591)
 	}
 
+	// #1147 — the mature axis, on the ROW plane. See the field's doc for
+	// why this one narrows rows in a query built to redact them instead.
+	//
+	// It reuses $5, the caller ref already bound above for the
+	// team-membership probe, so it adds NO placeholder. That is not a
+	// tidiness point: MatureFilterSQL folds to the empty string for a
+	// qualified viewer and for an admin, and a NEW placeholder referenced
+	// only by a fragment that sometimes vanishes is the 42P18 ("could not
+	// determine data type of parameter") that bit posts/list_page.go —
+	// an error on every request by exactly the readers who qualify.
+	// assets/list_page.go reuses its $8 for the same reason.
+	matureFrag := visibility.MatureFilterSQL("a", visibility.MatureOwnerColAsset,
+		"$5", p.Mature, visibility.ResolveContentCaps(caps).SystemAdmin)
+
 	// Derived columns join preview_available's inputs in the same pass —
 	// no per-asset round-trips (#471). Readability is decided in-Go per
 	// row (visibility.FieldsReadable) from a.sensitivity + a.status +
@@ -153,7 +186,7 @@ FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 WHERE cr.collection_id = $1
   AND cr.pinned = TRUE
-  AND a.deleted_at IS NULL
+  AND a.deleted_at IS NULL` + matureFrag + `
   AND (cr.expires_at IS NULL OR cr.expires_at > NOW())
   AND ($2::INTEGER IS NULL
        OR cr.sort_order > $2::INTEGER

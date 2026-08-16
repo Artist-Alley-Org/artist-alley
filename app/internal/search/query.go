@@ -901,15 +901,24 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	// The mosaic covers for the whole page in ONE query (#1026), after
 	// the row loop rather than inside it: composing per hit would be a
 	// round trip per card on a surface that already runs five entity
-	// queries in parallel. Same caller triple the predicate above used,
+	// queries in parallel. Same caller inputs the predicate above used,
 	// and every part of it is already in the result cache key.
+	//
+	// #1147 — q.Mature is the FOURTH, and it has to come from the Query
+	// rather than the context: this runs inside the Engine, which is
+	// reached from the saved-search executor and the IIIF content-search
+	// handler as well as the HTTP edge, and visibility.MatureFromContext
+	// would answer "disqualified" for the ones that carry no request
+	// context. Query.Mature is also already a component of the result
+	// cache key (visibility.MatureViewer.CacheKey via keyForQuery), so a
+	// mosaic composed under one viewer cannot be replayed to another.
 	if len(hits) > 0 {
 		ids := make([]uuid.UUID, 0, len(hits))
 		for _, h := range hits {
 			ids = append(ids, h.ID)
 		}
 		covers, err := collections.ComposeCovers(ctx, e.Pool,
-			visibility.NewCaller(q.CallerUserRef), q.Caps, q.PostCaps, ids)
+			visibility.NewCaller(q.CallerUserRef), q.Caps, q.PostCaps, q.Mature, ids)
 		if err != nil {
 			return nil, 0, err
 		}

@@ -41,7 +41,30 @@ type Executor struct {
 	// also runs many rows per tick so unbounded work per row
 	// starves peers. Default 100.
 	PerRunLimit int
+
+	// matureResolver answers the mature axis for the saved search's
+	// OWNER at execution time (#1147).
+	//
+	// It is a resolver rather than a stored value because the saved
+	// search outlives every one of the three conjuncts: the owner can
+	// change their `show_mature` preference, and the operator can switch
+	// the instance off, long after the DSL was saved. A viewer frozen at
+	// save time would keep mailing an opted-out reader the hits they
+	// opted out of — which is the same defect as ADR 0013's amendment,
+	// one store down.
+	//
+	// Unset leaves visibility.ResolveMatureOr to answer with the
+	// disqualified viewer. That is the pre-#1147 behaviour, so an
+	// unwired executor is no worse than before rather than wide open.
+	matureResolver visibility.MatureResolver
 }
+
+// SetMatureResolver wires the mature-content lookup (#1147).
+//
+// Injected rather than constructed here, exactly as
+// posts.SetMatureResolver is: this package must not learn what
+// `system_config` or `user_preferences` are in order to run a search.
+func (e *Executor) SetMatureResolver(r visibility.MatureResolver) { e.matureResolver = r }
 
 // NewExecutor wires the executor with sane defaults.
 func NewExecutor(pool *pgxpool.Pool, engine EngineRunner, fetcher *vector.Fetcher) *Executor {
@@ -74,6 +97,24 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 	if limit <= 0 {
 		limit = 100
 	}
+
+	// #1147 — the mature axis, for the OWNER, resolved NOW.
+	//
+	// Without this the Query carried the zero MatureViewer, which is the
+	// disqualified viewer: every saved search on this install ran
+	// permanently as a reader who had opted out, no matter who owned it
+	// or what they had chosen. Fail-closed and therefore not a leak, but
+	// silent and forever — an opted-in owner's saved search simply never
+	// mentioned a mature hit again, and nothing said why.
+	//
+	// Resolved once per RUN and never per hit, which is the contract
+	// visibility.MatureViewer states. The owner is signed-in by
+	// construction here (a saved search has an owner row), so unlike the
+	// HTTP edge there is no anonymous arm to consider — the adapter's own
+	// `caller.UserRef == 0` guard still catches a malformed row.
+	ownerCaller := visibility.NewCaller(&owner)
+	matureViewer := visibility.ResolveMatureOr(ctx, e.matureResolver, ownerCaller)
+
 	query := search.Query{
 		Text:          row.DSL, // BM25 path uses the raw text if compiled tsQuery is empty (similar_to-only)
 		Types:         []search.HitType{search.HitTypeAsset},
@@ -85,6 +126,13 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 		// saved from, and the owner would be emailed hits their own
 		// search does not return.
 		Filters: search.SelectionFromDSL(compiled.Filters, facet.Selection{}),
+		// The owner's mature axis (#1147). Caps stay at the zero value
+		// here — see anchorVisibleToOwner for why a background job
+		// resolves no capabilities — so the system.admin waiver inside
+		// MatureFilterSQL never fires on this path, and an admin's saved
+		// search is gated exactly like anyone else's. That is the
+		// direction a timer-driven job should be wrong in.
+		Mature: matureViewer,
 	}
 	if compiled.TSQuery == "" {
 		// Pure similar_to or all-filter DSL — nothing for the
@@ -102,7 +150,7 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 			// Owner-visibility spot-check on the anchor asset
 			// itself — a restricted asset the owner has since
 			// lost access to shouldn't leak its neighbourhood.
-			visible, err := e.anchorVisibleToOwner(ctx, assetID, owner)
+			visible, err := e.anchorVisibleToOwner(ctx, assetID, owner, matureViewer)
 			if err != nil {
 				return RunResult{}, fmt.Errorf("saved.Execute: anchor visibility: %w", err)
 			}
@@ -179,7 +227,28 @@ func (e *Executor) Run(ctx context.Context, row Row) (RunResult, error) {
 // `similar_to:` on someone else's restricted asset stops returning hits
 // rather than keeping them — which is the direction a background job
 // should err in.
-func (e *Executor) anchorVisibleToOwner(ctx context.Context, assetID uuid.UUID, ownerRef int64) (bool, error) {
+//
+// # THREE fragments, because the interactive handler splices three
+//
+// #1147 completes the "same pair" claim above, which had gone stale: the
+// interactive path grew a mature conjunct on the anchor in #1117 and this
+// one did not, so a saved `similar_to:` on a mature asset kept resolving
+// its neighbourhood for an owner who no longer qualified. ADR 0090 §3
+// puts a deep-linked asset id on the content plane, and an embedding is
+// that asset's picture in derived form — using it as a ranking anchor is
+// reading it, which is the argument #1066 made for the readability
+// fragment beside it.
+//
+// The owner's viewer is passed IN rather than resolved here, so the
+// anchor gate and the Query it guards cannot answer differently about the
+// same run — one lookup per run, the contract visibility.MatureViewer
+// states.
+func (e *Executor) anchorVisibleToOwner(
+	ctx context.Context,
+	assetID uuid.UUID,
+	ownerRef int64,
+	mature visibility.MatureViewer,
+) (bool, error) {
 	caller := visibility.Caller{UserRef: ownerRef, IsAnonymous: false}
 	pred, err := visibility.Filter(ctx, visibility.EntityAsset, caller)
 	if err != nil {
@@ -189,15 +258,24 @@ func (e *Executor) anchorVisibleToOwner(ctx context.Context, assetID uuid.UUID, 
 	// non-empty for every zero-capability caller, so $2 is always named
 	// here — but the offset is still computed rather than assumed, so
 	// this does not break if the caps ever start being resolved.
+	//
+	// The mature fragment shares that $2 and is bound when EITHER names
+	// it, the same one-boolean shape search/http.go's anchor gate uses:
+	// two independently-folding fragments over one placeholder is one
+	// piece of offset arithmetic, not two. It folds to empty for a
+	// qualified owner, and a bound-but-unreferenced $2 is 42P18 — which
+	// is why the condition is an OR and not a second append.
 	args := []any{assetID}
 	readFrag := visibility.ContentReadableSQL("", "$2", visibility.ContentCaps{})
-	if readFrag != "" {
+	matureFrag := visibility.MatureFilterSQL("", visibility.MatureOwnerColAsset,
+		"$2", mature, false)
+	if readFrag != "" || matureFrag != "" {
 		args = append(args, caller.UserRef)
 	}
 	frag, predArgs := pred.ToSQL("", len(args))
 	args = append(args, predArgs...)
 	var exists bool
-	sql := "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1" + readFrag + frag + ")"
+	sql := "SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1" + readFrag + matureFrag + frag + ")"
 	if err := e.Pool.QueryRow(ctx, sql, args...).Scan(&exists); err != nil {
 		return false, err
 	}

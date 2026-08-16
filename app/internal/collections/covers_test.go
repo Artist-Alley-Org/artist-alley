@@ -57,6 +57,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 const (
@@ -900,4 +901,464 @@ func TestCollectionCover_OverrideWithoutAColRenditionFallsBack(t *testing.T) {
 		t.Errorf("covers = %v with a cover that has no `col` rendition yet, want the "+
 			"mosaic [%s] — CollectionCover promises the rendition exists", got, member)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// #1147 — the mature axis on the derived picture
+// ---------------------------------------------------------------------------
+//
+// Every test above this line asks "may this caller SEE this asset". The
+// mature axis asks a different question — "has this caller OPTED IN" —
+// and ADR 0090 §1 is explicit that the two are independent in both
+// directions. A PUBLIC asset can be mature, which is what makes this a
+// leak rather than a rounding error: the fixtures below are public,
+// readable by anybody, and withheld from a disqualified viewer on the
+// mature axis alone.
+//
+// Every list surface was gated by #1117. The derived-PICTURE surfaces
+// were not, so a mature asset pinned into a public collection rendered
+// its real `col` rendition inside the cover mosaic on the SAME /search
+// response that correctly dropped the asset's own hit — a full
+// thumbnail, stronger than the thumbhash #1066 withheld.
+//
+// Every test here is a PAIR. The withheld leg alone passes on a composer
+// that shows the mosaic to nobody, which is why the qualified leg is not
+// decoration: it is the half that proves the conjunct is the mature rule
+// and not an outage.
+
+// ccMarkMature flips the one bit under test on an already-planted asset.
+//
+// A separate step rather than a parameter on ccRenderableAsset, matching
+// that helper's own note about `sensitivity` being its only knob: a
+// fixture that differs from its control in exactly one column is what
+// makes the pair's conclusion about the mature axis and nothing else.
+//
+// It also exercises the real derivation. `posts.mature` is maintained by
+// trigger from the asset, so marking an asset that a post carries is how
+// the post-half fixtures below get their flag — never by writing
+// `posts.mature` directly, which would test a value the product does not
+// produce.
+func ccMarkMature(t *testing.T, pool *pgxpool.Pool, assetID string) {
+	t.Helper()
+	tag, err := pool.Exec(context.Background(),
+		`UPDATE assets SET mature = TRUE WHERE id = $1`, assetID)
+	if err != nil {
+		t.Fatalf("mark asset %s mature: %v", assetID, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("mark asset %s mature: %d rows affected, want 1 — the fixture is not "+
+			"the row the assertion is about", assetID, tag.RowsAffected())
+	}
+}
+
+// ccQualified is the viewer who has cleared all three of ADR 0090 §2's
+// conjuncts. Spelled out at the call site rather than hidden behind a
+// helper because a test that drops one of the three still reads as
+// "qualified" and would quietly assert the withheld behaviour twice.
+var ccQualified = visibility.MatureViewer{SignedIn: true, OptedIn: true, InstanceAllows: true}
+
+// ccMatureRouter wraps makeRouter's router in the one piece of middleware
+// the production stack runs and the test harness does not: the resolved
+// mature viewer on the request context.
+//
+// It wraps rather than reaching inside makeRouter because the ordering is
+// the thing being reproduced — visibility.WithMatureViewer runs AFTER
+// identity resolution in http/server.go, and a helper that set it first
+// would be testing an arrangement the server never builds.
+//
+// Note what the UNWRAPPED router therefore is: a caller with no viewer on
+// the context at all, which visibility.MatureFromContext answers as the
+// DISQUALIFIED viewer. That is deliberate and is why every test above
+// this section keeps working unchanged — their fixtures are non-mature,
+// and MatureItemVisible's first branch says a non-mature item is visible
+// on this axis to everybody.
+func ccMatureRouter(t *testing.T, pool *pgxpool.Pool, userRef int64, v visibility.MatureViewer) chi.Router {
+	t.Helper()
+	inner, _ := makeRouter(t, pool, userRef /*admin=*/, false)
+	outer := chi.NewRouter()
+	outer.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(visibility.WithMatureViewer(r.Context(), v)))
+		})
+	})
+	outer.Mount("/", inner)
+	return outer
+}
+
+// TestCollectionCovers_MatureMemberWithheldFromDisqualifiedViewer is
+// #1147 as reported, as a pair.
+//
+// The mature member is PUBLIC and owned by a stranger. Public, so no
+// sensitivity conjunct can be what hides it; a stranger's, so the owner
+// exemption cannot be what shows it. The only thing separating the two
+// legs is the reader's opt-in.
+//
+// The assertion is on the SERVED PAYLOAD, for the reason
+// TestCollectionCovers_WithheldMemberContributesNothing states: a row
+// count cannot tell a withheld tile from a shipped id with a flag on it,
+// and a cover id IS the picture — the client renders
+// /assets/{id}/variants/col from it with nothing further to ask.
+func TestCollectionCovers_MatureMemberWithheldFromDisqualifiedViewer(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_covers_mature", "visibility": "public",
+	})
+
+	base := time.Now().Add(-time.Hour)
+	adult := ccRenderableAsset(t, pool, ccStranger, "ct_mat_adult", "public")
+	ccMarkMature(t, pool, adult)
+	plain := ccRenderableAsset(t, pool, ccStranger, "ct_mat_plain", "public")
+
+	ccPinAsset(t, pool, colID, adult, base)
+	ccPinAsset(t, pool, colID, plain, base.Add(time.Minute))
+
+	// LEAK ARM. A reader who has not opted in, on a collection anyone may
+	// read, holding a member anyone may read.
+	out := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
+	for _, g := range out {
+		if g == adult {
+			t.Errorf("the mature member %s rendered in the mosaic of a viewer who never "+
+				"opted in (covers=%v). The asset is PUBLIC, so no sensitivity conjunct "+
+				"was ever going to catch this — the picture plane has to carry the "+
+				"mature axis itself (#1147, ADR 0090 §3)", adult, out)
+		}
+	}
+	if len(out) != 1 || out[0] != plain {
+		t.Errorf("disqualified covers = %v, want [%s] — the mature member is ABSENT and "+
+			"the rest of the mosaic closes up behind it", out, plain)
+	}
+
+	// CONTROL ARM. Same collection, same members, opposite viewer. This
+	// is the half that separates "the axis works" from "the mosaic is
+	// broken": a composer that withheld from everybody passes the leak
+	// arm and fails here.
+	in := ccCovers(t, ccMatureRouter(t, pool, ccOwner, ccQualified), colID)
+	want := []string{adult, plain}
+	if strings.Join(in, ",") != strings.Join(want, ",") {
+		t.Errorf("qualified covers = %v, want %v — a reader who opted in, on an instance "+
+			"that allows it, gets the whole mosaic in the curator's order", in, want)
+	}
+}
+
+// TestCollectionCovers_MatureOwnerStillSeesTheirOwnTile pins the
+// exemption, which is an asymmetry on purpose (ADR 0090 §2): an artist
+// must be able to see their own work.
+//
+// Without it, an artist who labelled their own piece and never opted in
+// would find their own collection's tile gone — access to content they
+// own destroyed by a display preference. The exemption lives inside
+// MatureFilterSQL's `NULLIF(owner, 0)` comparison, so this also pins that
+// the composer passes a real owner ref rather than the anonymous
+// sentinel.
+func TestCollectionCovers_MatureOwnerStillSeesTheirOwnTile(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_covers_mature_own", "visibility": "private",
+	})
+
+	mine := ccRenderableAsset(t, pool, ccOwner, "ct_mat_mine", "public")
+	ccMarkMature(t, pool, mine)
+	ccPinAsset(t, pool, colID, mine, time.Now().Add(-time.Hour))
+
+	got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
+	if len(got) != 1 || got[0] != mine {
+		t.Errorf("covers = %v, want [%s] — the OWNER of a mature asset sees it whether or "+
+			"not they opted in, and whether or not the instance allows it. Switching a "+
+			"display preference must not take an artist's own work away from them", got, mine)
+	}
+}
+
+// TestCollectionCovers_MatureOverrideFallsBackToMosaic is ADR 0088's
+// fallback obligation on the new axis, and it is the case that would
+// silently not work.
+//
+// The curator pins their OWN mature asset as the chosen cover — allowed,
+// by the owner exemption. A disqualified reader must get the DERIVED
+// MOSAIC: not the mature asset (a leak) and not an empty array (a blank
+// tile, which is #1026's crowding defect arriving through a third door).
+//
+// An implementation that spliced the conjunct into the `renderable` CTE
+// only — which is what the issue literally asked for — passes every
+// other test in this section and leaks here.
+func TestCollectionCovers_MatureOverrideFallsBackToMosaic(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_cover_mature_override", "visibility": "public",
+	})
+
+	// A member everyone may picture, so "fell back" is distinguishable
+	// from "returned nothing".
+	open := ccRenderableAsset(t, pool, ccOwner, "ct_mo_open", "public")
+	ccPinAsset(t, pool, colID, open, time.Now().Add(-time.Hour))
+
+	adult := ccRenderableAsset(t, pool, ccOwner, "ct_mo_adult", "public")
+	ccMarkMature(t, pool, adult)
+	ccSetCover(t, ownerRouter, colID, adult)
+
+	// The curator's own view: the exemption applies, so the override is
+	// the sole tile. Without this leg an implementation that dropped
+	// every override on the floor passes the one below.
+	if got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID); //
+	len(got) != 1 || got[0] != adult {
+		t.Fatalf("the curator's own view = %v, want their chosen cover [%s] — they own it",
+			got, adult)
+	}
+
+	got := ccCovers(t, ccMatureRouter(t, pool, ccStranger, visibility.MatureViewer{}), colID)
+	for _, g := range got {
+		if g == adult {
+			t.Fatalf("the mature chosen cover %s reached a disqualified viewer (covers=%v). "+
+				"The pointer is a SECOND door to one asset's pixels and it must clear the "+
+				"same bar as a member", adult, got)
+		}
+	}
+	if len(got) != 1 || got[0] != open {
+		t.Errorf("disqualified covers = %v, want the derived mosaic [%s]. An empty array "+
+			"here is a BLANK TILE — ADR 0088's fallback obligation says a withheld cover "+
+			"falls back to the mosaic, never to nothing", got, open)
+	}
+
+	// And the control: the same stranger, opted in, gets the override.
+	if in := ccCovers(t, ccMatureRouter(t, pool, ccStranger, ccQualified), colID); //
+	len(in) != 1 || in[0] != adult {
+		t.Errorf("qualified stranger covers = %v, want the chosen cover [%s]", in, adult)
+	}
+}
+
+// TestCollectionCovers_MatureOnlyCollectionYieldsNoTileNotABlank is the
+// other half of the fallback obligation: a collection whose ONLY
+// renderable member is mature.
+//
+// There is nothing to fall back TO, and the right answer is the one a
+// collection with no renderable member already gets — an empty array,
+// which every surface paints as its own "no cover". What must NOT happen
+// is a tile slot occupied by an id the caller cannot render, which is
+// the shape the deleted client card consumed and the shape a row-count
+// assertion cannot see.
+func TestCollectionCovers_MatureOnlyCollectionYieldsNoTileNotABlank(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_covers_mature_only", "visibility": "public",
+	})
+
+	adult := ccRenderableAsset(t, pool, ccStranger, "ct_mono_adult", "public")
+	ccMarkMature(t, pool, adult)
+	ccPinAsset(t, pool, colID, adult, time.Now().Add(-time.Hour))
+
+	got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
+	if len(got) != 0 {
+		t.Errorf("covers = %v, want an EMPTY array. The one renderable member is mature "+
+			"and this viewer did not opt in, so the honest answer is the same one a "+
+			"collection with no renderable member gives — never a slot holding an id "+
+			"the caller cannot paint", got)
+	}
+
+	if in := ccCovers(t, ccMatureRouter(t, pool, ccOwner, ccQualified), colID); //
+	len(in) != 1 || in[0] != adult {
+		t.Errorf("qualified covers = %v, want [%s] — the empty answer above must be the "+
+			"mature axis and not an empty collection", in, adult)
+	}
+}
+
+// ccAddPostMember makes an asset a real MEMBER of a post, which is what
+// fires the `post_assets` trigger that maintains `posts.mature`.
+//
+// Written directly rather than through the add endpoint because the
+// derivation is the property under test: a fixture that set
+// `posts.mature` by hand would assert against a value the product never
+// produces, and would go on passing if the trigger were dropped.
+func ccAddPostMember(t *testing.T, pool *pgxpool.Pool, postID, assetID string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO post_assets (post_id, asset_id) VALUES ($1, $2)`,
+		postID, assetID); err != nil {
+		t.Fatalf("add post member: %v", err)
+	}
+}
+
+// ccAssertPostMature reads the DERIVED flag back, so a test whose real
+// subject is the tile cannot pass or fail for the wrong reason.
+func ccAssertPostMature(t *testing.T, pool *pgxpool.Pool, postID string, want bool) {
+	t.Helper()
+	var got bool
+	if err := pool.QueryRow(context.Background(),
+		`SELECT mature FROM posts WHERE id = $1`, postID).Scan(&got); err != nil {
+		t.Fatalf("read back the derived post flag: %v", err)
+	}
+	if got != want {
+		t.Fatalf("posts.mature = %v for post %s, want %v — the fixture is not the state "+
+			"the assertion below is about, so everything after this line would be "+
+			"testing something the product does not produce", got, postID, want)
+	}
+}
+
+// TestCollectionCovers_MaturePostContributesNoTile covers the POST half,
+// which is a different table with a different owner column and a DERIVED
+// flag.
+//
+// # The fixture is the whole test
+//
+// The post is mature because of a MEMBER, and its cover picture is NOT
+// mature. That separation is deliberate and it is what makes this test
+// mean anything: with a mature cover, the asset conjunct on the tile
+// catches the row and the post conjunct could be deleted with every
+// assertion still green. (Confirmed by deleting it — the first draft of
+// this fixture proved nothing.)
+//
+// So this is the case that justifies the post half existing at all: the
+// tile's own asset is perfectly ordinary, and the only thing wrong with
+// painting it is that it stands in for a MEMBER the viewer cannot see.
+// The feed hides that post; /collections/{id}/posts hides that post; a
+// mosaic tile for it would put it back on screen.
+func TestCollectionCovers_MaturePostContributesNoTile(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_covers_mature_post", "visibility": "public",
+	})
+
+	base := time.Now().Add(-time.Hour)
+	plain := ccRenderableAsset(t, pool, ccStranger, "ct_mp_plain", "public")
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccStranger, "public", plain, ""), base)
+
+	// An ORDINARY cover on a post made mature by a member nobody sees in
+	// the mosaic.
+	cover := ccRenderableAsset(t, pool, ccStranger, "ct_mp_cover", "public")
+	postID := ccPost(t, pool, ccStranger, "public", cover, "")
+	member := ccRenderableAsset(t, pool, ccStranger, "ct_mp_adult_member", "public")
+	ccAddPostMember(t, pool, postID, member)
+	// Marked AFTER the membership exists, so the ASSET trigger is what
+	// propagates the flag — the path an operator labelling an
+	// already-published asset takes, and the one 00052 added the second
+	// trigger for.
+	ccMarkMature(t, pool, member)
+	ccAssertPostMature(t, pool, postID, true)
+	ccPinPost(t, pool, colID, postID, base.Add(time.Minute))
+
+	got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
+	for _, g := range got {
+		if g == cover {
+			t.Errorf("the mature post's cover %s rendered for a disqualified viewer "+
+				"(covers=%v). The cover asset is NOT mature — the post is, and a tile "+
+				"is a summary of members this viewer can see", cover, got)
+		}
+	}
+	if len(got) != 1 || got[0] != plain {
+		t.Errorf("disqualified covers = %v, want [%s]", got, plain)
+	}
+
+	in := ccCovers(t, ccMatureRouter(t, pool, ccOwner, ccQualified), colID)
+	want := []string{plain, cover}
+	if strings.Join(in, ",") != strings.Join(want, ",") {
+		t.Errorf("qualified covers = %v, want %v", in, want)
+	}
+}
+
+// TestCollectionCovers_MaturePostCoverIsDerived is migration 00054, and
+// its subject is the DERIVATION rather than the tile.
+//
+// 00052 derived `posts.mature` from `post_assets` alone. But a post's
+// cover need not be a member — `cover_thumbnail_asset_id` is documented
+// as "an optional standalone thumbnail (not a post member)" — so a post
+// whose COVER was mature and whose members were not computed `false` and
+// sailed through every conjunct on every surface that trusts the column:
+// the browse feed, /search's post arm, the featured rail's cover
+// lateral, and this mosaic. It was also the first picture each of them
+// paints.
+//
+// The fixture is that exact post: a mature standalone thumbnail, no
+// members at all. The flag assertion is the real one; the tile
+// assertions below it are the consequence.
+func TestCollectionCovers_MaturePostCoverIsDerived(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_covers_mature_thumb", "visibility": "public",
+	})
+
+	base := time.Now().Add(-time.Hour)
+	plain := ccRenderableAsset(t, pool, ccStranger, "ct_mt_plain", "public")
+	ccPinPost(t, pool, colID, ccPost(t, pool, ccStranger, "public", plain, ""), base)
+
+	member := ccRenderableAsset(t, pool, ccStranger, "ct_mt_member", "public")
+	thumb := ccRenderableAsset(t, pool, ccStranger, "ct_mt_adult_thumb", "public")
+	ccMarkMature(t, pool, thumb)
+	// The standalone thumbnail wins over cover_asset_id on a feed card,
+	// so it is the picture this post actually shows.
+	postID := ccPost(t, pool, ccStranger, "public", member, thumb)
+	ccAssertPostMature(t, pool, postID, true)
+	ccPinPost(t, pool, colID, postID, base.Add(time.Minute))
+
+	got := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID)
+	for _, g := range got {
+		if g == thumb {
+			t.Errorf("the mature standalone cover %s rendered for a disqualified viewer "+
+				"(covers=%v)", thumb, got)
+		}
+	}
+	if len(got) != 1 || got[0] != plain {
+		t.Errorf("disqualified covers = %v, want [%s]", got, plain)
+	}
+
+	// The derivation must also come BACK DOWN. An operator who mislabels
+	// an asset and corrects it must not leave the post stuck mature —
+	// that would be a one-way door, and #1114's whole premise is that the
+	// label is editable.
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE assets SET mature = FALSE WHERE id = $1`, thumb); err != nil {
+		t.Fatalf("un-mark the cover: %v", err)
+	}
+	ccAssertPostMature(t, pool, postID, false)
+	if back := ccCovers(t, ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{}), colID); //
+	len(back) != 2 {
+		t.Errorf("covers = %v after the label was removed, want both tiles — the "+
+			"derivation has to fall as well as rise", back)
+	}
+}
+
+// TestCollectionCover_WriteRefusesAMatureAssetTheCuratorCannotPicture —
+// the write gate mirrors the read, which is the property
+// CallerMayPictureAsset exists to hold.
+//
+// Not because pinning a mature cover would leak: the read path withholds
+// it per viewer regardless. It is the existence oracle. A disqualified
+// curator cannot see a stranger's mature asset in ANY listing, so a write
+// gate that accepted one would confirm by id exactly the fact every
+// listing withholds — and the refusal is byte-identical to the one a
+// nonexistent id collects, which is what makes it not an oracle.
+func TestCollectionCover_WriteRefusesAMatureAssetTheCuratorCannotPicture(t *testing.T) {
+	pool := ccSetup(t)
+	ownerRouter, _ := makeRouter(t, pool, ccOwner /*admin=*/, false)
+	colID := mustCreate(t, ownerRouter, map[string]any{
+		"name": "ct_cover_mature_write", "visibility": "private",
+	})
+
+	adult := ccRenderableAsset(t, pool, ccStranger, "ct_mw_adult", "public")
+	ccMarkMature(t, pool, adult)
+
+	disqualified := ccMatureRouter(t, pool, ccOwner, visibility.MatureViewer{})
+	rr := patchJSON(t, disqualified, "/collections/"+colID,
+		map[string]any{"cover_asset_id": adult})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("pointing at a mature asset as a disqualified curator: status=%d, want "+
+			"400 (body=%s)", rr.Code, rr.Body.String())
+	}
+	// The PERSISTED value, not the response: a 400 whose write went
+	// through anyway is not a refusal, and a status assertion cannot
+	// tell the difference.
+	var stored *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT cover_asset_id::TEXT FROM collections WHERE id = $1`, colID).Scan(&stored); err != nil {
+		t.Fatalf("read back cover_asset_id: %v", err)
+	}
+	if stored != nil {
+		t.Errorf("cover_asset_id persisted as %q after a refused write, want NULL", *stored)
+	}
+
+	// The control: the same curator, opted in, may point at it.
+	ccSetCover(t, ccMatureRouter(t, pool, ccOwner, ccQualified), colID, adult)
 }

@@ -425,12 +425,13 @@ func (h *Handler) SetTeamHero(
 	var heroPtr pgtype.UUID
 	if req.Body.AssetId != nil {
 		want := uuid.UUID(*req.Body.AssetId)
-		ok, err := q.TeamHeroCandidate(ctx, TeamHeroCandidateParams{
-			AssetID: pgtype.UUID{Bytes: want, Valid: true},
-			TeamID:  pgID,
-		})
+		// #1147 — the same three caller inputs the render-time re-check
+		// takes, from the one helper, so "may point at" and "may see
+		// painted" cannot answer differently.
+		hCaller, hMature, hAdmin := heroViewerFromContext(ctx)
+		ok, err := TeamHeroCandidateGated(ctx, h.Pool, want, pgID, hCaller, hMature, hAdmin)
 		if err != nil {
-			return nil, fmt.Errorf("teams: hero candidate: %w", err)
+			return nil, err
 		}
 		if !ok {
 			// ONE response for "no such asset", "not public" and "not
@@ -928,9 +929,17 @@ func (h *Handler) attachHeroes(ctx context.Context, items []openapi.Team) error 
 	for _, it := range items {
 		ids = append(ids, pgtype.UUID{Bytes: it.Id, Valid: true})
 	}
-	rows, err := New(h.Pool).TeamHeroes(ctx, ids)
+	// #1147 — the hero is a DERIVED PICTURE: the row holds a pointer and
+	// the client paints that asset's rendition. So it composes the mature
+	// axis like every other derived-picture surface, which makes this
+	// enrichment per-viewer where it used to answer the same for
+	// everybody. It already ran after the by-id cache (see the note
+	// above), which is exactly where ADR 0013's amendment puts a
+	// viewer-dependent value, so nothing moved to accommodate it.
+	hCaller, hMature, hAdmin := heroViewerFromContext(ctx)
+	rows, err := TeamHeroesGated(ctx, h.Pool, ids, hCaller, hMature, hAdmin)
 	if err != nil {
-		return fmt.Errorf("teams: hero re-check: %w", err)
+		return err
 	}
 	byTeam := make(map[uuid.UUID]uuid.UUID, len(rows))
 	for _, r := range rows {

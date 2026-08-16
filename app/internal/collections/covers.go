@@ -126,12 +126,60 @@ const coverCount = 4
 // team-scoped `assets.admin` holder the FIELDS of the assets they
 // administer and explicitly not the picture, and a mosaic is nothing but
 // pictures.
+//
+// # The mature axis (#1147, ADR 0090)
+//
+// `mature` is the FOURTH caller-side input and it is a parameter for the
+// same reason the other three are: /search reaches this from an engine
+// that holds no request context, having resolved the viewer at the HTTP
+// edge and folded [visibility.MatureViewer.CacheKey] into its key. A
+// function that read the context itself would answer from an empty one
+// there — the disqualified viewer, permanently and silently, which is
+// the exact defect #1147 also found in saved searches.
+//
+// It composes on the PICTURE plane, which is the plane this whole
+// function operates on, and it is why the leak existed at all:
+// `visibility.PreviewReadableSQL` answers "who is ALLOWED" and says
+// nothing about "who has OPTED IN" (ADR 0090 §1). Every list surface was
+// gated by #1117 while this one — one construction over, deriving a
+// picture rather than listing a row — was not, so a mature asset pinned
+// into a public collection rendered its real `col` rendition to an
+// anonymous visitor, on the same /search response that correctly dropped
+// the asset's own hit.
+//
+// THREE splices, one per table that contributes a picture:
+//
+//	a (override)   the curator's chosen cover — a mature cover is a
+//	               mature picture, and `collections` has no mature column
+//	               of its own, so the cover asset is where the rule acts
+//	a (renderable) the mosaic's member assets — the tile itself
+//	p (members)    the post half's ROW plane. A post's `mature` is DERIVED
+//	               by trigger from its members, so a post can be mature
+//	               with a non-mature cover; the feed and
+//	               /collections/{id}/posts both drop that post for a
+//	               disqualified viewer, and a mosaic tile standing in for
+//	               a member this viewer cannot see is not a summary of
+//	               what they can see. It is the same conjunct
+//	               featured.ListPlacements splices on `ip` for the member
+//	               COUNT, so the count and the mosaic keep agreeing.
+//
+// ⚠️ WITHHOLDING HERE IS A FALLBACK, NEVER A BLANK TILE (ADR 0088). The
+// override's splice can only send a collection down to the mosaic branch
+// — the NOT EXISTS below already makes "the override did not render"
+// mean "compose from members" — and the members' splice removes
+// candidates before the rank, so the LIMIT stays exact and a mosaic
+// simply comes back shorter. A collection whose only renderable members
+// are mature is ABSENT from the map for this viewer, which is the same
+// answer as a collection with no renderable member at all, and callers
+// already paint their surface's "no cover" for that. Nothing anywhere
+// gets an empty slot.
 func ComposeCovers(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	caller visibility.Caller,
 	caps visibility.ContentCaps,
 	postCaps visibility.PostCaps,
+	mature visibility.MatureViewer,
 	ids []uuid.UUID,
 ) (map[uuid.UUID][]openapi.CollectionCover, error) {
 	if len(ids) == 0 {
@@ -179,6 +227,32 @@ func ComposeCovers(
 	previewFrag := visibility.PreviewReadableSQL("a",
 		strconv.FormatInt(caller.UserRef, 10), caller, caps)
 
+	// The mature conjuncts (#1147), on the SAME literal-ref discipline as
+	// previewFrag above and for a second reason on top of it.
+	//
+	// Every other splice site in the tree binds this ref as a `$n` and has
+	// to bind it CONDITIONALLY, because MatureFilterSQL returns the empty
+	// string for a qualified viewer and for an admin, and a parameter no
+	// statement mentions is 42P18 on every request by a qualified reader
+	// (posts/list_page.go and featured/rail.go both carry that warning).
+	// A literal has no such arm to get wrong: the fragment is spliced
+	// three times below, and three placeholders that must appear-or-not
+	// together, in a query that already renumbers two predicate fragments
+	// around them, is exactly the arithmetic ADR 0063's discipline exists
+	// to avoid. `caller.UserRef` is an int64 the auth resolver produced
+	// inside this process, not caller text.
+	//
+	// ⚠️ ZERO IS THE ANONYMOUS SENTINEL AND IT IS LOAD-BEARING, not a
+	// fallback: visibility.NewCaller(nil) leaves UserRef at 0 and
+	// MatureFilterSQL wraps the argument in `NULLIF(…, 0)` precisely so an
+	// anonymous caller cannot match a row whose owner column holds 0 as
+	// ITS OWNER. Same guard PreviewReadableSQL relies on one line up.
+	matureOwnerArg := strconv.FormatInt(caller.UserRef, 10)
+	matureAssetFrag := visibility.MatureFilterSQL("a",
+		visibility.MatureOwnerColAsset, matureOwnerArg, mature, caps.SystemAdmin)
+	maturePostFrag := visibility.MatureFilterSQL("p",
+		visibility.MatureOwnerColPost, matureOwnerArg, mature, caps.SystemAdmin)
+
 	// previewFrag is spliced TWICE below — once for the curator's chosen
 	// cover, once for the derived mosaic's members. That is safe because
 	// it contains no `$n`: its caller ref is a literal (above) and
@@ -211,6 +285,15 @@ WITH override AS (
     --
     -- A hard-deleted asset never reaches this join at all: the FK is
     -- ON DELETE SET NULL, so the pointer is already gone.
+    --
+    -- #1147: the mature conjunct is spliced here too, and NOT only on the
+    -- mosaic. The pointer is a second door to one asset's pixels, and a
+    -- door the curator opens — pointing a public collection at a mature
+    -- asset would otherwise publish it to every reader, including one who
+    -- never opted in, which is the escalation the picture-plane reuse two
+    -- paragraphs up exists to make impossible. Withholding sends the
+    -- collection down to the mosaic below, exactly as a withheld tier
+    -- does.
     SELECT c.id AS collection_id, c.cover_asset_id AS asset_id
       FROM collections c
       JOIN assets a ON a.id = c.cover_asset_id
@@ -219,7 +302,7 @@ WITH override AS (
        AND a.file_hash IS NOT NULL
        AND EXISTS (SELECT 1 FROM storage_variants sv
                     WHERE sv.object_hash = a.file_hash
-                      AND sv.variant_key = 'col')` + previewFrag + `
+                      AND sv.variant_key = 'col')` + previewFrag + matureAssetFrag + `
 ),
 members AS (
     -- The asset half. No EntityAsset predicate spliced, matching
@@ -237,13 +320,19 @@ members AS (
     -- what the Post schema already specifies for a feed card — the tile
     -- and the card should show the same picture. NULL when a post has
     -- neither; the JOIN below drops it.
+    --
+    -- #1147's post ROW plane rides the post predicate: posts.mature is
+    -- derived by trigger from the members, so a mature post can carry a
+    -- non-mature cover and the asset conjunct below would pass it. The
+    -- feed hides that post; a tile standing in for it here would put the
+    -- hidden member back on screen.
     SELECT cp.collection_id, cp.added_at, cp.sort_order,
            COALESCE(p.cover_thumbnail_asset_id, p.cover_asset_id)
       FROM collection_posts cp
       JOIN posts p ON p.id = cp.post_id
      WHERE cp.collection_id = ANY($1::UUID[])
        AND cp.pinned = TRUE
-       AND (cp.expires_at IS NULL OR cp.expires_at > NOW())` + postFrag + `
+       AND (cp.expires_at IS NULL OR cp.expires_at > NOW())` + postFrag + maturePostFrag + `
 ),
 renderable AS (
     -- DISTINCT ON collapses one asset reached by several routes to a
@@ -264,7 +353,7 @@ renderable AS (
        AND a.file_hash IS NOT NULL
        AND EXISTS (SELECT 1 FROM storage_variants sv
                     WHERE sv.object_hash = a.file_hash
-                      AND sv.variant_key = 'col')` + previewFrag + `
+                      AND sv.variant_key = 'col')` + previewFrag + matureAssetFrag + `
      ORDER BY m.collection_id, m.asset_id, m.added_at ASC, m.sort_order ASC
 ),
 ranked AS (
@@ -351,11 +440,28 @@ SELECT collection_id, asset_id
 // Mutation scope is not a parameter, for the reason on [ComposeCovers]:
 // ADR 0064 gives an `assets.admin` holder the FIELDS and explicitly not
 // the picture, and a cover is nothing but a picture.
+//
+// # It takes the mature axis for the SAME reason it takes the rest
+//
+// The whole argument above is that this is one rule evaluated twice, so
+// the moment [ComposeCovers] grew a fourth input (#1147) this had to
+// grow it too — a write gate that stayed one conjunct wider would be the
+// "readable, roughly" second expression the paragraph above refuses. It
+// costs nothing an artist would notice: the owner exemption is inside
+// [visibility.MatureFilterSQL], so an artist may always point a
+// collection at their own mature asset, opted in or not.
+//
+// The narrow thing it closes is an existence oracle on the mature axis.
+// A disqualified curator who guesses a mature asset's id would otherwise
+// learn from the 400-vs-success difference that the id names something
+// real — the one fact the read path spends three splices withholding
+// from that same curator.
 func CallerMayPictureAsset(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	caller visibility.Caller,
 	caps visibility.ContentCaps,
+	mature visibility.MatureViewer,
 	assetID uuid.UUID,
 ) (bool, error) {
 	// Soft-delete is inline for the same reason it is in ComposeCovers:
@@ -363,10 +469,16 @@ func CallerMayPictureAsset(
 	// withheld) and every caller's own query drops those rows.
 	previewFrag := visibility.PreviewReadableSQL("a",
 		strconv.FormatInt(caller.UserRef, 10), caller, caps)
+	// Literal owner ref, as above and for the first of the same two
+	// reasons: it keeps the conjunct free of a placeholder that would
+	// have to be bound conditionally.
+	matureFrag := visibility.MatureFilterSQL("a",
+		visibility.MatureOwnerColAsset, strconv.FormatInt(caller.UserRef, 10),
+		mature, caps.SystemAdmin)
 	sql := `SELECT EXISTS (
     SELECT 1 FROM assets a
      WHERE a.id = $1
-       AND a.deleted_at IS NULL` + previewFrag + `)`
+       AND a.deleted_at IS NULL` + previewFrag + matureFrag + `)`
 	var ok bool
 	if err := pool.QueryRow(ctx, sql, assetID).Scan(&ok); err != nil {
 		return false, fmt.Errorf("collections: cover picture gate: %w", err)
@@ -374,8 +486,16 @@ func CallerMayPictureAsset(
 	return ok, nil
 }
 
-// CoverCallerFromContext resolves the three caller-side inputs
+// CoverCallerFromContext resolves the four caller-side inputs
 // [ComposeCovers] takes from a request context.
+//
+// The mature viewer is returned HERE rather than read at each call site,
+// so the read path and the write gate below it cannot pick up different
+// answers — "may point at" and "may see painted" are one rule evaluated
+// twice, and #1147 is what a fourth input silently defaulting on one of
+// the two halves looks like. ⚠️ visibility.MatureFromContext returns the
+// DISQUALIFIED viewer when the middleware never ran; see its doc for why
+// the visible failure was chosen over the invisible one.
 //
 // The POST caller maps a nil-or-anonymous identity to the anonymous
 // caller, which is what posts.postRuleInputs does and is NARROWER than
@@ -385,16 +505,29 @@ func CallerMayPictureAsset(
 // is the direction to be wrong in. See the note on
 // posts.ListCollectionPosts, which made the same choice for the same
 // reason.
-func CoverCallerFromContext(ctx context.Context) (visibility.Caller, visibility.ContentCaps, visibility.PostCaps) {
+func CoverCallerFromContext(ctx context.Context) (
+	visibility.Caller,
+	visibility.ContentCaps,
+	visibility.PostCaps,
+	visibility.MatureViewer,
+) {
+	mature := visibility.MatureFromContext(ctx)
 	id := auth.IdentityFromContext(ctx)
 	if id == nil || id.IsAnonymous() {
-		return visibility.NewCaller(nil), visibility.ContentCaps{}, visibility.PostCaps{}
+		// The mature viewer still comes off the context for the
+		// anonymous arm rather than being zeroed here: the middleware
+		// already resolved an anonymous caller to the disqualified
+		// viewer, and re-deriving it would be a second expression of the
+		// first conjunct — the one place a "signed in" answer could
+		// drift from visibility.QualifiesForMature's.
+		return visibility.NewCaller(nil), visibility.ContentCaps{}, visibility.PostCaps{}, mature
 	}
 	can := func(code string) bool { return id.Can(code) }
 	ref := id.UserRef
 	return visibility.NewCaller(&ref),
 		visibility.ResolveContentCaps(can),
-		visibility.ResolvePostCaps(can)
+		visibility.ResolvePostCaps(can),
+		mature
 }
 
 // attachCovers stamps the composed mosaic onto a page of collections,
@@ -427,8 +560,8 @@ func (h *Handler) attachCovers(ctx context.Context, cs ...*openapi.Collection) e
 	if len(ids) == 0 {
 		return nil
 	}
-	caller, caps, postCaps := CoverCallerFromContext(ctx)
-	byID, err := ComposeCovers(ctx, h.Pool, caller, caps, postCaps, ids)
+	caller, caps, postCaps, mature := CoverCallerFromContext(ctx)
+	byID, err := ComposeCovers(ctx, h.Pool, caller, caps, postCaps, mature, ids)
 	if err != nil {
 		return err
 	}
