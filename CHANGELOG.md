@@ -20,6 +20,17 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Grid tiles are sharp everywhere.** Grid view had been loading the smallest saved copy of
+  every image (320px) and stretching it; tiles now request the right-sized copy for their
+  actual size and screen density, on every page that shows cards — measured upscale at high
+  density went from up to 5.8× down to the source's own limit (#1169, PR #1172).
+- **Thumbnail band controls sit together.** The checkbox and menu glyphs are 4px apart on
+  mouse screens; phones keep full-size touch targets (#1171, PR #1172).
+- **Search-by-image hides when the instance can't do it.** The advanced page checks whether
+  visual search is actually up — configured AND answering — before offering the drop zone
+  (#1163, PR #1172).
+- **Admin search results match admin suggestions.** Both use the same collection-readability
+  rule, so a completion is never offered that the results refuse (#1164, PR #1172).
 - **Endless scrolling stays ahead of the reader.** The next-page trigger had been watching the
   wrong scroll container since the facet rail shipped, so its lookahead never applied and fast
   wheel scrolling hit blank waits. It now watches the real one, 2.5 screens ahead: measured
