@@ -26,7 +26,7 @@
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { t } from '$stores/lang.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
-  import { masonryLayout, MASONRY_OVERLAY_MIN_COL_PX } from '$stores/masonryLayout.svelte';
+  import { masonryLayout, masonryOverlayTier } from '$stores/masonryLayout.svelte';
   import { api } from '$api/client';
   import type { CardCoverAsset, ContentOrigin } from '$components/cardAsset';
   import { kindForAsset } from './viewers/controller';
@@ -170,20 +170,28 @@
   // ── Masonry's two postures (#652, split by scale in #1047) ────────
   //
   // MASONRY IS MINIMAL WHEN ITS TILES ARE SMALL AND FULL WHEN THEY ARE
-  // BIG, and the switch is the RENDERED COLUMN WIDTH, not the rung the
+  // BIG, and the switch is the tile's RENDERED BOX, not the rung the
   // reader picked (owner amendment; #1025's lesson — a rung is a clamp,
-  // and the same clamp yields different widths at different viewports).
-  // `masonryLayout` carries the measured number and the calibration
-  // note for the threshold.
+  // and the same clamp yields different sizes at different viewports).
+  // `masonryLayout` carries the measured box and the calibration notes
+  // for all three thresholds.
   //
-  // Below the threshold the tile can be as short as the 60px control
-  // floor, so it holds the ⋮ menu and the checkbox and nothing else and
-  // its facts live in the hover tooltip. Above it, the tile is wider
-  // than a default grid tile and there is nothing "compact" left to
-  // justify: it takes grid's own overlay, unchanged.
-  const masonryWide = $derived(
-    mode === 'masonry' && masonryLayout.colWidth >= MASONRY_OVERLAY_MIN_COL_PX,
+  // THREE POSTURES, NOT TWO (#1139). Width alone was the gate and it let
+  // through the one shape it could not describe: a wide tile is SHORT by
+  // construction, so a two-column 5.33:1 piece cleared 280px easily and
+  // then cut the artist's avatar and name off at its bottom edge. Height
+  // now qualifies too, and between the two heights the overlay
+  // COMPRESSES to the title alone rather than clipping — a clipped
+  // identity row states less than the tooltip it replaced while still
+  // covering the art.
+  //
+  // Below both, the tile can be as short as the 60px control floor, so
+  // it holds the ⋮ menu and the checkbox and nothing else and its facts
+  // live in the hover tooltip.
+  const overlayTier = $derived(
+    mode === 'masonry' ? masonryOverlayTier(masonryLayout.box(post.id)) : 'minimal',
   );
+  const masonryWide = $derived(mode === 'masonry' && overlayTier !== 'minimal');
   const compact = $derived(mode === 'masonry' && !masonryWide);
 
   // ── Feed: the social card (#557) ─────────────────────────────────
@@ -844,7 +852,19 @@
              to the nearest positioned ancestor and reserves no flex
              space, so without both the ⋯ escapes to the card and a long
              display name runs underneath it. -->
-        <div class="relative z-[1] flex items-end pr-11" data-testid="post-card-identity">
+        <!-- `min-h-11` is the ⋯ menu's own tap target, and it is
+             load-bearing rather than cosmetic (#1139). CardMenu is
+             `absolute right-2 top-2` inside this block and reserves NO
+             flex space, so on the compressed tier — where the block is
+             one 20px title line — a 44px control would hang 32px below
+             the picture. That is the same clipping bug this issue is
+             about, one element smaller. On the full tier the block is
+             67px and this changes nothing. -->
+        <div
+          class="relative z-[1] flex min-h-11 items-end pr-11"
+          data-testid="post-card-identity"
+          data-overlay-tier={overlayTier}
+        >
           <div class="min-w-0 flex-1">
             <!-- No `title` attribute: the styled tooltip replaces the
                  native one for this element (#1126), and keeping both
@@ -856,8 +876,16 @@
             <p bind:this={titleEl} class="truncate text-sm font-semibold text-white">
               {post.title || 'Untitled'}
             </p>
-            {#if author}
-              <!-- The identity block now lives in CardAuthorLink (#1047)
+            {#if author && overlayTier !== 'compressed'}
+              <!-- DROPPED ON THE COMPRESSED TIER (#1139), which is the
+                   whole point of that tier: a wide, short tile has room
+                   for a caption and not for a 40px avatar under it. The
+                   choice is not "identity or nothing" — it is "a title
+                   that reads, or an identity row cut in half by the
+                   bottom of the picture". The artist is still one hover
+                   away in the tooltip, exactly as on the minimal tier.
+
+                   The identity block now lives in CardAuthorLink (#1047)
                    so grid, thumbnail and AssetCard draw ONE artist block
                    rather than three that drift. Everything that made it
                    work here is carried there: the `w-fit` that stops the

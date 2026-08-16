@@ -18,7 +18,7 @@
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
-  import { masonryLayout, MASONRY_OVERLAY_MIN_COL_PX } from '$stores/masonryLayout.svelte';
+  import { masonryLayout, masonryOverlayTier } from '$stores/masonryLayout.svelte';
   import { t } from '$stores/lang.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
@@ -72,14 +72,21 @@
   // across the bottom of the artwork would cover the entire work. Those
   // facts move to the hover tooltip.
   //
-  // ABOVE THE CALIBRATED COLUMN WIDTH the tile is wider than a default
-  // grid tile and there is nothing compact left to justify, so it takes
-  // the ordinary hover chrome back (owner amendment). The switch is the
-  // RENDERED width and not the rung — see masonryLayout for why, and for
-  // where the number comes from.
-  const masonryWide = $derived(
-    mode === 'masonry' && masonryLayout.colWidth >= MASONRY_OVERLAY_MIN_COL_PX,
+  // ABOVE THE CALIBRATED BOX the tile is wider than a default grid tile
+  // and there is nothing compact left to justify, so it takes the
+  // ordinary hover chrome back (owner amendment). The switch is the
+  // RENDERED BOX and not the rung — see masonryLayout for why, and for
+  // where all three numbers come from.
+  //
+  // HEIGHT IS HALF THE QUESTION (#1139). Width alone let a wide, short
+  // spanning tile through and then clipped the artist's avatar and name
+  // off its bottom edge; between the two heights the overlay compresses
+  // to the title alone instead. The twin in PostCard carries the same
+  // three tiers from the same function — one rule, two cards.
+  const overlayTier = $derived(
+    mode === 'masonry' ? masonryOverlayTier(masonryLayout.box(asset.id)) : 'minimal',
   );
+  const masonryWide = $derived(mode === 'masonry' && overlayTier !== 'minimal');
   const compact = $derived(mode === 'masonry' && !masonryWide);
 
   // The kind, as the icon vocabulary #1111 established (#1047). Resolved
@@ -359,8 +366,18 @@
                p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
       >
         <p class="text-sm font-medium text-white line-clamp-2">{asset.title}</p>
-        <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
-        {#if origin}
+        <!-- The COMPRESSED tier keeps the title and drops everything
+             under it (#1139). This overlay is bottom-anchored so it
+             cannot spill past the picture the way PostCard's
+             `justify-between` stack could — what it does on a short
+             wide tile is cover nearly all of it, which on a density
+             whose premise is "maximum art per page" is the same
+             complaint wearing different clothes. One line of caption
+             is what fits; the date and the peer stay in the tooltip. -->
+        {#if overlayTier !== 'compressed'}
+          <p class="text-xs text-white/70 mt-0.5">{createdShort}</p>
+        {/if}
+        {#if origin && overlayTier !== 'compressed'}
           <!-- Provenance rides EVERY density, not just the details tile
                (#552). Grid is the default view: attributing remote work
                only in a mode most people never switch to would leave it

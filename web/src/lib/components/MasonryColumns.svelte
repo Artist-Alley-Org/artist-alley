@@ -260,11 +260,6 @@
       // and not assumed, because it is declared in rem.
       minTilePx: masonryMinTilePx(),
     };
-    // Publish the rendered width for the cards (#1047). The wall is the
-    // only thing that knows how wide a masonry tile actually came out,
-    // and the card's at-rest posture is a question about that width —
-    // see masonryLayout for why it is a pixel threshold and not a rung.
-    masonryLayout.set(colWidth);
   }
 
   // The published column width belongs to the MOUNTED wall and to
@@ -342,6 +337,14 @@
       if (!id || w <= 0 || h <= 0) continue;
       measuredRatio.set(id, h / w);
       measuredRows.set(id, tileRows(h, g.gapPx));
+      // Publish the box for the card inside it (#1047, corrected in
+      // #1139). It rides this read rather than taking its own: the two
+      // questions — "how many rows does this tile occupy" and "how much
+      // overlay fits in it" — are asked of the same rectangle, and a
+      // second measurement would be a second chance to disagree. See
+      // masonryLayout for why the MEASURED box beats the predicted one
+      // precisely on the tiles that clip.
+      masonryLayout.set(id, w, h);
     }
   }
 
