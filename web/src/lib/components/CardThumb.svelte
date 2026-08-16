@@ -240,33 +240,53 @@
   // reintroduce the request.
   const colUrl = $derived(assetId && !restricted ? `/api/v1/assets/${assetId}/variants/col` : '');
 
-  // Responsive source set (#502/#589). Three conditions, all required:
+  // Responsive source set (#502/#589). Two conditions, both required:
   //
   //   ladderAvailable  the server confirms every configured rung exists
   //                    for THIS asset — without it, requesting anything
   //                    but `col` is the 404 class #471 removed
-  //   !fill            grid's `fill` mode wants the SQUARE CROP. A
-  //                    contact sheet is supposed to be a uniform wall,
-  //                    so `col` is correct there and this deliberately
-  //                    does not touch it (#561)
   //   rungs present    the install's ladder, read from GET /previews —
   //                    never hardcoded, or an operator who tuned their
   //                    rungs gets 404s (#610's trap, client side)
   //
-  // When any fails, `srcset` stays empty and the <img> renders from
+  // When either fails, `srcset` stays empty and the <img> renders from
   // colUrl exactly as it did before this change.
+  //
+  // ⚠️ `fill` USED TO BE A THIRD CONDITION, and removing it is #1169.
+  // The argument was that grid wants the square crop, which is true and
+  // unchanged — the tile still crops. What did not follow is that the
+  // crop has to come pre-baked from `col`: `object-cover` performs the
+  // same centred crop on any rung, so gating the ladder off here meant
+  // grid — the ONE mode that scales its tile from 261px to 925px — was
+  // also the one mode pinned to a 320px file. Measured on the seeded
+  // wall: 1.63x upscale at the default rung on a DPR-2 display, 2.89x at
+  // rung 8. What a cropped slot genuinely cannot reuse is the CONTAIN
+  // rungs' width DESCRIPTORS, and that is corrected in the store rather
+  // than by refusing the ladder — see coverSrcsetFor.
   onMount(() => previewLadder.init());
-  const srcset = $derived(
-    ladderAvailable && !fill && assetId && !restricted
-      ? (previewLadder.srcsetFor(assetId) ?? '')
+  const ladderUsable = $derived(!!ladderAvailable && !!assetId && !restricted);
+  // Split because the two are not interchangeable downstream: only the
+  // CONTAIN set implies the tile renders the source's own shape, which
+  // is what `declaredRatio` below is allowed to reason from.
+  const containSrcset = $derived(
+    ladderUsable && !fill ? (previewLadder.srcsetFor(assetId!) ?? '') : '',
+  );
+  const coverSrcset = $derived(
+    ladderUsable && fill
+      ? (previewLadder.coverSrcsetFor(assetId!, pixelWidth, pixelHeight) ?? '')
       : '',
   );
+  const srcset = $derived(containSrcset || coverSrcset);
   // `src` is the fallback for a browser that ignores srcset, and the
-  // thing the loader uses before it picks a candidate. The smallest
-  // CONTAIN rung, not col: mixing a square crop into a contain slot
-  // would flash the wrong shape before swapping.
+  // thing the loader uses before it picks a candidate.
+  //
+  //   contain slot — the smallest CONTAIN rung, not col: mixing a square
+  //     crop into a contain slot would flash the wrong shape before
+  //     swapping.
+  //   cover slot — `col`, which is both the smallest candidate in that
+  //     srcset and already the square the tile wants.
   const imgSrc = $derived.by(() => {
-    if (!srcset) return colUrl;
+    if (!containSrcset) return colUrl;
     const smallest = previewLadder.smallestKey();
     return smallest ? `/api/v1/assets/${assetId}/variants/${smallest}` : colUrl;
   });
@@ -331,9 +351,12 @@
   // source image. Without a full ladder the card can only request `col`,
   // which is a 320x320 centre-CROP (#471/#591), and sizing that tile
   // from the source's 5.33:1 would letterbox a square inside a
-  // billboard. So the recorded dimensions are used only when the
-  // responsive `srcset` is live, i.e. when the contain rungs — which do
-  // preserve the source ratio — are what will be served.
+  // billboard. So the recorded dimensions are used only when the CONTAIN
+  // srcset is live, i.e. when the contain rungs — which do preserve the
+  // source ratio — are what will be served. Since #1169 a cropped
+  // (`fill`) tile has a srcset of its own; it is deliberately NOT
+  // admitted here, because every candidate in it is displayed cropped to
+  // the tile and so says nothing about the shape the tile should take.
   //
   // Resolution order, best information first:
   //
@@ -365,7 +388,7 @@
   // up — see `cardTileRatio` there, which mirrors `declaredRatio` below
   // including the `srcset` precondition.
   const declaredRatio = $derived(
-    srcset && pixelWidth && pixelHeight && pixelWidth > 0 && pixelHeight > 0
+    containSrcset && pixelWidth && pixelHeight && pixelWidth > 0 && pixelHeight > 0
       ? clampRatio(pixelWidth / pixelHeight)
       : null,
   );
@@ -717,12 +740,17 @@
     {/if}
     <!--
       grid (fill): object-cover with NO padding, so the tile is filled
-      edge-to-edge. The `col` variant is itself a 320×320 centre-cropped
-      square (sysconfig DefaultPreviewConfig: Fit=cover, MaxDim=320 —
-      verified against the stored bytes), and the tile is square, so
-      "cover" here is a 1:1 display of the variant: no second crop, no
-      upscale beyond what `contain` was already doing. It just removes the
-      6px matte ring that `p-1.5` drew inside every tile.
+      edge-to-edge, and it removes the 6px matte ring that `p-1.5` drew
+      inside every tile.
+
+      The crop is done HERE, by `object-cover`, over whichever rung the
+      srcset picks (#1169). It used to be pre-baked: `col` is a 320×320
+      centre crop (sysconfig DefaultPreviewConfig: Fit=cover, MaxDim=320)
+      and the tile is square, so painting it was a 1:1 display of the
+      variant — true, and the reason the ladder was switched off here,
+      but it also meant a 925px tile was still decoding 320px. A centred
+      cover crop of a contain rung lands on the same region `col` shows,
+      at the tile's own resolution.
 
       everything else (contain + p-1.5): letterbox on the matte, so a
       details view still shows the whole work (#515 slice 1).

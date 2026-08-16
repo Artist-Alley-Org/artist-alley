@@ -471,25 +471,21 @@ func (s *Service) tags(
 // `collections.search_text`, which carries the name at weight A, so the
 // row answers for itself.
 //
-// ⚠️ A GATE ASYMMETRY SURVIVES THIS AND IS REPORTED, NOT CLOSED HERE.
-// This source composes [visibility.CollectionReadableSQL], whose admin
-// arm returns the EMPTY fragment (#1078); the Engine's runCollections
-// composes `Filter(EntityCollection)`, which has no admin disjunct at
-// all. So a system.admin can be completed the name of a private
-// collection they neither own nor hold a grant on, and /search will not
-// return it — #1155's class, on the gate rather than the corpus.
+// # The gate asymmetry this note used to describe is CLOSED (#1164)
 //
-// The self-conjunct below does not close it, deliberately: closing it
-// means choosing a direction, and both directions are product calls
-// somebody has to make rather than a bug to fix quietly. Narrowing this
-// source back to `Filter` re-breaks #1078's acceptance (an admin got no
-// completions for collections they can open). Widening runCollections to
-// CollectionReadableSQL decides the question predicate.go explicitly
-// leaves open — "whether an admin may browse OTHER people's PRIVATE
-// collections … nobody has asked it" — which is an escalation of an
-// admin's read, not a consistency fix. The dev seed cannot exhibit it
-// (every collection is owned by ref 1), so this is a read of the two
-// code paths, and it is written down here rather than acted on.
+// It was real: this source composed [visibility.CollectionReadableSQL]
+// while the Engine's runCollections composed `Filter(EntityCollection)`
+// alone, so a system.admin was completed the name of a private
+// collection and then handed a result page without it.
+//
+// The owner ratified the widening direction. runCollections now
+// composes the SAME authority, so the two paths cannot disagree, and
+// the direction costs no reach: an admin can already open any
+// collection directly ([visibility.CanReadCollection]), so a search
+// that returns one grants nothing new. Do not narrow either side back
+// to `Filter` on its own — that re-breaks #1078 and re-opens this — and
+// if the read rule changes, change it in CollectionReadableSQL, which
+// is now the only place it is written down for both.
 func (s *Service) collections(
 	ctx context.Context, prefix string, threshold float64,
 	caller visibility.Caller, caps visibility.CapabilityChecker,

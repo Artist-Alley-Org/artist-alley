@@ -9,19 +9,24 @@
 // page reads on mount, which keeps this spec a navigation rather than a
 // click sequence.
 //
-// Test-env note: the standalone dogfood compose stack does NOT run the
-// CLIP visual-encoder sidecar, so POST /search/by-image returns 501
-// sidecar_not_installed (or 404 when the search service is disabled
-// entirely). The happy-path results grid therefore can't be exercised
-// in CI — that needs the sidecar. This spec verifies the render + the
-// interaction wiring + that a submit resolves to a HANDLED state (the
-// component surfaces the not-configured / error path instead of
-// hanging or crashing). The full upload→results flow is covered by
-// manual verification against a sidecar-enabled instance (see PR body).
+// THE ARM IS NOW CONDITIONAL (#1163), and that is what this spec leads
+// with. `visual_search_enabled` on the public /appearance boot payload
+// says whether this install can answer a reverse-image search at all —
+// resolved, i.e. `search.visual.enabled` AND a CLIP sidecar that
+// answered at boot. False ⇒ the section is absent, rather than present
+// until someone drops an image and reads a 501 back.
+//
+// The dogfood stack runs no sidecar, so its real answer is FALSE and the
+// absent case is the one that needs no help. The interaction tests
+// therefore intercept /appearance and flip the flag on, which is the
+// only honest way to reach the widget here — and their submit still
+// lands on the 501 path, which pins the second channel (a sidecar that
+// goes away after boot) at the same time. The full upload→results flow
+// still needs a sidecar-enabled instance.
 
+import { type Page } from '@playwright/test';
 import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
-import { tid } from '../../helpers/testids';
 
 // A 1x1 red PNG — smallest valid image the picker + endpoint accept.
 const PNG_1x1 = Buffer.from(
@@ -29,12 +34,40 @@ const PNG_1x1 = Buffer.from(
   'base64',
 );
 
+/** Serve the boot payload this install would send if it HAD the CLIP
+ *  channel. Intercepted before the navigation, so the appearance store's
+ *  boot fetch is what receives it. */
+async function withVisualSearch(page: Page, enabled: boolean): Promise<void> {
+  await page.route('**/api/v1/appearance', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    body.visual_search_enabled = enabled;
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
 test.describe('UI-31 reverse-image dropzone', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdminViaUI(page);
   });
 
-  test('dropzone renders above the DSL builder in the advanced panel', async ({ page }) => {
+  test('the arm is ABSENT when the instance has no visual channel', async ({ page }) => {
+    // No interception — this is the stack's own answer, and the stack
+    // runs no sidecar.
+    await page.goto('/search?advanced=1');
+    // The panel itself is up: the assertion is about the arm, not about
+    // a page that failed to render.
+    await expect(page.getByTestId('advanced-rows')).toBeVisible();
+    await expect(
+      page.getByTestId('reverse-image-dropzone'),
+      'the reverse-image arm rendered on an install whose /search/by-image ' +
+        'answers 501 — #1163: the flag is on the boot payload, so this ' +
+        'section should not exist here',
+    ).toHaveCount(0);
+  });
+
+  test('dropzone renders above the DSL builder when the channel is on', async ({ page }) => {
+    await withVisualSearch(page, true);
     await page.goto('/search?advanced=1');
     await expect(page.getByTestId('reverse-image-dropzone')).toBeVisible();
     await expect(page.getByTestId('reverse-image-drop')).toBeVisible();
@@ -45,6 +78,7 @@ test.describe('UI-31 reverse-image dropzone', () => {
   });
 
   test('selecting an image shows a preview + enables submit', async ({ page }) => {
+    await withVisualSearch(page, true);
     await page.goto('/search?advanced=1');
     await page.getByTestId('reverse-image-file').setInputFiles({
       name: 'test.png',
@@ -57,7 +91,12 @@ test.describe('UI-31 reverse-image dropzone', () => {
     await expect(page.getByTestId('reverse-image-submit')).toBeEnabled();
   });
 
-  test('submitting resolves to a handled state (results or not-configured/error)', async ({ page }) => {
+  test('submitting resolves to a handled state (results or not-configured/error)', async ({
+    page,
+  }) => {
+    // The flag says yes and the endpoint says 501 — the exact split the
+    // boot flag cannot cover, so the component's own handling has to.
+    await withVisualSearch(page, true);
     await page.goto('/search?advanced=1');
     await page.getByTestId('reverse-image-file').setInputFiles({
       name: 'test.png',

@@ -292,6 +292,13 @@
   shown on touch, where hover is unreachable. 44px hit target, 36px
   visible chip — same sizing the row used. z-20 sits above the card's
   stretched nav link + the title overlay.
+
+  INLINE placement compresses the hit padding on fine pointers (#1171):
+  the 36px chip keeps 4px a side inside a 40px target instead of 44, so
+  it lands 4px from the checkbox beside it. The chip itself is NOT
+  resized — it is the visible control, and this is a spacing complaint.
+  Coarse pointers keep the whole 44px; see CardCheckbox for the full
+  argument, which is the same one on both halves of the pair.
 -->
 <div
   class="pointer-events-none transition-opacity duration-150
@@ -313,7 +320,8 @@
     title={t('card.tools.menu_label')}
     data-testid="card-menu-trigger"
     class="pointer-events-auto group/tool inline-flex h-11 w-11 cursor-pointer items-center
-           justify-center focus-visible:outline-none"
+           justify-center focus-visible:outline-none
+           {placement === 'inline' ? '[@media(pointer:fine)]:w-10' : ''}"
   >
     <!-- #1126: the hover state, made visible.
          `cursor-pointer` first, because there was none — a `<button>`
