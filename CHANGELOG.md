@@ -5,7 +5,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
-## [Unreleased]
+## [v0.10.0] — 2026-08-16 — The browse experience release: search sealed, the wall rebuilt, every view given its own feel
 
 ### Added
 
