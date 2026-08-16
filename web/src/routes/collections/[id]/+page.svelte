@@ -41,6 +41,7 @@
   import PostCard from '$components/PostCard.svelte';
   import type { CardAsset, CardCoverAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
+  import PostListTable from '$components/PostListTable.svelte';
   import ViewControls from '$components/ViewControls.svelte';
   import PostParamHost from '$components/PostParamHost.svelte';
   import Menu from '$components/Menu.svelte';
@@ -134,14 +135,33 @@
     restricted?: boolean;
     owner_display_name?: string;
   }
+  /** A post pinned in this collection.
+   *
+   *  ⚠️ WIDENED IN #1137, and the reason is the #1099 lesson rather than
+   *  a new requirement. `GET /collections/{id}/posts` returns
+   *  `PostList` — the SAME schema the browse feed reads — so every field
+   *  below has always been on the wire. This interface simply declared
+   *  the subset the card happened to render, and the moment the list
+   *  table (which reads the rest) was pointed at these rows, TypeScript
+   *  called it a shape mismatch. It was not: it was a local type that
+   *  under-described real data, which is exactly how #1099's surface
+   *  ended up unable to use a component it was already compatible with.
+   *
+   *  Add fields here from the schema, not from what the current card
+   *  reads. */
   interface PostRow {
     id: string;
     title: string;
+    description: string;
+    visibility: string;
     author_user_ref: number;
     cover_asset_id?: string | null;
+    posted_at: string;
     created_at: string;
+    updated_at: string;
     like_count: number;
     comment_count: number;
+    tags: string[];
     members: PostMemberRow[];
   }
 
@@ -717,6 +737,16 @@
             {#snippet card(item, mode)}
               <PostCard post={item as PostRow} {mode} tileSizes={browseView.tileSizes} />
             {/snippet}
+            {#snippet list()}
+              <!-- #1137. This snippet was simply MISSING, and its absence
+                   is the whole of the reported bug for the posts half: a
+                   collection's posts are the same rows the browse feed
+                   passes to this exact table, so `list` mode fell through
+                   to the grid branch and drew tiles while the control said
+                   LIST. Not a payload problem and not a shape mismatch —
+                   an omission. -->
+              <PostListTable items={posts} loading={false} />
+            {/snippet}
           </ContentGrid>
         </div>
       {/if}
@@ -726,8 +756,13 @@
           <h2 class="mb-2 mt-6 text-sm font-medium text-fg-muted">{t('collections.assets_heading')}</h2>
         {/if}
         <!-- Shared grid (#511/#582), so mode + tile size + sort match
-             browse. Assets carry no list table, so `list` falls back to the
-             grid here exactly as it does in UserProfile's asset section. -->
+             browse. Assets still carry no list table — PostListTable's row
+             type is the posts-feed shape and an asset is not one — so
+             `list` falls back to the grid here, exactly as it does in
+             UserProfile's and the team page's asset sections. Since #1137
+             that fallback STATES ITSELF on the page instead of silently
+             drawing tiles under a control that says LIST; an asset list
+             table is the follow-up, not a thing to fake with a cast. -->
         <div data-testid="collection-assets">
           <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
             {#snippet card(item, mode)}
