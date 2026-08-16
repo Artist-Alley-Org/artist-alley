@@ -53,6 +53,7 @@
   import PostListTable from '$components/PostListTable.svelte';
   import AssetCard from '$components/AssetCard.svelte';
   import ViewControls from '$components/ViewControls.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
   import TeamAvatar from '$components/TeamAvatar.svelte';
 
@@ -377,3 +378,18 @@
        that's browse-only. -->
   <ViewControls />
 {/if}
+
+<!-- #1130's sweep. This page renders PostCard, whose primary click
+     writes `?post=` onto this url, and nothing here consumed it — the
+     same silent dead-end the collection route was filed for. Outside
+     the `{#if team}` block so the host's lifetime is the route's, not
+     the team fetch's.
+
+     `ordered` is the loaded team feed; `onEndReached` pages it, the
+     same contract browse uses. -->
+<PostParamHost
+  ordered={() => posts.map((p) => (p as { id: string }).id)}
+  onEndReached={() => {
+    if (postsCursor && !loadingContent) void loadPosts(postsCursor);
+  }}
+/>

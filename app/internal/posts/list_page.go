@@ -66,7 +66,28 @@ type ListPostsPageParams struct {
 	// the team grants nothing here — the read rule never consults
 	// team_id (see visibility/post_rule.go), and this filter must not
 	// become the place that starts.
-	TeamID         pgtype.UUID
+	TeamID pgtype.UUID
+	// LikedByUserRef scopes the page to posts THIS ref has liked
+	// (#1106) — the profile's Likes tab, and the reason it is a
+	// parameter on the feed rather than an endpoint of its own.
+	//
+	// A likes listing is a DERIVED listing: the rows are chosen by one
+	// user's actions and read by another, so the whole question is whose
+	// read rule decides what is in it. Making it a conjunct on the feed
+	// query answers that structurally — the rule below is the VIEWER's,
+	// ANDed on after this, exactly as it is for every other filter here.
+	// A liked post the viewer may not read is therefore absent from the
+	// page, not withheld from it and not counted in it, and it cannot
+	// become otherwise without changing the feed for everyone.
+	//
+	// The alternative was a standalone "things user X liked" endpoint,
+	// which would have needed its own copy of the read rule, its own
+	// pagination and its own payload — three chances to disagree with
+	// the feed about what a post IS, for a tab that renders the same
+	// card. NARROWING like every other filter here (see the header):
+	// liking a post you cannot read does not make it readable by you or
+	// by anyone else.
+	LikedByUserRef *int64
 	CursorPostedAt pgtype.Timestamptz
 	CursorID       pgtype.UUID
 	RowLimit       int32
@@ -172,6 +193,7 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //     hitting the user_follows PK, the team_follows PK and the
 //     tag_follows PK respectively (#1123).
 //   - team_id: restrict to one team's posts (#684)
+//   - liked_by: restrict to posts a given ref has liked (#1106)
 //
 // Every one of those NARROWS. The read rule is ANDed onto the result,
 // never ORed into it, so no filter here can surface a row the caller
@@ -197,7 +219,15 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 // what the corpus is keyed by — see migration 00050 for why there is no
 // id to join on, and why matching is exact rather than case-folded.
 //
-// Placeholder discipline (ADR 0063): the builder binds $1–$10, the rule's
+// `liked_by` is the newest member of that list and the one whose
+// narrowing property is load-bearing rather than incidental: the likes
+// table is written by a THIRD PARTY (whoever liked the post), so if this
+// conjunct were ORed with the rule instead of ANDed, anybody could put a
+// post into anybody's view by liking it. It is a conjunct, so a liked
+// post the viewer cannot read is simply not on the page — see
+// LikedByUserRef above.
+//
+// Placeholder discipline (ADR 0063): the builder binds $1–$11, the rule's
 // fragment owns everything above, and its args are appended LAST.
 func (h *Handler) ListPostsPageGated(
 	ctx context.Context,
@@ -215,6 +245,7 @@ func (h *Handler) ListPostsPageGated(
 		p.CursorID,        // $8
 		p.RowLimit,        // $9
 		p.TeamID,          // $10
+		p.LikedByUserRef,  // $11
 	}
 	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
 	if err != nil {
@@ -246,6 +277,11 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
                     WHERE gf.user_ref = $6::BIGINT
                       AND pgt.post_id = posts.id))
   AND ($10::UUID IS NULL OR team_id = $10::UUID)
+  AND ($11::BIGINT IS NULL
+       OR EXISTS (SELECT 1 FROM likes lk
+                    WHERE lk.target_kind = 'post'
+                      AND lk.target_id = posts.id
+                      AND lk.user_ref = $11::BIGINT))
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
 	b.WriteString(ruleFrag)
 	b.WriteString(`

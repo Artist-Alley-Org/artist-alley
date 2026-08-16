@@ -42,6 +42,7 @@
   import type { CardAsset, CardCoverAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
   import ViewControls from '$components/ViewControls.svelte';
+  import PostParamHost from '$components/PostParamHost.svelte';
   import Menu from '$components/Menu.svelte';
   import EditCollectionModal from '$components/EditCollectionModal.svelte';
   import ShareEntityModal from '$components/ShareEntityModal.svelte';
@@ -103,6 +104,11 @@
      *  ratio, carried by the CollectionResource row. */
     pixel_width?: number | null;
     pixel_height?: number | null;
+    /** The at-a-glance `show_on_card` strip (#552), server-resolved to
+     *  display strings (#1133). Absent until this page's API row
+     *  started carrying it, which is why the flag rendered on browse
+     *  and on nothing here for a year. */
+    card_fields?: Array<{ code: string; label: string; value: string }> | null;
   }
 
   // #882 — a post pinned in this collection. The API returns the FULL
@@ -239,6 +245,11 @@
             pixel_width: m.pixel_width ?? null,
             pixel_height: m.pixel_height ?? null,
             restricted: false,
+            // #1133 — the at-a-glance strip. Passed through rather than
+            // reconstructed: the server already resolved every slug to
+            // its label (ADR 0012's rule, one home), so there is nothing
+            // for this page to format.
+            card_fields: m.card_fields ?? null,
           },
     ),
   );
@@ -728,6 +739,25 @@
     {/if}
   {/if}
 </div>
+
+<!-- #1130 — the `?post=` viewer host. A post card's primary click writes
+     the param onto THIS url and expects something here to overlay the
+     post; nothing did, so clicking a pinned post inside a collection
+     changed the address bar and nothing else. Never a regression: the
+     post grid arrived in #882 without a host and the gap shipped with
+     it.
+
+     Declared at the route's top level, NOT inside the `{#if collection}`
+     block below with the edit / share / delete dialogs. Those are
+     `<dialog>`s, and ADR 0067's amendment records what happens to a
+     viewer declared inside one: `Modal` portals to the nearest open
+     dialog resolved from where it is DECLARED, so it would render
+     underneath their top layer — in the DOM, invisible on screen.
+
+     `ordered` is the pinned posts in the curator's order, so ← / → walk
+     the collection. No `onEndReached`: the whole membership arrives in
+     one request (limit 200), so there is no next page to spill into. -->
+<PostParamHost ordered={() => posts.map((p) => p.id)} />
 
 {#if collection}
   <!-- The shared floating view controls (mode switcher + tile size +

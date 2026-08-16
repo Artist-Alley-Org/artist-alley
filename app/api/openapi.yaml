@@ -3769,6 +3769,26 @@ paths:
           required: false
           description: Filter to a single owner's assets.
           schema: { type: integer, format: int64 }
+        - name: liked_by
+          in: query
+          required: false
+          description: |
+            Restrict the page to assets this user ref has LIKED (#1106).
+            Same contract as `liked_by` on `GET /posts` — see there.
+
+            ONE DIFFERENCE, and it is deliberate. Unfiltered browse
+            returns an asset the caller may not read as a `restricted`
+            PLACEHOLDER (ADR 0064; #881's request-access flow attaches to
+            it). With `liked_by` set the row is ABSENT instead: the page
+            is then a statement about one person's ACTIONS, and a
+            placeholder on it would disclose that they liked something
+            this viewer cannot see — a fact about a third party attached
+            to a row they do not own. The filter is
+            `visibility.FieldsReadableSQL`, the sanctioned SQL twin of
+            the per-row decision that would otherwise have redacted it,
+            so "survives the filter" and "renders unredacted" are the
+            same answer.
+          schema: { type: integer, format: int64 }
         - name: asset_type
           in: query
           required: false
@@ -5501,6 +5521,27 @@ paths:
         - name: author_ref
           in: query
           required: false
+          schema: { type: integer, format: int64 }
+        - name: liked_by
+          in: query
+          required: false
+          description: |
+            Restrict the page to posts this user ref has LIKED (#1106) —
+            the profile's Likes tab.
+
+            It is a filter on this feed rather than an endpoint of its
+            own because a likes listing is a DERIVED listing: its rows
+            are chosen by one user's actions and read by another, so the
+            only question that matters is whose read rule decides what
+            appears. Here the answer is structural — the caller's own
+            read rule is ANDed onto the result exactly as it is for
+            every other filter, so a post the caller may not read is
+            ABSENT from the page whoever liked it, and the count on the
+            page is the count of what they may read.
+
+            NARROWING, never widening. The `likes` table is written by
+            third parties, so liking a post can never put it in front of
+            somebody the author did not admit.
           schema: { type: integer, format: int64 }
         - name: visibility
           in: query
@@ -13902,6 +13943,25 @@ components:
             REQUIRED (nullable), same as Asset.pixel_height. Projected
             as a PAIR with `pixel_width` — never one without the other.
         asset_created_at: { type: string, format: date-time }
+        card_fields:
+          type: array
+          items: { $ref: '#/components/schemas/CardField' }
+          description: |
+            The values of the fields an operator marked `show_on_card`,
+            already resolved to display strings and in the order the
+            field definitions declare — identical contract to
+            Asset.card_fields, see there.
+
+            #1133: this key was missing, and with it the flag had never
+            worked on the member grid. A collection member renders
+            through the same card as a browse tile, so "at a glance"
+            meant one thing on browse and nothing here. The values are
+            resolved by the same projection the browse page uses
+            (metadata.CardFieldsForAssets), not by a second one.
+
+            Absent on a `restricted` placeholder, like every other
+            asset-derived key above — the withheld row's permitted key
+            set is unchanged by this addition.
     CollectionResourceWrite:
       type: object
       required: [asset_id]
