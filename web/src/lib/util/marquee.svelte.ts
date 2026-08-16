@@ -43,6 +43,7 @@
 
 import { selection } from '$stores/selection.svelte';
 import { cancelNativeDrag } from '$lib/util/nativeDrag';
+import { scrollportOf } from '$lib/util/scrollport';
 
 /** Movement before a press becomes a marquee. Same number railScroll
  *  uses; the two gestures should feel identical up to the point they
@@ -114,16 +115,11 @@ export function createMarquee(getEl: () => HTMLElement | null, opts: MarqueeOpti
   /** The scrolling ancestor. The browse wall lives inside <main>'s own
    *  `overflow-y-auto` scrollport (#1122), NOT the window, so both the
    *  autoscroll and the document-space maths have to address that
-   *  element. Resolved per drag rather than cached: the same component
-   *  renders inside a modal on other surfaces. */
+   *  element. The walk itself moved to `scrollportOf` when the feed's
+   *  infinite-scroll observer turned out to need the same answer
+   *  (#1159); same algorithm, one copy. */
   function scrollParent(): HTMLElement | null {
-    let n: HTMLElement | null = getEl();
-    while (n) {
-      const s = getComputedStyle(n);
-      if (/(auto|scroll|overlay)/.test(s.overflowY) && n.scrollHeight > n.clientHeight) return n;
-      n = n.parentElement;
-    }
-    return null;
+    return scrollportOf(getEl());
   }
 
   function scrollTopOf(): number {
