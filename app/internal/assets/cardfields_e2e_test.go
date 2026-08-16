@@ -330,3 +330,121 @@ func TestCardFields_AGatedFieldCannotBeCarded(t *testing.T) {
 		t.Fatalf("control: gating a non-carded field failed (%v); the refusal above would prove nothing", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// #1047 — the card's ARTIST BLOCK
+// ---------------------------------------------------------------------------
+
+// getAs drives GetAsset for an arbitrary caller — nil means anonymous, which
+// is the case the opt-out is about and which `cardWorld.get` cannot express
+// because it always signs in as the owner.
+func (w *cardWorld) getAs(assetID uuid.UUID, caller *auth.Identity) openapi.Asset {
+	w.t.Helper()
+	ctx := context.Background()
+	if caller != nil {
+		ctx = auth.WithIdentity(ctx, caller)
+	}
+	resp, err := w.h.GetAsset(ctx, openapi.GetAssetRequestObject{Id: openapi_types.UUID(assetID)})
+	if err != nil {
+		w.t.Fatalf("GetAsset: %v", err)
+	}
+	ok, is := resp.(openapi.GetAsset200JSONResponse)
+	if !is {
+		w.t.Fatalf("GetAsset returned %T, want 200", resp)
+	}
+	return openapi.Asset(ok)
+}
+
+// TestCardOwner_RidesThePayloadResolvedByTheServer pins the positive case:
+// the identity behind `owner_user_ref` arrives already resolved, so a card
+// never re-derives the display-name ladder in a browser (#1023).
+//
+// The assertion is on what the HANDLER PROJECTS, not on a request echo, and
+// it names the resolved string rather than merely asserting non-nil: rung 2
+// of the ladder (`fullname`) is authenticated-only, and a pass that only
+// checked "an owner object is present" would survive the exact bug the rung
+// exists to prevent.
+func TestCardOwner_RidesThePayloadResolvedByTheServer(t *testing.T) {
+	w := newCardWorld(t)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx,
+		`UPDATE "user" SET fullname = 'Real Name' WHERE ref = $1`, w.owner); err != nil {
+		t.Fatalf("seed fullname: %v", err)
+	}
+	assetID := w.asset("an owned asset")
+
+	got := w.getAs(assetID, &auth.Identity{UserRef: w.owner, AuthMethod: "session"})
+	if got.Owner == nil {
+		t.Fatal("an authenticated reader got no owner identity on a readable asset")
+	}
+	if got.Owner.DisplayName != "Real Name" {
+		t.Errorf("owner display_name = %q, want %q (rung 2 of the ladder, authenticated)", got.Owner.DisplayName, "Real Name")
+	}
+	if got.Owner.Ref != w.owner {
+		t.Errorf("owner ref = %d, want %d", got.Owner.Ref, w.owner)
+	}
+}
+
+// TestCardOwner_AnonymousNeverGetsTheRealName is one half of the ladder rule
+// (ADR 0070 §3): the anonymous rung is display_name -> username, skipping
+// `fullname`. THE SAME ASSET, TWO CALLERS, OPPOSITE VERDICTS — which is the
+// only shape that can catch a COALESCE that reaches too far, because an
+// equality assertion against one caller passes on a uniformly-wrong rule.
+func TestCardOwner_AnonymousNeverGetsTheRealName(t *testing.T) {
+	w := newCardWorld(t)
+	ctx := context.Background()
+	var username string
+	if err := w.pool.QueryRow(ctx,
+		`UPDATE "user" SET fullname = 'Real Name' WHERE ref = $1 RETURNING username`, w.owner).Scan(&username); err != nil {
+		t.Fatalf("seed fullname: %v", err)
+	}
+	assetID := w.asset("a publicly readable asset")
+
+	authed := w.getAs(assetID, &auth.Identity{UserRef: w.owner, AuthMethod: "session"})
+	anon := w.getAs(assetID, nil)
+
+	if authed.Owner == nil || authed.Owner.DisplayName != "Real Name" {
+		t.Fatalf("control: an authenticated reader must see the real name, got %+v; the assertion below would prove nothing", authed.Owner)
+	}
+	if anon.Owner == nil {
+		t.Fatal("an anonymous reader got no owner identity at all on an asset whose owner did NOT opt out")
+	}
+	if anon.Owner.DisplayName == "Real Name" {
+		t.Error("an anonymous reader was handed the owner's real name; the ladder's rung 2 is authenticated-only")
+	}
+	if anon.Owner.DisplayName != username {
+		t.Errorf("anonymous owner display_name = %q, want the username %q", anon.Owner.DisplayName, username)
+	}
+}
+
+// TestCardOwner_TheAnonymousOptOutHolds is the other half (ADR 0024): an
+// owner who set `hide_from_anonymous` is not disclosed to an anonymous
+// reader AT ALL — no redacted entry, no "Anonymous" label, no object.
+//
+// SAME ASSET, TWO CALLERS, OPPOSITE VERDICTS again, and the authenticated
+// leg is the constructibility control: without it a bug that dropped the
+// owner for everyone would pass this test.
+func TestCardOwner_TheAnonymousOptOutHolds(t *testing.T) {
+	w := newCardWorld(t)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx,
+		`INSERT INTO user_profiles (user_ref, hide_from_anonymous) VALUES ($1, true)
+		 ON CONFLICT (user_ref) DO UPDATE SET hide_from_anonymous = true`, w.owner); err != nil {
+		t.Fatalf("seed opt-out: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(),
+			`DELETE FROM user_profiles WHERE user_ref = $1`, w.owner)
+	})
+	assetID := w.asset("an asset by a hidden owner")
+
+	authed := w.getAs(assetID, &auth.Identity{UserRef: w.owner, AuthMethod: "session"})
+	if authed.Owner == nil {
+		t.Fatal("control: an authenticated reader must still see the owner; the assertion below would prove nothing")
+	}
+
+	anon := w.getAs(assetID, nil)
+	if anon.Owner != nil {
+		t.Errorf("an owner who opted out of anonymous exposure was disclosed to an anonymous reader as %+v", anon.Owner)
+	}
+}

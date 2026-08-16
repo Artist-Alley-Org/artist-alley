@@ -11,10 +11,14 @@
   import CardThumb from './CardThumb.svelte';
   import CardMenu from './CardMenu.svelte';
   import CardCheckbox from './CardCheckbox.svelte';
+  import CardKindBadge from './CardKindBadge.svelte';
+  import CardAuthorLink from './CardAuthorLink.svelte';
+  import { kindForAsset } from './viewers/controller';
   import { auth } from '$stores/auth.svelte';
   import { selection } from '$stores/selection.svelte';
   import { cardTooltip } from '$stores/cardTooltip.svelte';
   import { DEFAULT_TILE_SIZES, type ViewMode } from '$stores/browseView.svelte';
+  import { masonryLayout, MASONRY_OVERLAY_MIN_COL_PX } from '$stores/masonryLayout.svelte';
   import { t } from '$stores/lang.svelte';
   import type { CardAsset } from '$components/cardAsset';
 
@@ -44,19 +48,51 @@
   // for it; see the CardThumb call. Only a container surface sets it.
   const restricted = $derived(!!asset.restricted);
 
-  // Grid reads as a clean dense wall (no frame, hover-only title). The
-  // other modes keep the gallery frame + a persistent footer in
-  // thumbnail. See CardThumb `framed`.
-  const framed = $derived(mode !== 'grid');
+  // ── Per-density posture (#1047) ──────────────────────────────────
+  //
+  // THE TWO WALL DENSITIES WEAR NO CARD CHROME. Grid is a contact sheet
+  // and masonry is "maximum art per page; barely any metadata" (owner's
+  // density table), and a card frame is metadata about a card: a
+  // rounded, bordered, elevated panel around every tile spends pixels
+  // saying "this is a card" on a surface whose whole job is saying "this
+  // is the work". Masonry lost that frame in this pass — see the strip
+  // note on `wrapperClass`.
+  //
+  // Thumbnail, list and feed keep it. They are reading surfaces, where
+  // the panel is what separates one item's metadata from the next's.
+  const framed = $derived(mode !== 'grid' && mode !== 'masonry');
   const detailed = $derived(mode === 'thumbnail');
 
-  // Masonry only (#652). Its tiles are the shape of their images since
-  // #646, so the thinnest are ~60px — the floor CardThumb clamps them
-  // to, which is one 44px tap target plus its inset. At that size the
-  // overlay holds the ⋮ menu and the checkbox and nothing else; the
-  // title/date that grid paints across the bottom of the artwork would
-  // cover the entire work. Those facts move to the hover tooltip.
-  const compact = $derived(mode === 'masonry');
+  // ── Masonry's two postures (#652, split by scale in #1047) ────────
+  //
+  // Its tiles are the shape of their images since #646, so the thinnest
+  // are ~60px — the floor CardThumb clamps them to, which is one 44px
+  // tap target plus its inset. At that size the overlay holds the ⋮ menu
+  // and the checkbox and nothing else; the title/date that grid paints
+  // across the bottom of the artwork would cover the entire work. Those
+  // facts move to the hover tooltip.
+  //
+  // ABOVE THE CALIBRATED COLUMN WIDTH the tile is wider than a default
+  // grid tile and there is nothing compact left to justify, so it takes
+  // the ordinary hover chrome back (owner amendment). The switch is the
+  // RENDERED width and not the rung — see masonryLayout for why, and for
+  // where the number comes from.
+  const masonryWide = $derived(
+    mode === 'masonry' && masonryLayout.colWidth >= MASONRY_OVERLAY_MIN_COL_PX,
+  );
+  const compact = $derived(mode === 'masonry' && !masonryWide);
+
+  // The kind, as the icon vocabulary #1111 established (#1047). Resolved
+  // through `kindForAsset` and not the extension, because a PNG uploaded
+  // as a sprite atlas is a sprite sheet and only the asset type says so.
+  const kind = $derived(
+    kindForAsset({ asset_type: asset.asset_type, file_extension: asset.file_extension }),
+  );
+
+  // The artist, when the server disclosed one (#1047). Absent is the ADR
+  // 0024 opt-out working — see cardAsset.ts — so this renders nothing
+  // rather than a placeholder identity.
+  const owner = $derived(asset.owner ?? null);
 
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub (keeps hover listeners off the presentation frame).
@@ -91,6 +127,15 @@
   // page colour itself would not: at 95% against near-white art there
   // are ~3 L points, and that near-invisibility is the whole reason the
   // matte token exists.
+  //
+  // #1047 — MASONRY NOW TAKES THE UNFRAMED BRANCH TOO. It used to render
+  // the same elevated, bordered, rounded panel as the thumbnail details
+  // card, with CardThumb letterboxing the art inside a further 6px
+  // matte inset. On a wall whose stated job is "maximum art per page"
+  // that is two rings and a gutter of chrome per tile, around artwork
+  // that is already cut to its own shape and therefore cannot letterbox
+  // against the box it is in. Both are gone; the 2px matte separator is
+  // what remains, exactly as in grid.
   const wrapperClass = $derived(
     framed
       ? `rounded-lg bg-surface-elevated border ${selected ? 'border-accent ring-2 ring-accent' : 'border-border hover:border-fg-muted/60'}`
@@ -102,19 +147,43 @@
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   );
 
-  // The operator's at-a-glance field set (#552). Capped rather than
-  // rendered in full: the footer is two lines of a tile, and a card that
-  // grows with the catalogue's field count stops being a card. The cap is
-  // presentation, not policy — the server sends everything marked, and a
-  // surface with more room may show more.
+  // ── The operator-configured metadata line (#552, extended by #1047) ─
+  //
+  // THE CONFIGURED FIELD SET IS `show_on_card`. There is no second key
+  // naming field codes, and adding one was considered and rejected in
+  // this pass — see the handoff. #552's flag already IS the operator's
+  // array: it is per-field, admin-editable at /admin/fields, ordered by
+  // (display_group, display_order, code), resolves #822's mirrored
+  // `title`/`description` columns through the same query, federates with
+  // the definition, and — the part a config array could not carry — is
+  // refused by a CHECK constraint on any field holding a
+  // `read_capability`, so it cannot become a side door around a gate.
+  // A sysconfig list of codes would have re-implemented that guarantee
+  // in a validator, which is a second enforcement point for one rule.
+  //
+  // Capped rather than rendered in full: the line is two rows of a tile,
+  // and a card that grows with the catalogue's field count stops being a
+  // card. The cap is presentation, not policy — the server sends
+  // everything marked, and a surface with more room may show more.
   const CARD_FIELD_LIMIT = 3;
-  const cardFields = $derived((asset.card_fields ?? []).slice(0, CARD_FIELD_LIMIT));
 
-  // The fallback is what makes the flag a HINT rather than a gate: with
-  // nothing configured, the footer renders exactly what it rendered before
-  // #552, and a client that ignores card_fields entirely is plainer and
-  // still correct (ADR 0012, amendment 2026-08-10).
-  const showConfiguredFields = $derived(cardFields.length > 0);
+  // THE DEFAULT IS TITLE ONLY (#1047). With nothing marked, the tile
+  // shows its title and its artist and no metadata line at all — which
+  // is the mature DAM's own default for this density, and the honest
+  // floor for "information at a glance": a date nobody configured is a
+  // field the operator did not ask for. The `createdShort` line that
+  // used to fill this space is gone; the date is still one `show_on_card`
+  // away, and it is still in masonry's hover tooltip.
+  //
+  // A field MIRRORING the title is dropped here rather than printed
+  // (#822): an operator who marks `title` at-a-glance means "put the
+  // title on the card", and the card already leads with it — printing it
+  // twice, eight pixels apart, is what that setting would otherwise do.
+  const cardFields = $derived(
+    (asset.card_fields ?? [])
+      .filter((f) => f.value !== asset.title)
+      .slice(0, CARD_FIELD_LIMIT),
+  );
 
   // Provenance (#552). Federated content uses the same card, the same
   // viewer and the same hints — seamless — and carries an attribution line
@@ -259,6 +328,26 @@
 
       <!-- Multi-select checkbox (top-left). -->
       <CardCheckbox id={asset.id} />
+
+      <!-- The kind, as an ICON and never as a word (#1047). This is the
+           replacement for CardThumb's hardcoded `video` / `3D` text
+           chip, which covered two of the thirteen kinds — the asymmetry
+           PR #1124 flagged, since grid post cards had already moved to
+           the icon in #1111.
+
+           BOTTOM-RIGHT, and the corner is forced rather than chosen:
+           top-left is the selection checkbox, top-right is the ⋮ menu,
+           and bottom-LEFT is where the hover title overlay's type sits.
+           The old text chip drew at `left-2 top-2` — on top of the
+           checkbox — which is the collision #578 recorded and never
+           resolved for this card.
+
+           Suppressed under `compact`: a 60px masonry tile is one 44px
+           control band tall, and the wall is about the art. The kind is
+           in its hover tooltip there instead (#652). -->
+      {#if !compact}
+        <CardKindBadge {kind} class="absolute bottom-2 right-2 z-[2]" />
+      {/if}
     {/if}
 
     {#if !detailed && !compact && !restricted}
@@ -297,34 +386,51 @@
     {/if}
   </CardThumb>
 
-  {#if detailed && !restricted}
-    <!-- Details FOOTER: the secondary at-a-glance metadata. The title
-         moved to the header (#556); this keeps the supporting fields
-         below the image where they don't compete with it. -->
-    <a href="/assets/{asset.id}" class="block px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      {#if showConfiguredFields}
-        <dl class="space-y-0.5" data-testid="card-fields">
-          {#each cardFields as f (f.code)}
-            <div class="flex gap-1.5 text-xs">
-              <dt class="shrink-0 text-fg-subtle">{f.label}</dt>
-              <dd class="truncate text-fg-muted" data-testid="card-field-{f.code}">{f.value}</dd>
-            </div>
-          {/each}
-        </dl>
-      {:else}
-        <p class="text-xs text-fg-muted">{createdShort}</p>
+  {#if detailed && !restricted && (owner || cardFields.length > 0 || origin)}
+    <!-- Details FOOTER — thumbnail's PERSISTENT chrome (#1047).
+         "Information at a glance, preview still clear" (owner's density
+         table): the identity sits AROUND the image, not over it, and it
+         is not hover-gated. Grid's #1111 vocabulary, same components,
+         same order (kind, then who, then what) — the two densities are
+         meant to read as one language, and the difference between them
+         is when it appears, not what it says.
+
+         The title stays in the header, where #556 put it on the owner's
+         "there should be a top to the thumbnail cards" note; this is the
+         supporting half. -->
+    <div class="space-y-1.5 px-3 py-2">
+      {#if owner}
+        <!-- The artist. A SIBLING link, not nested inside the card's
+             own anchor — nested anchors are invalid HTML and
+             unreachable by keyboard (#1126). -->
+        <CardAuthorLink author={owner} size="sm" />
       {/if}
-      {#if origin}
-        <p
-          class="mt-1 flex items-center gap-1 text-[11px] text-fg-subtle"
-          data-testid="card-origin"
-          title={originHost ? `${origin.display_name} — ${originHost}` : origin.display_name}
-          aria-label={t('card.origin_label')}
-        >
-          <span aria-hidden="true">↗</span>
-          <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
-        </p>
-      {/if}
-    </a>
+      <a
+        href="/assets/{asset.id}"
+        class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        {#if cardFields.length > 0}
+          <dl class="space-y-0.5" data-testid="card-fields">
+            {#each cardFields as f (f.code)}
+              <div class="flex gap-1.5 text-xs">
+                <dt class="shrink-0 text-fg-subtle">{f.label}</dt>
+                <dd class="truncate text-fg-muted" data-testid="card-field-{f.code}">{f.value}</dd>
+              </div>
+            {/each}
+          </dl>
+        {/if}
+        {#if origin}
+          <p
+            class="flex items-center gap-1 text-[11px] text-fg-subtle"
+            data-testid="card-origin"
+            title={originHost ? `${origin.display_name} — ${originHost}` : origin.display_name}
+            aria-label={t('card.origin_label')}
+          >
+            <span aria-hidden="true">↗</span>
+            <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
+          </p>
+        {/if}
+      </a>
+    </div>
   {/if}
 </div>

@@ -43,6 +43,8 @@
  * CSS half of the same decision and the two are useless apart.
  */
 
+import { cancelNativeDrag } from '$lib/util/nativeDrag';
+
 interface RailScrollOptions {
   /** Selector for one rail item, used to size an arrow step. Matched
    *  INSIDE the scroller. */
@@ -144,22 +146,19 @@ export function createRailScroll(
 
   /** Kill the browser's OWN drag-and-drop inside the strip.
    *
-   *  Without this the pan does not work at all, and the reason is worth
-   *  keeping because it is invisible from the code: rail items contain
-   *  links and images, both natively draggable. The first pointermove of
-   *  a press is below DRAG_THRESHOLD, so it returns early — correctly —
-   *  WITHOUT calling preventDefault, and in that same instant Chromium
-   *  starts a native image/link drag. `dragstart` cancels the pointer
-   *  sequence, so no further pointermove is ever delivered and the strip
-   *  moves by exactly one frame's worth of travel and then stops.
-   *  Measured on the featured strip: a 260px drag panned 20px.
+   *  Without this the pan does not work at all. The finding — why the
+   *  native drag wins the race against a sub-threshold pointermove, and
+   *  why cancelling `dragstart` is the fix rather than preventing the
+   *  default on pointerdown — now lives in `cancelNativeDrag` (#1047),
+   *  because the marquee needed exactly the same arm and did not have
+   *  it. Two gestures reading one written-down reason; the note that
+   *  used to be here is there in full.
    *
-   *  Cancelling dragstart is the fix rather than moving preventDefault
-   *  up into pointerdown: preventing the default on pointerdown also
-   *  suppresses focus and the click that follows it, which would break
-   *  every item to buy the same thing. */
+   *  Unconditional inside the strip, unlike the marquee's arm: a rail
+   *  item is a link or an image and nothing on this surface has a
+   *  drag-and-drop of its own to protect. */
   function onDragStart(e: DragEvent) {
-    e.preventDefault();
+    cancelNativeDrag(e);
   }
 
   function onPointerDown(e: PointerEvent) {

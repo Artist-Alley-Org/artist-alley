@@ -294,13 +294,23 @@ export interface ListColumnDef {
   /** May the reader drag this column's trailing edge (#1127)? Defaults
    *  to true, which is every column #1100 shipped.
    *
-   *  False for the selection column, and the reason is that it is not a
-   *  column of DATA: its content is one 24px control at a fixed size,
-   *  so there is nothing inside it that more width would reveal and
-   *  nothing that less width would ellipsize. A handle there offers a
-   *  gesture whose only possible outcome is whitespace beside a
-   *  checkbox — and it sits 8px from the row's first tab stop, so every
-   *  near-miss lands on a drag target instead. */
+   *  FALSE FOR THE FIXED-CONTROL COLUMNS, and the rule is one rule: a
+   *  column whose cell renders a control or a preview at a size of its
+   *  own is not a column of DATA. There is nothing inside it that more
+   *  width would reveal and nothing that less width would ellipsize, so
+   *  a handle there offers a gesture whose only possible outcome is
+   *  whitespace — and it sits 8px from a tab stop, so every near-miss
+   *  lands on a drag target instead.
+   *
+   *  Two columns qualify and they share this ONE flag rather than each
+   *  getting a special case (#1047, owner's list amendment):
+   *
+   *    select     one 24px checkbox (#1127)
+   *    thumbnail  one 32px preview square (#1047)
+   *
+   *  Both already had the other half of the symptom — a `labelKey` that
+   *  resolves to an empty string, because there is no field name to put
+   *  over a control. */
   resizable?: boolean;
   /** Can the reader turn this column off in the ColumnPicker? Defaults
    *  to true.
@@ -323,7 +333,12 @@ export const LIST_COLUMNS: ListColumnDef[] = [
   // — the desktop-list idiom, and the one column whose width is decided
   // by the control inside it rather than by its content.
   { id: 'select',       labelKey: 'browse.col.select',    defaultVisible: true,  sortable: false, align: 'center', width: '2.75rem', minPx: 44, resizable: false, hideable: false },
-  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem', minPx: 48 },
+  // The preview column (#1047). FIXED, like `select` above it and for
+  // the same stated reason: its cell is a 32px square whatever the track
+  // is, so dragging it only ever padded a picture with whitespace. Still
+  // HIDEABLE — unlike selection, a reader who wants a denser text table
+  // can turn the pictures off without losing a capability.
+  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem', minPx: 48, resizable: false },
   { id: 'title',        labelKey: 'browse.col.title',     defaultVisible: true,  sortable: true,  align: 'left',  width: 'minmax(16rem, 2fr)' },
   { id: 'author',       labelKey: 'browse.col.author',    defaultVisible: true,  sortable: true,  align: 'left',  width: '10rem' },
   { id: 'visibility',   labelKey: 'browse.col.visibility',defaultVisible: false, sortable: true,  align: 'left',  width: '7rem' },

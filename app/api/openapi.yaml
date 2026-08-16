@@ -14246,6 +14246,35 @@ components:
             without making remote work look lesser — federated content
             uses the same card, the same viewer and the same display
             hints; what it must not do is arrive unattributed.
+        owner:
+          allOf:
+            - $ref: '#/components/schemas/PostAuthor'
+          nullable: true
+          description: |
+            The renderable identity behind `owner_user_ref` — the
+            artist block on an asset card (#1047).
+
+            THE SAME SHAPE AND THE SAME RESOLUTION AS A POST'S AUTHOR,
+            because it is literally the same code: `users.LookupAuthors`,
+            batched once per page. An asset card that resolved the
+            owner client-side would be an N+1 per tile, and worse, it
+            would re-derive the display-name ladder in the browser —
+            which is how the anonymous rung gets skipped (#1023).
+
+            ABSENT MEANS "NOT DISCLOSED", NOT "NO OWNER". A ref is
+            omitted from the lookup when the owner set
+            `hide_from_anonymous` and the reader is anonymous (ADR 0024
+            / ADR 0070 §3), or when the account is gone. There is no
+            redacted entry and no placeholder identity: the card draws
+            no artist block at all. Deliberately not a sentinel —
+            "someone who opted out owns this" still discloses that they
+            own it.
+
+            Absent on a `restricted` placeholder too, which carries
+            `owner_display_name` instead: that surface has its own
+            allow-list and its own name rule
+            (`users.PlaceholderOwnerName`), and a second, wider
+            identity object riding the same row would defeat it.
     CardField:
       type: object
       description: |

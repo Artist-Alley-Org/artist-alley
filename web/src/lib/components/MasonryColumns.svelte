@@ -162,6 +162,7 @@
   import { untrack } from 'svelte';
   import type { ViewMode } from '$stores/browseView.svelte';
   import { previewLadder } from '$stores/previewLadder.svelte';
+  import { masonryLayout } from '$stores/masonryLayout.svelte';
   import { cardTileRatio, masonryMinTilePx, masonryTileHeight } from './cardAsset';
   import {
     ROW_UNIT_PX,
@@ -250,15 +251,27 @@
     const min = probe.getBoundingClientRect().width;
     const colCount = min > 0 ? Math.max(1, Math.floor((width + gapPx) / (min + gapPx))) : 1;
     lastWidth = width;
+    const colWidth = (width - gapPx * (colCount - 1)) / colCount;
     geo = {
       colCount,
-      colWidth: (width - gapPx * (colCount - 1)) / colCount,
+      colWidth,
       gapPx,
       // CardThumb's `min-height` floor (#652), resolved to px. Read here
       // and not assumed, because it is declared in rem.
       minTilePx: masonryMinTilePx(),
     };
+    // Publish the rendered width for the cards (#1047). The wall is the
+    // only thing that knows how wide a masonry tile actually came out,
+    // and the card's at-rest posture is a question about that width —
+    // see masonryLayout for why it is a pixel threshold and not a rung.
+    masonryLayout.set(colWidth);
   }
+
+  // The published column width belongs to the MOUNTED wall and to
+  // nothing else: leaving the last measurement behind would let a card
+  // on some other surface read a width from a masonry that is no longer
+  // on screen (#1047).
+  $effect(() => () => masonryLayout.clear());
 
   $effect(() => {
     const el = containerEl;
