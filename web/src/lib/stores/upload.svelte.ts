@@ -84,6 +84,19 @@ export interface UploadRow {
   title: string;
   /** Per-row tag chips. */
   tags: string[];
+  /**
+   * The artist's own MATURE label for this asset (#1116, ADR 0090).
+   *
+   * ONE checkbox, default false — the minimal-friction bar the upload
+   * flow is held to. It is a RATING, not a clearance: it says what the
+   * work is, not who may see it, and it is orthogonal to sensitivity.
+   *
+   * Sent only when the instance allows mature content. On an install
+   * that disallows it the control is not rendered, so this stays false
+   * and the create body carries `mature: false` — which every instance
+   * accepts, unlike `true`, which is a 400.
+   */
+  mature: boolean;
   /** Last error message, for the retry surface. */
   error: string | null;
   /**
@@ -459,6 +472,9 @@ class UploadState {
         deduped: false,
         title: defaultTitleFromFilename(file.name),
         tags: [],
+        // OFF by default, per ADR 0090 §2 and the owner's minimal-
+        // friction bar. A default of true would mislabel the library.
+        mature: false,
         error: null,
         fieldValues: new Map(),
         fieldsWritten: false,
@@ -498,6 +514,12 @@ class UploadState {
         file_hash: row.hash,
         file_extension: extensionOf(row.file.name),
         tags: row.tags,
+        // #1116 — the self-label. Always sent, including as `false`:
+        // sending nothing would be indistinguishable from an older
+        // client, and `false` is accepted on every instance while `true`
+        // is refused with a 400 where the operator has switched the
+        // feature off.
+        mature: row.mature,
         // Legacy-derived: stuff the upload context into the asset's
         // metadata JSONB so it's preserved even before the proper
         // field_value extraction lands. This mirrors what the legacy

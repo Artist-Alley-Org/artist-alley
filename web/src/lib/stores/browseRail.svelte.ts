@@ -393,11 +393,19 @@ class BrowseRailState {
     try {
       const current = await api.GET('/account/preferences', {});
       if (current.error || !current.data) return;
+      // ⚠️ EVERY member of UserPreferencesRequest is echoed below, and
+      // this local type has to name every one of them or the echo is
+      // silently incomplete. `mature_content` was added by #1116 —
+      // without it, dragging a rail chip would have RESET the reader's
+      // mature-content opt-in, because an absent member is a reset on a
+      // full-object PATCH. The same omission cost `browse_rail` on the
+      // preferences page's own writer.
       const p = current.data as {
         notification_channels?: Record<string, string[]>;
         email_cadence?: Record<string, string>;
         default_views?: Record<string, string>;
         feed_filters?: { show_restricted?: boolean };
+        mature_content?: { show?: boolean };
       };
       await api.PATCH('/account/preferences', {
         body: {
@@ -405,6 +413,7 @@ class BrowseRailState {
           email_cadence: p.email_cadence ?? {},
           default_views: p.default_views ?? {},
           feed_filters: p.feed_filters ?? {},
+          mature_content: p.mature_content ?? {},
           browse_rail: {
             hidden_team_ids: this.hidden,
             team_order: this.order,

@@ -212,6 +212,8 @@
       "status_active": "Published — anyone who can reach this site can see it",
       "status_archived": "Archived — kept, but out of the way",
       "status_note": "Publishing decides who can reach this asset, not how it looks.",
+      "field_mature": "Mature content",
+      "mature_note": "Labels what this work is, not who may see it — a public piece can be marked mature. People who haven’t opted in won’t see it in browse or search, and a direct link shows a blurred tile. You and site admins always see it.",
       "error_save": "Couldn't save this asset.",
       "forbidden_heading": "You can't edit this asset",
       "forbidden_body": "It belongs to someone else, and your account doesn't hold the rights to change other people's work.",
@@ -628,6 +630,9 @@
       "filters_title": "Feed filters",
       "filters_show_restricted": "Show items I don’t have access to",
       "filters_show_restricted_help": "By default your browse feed leaves out work you can’t open, and a post whose items are all restricted doesn’t appear at all — except your own posts, which always stay. Turn this on and those items come back as a “you don’t have access” tile. The Request access button sits on that tile, so while this is off you won’t find it in your feed — open the post itself, or a collection it’s in, to ask.",
+      "mature_title": "Mature content",
+      "mature_show": "Show mature content",
+      "mature_show_help": "Some work on this site is labelled mature by the artist who posted it. While this is off, that work is left out of your browse feed and search results, and opening a link to it shows a blurred tile instead. Your own uploads always stay visible to you, whatever this says.",
       "views_use_default": "Use default",
       "views_home_tab": "Home tab",
       "views_home_tab_latest": "Latest",
@@ -1588,6 +1593,10 @@
             "title": "Browse layouts",
             "blurb": "Choose which browse layouts your users can pick from."
           },
+          "mature_content": {
+            "title": "Mature content",
+            "blurb": "Allow artists to label work as mature, and readers to opt in."
+          },
           "maintenance": {
             "title": "Maintenance mode",
             "blurb": "Read-only mode and the banner shown to users."
@@ -2473,6 +2482,16 @@
         "org_binding_error_label": "Cross-binding failed",
         "org_binding_recovery_hint": "Recovery: copy the original org.key into place (file permissions 0600), or run scripts/customer-activation in the license-server repo to generate a new one and request a license re-issuance against the new public key."
       },
+      "mature_content": {
+        "title": "Mature content",
+        "description": "Whether artists on this install can label their work as mature, and readers can choose to be shown it. Turning it on shows nothing to anybody on its own — a reader still has to be signed in and turn it on for themselves, and that is off by default.",
+        "legend": "Mature content on this install",
+        "allow": "Allow mature content",
+        "allow_help": "Artists get one checkbox when they upload, and readers get one in their account settings. Neither does anything while this is off.",
+        "off_note": "Turning this off hides work already labelled mature from everyone except the artist who posted it and site admins — and it erases nothing, so turning it back on restores the library exactly as it was. While it is off, new mature labels are refused, but existing ones can still be cleared.",
+        "saved": "Saved.",
+        "read_only": "You can view this setting but not change it."
+      },
       "browse_views": {
         "title": "Browse layouts",
         "description": "Pick the layouts the view switcher offers on this install. This applies to everyone — anyone already using a layout you turn off is moved to one that is still on, so nobody lands on an empty page.",
@@ -3260,6 +3279,7 @@
       "subtitle": "Anywhere on the page works."
     },
     "file_row": {
+      "mature": "This is mature content",
       "fields_load_error": "Failed to load fields.",
       "state_queued": "Queued",
       "state_uploading": "Uploading {pct}%",

@@ -899,3 +899,62 @@ func browseViewsUpdateDenial(err error401or403) openapi.UpdateBrowseViewsRespons
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// Mature content (#1116, ADR 0090)
+// ---------------------------------------------------------------------------
+
+// matureContentToAPI flips the stored polarity onto the wire's.
+//
+// ⚠️ THE TWO STRUCTS NAME OPPOSITE DIRECTIONS ON PURPOSE, and these four
+// lines are the only place that is true. `MatureContentConfig.Disallowed`
+// is named for the restrictive direction so its ZERO VALUE is the
+// permissive upgrade default (an install that has never configured this
+// allows the feature); the wire field is named for the permissive one
+// because that is the question the operator's checkbox asks. Doing the
+// flip in one named function — rather than sprinkling `!cfg.Disallowed`
+// through two handlers — is what keeps a future third caller from
+// getting it backwards, which would be a silent switch-off.
+func matureContentToAPI(cfg MatureContentConfig) openapi.MatureContentConfig {
+	return openapi.MatureContentConfig{Allowed: cfg.Allowed()}
+}
+
+// matureContentFromAPI is the inverse.
+//
+// The wire field is REQUIRED, so `in.Allowed` is a plain bool that the
+// decoder has already refused to invent: a body without it never reaches
+// here. That is deliberate — an optional field would decode to Go's
+// false and DISALLOW mature content install-wide on a malformed request,
+// which is the accepted-but-empty write shape (#946) applied to a switch
+// that hides a library.
+func matureContentFromAPI(in openapi.MatureContentConfig) MatureContentConfig {
+	return MatureContentConfig{Disallowed: !in.Allowed}
+}
+
+func matureContentDenial(err error401or403) openapi.GetMatureContentConfigResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.GetMatureContentConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.GetMatureContentConfig403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
+func matureContentUpdateDenial(err error401or403) openapi.UpdateMatureContentConfigResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.UpdateMatureContentConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.UpdateMatureContentConfig403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}

@@ -2058,6 +2058,11 @@ func (h *Handler) ListAssets(
 		RowLimit:        fetch,
 		Ladder:          h.ladder(ctx),
 		MutationCaps:    mutationCaps(ctx),
+		// #1117 — read off the request context, resolved once by the
+		// mature middleware. An absent value is the DISQUALIFIED viewer,
+		// so a route that somehow skips the middleware narrows this page
+		// rather than widening it (visibility.MatureFromContext).
+		Mature: visibility.MatureFromContext(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assets: list: %w", err)
@@ -2627,9 +2632,37 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		Thumbhash:        r.Thumbhash,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
+		// #1116 — MISSING UNTIL NOW, and the omission was invisible in
+		// exactly the way #946 warns about.
+		//
+		// UpdateAsset's RETURNING has carried `mature` since #1115 and
+		// this converter dropped it, so a PATCH that SET the flag came
+		// back saying `mature: false` for a row the database had just
+		// stored as true. A response-body assertion cannot catch that —
+		// the handler echoes its own wrong value consistently, so the
+		// test and the bug agree. It was found by asserting the
+		// PERSISTED value instead, straight out of Postgres.
+		//
+		// The web edit form happens not to show the symptom — it
+		// navigates away and re-reads through GET, whose projection was
+		// always correct — but that is luck, not insulation. The comment
+		// at the rowToAsset call site above records that "a client that
+		// renders straight from the PATCH response" is a real pattern
+		// this endpoint is held to, and every such client was being told
+		// an asset it had just marked mature was not.
+		Mature: r.Mature,
 	}
 }
 
+// listRowToGetRow — note that ListAssetsPageRow carries no `mature`
+// column, so a browse-list projection reports the field's zero value.
+// That is a LABEL omission and not a gate: the row plane
+// (ListAssetsPageGated's MatureFilterSQL conjunct) has already decided
+// whether a mature row reaches this caller at all, so the only viewer
+// who sees the wrong label is one entitled to the row. Closing it means
+// adding the column to ListAssetsPage's RETURNING, which is the parity
+// ORACLE the #1065 guard's allowlist depends on staying rule-free —
+// worth doing deliberately rather than as a drive-by.
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 	return GetAssetRow{
 		TeamID:           r.TeamID,

@@ -620,6 +620,16 @@ func (*PanicShim) UpdateBrowseViews(context.Context, openapi.UpdateBrowseViewsRe
 	panic("PanicShim: UpdateBrowseViews called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetMatureContentConfig panics by default; test shims override.
+func (*PanicShim) GetMatureContentConfig(context.Context, openapi.GetMatureContentConfigRequestObject) (openapi.GetMatureContentConfigResponseObject, error) {
+	panic("PanicShim: GetMatureContentConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdateMatureContentConfig panics by default; test shims override.
+func (*PanicShim) UpdateMatureContentConfig(context.Context, openapi.UpdateMatureContentConfigRequestObject) (openapi.UpdateMatureContentConfigResponseObject, error) {
+	panic("PanicShim: UpdateMatureContentConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetPublicMode panics by default; test shims override.
 func (*PanicShim) GetPublicMode(context.Context, openapi.GetPublicModeRequestObject) (openapi.GetPublicModeResponseObject, error) {
 	panic("PanicShim: GetPublicMode called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

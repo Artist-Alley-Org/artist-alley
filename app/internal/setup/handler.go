@@ -363,9 +363,17 @@ func (h *Handler) CompleteSetup(
 	// capability set that reads as "you have no permission" at the
 	// /admin gate.
 	resp := openapi.CurrentUser{
-		Ref:                userRow.Ref,
-		AuthMethod:         "session",
-		CapabilitiesStatus: openapi.Unavailable,
+		Ref:        userRow.Ref,
+		AuthMethod: "session",
+		// #1116 — the install was created by the transaction above and
+		// has never configured the mature switch, so the answer is
+		// sysconfig.KeyMatureContent's absent-means-allowed default. It
+		// is stated rather than left to Go's zero value because the zero
+		// value would say the OPPOSITE ("this install forbids mature
+		// content"), and this producer is the one that does not go
+		// through auth.hydrateSessionUser.
+		MatureContentAllowed: true,
+		CapabilitiesStatus:   openapi.Unavailable,
 	}
 	if userRow.Username != nil {
 		resp.Username = *userRow.Username

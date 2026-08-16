@@ -9950,6 +9950,101 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/mature-content:
+    get:
+      operationId: getMatureContentConfig
+      summary: Read whether this install allows mature content
+      description: |
+        The operator's install-wide mature-content switch (#1116, epic
+        #1114, ADR 0090 §2).
+
+        An install that has never configured this reads back
+        `allowed: true`, and that default is deliberate: an install
+        upgraded into this feature has consented to nothing, and the
+        only safe reading of "no row" is the behaviour it already had —
+        which is one with no mature machinery at all, i.e. one where
+        nothing is filtered. The reading that *seems* safer (absent
+        means disallowed) is the one that breaks an upgrade, by making
+        every existing install refuse mature publication on the day it
+        upgraded, for a flag none of their assets carry.
+
+        Note what allowing does NOT do: it shows nothing to anybody on
+        its own. A viewer still has to be signed in AND opted in, and
+        the opt-in defaults OFF. This switch is permissive about the
+        OPERATOR's intent, never about a reader's.
+
+        There is no public counterpart to this endpoint. Every consumer
+        of the answer — the upload self-label, the operator override,
+        the account opt-in — is behind authentication, so the value
+        rides the session response as `CurrentUser.mature_content_allowed`
+        instead of being published to anonymous callers.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The install's mature-content switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MatureContentConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateMatureContentConfig
+      summary: Allow or disallow mature content on this install
+      description: |
+        Sets the switch. Requires the `system.config.write` capability
+        and is recorded as an `admin.system.mature_content_updated`
+        audit event.
+
+        ⚠️ SWITCHING IT OFF CLEARS NOTHING. Flags already set survive,
+        so switching it back on restores the library exactly. The switch
+        governs ENFORCEMENT and PUBLICATION, never storage — turning it
+        off would otherwise be a destructive operation disguised as a
+        display preference, and an operator who flipped it to see what
+        happened could not undo it.
+
+        With it off:
+
+          * nobody qualifies for mature content except an asset's OWNER
+            and a `system.admin` (ADR 0090 §2 — an artist must not lose
+            access to their own work because an operator flipped a
+            display switch, and an admin has to be able to moderate what
+            the switch hid);
+          * setting a `mature` flag on an asset is REFUSED with a 400
+            rather than accepted-and-ignored. Clearing one is still
+            accepted, so an operator who has just switched the feature
+            off can unmark what was marked while it was on.
+
+        The change takes effect on the next request without a restart:
+        the read is deliberately uncached, because a stale `true` would
+        keep serving mature content on an install whose operator has
+        just switched it off.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MatureContentConfig" }
+      responses:
+        "200":
+          description: The updated switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MatureContentConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /site-text:
     get:
       operationId: getSiteText
@@ -11738,6 +11833,34 @@ components:
             type: string
             enum: [grid, masonry, thumbnail, list, feed]
           example: [grid, list, feed]
+    MatureContentConfig:
+      type: object
+      required: [allowed]
+      description: |
+        The install-wide mature-content switch (#1116, ADR 0090 §2).
+
+        ⚠️ THE WIRE FIELD IS NAMED FOR THE PERMISSIVE DIRECTION AND THE
+        STORED ONE IS NOT, and the difference is not an oversight. The
+        stored struct's field is `disallowed`, so its ZERO VALUE — an
+        empty blob, a partial decode, an install that has never
+        configured this — reads as the permissive upgrade default. The
+        wire field is `allowed`, because that is the question an
+        operator is answering, and it is REQUIRED so no zero value is
+        ever in play on this side: a body that omits it is a 400, not a
+        silent switch-off.
+      properties:
+        allowed:
+          type: boolean
+          description: |
+            Whether this install permits mature content at all. `true`
+            for an install that has never configured it.
+
+            Allowing shows nothing to anybody by itself — the viewer
+            still has to be signed in and opted in, and the opt-in
+            defaults off. DISallowing is absolute: it outranks an
+            opted-in reader's own preference, because the operator's
+            answer is about the install and the reader's is about
+            themselves.
     SMTPConfig:
       type: object
       required: [host, port, encryption, from_address]
@@ -12625,7 +12748,7 @@ components:
 
     CurrentUser:
       type: object
-      required: [ref, username, auth_method, capabilities_status]
+      required: [ref, username, auth_method, capabilities_status, mature_content_allowed]
       properties:
         ref:
           type: integer
@@ -12730,14 +12853,45 @@ components:
 
             ⚠️ IT IS ONE OF THREE CONJUNCTS, NOT THE ANSWER. The reader
             also has to be signed in (they are, if they are reading
-            this) and the INSTANCE has to allow mature content, which is
-            an operator setting this object says nothing about. A client
-            rendering "mature content is on for you" from this alone
-            will be wrong on an instance that has switched it off.
+            this) and the INSTANCE has to allow mature content — that
+            third conjunct is `mature_content_allowed` below. A client
+            rendering "mature content is on for you" from THIS field
+            alone will be wrong on an instance that has switched the
+            feature off.
 
             OMITTED when the opt-in is off, which is every account that
             has not opted in — so this changes no existing session
             response.
+        mature_content_allowed:
+          type: boolean
+          description: |
+            Whether this INSTANCE allows mature content at all (#1116,
+            ADR 0090 §2) — the operator's switch, not this account's.
+
+            ⚠️ REQUIRED, unlike `mature_content` above, and the asymmetry
+            is the point. `mature_content` may be omitted because absent
+            and `false` mean the same thing there (not opted in). Here
+            they do NOT: the unconfigured default is `true`, so a client
+            that read an absent field as `false` would hide the opt-in
+            control on every install that has never touched the setting —
+            which is all of them. Declared required so the guess is
+            impossible to need: every producer of this schema must answer,
+            and the compiler says so.
+
+            It rides the session response rather than getting a public
+            endpoint because every consumer is behind authentication:
+            the upload self-label, the operator's per-asset override,
+            and the account opt-in are all signed-in surfaces, and an
+            anonymous viewer can never opt in (there is nowhere to store
+            the answer). The operator's read/write pair is
+            `/admin/system/mature-content`.
+
+            What a client does with it: when `false`, the account's
+            mature opt-in control is not rendered AT ALL — not rendered
+            disabled — because a toggle the server will not honour is a
+            control that lies. Server-side nothing depends on the
+            client obeying: the same switch is ANDed into the
+            qualification predicate on every request.
         capabilities:
           type: array
           items:
