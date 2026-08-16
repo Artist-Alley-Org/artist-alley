@@ -80,7 +80,7 @@ func inHubFeaturedTab(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller
 // for this caller.
 func onBrowseRail(t *testing.T, pool *pgxpool.Pool, caller visibility.Caller, id uuid.UUID) bool {
 	t.Helper()
-	rows, err := featured.ListPublicRail(context.Background(), pool, caller, visibility.PostCaps{}, 500, featuredLadder)
+	rows, err := featured.ListPlacements(context.Background(), pool, featured.PlacementQuery{Caller: caller, Limit: 500, Ladder: featuredLadder})
 	if err != nil {
 		t.Fatalf("browse rail: %v", err)
 	}

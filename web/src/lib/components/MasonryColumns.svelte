@@ -185,9 +185,35 @@
      *  because the row shape differs per surface. */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     card: Snippet<[any, ViewMode]>;
+    /** Where `items[0]` sits in the WHOLE feed, and how long that feed
+     *  is (#1118).
+     *
+     *  A wall used to be the whole feed, so `aria-posinset` was the
+     *  index in `items` and `aria-setsize` was its length. The promo
+     *  band breaks that: the feed is rendered as two walls with a band
+     *  between them, and a second wall left to its own arithmetic
+     *  announces "1 of 108" for the 37th post. ADR 0079's consequences
+     *  name exactly this — "aria-posinset / aria-setsize bookkeeping
+     *  must account for slots, or announced positions drift".
+     *
+     *  Defaults reproduce the single-wall behaviour exactly, so every
+     *  other surface is untouched. */
+    posOffset?: number;
+    setSize?: number;
   }
 
-  let { items, tileMin, loading = false, card }: Props = $props();
+  let {
+    items,
+    tileMin,
+    loading = false,
+    card,
+    posOffset = 0,
+    setSize,
+  }: Props = $props();
+
+  /** The announced set size: the whole feed when the caller said, this
+   *  wall otherwise. */
+  const announcedSetSize = $derived(setSize ?? items.length);
 
   /** Long enough that a drag re-places once; short enough that letting
    *  go feels immediate. */
@@ -262,11 +288,19 @@
     };
   }
 
-  // The published column width belongs to the MOUNTED wall and to
-  // nothing else: leaving the last measurement behind would let a card
-  // on some other surface read a width from a masonry that is no longer
-  // on screen (#1047).
-  $effect(() => () => masonryLayout.clear());
+  // The published tile boxes belong to the MOUNTED walls and to nothing
+  // else: leaving the last measurement behind would let a card on some
+  // other surface read a box from a masonry that is no longer on screen
+  // (#1047).
+  //
+  // REFCOUNTED since #1118, because a page can now hold two walls — the
+  // promo band splits the browse feed and sits between them. A bare
+  // `clear()` on unmount would have one wall wipe the other's boxes; see
+  // masonryLayout.release().
+  $effect(() => {
+    masonryLayout.acquire();
+    return () => masonryLayout.release();
+  });
 
   $effect(() => {
     const el = containerEl;
@@ -546,8 +580,8 @@
       data-tile-id={p.id}
       data-tile-col={p.col}
       data-tile-span={p.span}
-      aria-posinset={p.index + 1}
-      aria-setsize={items.length}
+      aria-posinset={posOffset + p.index + 1}
+      aria-setsize={announcedSetSize}
       style="grid-column: {p.col + 1} / span {p.span}; grid-row: {p.row} / span {p.rows};"
     >
       {@render card(items[p.index], 'masonry')}

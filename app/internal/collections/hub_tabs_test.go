@@ -208,8 +208,8 @@ func hubRail(t *testing.T, pool *pgxpool.Pool, callerRef int64, id uuid.UUID) bo
 		ref := callerRef
 		caller = visibility.NewCaller(&ref)
 	}
-	rows, err := featured.ListPublicRail(context.Background(), pool, caller,
-		visibility.PostCaps{}, 500, []string{"col", "preview", "screen", "hires"})
+	rows, err := featured.ListPlacements(context.Background(), pool, featured.PlacementQuery{
+		Caller: caller, Limit: 500, Ladder: []string{"col", "preview", "screen", "hires"}})
 	if err != nil {
 		t.Fatalf("browse rail: %v", err)
 	}

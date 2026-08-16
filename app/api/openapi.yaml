@@ -3291,6 +3291,164 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/featured/promo:
+    get:
+      operationId: getAdminPromoBand
+      summary: The operator promo band, for editing (GitHub #1118)
+      description: |
+        The band definition and its cards, with NO audience gate and no
+        collapse: a disabled band, a band with no cards and a band whose
+        cards are all above the tier this operator would read on the
+        public surface all come back in full. This is the page an
+        operator uses to BUILD the band, so it has to show what is
+        there.
+
+        Returns 404 when the install has no band at all. The
+        distinction from "an empty band" is real and the client needs
+        it: one offers "create", the other offers "add a card".
+
+        `items` here resolves through the same list as the rail's admin
+        curation list, which is deliberately gated more weakly than the
+        public read (see `listFeaturedItems`).
+
+        Read takes `featured.read` so a read-only auditor can see what
+        is published; every write below stays `system.admin`.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The band and its cards.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromoBand" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: savePromoBand
+      summary: Create or replace the operator promo band (GitHub #1118)
+      description: |
+        Upserts THE band. v1 renders one band, so this is a singleton
+        write rather than an id-addressed create — the table admits
+        several (ADR 0030's slot inventory is plural) and the reader
+        takes the enabled one with the lowest `after_page`, but the API
+        does not pretend to a plurality the release does not ship.
+
+        A REPLACE, not a PATCH: every field the form owns is written on
+        every save, so clearing the blurb is expressible.
+
+        The read that decides insert-vs-update runs in the same
+        transaction as the write, so two operators saving at once cannot
+        both find no band and both create one.
+
+        400 for a `cta_label`/`cta_url` supplied without its partner,
+        for an `after_page` below 1, and for a `cta_url` that is not an
+        absolute http(s) URL or a site-relative path — see
+        `PromoBand.cta_url` for why that last one is a security check.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromoBandInput" }
+      responses:
+        "200":
+          description: The saved band and its cards.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromoBand" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      operationId: deletePromoBand
+      summary: Delete the operator promo band (GitHub #1118)
+      description: |
+        Removes the band. Its cards go with it, through the
+        `featured_items.band_id` cascade — they are NOT orphaned onto
+        the featured rail, which is the anonymous landing page and not a
+        surface the operator chose for them.
+
+        Disabling (`enabled: false`) is the reversible alternative and
+        is what an operator normally wants; this exists so a band can be
+        actually removed rather than left switched off forever.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/featured/promo/items:
+    post:
+      operationId: addPromoBandItem
+      summary: Add a card to the operator promo band (GitHub #1118)
+      description: |
+        Appends one asset or collection to the band, at the end of its
+        own ordering — band positions are computed WITHIN the band, so
+        adding a card never reads or writes a rail position.
+
+        Removal and reordering are the EXISTING endpoints:
+        `DELETE /admin/featured/{id}` takes any placement id, band card
+        or rail entry, and `PUT /admin/featured/order` assigns positions
+        by id. Minting band-only twins of two operations that already do
+        exactly the right thing would have been two more places for the
+        next change to miss.
+
+        409 when the subject is already a card in this band. The same
+        subject may still be on the rail, and may be in another band —
+        those are different placements on different surfaces, which is
+        what the widened uniqueness key in migration 00053 exists to
+        allow.
+
+        404 when the install has no band to add to.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromoBandItemInput" }
+      responses:
+        "201":
+          description: The created placement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeaturedItem" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: That subject is already a card in this band.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /admin/users:
     get:
       operationId: listAdminUsers
@@ -10309,6 +10467,53 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/FeaturedItem" }
 
+  /featured/promo:
+    get:
+      operationId: getPromoBand
+      summary: The operator promo band for the browse feed (GitHub #1118)
+      description: |
+        The full-width strip the browse feed renders BETWEEN pages, or
+        nothing.
+
+        THE COLLAPSE IS DECIDED HERE, NOT BY THE CLIENT. The response is
+        `{}` — no `band` key at all — when the install has no band, when
+        the band is disabled, when it has no headline, or when every one
+        of its cards filtered away for this caller. Answering with an
+        empty band and letting the page decide would put the rule in
+        every client that ever renders one; answering with nothing puts
+        it beside the filter that produced the emptiness. See
+        `PromoBand` for why collapse (ADR 0030) rather than substitution
+        (ADR 0079 §2, which is scoped to in-grid sized slots).
+
+        FEATURING NEVER WIDENS ACCESS, and the band is not an exception.
+        Every card resolves through the same query the featured rail
+        uses: the caller's ADR 0063 predicate is spliced into the JOIN
+        that resolves each subject, per-asset sensitivity still
+        suppresses the thumbnail hints (ADR 0020), and the ADR 0090
+        mature conjunct drops a mature item for a reader who has not
+        opted in. A card pointing at content the caller may not see
+        produces no row, not a blank tile.
+
+        Anonymous-readable, and gated by the install's public-mode
+        setting exactly like `GET /featured` — the `/featured` prefix is
+        one entry in `auth.PublicSurfaceRoutes`, so both move together.
+        Whether an anonymous visitor sees a band at all is then the
+        BAND's own `scope`: `public` shows to everyone, `org` to
+        signed-in readers only.
+      tags: [featured]
+      security: []
+      responses:
+        "200":
+          description: |
+            The band this caller may see, or an empty object when there
+            is nothing to render.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  band: { $ref: "#/components/schemas/PromoBand" }
+
   /featured/teams:
     get:
       operationId: listFeaturedTeams
@@ -14704,9 +14909,196 @@ components:
             passes the content plane. Identical contract to
             Asset.ladder_available — see there for why this is computed
             from config rather than from the default rung list.
+        author:
+          $ref: "#/components/schemas/PostAuthor"
+          description: |
+            The subject's owner, as the promo band's card chip draws it
+            (#1118) — the asset's owner for an asset subject, the
+            collection's for a collection.
+
+            POPULATED ONLY BY `GET /featured/promo`, and the absence
+            elsewhere is a statement rather than an oversight. The
+            featured rail's card prints a subtitle, not an author
+            (#1110), and a value nothing consumes is a value nothing
+            tests; the admin curation list identifies a row by its
+            subject id, which is what an operator needs to prune it.
+
+            The name inside is resolved by `users.ResolveDisplayName`
+            through `users.LookupAuthors` — the one home of the
+            display-name ladder, with its authenticated rung and its
+            anonymous arm. It is NOT re-derived per surface: #1023
+            exists because that ladder had been transcribed four times
+            and three copies were wrong.
+
+            ABSENT — not redacted — for an author who took ADR 0024's
+            opt-out and for a hard-deleted account, exactly as on a post
+            card. "No author object" means "no name to show", never
+            "look it up another way".
         created_at:
           type: string
           format: date-time
+
+    PromoBand:
+      type: object
+      description: |
+        An operator-authored full-width promo strip rendered BETWEEN
+        pages of the browse feed (#1118): a headline, a blurb, an
+        optional call-to-action, and an ordered row of curated cards.
+
+        THE CARDS ARE ORDINARY PLACEMENTS. They are `featured_items`
+        rows carrying this band's id, resolved through the same query,
+        the same ADR 0063 predicate splices and the same ADR 0020
+        sensitivity and ADR 0090 mature gates as the featured rail — so
+        a card pointing at content this caller may not see produces
+        nothing at all, and a band is never a way to surface something.
+
+        THE COLLAPSE IS DECIDED SERVER-SIDE. `GET /featured/promo`
+        answers with NO band object at all when the install has none,
+        when the band is disabled, when it has no headline, or when
+        every card filtered away for this reader. That is ADR 0030's
+        rule for a banner between content, which is the geometry a
+        full-width band has; ADR 0079 §2's "an unfilled slot becomes
+        ordinary content" is scoped to IN-GRID sized slots, where
+        collapsing would leave a hole in the middle of a wall. Between
+        two walls there is no hole to leave.
+      required: [id, title, blurb, cta_label, cta_url, enabled, after_page, scope, items]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: |
+            The strip's headline. A band with an empty one does not
+            render — a button and a blurb with no headline is an
+            unfinished draft, not a banner.
+        blurb:
+          type: string
+          description: The short line under the headline. May be empty.
+        cta_label:
+          type: string
+          description: |
+            The call-to-action button's text. Empty means the band has
+            no button; `cta_label` and `cta_url` are written and
+            validated as a PAIR, so one is never present without the
+            other.
+        cta_url:
+          type: string
+          description: |
+            Where the button goes. Restricted to an absolute `http(s)`
+            URL or a site-relative path beginning with a single `/`.
+
+            THIS IS A SECURITY CONSTRAINT, not a formatting one. The
+            value becomes an `href` on the browse page of every reader
+            the band is shown to, and a `javascript:` URL there is
+            stored XSS. A scheme-relative `//host/x` is refused too — a
+            reader cannot tell it from a local link. Enforced by the
+            handler (a 400) and by a CHECK constraint in migration
+            00053 (the backstop).
+        enabled:
+          type: boolean
+          description: |
+            The operator's switch. A disabled band is invisible to
+            readers — it is filtered out by the query, not returned with
+            a flag for a client to honour.
+        after_page:
+          type: integer
+          minimum: 1
+          description: |
+            Where the band falls, counted in whole feed pages: 1 renders
+            it after the first page.
+
+            The PAGE SIZE is the client's (browse requests 36 posts at a
+            time), so this is a position in the reader's scroll rather
+            than a row count — deliberately, because "after the first
+            page" is something an operator can predict without knowing
+            the API's limit.
+        scope:
+          type: string
+          enum: [public, org]
+          description: |
+            THE WHOLE BAND'S AUDIENCE (ADR 0065's placement scopes,
+            narrowed to the two a band can hold). `public` includes
+            anonymous visitors on an install that has opened its public
+            surface; `org` is the signed-in audience.
+
+            It lives on the BAND and not on each card. A band is one
+            authored unit with a headline and a button, and "half these
+            cards are for logged-out visitors" is not a state an
+            operator can hold in their head — nor one worth a
+            denormalised copy of a visibility input on every card row.
+            A card's own `scope` column is left at its default and is
+            never read.
+        items:
+          type: array
+          description: |
+            The cards, in curation order, filtered to what THIS caller
+            may see. Never empty in a response: a band whose cards all
+            filtered away is not returned at all.
+          items: { $ref: "#/components/schemas/FeaturedItem" }
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PromoBandInput:
+      type: object
+      description: |
+        The band definition an operator saves (#1118). Every field the
+        form owns is written on every save — this is a REPLACE, not a
+        PATCH, because a partial write would make "clear the blurb"
+        indistinguishable from "leave the blurb alone".
+      required: [title]
+      properties:
+        title: { type: string }
+        blurb: { type: string, default: "" }
+        cta_label: { type: string, default: "" }
+        cta_url:
+          type: string
+          default: ""
+          description: |
+            Absolute `http(s)` URL or a site-relative path. See
+            `PromoBand.cta_url` — the restriction is a security
+            constraint and a `javascript:` value is refused with a 400.
+        enabled: { type: boolean, default: false }
+        after_page: { type: integer, minimum: 1, default: 1 }
+        scope:
+          type: string
+          enum: [public, org]
+          default: org
+          description: |
+            The band's audience. `org` — the signed-in audience — is the
+            default for the same reason `POST /admin/featured` defaults
+            to it: publishing to anonymous visitors is a deliberate act,
+            not the shape you get by leaving a field out.
+
+    PromoBandItemInput:
+      type: object
+      description: |
+        A card to add to the band (#1118).
+
+        NO `scope`, deliberately. A band card takes its audience from
+        its band, and accepting one here would store a value that looks
+        authoritative and is never read — an operator setting a card to
+        `public`, seeing it stored, and believing they had widened the
+        band. `POST /admin/featured` refuses the combination for the
+        same reason.
+
+        NO `team` kind either. A team tile belongs to the signed-in
+        teams rail (`GET /featured/teams`), whose render-time hero
+        re-check (#982) is the only admissible route to a team's
+        picture; the band renders covers, so it takes the two subject
+        kinds that resolve one.
+      required: [subject_kind, subject_id]
+      properties:
+        subject_kind:
+          type: string
+          enum: [asset, collection]
+        subject_id:
+          type: string
+          format: uuid
 
     FeaturedItemInput:
       type: object

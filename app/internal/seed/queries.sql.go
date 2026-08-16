@@ -540,11 +540,12 @@ INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_
 VALUES (
     $1,
     $2,
-    (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items),
+    (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items f2
+      WHERE f2.band_id IS NULL),
     $3,
     'public'
 )
-ON CONFLICT (subject_kind, subject_id, scope, team_id) DO NOTHING
+ON CONFLICT (subject_kind, subject_id, scope, team_id, band_id) DO NOTHING
 `
 
 type SeedInsertFeaturedParams struct {
@@ -561,16 +562,37 @@ type SeedInsertFeaturedParams struct {
 // page is empty is the thing this phase exists to prevent, and since
 // #416 the rail IS the landing page for a logged-out visitor.
 //
-// Position appends after any existing rows (max+1) — the SAME rule as
-// the admin InsertFeaturedItem (internal/featured/queries.sql), so
-// seeded rows and later admin curation interleave in one order.
+// Position appends after any existing rows on THIS SURFACE (max+1) —
+// the SAME rule as the admin InsertFeaturedItem
+// (internal/featured/queries.sql), so seeded rows and later admin
+// curation interleave in one order. `band_id IS NULL` scopes it to the
+// rail (#1118): a global MAX would hand a seeded rail row a position
+// derived from a promo band's ordering.
 //
-// ON CONFLICT names the PLACEMENT constraint, not the old
-// (subject_kind, subject_id) one that 00010 dropped. That rename is
-// not cosmetic: an ON CONFLICT target with no matching constraint is a
-// runtime error ("there is no unique or exclusion constraint matching
-// the ON CONFLICT specification"), so leaving it would have failed the
-// seed one statement after the boolean UPDATE did.
+// ⛔ THE ON CONFLICT TARGET MUST NAME EVERY COLUMN OF
+// featured_items_placement_unique, AND THIS HAS NOW BROKEN TWICE.
+//
+// An ON CONFLICT target is matched against a real constraint by its
+// exact column list; a list that matches nothing is a RUNTIME error,
+// 42P10 "there is no unique or exclusion constraint matching the ON
+// CONFLICT specification". It is not a compile error, sqlc does not
+// check it, and no Go test reaches this statement — the only thing that
+// executes it is `aa seed` against a real dataset, which is why both
+// failures surfaced in the Playwright job's seed step rather than in
+// the suite.
+//
+//	00010 widened (subject_kind, subject_id)
+//	           → (subject_kind, subject_id, scope, team_id)
+//	00053 widened it again, adding band_id (#1118)
+//
+// The 00010 note said "that rename is not cosmetic" and #1118 missed
+// this file anyway, so the note is now an instruction instead of an
+// observation: WHEN YOU CHANGE featured_items_placement_unique, GREP
+// FOR `ON CONFLICT` UNDER app/ AND FIX EVERY TARGET NAMING THIS TABLE.
+// Today that is exactly this statement — migration 00010's own insert
+// uses a bare `ON CONFLICT DO NOTHING`, which infers no constraint and
+// therefore survives any widening, and internal/featured's insert has
+// no target at all (its 23505 is caught in Go and mapped to 409).
 func (q *Queries) SeedInsertFeatured(ctx context.Context, arg SeedInsertFeaturedParams) error {
 	_, err := q.db.Exec(ctx, seedInsertFeatured, arg.SubjectKind, arg.SubjectID, arg.CreatedByUserRef)
 	return err

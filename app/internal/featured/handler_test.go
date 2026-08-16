@@ -85,7 +85,7 @@ func TestList_ResolvesTitles_InOrder(t *testing.T) {
 		t.Fatalf("Add asset: %v", err)
 	}
 
-	rows, err := h.List(context.Background())
+	rows, err := h.List(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestReorder_RewritesPositions(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Reorder: %v", err)
 	}
-	rows, err := h.List(context.Background())
+	rows, err := h.List(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

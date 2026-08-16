@@ -18,6 +18,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  masonryLayout,
   masonryOverlayTier,
   MASONRY_OVERLAY_MIN_W_PX,
   MASONRY_OVERLAY_MIN_H_PX,
@@ -98,5 +99,47 @@ describe('masonryOverlayTier', () => {
     for (const [w, h, want] of cases) {
       expect(masonryOverlayTier({ w, h }), `${w}x${h}`).toBe(want);
     }
+  });
+});
+
+// #1118 — "ONE WALL PER PAGE" STOPPED BEING TRUE.
+//
+// The promo band splits the browse feed into a head wall, the band, and
+// a tail wall, so two MasonryColumns are mounted at once. #1047's
+// invariant — a card must never read a box left behind by a masonry that
+// is no longer on screen — still has to hold, and the naive spelling
+// (clear on every unmount) breaks the surviving wall instead: its cards
+// read `null` boxes and silently drop to the `minimal` posture.
+describe('masonryLayout — refcounted lifetime (#1118)', () => {
+  it('a second wall unmounting does not blind the first', () => {
+    masonryLayout.acquire();
+    masonryLayout.acquire();
+    masonryLayout.set('tile-a', 400, 300);
+    masonryLayout.release();
+    // THE ASSERTION. Before the refcount this was null, and every card
+    // on the surviving wall fell back to `minimal` until something
+    // happened to re-measure it.
+    expect(masonryLayout.box('tile-a')).toEqual({ w: 400, h: 300 });
+    masonryLayout.release();
+    expect(masonryLayout.box('tile-a')).toBeNull();
+  });
+
+  it('the last wall out still clears — the #1047 invariant is unchanged', () => {
+    masonryLayout.acquire();
+    masonryLayout.set('tile-b', 100, 100);
+    masonryLayout.release();
+    expect(masonryLayout.box('tile-b')).toBeNull();
+  });
+
+  it('an unbalanced release cannot leave the count negative', () => {
+    // A negative count would make the NEXT release a no-op and leak the
+    // map into whatever surface mounts next — a stale box being exactly
+    // what this method exists to prevent.
+    masonryLayout.release();
+    masonryLayout.release();
+    masonryLayout.acquire();
+    masonryLayout.set('tile-c', 10, 10);
+    masonryLayout.release();
+    expect(masonryLayout.box('tile-c')).toBeNull();
   });
 });

@@ -3428,6 +3428,24 @@ func (s *apiServer) ReorderFeaturedItems(ctx context.Context, req openapi.Reorde
 	return s.featuredHTTP.ReorderFeaturedItems(ctx, req)
 }
 
+// --- the operator promo band (GitHub #1118) --------------------------------
+
+func (s *apiServer) GetPromoBand(ctx context.Context, req openapi.GetPromoBandRequestObject) (openapi.GetPromoBandResponseObject, error) {
+	return s.featuredHTTP.GetPromoBand(ctx, req)
+}
+func (s *apiServer) GetAdminPromoBand(ctx context.Context, req openapi.GetAdminPromoBandRequestObject) (openapi.GetAdminPromoBandResponseObject, error) {
+	return s.featuredHTTP.GetAdminPromoBand(ctx, req)
+}
+func (s *apiServer) SavePromoBand(ctx context.Context, req openapi.SavePromoBandRequestObject) (openapi.SavePromoBandResponseObject, error) {
+	return s.featuredHTTP.SavePromoBand(ctx, req)
+}
+func (s *apiServer) DeletePromoBand(ctx context.Context, req openapi.DeletePromoBandRequestObject) (openapi.DeletePromoBandResponseObject, error) {
+	return s.featuredHTTP.DeletePromoBand(ctx, req)
+}
+func (s *apiServer) AddPromoBandItem(ctx context.Context, req openapi.AddPromoBandItemRequestObject) (openapi.AddPromoBandItemResponseObject, error) {
+	return s.featuredHTTP.AddPromoBandItem(ctx, req)
+}
+
 // --- setup -----------------------------------------------------------------
 
 func (s *apiServer) GetSetupStatus(ctx context.Context, req openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {

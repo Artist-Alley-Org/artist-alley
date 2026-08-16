@@ -8,6 +8,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import FeaturedRail from '$components/FeaturedRail.svelte';
+  import PromoBand from '$components/PromoBand.svelte';
   import BrowseRail from '$components/BrowseRail.svelte';
   import TeamFollowButton from '$components/TeamFollowButton.svelte';
   import { browseRail } from '$stores/browseRail.svelte';
@@ -23,6 +24,7 @@
   import { t } from '$stores/lang.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
   import { createMarquee } from '$lib/util/marquee.svelte';
+  import type { components } from '$api/schema';
 
   onMount(() => { browseView.init(); });
 
@@ -365,6 +367,84 @@
       void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
     }
   }
+
+  // ── The operator promo band (#1118) ───────────────────────────────
+  //
+  // A full-width strip between two feed pages. It is inserted at the
+  // PAGE layer, between two grid instances — NOT into the wall.
+  //
+  // # Why the split is here and not in the placer
+  //
+  // The obvious reading of "a band between pages" is a slot in the feed
+  // sequence, which is ADR 0079's in-grid model and would mean teaching
+  // `masonryPlacement` about a full-width position. It is the wrong
+  // model twice over. The feed is ONE flat array rendered by ONE grid —
+  // there is no "wall / band / wall" seam in the data to hang a slot on
+  // — and a full-width strip is ADR 0030's banner geometry, which sits
+  // BETWEEN content rather than inside the packing. So the feed is
+  // sliced and the switch is rendered twice, and every line of
+  // `masonryPlacement.ts` is untouched: no spanning rule, no dense flow,
+  // no new coordinate to reserve.
+  //
+  // # Why the slice cannot move a tile
+  //
+  // `bandAt` is a fixed index — `after_page × PAGE` — decided before the
+  // first tile is placed and never recomputed from the loaded length. So
+  // the head wall reaches exactly that many items and then stops
+  // growing, and every append lands in the tail wall. MasonryColumns'
+  // own append check (`placedIds.every(...)`) sees the head's list
+  // unchanged and re-places nothing; the tail grows the way an unsplit
+  // wall does. The band appears when page 2 arrives, at which moment the
+  // tail's tiles have never been rendered, so nothing on screen moves.
+  //
+  // # Why both walls are always mounted
+  //
+  // The tail is rendered even while empty. Toggling between one grid and
+  // two would unmount and rebuild a wall the reader is looking at, which
+  // is a re-place of every tile in it — the exact instability #651
+  // removed, bought back through a mounting decision instead of a
+  // placement one.
+  let band = $state<components['schemas']['PromoBand'] | null>(null);
+
+  onMount(() => {
+    void (async () => {
+      // No error state, and no `finally` that reveals one: the band is
+      // supplementary chrome on a page that has its own content, so a
+      // failed fetch must leave the page looking un-curated rather than
+      // broken. Same posture as FeaturedRail's loader.
+      //
+      // A 401 is the ordinary answer for an anonymous visitor on an
+      // install that has not opened its public surface (#445), and it
+      // arrives here as `error` with no data — which is "no band",
+      // which is what an anonymous visitor on a closed install should
+      // see.
+      const { data } = await api.GET('/featured/promo');
+      band = (data as { band?: components['schemas']['PromoBand'] } | undefined)?.band ?? null;
+    })();
+  });
+
+  /** Where the band falls, as an index into the loaded feed.
+   *
+   *  `after_page` counts whole PAGES because that is what an operator
+   *  can predict without knowing the API's limit; the page size is this
+   *  client's, so the multiplication belongs here and nowhere else.
+   *
+   *  null = no band, and the page renders exactly the single wall it
+   *  always did. */
+  const bandAt = $derived(band ? band.after_page * PAGE : null);
+
+  /** The band only renders once the feed has actually reached its
+   *  position. Before that there is no "between" to sit in, and
+   *  rendering it below a short feed would put an operator's strip
+   *  somewhere they did not choose.
+   *
+   *  ⚠️ `>` and not `>=`: with exactly `bandAt` items loaded the band
+   *  would sit under the last tile with nothing beneath it — a footer,
+   *  not a band. It appears when the page after it exists. */
+  const showBand = $derived(bandAt !== null && items.length > bandAt);
+
+  const headItems = $derived(bandAt === null ? items : items.slice(0, bandAt));
+  const tailItems = $derived(bandAt === null ? [] : items.slice(bandAt));
 </script>
 
 <svelte:head>
@@ -551,21 +631,84 @@
          the third `nativeDrag` consumer and the only one whose surface
          is not already addressable, so the per-consumer drag test had
          nothing to press on. -->
+    <!-- The card and table snippets are declared HERE, at the page, and
+         handed to ContentGrid as props rather than written inside its
+         tag. A promo band renders the switch TWICE (head wall, band,
+         tail wall) and both walls must draw the identical card — a
+         second inline copy would be a second thing to keep in step, on
+         the two halves of one feed. -->
+    {#snippet cardSnippet(item: unknown, mode: typeof browseView.mode)}
+      {@const post = item as Post}
+      <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} {orderedIds} />
+    {/snippet}
+    {#snippet listSnippet()}
+      <PostListTable {items} {loading} {orderedIds} />
+    {/snippet}
+
     <div
       bind:this={wallEl}
       {...marquee.handlers}
       class="relative select-none"
       data-testid="browse-wall"
     >
-      <ContentGrid mode={browseView.mode} {items} tileMin={browseView.tileMin} {loading}>
-        {#snippet card(item, mode)}
-          {@const post = item as Post}
-          <PostCard {post} {mode} feed={mode === 'feed'} tileSizes={browseView.tileSizes} {orderedIds} />
-        {/snippet}
-        {#snippet list()}
-          <PostListTable {items} {loading} {orderedIds} />
-        {/snippet}
-      </ContentGrid>
+      {#if bandAt === null || browseView.mode === 'list'}
+        <!-- The unsplit feed: no band configured, or LIST mode.
+
+             List is deliberately excluded and the exclusion is a design
+             call, not an oversight. The list view is one `role="grid"`
+             with a sticky header, drag-resizable columns and rows that
+             are `role="row"` children of it. A promo band cannot go
+             between two halves of that: splitting the table gives the
+             reader two sticky headers and two independently sorted
+             halves, and putting the band INSIDE the grid puts a
+             non-row child in an ARIA grid. The band is a discovery
+             surface for a WALL of art; the list is a working table, and
+             the honest answer for it is nothing rather than something
+             misplaced. -->
+        <ContentGrid
+          mode={browseView.mode}
+          {items}
+          tileMin={browseView.tileMin}
+          {loading}
+          card={cardSnippet}
+          list={listSnippet}
+        />
+      {:else}
+        <!-- Head wall — a FIXED slice, so it stops growing at the band
+             and every append lands below. `setSize` is the whole feed:
+             a wall that announced its own length would tell a screen
+             reader "36 of 36" halfway down a 108-post feed (ADR 0079's
+             aria consequence). -->
+        <ContentGrid
+          mode={browseView.mode}
+          items={headItems}
+          tileMin={browseView.tileMin}
+          loading={false}
+          setSize={items.length}
+          card={cardSnippet}
+          list={listSnippet}
+        />
+
+        {#if showBand && band}
+          <PromoBand {band} />
+        {/if}
+
+        <!-- Tail wall. Always mounted, even while empty — see the note
+             on `band` above for why toggling its existence would
+             re-place a wall the reader is looking at. It owns the
+             loading skeletons, because it is where the next page
+             lands. -->
+        <ContentGrid
+          mode={browseView.mode}
+          items={tailItems}
+          tileMin={browseView.tileMin}
+          {loading}
+          posOffset={bandAt}
+          setSize={items.length}
+          card={cardSnippet}
+          list={listSnippet}
+        />
+      {/if}
 
       {#if marquee.rect}
         <!-- Fixed, not absolute: the rect is computed in viewport space

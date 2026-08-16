@@ -30,7 +30,7 @@ import (
 // adminRowFor finds one subject's row in the admin curation list.
 func adminRowFor(t *testing.T, pool *pgxpool.Pool, subject uuid.UUID) (ListFeaturedItemsRow, bool) {
 	t.Helper()
-	rows, err := New(pool).ListFeaturedItems(context.Background(), defaultLadder)
+	rows, err := New(pool).ListFeaturedItems(context.Background(), ListFeaturedItemsParams{Ladder: defaultLadder})
 	if err != nil {
 		t.Fatalf("ListFeaturedItems: %v", err)
 	}

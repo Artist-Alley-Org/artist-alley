@@ -1497,6 +1497,7 @@ CREATE TABLE public.featured_items (
     created_by_user_ref bigint,
     scope text DEFAULT 'org'::text NOT NULL,
     team_id uuid,
+    band_id uuid,
     CONSTRAINT featured_items_scope_check CHECK ((scope = ANY (ARRAY['public'::text, 'org'::text, 'team'::text]))),
     CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text, 'team'::text]))),
     CONSTRAINT featured_items_team_scope_check CHECK ((((scope = 'team'::text) AND (team_id IS NOT NULL)) OR ((scope <> 'team'::text) AND (team_id IS NULL))))
@@ -1508,6 +1509,13 @@ CREATE TABLE public.featured_items (
 --
 
 COMMENT ON COLUMN public.featured_items.subject_kind IS 'What kind of thing this placement points at: ''asset'', ''collection'' or ''team'' (#1084). There is deliberately no foreign key — the subject is polymorphic — so the read path resolves the subject by joining the matching table and DROPS the placement when that join finds nothing the caller may see. Adding a kind here is never sufficient on its own: the same enumeration is restated in SIX places (enumerated in featured/http.go''s AddFeaturedItem) — this CHECK, that handler''s validation, its error string, the OpenAPI FeaturedItemInput enum, the FeaturedItem RESPONSE enum, and the admin curation list''s title resolution plus the page that renders it. Miss any one and the failure is asymmetric: a 500 instead of a 400, a client that refuses to send the value, or an operator staring at an untitled row with a dead link.';
+
+
+--
+-- Name: COLUMN featured_items.band_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.featured_items.band_id IS 'Which surface this placement belongs to (#1118): NULL is the featured rail — every row that existed before this column — and a band id makes the row a card in that promo band. There is no second membership table on purpose (ADR 0065; see migration 00053''s header). ⚠️ For a band row the `scope` column is NOT the audience: the BAND carries the audience, and this row''s scope keeps its table default. Reading scope on a band row would be a second, stale copy of a visibility input.';
 
 
 --
@@ -2193,6 +2201,43 @@ CREATE TABLE public.posts (
 --
 
 COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for the parent asset''s subtitle tracks. NULL means use the asset''s intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.';
+
+
+--
+-- Name: promo_bands; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promo_bands (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    blurb text DEFAULT ''::text NOT NULL,
+    cta_label text DEFAULT ''::text NOT NULL,
+    cta_url text DEFAULT ''::text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    after_page integer DEFAULT 1 NOT NULL,
+    scope text DEFAULT 'org'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_user_ref bigint,
+    CONSTRAINT promo_bands_after_page_check CHECK ((after_page >= 1)),
+    CONSTRAINT promo_bands_cta_pair_check CHECK ((((cta_label = ''::text) AND (cta_url = ''::text)) OR ((cta_label <> ''::text) AND (cta_url <> ''::text)))),
+    CONSTRAINT promo_bands_cta_url_check CHECK (((cta_url = ''::text) OR (cta_url ~ '^(https?://[^/]|/[^/])'::text))),
+    CONSTRAINT promo_bands_scope_check CHECK ((scope = ANY (ARRAY['public'::text, 'org'::text])))
+);
+
+
+--
+-- Name: TABLE promo_bands; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promo_bands IS 'Operator-authored full-width promo strips rendered BETWEEN feed pages (#1118). The cards are ordinary featured_items rows carrying this band''s id — see featured_items.band_id — so curation, ordering and visibility composition have one home (ADR 0065). `scope` is the whole band''s audience, read by featured.ScopeVisibleSQL; the cards'' own scope column is not consulted. An empty or disabled band renders nothing at all (ADR 0030''s collapse rule, which governs a full-width band; ADR 0079 §2''s substitution rule is scoped to in-grid sized slots).';
+
+
+--
+-- Name: COLUMN promo_bands.after_page; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promo_bands.after_page IS 'Where the band falls in the feed, counted in whole loaded pages: 1 renders it after the first page. The PAGE SIZE is the client''s (the browse feed requests 36), so this is a position in the reader''s scroll rather than a row count — deliberately, because it is what the operator can predict without knowing the API''s limit.';
 
 
 --
@@ -3115,7 +3160,7 @@ ALTER TABLE ONLY public.featured_items
 --
 
 ALTER TABLE ONLY public.featured_items
-    ADD CONSTRAINT featured_items_placement_unique UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id);
+    ADD CONSTRAINT featured_items_placement_unique UNIQUE NULLS NOT DISTINCT (subject_kind, subject_id, scope, team_id, band_id);
 
 
 --
@@ -3356,6 +3401,14 @@ ALTER TABLE ONLY public.post_tags
 
 ALTER TABLE ONLY public.posts
     ADD CONSTRAINT posts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: promo_bands promo_bands_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.promo_bands
+    ADD CONSTRAINT promo_bands_pkey PRIMARY KEY (id);
 
 
 --
@@ -4220,6 +4273,13 @@ CREATE INDEX comments_whiteboards_idx ON public.comments USING btree (target_kin
 --
 
 CREATE INDEX digest_queue_pending_idx ON public.digest_queue USING btree (cadence, user_ref) WHERE (sent_at IS NULL);
+
+
+--
+-- Name: featured_items_band_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX featured_items_band_order_idx ON public.featured_items USING btree (band_id, "position", created_at);
 
 
 --
@@ -5876,6 +5936,14 @@ ALTER TABLE ONLY public.email_verification_token
 
 ALTER TABLE ONLY public.extraction_failure
     ADD CONSTRAINT extraction_failure_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: featured_items featured_items_band_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_band_id_fkey FOREIGN KEY (band_id) REFERENCES public.promo_bands(id) ON DELETE CASCADE;
 
 
 --

@@ -4,7 +4,7 @@
 -- existing requests + users packages.
 
 -- name: ListFeaturedItems :many
--- Ordered curation list. LEFT JOINs both subject tables so a single
+-- Ordered curation list for ONE surface. LEFT JOINs both subject tables so a single
 -- read resolves the display title (asset.title or collection.name)
 -- plus the asset thumbnail hints, without the handler fanning out a
 -- per-row lookup. A dangling reference (subject hard-deleted) yields
@@ -106,6 +106,19 @@ LEFT JOIN LATERAL (
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT 1
 ) cover ON true
+-- Which SURFACE's curation list this is (#1118). `IS NOT DISTINCT FROM`
+-- rather than a pair of branches: passing NULL selects the rail — every
+-- row that existed before band_id — and passing a band id selects that
+-- band's cards. One query, because the alternative was a second copy of
+-- everything above it, and the two would have drifted on the next change
+-- to the cover lateral exactly as the rail and the admin list did before
+-- #625.
+--
+-- It is NOT a visibility filter and does not pretend to be one: this
+-- endpoint is system.admin-gated (see the note on the cover lateral),
+-- and band membership is a surface, not an audience. The band's audience
+-- lives on promo_bands.scope and is read by the PUBLIC band query.
+WHERE f.band_id IS NOT DISTINCT FROM sqlc.narg('band_id')::uuid
 ORDER BY f.position ASC, f.created_at ASC;
 
 -- name: InsertFeaturedItem :one
@@ -113,19 +126,32 @@ ORDER BY f.position ASC, f.created_at ASC;
 -- row appends to the end (max existing position + 1). Scope defaults
 -- to 'org' — the admin surface curates the internal list, and a
 -- public placement is a deliberate act (ADR 0065). The
--- (subject_kind, subject_id, scope, team_id) unique constraint makes
--- a duplicate add WITHIN ONE AUDIENCE a 23505 the handler maps to
--- 409, while still allowing the same subject at another scope.
-INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope)
+-- (subject_kind, subject_id, scope, team_id, band_id) unique constraint
+-- makes a duplicate add WITHIN ONE AUDIENCE ON ONE SURFACE a 23505 the
+-- handler maps to 409, while still allowing the same subject at another
+-- scope or in a band.
+--
+-- `band_id` NULL is the rail (#1118). The append position is computed
+-- WITHIN THE SURFACE — `IS NOT DISTINCT FROM` again — because a global
+-- MAX would hand a rail add a position derived from a band's ordering
+-- and vice versa. Harmless while ordering is only ever relative, and
+-- wrong the moment anything reads a position as a number.
+--
+-- ⚠️ `scope` on a BAND row is not the band's audience. The band carries
+-- it (promo_bands.scope); this column keeps its default for band rows
+-- and no reader consults it there. See migration 00053.
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref, scope, band_id)
 VALUES (
     $1,
     $2,
     COALESCE(sqlc.narg('position')::integer,
-             (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items)),
+             (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items f2
+               WHERE f2.band_id IS NOT DISTINCT FROM sqlc.narg('band_id')::uuid)),
     sqlc.narg('created_by_user_ref')::bigint,
-    COALESCE(sqlc.narg('scope')::text, 'org')
+    COALESCE(sqlc.narg('scope')::text, 'org'),
+    sqlc.narg('band_id')::uuid
 )
-RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref, scope, team_id;
+RETURNING id, subject_kind, subject_id, position, created_at, created_by_user_ref, scope, team_id, band_id;
 
 -- name: DeleteFeaturedItem :execrows
 -- Removes one entry by id. Returns rows-affected so the handler can
@@ -137,3 +163,59 @@ DELETE FROM featured_items WHERE id = $1;
 -- the reorder transaction. Returns rows-affected for the same 0 → 404
 -- mapping.
 UPDATE featured_items SET position = $2 WHERE id = $1;
+
+-- ---------------------------------------------------------------------
+-- The operator promo band (#1118)
+-- ---------------------------------------------------------------------
+--
+-- The band DEFINITION only — its cards are featured_items rows carrying
+-- its id, read through ListFeaturedItems (admin) and the hand-built
+-- public band query in band.go (readers). See migration 00053 for why
+-- there is no second membership table.
+--
+-- These are all system.admin surfaces, so none of them gates on
+-- audience: `scope` is DATA here, and the only reader that treats it as
+-- a predicate is the public one.
+
+-- name: GetPromoBand :one
+-- The band the v1 surfaces operate on, enabled or not.
+--
+-- "The band" is singular by PRODUCT decision, not by schema: the table
+-- admits several (ADR 0030's slot inventory is plural) and this picks
+-- the one the release renders — earliest feed position, then oldest.
+-- `id` is the final tiebreak so the choice is total rather than
+-- arbitrary under equal timestamps, which a seeded install can produce.
+SELECT id, title, blurb, cta_label, cta_url, enabled, after_page, scope,
+       created_at, updated_at, created_by_user_ref
+FROM promo_bands
+ORDER BY after_page ASC, created_at ASC, id ASC
+LIMIT 1;
+
+-- name: InsertPromoBand :one
+-- Creates the band. Called only when GetPromoBand found none — the
+-- admin surface is an upsert over a singleton, and the decision which
+-- of the two writes to run is the handler's, inside one transaction.
+INSERT INTO promo_bands (title, blurb, cta_label, cta_url, enabled, after_page, scope, created_by_user_ref)
+VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('created_by_user_ref')::bigint)
+RETURNING id, title, blurb, cta_label, cta_url, enabled, after_page, scope,
+          created_at, updated_at, created_by_user_ref;
+
+-- name: UpdatePromoBand :one
+-- Replaces the band's definition wholesale. NOT a COALESCE-style PATCH:
+-- the admin form posts every field it owns on every save, and a partial
+-- write would make "clear the blurb" indistinguishable from "leave the
+-- blurb alone" — the failure the COALESCE PATCH convention exists to
+-- produce deliberately elsewhere and which is wrong here.
+UPDATE promo_bands
+   SET title = $2, blurb = $3, cta_label = $4, cta_url = $5,
+       enabled = $6, after_page = $7, scope = $8, updated_at = now()
+ WHERE id = $1
+RETURNING id, title, blurb, cta_label, cta_url, enabled, after_page, scope,
+          created_at, updated_at, created_by_user_ref;
+
+-- name: DeletePromoBand :execrows
+-- Removes the band. Its cards go with it through
+-- featured_items_band_id_fkey's ON DELETE CASCADE rather than being
+-- orphaned onto the rail — see migration 00053's Down for the same
+-- argument. Returns rows-affected for the 0 → 404 mapping.
+DELETE FROM promo_bands WHERE id = $1;
