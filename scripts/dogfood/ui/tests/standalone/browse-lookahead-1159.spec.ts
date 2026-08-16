@@ -165,14 +165,38 @@ const isFeedRequest = (url: string) => url.includes('/api/v1/posts?');
 const SETTLE_QUIET_MS = 750;
 const SETTLE_CAP_MS = 15_000;
 
-async function settle(count: () => number): Promise<void> {
-  let seen = count();
+/** Quiet means NOTHING IS IN FLIGHT, not just "nothing new was asked
+ *  for" (#1169-era CI failure).
+ *
+ *  This used to watch the request count alone, and a request count that
+ *  stops rising has two causes: the chase finished, or the chase is
+ *  BLOCKED on a response that has not come back. The second one is what
+ *  a loaded runner produces — the CI job deliberately does not wait for
+ *  `preview.3d`, and the ~31 outstanding renders land squarely on the
+ *  first seconds of the suite, which is when this spec runs — and the
+ *  old settle() returned after its 750ms of "quiet" with the very FIRST
+ *  page still on the wire.
+ *
+ *  What the page looks like at that moment is the reason this went
+ *  unnoticed: the wall renders skeleton placeholders, which are real
+ *  children of a real wall, so every check downstream was satisfied by a
+ *  feed that had not arrived. Reproduced deterministically by delaying
+ *  `GET /posts` by 1.5s in front of a CI-shaped stack: the wall is
+ *  199px of skeletons, `main.scrollHeight` is 648 against a 467px port,
+ *  and the run dies on the anti-vacuity guard reporting a short seed.
+ *
+ *  So the condition is BOTH: every request has an answer, and no new one
+ *  for SETTLE_QUIET_MS. A request still on the wire resets the clock the
+ *  same way a new request does. */
+async function settle(asked: () => number, answered: () => number): Promise<void> {
+  let seen = asked();
   let quietSince = Date.now();
   const deadline = Date.now() + SETTLE_CAP_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
-    if (count() !== seen) {
-      seen = count();
+    const inFlight = asked() > answered();
+    if (asked() !== seen || inFlight) {
+      seen = asked();
       quietSince = Date.now();
     } else if (Date.now() - quietSince >= SETTLE_QUIET_MS) return;
   }
@@ -255,9 +279,19 @@ test.describe('#1159 browse feed lookahead', () => {
     await page.goto('/');
     const wall = page.locator('[data-testid="browse-wall"]');
     await expect(wall).toBeVisible({ timeout: 20_000 });
-    // The first page has to be on screen before a scroll means anything.
+    // The first page has to be on screen before a scroll means anything —
+    // and TILES are what "on screen" means, not children.
+    //
+    // This used to count `article, > div > *`, which a wall full of
+    // SKELETON placeholders satisfies: the loading state is real
+    // children of a real wall. On a runner slow enough to still be
+    // fetching the first page, the poll passed on skeletons and every
+    // measurement downstream was taken of a feed that had not landed.
+    // `[data-select-id]` is the tile's own attribute — the same one
+    // readGeometry() counts, so the gate and the measurement now agree
+    // about what a rendered feed is.
     await expect
-      .poll(() => page.locator('[data-testid="browse-wall"] article, [data-testid="browse-wall"] > div > *').count(), {
+      .poll(() => page.locator('[data-testid="browse-wall"] [data-select-id]').count(), {
         timeout: 20_000,
       })
       .toBeGreaterThan(0);
@@ -267,15 +301,33 @@ test.describe('#1159 browse feed lookahead', () => {
     // it fills them in a sequential burst; a fetch still in flight when
     // the wheel turns would otherwise be credited to the walk and the
     // anti-vacuity floor below would be measuring first paint.
-    await settle(() => feedRequests.length);
+    await settle(
+      () => feedRequests.length,
+      () => feedResponses.length,
+    );
 
-    const scrollable = await page.evaluate(() => {
+    const landing = await page.evaluate(() => {
       const main = document.querySelector('main');
-      return !!main && main.scrollHeight > main.clientHeight + 200;
+      const wall = document.querySelector('[data-testid="browse-wall"]');
+      return {
+        scrollHeight: main?.scrollHeight ?? 0,
+        clientHeight: main?.clientHeight ?? 0,
+        wallPx: wall ? Math.round(wall.getBoundingClientRect().height) : 0,
+        tiles: wall ? wall.querySelectorAll('[data-select-id]').length : 0,
+        skeletons: wall ? wall.querySelectorAll('.animate-pulse').length : 0,
+      };
     });
+    // The anti-vacuity guard, and it now SAYS WHICH vacuity. A short
+    // page has two causes that need opposite responses — a seed too
+    // small to walk (re-seed / re-tune the configuration) and a feed
+    // that has not landed yet (the runner is slow and the wait above is
+    // wrong) — and the message used to name only the first, which cost
+    // a whole investigation the day skeletons got past it.
     expect(
-      scrollable,
-      'the seeded feed does not overflow one screen, so this test would prove nothing',
+      landing.scrollHeight > landing.clientHeight + 200,
+      `the loaded feed does not overflow one screen, so this test would prove nothing: ` +
+        `${JSON.stringify({ ...landing, feedRequests: feedRequests.length, feedResponses: feedResponses.length })}. ` +
+        `tiles: 0 with skeletons > 0 means the first page had not arrived — a wait bug, not a seed one.`,
     ).toBeTruthy();
 
     // ── the in-page sampler ──────────────────────────────────────────
