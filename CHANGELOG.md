@@ -26,6 +26,15 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Every menu works from the keyboard.** The shared menu component's default styling made its
+  buttons invisible to keyboard focus — on the browse page not one menu could be reached by Tab,
+  including sign-out. All menus now have real focusable buttons, three had invalid nested-button
+  markup repaired, and a regression test walks the page by keyboard so this can't quietly return
+  (#1109, PR #1188).
+- **A stale dependency guard was re-armed.** The pin protecting a YAML library sat inside the
+  window of two newer advisories; it now floors at the patched version — kept rather than
+  removed, since removing it would let the tree resolve to a genuinely vulnerable version
+  (#1005, PR #1188).
 - **Collections show posts only.** The separate "assets" section on collection pages is gone,
   along with every way to attach a bare asset to a collection — non-post assets belong to their
   uploader until they're made into a post. The sample library's reference collections were
