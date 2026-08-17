@@ -497,6 +497,59 @@ describe('PostCard — the extension is a ONE-ANSWER fact', () => {
       expect(glyph(one)).toBe('image');
       expect(band(one)!.querySelector('[data-testid="card-kind-multi"]')).toBeNull();
     });
+
+    // THE GLYPH FOLLOWS THE CARD, not the view (owner ruling on #1203).
+    //
+    // It landed on the thumbnail band first because that is where the
+    // incoherence was reported, but the SAME badge in the grid overlay
+    // and in the feed/list corner was already telling a hover "4 glb
+    // assets in this post" (#1191) while drawing Shapes at rest.
+    // Scoping the fix to one density would have left that contradiction
+    // standing in two places and made a tile mean different things
+    // depending on which switcher button was last pressed.
+    //
+    // Anywhere the badge renders, then — and pinned in both directions
+    // per density, because "grid shows the 3D glyph" passes just as well
+    // on a card that always draws the cover's kind.
+    //
+    // `list` here is PostCard's list mode, which is the #1137 FALLBACK
+    // ("list view isn't available for this content — showing tiles
+    // instead"), not the list table: a surface that supplies the table
+    // snippet never renders this component at all, so there is no badge
+    // on it to be wrong.
+    const anyBadge = (c: HTMLElement) =>
+      c.querySelector('[data-testid^="card-kind"]')?.getAttribute('data-glyph') ?? null;
+
+    it('⭐⭐ states the same kind in every density that draws a badge', () => {
+      for (const mode of ['grid', 'feed', 'list'] as const) {
+        expect(anyBadge(cardOf(['glb', 'glb', 'glb'], { mode })), mode).toBe('3d');
+        expect(anyBadge(cardOf(['mp4', 'webm'], { mode })), mode).toBe('video');
+        // ...and a genuinely mixed pack keeps Shapes in each of them.
+        expect(anyBadge(cardOf(['png', 'mp4'], { mode })), mode).toBe('multi');
+      }
+    });
+
+    it('carries the gates into those densities too, rather than re-deriving them', () => {
+      // The gates live on `packKind`, so a truncated payload stays on
+      // Shapes off the thumbnail band as well — the call sites pass a
+      // value, they do not each decide one.
+      for (const mode of ['grid', 'feed', 'list'] as const) {
+        expect(anyBadge(cardOf(['glb'], { mode, memberCount: 4 })), mode).toBe('multi');
+        // A hidden member cannot flip the glyph in any view either.
+        expect(anyBadge(cardOf(['png', 'png', null, 'png'], { mode })), mode).toBe('image');
+      }
+    });
+
+    it('draws NO badge on a compact masonry tile, which is why masonry is absent above', () => {
+      // Not an oversight in the loop: `compact` suppresses this badge
+      // entirely (#652 — on a 60px tile it collides with the ⋮ menu),
+      // and an unmeasured tile in jsdom is always the minimal tier. The
+      // facts live in that density's hover tooltip instead.
+      expect(cardOf(['glb', 'glb'], { mode: 'masonry' })).toBeTruthy();
+      expect(
+        cardOf(['glb', 'glb'], { mode: 'masonry' }).querySelector('[data-testid^="card-kind"]'),
+      ).toBeNull();
+    });
   });
 
   it('shows no extension in grid or masonry, which have no band', () => {

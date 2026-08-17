@@ -577,8 +577,18 @@
    *  Readable members only, so the same withholding rule carries: a
    *  hidden .glb must not be able to flip a wall of visible PNGs from
    *  the image glyph to Shapes, which would announce that something
-   *  foreign is in there (#902/#1066's class, on a card). */
-  const bandKind = $derived(
+   *  foreign is in there (#902/#1066's class, on a card).
+   *
+   *  EVERY DENSITY, not just the thumbnail band (owner ruling). This
+   *  landed on the band first because that is where the incoherence was
+   *  reported, and the card is one card: the SAME badge in the grid
+   *  overlay and in the feed corner was already telling a hover "4 glb
+   *  assets in this post" (#1191) while drawing Shapes at rest. Scoping
+   *  the glyph to one view would have kept that contradiction in two
+   *  places and made the card mean different things depending on which
+   *  switcher button you last pressed. The gates above ride along for
+   *  free, because they live HERE rather than at any call site. */
+  const packKind = $derived(
     coverRestricted || memberCount <= 1 || !membersComplete ? null : uniformKind,
   );
 
@@ -608,7 +618,7 @@
 
   /** That name for the kind this badge's glyph is drawing, or null when
    *  there is no such glyph (or no such name) to talk about. */
-  const packKindName = $derived(bandKind ? kindNoun(bandKind) : null);
+  const packKindName = $derived(packKind ? kindNoun(packKind) : null);
 
   /**
    * What the kind badge says when you hover or focus it, on a PACK.
@@ -974,14 +984,15 @@
              The band keeps its `gap-2` for what it still separates: this
              unit from the checkbox at the far edge. -->
         <div class="flex min-w-0 items-center">
-          <!-- `bandKind` is the pack's own kind when every readable
+          <!-- `packKind` is the pack's own kind when every readable
                member agrees (#1203) and null otherwise, so a mixed post
                keeps Shapes and a single-asset post keeps reading the
-               cover — which IS the whole post there. -->
+               cover — which IS the whole post there. The same pair goes
+               to every other density's badge; see `packKind`. -->
           <CardKindBadge
-            kind={bandKind ?? coverKind}
+            kind={packKind ?? coverKind}
             count={memberCount}
-            uniform={bandKind !== null}
+            uniform={packKind !== null}
             variant="inline"
             tooltipKey={post.id}
             label={packLabel}
@@ -1074,7 +1085,10 @@
          said nothing at all about a SINGLE-asset post, whose kind was
          left to CardThumb's two-of-thirteen text chip. CardKindBadge
          answers both: the count plus Shapes for a set, the kind glyph
-         for one.
+         for one — and since #1203 the count plus the KIND's glyph when
+         the set has only one, which is the same `packKind` the band and
+         the grid overlay pass. One card, one meaning, whichever
+         switcher button the reader last pressed.
 
          Suppressed under `compact` (#652). On a 60px masonry tile
          "bottom-right" and "top-right" are the same 44px band, so the
@@ -1090,8 +1104,9 @@
          its type indicator and which leaves the artwork untouched. -->
     {#if !compact && !showOverlay && !coverRestricted && !detailed}
       <CardKindBadge
-        kind={coverKind}
+        kind={packKind ?? coverKind}
         count={memberCount}
+        uniform={packKind !== null}
         class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} label={packLabel} />
     {/if}
 
@@ -1179,17 +1194,26 @@
           data-testid="post-card-scrim"
         ></div>
         <!-- TOP-LEFT: the kind, as an icon and never as a word.
-             A multi-asset post states the SET instead of any one
-             member's kind, with the count to the LEFT of the glyph —
-             #1111's spelling, and the right way round: the number is
-             read first and the glyph qualifies it.
+             A multi-asset post carries the count to the LEFT of the
+             glyph — #1111's spelling, and the right way round: the
+             number is read first and the glyph qualifies it. The glyph
+             states the SET (Shapes) only when its members disagree;
+             where they share a kind it states that kind (#1203, via
+             `packKind` — the same value the thumbnail band uses, so the
+             tile does not change its mind between densities).
 
              `memberCount` is the truth rule from the props block: a
              search hit ships one member and carries its real size
              beside it, so this never becomes `members.length` and never
              becomes an unbounded query for a badge. -->
         <div class="relative flex items-start justify-between gap-2">
-          <CardKindBadge kind={coverKind} count={memberCount} tooltipKey={post.id} label={packLabel} />
+          <CardKindBadge
+            kind={packKind ?? coverKind}
+            count={memberCount}
+            uniform={packKind !== null}
+            tooltipKey={post.id}
+            label={packLabel}
+          />
         </div>
 
         <!-- BOTTOM-LEFT: identity. Title, then the author.
