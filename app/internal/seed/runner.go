@@ -19,6 +19,9 @@
 //	applyAssets      bytes -> content store, then asset row + tags +
 //	                 collection membership + typed field values
 //	applyPosts       post row + members + tags + collection linkage
+//	applyCollectionPostBackfill
+//	                 compose a post for every collection member the
+//	                 dataset left bare, so the wall shows them (#1185)
 //	applyComments    forge reviewer comments from asset review_notes
 //	verify           count rows
 //
@@ -269,6 +272,7 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyFeatured", r.applyFeatured},
 		{"applyAssets", r.applyAssets},
 		{"applyPosts", r.applyPosts},
+		{"applyCollectionPostBackfill", r.applyCollectionPostBackfill},
 		{"applyLikes", r.applyLikes},
 		{"applyComments", r.applyComments},
 		{"applyPostComments", r.applyPostComments},
@@ -1257,6 +1261,205 @@ func postVisibility(p manifestPost, coverTier string) string {
 		return "public"
 	}
 	return "org-only"
+}
+
+// --- phase: collection post backfill ----------------------------------
+
+// applyCollectionPostBackfill authors a post for every collection member
+// asset the dataset left bare (#1185).
+//
+// A collection renders POSTS and nothing else now. `collection_resources`
+// is still written by applyAssets and still feeds the cover mosaic, but
+// nothing draws it as content — so an asset pinned to a collection that no
+// post in that collection frames simply vanishes from the page. Measured
+// against site_a that is 37 of Internet Reference's 118 members: the
+// dataset's own generator groups loose assets into bundles keyed on
+// (collection, team, asset_type) and leaves a tail behind, and 36 of those
+// 37 ARE in a post — one filed under Project Echo. Membership of a
+// collection and authorship of a post are different relations in this
+// corpus, which is exactly why the gap exists and why the fix belongs
+// here rather than in the dataset: a subset profile (`--profile ci`,
+// `--limit-per-extension`) can widen it arbitrarily by dropping the
+// members a post needed, and applyPosts then skips that post entirely.
+//
+// Composition:
+//
+//   - Members are grouped by `metadata.group_id`, the dataset's own
+//     grouping key and the same one seed/scripts/sanitize_and_assemble.py
+//     composes its `asset_group` posts from. Assets without one become
+//     single-asset posts. In site_a every one of the 37 is groupless, so
+//     the group arm is here for the subset profiles and for future
+//     datasets, not for decoration.
+//   - The author is the first member's OWNER, not the bootstrap admin. A
+//     post is someone's work; attributing a backfilled one to `admin`
+//     would put a wall of admin-authored posts on collections owned by
+//     artists and make every "posts by this user" surface lie.
+//   - VISIBILITY RULE: `public` iff EVERY member asset is sensitivity
+//     `public`; otherwise `org-only`. This is stricter than
+//     postVisibility's dataset rule, which constrains only the cover so
+//     that ~47 posts carry a withheld member behind a public cover and
+//     the anonymous redaction path (#883) gets seed coverage. That
+//     coverage already exists and is deliberate; a backfilled post has no
+//     authored `sensitivity_tier` to honour, so widening one to public on
+//     the strength of its cover alone would be inventing a publication
+//     decision nobody made.
+//
+// Post ids are stableUUID-derived, so a re-run re-composes the same posts
+// and lands on SeedInsertPost's ON CONFLICT path rather than duplicating
+// the wall.
+func (r *Runner) applyCollectionPostBackfill(ctx context.Context, cat *catalogues) error {
+	// covered[collection name] = manifest asset ids already framed by a
+	// post PINNED IN THAT COLLECTION. Keyed on the collection because the
+	// same asset can be framed by a post filed elsewhere, and that post
+	// does not put it on this collection's wall.
+	covered := make(map[string]map[string]struct{}, len(r.collections))
+	for _, p := range cat.Posts {
+		if p.CollectionName == "" {
+			continue
+		}
+		// Only posts that were actually INSERTED count. applyPosts skips a
+		// post whose members all fell out, and a skipped post frames
+		// nothing.
+		if _, ok := r.posts[p.ID]; !ok {
+			continue
+		}
+		if _, ok := r.collections[p.CollectionName]; !ok {
+			continue
+		}
+		set := covered[p.CollectionName]
+		if set == nil {
+			set = make(map[string]struct{})
+			covered[p.CollectionName] = set
+		}
+		for _, aid := range p.AssetIDs {
+			set[aid] = struct{}{}
+		}
+	}
+
+	type bundle struct {
+		collection string
+		members    []manifestAsset
+	}
+	// Insertion order is the catalogue's, so the composed wall is stable
+	// across runs — a map range would shuffle titles and sort_order.
+	var order []string
+	index := make(map[string]*bundle)
+	for _, a := range cat.Assets {
+		if a.CollectionName == "" {
+			continue
+		}
+		if _, ok := r.collections[a.CollectionName]; !ok {
+			continue
+		}
+		if _, ok := r.assets[a.ID]; !ok {
+			continue // never inserted: missing bytes, or deduped on hash
+		}
+		if _, ok := covered[a.CollectionName][a.ID]; ok {
+			continue
+		}
+		key := a.CollectionName + "\x00"
+		if gid := assetGroupID(a); gid != "" {
+			key += "g:" + gid
+		} else {
+			key += "a:" + a.ID
+		}
+		b := index[key]
+		if b == nil {
+			b = &bundle{collection: a.CollectionName}
+			index[key] = b
+			order = append(order, key)
+		}
+		b.members = append(b.members, a)
+	}
+
+	inserted, madePublic, bare := 0, 0, 0
+	for _, key := range order {
+		b := index[key]
+		bare += len(b.members)
+		first := b.members[0]
+
+		authorRef, ok := r.users[first.OwnerUsername]
+		if !ok {
+			authorRef = r.adminRef
+		}
+		vis := "public"
+		var tags []string
+		for _, m := range b.members {
+			if sensitivity(m.SensitivityTier) != "public" {
+				vis = "org-only"
+			}
+			tags = append(tags, m.Tags...)
+		}
+		if vis == "public" {
+			madePublic++
+		}
+		created, updated := r.rowTimes(first.CreatedAt, first.UpdatedAt)
+		title := orDefault(first.Title, "Untitled")
+		description := first.Description
+		if len(b.members) > 1 {
+			title = fmt.Sprintf("%s — %d assets", title, len(b.members))
+			description = fmt.Sprintf("%s working set for %s. %d assets pulled together for review.",
+				orDefault(first.TeamName, "Reference"), b.collection, len(b.members))
+		}
+		postID := stableUUID("collection-post-backfill", key)
+		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
+			ID:            parseUUID(postID.String()),
+			AuthorUserRef: authorRef,
+			Title:         title,
+			Description:   description,
+			Visibility:    vis,
+			CoverAssetID:  r.assets[first.ID],
+			StateID:       r.postStates["published"],
+			TeamID:        r.teamIDForName(first.TeamName),
+			CreatedAt:     created,
+			UpdatedAt:     updated,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Already composed by a prior run.
+				continue
+			}
+			return fmt.Errorf("insert backfill post %s: %w", key, err)
+		}
+		for i, m := range b.members {
+			if err := r.q.SeedInsertPostAsset(ctx, SeedInsertPostAssetParams{
+				PostID: id, AssetID: r.assets[m.ID], SortOrder: int32(i),
+			}); err != nil {
+				return fmt.Errorf("backfill post asset %s: %w", key, err)
+			}
+		}
+		for _, tag := range dedupStrings(tags) {
+			if err := r.q.SeedInsertPostTag(ctx, SeedInsertPostTagParams{PostID: id, Tag: tag}); err != nil {
+				return fmt.Errorf("backfill post tag %s: %w", key, err)
+			}
+		}
+		if err := r.q.SeedInsertCollectionPost(ctx, SeedInsertCollectionPostParams{
+			CollectionID: r.collections[b.collection], PostID: id,
+		}); err != nil {
+			return fmt.Errorf("backfill collection post %s: %w", key, err)
+		}
+		inserted++
+	}
+	r.log.Info("seed.collection_post_backfill",
+		"bare_members", bare, "posts", inserted, "public", madePublic)
+	return nil
+}
+
+// assetGroupID reads the dataset's grouping key out of an asset's opaque
+// metadata blob. It is NOT a manifestAsset field: `metadata` is carried
+// through to `assets.metadata` as raw jsonb, and `group_id` is one key
+// inside it (1802 of site_a's 1947 assets carry one).
+func assetGroupID(a manifestAsset) string {
+	if len(a.Metadata) == 0 {
+		return ""
+	}
+	var md struct {
+		GroupID string `json:"group_id"`
+	}
+	if err := json.Unmarshal(a.Metadata, &md); err != nil {
+		return ""
+	}
+	return md.GroupID
 }
 
 // --- phase: comments --------------------------------------------------
