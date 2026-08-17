@@ -49,6 +49,10 @@ where applicable, otherwise note "no-spec-impact."
   the dialog (it appears when the instance allows anonymous browsing); the dialog also gained a
   crop preview showing exactly what the featured strip will display of your cover, and more
   breathing room (#1195, PR #1199).
+- **A pack of one kind wears that kind's icon.** A multi-asset post whose visible contents are
+  all 3D models (or all videos, all images…) shows that type's icon with its count — the
+  generic "mixed" Shapes icon is reserved for genuinely mixed posts — across every view that
+  draws the badge, with matching hover text (#1203, PR #1205).
 - **Advanced search speaks plainly and scales.** Developer wording is gone from the page, and
   any metadata field with a large vocabulary becomes a type-to-filter box instead of an endless
   chip wall. The type filter also learned a power move: double-click an option to select only
