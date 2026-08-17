@@ -26,6 +26,11 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The feed's sort button now filters too.** Beside Newest/Oldest sits a type filter — check
+  the asset types you want, all-checked means no filter, the button lights up when a subset is
+  active, and the feed refilters in place with the choice kept in the address. Filtering matches
+  what each card's badge shows, and a work whose cover is withheld from you matches no filter —
+  it cannot be found by elimination (#1166 first cut, PR #1184).
 - **Anonymous visitors can browse public work.** On an instance with public mode enabled, the
   browse feed now serves signed-out viewers exactly the posts marked Public — with every
   privacy rule (hidden names, restricted members, mature content, withheld covers) verified on
