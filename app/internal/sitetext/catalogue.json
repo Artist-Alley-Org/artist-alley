@@ -192,7 +192,10 @@
       "no_matches": "No matches",
       "no_posts_yet": "No posts yet",
       "try_different": "Try a different search term.",
-      "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first."
+      "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first.",
+      "guest_title": "Nothing public to show",
+      "guest_hint": "You're signed out, so you only see posts marked public. Sign in to see what members have shared.",
+      "guest_no_matches_hint": "Nothing public matches this. Sign in to search member content too."
     },
     "end_of_feed": "— end of feed —"
   },

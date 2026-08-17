@@ -470,6 +470,25 @@
   // "nothing here yet" block would render underneath it.
   const showEmpty = $derived(initialLoaded && items.length === 0 && !error && !guestFeed);
 
+  // #1176 — the OTHER anonymous empty state, and the one nothing
+  // handled. `guestFeed` above covers the 401: public mode off, the
+  // feed refuses a signed-out caller, and the honest answer is "the
+  // feed is for members". With public mode ON the same visitor gets a
+  // 200 and a page of whatever is `public` — which, until this sprint,
+  // was nothing at all, because no seeded post and no compose-form post
+  // could reach that tier. The wall then fell through to the generic
+  // "No posts yet — once posts are uploaded they'll appear here",
+  // which tells a signed-out visitor the instance is empty when what is
+  // actually true is that they are only being shown a slice of it, and
+  // offers them no way in.
+  //
+  // A 200 with zero items can only reach a signed-out caller when
+  // public mode is on — with it off, GET /posts answers 401 and the
+  // guestFeed branch takes it — so this needs no separate flag for the
+  // mode. It reads `auth.user` rather than the loader's `publicMode`
+  // for that reason: the condition that matters is who is looking.
+  const guestEmpty = $derived(showEmpty && !auth.user);
+
   // ?post={uuid} → overlay the post on top of the feed. The feed stays
   // mounted (no scroll loss, no re-fetch). The watcher, the close
   // policy and the ← / → walk all live in PostParamHost since #1130 —
@@ -726,7 +745,39 @@
     </div>
   {/if}
 
-  {#if showEmpty}
+  {#if guestEmpty}
+    <!-- #1176 — signed out, public mode on, nothing public to show.
+         Same calm shape as the guestFeed block above, and the same two
+         affordances: collections (still browsable) and a way in. -->
+    <div
+      class="rounded-xl border border-dashed border-border p-12 text-center"
+      data-testid="guest-public-empty"
+    >
+      <p class="text-base font-medium text-fg">
+        {query ? t('browse.empty.no_matches') : t('browse.empty.guest_title')}
+      </p>
+      <p class="mx-auto mt-1 max-w-md text-sm text-fg-muted">
+        {query
+          ? t('browse.empty.guest_no_matches_hint')
+          : t('browse.empty.guest_hint')}
+      </p>
+      <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <a
+          href="/collections"
+          class="inline-flex min-h-11 items-center rounded-md border border-border px-4 py-2 text-sm font-medium text-fg hover:border-border-strong"
+        >
+          {t('user_menu.guest_browse_collections')}
+        </a>
+        <a
+          href="/login"
+          class="inline-flex min-h-11 items-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent"
+          data-testid="guest-public-empty-signin"
+        >
+          {t('user_menu.sign_in')}
+        </a>
+      </div>
+    </div>
+  {:else if showEmpty}
     <div class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
       <p class="font-medium text-fg">{query ? t('browse.empty.no_matches') : t('browse.empty.no_posts_yet')}</p>
       <p class="mt-1 text-sm">

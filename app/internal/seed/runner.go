@@ -1142,12 +1142,20 @@ func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals
 // --- phase: posts -----------------------------------------------------
 
 func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
-	inserted, skipped := 0, 0
+	assetTiers := make(map[string]string, len(cat.Assets))
+	for _, a := range cat.Assets {
+		assetTiers[a.ID] = sensitivity(a.SensitivityTier)
+	}
+	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
 		// Resolve members from inserted assets (apply.py "any member" rule).
 		var members []pgtype.UUID
+		var coverManifestID string
 		for _, aid := range p.AssetIDs {
 			if sid, ok := r.assets[aid]; ok {
+				if len(members) == 0 {
+					coverManifestID = aid
+				}
 				members = append(members, sid)
 			}
 		}
@@ -1161,12 +1169,16 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
 		cover := members[0]
+		vis := postVisibility(p, assetTiers[coverManifestID])
+		if vis == "public" {
+			madePublic++
+		}
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(p.ID),
 			AuthorUserRef: authorRef,
 			Title:         orDefault(p.Title, "Untitled"),
 			Description:   p.Description,
-			Visibility:    "org-only",
+			Visibility:    vis,
 			CoverAssetID:  cover,
 			StateID:       r.postStates["published"],
 			TeamID:        r.teamIDForName(p.TeamName),
@@ -1205,8 +1217,46 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		inserted++
 	}
-	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped)
+	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped, "public", madePublic)
 	return nil
+}
+
+// postVisibility decides a seeded post's visibility tier (#1176).
+//
+// Every seeded post used to be written 'org-only', so an instance with
+// public mode ON served anonymous visitors a 200 with zero items: the
+// public tier existed in the CHECK constraint, was enforced and tested
+// in the ACL, and was offered by the compose form, but nothing in the
+// corpus ever used it. The anonymous wall — the whole point of public
+// mode — could not be looked at.
+//
+// The rule is the DATASET'S OWN declaration, not an arbitrary hash
+// slice: a post goes public when it declares sensitivity_tier 'public'
+// AND its cover asset does too. Both halves are load-bearing.
+//
+//   - The post tier is what says this content is publishable at all.
+//     ~24% of the corpus declares it; the other ~76% (team + restricted)
+//     stays org-only, so team-scoped content remains the majority, which
+//     is the ruling: uploaders get the OPTION of anonymous viewing, it
+//     does not become the default.
+//   - The COVER tier is what decides whether the card can be LOOKED at.
+//     A member asset the viewer may not read is redacted per caller
+//     (#883), which is correct — but when the redacted member is the
+//     cover, the card renders as a placeholder with no image. Admitting
+//     those would put a visibly broken tile on ~18% of the anonymous
+//     wall. Requiring a public cover drops that to zero.
+//
+// Non-cover members are deliberately NOT constrained: ~47 of the posts
+// this admits carry a team-tier member behind a public cover, so the
+// anonymous redaction path finally has seed coverage instead of being a
+// branch no fixture reaches.
+//
+// Measured against site_a: 164 of 847 posts (19.4%) go public.
+func postVisibility(p manifestPost, coverTier string) string {
+	if p.SensitivityTier == "public" && coverTier == "public" {
+		return "public"
+	}
+	return "org-only"
 }
 
 // --- phase: comments --------------------------------------------------
@@ -1707,10 +1757,11 @@ func followEdges(names []string) [][2]string {
 
 // --- phase: likes -----------------------------------------------------
 //
-// Like ROWS per post, only from users who can see it. Seed posts are all
-// org-only (applyPosts) → visible to every fictional user (the walled
-// garden), so the eligible pool is all users minus the author; a private
-// post (none in the dataset today) would collapse to the author. The
+// Like ROWS per post, only from users who can see it. Seed posts are
+// org-only or public (applyPosts, #1176) → both are visible to every
+// fictional user (the walled garden, plus everyone outside it), so the
+// eligible pool is all users minus the author; a private post (none in
+// the dataset today) would collapse to the author. The
 // likes_after_insert trigger keeps posts.like_count == the row count.
 func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 	names := r.sortedUsernames()
@@ -1725,11 +1776,12 @@ func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			continue
 		}
-		// Eligible viewers = who can see the post. Seed posts are all
-		// org-only (applyPosts) ⇒ every fictional user can see every post;
-		// the author is excluded from their own likes below. If the seed
-		// ever grows private/followers-gated posts, the eligible pool
-		// would narrow here (ADR 0010) — today it's the whole membership.
+		// Eligible viewers = who can see the post. Seed posts are
+		// org-only or public (applyPosts) ⇒ every fictional user can see
+		// every post; the author is excluded from their own likes below.
+		// If the seed ever grows private/followers-gated posts, the
+		// eligible pool would narrow here (ADR 0010) — today it's the
+		// whole membership.
 		eligible := names
 		// Skewed like count: a baseline for every post, plus a big bump
 		// for ~1-in-5 "popular" posts.
