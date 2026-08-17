@@ -58,6 +58,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/users"
+	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -1091,6 +1092,27 @@ func (h *Handler) ListPosts(
 		tagPtr = req.Params.Tag
 	}
 
+	// ?kind= restricts the feed to posts whose COVER asset is of the
+	// named kind(s) — the browse footer's type filter (#1166).
+	//
+	// Parsed here and enforced in kindFilterSQL, which carries the
+	// cover's field-plane readability rule with it: a cover the caller
+	// may not read matches no kind, because the card withholds its badge
+	// and a filter that could still select the post would hand the same
+	// fact back by elimination.
+	//
+	// No authorization decision at this layer, for the same reason
+	// ?team_id= has none: the conjunct NARROWS and the post read rule
+	// below still decides every row. A junk value is not ignored, unlike
+	// ?dir= and ?feed= above — see viewkind.ParseList, which returns a
+	// present-but-empty selection so a typo answers an empty page rather
+	// than the whole feed under a label promising one kind.
+	var kinds []viewkind.Kind
+	var kindsRequested bool
+	if req.Params.Kind != nil {
+		kinds, kindsRequested = viewkind.ParseList(*req.Params.Kind)
+	}
+
 	// ?team_id= scopes the feed to one team's posts — the team page's
 	// content (#684).
 	//
@@ -1184,6 +1206,8 @@ func (h *Handler) ListPosts(
 		FeedFollowerRef: followerPtr,
 		TeamID:          teamID,
 		LikedByUserRef:  likedByPtr,
+		Kinds:           kinds,
+		KindsRequested:  kindsRequested,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,

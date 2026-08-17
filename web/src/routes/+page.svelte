@@ -133,6 +133,33 @@
     await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
   }
 
+  /** The footer's asset-type filter (#1166), read straight off the URL
+   *  like `?team=` and `?tag=` above it — one owner for every narrowing
+   *  control on this page, so a filtered wall is shareable and the back
+   *  button walks the filters.
+   *
+   *  The wire form is what the server parses (comma-joined) and what the
+   *  URL shows, so there is no second representation to keep in step.
+   *  An empty string means no filter, which is what "all types" is.
+   *
+   *  Unlike `?team=` this one is INDEPENDENT of the rail: a reader can
+   *  be looking at one studio's videos. The rail's two chips clear each
+   *  other because the rail is single-select; the type filter is a
+   *  different axis and clears nothing. */
+  const activeKinds = $derived(page.url.searchParams.get('kind') ?? '');
+  const activeKindList = $derived(activeKinds === '' ? [] : activeKinds.split(','));
+
+  /** Commit a type selection. In place, like the rail's chips — this is
+   *  a filter, not a navigation. An empty list drops the parameter
+   *  rather than writing `kind=`, so "all types" leaves no trace in a
+   *  URL somebody is about to share. */
+  async function selectKinds(next: string[]) {
+    const target = new URL(page.url);
+    if (next.length > 0) target.searchParams.set('kind', next.join(','));
+    else target.searchParams.delete('kind');
+    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+  }
+
   // #891 shipped a one-line note here — "items you don't have access to
   // are hidden by your preferences", with a link to change it — because
   // hiding was an opt-in and an opted-in reader's grid was shorter than
@@ -163,6 +190,7 @@
     q: string,
     team: string | null,
     tag: string | null,
+    kinds: string,
     cursor: string | null,
     reset: boolean,
   ) {
@@ -184,6 +212,12 @@
       // with `q` and the feed pill server-side for the same reason
       // `team_id` does: they are all parameters of one query.
       if (tag) params.tag = tag;
+      // #1166 — the footer's type filter. Comma-joined, straight from
+      // the URL, and a plain parameter of the same query for the same
+      // reason `team_id` and `tag` are: composition is the server's
+      // job, so a studio's videos is one request and not an
+      // intersection this page computes.
+      if (kinds) params.kind = kinds;
       if (!reset && cursor) params.cursor = cursor;
       // Feed filter + direction from the BrowseFooter store.
       //
@@ -266,7 +300,7 @@
   // control byte back in here.
   const feedKey = () =>
     `${query}\u001f${browseView.filter}\u001f${browseView.feedDir}\u001f${activeTeamId ?? ''}` +
-    `\u001f${activeTag ?? ''}`;
+    `\u001f${activeTag ?? ''}\u001f${activeKinds}`;
 
   /** The feedKey whose first page we've already loaded (or restored).
    *  Guards the effect against re-fetching a set we already hold —
@@ -284,7 +318,7 @@
       items = [];
       nextCursor = null;
       initialLoaded = false;
-      void fetchPage(query, activeTeamId, activeTag, null, true);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, null, true);
     });
   });
 
@@ -407,7 +441,7 @@
     untrack(() => {
       if (!nextCursor || loading) return;
       if (!wantsMore()) return;
-      void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
     });
   }
 
@@ -509,7 +543,7 @@
   // resolves; the user sees it on the next press.
   function loadMoreForSiblingWalk() {
     if (nextCursor && !loading) {
-      void fetchPage(query, activeTeamId, activeTag, nextCursor, false);
+      void fetchPage(query, activeTeamId, activeTag, activeKinds, nextCursor, false);
     }
   }
 
@@ -917,7 +951,7 @@
 <!-- Floating browse controls: view switcher + back-to-top. Stays
      mounted alongside the feed so the user can change layouts without
      losing scroll position. -->
-<BrowseFooter />
+<BrowseFooter kinds={activeKindList} onkinds={(next) => void selectKinds(next)} />
 
 <!-- The grid / masonry / feed / list layouts moved to the shared
      ContentGrid component (#511) so the profile + post-by-asset pages

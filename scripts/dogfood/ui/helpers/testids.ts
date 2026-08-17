@@ -105,6 +105,22 @@ export const testIds = {
     featuredRailItem:    'featured-rail-item',
     teamsRailScroller:   'teams-rail-scroller',
     teamsRailChip:       'teams-rail-chip',
+    // The footer control bar, and the asset-type filter that joined the
+    // sort toggle in its right cluster (#1166). The bar is shared by
+    // browse, the profile pages and post-by-asset; the FILTER is
+    // browse-only, which is why both ids are registered — the specs pin
+    // its presence on browse and its absence everywhere else.
+    viewControls:        'view-controls',
+    kindFilterToggle:    'kind-filter-toggle',
+    kindFilterPanel:     'kind-filter-panel',
+    kindFilterAll:       'kind-filter-all',
+    kindFilterOption:    'kind-filter-option',
+    kindFilterApply:     'kind-filter-apply',
+    // The card's kind badge, which is what a type-filtered wall has to
+    // agree with. `cardKind` is the single-asset glyph; `cardKindMulti`
+    // is the count-plus-Shapes badge a multi-asset post draws instead.
+    cardKind:            'card-kind',
+    cardKindMulti:       'card-kind-multi',
   },
 
   // Generic page surfaces ------------------------------------

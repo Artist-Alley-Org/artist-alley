@@ -39,6 +39,14 @@ test.describe('UI-32 public user profile', () => {
     // The same floating control bar as browse (mode switcher + sort).
     await expect(page.getByTestId('view-controls')).toBeVisible();
 
+    // ...but NOT browse's asset-type filter (#1166). It is injected
+    // through ViewControls' `trailing` seam by BrowseFooter, the same
+    // way the latest/following pills arrive through `middle`, because
+    // it filters a FEED and this page does not have one. Pinned as an
+    // absence so the seam cannot quietly become part of the shared bar
+    // and start offering a control that would do nothing here.
+    await expect(page.getByTestId('kind-filter-toggle')).toHaveCount(0);
+
     // Switching to list mode re-renders the posts section as a table —
     // the browseView mode is honored here exactly as on browse. The mode
     // is the global browseView preference (localStorage); set it + reload.

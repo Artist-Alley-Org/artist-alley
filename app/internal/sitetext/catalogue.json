@@ -155,7 +155,12 @@
     "filter": {
       "label": "Feed filter",
       "latest": "Latest",
-      "following": "Following"
+      "following": "Following",
+      "type": {
+        "label": "Filter by type",
+        "all": "All types",
+        "apply": "Apply"
+      }
     },
     "sort": {
       "toggle": "Toggle sort direction",

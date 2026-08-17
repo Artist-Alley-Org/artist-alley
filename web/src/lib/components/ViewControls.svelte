@@ -32,8 +32,22 @@
   import { chromeScroll } from '$stores/chromeScroll.svelte';
   import { t } from '$stores/lang.svelte';
 
-  /** Optional centre content (browse's feed filter). */
-  let { middle }: { middle?: Snippet } = $props();
+  /** Optional centre content (browse's feed filter), and optional
+   *  content in the RIGHT cluster beside the sort toggle.
+   *
+   *  `trailing` is browse's asset-type filter (#1166) and it arrives the
+   *  same way `middle` does, for the same reason: this component is
+   *  mounted by profile, post-by-asset and the collection page too, and
+   *  none of them has a feed to filter. `trailingOpen` is that control
+   *  telling the bar it has a panel up — the bar auto-hides on scroll,
+   *  and sliding it off screen with an open dropdown on it would be
+   *  hostile. It joins `expanded` in the same expression for exactly the
+   *  same reason `expanded` is there. */
+  let {
+    middle,
+    trailing,
+    trailingOpen = false,
+  }: { middle?: Snippet; trailing?: Snippet; trailingOpen?: boolean } = $props();
 
   // View catalogue — order chosen so the icons cluster naturally and the
   // default (grid) anchors centre when expanded. `feed` is the
@@ -117,7 +131,11 @@
   // focus are the same kind of term: each one holds the bar, none of
   // them touches the shared store.
   const hidden = $derived(
-    chromeScroll.hidden && !expanded && !focusInside && !(pointerNear && !hoverDismissed),
+    chromeScroll.hidden &&
+      !expanded &&
+      !trailingOpen &&
+      !focusInside &&
+      !(pointerNear && !hoverDismissed),
   );
 
   // A `pointermove` test against clientY, NOT an element occupying the
@@ -528,13 +546,19 @@
     {#if middle}{@render middle()}{/if}
   </div>
 
-  <!-- RIGHT cluster: sort direction toggle. -->
+  <!-- RIGHT cluster: the surface's own filter (browse injects the
+       asset-type one, #1166) then the sort direction toggle.
+       `ml-auto` moved from the sort button onto the cluster so the pair
+       stays pinned to the right edge as one unit — the property #1105
+       relied on when it measured which controls survived a reflow. -->
+  <div class="pointer-events-auto ml-auto flex items-end gap-2">
+  {#if trailing}{@render trailing()}{/if}
   <button
     type="button"
     onclick={() => browseView.toggleFeedDir()}
     title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
     aria-label={t('browse.sort.toggle')}
-    class="pointer-events-auto ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       {#if browseView.feedDir === 'desc'}
@@ -555,6 +579,7 @@
       {browseView.feedDir === 'desc' ? t('browse.sort.newest') : t('browse.sort.oldest')}
     </span>
   </button>
+  </div>
 </div>
 
 <style>
