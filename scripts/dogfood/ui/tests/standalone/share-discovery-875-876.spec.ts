@@ -6,10 +6,16 @@
 // #667 made a share WORK (see post-acl-share-667.spec.ts): the grantee
 // can open the post. It could still only be FOUND if the sharer sent a
 // link out of band — nothing notified the recipient, and the browse feed
-// pins `visibility=org-only` when no filter is sent, so the post never
-// entered their grid. And gating the ACL list on "can read the post"
-// meant the grantee could enumerate everyone else the post was shared
-// with.
+// pinned `visibility=org-only` when no filter was sent, so the post
+// never entered their grid. And gating the ACL list on "can read the
+// post" meant the grantee could enumerate everyone else the post was
+// shared with.
+//
+// #1193 finished the "found" half. The browse default is now the union
+// of the shared tiers — `explicit-share` among them — so a granted post
+// reaches the grid as well as the notification and the shared-with-me
+// page. The test below reversed its expectation with it; the CONTROL
+// did not move, and that is what keeps the reversal honest.
 //
 // Everything below is asserted in the GRANTEE's own browser session,
 // signed in through the login form, because every claim here is about
@@ -201,10 +207,16 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
     }
   });
 
-  test('the default browse feed still does not carry the share', async ({ browser }) => {
-    // #875 was deliberately NOT fixed by widening the feed: `/posts`
-    // with no filter still means the org-only tier. If a post_acls
-    // EXISTS ever leaks into that query this fails, which is the point.
+  test('the default browse feed carries the share, and only the share', async ({ browser }) => {
+    // #875 shipped this as "the feed does not carry the share": the
+    // browse default was the org-only tier, and a post_acls EXISTS
+    // leaking into that query was the accident to catch.
+    //
+    // #1193 changed the default to the union of the SHARED tiers, so the
+    // granted post belongs on the grid now. What must not change is the
+    // gate: the ungranted control post sits at the SAME tier by the SAME
+    // author, so if the display filter ever started admitting a tier
+    // instead of narrowing within the read rule, this test says so.
     const { ctx, page } = await granteeContext(browser);
     try {
       const list = await page.request.get('/api/v1/posts?limit=200');
@@ -212,9 +224,14 @@ test.describe('#875/#876 a share is announced, findable, and not a guest list', 
       const ids = (((await list.json()) as { items?: Array<{ id: string }> }).items ?? []).map(
         (i) => i.id,
       );
-      expect(ids, 'the shared post must NOT be in the default feed').not.toContain(
+      expect(ids, 'the shared post must be in the default feed (#1193)').toContain(
         fx!.sharedPostId,
       );
+      expect(
+        ids,
+        'the UNGRANTED post at the same tier must not be — the default filter narrows ' +
+          'within the read rule, it does not admit a tier',
+      ).not.toContain(fx!.unsharedPostId);
 
       // And the surface that IS supposed to carry it does.
       const shared = await page.request.get('/api/v1/account/shared-posts?limit=200');
