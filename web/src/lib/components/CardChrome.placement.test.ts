@@ -60,23 +60,37 @@ function asset(overrides: Partial<CardAsset> = {}): CardAsset {
   };
 }
 
-/** A post holding `n` assets. One is the single-asset shape the
- *  extension rule turns on for; more than one is the set it turns off
- *  for. The members are real rows rather than a `memberCount` override
- *  so the fixture matches what a list endpoint actually ships. */
+/** A post holding `n` assets, all of them PNGs — the uniform shape.
+ *  The members are real rows rather than a `memberCount` override so the
+ *  fixture matches what a list endpoint actually ships. */
 function post(n = 1) {
+  return postOf(Array.from({ length: n }, () => 'png'));
+}
+
+/** A post whose members carry exactly these extensions, in order.
+ *  `null` plants a RESTRICTED member — the #883 placeholder shape, with
+ *  no `asset` at all — which is what a member this reader may not see
+ *  actually looks like on the wire. */
+function postOf(exts: Array<string | null>) {
   return {
     id: POST_ID,
-    title: n > 1 ? 'A set of three' : 'A single picture',
+    title: exts.length > 1 ? 'A set of three' : 'A single picture',
     created_at: '2026-08-01T12:00:00.000Z',
     like_count: 4,
     comment_count: 2,
-    members: Array.from({ length: n }, (_, i) => ({
-      asset_id: `3f1b8e2c-0000-4000-8000-00000000c${i}0`,
-      asset: asset({ id: `3f1b8e2c-0000-4000-8000-00000000c${i}0` }),
-    })),
+    members: exts.map((ext, i) => {
+      const id = `3f1b8e2c-0000-4000-8000-00000000c${i}0`;
+      if (ext === null) return { asset_id: id, restricted: true };
+      return { asset_id: id, asset: asset({ id, file_extension: ext }) };
+    }),
   };
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const cardOf = (exts: Array<string | null>, extra: Record<string, any> = {}) =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  render(PostCard, { post: postOf(exts) as any, mode: 'thumbnail' as ViewMode, ...extra })
+    .container;
 
 const assetCard = (mode: ViewMode) => render(AssetCard, { asset: asset(), mode }).container;
 const postCard = (mode: ViewMode, n = 1) =>
@@ -210,42 +224,89 @@ describe('AssetCard — the asset band says which FILE', () => {
   });
 });
 
-// THE COUNT DECIDES, on a post card.
+// ONE ANSWER DECIDES, on a post card — not one asset.
 //
-// The owner's refinement: "For thumbnails on posts with only one asset,
-// it can show the extension, but not if there is more than one asset in
-// the post." Both directions are pinned, because this rule is only
-// meaningful as a pair — a test that a single-asset post shows "png"
-// passes just as well on a card that shows it unconditionally, which is
-// precisely the bug the ruling exists to prevent.
-//
-// The reason it is a count: on a set, the cover's extension is not the
-// post's fact. A carousel of a PNG, a PSD and an MP4 labelled "png" by
+// #1158's rule was a COUNT: a single-asset post showed its extension and
+// a set showed nothing, because the COVER's extension is not the SET's
+// fact. A carousel of a PNG, a PSD and an MP4 labelled "png" by
 // whichever member happens to be the cover says something false about
 // the other two — the failure #1111 named when it made the badge state
 // the SET rather than any one member's kind.
-describe('PostCard — the extension is a SINGLE-asset fact', () => {
+//
+// #1190 keeps that reasoning and finds the count was a proxy for it. The
+// owner: "if a multi asset post contains all the same extension (glb,
+// png, etc...) we can place the extension on the thumbnail. Not if it's
+// mixed. Maybe we can put (mixed) for the extension instead?" A pack of
+// six .glb files has a true answer — every member is a glb — and the old
+// rule suppressed it for a reason that did not apply. So the band shows
+// the shared extension when there is one and the WORD when there is not.
+//
+// Both directions are pinned, because the rule is only meaningful as a
+// pair: "a uniform post shows glb" passes just as well on a card that
+// prints the cover's extension unconditionally, which is the bug the
+// original ruling exists to prevent.
+describe('PostCard — the extension is a ONE-ANSWER fact', () => {
   const ext = (c: HTMLElement) => c.querySelector('[data-testid="thumb-band-extension"]');
+  const extText = (c: HTMLElement) => ext(c)?.textContent?.trim() ?? null;
 
   it('SHOWS the extension when the post holds exactly one asset', () => {
-    const e = ext(postCard('thumbnail', 1));
-    expect(e).toBeTruthy();
-    expect(e!.textContent!.trim()).toBe('png');
+    expect(extText(postCard('thumbnail', 1))).toBe('png');
   });
 
-  it('HIDES it as soon as the post holds two', () => {
-    expect(ext(postCard('thumbnail', 2))).toBeNull();
+  it('⭐ SHOWS the shared extension when every member agrees', () => {
+    expect(extText(cardOf(['glb', 'glb', 'glb']))).toBe('glb');
+    expect(extText(postCard('thumbnail', 5))).toBe('png');
   });
 
-  it('stays hidden on a larger set', () => {
-    expect(ext(postCard('thumbnail', 5))).toBeNull();
+  it('⭐ says "mixed" instead when the members disagree', () => {
+    const c = cardOf(['png', 'psd', 'mp4']);
+    expect(extText(c)).toBe('mixed');
+    // The word is marked as a word. The span reads as an extension by
+    // position and by casing, so a screen reader gets the sentence and
+    // a future pass gets something to assert that is not the English.
+    expect(ext(c)!.getAttribute('data-mixed')).toBe('true');
+    expect(ext(c)!.getAttribute('aria-label')).toBeTruthy();
+    // ...and a uniform set is NOT marked, or the flag would be noise.
+    expect(ext(cardOf(['glb', 'glb']))!.getAttribute('data-mixed')).toBeNull();
   });
 
-  it('leaves the multi-asset badge to say the count instead', () => {
-    // What a set shows in place of the extension, so the "no extension"
-    // assertion above is not passing on an empty band.
+  it('normalises before comparing, so ".PNG" and "png" are one answer', () => {
+    expect(extText(cardOf(['.PNG', 'png']))).toBe('png');
+  });
+
+  it('⭐⭐ computes uniformity over the members this READER can see', () => {
+    // The leak this rule is written to avoid. Three visible PNGs beside
+    // a member this caller may not read: the band says "png", because
+    // the alternative — recomputing over all members and flipping to
+    // "mixed" — would announce the existence and the foreignness of a
+    // file that was deliberately withheld (#902/#1066's class, on a
+    // card instead of in a query).
+    expect(extText(cardOf(['png', 'png', null, 'png']))).toBe('png');
+    // The owner of that member sees their own truth: with the same
+    // member readable and a different format, the set IS mixed.
+    expect(extText(cardOf(['png', 'png', 'glb', 'png']))).toBe('mixed');
+  });
+
+  it('says nothing when no member is readable', () => {
+    // Nothing to compare is not "mixed" — it is no answer, and the band
+    // prints no answer rather than a guess.
+    expect(ext(cardOf([null, null]))).toBeNull();
+  });
+
+  it('says nothing when the payload carries only part of the membership', () => {
+    // A search hit ships ONE member with the real total beside it, so
+    // uniformity is unknowable there. Three of the four members are
+    // absent from this payload — inferring "png" from the one that came
+    // would be a sentence about a set this card never received.
+    expect(ext(cardOf(['png'], { memberCount: 4 }))).toBeNull();
+  });
+
+  it('leaves the multi-asset badge to say the count as well', () => {
+    // The count and the format are two facts, not alternatives — the
+    // badge still states the SET while the extension states the format.
     const c = postCard('thumbnail', 3);
     expect(band(c)!.querySelector('[data-testid="card-kind-multi"]')).toBeTruthy();
+    expect(extText(c)).toBe('png');
     // ...and a single-asset post gets the plain kind glyph beside its
     // extension, never the multi badge.
     const one = postCard('thumbnail', 1);
@@ -268,11 +329,9 @@ describe('PostCard — the extension is a SINGLE-asset fact', () => {
     // A withheld value has derived copies, and each one has to be
     // withheld too. The band already suppresses the kind badge for a
     // restricted cover; a card that hides the icon and then prints
-    // "png" beside the gap has disclosed the thing it just withheld.
-    const p = post(1);
-    p.members[0] = { ...p.members[0], restricted: true } as (typeof p.members)[0];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const c = render(PostCard, { post: p as any, mode: 'thumbnail' as ViewMode }).container;
+    // "png" — or "mixed" — beside the gap has disclosed something about
+    // the thing it just withheld.
+    const c = cardOf([null, 'png']);
     expect(ext(c)).toBeNull();
     // The badge is gone too — i.e. the test is observing the restricted
     // branch and not simply a card that failed to render a band.

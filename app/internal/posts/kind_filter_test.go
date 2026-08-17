@@ -20,17 +20,36 @@
 //     author's private post that happens to have a PNG cover. This is
 //     the ordinary ANDed-conjunct property every filter here has.
 //
-//  2. THE COVER'S OWN FIELD PLANE. This one is specific to this filter
+//  2. THE MEMBER'S OWN FIELD PLANE. This one is specific to this filter
 //     and it is the reason kindFilterSQL carries
-//     visibility.FieldsReadableSQL. A post can be readable while its
-//     COVER asset is not — #883's placeholder case — and the card then
-//     draws no kind badge, deliberately, because the kind of something
-//     you may not see is not yours to know. A filter that could still
-//     select such a post gives the withheld value back by elimination:
-//     ask for each kind in turn and the one that returns the post has
-//     named it. That is #902/#1066's derived-copy defect arriving
-//     through a new channel, and TestKindFilter_RestrictedCoverNeverMatches
-//     is what stops it.
+//     visibility.FieldsReadableSQL. A post can be readable while one of
+//     its member assets is not — #883's placeholder case — and the card
+//     then draws nothing about that member, deliberately, because the
+//     kind of something you may not see is not yours to know. A filter
+//     that could still select the post through that member gives the
+//     withheld value back by elimination: ask for each kind in turn and
+//     the one that returns the post has named it. That is #902/#1066's
+//     derived-copy defect arriving through a new channel, and
+//     TestKindFilter_RestrictedMemberIsNeverProbeable is what stops it.
+//
+// # #1190 widened WHICH assets are looked at, not WHICH may be
+//
+// The filter used to select on the COVER alone. It now matches when ANY
+// member the caller can read resolves to the requested kind, because a
+// post containing an epub is a post the ebook filter should return
+// whatever its cover happens to be. Two consequences run through the
+// cases below:
+//
+//   - THE KINDS NO LONGER PARTITION. A three-file post can be returned
+//     by three different kinds, so "these two filters never return the
+//     same post" is no longer a property and the disjointness
+//     assertions that pinned it are gone. What replaces them is
+//     CONTAINMENT: every kind a post's visible members resolve to
+//     returns it, and no other kind does.
+//   - THE LEAK CASE GOT SHARPER, not weaker. A post whose ONLY ebook is
+//     restricted must still be absent from `?kind=ebook` for a stranger
+//     and present for its owner — the same post, two answers, decided
+//     per member.
 //
 // Skips without AA_DB_PASSWORD (reuses the previewPool harness).
 
@@ -79,8 +98,9 @@ func kfAsset(t *testing.T, pool *pgxpool.Pool, ext string, assetType int64, sens
 
 // kfPost plants a post at a visibility tier with the given members in
 // order. `cover` names the explicit cover; pass uuid.Nil to leave
-// cover_asset_id NULL and exercise the first-member fallback — the same
-// fallback PostCard applies when it picks which badge to draw.
+// cover_asset_id NULL, which since #1190 changes nothing about what the
+// filter selects — the conjunct ranges over the membership — but keeps
+// the fixtures honest about the shape real posts have.
 func kfPost(
 	t *testing.T, pool *pgxpool.Pool,
 	author int64, visibility string, cover uuid.UUID, members ...uuid.UUID,
@@ -169,21 +189,26 @@ func kfAssertAbsent(t *testing.T, what string, got map[uuid.UUID]bool, id uuid.U
 }
 
 // ---------------------------------------------------------------------------
-// The filter selects by the COVER's kind, and only by it
+// The filter selects by ANY member's kind (#1190)
 // ---------------------------------------------------------------------------
 
-// TestKindFilter_SelectsCoverKind is the base case plus the three
-// derivations that are easy to get wrong: the first-member fallback
-// when there is no explicit cover, the asset_type override (a sprite
-// atlas is a PNG and its badge says sprite), and the fact that a
-// NON-cover member's kind is not a match.
-func TestKindFilter_SelectsCoverKind(t *testing.T) {
+// TestKindFilter_SelectsAnyMemberKind is the base case plus the
+// derivations that are easy to get wrong: the asset_type override (a
+// sprite atlas is a PNG and its badge says sprite), and the owner's
+// ruling itself — a member that is NOT the cover still matches.
+//
+// The bundle post is the whole point of #1190. It holds a 3D model and
+// a video, is covered by neither explicitly, and must be returned by
+// `kind=3d` AND by `kind=video` — while still being returned by no
+// kind it does not contain.
+func TestKindFilter_SelectsAnyMemberKind(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)
 
 	png := kfAsset(t, pool, "png", 1, "public", kfAuthor)
 	mp4 := kfAsset(t, pool, "mp4", 3, "public", kfAuthor)
 	glb := kfAsset(t, pool, "glb", 5, "public", kfAuthor)
+	epub := kfAsset(t, pool, "epub", 2, "public", kfAuthor)
 	// asset_type 13 is Sprite; the extension says image and the ref wins,
 	// exactly as kindForAsset resolves it in the browser.
 	atlas := kfAsset(t, pool, "png", 13, "public", kfAuthor)
@@ -191,41 +216,61 @@ func TestKindFilter_SelectsCoverKind(t *testing.T) {
 	imagePost := kfPost(t, pool, kfAuthor, "public", png, png)
 	videoPost := kfPost(t, pool, kfAuthor, "public", mp4, mp4)
 	spritePost := kfPost(t, pool, kfAuthor, "public", atlas, atlas)
-	// No explicit cover: the badge is drawn off the FIRST member, so the
-	// filter has to resolve the same one. The second member is a video —
-	// if the filter matched any member this would answer `kind=video`.
-	fallbackPost := kfPost(t, pool, kfAuthor, "public", uuid.Nil, glb, mp4)
+	// The owner's case: a bundle. No explicit cover, a 3D model first and
+	// a video second. Before #1190 this answered `kind=3d` only, because
+	// only the resolved cover was looked at.
+	bundlePost := kfPost(t, pool, kfAuthor, "public", uuid.Nil, glb, mp4)
+	// The literal report: an art drop whose cover is a PNG with the epub
+	// buried inside it. "I picked ebook and got no results."
+	dropPost := kfPost(t, pool, kfAuthor, "public", png, png, epub)
 
 	images := kfFeed(t, h, kfAuthor, "image")
 	kfAssertPresent(t, "kind=image", images, imagePost)
+	kfAssertPresent(t, "kind=image (the drop's cover IS a png)", images, dropPost)
 	kfAssertAbsent(t, "kind=image", images, videoPost)
-	kfAssertAbsent(t, "kind=image", images, fallbackPost)
+	kfAssertAbsent(t, "kind=image (no image member)", images, bundlePost)
 	kfAssertAbsent(t, "kind=image (a sprite atlas is a PNG; the ref overrides)", images, spritePost)
 
 	videos := kfFeed(t, h, kfAuthor, "video")
 	kfAssertPresent(t, "kind=video", videos, videoPost)
+	kfAssertPresent(t, "⭐ kind=video (a NON-cover member — #1190)", videos, bundlePost)
 	kfAssertAbsent(t, "kind=video", videos, imagePost)
-	kfAssertAbsent(t, "kind=video (matched a NON-cover member)", videos, fallbackPost)
+	kfAssertAbsent(t, "kind=video", videos, dropPost)
+
+	// ⭐ The report itself: the epub is member two of a png-covered post.
+	ebooks := kfFeed(t, h, kfAuthor, "ebook")
+	kfAssertPresent(t, "⭐ kind=ebook (an epub inside a png-covered drop — #1190)", ebooks, dropPost)
+	kfAssertAbsent(t, "kind=ebook", ebooks, imagePost)
+	kfAssertAbsent(t, "kind=ebook", ebooks, bundlePost)
 
 	sprites := kfFeed(t, h, kfAuthor, "sprite")
 	kfAssertPresent(t, "kind=sprite", sprites, spritePost)
 	kfAssertAbsent(t, "kind=sprite", sprites, imagePost)
 
 	threeD := kfFeed(t, h, kfAuthor, "3d")
-	kfAssertPresent(t, "kind=3d (first-member fallback cover)", threeD, fallbackPost)
+	kfAssertPresent(t, "kind=3d", threeD, bundlePost)
 	kfAssertAbsent(t, "kind=3d", threeD, imagePost)
+
+	// CONTAINMENT, which is what replaced the old disjointness property.
+	// One post, two kinds, and it is the SAME post — a filter that had
+	// become "the first matching member wins" would fail exactly here.
+	if !threeD[bundlePost] || !videos[bundlePost] {
+		t.Errorf("the bundle post must be reachable by BOTH of its members' kinds; "+
+			"3d=%v video=%v", threeD[bundlePost], videos[bundlePost])
+	}
 
 	// Multi-select, comma-joined: the union of two kinds and nothing else.
 	both := kfFeed(t, h, kfAuthor, "image,video")
 	kfAssertPresent(t, "kind=image,video", both, imagePost)
 	kfAssertPresent(t, "kind=image,video", both, videoPost)
+	kfAssertPresent(t, "kind=image,video (the video member)", both, bundlePost)
+	kfAssertPresent(t, "kind=image,video (the png member)", both, dropPost)
 	kfAssertAbsent(t, "kind=image,video", both, spritePost)
-	kfAssertAbsent(t, "kind=image,video", both, fallbackPost)
 
 	// All-checked is spelled as an ABSENT parameter by the control, and
 	// the unfiltered feed is the superset every filtered page came from.
 	all := kfFeed(t, h, kfAuthor, "")
-	for _, id := range []uuid.UUID{imagePost, videoPost, spritePost, fallbackPost} {
+	for _, id := range []uuid.UUID{imagePost, videoPost, spritePost, bundlePost, dropPost} {
 		kfAssertPresent(t, "unfiltered", all, id)
 	}
 }
@@ -287,55 +332,104 @@ func TestKindFilter_AnonymousSeesPublicOnly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ⭐⭐ Gate 2 — a cover the caller may not READ matches no kind
+// ⭐⭐ Gate 2 — a member the caller may not READ contributes no kind
 // ---------------------------------------------------------------------------
 
-// TestKindFilter_RestrictedCoverNeverMatches is the leak test.
+// TestKindFilter_RestrictedMemberIsNeverProbeable is the leak test, and
+// #1190 is the reason it had to get SHARPER rather than looser.
 //
-// The fixture is a PUBLIC post — readable by everyone — whose COVER is
-// a restricted asset owned by somebody else, plus one public member so
-// #921's applyHideRestricted does not drop the whole post. The card
-// draws no kind badge on it, by design.
+// The fixture is a PUBLIC post — readable by everyone — holding a
+// restricted PNG owned by somebody else plus one public MP4, so #921's
+// applyHideRestricted does not drop the whole post. To a stranger the
+// card shows the video and nothing at all about the PNG.
 //
-// The property: the post is on the unfiltered feed and on NO kind's
-// filtered feed. Asking for every kind in turn is exactly the attack —
-// if any one of them returns it, the reader has recovered the cover's
-// kind by elimination — so the test asks for every kind in turn.
+// The property: the post is reachable by the kinds of its VISIBLE
+// members and by no others. Asking for every kind in turn is exactly the
+// attack — if `image` returns it, the reader has recovered the hidden
+// member's kind by elimination — so the test asks for every kind in
+// turn and allows exactly `video`.
 //
-// The owner's own view is the control: to kfOther the cover is readable,
-// the badge draws, and `kind=image` must return it. Without that arm a
-// filter that simply never matched anything would pass.
-func TestKindFilter_RestrictedCoverNeverMatches(t *testing.T) {
+// Under the cover-only rule this same fixture answered NO kind at all,
+// which passed for a weaker reason than it looked: a filter that simply
+// never matched anything passed too. Now the video arm is a positive
+// assertion in the same loop, so the test can only pass by deciding
+// per member.
+//
+// The owner's own view is the second control: to kfOther the PNG is
+// readable, so `kind=image` must return the same post.
+func TestKindFilter_RestrictedMemberIsNeverProbeable(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)
 
-	secretCover := kfAsset(t, pool, "png", 1, "restricted", kfOther)
+	secretImage := kfAsset(t, pool, "png", 1, "restricted", kfOther)
 	publicMember := kfAsset(t, pool, "mp4", 3, "public", kfOther)
 
-	post := kfPost(t, pool, kfOther, "public", secretCover, secretCover, publicMember)
+	post := kfPost(t, pool, kfOther, "public", secretImage, secretImage, publicMember)
 
-	// A viewer who may read the POST but not its COVER.
+	// A viewer who may read the POST but not one of its members.
 	unfiltered := kfFeed(t, h, kfViewer, "")
-	kfAssertPresent(t, "unfiltered (a readable post with a restricted cover)", unfiltered, post)
+	kfAssertPresent(t, "unfiltered (a readable post with a restricted member)", unfiltered, post)
 
 	for _, kind := range []string{
 		"image", "video", "pdf", "audio", "sequence", "font", "sprite",
 		"3d", "ebook", "doc", "audiobook", "archive", "placeholder",
 	} {
 		got := kfFeed(t, h, kfViewer, kind)
-		if got[post] {
-			t.Errorf("kind=%s returned a post whose cover this caller may not read — "+
-				"the withheld kind is recoverable by elimination (#902/#1066)", kind)
+		switch kind {
+		case "video":
+			kfAssertPresent(t, "kind=video (the member this caller CAN read)", got, post)
+		default:
+			if got[post] {
+				t.Errorf("kind=%s returned a post whose only member of that kind this caller "+
+					"may not read — the withheld kind is recoverable by elimination "+
+					"(#902/#1066)", kind)
+			}
 		}
 	}
 	// Anonymous too: the same post is public, so it is on their feed,
-	// and the restricted cover must be just as unnameable to them.
+	// and the restricted member must be just as unnameable to them.
 	anonAll := kfFeed(t, h, kfNoOneAt, "")
 	kfAssertPresent(t, "anonymous unfiltered", anonAll, post)
 	kfAssertAbsent(t, "anonymous kind=image", kfFeed(t, h, kfNoOneAt, "image"), post)
+	kfAssertPresent(t, "anonymous kind=video", kfFeed(t, h, kfNoOneAt, "video"), post)
 
-	// The control: to the cover's OWNER it is readable, so it matches.
+	// The control: to the asset's OWNER it is readable, so it matches.
 	kfAssertPresent(t, "owner kind=image", kfFeed(t, h, kfOther, "image"), post)
+}
+
+// TestKindFilter_RestrictedOnlyEbookSplitsByCaller is the case the
+// #1190 ruling names directly: a post whose ONLY ebook member is
+// restricted.
+//
+// It is the one that any-member matching could have got wrong in the
+// obvious way. Widening from "the cover" to "the members" without
+// carrying visibility.FieldsReadableSQL INTO the per-member EXISTS
+// turns `?kind=ebook` into a working probe for the existence of an
+// epub inside any post a caller can open — a fact the card withholds
+// completely, since a restricted member ships with no `asset` at all.
+//
+// Same post, two answers: absent for the stranger, present for the
+// owner. An implementation that hoisted the readability conjunct up to
+// the post would return it for both.
+func TestKindFilter_RestrictedOnlyEbookSplitsByCaller(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	secretEbook := kfAsset(t, pool, "epub", 2, "restricted", kfOther)
+	publicCover := kfAsset(t, pool, "png", 1, "public", kfOther)
+
+	post := kfPost(t, pool, kfOther, "public", publicCover, publicCover, secretEbook)
+
+	kfAssertPresent(t, "stranger unfiltered", kfFeed(t, h, kfViewer, ""), post)
+	kfAssertPresent(t, "stranger kind=image (the visible cover)",
+		kfFeed(t, h, kfViewer, "image"), post)
+	kfAssertAbsent(t, "⭐⭐ stranger kind=ebook (the only epub is restricted)",
+		kfFeed(t, h, kfViewer, "ebook"), post)
+	kfAssertAbsent(t, "⭐⭐ anonymous kind=ebook (the only epub is restricted)",
+		kfFeed(t, h, kfNoOneAt, "ebook"), post)
+
+	// The owner may read the epub, so for them the post IS an ebook post.
+	kfAssertPresent(t, "⭐⭐ owner kind=ebook", kfFeed(t, h, kfOther, "ebook"), post)
 }
 
 // ---------------------------------------------------------------------------
