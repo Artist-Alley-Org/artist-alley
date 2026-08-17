@@ -56,24 +56,24 @@
     },
     "advanced": {
       "heading": "Advanced search",
-      "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
-      "freetext_label": "Free-text query (optional)",
-      "freetext_placeholder": "cat OR dog",
-      "not": "NOT",
-      "value_placeholder": "value",
-      "remove_row": "Remove row",
-      "add_row": "+ Add row",
-      "compiled_dsl": "Compiled DSL",
-      "compiled_empty": "(empty)",
+      "body": "Add a line for each thing you want to match. Everything you add has to match. The box at the bottom shows the search you have built.",
+      "freetext_label": "Words to look for (optional)",
+      "freetext_placeholder": "sunset beach",
+      "not": "Exclude",
+      "value_placeholder": "what to match",
+      "remove_row": "Remove this line",
+      "add_row": "+ Add another line",
+      "preview_label": "Your search",
+      "preview_empty": "(nothing yet)",
       "field": {
         "title": "Title",
-        "description": "Description / body",
+        "description": "Description",
         "tag": "Tag",
-        "owner": "Owner (username or ref)",
+        "owner": "Owner (username)",
         "type": "Asset type",
         "sensitivity": "Sensitivity",
         "extension": "File extension",
-        "similar_to": "Similar to asset (UUID)"
+        "similar_to": "Similar to asset (paste its ID)"
       }
     },
     "by_image": {
@@ -116,16 +116,17 @@
     },
     "advanced_page": {
       "title": "Advanced search",
-      "intro": "Build a query from typed conditions and metadata fields. Everything here composes into one search — the results open on the normal search page with the query in the address.",
-      "conditions_heading": "Conditions",
-      "fields_heading": "Metadata fields",
+      "intro": "Put a search together from words, from things that have to match, and from the fields filled in on your work. It all becomes one search — the results open on the normal search page, and your choices stay in the web address so you can share or bookmark them.",
+      "conditions_heading": "What to match",
+      "fields_heading": "Filter by field",
       "fields_loading": "Loading fields…",
-      "fields_empty": "No searchable vocabulary fields are available to you.",
-      "fields_error": "Could not load field definitions.",
+      "fields_empty": "There are no fields with a set list of values you can search on.",
+      "fields_error": "Could not load your fields.",
       "by_image_heading": "Search by image",
       "submit": "Search",
-      "reset": "Reset",
-      "active_filters": "{count} field filters active"
+      "reset": "Start over",
+      "active_filters": "{count} values chosen",
+      "field_filter_placeholder": "Type to narrow this list…"
     }
   },
   "blogs": {
