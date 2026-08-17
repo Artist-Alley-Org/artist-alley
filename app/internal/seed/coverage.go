@@ -116,6 +116,7 @@ const (
 	dimPostTeam   = "post.team"
 	dimPostMulti  = "post.multi" // post holds more than one asset
 	dimPostMixed  = "post.mixed" // post mixes asset types
+	dimPostVis    = "post.vis"   // visibility tier the seeder will WRITE
 )
 
 // requiredDims is the declared floor: coverage classes the UI suite
@@ -152,6 +153,15 @@ var requiredDims = []dim{
 	{dimRel, "field_values"}, // typed metadata on the asset
 	{dimPostMulti, "true"},   // multi-asset post => ordering, playlist
 	{dimPostMixed, "true"},   // mixed-type post => cross-renderer playlist
+
+	// At least one post the seeder actually writes as PUBLIC (#1176) —
+	// the only rows an anonymous visitor can see. post.sens alone is not
+	// this requirement: a post can declare sensitivity_tier 'public' and
+	// still be written org-only because its cover asset is team-tier, so
+	// a cover-set chosen on post.sens can land a fixture with zero
+	// publicly visible posts. Anonymous specs would then assert against
+	// an empty feed and pass on nothing.
+	{dimPostVis, "public"},
 }
 
 // coverageReport is what a profile run tallies, for the log line and for
@@ -314,9 +324,33 @@ func assetDims(a manifestAsset, companion bool) []dim {
 	return out
 }
 
+// assetTierIndex maps manifest asset id -> the sensitivity tier the
+// seeder will WRITE for it (sensitivity() normalises unknown/absent
+// tiers exactly as applyAssets does).
+func assetTierIndex(assets []manifestAsset) map[string]string {
+	tiers := make(map[string]string, len(assets))
+	for _, a := range assets {
+		tiers[a.ID] = sensitivity(a.SensitivityTier)
+	}
+	return tiers
+}
+
+// coverTier is the sensitivity tier of the post's cover — the first
+// member the manifest still holds, which is the one applyPosts writes
+// as cover_asset_id. "" when the post has no resolvable member.
+func coverTier(p manifestPost, tiers map[string]string) string {
+	for _, aid := range p.AssetIDs {
+		if t, ok := tiers[aid]; ok {
+			return t
+		}
+	}
+	return ""
+}
+
 // postDims returns the dimensions one post contributes on its own,
-// before its assets are folded in.
-func postDims(p manifestPost) []dim {
+// before its assets are folded in. tiers indexes member sensitivity so
+// the visibility dimension matches what applyPosts will write.
+func postDims(p manifestPost, tiers map[string]string) []dim {
 	out := []dim{
 		{dimPostState, p.WorkflowState},
 		{dimPostSens, p.SensitivityTier},
@@ -324,6 +358,7 @@ func postDims(p manifestPost) []dim {
 		{dimPostTeam, p.TeamName},
 		{dimPostMulti, boolValue(len(p.AssetIDs) > 1)},
 		{dimPostMixed, boolValue(p.IsMixedType)},
+		{dimPostVis, postVisibility(p, coverTier(p, tiers))},
 	}
 	if p.CollectionName != "" {
 		out = append(out, dim{dimPostColl, p.CollectionName})
@@ -395,6 +430,11 @@ func (c *catalogues) applyCoverageProfile(depth int, log *slog.Logger) (*coverag
 	for i, a := range c.Assets {
 		assetDimCache[i] = assetDims(a, companions[a.ID])
 	}
+	// Indexed over the FULL catalogue, not the surviving selection: the
+	// visibility dimension must describe the post the demo seed writes,
+	// so shrinking the catalogue cannot flip a post's tier and hide the
+	// requirement from the check below.
+	assetTiers := assetTierIndex(c.Assets)
 
 	// Universe + per-post dimension sets. A post's set is its own
 	// dimensions unioned with those of every asset it holds, because
@@ -408,7 +448,7 @@ func (c *catalogues) applyCoverageProfile(depth int, log *slog.Logger) (*coverag
 	postSets := make([]map[dim]bool, len(c.Posts))
 	for i, p := range c.Posts {
 		set := map[dim]bool{}
-		for _, x := range postDims(p) {
+		for _, x := range postDims(p, assetTiers) {
 			set[x] = true
 			universe[x] = true
 		}
@@ -629,7 +669,7 @@ func (c *catalogues) applyCoverageProfile(depth int, log *slog.Logger) (*coverag
 	}
 	for i, p := range c.Posts {
 		if selected[i] {
-			for _, d := range postDims(p) {
+			for _, d := range postDims(p, assetTiers) {
 				have[d] = true
 			}
 		}
@@ -672,7 +712,7 @@ func (c *catalogues) applyCoverageProfile(depth int, log *slog.Logger) (*coverag
 		rep.Bytes += a.FileSizeBytes
 	}
 	for _, p := range keptPosts {
-		for _, d := range postDims(p) {
+		for _, d := range postDims(p, assetTiers) {
 			final[d] = true
 		}
 	}

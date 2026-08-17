@@ -5706,7 +5706,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [private, org-only, followers, explicit-share]
+            enum: [public, private, org-only, followers, explicit-share]
         - name: q
           in: query
           required: false
@@ -15633,7 +15633,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid
@@ -15934,8 +15934,16 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
-          default: public
+          enum: [public, private, org-only, followers, explicit-share]
+          default: org-only
+          description: |
+            `public` is readable by anonymous visitors on an instance
+            with public mode on. It is writable as of #1176 — the write
+            gate used to refuse the value the compose form offered — but
+            it is NOT the default: an omitted field means `org-only`,
+            the walled-garden tier, which is what the handler has always
+            applied. The schema previously declared `default: public`,
+            a value its own enum did not even list.
         cover_asset_id:
           type: string
           format: uuid
@@ -15988,7 +15996,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid

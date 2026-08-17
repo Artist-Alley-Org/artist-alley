@@ -115,11 +115,13 @@ func WithPostCaps(c PostCaps) Option {
 //
 // Tier by tier, for an authenticated caller:
 //
-//   - public        — readable by everyone, including anonymous. No post
-//     can be written into this tier through the API
-//     (posts.validVisibility rejects it), but migration 00008
-//     admits the value, so the rule agrees with the column
-//     rather than being the one place that says otherwise.
+//   - public        — readable by everyone, including anonymous. Writable
+//     as of #1176: posts.validVisibility used to refuse the
+//     tier, so this branch served rows only the seeder or a
+//     direct INSERT could produce, and an instance in public
+//     mode had nothing to show an anonymous visitor. The
+//     column (migration 00008), this rule, and the write gate
+//     now agree.
 //   - org-only      — any authenticated local user. The walled-garden
 //     default tier.
 //   - followers     — the caller must follow the author, decided by

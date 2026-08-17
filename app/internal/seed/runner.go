@@ -142,6 +142,13 @@ type Runner struct {
 
 	adminRef int64
 
+	// genTime is the instant this run started, and the ceiling every
+	// row timestamp is clamped to (#1174). Captured ONCE so a run is
+	// internally consistent: a post, its assets and its derived
+	// likes/comments all measure against the same "now" no matter how
+	// long the run takes.
+	genTime time.Time
+
 	// resolved lookups
 	assetStates map[string]pgtype.UUID // asset:1 code -> state id
 	postStates  map[string]pgtype.UUID // post code -> state id
@@ -186,6 +193,7 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		jobs:        jobs.NewService(pool, opts.Logger, nil),
 		log:         opts.Logger,
 		opts:        opts,
+		genTime:     time.Now().UTC(),
 		assetStates: map[string]pgtype.UUID{},
 		postStates:  map[string]pgtype.UUID{},
 		assetTypes:  map[string]int64{},
@@ -676,11 +684,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			typeRef = 1 // fall back to Image
 		}
-		created := parseTime(a.CreatedAt)
-		updated := parseTime(a.UpdatedAt)
-		if !updated.Valid {
-			updated = created
-		}
+		created, updated := r.rowTimes(a.CreatedAt, a.UpdatedAt)
 		var ownerRef *int64
 		if ref, ok := r.users[a.OwnerUsername]; ok {
 			ownerRef = &ref
@@ -1138,12 +1142,20 @@ func (r *Runner) applyAssetFields(ctx context.Context, assetID pgtype.UUID, vals
 // --- phase: posts -----------------------------------------------------
 
 func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
-	inserted, skipped := 0, 0
+	assetTiers := make(map[string]string, len(cat.Assets))
+	for _, a := range cat.Assets {
+		assetTiers[a.ID] = sensitivity(a.SensitivityTier)
+	}
+	inserted, skipped, madePublic := 0, 0, 0
 	for _, p := range cat.Posts {
 		// Resolve members from inserted assets (apply.py "any member" rule).
 		var members []pgtype.UUID
+		var coverManifestID string
 		for _, aid := range p.AssetIDs {
 			if sid, ok := r.assets[aid]; ok {
+				if len(members) == 0 {
+					coverManifestID = aid
+				}
 				members = append(members, sid)
 			}
 		}
@@ -1155,18 +1167,18 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			authorRef = r.adminRef
 		}
-		created := parseTime(p.CreatedAt)
-		updated := parseTime(p.UpdatedAt)
-		if !updated.Valid {
-			updated = created
-		}
+		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
 		cover := members[0]
+		vis := postVisibility(p, assetTiers[coverManifestID])
+		if vis == "public" {
+			madePublic++
+		}
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(p.ID),
 			AuthorUserRef: authorRef,
 			Title:         orDefault(p.Title, "Untitled"),
 			Description:   p.Description,
-			Visibility:    "org-only",
+			Visibility:    vis,
 			CoverAssetID:  cover,
 			StateID:       r.postStates["published"],
 			TeamID:        r.teamIDForName(p.TeamName),
@@ -1205,8 +1217,46 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		}
 		inserted++
 	}
-	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped)
+	r.log.Info("seed.posts", "inserted", inserted, "skipped_no_members", skipped, "public", madePublic)
 	return nil
+}
+
+// postVisibility decides a seeded post's visibility tier (#1176).
+//
+// Every seeded post used to be written 'org-only', so an instance with
+// public mode ON served anonymous visitors a 200 with zero items: the
+// public tier existed in the CHECK constraint, was enforced and tested
+// in the ACL, and was offered by the compose form, but nothing in the
+// corpus ever used it. The anonymous wall — the whole point of public
+// mode — could not be looked at.
+//
+// The rule is the DATASET'S OWN declaration, not an arbitrary hash
+// slice: a post goes public when it declares sensitivity_tier 'public'
+// AND its cover asset does too. Both halves are load-bearing.
+//
+//   - The post tier is what says this content is publishable at all.
+//     ~24% of the corpus declares it; the other ~76% (team + restricted)
+//     stays org-only, so team-scoped content remains the majority, which
+//     is the ruling: uploaders get the OPTION of anonymous viewing, it
+//     does not become the default.
+//   - The COVER tier is what decides whether the card can be LOOKED at.
+//     A member asset the viewer may not read is redacted per caller
+//     (#883), which is correct — but when the redacted member is the
+//     cover, the card renders as a placeholder with no image. Admitting
+//     those would put a visibly broken tile on ~18% of the anonymous
+//     wall. Requiring a public cover drops that to zero.
+//
+// Non-cover members are deliberately NOT constrained: ~47 of the posts
+// this admits carry a team-tier member behind a public cover, so the
+// anonymous redaction path finally has seed coverage instead of being a
+// branch no fixture reaches.
+//
+// Measured against site_a: 164 of 847 posts (19.4%) go public.
+func postVisibility(p manifestPost, coverTier string) string {
+	if p.SensitivityTier == "public" && coverTier == "public" {
+		return "public"
+	}
+	return "org-only"
 }
 
 // --- phase: comments --------------------------------------------------
@@ -1246,7 +1296,7 @@ func (r *Runner) applyComments(ctx context.Context, cat *catalogues) error {
 			continue
 		}
 		cid := stableUUID("comment", a.ID, uuidString(postID))
-		created := parseTime(a.UpdatedAt)
+		created := r.rowTime(a.UpdatedAt)
 		in := CommentInput{
 			ID:            &cid,
 			TargetKind:    CommentTargetPost,
@@ -1409,6 +1459,66 @@ func parseTime(s string) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
+// clampToPast maps a dataset timestamp onto the closed past (#1174).
+//
+// The site datasets scatter created_at/updated_at around the date they
+// were generated in BOTH directions, so a fresh seed lands rows dated
+// months ahead of the machine seeding them: 36 posts and 155 assets out
+// to 2026-12-14 when the bug was found. Future-dated rows sit pinned at
+// the top of every Newest sort until their date arrives (a permanently
+// static feed head), display dates that have not happened, and quietly
+// widen any date-window logic tested against the seed.
+//
+// Timestamps already in the past are returned UNCHANGED — that is the
+// overwhelming majority of the corpus, so the seed keeps its dataset
+// dates and stays byte-reproducible run to run. Only the overshoot is
+// rewritten, and it is REFLECTED rather than pinned to `now`: a row
+// four months ahead becomes four months old. Pinning would collapse
+// every future row onto one instant, which trades the future-dates bug
+// for a clump of 155 identically-dated rows sitting at the head of the
+// feed — the same static-head symptom the fix exists to remove.
+// Reflection spreads them back across the corpus's own date range.
+//
+// Reflection reverses ORDER within the reflected set, so a row's
+// created_at can come out later than its updated_at; callers pair this
+// with an updated >= created normalisation (see rowTimes).
+func clampToPast(t, now time.Time) time.Time {
+	if !t.After(now) {
+		return t
+	}
+	return now.Add(-t.Sub(now))
+}
+
+// rowTime parses a dataset timestamp destined for a ROW's created_at /
+// updated_at / liked_at and clamps it to the generation instant.
+//
+// It is deliberately NOT folded into parseTime: parseTime also reads
+// metadata FIELD values (a `datetime` field's contents, parseDateValue),
+// which are user data and legitimately hold future dates — a shoot date,
+// a licence expiry. Clamping those would corrupt the value.
+func (r *Runner) rowTime(s string) pgtype.Timestamptz {
+	ts := parseTime(s)
+	if !ts.Valid {
+		return ts
+	}
+	return pgtype.Timestamptz{Time: clampToPast(ts.Time, r.genTime), Valid: true}
+}
+
+// rowTimes clamps a row's created/updated pair and restores the
+// invariant that a row is not updated before it exists — which both an
+// absent updated_at and clampToPast's order reversal can break.
+func (r *Runner) rowTimes(createdAt, updatedAt string) (created, updated pgtype.Timestamptz) {
+	created = r.rowTime(createdAt)
+	updated = r.rowTime(updatedAt)
+	if !updated.Valid {
+		updated = created
+	}
+	if created.Valid && updated.Valid && updated.Time.Before(created.Time) {
+		updated = created
+	}
+	return created, updated
+}
+
 // dateOnlyLayout is the calendar date a `date`-typed field accepts in
 // addition to RFC3339. Midnight UTC, matching what the API's own date
 // writer stores.
@@ -1484,10 +1594,17 @@ func (r *Runner) sortedUsernames() []string {
 // contentSpan is the [earliest, latest] post created_at window. Follow /
 // like / comment timestamps are distributed inside it (dataset-derived,
 // so reproducible — no now()).
+//
+// It reads the CLAMPED post dates (#1174), which is what makes the whole
+// derived social graph inherit the clamp: hi is the newest post the
+// seeder actually wrote, so every follow, like and comment placed inside
+// the span lands at or before the generation instant. Reading the raw
+// dataset dates here would leave the derived rows in the future even
+// after the posts themselves were pulled back.
 func (r *Runner) contentSpan(cat *catalogues) (time.Time, time.Time) {
 	var lo, hi time.Time
 	for _, p := range cat.Posts {
-		t := parseTime(p.CreatedAt)
+		t := r.rowTime(p.CreatedAt)
 		if !t.Valid {
 			continue
 		}
@@ -1640,10 +1757,11 @@ func followEdges(names []string) [][2]string {
 
 // --- phase: likes -----------------------------------------------------
 //
-// Like ROWS per post, only from users who can see it. Seed posts are all
-// org-only (applyPosts) → visible to every fictional user (the walled
-// garden), so the eligible pool is all users minus the author; a private
-// post (none in the dataset today) would collapse to the author. The
+// Like ROWS per post, only from users who can see it. Seed posts are
+// org-only or public (applyPosts, #1176) → both are visible to every
+// fictional user (the walled garden, plus everyone outside it), so the
+// eligible pool is all users minus the author; a private post (none in
+// the dataset today) would collapse to the author. The
 // likes_after_insert trigger keeps posts.like_count == the row count.
 func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 	names := r.sortedUsernames()
@@ -1658,11 +1776,12 @@ func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			continue
 		}
-		// Eligible viewers = who can see the post. Seed posts are all
-		// org-only (applyPosts) ⇒ every fictional user can see every post;
-		// the author is excluded from their own likes below. If the seed
-		// ever grows private/followers-gated posts, the eligible pool
-		// would narrow here (ADR 0010) — today it's the whole membership.
+		// Eligible viewers = who can see the post. Seed posts are
+		// org-only or public (applyPosts) ⇒ every fictional user can see
+		// every post; the author is excluded from their own likes below.
+		// If the seed ever grows private/followers-gated posts, the
+		// eligible pool would narrow here (ADR 0010) — today it's the
+		// whole membership.
 		eligible := names
 		// Skewed like count: a baseline for every post, plus a big bump
 		// for ~1-in-5 "popular" posts.
@@ -1670,7 +1789,7 @@ func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 		if stableIntn(5, "likepop", p.ID) == 0 {
 			count += 8 + stableIntn(12, "likebonus", p.ID)
 		}
-		postCreated := parseTime(p.CreatedAt).Time
+		postCreated := r.rowTime(p.CreatedAt).Time
 		for _, liker := range pickDistinct(eligible, count, p.AuthorUsername, "like", p.ID) {
 			ref := r.users[liker]
 			ts := stableTimeBetween(postCreated, hi, "likeat", p.ID, liker)
@@ -1711,7 +1830,7 @@ func (r *Runner) applyPostComments(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			continue
 		}
-		postCreated := parseTime(p.CreatedAt).Time
+		postCreated := r.rowTime(p.CreatedAt).Time
 		nTop := stableIntn(4, "cmtcnt", p.ID) // 0..3
 		for ci, author := range pickDistinct(names, nTop, p.AuthorUsername, "cmt", p.ID) {
 			cis := strconv.Itoa(ci)

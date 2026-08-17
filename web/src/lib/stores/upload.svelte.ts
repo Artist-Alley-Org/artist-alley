@@ -147,7 +147,18 @@ export interface PostComposeState {
   mode: PostMode;            // when enabled
   title: string;
   description: string;
-  visibility: 'private' | 'org-only' | 'followers' | 'explicit-share';
+  /** Post visibility tier.
+   *
+   *  'public' was missing from this union while PostComposeForm's
+   *  <select> has always offered it (#1176). Nothing narrowed at
+   *  runtime — TS types are erased, and svelte-check does not check a
+   *  `bind:value` against the <option> values it is bound to, so the
+   *  mismatch was silent in both directions. The value it named was
+   *  nonetheless refused end to end: POST /posts answered 400 because
+   *  the server's write gate reserved the tier, and the schema this
+   *  union mirrors did not list it either. Widening all three is what
+   *  makes the option real. */
+  visibility: 'public' | 'private' | 'org-only' | 'followers' | 'explicit-share';
   tags: string[];
   /** Optional collection to add the post(s) to. */
   collectionId: string | null;

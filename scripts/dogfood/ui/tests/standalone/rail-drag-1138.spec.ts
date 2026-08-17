@@ -98,13 +98,13 @@ async function dragLeftFrom(page: Page, x: number, y: number) {
 }
 
 /**
- * Where to press inside a rail's first item.
+ * Where to press inside a rail item.
  *
  * Prefers an `<img>` — that is the one press position that can
  * reproduce this bug, because only a natively-draggable element under
- * the pointer gives the browser a drag to start. Falls back to the item
- * itself when the consumer renders none, and reports which it got so a
- * caller can insist.
+ * the pointer gives the browser a drag to start. Falls back to the first
+ * item itself when NO item in the rail renders one, and reports which it
+ * got so a caller can insist.
  *
  * The fallback is not a loophole. A consumer with no draggable content
  * cannot exhibit the #1138 failure at all today, but it is still a
@@ -112,15 +112,59 @@ async function dragLeftFrom(page: Page, x: number, y: number) {
  * the guard the issue asks for. What must never happen is a test
  * silently taking the fallback on the surface where the bug was
  * actually reported, which is why the featured case asserts `onImage`.
+ *
+ * # Why it scans the rail instead of pinning to item 0 (#1180)
+ *
+ * It used to take `.first()` and nothing else, which quietly coupled
+ * this test to WHICH tile the seed happens to put in slot 0 and to
+ * WHETHER that tile's picture had finished rendering. Both move.
+ *
+ * FeaturedRail has two legitimate arms: an `<img>` card, and a
+ * title-only plate for a cover with no servable `col` variant — an
+ * empty collection, a cover above the public tier (#559), or a variant
+ * that is not there yet (#1110). The plate is correct behaviour, not a
+ * failure.
+ *
+ * On the CI seed profile the first featured collection resolves its
+ * cover to a `.glb`, whose `col` comes from `preview.3d` — the one
+ * render kind ui-pr.yml deliberately does NOT wait for (it is the slow
+ * tail, and gating on it blew the job budget; see the drain step). So
+ * slot 0 is a plate for as long as that queue is draining, and this
+ * test was a coin flip on how far it had got. Verified: the `.glb`
+ * cover is what BOTH dev and #1180 select — the coverage profile picks
+ * a byte-identical set on each — so the flake was latent, not
+ * introduced.
+ *
+ * What #1138 needs is A natively-draggable element in this rail, not
+ * specifically the first one. Scanning for it removes the timing
+ * coupling without weakening anything: if no item anywhere in the rail
+ * has a visible image, `onImage` is still false and the featured case
+ * still fails loudly.
+ *
+ * Only items actually inside the viewport are considered — the rail
+ * overflows by design, and `page.mouse` cannot press a tile that is
+ * scrolled off to the right.
  */
 async function firstItemPressPoint(page: Page, itemTestId: string) {
-  const item = page.locator(tid(itemTestId)).first();
-  await item.waitFor({ state: 'visible', timeout: 15_000 });
-  const img = item.locator('img').first();
-  const onImage = (await img.count()) > 0 && (await img.isVisible());
-  const box = await (onImage ? img : item).boundingBox();
+  const items = page.locator(tid(itemTestId));
+  await items.first().waitFor({ state: 'visible', timeout: 15_000 });
+
+  const viewport = page.viewportSize();
+  const maxX = viewport?.width ?? Number.MAX_SAFE_INTEGER;
+  const count = await items.count();
+
+  for (let i = 0; i < count; i++) {
+    const img = items.nth(i).locator('img').first();
+    if ((await img.count()) === 0 || !(await img.isVisible())) continue;
+    const box = await img.boundingBox();
+    if (!box || box.width === 0 || box.height === 0) continue;
+    if (box.x < 0 || box.x + box.width > maxX) continue;
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2, onImage: true, index: i };
+  }
+
+  const box = await items.first().boundingBox();
   expect(box, `${itemTestId} has no box to press`).not.toBeNull();
-  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2, onImage };
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2, onImage: false, index: 0 };
 }
 
 /** Drive one railScroll consumer end to end and assert the three
@@ -154,9 +198,11 @@ async function assertRailPans(
   if (requireImage) {
     expect(
       pt.onImage,
-      `${itemTestId} rendered no visible <img>, so this drag started somewhere that CANNOT ` +
-        `reproduce #1138 — the regression only bites when the gesture begins on a natively ` +
-        `draggable element. Fix the fixture rather than relaxing this.`,
+      `no ${itemTestId} in the viewport rendered a visible <img>, so this drag would start ` +
+        `somewhere that CANNOT reproduce #1138 — the regression only bites when the gesture ` +
+        `begins on a natively draggable element. Every tile in the rail is a title-only plate: ` +
+        `either the covers are gated / missing, or the preview queue has not produced a single ` +
+        `col variant. Fix the fixture rather than relaxing this.`,
     ).toBe(true);
   }
   await dragLeftFrom(page, pt.x, pt.y);

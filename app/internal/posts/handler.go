@@ -252,7 +252,7 @@ func (h *Handler) CreatePost(
 	}
 	if !validVisibility(visibility) {
 		return openapi.CreatePost400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|private|org-only|followers|explicit-share"},
 		}, nil
 	}
 
@@ -617,7 +617,7 @@ func (h *Handler) UpdatePost(
 		s := string(*in.Visibility)
 		if !validVisibility(s) {
 			return openapi.UpdatePost400JSONResponse{
-				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|private|org-only|followers|explicit-share"},
 			}, nil
 		}
 		// The disclosure boundary. canMutatePost now admits a
@@ -2008,17 +2008,40 @@ func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi
 	return h.postReadable(ctx, id, uuid.UUID(p.Id))
 }
 
-// validVisibility checks against the 4-tier closed catalogue
-// per the 1.22.C design proposal §1. `public` was removed before the
-// v0.1 baseline fold — 00001_baseline_v0_1.sql's posts_visibility_check
-// lists the four tiers below and not `public` — and reserved for a
-// future public-fediverse phase. Migration 00008 later re-admitted the
-// value at the DB level (#414) for the READ rule; this WRITE gate still
-// refuses it, so writes attempting `public` get the clear "tier
-// reserved" error.
+// validVisibility checks a post visibility tier against the closed
+// catalogue.
+//
+// `public` is in it as of #1176, and that is a change of position worth
+// stating. It was removed before the v0.1 baseline fold — 00001's
+// posts_visibility_check listed four tiers — and reserved for a future
+// PUBLIC-FEDIVERSE phase (1.22.C §1, ADR 0043). That reservation was
+// about federating to strangers' servers. It was never about anonymous
+// readers of THIS one, and everything else in the system had already
+// moved:
+//
+//   - migration 00008 re-admitted the value in the column's CHECK (#414);
+//   - the read rule serves it — visibility.postReadableExpr's anonymous
+//     branch IS `visibility = 'public'`, tested in acl_read_test.go;
+//   - ADR 0010 grants the Anonymous role `posts.read.public`;
+//   - public mode (#709) shipped the operator switch that turns
+//     anonymous browsing on;
+//   - the compose form has offered a "Public" option all along.
+//
+// So the only thing left saying `public` was reserved was this one
+// write gate, and it made that form option a dead control: choosing it
+// produced a 400, not a post. Anonymous browse consequently had nothing
+// to show — every seeded and every user-written post was org-only
+// (#1176).
+//
+// The tier does NOT become the default: CreatePost still defaults to
+// org-only when the field is omitted, so a caller reaches `public` only
+// by asking for it. On PATCH, changing visibility remains behind
+// canWidenPostAccess, so admitting the value here does not let anyone
+// but the author (or a principal already trusted to widen reach) move
+// somebody else's post into it.
 func validVisibility(s string) bool {
 	switch s {
-	case "private", "org-only", "followers", "explicit-share":
+	case "public", "private", "org-only", "followers", "explicit-share":
 		return true
 	}
 	return false

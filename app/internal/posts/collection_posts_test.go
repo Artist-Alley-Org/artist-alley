@@ -57,10 +57,12 @@ const (
 )
 
 // cpSeedPost writes one post by cpAuthor at a given tier. Direct SQL
-// rather than CreatePost because `public` is not writable through the
-// API (validVisibility rejects it) while the READ RULE still admits the
-// tier and migration 00008 still stores it — so the API cannot
-// construct the whole matrix this gate has to be tested against.
+// rather than CreatePost so the matrix is built from the COLUMN's
+// catalogue rather than from whatever the write gate admits today —
+// the two disagreed for most of this file's life (`public` was
+// unwritable through the API until #1176) and the gate under test here
+// is the READ rule, which has to answer for every value the column can
+// hold however it got there.
 func cpSeedPost(t *testing.T, pool *pgxpool.Pool, visibility, title string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
@@ -519,9 +521,8 @@ func TestListCollectionPosts_MembershipNeverWidens(t *testing.T) {
 	// assertion above passes just as happily on a rule that returns
 	// nothing at all to anyone.
 	//
-	// `public` is seeded directly because the write API refuses the tier
-	// (posts.validVisibility) while the read rule and the column's own
-	// CHECK still admit it — the same reason cpSeedPost exists.
+	// `public` is seeded directly for the same reason cpSeedPost exists:
+	// the read rule has to answer for the value whatever wrote it.
 	pub := cpSeedPost(t, pool, "public", "cp public")
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO collection_posts (collection_id, post_id, sort_order, pinned)
