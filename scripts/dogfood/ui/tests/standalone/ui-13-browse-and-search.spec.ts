@@ -181,18 +181,33 @@ test.describe('UI-13 browse + search', () => {
    *
    *  Scans the feed until it has two distinct words rather than taking
    *  posts 0 and 1 and skipping when they collide: a skipped test is
-   *  not a passing one, and this is the spec for #1053 itself. */
+   *  not a passing one, and this is the spec for #1053 itself.
+   *
+   *  The scan covers EVERY rendered post, not a fixed first twelve, and
+   *  the difference is a whole suite run. The head of the wall is
+   *  whatever posted most recently, which on a long-lived dev instance
+   *  is a block of fixture posts other specs left behind — and one
+   *  spec's fixtures share a title template, so the first N can be a
+   *  single searchable word repeated N times. Thirteen of them was
+   *  enough to red seven tests in this file at once, for a reason with
+   *  nothing to do with search. Every rendered card is still a bounded
+   *  scan (one page of the feed) and it reaches past any one family of
+   *  fixtures; the accumulation itself is #1198's. */
   async function seededTerms(page: import('@playwright/test').Page) {
     const links = page.locator('a[href^="/posts/"]');
     await expect(links.first()).toBeVisible();
-    const n = Math.min(await links.count(), 12);
+    const n = await links.count();
     const terms: string[] = [];
     for (let i = 0; i < n && terms.length < 2; i++) {
       const label = (await links.nth(i).getAttribute('aria-label')) ?? '';
       const word = (label.match(/[A-Za-z]{5,}/g) ?? [])[0];
       if (word && !terms.includes(word)) terms.push(word);
     }
-    expect(terms.length, `no two distinct searchable words in the first ${n} post titles`).toBe(2);
+    expect(
+      terms.length,
+      `no two distinct searchable words across ${n} rendered post titles — the whole ` +
+        'page is one fixture family (#1198), not a search defect',
+    ).toBe(2);
     return terms as [string, string];
   }
 
