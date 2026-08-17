@@ -721,6 +721,26 @@ func (h *Handler) GetPublicAppearance(
 	// upload an image and read the 501 back.
 	visual := h.VisualSearchEnabled
 	out.VisualSearchEnabled = &visual
+	// Same boot path, same reason again (#1195): a "Public" tier option
+	// on a collection promises anonymous readers, and an install with
+	// public mode off has none. The switch itself is read through
+	// GetPublicMode below, which requires system.config.read — a
+	// capability the curator choosing a tier does not have and should
+	// not need for this. So the flag rides the payload every client
+	// already fetches.
+	//
+	// A read failure resolves to FALSE rather than propagating. The flag
+	// decides whether one option is OFFERED; the read rule decides what
+	// anonymous callers actually get, and it consults the config
+	// directly. So the failure mode here is "the option is missing for a
+	// moment", not an exposure — and refusing to serve the whole boot
+	// payload (fonts, site name, logo) because one sysconfig row could
+	// not be read would take the app down for a control this pays for.
+	publicMode := false
+	if pm, pmErr := h.Store.GetPublicMode(ctx); pmErr == nil {
+		publicMode = pm.Enabled
+	}
+	out.PublicModeEnabled = &publicMode
 	return openapi.GetPublicAppearance200JSONResponse(out), nil
 }
 

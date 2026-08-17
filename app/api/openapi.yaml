@@ -6669,9 +6669,19 @@ paths:
         - name: visibility
           in: query
           required: false
+          description: |
+            Narrow to one tier WITHIN what this caller may read — the
+            same display-filter semantics `GET /posts?visibility=` has.
+            It never widens the read rule.
+
+            `public` joined the list with #1195. The tab-driven Public
+            view has filtered on that tier server-side since #1104
+            (`hubPublicTier`), so a client could reach the tier by tab
+            and not by name; the enum was the only thing saying it did
+            not exist.
           schema:
             type: string
-            enum: [private, org-only, followers, explicit-share]
+            enum: [public, private, org-only, followers, explicit-share]
         - name: featured
           in: query
           required: false
@@ -12932,6 +12942,31 @@ components:
             an image and getting an error. Absent/false on a default
             install — the feature is off unless an operator turns it on.
           example: false
+        public_mode_enabled:
+          type: boolean
+          readOnly: true
+          description: |
+            True when this install lets anonymous visitors browse
+            (`public_mode`, #445/#709). Read-only here — the switch is
+            owned by `GET`/`PUT /system/public-mode`, which are gated on
+            `system.config.read`/`write`; this is the same fact
+            published on the boot path every client already fetches, so
+            an ordinary member can ask "does 'public' mean anything on
+            this instance?" without an admin capability.
+
+            It exists for the tier pickers (#1195). A `public`
+            visibility option on a collection or a post promises
+            something an install with public mode OFF cannot deliver —
+            there are no anonymous readers to see it — so the option is
+            offered only where it is meaningful, the same
+            resolved-capability discipline `visual_search_enabled`
+            follows (#1163).
+
+            It discloses nothing: with public mode on, an anonymous
+            visitor can simply browse; with it off, every anonymous
+            request is already refused by the public-mode middleware.
+            Either way the answer is one unauthenticated request away.
+          example: false
         logo_url:
           type: string
           readOnly: true
@@ -14056,7 +14091,18 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
+          description: |
+            The collection's read tier.
+
+            `public` means anonymous visitors may read it when the
+            instance has public mode on. It has been in the column's
+            CHECK constraint since migration 00008 and in the read rule
+            (`visibility.Predicate` over `EntityCollection` admits
+            `visibility = 'public'`) ever since; only this schema, and
+            therefore every client, kept saying otherwise — the same
+            defect #1176 fixed for posts. A collection could be made
+            public by no route the API offered (#1195).
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -14191,7 +14237,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
           default: private
         membership:
           type: string
@@ -14238,7 +14284,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, org-only, followers, explicit-share]
+          enum: [public, private, org-only, followers, explicit-share]
         membership:
           type: string
           enum: [manual, query, hybrid]
