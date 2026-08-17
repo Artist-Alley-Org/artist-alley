@@ -934,15 +934,44 @@ const softDeleteReasonMaxLen = 500
 // ListPosts (the feed)
 // ---------------------------------------------------------------------------
 
+// ListPosts serves the browse feed.
+//
+// # Anonymous callers (#1181)
+//
+// There is no nil-caller 401 here, and its absence is the feature.
+// Admission is decided upstream by the public-mode gate
+// (auth.PublicSurfaceRoutes now names "/posts"): with public mode OFF an
+// anonymous request is refused by the middleware and never arrives; with
+// it ON the caller arrives as nil. That is the same shape
+// GetPostsByAsset and the /users/by-* profile reads already use — the
+// toggle decides admission, the read rule decides rows.
+//
+// Authorization did NOT move. Every row still comes back through
+// readRuleSQL, whose anonymous arm (a nil identity yields
+// visibility.NewCaller(nil) with empty PostCaps) resolves to the public
+// tier alone — team, followers, org-only, private and explicit-share all
+// fold closed with no author, relationship or ACL conjunct able to
+// match. So this handler grants nothing; it stops refusing, and the rule
+// that was always there answers.
+//
+// What DID have to change is every place below that read the caller
+// without asking whether there was one. Each is marked with its
+// anonymous answer inline. The pattern throughout is that anonymous
+// resolves to user_ref 0, which no user has (refs start at 1), so the
+// "is this mine / do I follow this" conjuncts answer false in SQL rather
+// than being special-cased in Go.
 func (h *Handler) ListPosts(
 	ctx context.Context,
 	req openapi.ListPostsRequestObject,
 ) (openapi.ListPostsResponseObject, error) {
 	caller := auth.IdentityFromContext(ctx)
-	if caller == nil {
-		return openapi.ListPosts401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
+	// The anonymous ref. Not a sentinel that means "nobody" to any
+	// query — it is simply a ref that cannot exist, so `author_user_ref
+	// = 0`, `follower_user_ref = 0` and `AuthorUserRef != 0` all give
+	// the right answer without a nil branch at each site.
+	var callerRef int64
+	if caller != nil {
+		callerRef = caller.UserRef
 	}
 
 	limit := int32(50)
@@ -993,7 +1022,27 @@ func (h *Handler) ListPosts(
 	case req.Params.Visibility != nil:
 		v := string(*req.Params.Visibility)
 		visPtr = &v
-	case req.Params.AuthorRef != nil && *req.Params.AuthorRef == caller.UserRef:
+	case caller == nil:
+		// #1181 — the anonymous default is the PUBLIC tier, not the
+		// org-only one below.
+		//
+		// This is a display filter, so getting it wrong is not an
+		// exposure; it is the difference between a working public
+		// install and an empty one. The org-only default is spliced
+		// into the query as `visibility = 'org-only'` and then
+		// intersected with the read rule, whose anonymous arm admits
+		// the public tier only — an empty intersection, so every
+		// anonymous browse would have returned zero posts on an
+		// install with 164 public ones, which looks exactly like the
+		// feature not working.
+		//
+		// It cannot widen anything: the read rule is spliced
+		// independently below and already limits an anonymous caller
+		// to the public tier, so naming that tier here is a narrowing
+		// conjunct over a set that was already exactly it.
+		v := "public"
+		visPtr = &v
+	case req.Params.AuthorRef != nil && *req.Params.AuthorRef == callerRef:
 		visPtr = nil
 	case req.Params.LikedBy != nil:
 		// #1106 — the Likes tab drops the default for the same reason
@@ -1079,15 +1128,27 @@ func (h *Handler) ListPosts(
 	// away. Splitting the control in two (People / Studios) was
 	// considered and rejected: it doubles a control that already competes
 	// for room, to expose a distinction nobody asked for.
+	//
+	// #1181 amends the parenthetical above: anonymous callers DO reach
+	// this now, and they follow nobody. `callerRef` is 0 for them, so
+	// all three EXISTS subqueries (user_follows, team_follows,
+	// tag_follows) find no row and the page comes back empty — the same
+	// "your following tab is empty" answer a signed-in account that
+	// follows nothing gets, produced by the same SQL rather than by a
+	// special case. Notably NOT the alternative of ignoring the filter,
+	// which would serve the whole public feed under a "Following" label.
 	var followerPtr *int64
 	if req.Params.Feed != nil && *req.Params.Feed == openapi.Following {
-		ref := caller.UserRef
+		ref := callerRef
 		followerPtr = &ref
 	}
 
-	// Phase 1.55.C-1b: ?include_deleted=true is admin-only.
+	// Phase 1.55.C-1b: ?include_deleted=true is admin-only — and
+	// anonymous is never an admin (#1181), so the nil guard here is the
+	// gate, not a convenience.
 	var includeDeletedArg *bool
-	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && caller.Can(auth.SuperAdminCapability) {
+	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted &&
+		caller != nil && caller.Can(auth.SuperAdminCapability) {
 		t := true
 		includeDeletedArg = &t
 	}
@@ -1208,8 +1269,19 @@ func (h *Handler) ListPosts(
 	// fewer items, never a different window. (`PostList` carries no
 	// total, so there is no count to disagree with what renders; the
 	// client's infinite scroll follows the cursor.)
-	if show := h.showRestricted(ctx, caller.UserRef); !show {
-		items = applyHideRestricted(items, caller.UserRef)
+	//
+	// #1181 — anonymous takes the hiding branch, and takes it twice
+	// over. showRestricted looks up a per-user preference for ref 0,
+	// which no user has, so the lookup misses and the helper returns
+	// its `false` default (opt-IN is the only way past this, and there
+	// is nobody to have opted in). Then applyHideRestricted compares
+	// each post's AuthorUserRef against 0, which never matches, so the
+	// own-post exemption that lets an author still see their own
+	// all-restricted post cannot fire for a caller who authored
+	// nothing. Anonymous therefore gets the #883 placeholders stripped
+	// AND the posts that were nothing but placeholders dropped.
+	if show := h.showRestricted(ctx, callerRef); !show {
+		items = applyHideRestricted(items, callerRef)
 	}
 
 	resp := openapi.PostList{Items: items}
