@@ -142,6 +142,13 @@ type Runner struct {
 
 	adminRef int64
 
+	// genTime is the instant this run started, and the ceiling every
+	// row timestamp is clamped to (#1174). Captured ONCE so a run is
+	// internally consistent: a post, its assets and its derived
+	// likes/comments all measure against the same "now" no matter how
+	// long the run takes.
+	genTime time.Time
+
 	// resolved lookups
 	assetStates map[string]pgtype.UUID // asset:1 code -> state id
 	postStates  map[string]pgtype.UUID // post code -> state id
@@ -186,6 +193,7 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		jobs:        jobs.NewService(pool, opts.Logger, nil),
 		log:         opts.Logger,
 		opts:        opts,
+		genTime:     time.Now().UTC(),
 		assetStates: map[string]pgtype.UUID{},
 		postStates:  map[string]pgtype.UUID{},
 		assetTypes:  map[string]int64{},
@@ -676,11 +684,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			typeRef = 1 // fall back to Image
 		}
-		created := parseTime(a.CreatedAt)
-		updated := parseTime(a.UpdatedAt)
-		if !updated.Valid {
-			updated = created
-		}
+		created, updated := r.rowTimes(a.CreatedAt, a.UpdatedAt)
 		var ownerRef *int64
 		if ref, ok := r.users[a.OwnerUsername]; ok {
 			ownerRef = &ref
@@ -1155,11 +1159,7 @@ func (r *Runner) applyPosts(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			authorRef = r.adminRef
 		}
-		created := parseTime(p.CreatedAt)
-		updated := parseTime(p.UpdatedAt)
-		if !updated.Valid {
-			updated = created
-		}
+		created, updated := r.rowTimes(p.CreatedAt, p.UpdatedAt)
 		cover := members[0]
 		id, err := r.q.SeedInsertPost(ctx, SeedInsertPostParams{
 			ID:            parseUUID(p.ID),
@@ -1246,7 +1246,7 @@ func (r *Runner) applyComments(ctx context.Context, cat *catalogues) error {
 			continue
 		}
 		cid := stableUUID("comment", a.ID, uuidString(postID))
-		created := parseTime(a.UpdatedAt)
+		created := r.rowTime(a.UpdatedAt)
 		in := CommentInput{
 			ID:            &cid,
 			TargetKind:    CommentTargetPost,
@@ -1409,6 +1409,66 @@ func parseTime(s string) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
+// clampToPast maps a dataset timestamp onto the closed past (#1174).
+//
+// The site datasets scatter created_at/updated_at around the date they
+// were generated in BOTH directions, so a fresh seed lands rows dated
+// months ahead of the machine seeding them: 36 posts and 155 assets out
+// to 2026-12-14 when the bug was found. Future-dated rows sit pinned at
+// the top of every Newest sort until their date arrives (a permanently
+// static feed head), display dates that have not happened, and quietly
+// widen any date-window logic tested against the seed.
+//
+// Timestamps already in the past are returned UNCHANGED — that is the
+// overwhelming majority of the corpus, so the seed keeps its dataset
+// dates and stays byte-reproducible run to run. Only the overshoot is
+// rewritten, and it is REFLECTED rather than pinned to `now`: a row
+// four months ahead becomes four months old. Pinning would collapse
+// every future row onto one instant, which trades the future-dates bug
+// for a clump of 155 identically-dated rows sitting at the head of the
+// feed — the same static-head symptom the fix exists to remove.
+// Reflection spreads them back across the corpus's own date range.
+//
+// Reflection reverses ORDER within the reflected set, so a row's
+// created_at can come out later than its updated_at; callers pair this
+// with an updated >= created normalisation (see rowTimes).
+func clampToPast(t, now time.Time) time.Time {
+	if !t.After(now) {
+		return t
+	}
+	return now.Add(-t.Sub(now))
+}
+
+// rowTime parses a dataset timestamp destined for a ROW's created_at /
+// updated_at / liked_at and clamps it to the generation instant.
+//
+// It is deliberately NOT folded into parseTime: parseTime also reads
+// metadata FIELD values (a `datetime` field's contents, parseDateValue),
+// which are user data and legitimately hold future dates — a shoot date,
+// a licence expiry. Clamping those would corrupt the value.
+func (r *Runner) rowTime(s string) pgtype.Timestamptz {
+	ts := parseTime(s)
+	if !ts.Valid {
+		return ts
+	}
+	return pgtype.Timestamptz{Time: clampToPast(ts.Time, r.genTime), Valid: true}
+}
+
+// rowTimes clamps a row's created/updated pair and restores the
+// invariant that a row is not updated before it exists — which both an
+// absent updated_at and clampToPast's order reversal can break.
+func (r *Runner) rowTimes(createdAt, updatedAt string) (created, updated pgtype.Timestamptz) {
+	created = r.rowTime(createdAt)
+	updated = r.rowTime(updatedAt)
+	if !updated.Valid {
+		updated = created
+	}
+	if created.Valid && updated.Valid && updated.Time.Before(created.Time) {
+		updated = created
+	}
+	return created, updated
+}
+
 // dateOnlyLayout is the calendar date a `date`-typed field accepts in
 // addition to RFC3339. Midnight UTC, matching what the API's own date
 // writer stores.
@@ -1484,10 +1544,17 @@ func (r *Runner) sortedUsernames() []string {
 // contentSpan is the [earliest, latest] post created_at window. Follow /
 // like / comment timestamps are distributed inside it (dataset-derived,
 // so reproducible — no now()).
+//
+// It reads the CLAMPED post dates (#1174), which is what makes the whole
+// derived social graph inherit the clamp: hi is the newest post the
+// seeder actually wrote, so every follow, like and comment placed inside
+// the span lands at or before the generation instant. Reading the raw
+// dataset dates here would leave the derived rows in the future even
+// after the posts themselves were pulled back.
 func (r *Runner) contentSpan(cat *catalogues) (time.Time, time.Time) {
 	var lo, hi time.Time
 	for _, p := range cat.Posts {
-		t := parseTime(p.CreatedAt)
+		t := r.rowTime(p.CreatedAt)
 		if !t.Valid {
 			continue
 		}
@@ -1670,7 +1737,7 @@ func (r *Runner) applyLikes(ctx context.Context, cat *catalogues) error {
 		if stableIntn(5, "likepop", p.ID) == 0 {
 			count += 8 + stableIntn(12, "likebonus", p.ID)
 		}
-		postCreated := parseTime(p.CreatedAt).Time
+		postCreated := r.rowTime(p.CreatedAt).Time
 		for _, liker := range pickDistinct(eligible, count, p.AuthorUsername, "like", p.ID) {
 			ref := r.users[liker]
 			ts := stableTimeBetween(postCreated, hi, "likeat", p.ID, liker)
@@ -1711,7 +1778,7 @@ func (r *Runner) applyPostComments(ctx context.Context, cat *catalogues) error {
 		if !ok {
 			continue
 		}
-		postCreated := parseTime(p.CreatedAt).Time
+		postCreated := r.rowTime(p.CreatedAt).Time
 		nTop := stableIntn(4, "cmtcnt", p.ID) // 0..3
 		for ci, author := range pickDistinct(names, nTop, p.AuthorUsername, "cmt", p.ID) {
 			cis := strconv.Itoa(ci)
