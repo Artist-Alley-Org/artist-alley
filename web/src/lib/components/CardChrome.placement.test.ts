@@ -121,6 +121,14 @@ for (const [name, card] of [
       expect(plate.className).not.toContain('rounded-full');
     });
 
+    it('ends the metadata stack with the row the ⋯ menu is on', () => {
+      // The trigger belongs to the LAST row, not to some row in the
+      // middle — "menu bottom right" is a position, and a stack that
+      // grows a new row underneath it would quietly break the ruling.
+      const m = meta(card('thumbnail'))!;
+      expect(triggers(m.lastElementChild!)).toHaveLength(1);
+    });
+
     it('leaves grid and masonry on the overlay trigger', () => {
       // Scope guard. The ruling names thumbnail's card layout; the
       // other densities own their own chrome and are not part of it.
@@ -136,3 +144,63 @@ for (const [name, card] of [
     });
   });
 }
+
+// The two cards are NOT twins here, and that is the point of these
+// tests rather than an inconsistency to be tidied away later.
+//
+// #1158 pulled the extension off both bands. The owner has since split
+// the ruling by SURFACE: a post wall is discovery, where the icon
+// already answers "what kind of thing is this?", and an asset wall is
+// somebody's own uploads, where the file is the unit and "which of
+// these is the TXT" is the question being asked. So the extension comes
+// back on the asset band only, and the asset stack grows the date row
+// the post stack always had.
+describe('AssetCard — the asset band says which FILE', () => {
+  it('shows the extension after the kind icon', () => {
+    const c = assetCard('thumbnail');
+    const ext = c.querySelector('[data-testid="thumb-band-extension"]');
+    expect(ext).toBeTruthy();
+    expect(ext!.textContent!.trim()).toBe('png');
+    // Icon first, word second — the glyph is the notation and the
+    // extension qualifies it.
+    const badge = band(c)!.querySelector('[data-testid^="card-kind"]')!;
+    expect(badge.compareDocumentPosition(ext!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('renders NOTHING rather than an empty slot with no extension', () => {
+    const c = render(AssetCard, {
+      asset: asset({ file_extension: '' }),
+      mode: 'thumbnail' as ViewMode,
+    }).container;
+    expect(c.querySelector('[data-testid="thumb-band-extension"]')).toBeNull();
+  });
+
+  it('strips a leading dot', () => {
+    const c = render(AssetCard, {
+      asset: asset({ file_extension: '.txt' }),
+      mode: 'thumbnail' as ViewMode,
+    }).container;
+    expect(c.querySelector('[data-testid="thumb-band-extension"]')!.textContent!.trim()).toBe('txt');
+  });
+
+  it('carries the date on the same row as the ⋯ menu', () => {
+    const c = assetCard('thumbnail');
+    const date = c.querySelector('[data-testid="card-date"]');
+    expect(date).toBeTruthy();
+    expect(date!.textContent!.trim()).toBeTruthy();
+    // One row, two siblings — and the date's link is not the menu's
+    // parent, which is the invalid-nesting trap this file exists for.
+    const row = meta(c)!.lastElementChild!;
+    expect(row.contains(date!)).toBe(true);
+    expect(triggers(row)).toHaveLength(1);
+    expect(triggers(row)[0].closest('a')).toBeNull();
+  });
+
+  it('keeps the extension OFF the post band, and both off grid', () => {
+    // The scope line, asserted from the other side.
+    expect(postCard('thumbnail').querySelector('[data-testid="thumb-band-extension"]')).toBeNull();
+    // Grid gets no band and no metadata stack, so neither fact can leak.
+    expect(assetCard('grid').querySelector('[data-testid="thumb-band-extension"]')).toBeNull();
+    expect(assetCard('grid').querySelector('[data-testid="card-date"]')).toBeNull();
+  });
+});
