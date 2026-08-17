@@ -852,7 +852,11 @@
            in the one case where nothing at all qualifies — a reader on a
            memberless post they did not write. -->
       {#if hasMenuItems}
-        <Menu align="right" panelClass="min-w-[12rem]">
+        <Menu
+          align="right"
+          panelClass="min-w-[12rem]"
+          triggerClass="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           {#snippet trigger({ open })}
             <span
               class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"

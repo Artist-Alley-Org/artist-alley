@@ -12,7 +12,10 @@
   import Menu from '$components/Menu.svelte';
 </script>
 
-<Menu align="left">
+<Menu
+  align="left"
+  triggerClass="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+>
   {#snippet trigger({ open })}
     <span
       class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-fg hover:bg-state-hover"
