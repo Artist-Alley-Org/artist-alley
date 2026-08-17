@@ -26,6 +26,11 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Collections show posts only.** The separate "assets" section on collection pages is gone,
+  along with every way to attach a bare asset to a collection — non-post assets belong to their
+  uploader until they're made into a post. The sample library's reference collections were
+  reworked so every formerly-bare asset lives in a real post, authored by its owner and public
+  only when everything in it is public (#1185, PR #1186; the deeper model change is #1161).
 - **The feed's sort button now filters too.** Beside Newest/Oldest sits a type filter — check
   the asset types you want, all-checked means no filter, the button lights up when a subset is
   active, and the feed refilters in place with the choice kept in the address. Filtering matches
