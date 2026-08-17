@@ -19,12 +19,15 @@
 //    PostAuthor later that happens to carry the name fails this test
 //    rather than shipping quietly.
 //
-//    ⚠️ The anonymous path is REACHABLE. `GET /posts` 401s anonymous
-//    callers (posts are members-only — auth.PublicSurfaceRoutes
-//    deliberately omits the feed), but `/posts/by-asset` and
-//    `/collections/{id}/posts` are both public-surface routes that
-//    return PostList through the same enrichment. So this is a live
-//    surface, not future-proofing.
+//    ⚠️ The anonymous path is REACHABLE, and since #1181 it is the
+//    BROWSE FEED. `/posts/by-asset` and `/collections/{id}/posts` were
+//    already public-surface routes returning PostList through this same
+//    enrichment; `GET /posts` has now joined them, gated by public mode
+//    rather than by a nil-caller 401 in the handler. So an author who
+//    took ADR 0024's opt-out is withheld on the busiest surface in the
+//    app, not just on two lookup routes. Asserted end-to-end through
+//    the handler by TestAnonymousFeed_OwnerDisplayNameOptOut
+//    (anon_feed_test.go); this file pins the enrichment pass itself.
 //
 // 2. IT IS ONE QUERY PER PAGE. The whole justification for putting the
 //    author on the payload is that the alternative — ~20 `GET /users/{ref}`

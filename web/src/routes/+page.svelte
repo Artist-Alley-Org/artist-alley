@@ -206,14 +206,17 @@
       if (gen !== generation) return;
 
       if (apiErr || !data) {
-        // A signed-out visitor gets 401 here and that is EXPECTED
-        // (#416). `/` is a public route so a guest can reach the site
-        // root, but its only data source is the posts feed, and posts
-        // stay members-only — the followers visibility tier is not
-        // modelled in the predicate yet. Rendering "authentication
-        // required" in a red alert told a guest something had broken.
-        // Nothing had; they are simply looking at a members-only
-        // surface, so it gets an empty state, not an error.
+        // A signed-out visitor can still get 401 here, and it is
+        // EXPECTED (#416) — but since #1181 it means exactly ONE thing:
+        // this install has public mode OFF. The feed is a public-mode
+        // surface now, so with the toggle ON a guest gets a 200 and the
+        // public tier, and only a members-only install refuses them.
+        //
+        // Rendering "authentication required" in a red alert told a
+        // guest something had broken. Nothing had; they are looking at
+        // a members-only install, so it gets an empty state, not an
+        // error. The OTHER anonymous empty state — 200 with nothing
+        // public to show — is `guestEmpty` further down.
         if (!auth.user) {
           guestFeed = true;
           return;

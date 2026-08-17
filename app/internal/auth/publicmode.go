@@ -111,9 +111,48 @@ var PublicSurfaceRoutes = []publicRoute{
 
 	// Post-by-asset lookup (#478 slice-2, ADR 0070). Anonymous sees the
 	// public posts featuring an asset; the handler filters to visibility
-	// 'public' for anonymous callers. Scoped to /posts/by-asset only — the
-	// rest of /posts stays members-only (not a public surface).
+	// 'public' for anonymous callers.
 	{path: "/posts/by-asset", prefix: true, why: "public post-by-asset lookup"},
+
+	// The browse feed (#1181). The page a public install's visitors
+	// actually land on: /posts/by-asset above could only ever answer
+	// about an asset somebody already had a link to, so until this
+	// entry a "public" install had a browse grid that 401'd.
+	//
+	// EXACT, not a prefix, and that is the whole design of this entry.
+	// A prefix would sweep in /posts/{id}, /posts/{id}/comments,
+	// /posts/{id}/whiteboard and the rest of the item surface, none of
+	// which #1181 opens. They keep their own handler gates and are
+	// untouched here — "absent" for them still means "already 401s
+	// anonymous", exactly as before.
+	//
+	// ⚠️ WHY THERE IS NO METHOD FIELD, since a naive reading of this
+	// entry says it publishes POST /posts as well.
+	//
+	// It does not, because this table is a DENY-list, not an allowlist
+	// — the long comment at the top of this file is the argument, and
+	// the middleware is three lines: `if !publicModeEnabled &&
+	// IsPublicSurface(path) { 401 }`. Being named here can only ever
+	// SUBTRACT reachability (a 401 when the toggle is off). It never
+	// adds any: with the toggle on, a named path is passed to its
+	// handler, which is precisely what happens today to every path that
+	// is NOT named. Admission to a handler is not authorization.
+	//
+	// So POST /posts is unaffected in both toggle states. With public
+	// mode off it 401s here (it would have 401'd one layer down
+	// anyway); with public mode on it reaches CreatePost, which 401s a
+	// nil caller — as do PATCH and DELETE on the item paths. The one
+	// thing that actually became anonymous-readable is ListPosts, and
+	// it became so by having its own nil-caller 401 removed in
+	// posts.ListPosts, not by this line.
+	//
+	// Adding a method field would therefore make this list NARROWER
+	// (POST /posts would stop being refused on a private install) while
+	// granting nothing — the wrong direction for a deny-list, per this
+	// file's "over-inclusion is safe; under-inclusion is the risk".
+	// TestPostsRouteGate pins all three arms: read+on=200, read+off=401,
+	// write=401 in both.
+	{path: "/posts", why: "public browse feed (#1181) — the collection READ; writes keep their own handler gate"},
 
 	// The featured rail (#417). This is the landing page for a public
 	// install — with posts members-only, it is the only content an
