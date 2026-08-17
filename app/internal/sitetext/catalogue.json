@@ -160,7 +160,8 @@
       "type": {
         "label": "Filter by type",
         "all": "All types",
-        "apply": "Apply"
+        "apply": "Apply",
+        "solo_hint": "Double-click to pick only this one"
       }
     },
     "sort": {

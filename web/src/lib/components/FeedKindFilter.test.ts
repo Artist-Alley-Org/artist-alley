@@ -71,6 +71,24 @@ function check(el: HTMLInputElement, next: boolean) {
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+/** A real double click, in full: a browser delivers the two ordinary
+ *  clicks (which the <label> forwards to its checkbox, flipping it
+ *  twice) and THEN `dblclick`. Dispatching only the `dblclick` would
+ *  test a gesture no browser produces, and would hide the one way this
+ *  could go wrong — solo being applied and then undone by a trailing
+ *  toggle. */
+function dblclick(label: Element, box: HTMLInputElement) {
+  check(box, !box.checked);
+  check(box, !box.checked);
+  label.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+}
+
+function labelOf(box: HTMLInputElement): HTMLElement {
+  const el = box.closest('label');
+  if (!el) throw new Error('the checkbox is not inside a label');
+  return el;
+}
+
 async function open(selected: string[] = []) {
   const onapply = vi.fn();
   render(FeedKindFilter, { props: { selected, onapply } });
@@ -102,6 +120,88 @@ describe('FeedKindFilter — the panel', () => {
       .filter((o) => o.checked)
       .map((o) => o.dataset.kind);
     expect(ticked).toEqual(['image', 'video']);
+  });
+});
+
+// The owner: "If all types is selected, and I double click PDF, it
+// should deselect all but pdf."
+//
+// The trap this pins is ORDER. A double click delivers its two ordinary
+// clicks first and `dblclick` last, so a solo written as a mutation of
+// the draft — or applied before the toggles land — ends with the soloed
+// type toggled back off and everything else still ticked, which looks
+// like the gesture did nothing at all.
+describe('FeedKindFilter — double-click solos', () => {
+  it('⭐ leaves ONLY the double-clicked type ticked, from all-checked', async () => {
+    await open([]);
+    expect(options().every((o) => o.checked)).toBe(true);
+    const pdf = optionFor('pdf');
+    dblclick(labelOf(pdf), pdf);
+    await tick();
+    expect(
+      options()
+        .filter((o) => o.checked)
+        .map((o) => o.dataset.kind),
+    ).toEqual(['pdf']);
+    expect(allBox().checked).toBe(false);
+  });
+
+  it('solos from a SUBSET too, replacing it rather than adding to it', async () => {
+    await open(['image', 'video']);
+    const audio = optionFor('audio');
+    dblclick(labelOf(audio), audio);
+    await tick();
+    expect(
+      options()
+        .filter((o) => o.checked)
+        .map((o) => o.dataset.kind),
+    ).toEqual(['audio']);
+  });
+
+  it('is idempotent — soloing what is already soloed keeps it', async () => {
+    await open(['pdf']);
+    const pdf = optionFor('pdf');
+    dblclick(labelOf(pdf), pdf);
+    await tick();
+    expect(
+      options()
+        .filter((o) => o.checked)
+        .map((o) => o.dataset.kind),
+    ).toEqual(['pdf']);
+  });
+
+  it('does not commit — Apply is still what the feed hears', async () => {
+    const onapply = await open([]);
+    const pdf = optionFor('pdf');
+    dblclick(labelOf(pdf), pdf);
+    await tick();
+    expect(onapply).not.toHaveBeenCalled();
+    click(applyBtn());
+    expect(onapply).toHaveBeenCalledWith(['pdf']);
+  });
+
+  it('leaves the SINGLE click alone — it still plain-toggles', async () => {
+    await open([]);
+    const pdf = optionFor('pdf');
+    check(pdf, false);
+    await tick();
+    const ticked = options()
+      .filter((o) => o.checked)
+      .map((o) => o.dataset.kind);
+    expect(ticked).not.toContain('pdf');
+    expect(ticked.length).toBe(FILTERABLE_KINDS.length - 1);
+  });
+
+  it('double-clicking "All types" lands on every type, from any state', async () => {
+    // Its two ordinary clicks cancel out only when it started checked;
+    // from a subset they would clear the board, which is the opposite of
+    // what the row says it does.
+    await open(['pdf']);
+    const all = allBox();
+    dblclick(labelOf(all), all);
+    await tick();
+    expect(options().every((o) => o.checked)).toBe(true);
+    expect(allBox().checked).toBe(true);
   });
 });
 
