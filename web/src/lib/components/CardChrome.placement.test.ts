@@ -60,20 +60,28 @@ function asset(overrides: Partial<CardAsset> = {}): CardAsset {
   };
 }
 
-function post() {
+/** A post holding `n` assets. One is the single-asset shape the
+ *  extension rule turns on for; more than one is the set it turns off
+ *  for. The members are real rows rather than a `memberCount` override
+ *  so the fixture matches what a list endpoint actually ships. */
+function post(n = 1) {
   return {
     id: POST_ID,
-    title: 'A set of three',
+    title: n > 1 ? 'A set of three' : 'A single picture',
     created_at: '2026-08-01T12:00:00.000Z',
     like_count: 4,
     comment_count: 2,
-    members: [{ asset_id: ASSET_ID, asset: asset() }],
+    members: Array.from({ length: n }, (_, i) => ({
+      asset_id: `3f1b8e2c-0000-4000-8000-00000000c${i}0`,
+      asset: asset({ id: `3f1b8e2c-0000-4000-8000-00000000c${i}0` }),
+    })),
   };
 }
 
 const assetCard = (mode: ViewMode) => render(AssetCard, { asset: asset(), mode }).container;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const postCard = (mode: ViewMode) => render(PostCard, { post: post() as any, mode }).container;
+const postCard = (mode: ViewMode, n = 1) =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  render(PostCard, { post: post(n) as any, mode }).container;
 
 const band = (c: HTMLElement) => c.querySelector<HTMLElement>('[data-testid="thumb-band-top"]');
 const meta = (c: HTMLElement) => c.querySelector<HTMLElement>('[data-testid="thumb-metadata"]');
@@ -196,11 +204,78 @@ describe('AssetCard — the asset band says which FILE', () => {
     expect(triggers(row)[0].closest('a')).toBeNull();
   });
 
-  it('keeps the extension OFF the post band, and both off grid', () => {
-    // The scope line, asserted from the other side.
-    expect(postCard('thumbnail').querySelector('[data-testid="thumb-band-extension"]')).toBeNull();
-    // Grid gets no band and no metadata stack, so neither fact can leak.
+  it('keeps the band facts off grid, which has no band at all', () => {
     expect(assetCard('grid').querySelector('[data-testid="thumb-band-extension"]')).toBeNull();
     expect(assetCard('grid').querySelector('[data-testid="card-date"]')).toBeNull();
+  });
+});
+
+// THE COUNT DECIDES, on a post card.
+//
+// The owner's refinement: "For thumbnails on posts with only one asset,
+// it can show the extension, but not if there is more than one asset in
+// the post." Both directions are pinned, because this rule is only
+// meaningful as a pair — a test that a single-asset post shows "png"
+// passes just as well on a card that shows it unconditionally, which is
+// precisely the bug the ruling exists to prevent.
+//
+// The reason it is a count: on a set, the cover's extension is not the
+// post's fact. A carousel of a PNG, a PSD and an MP4 labelled "png" by
+// whichever member happens to be the cover says something false about
+// the other two — the failure #1111 named when it made the badge state
+// the SET rather than any one member's kind.
+describe('PostCard — the extension is a SINGLE-asset fact', () => {
+  const ext = (c: HTMLElement) => c.querySelector('[data-testid="thumb-band-extension"]');
+
+  it('SHOWS the extension when the post holds exactly one asset', () => {
+    const e = ext(postCard('thumbnail', 1));
+    expect(e).toBeTruthy();
+    expect(e!.textContent!.trim()).toBe('png');
+  });
+
+  it('HIDES it as soon as the post holds two', () => {
+    expect(ext(postCard('thumbnail', 2))).toBeNull();
+  });
+
+  it('stays hidden on a larger set', () => {
+    expect(ext(postCard('thumbnail', 5))).toBeNull();
+  });
+
+  it('leaves the multi-asset badge to say the count instead', () => {
+    // What a set shows in place of the extension, so the "no extension"
+    // assertion above is not passing on an empty band.
+    const c = postCard('thumbnail', 3);
+    expect(band(c)!.querySelector('[data-testid="card-kind-multi"]')).toBeTruthy();
+    // ...and a single-asset post gets the plain kind glyph beside its
+    // extension, never the multi badge.
+    const one = postCard('thumbnail', 1);
+    expect(band(one)!.querySelector('[data-testid="card-kind"]')).toBeTruthy();
+    expect(band(one)!.querySelector('[data-testid="card-kind-multi"]')).toBeNull();
+  });
+
+  it('puts the extension after the icon, as the asset band does', () => {
+    const c = postCard('thumbnail', 1);
+    const badge = band(c)!.querySelector('[data-testid^="card-kind"]')!;
+    expect(badge.compareDocumentPosition(ext(c)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows no extension in grid or masonry, which have no band', () => {
+    expect(ext(postCard('grid', 1))).toBeNull();
+    expect(ext(postCard('masonry', 1))).toBeNull();
+  });
+
+  it('WITHHOLDS the extension when the cover is restricted', () => {
+    // A withheld value has derived copies, and each one has to be
+    // withheld too. The band already suppresses the kind badge for a
+    // restricted cover; a card that hides the icon and then prints
+    // "png" beside the gap has disclosed the thing it just withheld.
+    const p = post(1);
+    p.members[0] = { ...p.members[0], restricted: true } as (typeof p.members)[0];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = render(PostCard, { post: p as any, mode: 'thumbnail' as ViewMode }).container;
+    expect(ext(c)).toBeNull();
+    // The badge is gone too — i.e. the test is observing the restricted
+    // branch and not simply a card that failed to render a band.
+    expect(band(c)!.querySelector('[data-testid^="card-kind"]')).toBeNull();
   });
 });

@@ -429,6 +429,38 @@
 
   const memberCount = $derived(memberCountProp ?? post.members.length);
 
+  /** The extension thumbnail's band shows, or null to show none.
+   *
+   *  ONE ASSET ONLY. The owner's refinement: "For thumbnails on posts
+   *  with only one asset, it can show the extension, but not if there
+   *  is more than one asset in the post."
+   *
+   *  The reason the rule is a COUNT and not a preference: on a set, the
+   *  cover's extension is not the post's fact. A carousel of a PNG, a
+   *  PSD and an MP4 would be labelled "png" by whichever member happens
+   *  to be the cover, which says something false about the other two —
+   *  the exact failure #1111 named when it made the badge state the SET
+   *  ("4 ⬠") instead of any one member's kind. A single-asset post has
+   *  no other members to misrepresent, so the extension is simply that
+   *  asset's, and the card can say which file it is for the same reason
+   *  AssetCard's band does.
+   *
+   *  `memberCount` and not `post.members.length` is the truth rule from
+   *  the props block: a search hit ships one member with the real total
+   *  beside it, so a 4-asset post arriving as a single cover row must
+   *  still count as a set here.
+   *
+   *  Withheld when the cover is RESTRICTED. The extension is a DERIVED
+   *  COPY of a value this reader may not have, and the band already
+   *  suppresses the kind badge on the same condition — a card that
+   *  hides the icon and then prints "psd" beside the gap has disclosed
+   *  the thing it just withheld. */
+  const bandExtension = $derived(
+    coverRestricted || memberCount > 1
+      ? null
+      : (coverFileExtension ?? '').replace(/^\./, '') || null,
+  );
+
   // ── #1111: the grid card's overlay ──────────────────────────────────
   //
   // At rest a grid tile is IMAGE ONLY — the reference's discovery-wall
@@ -721,6 +753,17 @@
     >
       {#if !coverRestricted}
         <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
+      {/if}
+      {#if bandExtension}
+        <!-- SINGLE-ASSET POSTS ONLY — see `bandExtension`. Same type
+             scale and same position as AssetCard's band, because on a
+             one-asset post this card IS showing a file and there is no
+             reason for the two to look different when they are saying
+             the same thing. -->
+        <span
+          class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
+          data-testid="thumb-band-extension"
+        >{bandExtension}</span>
       {/if}
       <span class="flex-1"></span>
       <CardCheckbox id={post.id} placement="inline" {orderedIds} />
