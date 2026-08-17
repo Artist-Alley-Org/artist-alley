@@ -526,6 +526,72 @@
   // for that reason: the condition that matters is who is looking.
   const guestEmpty = $derived(showEmpty && !auth.user);
 
+  // ── #1190: an empty wall must say WHAT emptied it ─────────────────
+  //
+  // The bug this closes is not the filter. It is that a reader who
+  // narrowed the feed and landed on nothing was told "No posts yet —
+  // once posts are uploaded they'll appear here", which is a statement
+  // about the INSTANCE. The owner picked E-book, got that sentence, and
+  // read it as the type filter being broken. It was not: the feed pill
+  // was on Following, `?kind=ebook` intersected with the follow graph,
+  // and the intersection was legitimately empty
+  // (`?kind=ebook&feed=following` → 0 while `?kind=ebook` → 4 on the
+  // same session and the same stack). An honestly empty page that
+  // describes itself as an empty instance is indistinguishable from a
+  // broken one.
+  //
+  // WHICH narrowings get named here, and why not all of them: the type
+  // filter and the feed scope are the two that leave no trace on the
+  // page. `?team=` and `?tag=` already print themselves in the feed
+  // HEADING directly above this block — a reader looking at an empty
+  // wall under "Props" or "#fantasy" can see what they asked for — and
+  // `?q=` has had its own "No matches / try a different search term"
+  // since long before this. Repeating those here would be a second
+  // label for a fact already on screen; the two that are invisible are
+  // the ones that get a sentence.
+  //
+  // The names come from the SAME i18n keys the controls draw with —
+  // `card.fallback.kind.*` is what the checkbox list and the card badge
+  // are both labelled from — so the sentence cannot name a type the
+  // dropdown spells differently.
+  //
+  // A name with no label is DROPPED rather than printed. `t()` falls
+  // back to the key, so `?kind=nonsense` — which the server answers with
+  // an empty page on purpose — would otherwise put the literal string
+  // `card.fallback.kind.nonsense` in front of a reader. An unnameable
+  // filter degrades to the plain empty state, which is the honest
+  // answer: the page cannot say what it was narrowed to.
+  const activeKindLabels = $derived(
+    activeKindList
+      .map((k) => ({ k, label: t(`card.fallback.kind.${k}`) }))
+      .filter(({ k, label }) => label !== `card.fallback.kind.${k}`)
+      .map(({ label }) => label)
+      .join(', '),
+  );
+  const followingScope = $derived(browseView.filter === 'following');
+  const emptyTitle = $derived(
+    query
+      ? t('browse.empty.no_matches')
+      : activeKindLabels && followingScope
+        ? t('browse.empty.kind_following_title', { types: activeKindLabels })
+        : activeKindLabels
+          ? t('browse.empty.kind_title', { types: activeKindLabels })
+          : followingScope
+            ? t('browse.empty.following_title')
+            : t('browse.empty.no_posts_yet'),
+  );
+  const emptyHint = $derived(
+    query
+      ? t('browse.empty.try_different')
+      : activeKindLabels && followingScope
+        ? t('browse.empty.kind_following_hint')
+        : activeKindLabels
+          ? t('browse.empty.kind_hint')
+          : followingScope
+            ? t('browse.empty.following_hint')
+            : t('browse.empty.uploaded_appear_here'),
+  );
+
   // ?post={uuid} → overlay the post on top of the feed. The feed stays
   // mounted (no scroll loss, no re-fetch). The watcher, the close
   // policy and the ← / → walk all live in PostParamHost since #1130 —
@@ -815,13 +881,15 @@
       </div>
     </div>
   {:else if showEmpty}
-    <div class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-      <p class="font-medium text-fg">{query ? t('browse.empty.no_matches') : t('browse.empty.no_posts_yet')}</p>
-      <p class="mt-1 text-sm">
-        {query
-          ? t('browse.empty.try_different')
-          : t('browse.empty.uploaded_appear_here')}
-      </p>
+    <!-- #1190 — the sentence names the narrowing that is not otherwise
+         visible on the page. See `emptyTitle` for which ones those are
+         and why the team/tag chips are deliberately not among them. -->
+    <div
+      class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted"
+      data-testid="browse-empty"
+    >
+      <p class="font-medium text-fg" data-testid="browse-empty-title">{emptyTitle}</p>
+      <p class="mt-1 text-sm" data-testid="browse-empty-hint">{emptyHint}</p>
     </div>
   {:else}
     <!--

@@ -1092,14 +1092,15 @@ func (h *Handler) ListPosts(
 		tagPtr = req.Params.Tag
 	}
 
-	// ?kind= restricts the feed to posts whose COVER asset is of the
-	// named kind(s) — the browse footer's type filter (#1166).
+	// ?kind= restricts the feed to posts CONTAINING an asset of the
+	// named kind(s) — the browse footer's type filter (#1166, widened
+	// from cover-only to any-member by #1190).
 	//
 	// Parsed here and enforced in kindFilterSQL, which carries the
-	// cover's field-plane readability rule with it: a cover the caller
-	// may not read matches no kind, because the card withholds its badge
-	// and a filter that could still select the post would hand the same
-	// fact back by elimination.
+	// per-member field-plane readability rule with it: a member the
+	// caller may not read contributes no kind, because the card
+	// withholds everything about it and a filter that could still select
+	// the post through it would hand the same fact back by elimination.
 	//
 	// No authorization decision at this layer, for the same reason
 	// ?team_id= has none: the conjunct NARROWS and the post read rule

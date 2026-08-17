@@ -200,7 +200,13 @@
       "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first.",
       "guest_title": "Nothing public to show",
       "guest_hint": "You're signed out, so you only see posts marked public. Sign in to see what members have shared.",
-      "guest_no_matches_hint": "Nothing public matches this. Sign in to search member content too."
+      "guest_no_matches_hint": "Nothing public matches this. Sign in to search member content too.",
+      "kind_title": "No {types} posts here",
+      "kind_hint": "This wall is filtered by type. Tick more types to widen it.",
+      "kind_following_title": "No {types} posts from people you follow",
+      "kind_following_hint": "You're on the Following feed and filtered by type. Switch to Latest, or tick more types.",
+      "following_title": "Nothing from people you follow yet",
+      "following_hint": "Follow more people and teams, or switch to Latest to see everything."
     },
     "end_of_feed": "— end of feed —"
   },

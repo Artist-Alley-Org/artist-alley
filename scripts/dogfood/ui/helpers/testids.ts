@@ -121,6 +121,13 @@ export const testIds = {
     // is the count-plus-Shapes badge a multi-asset post draws instead.
     cardKind:            'card-kind',
     cardKindMulti:       'card-kind-multi',
+    // The empty wall, and the two lines that have to name what emptied
+    // it: the type filter and the Following scope leave no other trace
+    // on the page, and a reader who cannot see the narrowing reads an
+    // honestly empty result as a broken one (#1190).
+    empty:               'browse-empty',
+    emptyTitle:          'browse-empty-title',
+    emptyHint:           'browse-empty-hint',
   },
 
   // Generic page surfaces ------------------------------------

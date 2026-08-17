@@ -12,28 +12,6 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
-// coverAssetSQL resolves ONE post's cover asset id, as a scalar
-// expression correlated to the feed query's `posts` row.
-//
-// It restates the card's own choice — `post.cover_asset_id ?? the first
-// member` (PostCard.svelte's `coverAssetId`) — because the filter has
-// to select the asset whose badge the reader will actually see. A post
-// with no explicit cover still draws a badge, off its first member, so
-// filtering only on `cover_asset_id` would have made every such post
-// unreachable by any kind while still showing a kind.
-//
-// `ORDER BY sort_order, added_at` and the `deleted_at IS NULL` join are
-// ListPostAssets' ordering and filter, not a second opinion about what
-// "first member" means: that query is what populates `post.members`, so
-// its first row is the one the card resolves against.
-const coverAssetSQL = `COALESCE(posts.cover_asset_id, (
-             SELECT pa.asset_id
-               FROM post_assets pa
-               JOIN assets fa ON fa.id = pa.asset_id
-              WHERE pa.post_id = posts.id AND fa.deleted_at IS NULL
-              ORDER BY pa.sort_order ASC, pa.added_at ASC
-              LIMIT 1))`
-
 // kindFilterSQL renders the `?kind=` conjunct for the feed query
 // (#1166), beginning with " AND …" so callers concatenate it into an
 // existing WHERE clause, plus the arguments it binds.
@@ -44,6 +22,28 @@ const coverAssetSQL = `COALESCE(posts.cover_asset_id, (
 // unreferenced parameter is a 42P18 ("could not determine data type"),
 // not a harmless extra, which is the trap the mature conjunct above the
 // call site documents at length.
+//
+// # ANY MEMBER THE CALLER CAN READ, not the cover (#1190)
+//
+// A post matches kind K when ANY of its members that this caller may
+// read resolves to K. The owner's ruling: "a post containing an ebook
+// matches the ebook filter, cover or not". #1166 shipped the cover-only
+// reading and it answered the wrong question — a five-file art drop
+// whose first image happens to be the cover was unreachable by every
+// kind it actually contains, so a reader looking for the epub inside it
+// got an empty wall while the epub sat in the post.
+//
+// The membership is `post_assets`, and the EXPLICIT COVER IS NOT ADDED
+// BESIDE IT even though `posts.cover_asset_id` can name a non-member
+// (nothing in CreatePost/UpdatePost requires the cover to be attached —
+// only that the caller may read it). Widening to it would be widening
+// past the card: PostCard resolves its cover as
+// `post.cover_asset_id ?? members[0]` and then LOOKS IT UP IN
+// `post.members`, so a cover that is not a member yields no
+// `coverAsset`, no kind badge and no extension band. Selecting a post
+// by a fact its card cannot draw is the disagreement this filter's
+// whole test suite is built to catch. Members are what the reader can
+// see; members are what the filter selects on.
 //
 // # The shape of the predicate
 //
@@ -60,17 +60,24 @@ const coverAssetSQL = `COALESCE(posts.cover_asset_id, (
 // (a PNG with ref 13) would match `?kind=image` through its extension
 // even though its badge says sprite.
 //
-// # The readability conjunct is not optional
+// # The readability conjunct is not optional, and it lives PER MEMBER
 //
 // visibility.FieldsReadableSQL is the SQL twin of the exact Go call
 // enrichPreview makes to decide `PostMember.Restricted`, so "this
-// cover matched" and "this cover's badge is drawn" are one decision.
-// Dropping it would turn the filter into an oracle for a value the card
-// deliberately withholds: a restricted cover shows no kind badge and no
-// extension band, and a filter that could still select the post lets a
-// reader recover the kind by asking for each one in turn. That is the
-// derived-copy defect class of #902/#1066, arriving through a new
-// channel — so the channel carries the rule with it.
+// member matched" and "this member's kind is drawable" are one
+// decision. It sits INSIDE the per-member EXISTS, beside the arms, so
+// widening the search from the cover to the whole membership does not
+// widen what may be probed: an unreadable member is not a candidate at
+// all.
+//
+// Dropping it — or hoisting it out to the post — would turn the filter
+// into an oracle for a value the card deliberately withholds: a
+// restricted member shows no kind and no extension anywhere on the
+// card, and a filter that could still select the post lets a reader
+// recover that member's kind by asking for each kind in turn. That is
+// the derived-copy defect class of #902/#1066, arriving through a new
+// channel — so the channel carries the rule with it. #1190 widens WHICH
+// assets are looked at and changes nothing about WHICH may be looked at.
 //
 // It cannot widen: it is a conjunct INSIDE an EXISTS that is itself a
 // conjunct, and the whole fragment only ever removes rows.
@@ -136,10 +143,15 @@ func kindFilterSQL(id *auth.Identity, sel viewkind.Selection, argOffset int) (st
 		args = append(args, callerRef)
 	}
 
+	// The membership join, not a correlated scalar. `deleted_at IS NULL`
+	// is ListPostAssets' own filter, so the assets considered here are
+	// exactly the ones that reach `post.members` — a soft-deleted asset
+	// is not a member of anything the reader can see.
 	return `
-  AND EXISTS (SELECT 1 FROM assets ca
-                WHERE ca.id = ` + coverAssetSQL + `
-                  AND ca.deleted_at IS NULL
-                  AND (` + strings.Join(arms, `
-                       OR `) + `)` + readable + `)`, args
+  AND EXISTS (SELECT 1 FROM post_assets kpa
+                JOIN assets ca ON ca.id = kpa.asset_id
+               WHERE kpa.post_id = posts.id
+                 AND ca.deleted_at IS NULL
+                 AND (` + strings.Join(arms, `
+                      OR `) + `)` + readable + `)`, args
 }

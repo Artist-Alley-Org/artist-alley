@@ -21,17 +21,30 @@
 // hold exactly when the post is in what `?kind=K` returns. One
 // direction alone is satisfiable by a filter that returns too little.
 //
+// ⭐ #1190 WIDENED THE FILTER AND THE BICONDITIONAL SURVIVED — read
+// this before assuming it should have been weakened. The filter now
+// matches ANY readable member, so a post can be selected by a kind its
+// COVER is not. But a card only draws a KIND badge when it stands for
+// exactly one visible asset: a set draws the count plus Shapes and
+// names no kind at all (#1111). So on every card this check can see,
+// "the cover's kind" and "the membership's kinds" are the same set of
+// one, and both directions still hold. Widening it to sets would not
+// make the check stronger — it would make it meaningless, since there
+// is no badge there to agree or disagree with anything.
+//
 // It reads the badges the page actually drew rather than re-deriving
 // them here. A second copy of `kindForAsset` in this file would agree
 // with the bug it was written to catch, and importing the module by
 // source path only works against the Vite dev server — CI serves the
 // BUILT app, where `/src/...` does not exist.
 //
-// Multi-asset posts are the deliberate limit: their card states the
-// SET (count plus Shapes) and no kind at all (#1111), so there is no
-// badge for a filter to disagree with. What is asserted for them is
-// what is assertable — the kinds partition the feed, so each lands in
-// exactly one bucket.
+// WHAT #1190 DID RETIRE is the partition. The kinds used to be
+// disjoint, because a post had one cover and a cover has one kind; a
+// post holding a .glb and an .mp4 is now in `?kind=3d` AND in
+// `?kind=video`, so "no post appears in two buckets" is false by
+// design and the assertion that pinned it is gone. Its replacement is
+// the OVERLAP assertion — the same fact stated in the direction that is
+// now true — plus the union law, which never depended on disjointness.
 //
 // # The rest is the ratified anatomy
 //
@@ -167,15 +180,19 @@ test.describe('#1166 browse footer — asset-type filter', () => {
       await page.mouse.wheel(0, 2400);
       await page.waitForTimeout(400);
     }
+    // Single-asset cards only — a set draws the count badge and states
+    // no kind, and since #1190 the wall legitimately holds sets whose
+    // cover is not a video. `badgeLabels` reads `card-kind` exactly, so
+    // what it collects is the population this rule applies to.
     const labels = await badgeLabels(page);
     expect(labels.length, 'no cards on the filtered wall').toBeGreaterThan(0);
     expect(
       labels.filter((l) => l !== KIND_LABEL.video),
-      'a badge on the wall disagrees with the applied filter',
+      'a single-asset card on the wall disagrees with the applied filter',
     ).toEqual([]);
   });
 
-  test('badge and filter agree in BOTH directions, and the kinds partition the feed', async ({
+  test('badge and filter agree in BOTH directions, and the kinds OVERLAP', async ({
     page,
   }) => {
     await page.goto('/');
@@ -196,7 +213,9 @@ test.describe('#1166 browse footer — asset-type filter', () => {
     }
 
     // ⭐ The biconditional. For every card the page actually drew a kind
-    // badge on: it is in `?kind=K` exactly when its badge says K.
+    // badge on — which is every SINGLE-asset card and no other — it is
+    // in `?kind=K` exactly when its badge says K. See the header note on
+    // why #1190's any-member widening leaves this intact.
     for (const kind of Object.keys(KIND_LABEL)) {
       const label = KIND_LABEL[kind];
       const shouldBe = cards.filter((c) => c.label === label).map((c) => c.id);
@@ -211,19 +230,104 @@ test.describe('#1166 browse footer — asset-type filter', () => {
       ).toEqual([]);
     }
 
-    // The kinds are disjoint — a post's cover has ONE kind, so no post
-    // may be reachable through two of them.
     const kinds = Object.keys(KIND_LABEL);
-    for (let i = 0; i < kinds.length; i++) {
-      for (let j = i + 1; j < kinds.length; j++) {
-        const overlap = [...sets[kinds[i]]].filter((id) => sets[kinds[j]].has(id));
-        expect(overlap, `${kinds[i]} and ${kinds[j]} both returned the same post`).toEqual([]);
+
+    // ⭐ #1190: A POST WITH TWO KINDS IN IT IS RETURNED BY BOTH.
+    //
+    // The one check here that the cover-only implementation cannot pass,
+    // and the reason the disjointness assertions it replaced are gone.
+    //
+    // The hard part is naming such a post WITHOUT a kind table. This
+    // file may not carry one — a second copy of `kindForAsset` agrees
+    // with the bug it was written to catch — so the map is LEARNED from
+    // what the app itself rendered: every SINGLE-asset card states its
+    // kind in a badge, and the payload states that same asset's
+    // extension and asset_type, so the wall is a (extension, asset_type)
+    // → kind oracle for exactly the formats it is showing. A post whose
+    // readable members resolve, through THAT map, to two different kinds
+    // must be in both buckets. Nothing here decides what a format means;
+    // the page already did.
+    //
+    // The key is the PAIR and not the extension, because the extension
+    // alone is not the input to the derivation it is learning: a sprite
+    // atlas is a PNG and only the ref separates it from a texture. Keyed
+    // on the extension alone, one atlas on the wall would teach this
+    // that "png means sprite sheet" and the assertion below would then
+    // demand the wrong bucket. Any pair whose cards DISAGREE is dropped
+    // rather than resolved — an oracle that has seen a contradiction
+    // about a format has nothing to say about it.
+    const corpus = await page.evaluate(async () => {
+      const d = await (await fetch('/api/v1/posts?limit=200')).json();
+      return (d.items ?? []).map(
+        (p: {
+          id: string;
+          members?: Array<{
+            restricted?: boolean;
+            asset?: { file_extension?: string; asset_type?: number | null };
+          }>;
+        }) => ({
+          id: p.id,
+          formats: [
+            ...new Set(
+              (p.members ?? [])
+                .filter((m) => !m.restricted && m.asset)
+                .map(
+                  (m) =>
+                    (m.asset?.file_extension ?? '').replace(/^\./, '').toLowerCase() +
+                    '|' +
+                    String(m.asset?.asset_type ?? ''),
+                ),
+            ),
+          ],
+        }),
+      ) as Array<{ id: string; formats: string[] }>;
+    });
+    const byId = new Map(corpus.map((p) => [p.id, p]));
+    const learned = new Map<string, string | null>(); // null = contradicted
+    for (const c of cards) {
+      // Single-asset cards only — `cards` is exactly those — so the one
+      // readable format and the badge describe the same asset.
+      const formats = byId.get(c.id)?.formats ?? [];
+      if (formats.length !== 1) continue;
+      const seen = learned.get(formats[0]);
+      if (seen === undefined) learned.set(formats[0], c.label);
+      else if (seen !== c.label) learned.set(formats[0], null);
+    }
+    const labelToKind = new Map(kinds.map((k) => [KIND_LABEL[k], k]));
+    const twoKindPosts: Array<{ id: string; a: string; b: string }> = [];
+    for (const p of corpus) {
+      const named = [
+        ...new Set(
+          p.formats
+            .map((f) => learned.get(f))
+            .filter((l): l is string => !!l && labelToKind.has(l)),
+        ),
+      ];
+      if (named.length >= 2) {
+        twoKindPosts.push({
+          id: p.id,
+          a: labelToKind.get(named[0])!,
+          b: labelToKind.get(named[1])!,
+        });
       }
+    }
+    // Genuinely unobservable on a corpus whose posts are all one kind —
+    // there both implementations agree and there is nothing to see.
+    test.skip(
+      twoKindPosts.length === 0,
+      'no post on this instance holds two kinds the wall could name',
+    );
+    for (const { id, a, b } of twoKindPosts.slice(0, 10)) {
+      expect(
+        [sets[a].has(id), sets[b].has(id)],
+        `post ${id} holds a ${a} and a ${b}; both filters must return it (#1190)`,
+      ).toEqual([true, true]);
     }
 
     // A multi-kind request is exactly the union of its parts — which is
     // also what covers the multi-asset posts, whose card states no kind
-    // for the check above to use.
+    // for the check above to use. Unaffected by the overlap: a union is
+    // a set, so a post in two of the parts is in it once.
     const union = new Set(await idsForKind(page, kinds.join(',')));
     const parts = new Set(kinds.flatMap((k) => [...sets[k]]));
     expect(union.size, 'the multi-kind request is not the union of its parts').toBe(parts.size);
@@ -292,6 +396,49 @@ test.describe('#1166 browse footer — asset-type filter', () => {
           .map((e) => (e as HTMLElement).dataset.kind),
       );
     expect(ticked).toEqual(['image', '3d']);
+  });
+
+  // ⭐ #1190's DIAGNOSIS half. The owner picked E-book, got nothing, and
+  // read "No posts yet — once posts are uploaded they'll appear here" as
+  // the filter being broken. It was not: the feed pill was on Following,
+  // and `?kind=ebook&feed=following` was legitimately empty while
+  // `?kind=ebook` returned rows on the same session. An honestly empty
+  // page that describes itself as an EMPTY INSTANCE is indistinguishable
+  // from a broken one, so the sentence now names what emptied it.
+  //
+  // Both narrowings get their own case because they compose: the type
+  // filter alone, and the type filter inside the Following scope.
+  test('an empty filtered wall names the type filter', async ({ page }) => {
+    // A kind this instance genuinely has none of. `sequence` is the
+    // guaranteed one — a real kind in the vocabulary that no single
+    // asset can ever resolve to — so this case never depends on the
+    // corpus, and the page reads its selection off the URL exactly as
+    // the dropdown writes it.
+    await page.goto('/?kind=sequence');
+    const title = page.locator(tid('browse-empty-title'));
+    await expect(title).toBeVisible();
+    // The TYPE is named, in the same words the checkbox list uses.
+    await expect(title).toContainText('Image sequence');
+    // And the old sentence — the one about the instance — is gone.
+    await expect(title).not.toContainText('No posts yet');
+  });
+
+  test('an empty Following + type wall names BOTH', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator(tid('browse-wall'))).toBeVisible();
+    // Drive the real feed pill, not a store poke: which scope is active
+    // is exactly what the owner could not see, so the test has to get
+    // there the way they did.
+    await page.getByRole('tab', { name: 'Following' }).click();
+    await page.goto('/?kind=sequence');
+
+    const title = page.locator(tid('browse-empty-title'));
+    await expect(title).toBeVisible();
+    await expect(title).toContainText('Image sequence');
+    await expect(title).toContainText('follow');
+    // The hint names the way out of both, which is the part the owner
+    // had no way to work out from the page.
+    await expect(page.locator(tid('browse-empty-hint'))).toContainText('Latest');
   });
 
   test('composes with the rail chips', async ({ page }) => {

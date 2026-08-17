@@ -5747,8 +5747,9 @@ paths:
           in: query
           required: false
           description: |
-            Restrict the feed to posts whose COVER asset is of the given
-            kind — the browse footer's type filter (#1166).
+            Restrict the feed to posts CONTAINING an asset of the given
+            kind — the browse footer's type filter (#1166, widened by
+            #1190).
 
             Comma-joined, spelled the way `/search?types=` already
             spells a multi-value narrowing filter on this wire:
@@ -5760,29 +5761,41 @@ paths:
             and a filter that used a different vocabulary from the badge
             could not be checked against it by looking at the page.
 
-            THE COVER, not any member. A post matching because some
-            member the caller cannot see is a video would disclose that
-            member's kind; any-member matching is deferred with the rest
-            of the filter panel. The cover is `cover_asset_id` when set,
-            otherwise the first live member in display order — the same
-            choice the card makes.
+            ANY MEMBER, not the cover. A post matches when ANY of its
+            member assets resolves to a selected kind — "a post
+            containing an ebook matches the ebook filter, cover or not"
+            (#1190). #1166 shipped the cover-only reading and it
+            answered the wrong question: a multi-file art drop was
+            unreachable by every kind it actually contained except
+            whichever one its cover happened to be.
 
-            ⚠️ A COVER THIS CALLER MAY NOT READ NEVER MATCHES. The
-            card withholds the kind badge and the extension band for a
-            restricted cover, because the kind of something you may not
-            see is not yours to know; a filter that selected such a post
-            would hand back the same fact by elimination — ask for each
-            kind in turn and the one that returns the post has named it.
-            So the kind conjunct carries the field-plane readability
-            rule for the cover asset beside it. Such a post is reachable
-            unfiltered and by no kind.
+            THE KINDS THEREFORE DO NOT PARTITION. One post can be
+            returned by several kinds — a bundle holding a .glb and an
+            .mp4 is in `?kind=3d` and in `?kind=video` — and a card in
+            `?kind=ebook` can be drawing a video badge, because the
+            badge names the COVER while the filter names the
+            MEMBERSHIP. `?kind=A,B` is still exactly the union of
+            `?kind=A` and `?kind=B`.
+
+            ⚠️ A MEMBER THIS CALLER MAY NOT READ CONTRIBUTES NO KIND.
+            The card withholds everything about a restricted member —
+            it ships with no `asset` object at all — because the kind of
+            something you may not see is not yours to know; a filter
+            that selected a post through such a member would hand the
+            fact back by elimination (ask for each kind in turn and the
+            one that returns the post has named it). So the field-plane
+            readability rule sits INSIDE the per-member test: a post
+            whose only epub is restricted is absent from `?kind=ebook`
+            for a stranger and present for its owner, and a post whose
+            members are all unreadable is reachable unfiltered and by no
+            kind.
 
             NARROWING, like every other filter on this operation. It is
             a plain conjunct beside the post read rule, never a disjunct
             with it, so it can only remove posts from the page the
             caller would otherwise have received — including for an
-            anonymous caller under public mode, who sees public posts of
-            that cover kind and nothing else.
+            anonymous caller under public mode, who sees public posts
+            containing a visible asset of that kind and nothing else.
 
             An unrecognised name selects NOTHING rather than being
             ignored: `?kind=nonsense` answers an empty page, because
