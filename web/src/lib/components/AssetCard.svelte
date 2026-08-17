@@ -102,6 +102,22 @@
   // rather than a placeholder identity.
   const owner = $derived(asset.owner ?? null);
 
+  // The extension, bare and without its dot, for thumbnail's band.
+  //
+  // THIS IS NOT A REVERSAL OF #1158 — it is that ruling meeting the
+  // OTHER card. #1158 took the extension out of the POST band, where
+  // the surface is browse: a discovery wall of finished work, on which
+  // "png" next to an icon that already says "image" was a second and
+  // coarser answer to a question nobody was asking.
+  //
+  // An ASSET card is the working surface — a person's own uploads
+  // (#1161 makes that this component's main home), where the file IS
+  // the unit and "which of these is the TXT and which is the PNG" is a
+  // question the wall gets asked constantly. The owner drew that line
+  // explicitly. So the extension rides the asset band and stays off the
+  // post band, and the two are no longer twins in this one respect.
+  const extension = $derived((asset.file_extension ?? '').replace(/^\./, ''));
+
   // Hover state lives on the interactive <a> and feeds CardThumb's
   // sprite-scrub (keeps hover listeners off the presentation frame).
   let hovering = $state(false);
@@ -150,6 +166,10 @@
       : `p-[2px] rounded-[4px] bg-thumb-matte hover:z-10 hover:scale-[1.03] ${selected ? 'z-10 ring-2 ring-inset ring-accent' : ''}`,
   );
 
+  // The upload date. Already here for the masonry hover tooltip; the
+  // owner's ruling ("I want to see a date too like posts have") now
+  // also puts it on thumbnail's last metadata row, and it is the SAME
+  // derived value in PostCard's exact format rather than a second one.
   const created = $derived(new Date(asset.created_at));
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -271,15 +291,26 @@
 >
   {#if detailed && !restricted}
     <!-- ═══ #1136: the TOP CHROME BAND ═════════════════════════════
-         #1158: TYPE ICON LEFT, CONTROLS RIGHT, and no extension text —
-         the twin of PostCard's band, and the full argument is written
-         once over there. The short version: the icon (plus #1144's
-         tooltip, which says the type in words) is the exact answer to
-         "what kind of thing is this?", the extension was a second and
-         coarser answer to the same question, and the band now separates
-         what the card IS from what you can DO to it. The two controls
-         are a tight CLUSTER, with the elastic space between the groups
-         and none inside the pair — see PostCard's band for why.
+         TYPE ICON THEN EXTENSION on the left, CHECKBOX on the right.
+
+         The ⋯ menu has left this band the same way it left PostCard's,
+         for the same ruling and with the same sizing consequence — see
+         that band and CardMenu's trigger comment. What differs is the
+         EXTENSION, which #1158 removed from both bands and the owner
+         has now put back on this one only: "The ones that are all the
+         assets uploaded, should show the extension next to the asset
+         type icon." The reasoning is on `extension` in the script — the
+         short version is that a post wall is for discovery and an asset
+         wall is for finding a particular FILE, so the two surfaces
+         genuinely want different labels and this is no longer
+         PostCard's twin in that one respect.
+
+         The icon comes FIRST and the word second: the glyph is the
+         notation the whole card vocabulary is built on (#1111/#1047)
+         and the extension qualifies it, which is also the order the
+         band read in before #1136 flipped it. Absent extension renders
+         NOTHING rather than an empty slot — the icon still answers the
+         question on its own, which is exactly what #1158 established.
 
          It REPLACES #556's title header; the title moves down into the
          metadata stack where one fact per row reads as a record. -->
@@ -288,16 +319,18 @@
       data-testid="thumb-band-top"
     >
       <CardKindBadge {kind} variant="inline" tooltipKey={asset.id} />
+      {#if extension}
+        <!-- The same type scale the band wore for this text before
+             #1158 — 11px, uppercase, tracked, muted. Restored rather
+             than re-picked, so the band looks like itself. `min-w-0`
+             lets it truncate instead of shoving the checkbox. -->
+        <span
+          class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
+          data-testid="thumb-band-extension"
+        >{extension}</span>
+      {/if}
       <span class="flex-1"></span>
-      <div class="flex items-center">
-        <CardCheckbox id={asset.id} placement="inline" />
-        <CardMenu
-          assetId={asset.id}
-          detailPath="/assets/{asset.id}"
-          editPath={canEdit ? `/assets/${asset.id}/edit` : null}
-          placement="inline"
-        />
-      </div>
+      <CardCheckbox id={asset.id} placement="inline" />
     </div>
   {/if}
 
@@ -430,8 +463,16 @@
     <!-- ═══ #1136: the METADATA STACK ══════════════════════════════
          "Information at a glance, preview still clear" (owner's density
          table), now with the owner's placement grammar: one fact per
-         row, BELOW the preview, never over it — title, artist, then the
-         operator's `show_on_card` fields (#552).
+         row, BELOW the preview, never over it — title, artist, the
+         operator's `show_on_card` fields (#552), then the DATE and the
+         ⋯ menu.
+
+         The date row is the owner's addition, and it makes this stack
+         PostCard's shape rather than a shorter cousin of it: "I want to
+         see a date too like posts have." An upload wall is where
+         someone goes looking for the thing they made last week, and it
+         was the one card of the two that could not answer that without
+         being opened.
 
          The rows are unconditional where the fact exists, and the block
          itself is no longer gated on `owner || fields || origin`: the
@@ -451,6 +492,9 @@
              unreachable by keyboard (#1126). -->
         <CardAuthorLink author={owner} size="sm" />
       {/if}
+      <!-- The operator's `show_on_card` fields and the provenance line
+           (#552). Optional both — a card with neither renders nothing
+           here and goes straight from the artist to the date row. -->
       <a
         href="/assets/{asset.id}"
         class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -477,6 +521,40 @@
           </p>
         {/if}
       </a>
+      <!-- THE LAST ROW — the DATE and the ⋯ MENU (owner's ruling: "I
+           want to see a date too like posts have", and "I like the menu
+           bottom right").
+
+           PostCard's twin row carries the date plus the engagement
+           counts; an asset has no likes and no comments, so this one is
+           the date alone. Deliberately NOT padded out with a
+           substitute fact: the row exists because the date and the menu
+           both belong at the bottom of the stack, not because the two
+           cards have to have the same number of things in it.
+
+           THE TRIGGER IS A SIBLING OF THE LINK, NOT A CHILD OF IT.
+           Interactive content inside an <a> is invalid and the anchor's
+           own handler would navigate on the way to opening the menu
+           (#1126, and the identical note is on PostCard's row). The
+           anchor takes the elastic space with `min-w-0 flex-1` and
+           stays the row's click target; the trigger sits at its end.
+
+           The row's height is the 16px `text-xs` line box, and the
+           trigger is sized so it stays that — see CardMenu. -->
+      <div class="flex items-center gap-2">
+        <a
+          href="/assets/{asset.id}"
+          class="block min-w-0 flex-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <p class="truncate text-xs text-fg-muted" data-testid="card-date">{createdShort}</p>
+        </a>
+        <CardMenu
+          assetId={asset.id}
+          detailPath="/assets/{asset.id}"
+          editPath={canEdit ? `/assets/${asset.id}/edit` : null}
+          placement="inline"
+        />
+      </div>
     </div>
 
   {/if}

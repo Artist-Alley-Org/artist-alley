@@ -47,6 +47,14 @@ export default defineConfig({
       '$app/environment': fileURLToPath(
         new URL('./vitest-stubs/app-environment.ts', import.meta.url),
       ),
+      // PostCard reaches both of these — `page.url` to build its modal
+      // target and `goto` to navigate to it. Added when the card-chrome
+      // placement tests started rendering PostCard, which is the first
+      // test in the suite to mount it.
+      '$app/state': fileURLToPath(new URL('./vitest-stubs/app-state.ts', import.meta.url)),
+      '$app/navigation': fileURLToPath(
+        new URL('./vitest-stubs/app-navigation.ts', import.meta.url),
+      ),
     },
   },
   test: {

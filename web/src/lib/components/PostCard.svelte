@@ -429,6 +429,38 @@
 
   const memberCount = $derived(memberCountProp ?? post.members.length);
 
+  /** The extension thumbnail's band shows, or null to show none.
+   *
+   *  ONE ASSET ONLY. The owner's refinement: "For thumbnails on posts
+   *  with only one asset, it can show the extension, but not if there
+   *  is more than one asset in the post."
+   *
+   *  The reason the rule is a COUNT and not a preference: on a set, the
+   *  cover's extension is not the post's fact. A carousel of a PNG, a
+   *  PSD and an MP4 would be labelled "png" by whichever member happens
+   *  to be the cover, which says something false about the other two —
+   *  the exact failure #1111 named when it made the badge state the SET
+   *  ("4 ⬠") instead of any one member's kind. A single-asset post has
+   *  no other members to misrepresent, so the extension is simply that
+   *  asset's, and the card can say which file it is for the same reason
+   *  AssetCard's band does.
+   *
+   *  `memberCount` and not `post.members.length` is the truth rule from
+   *  the props block: a search hit ships one member with the real total
+   *  beside it, so a 4-asset post arriving as a single cover row must
+   *  still count as a set here.
+   *
+   *  Withheld when the cover is RESTRICTED. The extension is a DERIVED
+   *  COPY of a value this reader may not have, and the band already
+   *  suppresses the kind badge on the same condition — a card that
+   *  hides the icon and then prints "psd" beside the gap has disclosed
+   *  the thing it just withheld. */
+  const bandExtension = $derived(
+    coverRestricted || memberCount > 1
+      ? null
+      : (coverFileExtension ?? '').replace(/^\./, '') || null,
+  );
+
   // ── #1111: the grid card's overlay ──────────────────────────────────
   //
   // At rest a grid tile is IMAGE ONLY — the reference's discovery-wall
@@ -682,8 +714,13 @@
          is the question a working shelf asks first and the one the
          filename half-answers.
 
-         #1158 — THE EXTENSION IS GONE, and the band's order is fixed:
-         TYPE ICON LEFT, CONTROLS RIGHT.
+         #1158 — THE EXTENSION IS GONE, and the band now holds exactly
+         TWO things: the KIND BADGE left, the CHECKBOX right. The ⋯ menu
+         has left it entirely (#1171 follow-up, owner's ruling: "I like
+         the menu bottom right. Asset type icon and count top left and
+         checkbox top right"). See the metadata stack's last row, which
+         is where it went, and CardMenu's trigger comment for the
+         sizing that move required.
 
          #1136 opened this band as a FORMAT band and #1144 narrowed the
          extension to "where it is unambiguous" (single-asset, ≥sm). The
@@ -697,24 +734,19 @@
 
          The ordering is the other half. The band held CONTENT (kind) and
          CONTROLS (checkbox, ⋯) interleaved, with the checkbox first, so
-         the eye met a widget before it met the fact. Now the two groups
-         are separated: what the card IS on the left, what you can DO to
-         it on the right — the same split the metadata stack below and
-         the grid overlay already use, and the reading order a shelf
-         wants. The checkbox moving to the right is a MOVE, not a second
+         the eye met a widget before it met the fact. Now it is one fact
+         and one control: what the card IS on the left, and the one
+         control that belongs to READING a shelf — the checkbox — on the
+         right. The checkbox moving to the right is a MOVE, not a second
          checkbox: same `CardCheckbox`, same `orderedIds`, so
          shift-range and the marquee's passthrough behave as before.
 
-         TWO GROUPS, ONE GAP. The elastic space is between the groups and
-         nowhere else — the controls are a CLUSTER, not a distribution.
-         Spreading them with the band's own `gap-2` put ~28px of daylight
-         between the checkbox and the ⋯ (each is a 44px tap target around
-         a ~24px glyph, so the gap the eye sees is both paddings plus the
-         gap), and two controls that far apart read as two unrelated
-         widgets rather than this card's toolbar. The cluster has no gap
-         of its own: the tap targets butt together, which leaves the
-         glyphs a tight ~14px apart while both controls keep the full
-         44px target — the spacing shrinks, the touch surface does not. -->
+         ONE GAP, AND IT IS THE ONLY ONE. #1158's band held a two-control
+         CLUSTER and needed a note about not spreading it; with the ⋯
+         gone there is no cluster left to hold together, so the elastic
+         span simply pushes the checkbox to the edge. The band keeps its
+         `gap-2` for the degenerate case where a restricted cover
+         suppresses the badge and the checkbox is all there is. -->
     <div
       class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
@@ -722,17 +754,19 @@
       {#if !coverRestricted}
         <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
       {/if}
+      {#if bandExtension}
+        <!-- SINGLE-ASSET POSTS ONLY — see `bandExtension`. Same type
+             scale and same position as AssetCard's band, because on a
+             one-asset post this card IS showing a file and there is no
+             reason for the two to look different when they are saying
+             the same thing. -->
+        <span
+          class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
+          data-testid="thumb-band-extension"
+        >{bandExtension}</span>
+      {/if}
       <span class="flex-1"></span>
-      <div class="flex items-center">
-        <CardCheckbox id={post.id} placement="inline" {orderedIds} />
-        <CardMenu
-          assetId={coverAssetId}
-          postId={post.id}
-          detailPath="/posts/{post.id}"
-          manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
-          placement="inline"
-        />
-      </div>
+      <CardCheckbox id={post.id} placement="inline" {orderedIds} />
     </div>
   {/if}
 
@@ -1171,35 +1205,60 @@
              anchor (#1126). -->
         <CardAuthorLink {author} size="sm" />
       {/if}
-      <!-- ROW 3 — the date and the engagement facts. One row rather than
-           one per fact: they are a single "how has this been received"
-           reading, and four rows of one number each would push the
-           preview off a 200px card. -->
-      <a href="/posts/{post.id}" onclick={handleClick} class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <p class="flex items-center gap-2 text-xs text-fg-muted">
-          <span>{createdShort}</span>
-          {#if post.like_count > 0}
-            <span class="inline-flex items-center gap-1" title={t('card.footer.likes', { count: String(post.like_count) })}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-6.7-4.35-9.33-8.24C.9 10.06 1.6 6.5 4.6 5.4c2-.73 3.9.2 4.9 1.7l.5.75.5-.75c1-1.5 2.9-2.43 4.9-1.7 3 1.1 3.7 4.66 1.93 7.36C18.7 16.65 12 21 12 21z"/></svg>
-              {post.like_count}
-            </span>
-          {/if}
-          {#if post.comment_count > 0}
-            <span class="inline-flex items-center gap-1" title={t('card.footer.comments', { count: String(post.comment_count) })}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              {post.comment_count}
-            </span>
-          {/if}
-          {#if origin}
-            <!-- Provenance rides EVERY density (#552) — see the feed
-                 header and AssetCard's footer for the same line. -->
-            <span class="inline-flex items-center gap-1 truncate" data-testid="card-origin" title={t('card.origin_label')}>
-              <span aria-hidden="true">↗</span>
-              <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
-            </span>
-          {/if}
-        </p>
-      </a>
+      <!-- ROW 3 — the date, the engagement facts, and the ⋯ MENU. One
+           row rather than one per fact: they are a single "how has this
+           been received" reading, and four rows of one number each
+           would push the preview off a 200px card.
+
+           THE MENU IS A SIBLING OF THE LINK, NOT A CHILD OF IT. The
+           owner's ruling puts the ⋯ at this row's end, and the obvious
+           way to write that — dropping the button inside the anchor
+           that already spans the row — is invalid HTML (interactive
+           content inside an <a>) and would fire the card's navigation
+           on the way to opening the menu, since the anchor's click
+           handler sits between the button and the document. So the row
+           becomes a flex box holding two siblings: the anchor, which
+           takes the elastic space and stays the whole row's click
+           target, and the trigger at its end. Same rule the artist row
+           follows for the same reason (#1126).
+
+           The anchor keeps `min-w-0` because its `<p>` truncates the
+           origin peer name; without it the flex item refuses to shrink
+           below its content and the menu is pushed off the card. -->
+      <div class="flex items-center gap-2">
+        <a href="/posts/{post.id}" onclick={handleClick} class="block min-w-0 flex-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <p class="flex items-center gap-2 text-xs text-fg-muted">
+            <span>{createdShort}</span>
+            {#if post.like_count > 0}
+              <span class="inline-flex items-center gap-1" title={t('card.footer.likes', { count: String(post.like_count) })}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-6.7-4.35-9.33-8.24C.9 10.06 1.6 6.5 4.6 5.4c2-.73 3.9.2 4.9 1.7l.5.75.5-.75c1-1.5 2.9-2.43 4.9-1.7 3 1.1 3.7 4.66 1.93 7.36C18.7 16.65 12 21 12 21z"/></svg>
+                {post.like_count}
+              </span>
+            {/if}
+            {#if post.comment_count > 0}
+              <span class="inline-flex items-center gap-1" title={t('card.footer.comments', { count: String(post.comment_count) })}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                {post.comment_count}
+              </span>
+            {/if}
+            {#if origin}
+              <!-- Provenance rides EVERY density (#552) — see the feed
+                   header and AssetCard's footer for the same line. -->
+              <span class="inline-flex items-center gap-1 truncate" data-testid="card-origin" title={t('card.origin_label')}>
+                <span aria-hidden="true">↗</span>
+                <span class="truncate">{t('card.origin_from', { peer: origin.display_name })}</span>
+              </span>
+            {/if}
+          </p>
+        </a>
+        <CardMenu
+          assetId={coverAssetId}
+          postId={post.id}
+          detailPath="/posts/{post.id}"
+          manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
+          placement="inline"
+        />
+      </div>
     </div>
 
   {/if}
