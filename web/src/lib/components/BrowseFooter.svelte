@@ -20,10 +20,33 @@
   // server could see, and the user got the latest feed under another
   // name (#691). Every segment here must be a `FeedFilter`, and every
   // `FeedFilter` must be a value `GET /posts` accepts.
+  //
+  // #1166 adds the asset-type filter to the RIGHT cluster, beside sort,
+  // through the same seam (`trailing`). It is browse-only for the same
+  // reason the feed filter is: it filters a feed, and the surfaces that
+  // share ViewControls do not have one.
+  //
+  // Its selection lives in the URL rather than in browseView, which is
+  // the one place it deliberately differs from the feed filter beside
+  // it. `?kind=` has to make a filtered wall shareable and the back
+  // button correct — a store would survive navigation and describe
+  // nothing about the page you are looking at. Same choice the team and
+  // tag chips already made (#1113, #1123), so all three of the browse
+  // page's narrowing controls read out of one place.
   import ViewControls from '$components/ViewControls.svelte';
   import FooterTabs from '$components/FooterTabs.svelte';
+  import FeedKindFilter from '$components/FeedKindFilter.svelte';
   import { browseView, type FeedFilter } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
+
+  let {
+    kinds = [],
+    onkinds,
+  }: { kinds?: readonly string[]; onkinds?: (next: string[]) => void } = $props();
+
+  /** The panel's own open state, lifted here so ViewControls can hold
+   *  the bar on screen while it is up. */
+  let kindOpen = $state(false);
 
   const FILTERS: Array<{ id: FeedFilter; labelKey: string }> = [
     { id: 'latest',    labelKey: 'browse.filter.latest' },
@@ -41,7 +64,7 @@
   );
 </script>
 
-<ViewControls>
+<ViewControls trailingOpen={kindOpen}>
   {#snippet middle()}
     <!-- The selection lives in the browseView store, not in FooterTabs:
          it survives navigation and drives a query param, which a
@@ -51,6 +74,14 @@
       {active}
       label={t('browse.filter.label')}
       onSelect={(id) => browseView.setFilter(id as FeedFilter)}
+    />
+  {/snippet}
+
+  {#snippet trailing()}
+    <FeedKindFilter
+      selected={kinds}
+      bind:open={kindOpen}
+      onapply={(next) => onkinds?.(next)}
     />
   {/snippet}
 </ViewControls>

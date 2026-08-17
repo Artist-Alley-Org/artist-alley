@@ -102,3 +102,36 @@ export const KIND_ICON: Record<ViewKind, Component> = {
 export function iconForKind(kind: ViewKind): Component {
   return KIND_ICON[kind] ?? File;
 }
+
+/**
+ * The kinds the browse footer's type filter offers (#1166).
+ *
+ * DERIVED from KIND_ICON rather than listed again, which is the whole
+ * point of that map being exhaustive over `ViewKind`: adding a kind to
+ * the union puts it in the filter automatically, and the compiler
+ * already forced someone to pick its glyph. The label comes from the
+ * same place the badge's accessible name does —
+ * `card.fallback.kind.<kind>` — so the checkbox and the badge it
+ * selects for are never named differently.
+ *
+ * Two subtractions, both because the filter selects on a COVER ASSET's
+ * kind and neither of these can be one:
+ *
+ *   `sequence`  no single asset resolves to it — `kindForAsset` never
+ *               returns it, so its checkbox could only ever produce an
+ *               empty wall.
+ *   `placeholder` the resolver's "I could not tell" answer, and a filter
+ *               is a question about what something IS. Its label is
+ *               "File", which as a checkbox reads like a catch-all it is
+ *               not. A post whose cover lands there is still reachable —
+ *               all-checked means no filter, so it is on the unfiltered
+ *               wall like everything else.
+ *
+ * The order is KIND_ICON's declaration order, which groups the visual
+ * kinds first and is the order the checkbox list renders in.
+ */
+const NOT_FILTERABLE: ReadonlySet<ViewKind> = new Set<ViewKind>(['sequence', 'placeholder']);
+
+export const FILTERABLE_KINDS: readonly ViewKind[] = (
+  Object.keys(KIND_ICON) as ViewKind[]
+).filter((k) => !NOT_FILTERABLE.has(k));
