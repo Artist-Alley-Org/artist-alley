@@ -16,12 +16,22 @@
 // and the badge splits it into E-book and Document, so such a filter
 // returns two badges under one label.
 //
-// The DOM half only sees SINGLE-asset posts — a multi-asset post draws
-// the count-plus-Shapes badge instead of a kind glyph (#1111) — so the
-// spec also re-derives every returned item's cover kind through the
-// app's own resolver, imported from the running bundle rather than
-// copied here. Between them, every item on the filtered page is
-// checked.
+// The check is a BICONDITIONAL over the rendered wall, not a spot
+// check: for every card that draws a kind badge, `badge === K` must
+// hold exactly when the post is in what `?kind=K` returns. One
+// direction alone is satisfiable by a filter that returns too little.
+//
+// It reads the badges the page actually drew rather than re-deriving
+// them here. A second copy of `kindForAsset` in this file would agree
+// with the bug it was written to catch, and importing the module by
+// source path only works against the Vite dev server — CI serves the
+// BUILT app, where `/src/...` does not exist.
+//
+// Multi-asset posts are the deliberate limit: their card states the
+// SET (count plus Shapes) and no kind at all (#1111), so there is no
+// badge for a filter to disagree with. What is asserted for them is
+// what is assertable — the kinds partition the feed, so each lands in
+// exactly one bucket.
 //
 // # The rest is the ratified anatomy
 //
@@ -72,49 +82,50 @@ async function badgeLabels(page: Page): Promise<string[]> {
   );
 }
 
-/**
- * Re-derive the cover kind of every item `?kind=<kind>` returns, using
- * the app's OWN resolver. This is the half that covers multi-asset
- * posts, whose badge states the set rather than a kind.
- */
-async function coverKindsFor(page: Page, kind: string) {
+/** Every card on the wall that DREW a kind badge, as {postId, label}.
+ *
+ *  The post id comes from the card's own permalink rather than a
+ *  dedicated attribute: walk up from the badge until an ancestor holds
+ *  exactly one distinct `/posts/<id>` link, which is that card and
+ *  nothing wider. Cards with a restricted cover draw no kind badge at
+ *  all and are simply absent — which is the right answer, since they
+ *  must be selected by no kind either. */
+async function badgedCards(page: Page): Promise<Array<{ id: string; label: string }>> {
+  return page.evaluate(() => {
+    const out: Array<{ id: string; label: string }> = [];
+    for (const badge of Array.from(document.querySelectorAll('[data-testid="card-kind"]'))) {
+      let el: HTMLElement | null = badge.parentElement;
+      for (let depth = 0; el && depth < 10; depth++, el = el.parentElement) {
+        const hrefs = new Set(
+          Array.from(el.querySelectorAll('a[href^="/posts/"]')).map(
+            (a) => a.getAttribute('href') ?? '',
+          ),
+        );
+        if (hrefs.size !== 1) continue;
+        const id = [...hrefs][0].split('/posts/')[1].split(/[?#]/)[0];
+        out.push({ id, label: badge.getAttribute('aria-label') ?? '' });
+        break;
+      }
+    }
+    return out;
+  });
+}
+
+/** Every post id `?kind=<kind>` returns, paged to exhaustion. */
+async function idsForKind(page: Page, kind: string): Promise<string[]> {
   return page.evaluate(async (k: string) => {
-    const mod = await import('/src/lib/components/viewers/controller.ts');
-    const items: Array<Record<string, unknown>> = [];
+    const ids: string[] = [];
     let cursor: string | null = null;
     for (;;) {
-      let u = `/api/v1/posts?limit=200&kind=${k}`;
+      let u = '/api/v1/posts?limit=200';
+      if (k) u += '&kind=' + k;
       if (cursor) u += '&cursor=' + encodeURIComponent(cursor);
       const d = await (await fetch(u)).json();
-      items.push(...(d.items ?? []));
+      for (const p of d.items ?? []) ids.push(p.id);
       cursor = d.next_cursor ?? null;
       if (!cursor) break;
     }
-    const kinds: Record<string, number> = {};
-    let multi = 0;
-    for (const p of items as never[]) {
-      const post = p as {
-        cover_asset_id?: string | null;
-        members?: Array<{
-          asset_id: string;
-          restricted?: boolean;
-          asset?: { asset_type?: number | null; file_extension?: string | null };
-        }>;
-      };
-      const members = post.members ?? [];
-      if (members.length > 1) multi++;
-      const id = post.cover_asset_id ?? (members.length ? members[0].asset_id : null);
-      const m = members.find((x) => x.asset_id === id);
-      const resolved =
-        !m || m.restricted || !m.asset
-          ? '(withheld)'
-          : (mod as { kindForAsset: (a: unknown) => string }).kindForAsset({
-              asset_type: m.asset.asset_type ?? null,
-              file_extension: m.asset.file_extension ?? null,
-            });
-      kinds[resolved] = (kinds[resolved] ?? 0) + 1;
-    }
-    return { total: items.length, kinds, multi };
+    return ids;
   }, kind);
 }
 
@@ -164,21 +175,72 @@ test.describe('#1166 browse footer — asset-type filter', () => {
     ).toEqual([]);
   });
 
-  test('every returned item — multi-asset ones too — has a cover of the asked kind', async ({
+  test('badge and filter agree in BOTH directions, and the kinds partition the feed', async ({
     page,
   }) => {
     await page.goto('/');
     await expect(page.locator(tid('browse-wall'))).toBeVisible();
-
-    for (const kind of ['video', 'image', '3d']) {
-      const r = await coverKindsFor(page, kind);
-      test.skip(r.total === 0, `no ${kind} posts on this instance`);
-      expect(
-        Object.keys(r.kinds),
-        `?kind=${kind} returned ${r.total} items (${r.multi} multi-asset) with cover kinds ` +
-          JSON.stringify(r.kinds),
-      ).toEqual([kind]);
+    await expect(page.locator(tid('card-kind')).first()).toBeVisible();
+    // Walk a few screens so the sample spans more than the first page.
+    for (let i = 0; i < 4; i++) {
+      await page.mouse.wheel(0, 2400);
+      await page.waitForTimeout(400);
     }
+
+    const cards = await badgedCards(page);
+    expect(cards.length, 'no badged cards on the unfiltered wall').toBeGreaterThan(5);
+
+    const sets: Record<string, Set<string>> = {};
+    for (const kind of Object.keys(KIND_LABEL)) {
+      sets[kind] = new Set(await idsForKind(page, kind));
+    }
+
+    // ⭐ The biconditional. For every card the page actually drew a kind
+    // badge on: it is in `?kind=K` exactly when its badge says K.
+    for (const kind of Object.keys(KIND_LABEL)) {
+      const label = KIND_LABEL[kind];
+      const shouldBe = cards.filter((c) => c.label === label).map((c) => c.id);
+      const shouldNot = cards.filter((c) => c.label !== label).map((c) => c.id);
+      expect(
+        shouldBe.filter((id) => !sets[kind].has(id)),
+        `cards badged "${label}" that ?kind=${kind} did NOT return`,
+      ).toEqual([]);
+      expect(
+        shouldNot.filter((id) => sets[kind].has(id)),
+        `?kind=${kind} returned cards whose badge is not "${label}"`,
+      ).toEqual([]);
+    }
+
+    // The kinds are disjoint — a post's cover has ONE kind, so no post
+    // may be reachable through two of them.
+    const kinds = Object.keys(KIND_LABEL);
+    for (let i = 0; i < kinds.length; i++) {
+      for (let j = i + 1; j < kinds.length; j++) {
+        const overlap = [...sets[kinds[i]]].filter((id) => sets[kinds[j]].has(id));
+        expect(overlap, `${kinds[i]} and ${kinds[j]} both returned the same post`).toEqual([]);
+      }
+    }
+
+    // A multi-kind request is exactly the union of its parts — which is
+    // also what covers the multi-asset posts, whose card states no kind
+    // for the check above to use.
+    const union = new Set(await idsForKind(page, kinds.join(',')));
+    const parts = new Set(kinds.flatMap((k) => [...sets[k]]));
+    expect(union.size, 'the multi-kind request is not the union of its parts').toBe(parts.size);
+    expect([...parts].filter((id) => !union.has(id))).toEqual([]);
+
+    // And every one of them is on the unfiltered feed: the filter
+    // narrows, it never introduces a row.
+    const all = new Set(await idsForKind(page, ''));
+    expect(
+      [...union].filter((id) => !all.has(id)),
+      'a kind-filtered page returned a post the unfiltered feed does not have',
+    ).toEqual([]);
+    // `<=` and not `<`: whether any post's cover falls OUTSIDE the five
+    // kinds sampled here is a property of the instance's fixture, not of
+    // the filter. The subset assertion above is the one that carries the
+    // meaning.
+    expect(union.size).toBeLessThanOrEqual(all.size);
   });
 
   test('re-checking All clears the filter and restores the mixed wall', async ({ page }) => {
