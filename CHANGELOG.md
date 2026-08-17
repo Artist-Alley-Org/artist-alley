@@ -26,6 +26,20 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **The "Public" visibility option actually works now.** Choosing Public when posting had
+  always been refused by the server (a leftover reservation from before public mode existed),
+  so nobody could ever offer a post to anonymous viewers. The gate now accepts it, the seeded
+  library carries a real share of public work, and choosing Public is covered by a test that
+  reads the post back as an anonymous viewer (#1176 in part, PR #1180 — the anonymous feed
+  route itself opens in a follow-up).
+- **Seeded dates stay in the past.** The sample library had three dozen posts dated up to four
+  months into the future, permanently pinned atop Newest; generated dates now reflect into the
+  past (#1174, PR #1180).
+- **Drag-select works on asset cards.** The marquee could not see personal asset tiles at all —
+  and the profile page had no marquee wiring to begin with; sweeps now select posts and assets
+  alike (#1177, PR #1180).
+- **Mature-content settings moved to Community & moderation** in the admin, where policy
+  belongs (#1179, PR #1180).
 - **Grid tiles are sharp everywhere.** Grid view had been loading the smallest saved copy of
   every image (320px) and stretching it; tiles now request the right-sized copy for their
   actual size and screen density, on every page that shows cards — measured upscale at high
