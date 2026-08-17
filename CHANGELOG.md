@@ -40,6 +40,15 @@ where applicable, otherwise note "no-spec-impact."
   uploader until they're made into a post. The sample library's reference collections were
   reworked so every formerly-bare asset lives in a real post, authored by its owner and public
   only when everything in it is public (#1185, PR #1186; the deeper model change is #1161).
+- **Your feed shows everything you're allowed to see.** A signed-in member's wall used to
+  show only organization-internal posts — work published to the world was invisible to the
+  community it came from. The default is now every shared tier you can read (drafts stay out
+  of everyone's default wall, deliberately), which also makes filter counts finally agree
+  between signed-in and signed-out (#1193, PR #1199).
+- **Collections can be made public from the edit dialog** — the option existed everywhere but
+  the dialog (it appears when the instance allows anonymous browsing); the dialog also gained a
+  crop preview showing exactly what the featured strip will display of your cover, and more
+  breathing room (#1195, PR #1199).
 - **Advanced search speaks plainly and scales.** Developer wording is gone from the page, and
   any metadata field with a large vocabulary becomes a type-to-filter box instead of an endless
   chip wall. The type filter also learned a power move: double-click an option to select only
