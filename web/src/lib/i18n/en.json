@@ -268,7 +268,8 @@
     "origin_from": "from {peer}",
     "origin_label": "This item is hosted by another server",
     "multi": {
-      "badge_label": "{count} assets in this post"
+      "badge_label": "{count} assets in this post",
+      "badge_label_format": "{count} {format} assets in this post"
     },
     "band": {
       "mixed": "mixed",

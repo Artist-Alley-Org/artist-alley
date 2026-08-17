@@ -335,17 +335,26 @@
       class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
     >
-      <CardKindBadge {kind} variant="inline" tooltipKey={asset.id} />
-      {#if extension}
-        <!-- The same type scale the band wore for this text before
-             #1158 — 11px, uppercase, tracked, muted. Restored rather
-             than re-picked, so the band looks like itself. `min-w-0`
-             lets it truncate instead of shoving the checkbox. -->
-        <span
-          class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
-          data-testid="thumb-band-extension"
-        >{extension}</span>
-      {/if}
+      <!-- Glyph and word as ONE unit, no gap of their own, so the only
+           thing between them is the badge pill's 6px trailing padding
+           (was 14px: that padding plus the band's `gap-2`). PostCard's
+           band made the same move for the same owner ruling, and the
+           two are kept identical on purpose — a one-asset post and a
+           standalone asset are showing the same fact in the same
+           place. -->
+      <div class="flex min-w-0 items-center">
+        <CardKindBadge {kind} variant="inline" tooltipKey={asset.id} />
+        {#if extension}
+          <!-- The same type scale the band wore for this text before
+               #1158 — 11px, uppercase, tracked, muted. Restored rather
+               than re-picked, so the band looks like itself. `min-w-0`
+               lets it truncate instead of shoving the checkbox. -->
+          <span
+            class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
+            data-testid="thumb-band-extension"
+          >{extension}</span>
+        {/if}
+      </div>
       <span class="flex-1"></span>
       <CardCheckbox id={asset.id} placement="inline" />
     </div>
