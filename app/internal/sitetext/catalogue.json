@@ -1522,6 +1522,10 @@
             "title": "Anonymous browse",
             "blurb": "Whether non-signed-in visitors can browse."
           },
+          "mature_content": {
+            "title": "Mature content",
+            "blurb": "Allow artists to label work as mature, and readers to opt in."
+          },
           "rate_limits": {
             "title": "Rate limiting",
             "blurb": "Per-user and per-IP rate-limit policy."
@@ -1635,10 +1639,6 @@
           "browse_views": {
             "title": "Browse layouts",
             "blurb": "Choose which browse layouts your users can pick from."
-          },
-          "mature_content": {
-            "title": "Mature content",
-            "blurb": "Allow artists to label work as mature, and readers to opt in."
           },
           "maintenance": {
             "title": "Maintenance mode",
