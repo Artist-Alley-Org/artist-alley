@@ -447,34 +447,25 @@
   onDestroy(() => {});
 
   // ── Collection-picker state ───────────────────────────────────────
-  // pickerAssetIds / pickerPostIds are the working set the picker
-  // operates on. For single-asset (Edit menu) we set the assets to
-  // [currentAssetId]; for the bulk action to every item id; for "save
-  // this post" (#882) we set the POST instead and leave the assets
-  // empty. Driving every flow from one pair of state fields keeps the
-  // modal rendered at most once.
+  // The working set the picker operates on: the POST (#882). Saving the
+  // post keeps the author's framing — title, description, the carousel's
+  // order — as a reference that dies with their post.
   //
-  // Saving the POST and saving ALL ITS ASSETS are different actions and
-  // both are on the menu: one keeps the author's framing (title,
-  // description, the carousel's order) as a reference that dies with
-  // their post; the other lifts the images out into your own shelf.
-  let pickerAssetIds = $state<string[]>([]);
+  // #1185 — there were two more entry points here, both writing ASSET
+  // rows: "Add to collection…" in the viewer's Edit menu (the current
+  // member) and "Add all to collection" in the playlist menu (every
+  // member). They are gone. The reasoning against them is the one that
+  // removed the collection page's asset grid: "the other lifts the
+  // images out into your own shelf" was the pitch, and there is no shelf
+  // to lift them onto any more — a collection shows posts only, so both
+  // wrote `collection_resources` rows that nothing displays. Turning a
+  // selection of members into a POST in a collection is the replacement
+  // and it is #1161's.
   let pickerPostIds = $state<string[]>([]);
   let pickerOpen = $state(false);
 
-  function openPickerForCurrent(assetId: string) {
-    pickerAssetIds = [assetId];
-    pickerPostIds = [];
-    pickerOpen = true;
-  }
-  function openPickerForAll() {
-    pickerAssetIds = pl.source.items.map((it) => it.id);
-    pickerPostIds = [];
-    pickerOpen = true;
-  }
   function openPickerForPost() {
     if (!post) return;
-    pickerAssetIds = [];
     pickerPostIds = [post.id];
     pickerOpen = true;
   }
@@ -688,7 +679,6 @@
   }}
   canvasOverlay={whiteboardOpen && whiteboardSession ? whiteboardCanvasSlot : undefined}
   titleSlot={postTitleSlot}
-  onAddToCollection={openPickerForCurrent}
   onRecreatePreviews={isOwner ? recreatePreviews : undefined}
   onEditTags={isOwner ? editTags : undefined}
   onEditMetadata={isOwner ? editMetadata : undefined}
@@ -758,7 +748,6 @@
 
 {#if pickerOpen}
   <CollectionPicker
-    assetIds={pickerAssetIds}
     postIds={pickerPostIds}
     onClose={closePicker}
   />
@@ -890,9 +879,6 @@
             </button>
           {/if}
           {#if hasVisibleMembers}
-            <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
-              {t('playlist_actions.add_all_to_collection')}
-            </button>
             <button type="button" role="menuitem" onclick={bulkDownloadZip} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
               {t('playlist_actions.download_all_zip')}
             </button>

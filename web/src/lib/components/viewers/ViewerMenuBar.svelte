@@ -42,11 +42,14 @@
         window-controls zone (right edge) AND a "Close" entry in the
         File menu. Hosts that own their own close affordance omit this. */
     onClose?: () => void;
-    /** Optional — Edit menu's "Add to collection…" item is enabled
-        when the host wires this callback. The host opens its own
-        CollectionPicker so a single picker component drives both
-        per-asset and per-playlist add flows. */
-    onAddToCollection?: () => void;
+    /* #1185 — the Edit menu's "Add to collection…" item is gone, and so
+       is the `onAddToCollection` hook that enabled it. This menu bar is
+       always in ASSET context, and a collection shows posts only, so the
+       item wrote a `collection_resources` row that nothing renders. The
+       endpoint is untouched (#1161 retires it); the replacement flow —
+       turn this asset into a post in a collection — is #1161's too, and
+       a disabled "coming soon" stub in its place would advertise it
+       before it exists. */
     /** Optional — Edit menu's "Recreate previews" item appears when
         wired. Triggers the host's re-enqueue logic for the current
         asset's preview job. */
@@ -106,7 +109,6 @@
     onToggleFullscreen,
     onTogglePane,
     onClose,
-    onAddToCollection,
     onRecreatePreviews,
     onEditTags,
     onEditMetadata,
@@ -312,26 +314,6 @@
         title={t('viewer_menu.coming_soon')}
       >
         {t('viewer_menu.edit_metadata')}
-      </button>
-    {/if}
-    {#if onAddToCollection}
-      <button
-        type="button"
-        role="menuitem"
-        onclick={onAddToCollection}
-        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
-      >
-        {t('viewer_menu.add_to_collection')}
-      </button>
-    {:else}
-      <button
-        type="button"
-        role="menuitem"
-        disabled
-        class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-        title={t('viewer_menu.coming_soon')}
-      >
-        {t('viewer_menu.add_to_collection')}
       </button>
     {/if}
     {#if onRecreatePreviews}

@@ -1,19 +1,29 @@
 // ui-30-collection-asset-permalink.spec.ts
 //
-// #475 / ADR 0068 layer 3 — the golden-path walk the suite was missing:
-// browse → collection → click an asset tile → the asset viewer opens on
-// a real, reloadable /assets/{id} URL.
+// TWO assertions over one fixture — a collection with a single pinned
+// asset — because #1185 turned the first one inside out.
 //
-// ui-18 only exercises the collection fields editor; ui-29 only asserts
-// that BOGUS routes 404 — neither ever confirmed that a REAL asset link
-// resolves. This is that assertion, and it is exactly what #475 slipped
-// past: every AssetCard linked to /assets/{id}, a route that did not
-// exist, so clicking any asset inside a collection dead-ended on 404.
+// 1. #1185 — A COLLECTION SHOWS POSTS ONLY. The owner's ruling: "non-post
+//    assets only belong to their uploader; collections and browse contain
+//    posts only." So a collection holding nothing but a pinned asset is,
+//    to every reader, EMPTY. This spec pins the absence: no
+//    `collection-assets` section, no asset tile, and the empty state on
+//    the page. Pinning the absence rather than deleting the old assertion
+//    is deliberate — `POST /collections/{id}/resources` still succeeds
+//    (dropping it is #1161), so nothing else in the suite would notice
+//    the section coming back.
 //
-// Structural, not seed-id-bound: it PROVISIONS its own fixture — a
-// collection with one pinned asset — then drives the UI through it and
-// cleans up. That keeps it independent of any seeded collection (the
-// demo dataset does not always pin assets into collections).
+// 2. #475 / ADR 0068 layer 3 — THE /assets/{id} PERMALINK STILL RESOLVES.
+//    That route did not exist once, so every AssetCard linked into a 404.
+//    The walk this spec used to make (collection → click a tile → viewer)
+//    is no longer a thing the product does, but the route it proved is
+//    still real and still reachable from browse, search and the profile
+//    uploads grid. ui-13 covers the card→link click on those surfaces;
+//    what is asserted here is the destination: the URL opens the viewer,
+//    survives a hard reload, and 404s nothing.
+//
+// Structural, not seed-id-bound: it PROVISIONS its own fixture, then
+// cleans up. That keeps it independent of any seeded collection.
 //
 // Determinism (#488): the pinned asset is not "whatever ?limit=1
 // returns" (arbitrary Postgres order — often a 3D/failed/non-preview
@@ -128,7 +138,7 @@ async function provisionCollectionWithAsset(
   return { collectionId: collection.id, assetId };
 }
 
-test.describe('UI-30 collection → asset permalink', () => {
+test.describe('UI-30 collections are posts-only, and /assets/{id} still resolves', () => {
   let collectionId: string | undefined;
 
   test.beforeEach(async ({ page }) => {
@@ -142,14 +152,46 @@ test.describe('UI-30 collection → asset permalink', () => {
     }
   });
 
-  test('clicking an asset tile in a collection opens the viewer on a real /assets/{id} URL', async ({
+  test('a collection holding only a pinned asset renders as empty — no asset section (#1185)', async ({
+    page,
+  }) => {
+    const provisioned = await provisionCollectionWithAsset(page);
+    collectionId = provisioned.collectionId;
+
+    await page.goto(`/collections/${collectionId}`);
+
+    // The collection loaded as ITSELF, not as the 404 plate — otherwise
+    // every absence below would pass for the wrong reason.
+    await expect(page.getByRole('heading', { name: TEST_COLLECTION_NAME })).toBeVisible();
+    await expect(page.getByTestId('collection-unavailable')).toHaveCount(0);
+
+    // The section, the tile and the heading are all gone. `toHaveCount(0)`
+    // and not `toBeHidden`: the markup must not be rendered at all.
+    await expect(
+      page.getByTestId('collection-assets'),
+      'the collection page still renders the non-post assets section',
+    ).toHaveCount(0);
+    await expect(
+      page.locator('main a[href^="/assets/"]'),
+      'an asset tile is still on the collection wall',
+    ).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toHaveCount(0);
+
+    // And what a reader sees instead is the honest answer: this
+    // collection has nothing on its wall, because a pinned asset is not
+    // content a collection shows.
+    await expect(page.getByText('Nothing in this collection yet.')).toBeVisible();
+    await expect(page.getByTestId('collection-posts')).toHaveCount(0);
+  });
+
+  test('the /assets/{id} permalink opens the viewer and survives a reload (#475)', async ({
     page,
   }) => {
     const provisioned = await provisionCollectionWithAsset(page);
     collectionId = provisioned.collectionId;
 
     // Collect real API failures during the navigation — the #475 class
-    // is exactly "the click 4xx'd / dead-ended", so this is the guard.
+    // is exactly "the link 4xx'd / dead-ended", so this is the guard.
     const apiFailures: string[] = [];
     page.on('response', (resp) => {
       const url = resp.url();
@@ -158,16 +200,9 @@ test.describe('UI-30 collection → asset permalink', () => {
       }
     });
 
-    await page.goto(`/collections/${collectionId}`);
-
-    // The first asset tile — AssetCard renders <a href="/assets/{id}">.
-    // Selecting by href shape keeps this independent of any testid and
-    // is exactly the link #475 was about.
-    const tile = page.locator('a[href^="/assets/"]').first();
-    await expect(tile, 'the collection should render its pinned asset tile').toBeVisible();
-    await tile.click();
-
-    // A real, shareable /assets/{uuid} URL.
+    // The address every AssetCard on browse / search / the profile
+    // uploads grid points at.
+    await page.goto(`/assets/${provisioned.assetId}`);
     await expect(page).toHaveURL(/\/assets\/[0-9a-f-]{36}$/);
 
     // The asset viewer actually opened — not the 404 page.

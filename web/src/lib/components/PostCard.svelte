@@ -691,7 +691,6 @@
            CardMenu portals its panel and positions from the trigger
            rect, so it works identically outside CardThumb. -->
       <CardMenu
-        assetId={coverAssetId}
         postId={post.id}
         detailPath="/posts/{post.id}"
         manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
@@ -1006,7 +1005,6 @@
                top-right instance below is skipped in this mode, so the
                card still has exactly one. -->
           <CardMenu
-            assetId={coverAssetId}
             postId={post.id}
             detailPath="/posts/{post.id}"
             manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
@@ -1048,7 +1046,6 @@
            card still has exactly one ⋯ and it sits where a social card's
            overflow belongs: beside the author, not over the artwork. -->
       <CardMenu
-        assetId={coverAssetId}
         postId={post.id}
         detailPath="/posts/{post.id}"
         manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
@@ -1252,7 +1249,6 @@
           </p>
         </a>
         <CardMenu
-          assetId={coverAssetId}
           postId={post.id}
           detailPath="/posts/{post.id}"
           manageAccess={isAuthor ? { kind: 'post', id: post.id } : null}
