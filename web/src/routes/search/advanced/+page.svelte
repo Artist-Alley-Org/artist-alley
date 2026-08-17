@@ -45,6 +45,20 @@
   // display half only — the load-bearing half is server-side, in
   // facet.Selection.Authorize, which refuses a `field:` term naming a
   // field this caller may not read regardless of what any client sends.
+  //
+  // # Two things #1191 changed
+  //
+  // 1. The words. This page shipped reading "Compiled DSL" and "the
+  //    server-side DSL parser" — vocabulary from the implementation,
+  //    printed at the person using it. Every string it renders is plain
+  //    now. The preview of what will run STAYS, because seeing the
+  //    search you built is how you learn to build one; it just has a
+  //    name a person can act on.
+  // 2. The scale. Every field rendered its ENTIRE vocabulary as chips,
+  //    which is right at a dozen values and unusable at a thousand.
+  //    Past CHIP_LIMIT a field's row becomes a typeahead instead — see
+  //    the constant, which also records where this stops and #1173
+  //    begins.
 
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -54,7 +68,8 @@
   import { site } from '$stores/site.svelte';
   import AdvancedQueryBuilder from '$components/search/AdvancedQueryBuilder.svelte';
   import ReverseImageDropzone from '$components/search/ReverseImageDropzone.svelte';
-  import { selectableOptions, normalizeOptions } from '$lib/fieldOptions';
+  import VocabularyCombobox from '$components/VocabularyCombobox.svelte';
+  import { selectableOptions, normalizeOptions, type FieldOption } from '$lib/fieldOptions';
 
   // The nav control carries whatever was in the box, so a caller who
   // typed something and then reached for "Advanced" does not lose it.
@@ -106,23 +121,64 @@
    *  which is the facet grammar's own rule for non-tag dimensions. */
   let chosen = $state<Record<string, string[]>>({});
 
-  function toggleValue(code: string, value: string) {
-    const cur = chosen[code] ?? [];
-    chosen = {
-      ...chosen,
-      [code]: cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value],
-    };
+  /**
+   * How many values a field may have before its row stops being a wall
+   * of chips and becomes a type-to-filter box (#1191).
+   *
+   * 20 rather than a rounder-feeling 12 or 16, and the reason is
+   * measured rather than aesthetic: the largest vocabulary the product
+   * SHIPS is `keywords` at 17 terms (migration 00024). A threshold
+   * under that would change how a brand-new install's own field looks
+   * on the day it is installed, which is a redesign of the default
+   * rather than a concession to scale. 20 clears the shipped list with
+   * headroom and is still a chip row you take in at a glance — at this
+   * page's widths that is two or three wrapped lines.
+   *
+   * A vocabulary that has GROWN past 20 does get the typeahead, and
+   * that is the point: `keywords` is an open vocabulary, so a working
+   * instance's copy of it is exactly the field that stops fitting.
+   *
+   * # The boundary this constant does NOT cross (#1173)
+   *
+   * This is a DISPLAY threshold, not a transport one. `GET /fields`
+   * ships every field's whole vocabulary to the browser either way, so
+   * the typeahead below filters an array that is already in memory and
+   * needs no endpoint. A vocabulary too large to SHIP is a different
+   * problem with a different fix — server-side value search, which is
+   * #1173's dynamic-keyword work. Raising this number is free; the
+   * payload is what eventually is not.
+   */
+  const CHIP_LIMIT = 20;
+
+  function setValues(code: string, values: string[]) {
+    chosen = { ...chosen, [code]: values };
   }
 
-  function optionsFor(f: FieldDef): { value: string; label: string }[] {
+  function toggleValue(code: string, value: string) {
+    const cur = chosen[code] ?? [];
+    setValues(code, cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value]);
+  }
+
+  /** The field's whole vocabulary, normalised. */
+  function vocabFor(f: FieldDef): FieldOption[] {
     try {
-      return selectableOptions(normalizeOptions(f.options)).map((o) => ({
-        value: o.value,
-        label: o.label ?? o.value,
-      }));
+      return normalizeOptions(f.options);
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Whether this field's row is a typeahead rather than chips.
+   *
+   * `tree` is excluded on purpose and not by oversight: a tree's
+   * vocabulary is a shape, not a list, and flattening it into a
+   * typeahead would lose the only thing that makes it a tree. Its own
+   * picker is a separate piece of work; until then it keeps exactly the
+   * rendering it has.
+   */
+  function usesTypeahead(f: FieldDef, offered: FieldOption[]): boolean {
+    return f.type !== 'tree' && offered.length > CHIP_LIMIT;
   }
 
   const activeCount = $derived(
@@ -265,27 +321,48 @@
       {:else}
         <div class="flex flex-col gap-4">
           {#each filterable as f (f.id)}
-            {@const opts = optionsFor(f)}
+            {@const vocab = vocabFor(f)}
+            {@const opts = selectableOptions(vocab, chosen[f.code] ?? [])}
             {#if opts.length > 0}
               <div data-testid="field-filter-{f.code}">
-                <div class="mb-1.5 text-sm font-medium text-fg">{f.label}</div>
-                <div class="flex flex-wrap gap-1.5">
-                  {#each opts as o (o.value)}
-                    {@const on = (chosen[f.code] ?? []).includes(o.value)}
-                    <button
-                      type="button"
-                      onclick={() => toggleValue(f.code, o.value)}
-                      aria-pressed={on}
-                      data-testid="field-option-{f.code}-{o.value}"
-                      class="rounded-full border px-2.5 py-1 text-xs transition-colors
-                             {on
-                        ? 'border-accent bg-accent text-on-accent'
-                        : 'border-border bg-surface text-fg-muted hover:bg-state-hover hover:text-fg'}"
-                    >
-                      {o.label}
-                    </button>
-                  {/each}
+                <div id="field-filter-label-{f.code}" class="mb-1.5 text-sm font-medium text-fg">
+                  {f.label}
                 </div>
+                {#if usesTypeahead(f, opts)}
+                  <!-- Same picker the upload row and the collection field
+                       editor use, with its create arm off: this field's
+                       vocabulary is fixed here, and search must never be
+                       able to mint a term. What it contributes is what a
+                       long chip wall cannot — filter as you type, arrow
+                       keys, and tokens that come back off. -->
+                  <VocabularyCombobox
+                    options={vocab}
+                    value={chosen[f.code] ?? []}
+                    open={false}
+                    labelledBy="field-filter-label-{f.code}"
+                    placeholder={t('search.advanced_page.field_filter_placeholder')}
+                    testid={f.code}
+                    onchange={(values) => setValues(f.code, values)}
+                  />
+                {:else}
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each opts as o (o.value)}
+                      {@const on = (chosen[f.code] ?? []).includes(o.value)}
+                      <button
+                        type="button"
+                        onclick={() => toggleValue(f.code, o.value)}
+                        aria-pressed={on}
+                        data-testid="field-option-{f.code}-{o.value}"
+                        class="rounded-full border px-2.5 py-1 text-xs transition-colors
+                               {on
+                          ? 'border-accent bg-accent text-on-accent'
+                          : 'border-border bg-surface text-fg-muted hover:bg-state-hover hover:text-fg'}"
+                      >
+                        {o.label}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             {/if}
           {/each}
