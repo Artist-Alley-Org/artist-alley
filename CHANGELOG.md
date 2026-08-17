@@ -17,6 +17,12 @@ where applicable, otherwise note "no-spec-impact."
   catalogue; every choice composes into one query and lands on the normal results page with the
   query in the address. Capability-gated fields refuse to filter for callers without the
   capability (#1157, PR #1162).
+- **The thumbnail card's chrome settled into its final arrangement.** Type icon and count sit
+  top-left — with the file extension when a post holds exactly one asset (a set stays count +
+  icon; a hidden cover hides its extension too); the checkbox sits top-right; the ⋯ menu moved
+  to the bottom row beside the date, with a tighter rectangular hover shape. Personal asset
+  cards always show extension and date — the working surface earns the file detail
+  (PR #1175, refining #1158/#1171).
 
 ### Fixed
 
