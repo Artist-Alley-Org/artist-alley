@@ -320,6 +320,74 @@ describe('PostCard — the extension is a ONE-ANSWER fact', () => {
     expect(badge.compareDocumentPosition(ext(c)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  // The owner: "Move the extension closer to the asset type icon. Maybe
+  // half the space between." The measured 14px of air was the badge
+  // pill's 6px trailing padding plus the BAND's own `gap-2`, so the fix
+  // is that the glyph and the word stop being siblings of that gap and
+  // become one unit with no gap of its own. jsdom computes no layout, so
+  // what is pinned here is the STRUCTURE that produces the spacing —
+  // which is the half a future pass would undo without noticing.
+  it('⭐ keeps the glyph and the word in ONE gapless container', () => {
+    for (const c of [postCard('thumbnail', 1), assetCard('thumbnail'), cardOf(['glb', 'glb'])]) {
+      const badge = band(c)!.querySelector('[data-testid^="card-kind"]')!;
+      const word = c.querySelector('[data-testid="thumb-band-extension"]')!;
+      expect(word.parentElement, 'the word sits beside the glyph, not beside the band').toBe(
+        badge.parentElement,
+      );
+      // ...and that shared parent is not the band itself, which still
+      // needs its gap to hold the checkbox off at the far edge.
+      expect(word.parentElement).not.toBe(band(c));
+      expect(band(c)!.className).toContain('gap-2');
+      expect(word.parentElement!.className).not.toMatch(/\bgap-/);
+    }
+  });
+
+  // #1191 follow-up, the owner's phrasing: "7 mixed assets in this
+  // post", "4 glb assets in this post". The badge already knew the
+  // count; the format is what the band prints beside it.
+  describe('the pack badge names the format as well as the count', () => {
+    const badgeLabel = (c: HTMLElement) =>
+      band(c)!.querySelector('[data-testid^="card-kind"]')!.getAttribute('aria-label');
+
+    it('⭐ says the shared extension on a uniform pack', () => {
+      expect(badgeLabel(cardOf(['glb', 'glb', 'glb', 'glb']))).toBe(
+        '4 glb assets in this post',
+      );
+    });
+
+    it('⭐ says the WORD on a mixed pack, matching what the band drew', () => {
+      const c = cardOf(['png', 'psd', 'mp4', 'glb', 'png', 'psd', 'mp4']);
+      expect(badgeLabel(c)).toBe('7 mixed assets in this post');
+      // The sentence and the label beside it are the same value, never
+      // two derivations that could drift apart.
+      expect(extText(c)).toBe('mixed');
+    });
+
+    it('falls back to the count alone when the format is unknowable', () => {
+      // A truncated payload: uniformity cannot be computed, so the band
+      // prints nothing and the badge must not invent a format either.
+      const c = cardOf(['png'], { memberCount: 4 });
+      expect(ext(c)).toBeNull();
+      expect(badgeLabel(c)).toBe('4 assets in this post');
+    });
+
+    it('leaves a SINGLE-asset post on the kind tooltip', () => {
+      // Deliberate, and the reason is that the band is already printing
+      // "PNG" two pixels to the right: "1 png asset in this post" would
+      // say that back and drop the one word the reader could not
+      // otherwise get. #1144 built this tooltip to spell the type out.
+      const c = postCard('thumbnail', 1);
+      expect(badgeLabel(c)).not.toMatch(/in this post/);
+      expect(badgeLabel(c)).toBeTruthy();
+    });
+
+    it('says nothing at all when the cover is restricted', () => {
+      // No badge, so no tooltip — the withholding is upstream of both.
+      const c = cardOf([null, 'png']);
+      expect(band(c)!.querySelector('[data-testid^="card-kind"]')).toBeNull();
+    });
+  });
+
   it('shows no extension in grid or masonry, which have no band', () => {
     expect(ext(postCard('grid', 1))).toBeNull();
     expect(ext(postCard('masonry', 1))).toBeNull();

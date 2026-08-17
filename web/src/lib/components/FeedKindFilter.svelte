@@ -103,6 +103,52 @@
     draft = allChecked ? new Set() : new Set(ALL);
   }
 
+  /**
+   * DOUBLE-CLICK SOLOS (owner: "If all types is selected, and I double
+   * click PDF, it should deselect all but pdf").
+   *
+   * # Why a whole gesture rather than a "only" link on each row
+   *
+   * The common intent on this panel is a single type, and reaching it
+   * from the resting all-checked state costs eleven un-ticks. Solo is
+   * the mixer's answer to exactly that, and it needs no pixels: the
+   * rows stay a plain checkbox list.
+   *
+   * # Why this does not fight the single click
+   *
+   * A double click also delivers its two ordinary clicks, so the box
+   * toggles off and back on underneath before `dblclick` arrives. That
+   * is harmless because solo is an ABSOLUTE write — `new Set([kind])`,
+   * not a mutation of whatever the two toggles happened to leave — so
+   * the end state is the same however many clicks the browser decided
+   * to forward through the <label>. Single click keeps its exact old
+   * meaning; nothing is debounced and no click is swallowed.
+   *
+   * # Fine pointers only, and that is fine
+   *
+   * Touch has no reliable double-tap-to-act (the browser spends it on
+   * zoom intent), so on a phone this gesture simply never fires and
+   * every row stays an ordinary toggle. It is an accelerator, not the
+   * only route to a single type — un-ticking "All types" and ticking
+   * one box reaches the same place with taps.
+   *
+   * Nothing commits here either way: Apply is still what the feed
+   * hears.
+   */
+  function solo(kind: ViewKind) {
+    draft = new Set([kind]);
+  }
+
+  /** The same gesture on the "All types" row, which has no one type to
+   *  solo: double-clicking it lands on every type. Its two ordinary
+   *  clicks toggle it twice and land back where they started only when
+   *  it began checked, so without this a double click on All from a
+   *  subset would end with the board cleared — the opposite of what the
+   *  row says it does. */
+  function soloAll() {
+    draft = new Set(ALL);
+  }
+
   function apply() {
     // All-checked and none-checked BOTH commit as "no filter". Nothing
     // ticked is not a request for an empty wall — it is a half-made
@@ -171,10 +217,14 @@
              rounded-2xl border border-border bg-surface-elevated p-2 shadow-xl"
     >
       <div class="max-h-[60vh] overflow-y-auto">
+        <!-- `select-none`: a double click is a gesture here, and the
+             browser's default answer to one on a label is to select its
+             text. -->
         <!-- eslint-disable-next-line -->
         <label
-          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl px-2.5 text-sm
-                 font-semibold text-fg hover:bg-surface-hover"
+          ondblclick={soloAll}
+          class="flex min-h-11 cursor-pointer select-none items-center gap-2.5 rounded-xl px-2.5
+                 text-sm font-semibold text-fg hover:bg-surface-hover"
         >
           <input
             type="checkbox"
@@ -191,9 +241,12 @@
 
         {#each ALL as kind (kind)}
           {@const Icon = iconForKind(kind)}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <label
-            class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl px-2.5 text-sm
-                   text-fg hover:bg-surface-hover"
+            ondblclick={() => solo(kind)}
+            title={t('browse.filter.type.solo_hint')}
+            class="flex min-h-11 cursor-pointer select-none items-center gap-2.5 rounded-xl px-2.5
+                   text-sm text-fg hover:bg-surface-hover"
           >
             <input
               type="checkbox"

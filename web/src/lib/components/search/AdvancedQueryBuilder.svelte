@@ -156,9 +156,13 @@
     class="min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
   >{t('search.advanced.add_row')}</button>
 
+  <!-- The preview of what will run. It stays (it is how someone learns
+       what the rows above add up to, and it is copy-pasteable), but
+       #1191 took the developer words off its label: an artist reading
+       "Compiled DSL" learns nothing they can act on. -->
   <div class="mt-6 overflow-x-auto rounded-md border border-border bg-surface p-3">
-    <div class="mb-1 text-xs font-medium text-fg-muted">{t('search.advanced.compiled_dsl')}</div>
-    <code class="block font-mono text-sm text-fg" data-testid="advanced-compiled">{compiled || t('search.advanced.compiled_empty')}</code>
+    <div class="mb-1 text-xs font-medium text-fg-muted">{t('search.advanced.preview_label')}</div>
+    <code class="block font-mono text-sm text-fg" data-testid="advanced-compiled">{compiled || t('search.advanced.preview_empty')}</code>
   </div>
 
   <div class="flex justify-end">

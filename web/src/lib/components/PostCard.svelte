@@ -523,6 +523,40 @@
     bandExtension !== null && !coverRestricted && memberCount > 1 && uniformExtension === null,
   );
 
+  /**
+   * What the kind badge says when you hover or focus it, on a PACK.
+   *
+   * The owner's phrasing: "7 mixed assets in this post", "4 glb assets
+   * in this post" — the count, then the format, then what it is a pack
+   * OF. The badge already stated the count; the format is the fact the
+   * band prints beside it, and saying both in one sentence is what
+   * turns two glances into one.
+   *
+   * SINGLE-ASSET POSTS KEEP THE KIND TOOLTIP ("3D model", "Sprite
+   * sheet"), deliberately. `undefined` here leaves CardKindBadge's own
+   * default in place, and that default is the whole point of #1144:
+   * the icon is a notation and the tooltip is what spells the type out
+   * in words. Restating "1 glb asset in this post" instead would say
+   * back the extension the band is already printing two pixels to the
+   * right — two labels for one fact, which is the thing the density
+   * pass has been removing everywhere else — while dropping the one
+   * word the reader could not already see.
+   *
+   * `bandExtension` is the SAME value the band draws, `mixed` word
+   * included; nothing is re-derived here, so the sentence and the label
+   * beside it can never disagree. When it is null — a truncated payload
+   * whose uniformity is unknowable — the badge falls back to the count
+   * alone rather than inventing a format for it.
+   */
+  const packLabel = $derived(
+    memberCount > 1 && bandExtension
+      ? t('card.multi.badge_label_format', {
+          count: String(memberCount),
+          format: bandExtension,
+        })
+      : undefined,
+  );
+
   // ── #1111: the grid card's overlay ──────────────────────────────────
   //
   // At rest a grid tile is IMAGE ONLY — the reference's discovery-wall
@@ -812,27 +846,60 @@
       class="flex items-center gap-2 border-b border-border px-1.5 py-0.5"
       data-testid="thumb-band-top"
     >
+      <!-- A restricted cover withholds BOTH halves, so the unit is not
+           rendered at all rather than rendered empty — which is also
+           what keeps the band's degenerate "checkbox only" case looking
+           the way it did. -->
       {#if !coverRestricted}
-        <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
-      {/if}
-      {#if bandExtension}
-        <!-- The format, in one of three readings — see `bandExtension`.
-             Single-asset: that file's extension. Multi-asset with one
-             shared extension: that extension, because it is true of
-             every member. Multi-asset and mixed: the word, styled
-             identically so the band keeps ONE slot with one meaning
-             ("what format is this?") rather than growing a second.
+        <!-- ONE UNIT: the glyph and the word it qualifies.
+             (Owner: "Move the extension closer to the asset type icon.
+             Maybe half the space between.")
 
-             Same type scale and same position as AssetCard's band,
-             because on a one-asset post this card IS showing a file and
-             there is no reason for the two to look different when they
-             are saying the same thing. -->
-        <span
-          class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
-          data-testid="thumb-band-extension"
-          data-mixed={bandMixed ? 'true' : undefined}
-          aria-label={bandMixed ? t('card.band.mixed_label') : undefined}
-        >{bandExtension}</span>
+             They used to be two siblings of the band's own `gap-2`, and
+             the measured result was 14px of air between the glyph's
+             right edge and the word's left edge — the badge's own 6px
+             trailing padding plus that 8px gap (16px beside a multi
+             badge, whose pill is `px-2`). Read at a glance the word
+             floated away from the icon it belongs to.
+
+             The pair now has NO gap of its own, so the separation is
+             exactly the badge pill's trailing padding: 6px beside a
+             single glyph and 8px beside a count pill, down from 14 and
+             16. That is the tightening the ruling asked for without
+             touching the pill's padding, which is symmetric because its
+             focus ring is drawn around it.
+
+             The band keeps its `gap-2` for what it still separates: this
+             unit from the checkbox at the far edge. -->
+        <div class="flex min-w-0 items-center">
+          <CardKindBadge
+            kind={coverKind}
+            count={memberCount}
+            variant="inline"
+            tooltipKey={post.id}
+            label={packLabel}
+          />
+          {#if bandExtension}
+            <!-- The format, in one of three readings — see
+                 `bandExtension`. Single-asset: that file's extension.
+                 Multi-asset with one shared extension: that extension,
+                 because it is true of every member. Multi-asset and
+                 mixed: the word, styled identically so the band keeps
+                 ONE slot with one meaning ("what format is this?")
+                 rather than growing a second.
+
+                 Same type scale and same position as AssetCard's band,
+                 because on a one-asset post this card IS showing a file
+                 and there is no reason for the two to look different
+                 when they are saying the same thing. -->
+            <span
+              class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
+              data-testid="thumb-band-extension"
+              data-mixed={bandMixed ? 'true' : undefined}
+              aria-label={bandMixed ? t('card.band.mixed_label') : undefined}
+            >{bandExtension}</span>
+          {/if}
+        </div>
       {/if}
       <span class="flex-1"></span>
       <CardCheckbox id={post.id} placement="inline" {orderedIds} />
@@ -918,7 +985,7 @@
       <CardKindBadge
         kind={coverKind}
         count={memberCount}
-        class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} />
+        class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} label={packLabel} />
     {/if}
 
     {#if showOverlay}
@@ -1015,7 +1082,7 @@
              beside it, so this never becomes `members.length` and never
              becomes an unbounded query for a badge. -->
         <div class="relative flex items-start justify-between gap-2">
-          <CardKindBadge kind={coverKind} count={memberCount} tooltipKey={post.id} />
+          <CardKindBadge kind={coverKind} count={memberCount} tooltipKey={post.id} label={packLabel} />
         </div>
 
         <!-- BOTTOM-LEFT: identity. Title, then the author.

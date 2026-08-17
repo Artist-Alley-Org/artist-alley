@@ -59,6 +59,19 @@
      *  the kind, which is right for the one-badge-per-page cases and
      *  wrong nowhere, because a wall always passes the row id. */
     tooltipKey?: string;
+    /** A better sentence than this component can compose on its own.
+     *
+     *  It sets the accessible name AND the tooltip — one string, because
+     *  a badge whose tooltip and screen-reader name disagree is two
+     *  different answers to the same question depending on how you
+     *  read the page.
+     *
+     *  The case that needs it is a post's PACK badge: the host knows
+     *  what format the pack is ("4 glb assets in this post"), and this
+     *  component knows only the count. Everything that does not pass it
+     *  keeps the default — the count for a set, the kind for a single
+     *  item, which is what an asset tile outside any post wants. */
+    label?: string;
   }
 
   let {
@@ -67,12 +80,16 @@
     class: klass = '',
     variant = 'overlay',
     tooltipKey = '',
+    label: labelOverride,
   }: Props = $props();
 
   const multi = $derived(count > 1);
   const KindIcon = $derived(iconForKind(kind));
   const label = $derived(
-    multi ? t('card.multi.badge_label', { count: String(count) }) : t(`card.fallback.kind.${kind}`),
+    labelOverride ||
+      (multi
+        ? t('card.multi.badge_label', { count: String(count) })
+        : t(`card.fallback.kind.${kind}`)),
   );
 
   // #1144 — the icon gets a tooltip NAMING the type, on hover and on
