@@ -5,10 +5,6 @@
   // one-or-many items into.
   //
   // Used by:
-  //   - AssetViewer Edit menu ("Add to collection…") for the current
-  //     asset
-  //   - AssetPlaylist toolbarActions ("Add all to collection") for the
-  //     whole playlist
   //   - CardMenu on a post card, and PostHost's post menu, for the POST
   //     itself (#882)
   //
@@ -23,6 +19,18 @@
   //
   // The two are not exclusive: nothing prevents a caller passing both,
   // and the confirm loop reports one combined count.
+  //
+  // ⚠️ `assetIds` HAS NO CALLER as of #1185, and that is deliberate
+  // rather than an oversight to tidy. Its three call sites — the
+  // viewer's Edit menu, the playlist's "Add all to collection", and
+  // CardMenu on an ASSET card — were removed because a collection shows
+  // posts only, so every one of them wrote a `collection_resources` row
+  // that no surface displays. The arm is left standing because
+  // `POST /collections/{id}/resources` is still a live, supported
+  // endpoint and #1161 owns the decision to retire it along with the
+  // post-creating flow that replaces these entry points. Deleting the
+  // client here would prejudge that; leaving it costs a defaulted prop
+  // and can write nothing on its own.
   //
   // Behaviour:
   //   - Lists the caller's writable collections (tab=mine).

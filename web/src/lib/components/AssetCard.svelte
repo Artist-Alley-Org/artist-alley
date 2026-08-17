@@ -482,7 +482,6 @@
            Thumbnail renders the SAME component inline in its bottom band
            (#1136); still exactly one per card. -->
       <CardMenu
-        assetId={asset.id}
         detailPath="/assets/{asset.id}"
         editPath={canEdit ? `/assets/${asset.id}/edit` : null}
       />
@@ -579,7 +578,6 @@
           <p class="truncate text-xs text-fg-muted" data-testid="card-date">{createdShort}</p>
         </a>
         <CardMenu
-          assetId={asset.id}
           detailPath="/assets/{asset.id}"
           editPath={canEdit ? `/assets/${asset.id}/edit` : null}
           placement="inline"

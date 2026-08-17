@@ -24,11 +24,18 @@
   //           people's work is the point of #882, and what may be
   //           collected is decided server-side by whether the caller can
   //           READ the item, which the card cannot know.
-  //           On a POST card it collects the POST (`postId`), not the
-  //           post's cover asset. Before #882 it collected the cover,
-  //           which quietly turned "save this post" into "save one image
-  //           out of it" and lost the author's title, description and
-  //           the rest of the carousel.
+  //           POST CARDS ONLY (#1185). It collects the POST (`postId`),
+  //           never the post's cover asset — before #882 it collected the
+  //           cover, which quietly turned "save this post" into "save one
+  //           image out of it" and lost the author's title, description
+  //           and the rest of the carousel. An ASSET card no longer offers
+  //           it at all: a collection shows posts only, so pinning a bare
+  //           asset wrote a `collection_resources` row that nothing on
+  //           this instance renders — a click that reported success and
+  //           changed nothing the user could see. The endpoint still
+  //           exists and still works; retiring it is #1161's, and the
+  //           post-creating replacement ("turn these assets into a post
+  //           in this collection") is #1161's too.
   //   edit  — links to the entity's edit route (#549). WRITE action, and
   //           like manage-access it appears only when the CARD hands one
   //           over: the card knows whose work it is, this menu does not.
@@ -68,18 +75,17 @@
   import ShareEntityModal from './ShareEntityModal.svelte';
 
   interface Props {
-    /** The asset this card stands for. Null on a post card, and on any
-     *  asset card with no id to offer. */
-    assetId: string | null;
     /** The post this card stands for, when it IS a post card (#882).
-     *  Set, the add-to-collection action collects the POST; unset, it
-     *  falls back to `assetId`. A card that supplies neither hides the
-     *  action.
+     *  Set, the add-to-collection action collects the POST; unset, the
+     *  action does not render at all.
      *
-     *  Two props rather than one `{kind, id}` because the cover asset id
-     *  is still what a post card wants for its OTHER concerns, and
-     *  collapsing them would make PostCard choose between them at a
-     *  distance from where each is used. */
+     *  This sat beside an `assetId` prop until #1185. That prop existed
+     *  so an ASSET card could offer the same action against
+     *  `collection_resources`; with collections showing posts only there
+     *  is nothing for an asset card to collect INTO, and no other action
+     *  in this menu read it — every one of them works off `detailPath`,
+     *  `editPath` or `manageAccess`. So it is gone rather than kept as an
+     *  ignored parameter. */
     postId?: string | null;
     /** Canonical detail path, e.g. `/assets/{id}` or `/posts/{id}`. Info
      *  navigates here; share copies `origin + detailPath`. */
@@ -132,7 +138,6 @@
   }
 
   let {
-    assetId,
     postId = null,
     detailPath,
     manageAccess = null,
@@ -141,13 +146,16 @@
     placement = 'overlay',
   }: Props = $props();
 
-  // What this card would put in a collection, and which endpoint that
-  // is (#882). Resolved once here so the menu ITEM's visibility and the
-  // modal's payload can never disagree — the bug shape where the action
-  // renders and then opens a picker with nothing to add.
+  // What this card would put in a collection (#882). Resolved once here
+  // so the menu ITEM's visibility and the modal's payload can never
+  // disagree — the bug shape where the action renders and then opens a
+  // picker with nothing to add.
+  //
+  // #1185 — a POST id or nothing. This used to fall back to an `assetId`
+  // prop, which is what made every asset card offer a write whose result
+  // no surface displays.
   const collectPostId = $derived(postId ?? null);
-  const collectAssetId = $derived(collectPostId ? null : assetId);
-  const canCollect = $derived(!!collectPostId || !!collectAssetId);
+  const canCollect = $derived(!!collectPostId);
 
   // Write actions show only for a logged-in user on a non-demo install.
   // (No dedicated content-write capability exists — collections gate on
@@ -454,11 +462,7 @@
 {/if}
 
 {#if pickerOpen && canCollect}
-  <CollectionPicker
-    assetIds={collectAssetId ? [collectAssetId] : []}
-    postIds={collectPostId ? [collectPostId] : []}
-    onClose={closePicker}
-  />
+  <CollectionPicker postIds={collectPostId ? [collectPostId] : []} onClose={closePicker} />
 {/if}
 
 {#if manageAccess}

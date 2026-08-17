@@ -2948,7 +2948,6 @@
     "close": "Close",
     "edit_tags": "Edit tags…",
     "edit_metadata": "Edit metadata…",
-    "add_to_collection": "Add to collection…",
     "coming_soon": "Coming soon",
     "about_type": "Type",
     "about_dimensions": "Dimensions",
@@ -3000,7 +2999,6 @@
     "add_failed_partial": "Added {added} of {total}; some failed."
   },
   "playlist_actions": {
-    "add_all_to_collection": "Add all to collection",
     "download_all_zip": "Download all as ZIP",
     "bulk_tag": "Tag all",
     "share_playlist": "Share playlist"
