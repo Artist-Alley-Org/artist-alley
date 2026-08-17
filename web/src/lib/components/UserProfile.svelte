@@ -66,6 +66,7 @@
   import ViewControls from '$components/ViewControls.svelte';
   import FooterTabs from '$components/FooterTabs.svelte';
   import PostParamHost from '$components/PostParamHost.svelte';
+  import { createMarquee } from '$lib/util/marquee.svelte';
 
   interface Props {
     ref?: number;
@@ -231,11 +232,61 @@
 
   const portfolioEmpty = $derived(!posts.length && !collections.length && !assets.length);
   const likesEmpty = $derived(likesLoaded && !likedPosts.length && !likedAssets.length);
+
+  // ── Marquee drag-select (#1177) ───────────────────────────────────
+  //
+  // #1127 gave the browse wall a rubber band; this is the same
+  // controller on the profile's card sections, which is where the
+  // MIXED case lives — posts and raw uploads on one page, both feeding
+  // the one selection store.
+  //
+  // Two element refs rather than one, because the tabs are mutually
+  // exclusive branches: a single `bind:this` written in both would race
+  // on a tab switch (the outgoing branch's unbind can land after the
+  // incoming branch's bind and leave the marquee holding null). Only
+  // one is ever non-null, so the thunk just takes whichever it is.
+  //
+  // NOT attached to the About tab: it is prose, and a `select-none`
+  // drag surface over a bio would break selecting the text on it for no
+  // gain — there is nothing there to hit-test.
+  let portfolioWallEl = $state<HTMLElement | null>(null);
+  let likesWallEl = $state<HTMLElement | null>(null);
+
+  // Feed order for the band's anchor bookkeeping: cards in the order
+  // they are painted, POSTS THEN ASSETS, matching the section order
+  // below. Collections are absent because CollectionCard carries no
+  // `data-select-id` — it is not selectable, so it is not in the range
+  // either.
+  const orderedSelectableIds = () =>
+    activeTab === 'likes'
+      ? [...sortedLikedPosts.map((p) => p.id), ...sortedLikedAssets.map((a) => a.id)]
+      : [...sortedPosts.map((p) => p.id), ...sortedAssets.map((a) => a.id)];
+
+  const marquee = createMarquee(
+    () => portfolioWallEl ?? likesWallEl,
+    { ordered: orderedSelectableIds },
+  );
 </script>
 
 <svelte:head>
   <title>{profile ? `${profile.display_name} — Artist Alley` : 'Profile — Artist Alley'}</title>
 </svelte:head>
+
+<!-- The band itself, declared once and rendered inside whichever wall is
+     mounted. Fixed, not absolute: the rect is computed in viewport space
+     for painting, so it stays put while edge-autoscroll moves the wall
+     underneath it. pointer-events-none or it would hit-test itself and
+     swallow the pointerup. Same element as the browse wall's. -->
+{#snippet marqueeBand()}
+  {#if marquee.rect}
+    <div
+      aria-hidden="true"
+      data-testid="marquee-band"
+      class="pointer-events-none fixed z-30 rounded-sm border border-accent bg-accent/20"
+      style="left:{marquee.rect.left}px; top:{marquee.rect.top}px; width:{marquee.rect.width}px; height:{marquee.rect.height}px;"
+    ></div>
+  {/if}
+{/snippet}
 
 {#if notFound}
   <div class="mx-auto max-w-2xl px-4 py-16 text-center text-fg-muted">
@@ -318,6 +369,15 @@
       {#if likesLoading && !likesLoaded}
         <p class="mt-10 text-center text-fg-muted">{t('common.loading')}</p>
       {:else}
+        <!-- Marquee surface (#1177). `relative` is what the band
+             positions against; `select-none` stops the drag painting a
+             browser text selection across every title it crosses. -->
+        <div
+          bind:this={likesWallEl}
+          {...marquee.handlers}
+          class="relative select-none"
+          data-testid="profile-wall"
+        >
         {#if likedPosts.length}
           <section class="mt-10">
             <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.liked_posts')}</h2>
@@ -344,15 +404,29 @@
         {#if likesEmpty}
           <p class="mt-10 text-center text-fg-muted">{t('profile.likes.empty')}</p>
         {/if}
+        {@render marqueeBand()}
+        </div>
       {/if}
     {:else}
       <!-- Portfolio. All sections render through the shared ContentGrid,
            so mode (grid/masonry/feed/thumbnail/list) + tile size + sort
            match the home browse. Posts carry a list table; assets and
            collections have none, so list mode falls back to the grid for
-           them. -->
+           them.
+
+           The whole tab is ONE marquee surface (#1177) rather than one
+           per section, which is what makes a sweep that starts in the
+           posts grid and ends in the uploads grid select both kinds:
+           the hit-test enumerates `data-select-id` under this element,
+           and both card types now carry it. -->
+      <div
+        bind:this={portfolioWallEl}
+        {...marquee.handlers}
+        class="relative select-none"
+        data-testid="profile-wall"
+      >
       {#if posts.length}
-        <section class="mt-10">
+        <section class="mt-10" data-testid="profile-posts">
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.posts')}</h2>
           <ContentGrid mode={browseView.mode} items={sortedPosts} tileMin={browseView.tileMin}>
             {#snippet card(item, mode)}
@@ -381,7 +455,7 @@
            at all for a visitor, so there is nothing here for a stray
            `{#if}` to bring back. -->
       {#if isSelf && assets.length}
-        <section class="mt-10">
+        <section class="mt-10" data-testid="profile-uploads">
           <h2 class="mb-3 text-lg font-semibold text-fg">{t('profile.section.uploads')}</h2>
           <ContentGrid mode={browseView.mode} items={sortedAssets} tileMin={browseView.tileMin}>
             {#snippet card(item, mode)}
@@ -394,6 +468,8 @@
       {#if portfolioEmpty}
         <p class="mt-10 text-center text-fg-muted">{t('profile.no_content')}</p>
       {/if}
+      {@render marqueeBand()}
+      </div>
     {/if}
   </div>
 

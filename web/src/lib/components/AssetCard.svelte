@@ -286,7 +286,24 @@
   overlay is pointer-events-none; the tool row (z-20) captures its own
   clicks above the link.
 -->
+<!-- `data-select-id` is what the marquee hit-tests against (#1177), and
+     it carries the ASSET id — the same id CardCheckbox contributes to
+     the selection store, so a band and a click build one set rather
+     than two. PostCard has had this attribute since #1127; AssetCard
+     never got it, which made marquee-drag select ZERO cards on the
+     profile uploads grid while the checkbox and Shift+range worked
+     fine (they go through CardCheckbox, not the hit-test).
+
+     On the CARD ROOT, for the same reason it is on PostCard's: the band
+     selects a card when it touches the card, not when it happens to
+     clip a 24px control in one corner.
+
+     Present on a restricted card too (#883 renders a placeholder tile
+     from this same root). That is deliberate: a redacted member is
+     still a row the reader can act on in bulk, and skipping it would
+     make a sweep silently drop cards it visibly crossed. -->
 <div
+  data-select-id={asset.id}
   class="group relative block overflow-hidden transition duration-200 {wrapperClass}"
 >
   {#if detailed && !restricted}
@@ -371,7 +388,19 @@
            in masonry, the shared hover tooltip. The listeners hang off
            THIS element and not the frame because it is exactly the tile's
            box and it is interactive; `currentTarget` is therefore the
-           rect the tooltip anchors to. -->
+           rect the tooltip anchors to.
+
+           `data-marquee-passthrough` is the OTHER half of #1177, and
+           without it `data-select-id` alone buys almost nothing. This
+           anchor covers the tile edge to edge (the stretched-link
+           pattern, #515), so every press on an asset's artwork lands on
+           an <a> — and the marquee refuses to arm on a press that
+           begins on a control (marquee.svelte.ts `onControl`). A band
+           could therefore only ever be STARTED from the gutter between
+           tiles. PostCard's stretched link has carried the opt-out
+           since #1127; this one is safe for the same reason its is: a
+           press that never travels the 5px threshold stays a click and
+           still opens the asset. -->
       <a
         href="/assets/{asset.id}"
         onmouseenter={tipEnter}
@@ -379,6 +408,7 @@
         onmouseleave={tipLeave}
         class="absolute inset-0 z-[1]"
         aria-label={asset.title}
+        data-marquee-passthrough
       ></a>
 
       <!-- Multi-select checkbox (top-left). NOT IN THUMBNAIL (#1136):
