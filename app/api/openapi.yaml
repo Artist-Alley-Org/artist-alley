@@ -5667,14 +5667,22 @@ paths:
       operationId: listPosts
       summary: List posts (paginated feed)
       description: |
-        The browse-page feed. Public posts visible to authenticated
-        callers; the author's own posts of any visibility are also
-        returned. Anonymous access to this feed is not yet
-        implemented.
+        The browse-page feed. Authenticated callers see the
+        walled-garden tier, their own posts at any visibility, followed
+        authors' followers-tier posts and anything shared with them.
+
+        Anonymous-visible under public mode (#1181, ADR 0063): with
+        public mode ON an anonymous caller sees the public tier and
+        nothing else, and the default `visibility` filter is `public`
+        rather than the signed-in `org-only`. With public mode OFF the
+        request is refused with 401 before it reaches the handler. The
+        same read rule decides rows in both cases — no separate
+        enforcement plane.
+
+        Writes on this path (`POST /posts`) are unaffected by public
+        mode and require authentication in both states.
       tags: [posts]
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      security: []
       parameters:
         - name: author_ref
           in: query
