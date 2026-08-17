@@ -169,6 +169,11 @@ class AppearanceState {
       // rides the same fetch, so /search/advanced can omit that section
       // instead of the frontend learning it from a failed upload.
       site.setVisualSearchEnabled(data.visual_search_enabled);
+      // Whether anonymous visitors can browse at all (#1195) rides the
+      // same fetch, so a tier picker can offer "Public" only where the
+      // word means something. Same reason as the flag above: the switch
+      // itself is behind an admin capability the curator does not have.
+      site.setPublicModeEnabled(data.public_mode_enabled);
       // Absent logo_url is the shipped-default state, so normalise to
       // '' rather than leaving a stale URL in place — an operator who
       // reverts to the default must actually see it come back.

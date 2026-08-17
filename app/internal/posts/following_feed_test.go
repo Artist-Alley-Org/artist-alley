@@ -28,7 +28,13 @@
 // row of what the caller may read. TestFollowingFeed_ReadRuleStillNarrows
 // is the positive control for that, and it asks with an explicit
 // `?visibility=` so the answer comes from the read rule and not from
-// the handler's org-only display default quietly hiding the row.
+// the handler's display default quietly hiding the row.
+//
+// The Following pill is a SEPARATE conjunct from that default (#1193
+// widened the default from org-only to the union of the shared tiers),
+// so the two compose rather than one masking the other: "Following"
+// still means the follow graph, now over every tier the caller may
+// read instead of one of them.
 
 package posts
 
@@ -146,7 +152,7 @@ func folPost(
 
 // folFeed runs `?feed=following` as `ref` and returns the ids on the
 // page, in order. `vis` is the explicit `?visibility=` filter, or "" to
-// take the handler's org-only default.
+// take the handler's default (#1193: the union of the shared tiers).
 //
 // No AuthorRef pin here, unlike the team-feed harness: pinning the
 // author is the one thing that would make a following feed prove

@@ -264,8 +264,26 @@ test.describe('#1138 — every nativeDrag consumer pans from a press on artwork'
     await expect(wall).toBeVisible();
     const img = wall.locator('img').first();
     await img.waitFor({ state: 'visible', timeout: 15_000 });
+    // SCROLLED INTO VIEW BEFORE IT IS MEASURED, and this line is
+    // load-bearing rather than defensive. `page.mouse` works in VIEWPORT
+    // coordinates, so a press aimed at a card below the fold lands on
+    // nothing and no band forms — a pass/fail decided by how far down
+    // the wall the first `<img>` happens to sit.
+    //
+    // Which is not a constant. The top of the wall is whatever posted
+    // most recently, and on a long-lived dev instance that is a pile of
+    // fixture posts other specs left behind (#1198). Every one of them
+    // is a TXT document, drawn as an inline SVG placeholder and not an
+    // `<img>` at all, so the first real picture had been pushed to
+    // y≈1038 in a 1080-tall viewport — off-screen by half a card.
+    await img.scrollIntoViewIfNeeded();
     const box = await img.boundingBox();
     expect(box).not.toBeNull();
+    expect(
+      box!.y + box!.height / 2,
+      'the first wall image is still off-screen after scrolling to it — the press below ' +
+        'would land on nothing and fail for a reason that has nothing to do with #1138',
+    ).toBeLessThan(1080);
 
     await armProbe(page);
 

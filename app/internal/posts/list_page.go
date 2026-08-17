@@ -41,9 +41,30 @@ type ListPostsPageParams struct {
 	// read rule still applies in full.
 	IncludeDeleted *bool
 	AuthorUserRef  *int64
-	Visibility     *string
-	Q              *string
-	Tag            *string
+	// Visibility is a SET of tiers, not one tier (#1193). Nil means no
+	// display filter at all — every tier the read rule admits.
+	//
+	// It was a single `*string` while the only two answers the handler
+	// ever produced were "one named tier" and "the org-only default",
+	// and that shape is exactly what made the default wrong: the
+	// signed-in default could not be spelled as anything but ONE tier,
+	// so it was org-only, so a member's browse wall excluded every
+	// public post on the instance. A set makes the union expressible,
+	// which is what the default now is.
+	//
+	// Still narrowing, unchanged in direction: the rule is ANDed on
+	// after this, so naming five tiers here selects among the ones the
+	// caller could already read rather than adding any.
+	//
+	// An EMPTY NON-NIL slice is not produced by any caller and is not
+	// given the "selects nothing" meaning `Kinds` has — the SQL below
+	// treats it as `= ANY('{}')`, which matches no row, so it degrades
+	// to an empty page rather than to the whole feed. The distinction
+	// matters for Kinds because a user typo reaches it; no query
+	// parameter reaches this one empty.
+	Visibility []string
+	Q          *string
+	Tag        *string
 	// FeedFollowerRef is ?feed=following, and "following" is the UNION
 	// of the two follow graphs (#1048): posts by an author this ref
 	// follows, OR posts belonging to a team it follows. It had only the
@@ -231,7 +252,9 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 // `Ascending` selects — both halves of that key move together via
 // feedOrder, which is the point of it. Filters:
 //   - author_user_ref: limit to posts by a given user
-//   - visibility: narrow to one tier WITHIN what the caller may read
+//   - visibility: narrow to a SET of tiers WITHIN what the caller may
+//     read (#1193 — it was one tier, which is why the default could not
+//     be the union it should always have been)
 //   - q: plain-text TSVECTOR search across post search_text
 //   - tag: single-tag filter (intersects with q if both given)
 //   - feed_follower_ref: restrict to what the given ref follows
@@ -345,7 +368,7 @@ func (h *Handler) ListPostsPageGated(
 FROM posts
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT IS NULL OR author_user_ref = $2::BIGINT)
-  AND ($3::TEXT IS NULL OR visibility = $3::TEXT)
+  AND ($3::TEXT[] IS NULL OR visibility = ANY($3::TEXT[]))
   AND ($4::TEXT IS NULL OR search_text @@ plainto_tsquery('english', $4::TEXT))
   AND ($5::TEXT IS NULL
        OR EXISTS (SELECT 1 FROM post_tags pt

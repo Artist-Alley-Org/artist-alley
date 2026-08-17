@@ -486,11 +486,13 @@ func TestAnonymousFeed_MatureAxis(t *testing.T) {
 // filter, which is the difference between the feature working and the
 // feature looking broken.
 //
-// A signed-in caller with no ?visibility= gets `org-only`, the
-// walled-garden tier. Handing an anonymous caller that same default
-// intersects `visibility = 'org-only'` with a read rule that admits
-// `visibility = 'public'` and nothing else — an empty set, on every
-// request, on an install full of public posts.
+// A signed-in caller with no ?visibility= gets the union of the shared
+// tiers (#1193); before that they got `org-only` alone, and handing an
+// anonymous caller that same default intersected `visibility =
+// 'org-only'` with a read rule that admits `visibility = 'public'` and
+// nothing else — an empty set, on every request, on an install full of
+// public posts. The anonymous branch stayed a branch of its own after
+// #1193, so it still needs its own test.
 //
 // It also pins the direction: the filter NARROWS. An anonymous caller
 // who explicitly asks for a tier they cannot read gets nothing, rather

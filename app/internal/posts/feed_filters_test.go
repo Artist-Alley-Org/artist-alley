@@ -166,9 +166,11 @@ func ffSeedAsset(t *testing.T, pool *pgxpool.Pool, sensitivity string) uuid.UUID
 	return seedPreviewAssetOwned(t, pool, sensitivity, true, ffAuthor)
 }
 
-// ffSeedPost plants an org-only post — the tier ListPosts defaults to
-// when no `?visibility=` is sent, which is what every frontend surface
-// does.
+// ffSeedPost plants an org-only post — one of the tiers ListPosts
+// defaults to when no `?visibility=` is sent, which is what every
+// frontend surface does. (#1193 made that default the union of the
+// shared tiers rather than org-only alone; org-only is still in it, so
+// this fixture is unaffected.)
 func ffSeedPost(t *testing.T, pool *pgxpool.Pool, author int64, members ...uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()

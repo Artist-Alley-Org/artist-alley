@@ -2918,7 +2918,16 @@
     "cover_derived_hint": "No chosen cover",
     "cover_none": "Add some members first — there is nothing to choose from yet.",
     "cover_current_external": "Current cover (not a member of this collection)",
-    "cover_loading": "Loading members…"
+    "cover_loading": "Loading members…",
+    "vis_public_off_note": "Anonymous browsing is off on this instance, so visitors can't see public collections right now. An admin can turn it on in System settings.",
+    "crop_heading": "How the featured card will crop it",
+    "crop_hint": "Featured cards are wide. Only what's inside the box shows up there — the rest is cropped off.",
+    "crop_full_label": "Whole picture",
+    "crop_card_label": "Featured card",
+    "crop_full_alt": "The chosen cover with the featured card's crop marked on it",
+    "crop_card_alt": "The chosen cover cropped the way the featured card crops it",
+    "crop_mosaic_note": "The mosaic cover is drawn to fit each card, so there is nothing to crop.",
+    "crop_no_dimensions": "Loading the picture…"
   },
   "errors": {
     "save_failed": "Couldn't save changes."

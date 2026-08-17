@@ -1000,8 +1000,8 @@ func (h *Handler) ListPosts(
 		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
 
-	// Default visibility filter: org-only (the post-1.22.C-a
-	// equivalent of legacy 'public' for the walled-garden feed).
+	// The default visibility filter (#1193): every SHARED tier the
+	// caller may read, not the org-only tier alone.
 	//
 	// `?visibility=` NARROWS within what the caller may read; it never
 	// widens it. Authorization is the read rule's job (readRuleSQL,
@@ -1013,16 +1013,51 @@ func (h *Handler) ListPosts(
 	// relationship conjunct anywhere, which handed every signed-in
 	// caller every other author's private posts.
 	//
-	// The DEFAULT stays org-only so the browse feed keeps showing the
-	// walled-garden tier and nothing else — without it, signing in would
-	// start dropping your own private posts into the public grid. An
-	// explicit author filter for yourself still drops the default, since
-	// "show me my posts" means all of your tiers.
-	var visPtr *string
+	// The signed-in default USED to be the single tier `org-only`, and
+	// that was ratified once, so replacing it is a change of position
+	// rather than a bug fix to an accident. What overturned it was a
+	// count: on this instance the admin's unfiltered wall showed 693
+	// posts and excluded all 139 public ones. A member publishing to the
+	// WORLD was invisible to their own community's default feed, and
+	// signed-in and signed-out visitors were shown different answers to
+	// the same question — the confusing kind-filter counts of #1193.
+	// Nobody's expectation of "browse" is "browse one tier".
+	//
+	// So the default is now the union of the shared tiers, intersected
+	// as always with the read rule. Each tier earns its place:
+	//
+	//   - public — the tier the old default excluded, and the whole
+	//     point. An anonymous visitor already saw these; a member should
+	//     not see less of their own instance than a stranger does.
+	//   - org-only — the walled-garden tier, the previous default.
+	//   - followers — posts by authors this caller follows, which the
+	//     rule already admits; the wall is where a follow is supposed to
+	//     pay off.
+	//   - explicit-share — posts somebody deliberately shared with THIS
+	//     caller. #875 kept these off the wall on the reasoning that a
+	//     grant deserves a notification instead; the notification stays,
+	//     and the post now also appears where the person who received it
+	//     would look for it.
+	//
+	// `private` is deliberately NOT in the set, and its absence is the
+	// half of the old comment that survives intact. The rule admits your
+	// own private posts (and, for a moderator, EVERYONE's), so a nil
+	// filter here would drop unpublished drafts into the browse grid and
+	// put every user's private work on a moderator's wall. Private stays
+	// reachable by asking for it — `?visibility=private` — which is what
+	// a display filter is for.
+	//
+	// None of this widens anything. The four tiers are ANDed with the
+	// read rule exactly as one tier was, so a caller sees a followers or
+	// explicit-share post here only where the rule already said yes.
+	//
+	// An explicit author filter for yourself still drops the default
+	// entirely, since "show me my posts" means all of your tiers,
+	// private included.
+	var visPtr []string
 	switch {
 	case req.Params.Visibility != nil:
-		v := string(*req.Params.Visibility)
-		visPtr = &v
+		visPtr = []string{string(*req.Params.Visibility)}
 	case caller == nil:
 		// #1181 — the anonymous default is the PUBLIC tier, not the
 		// org-only one below.
@@ -1041,8 +1076,14 @@ func (h *Handler) ListPosts(
 		// independently below and already limits an anonymous caller
 		// to the public tier, so naming that tier here is a narrowing
 		// conjunct over a set that was already exactly it.
-		v := "public"
-		visPtr = &v
+		//
+		// It stays a SEPARATE branch under #1193's union default even
+		// though the union would now intersect to the same rows. The
+		// anonymous answer is the one tier the rule admits; stating it
+		// keeps the signed-out page's filter honest about what it is
+		// showing, and keeps the two defaults independently
+		// changeable.
+		visPtr = []string{"public"}
 	case req.Params.AuthorRef != nil && *req.Params.AuthorRef == callerRef:
 		visPtr = nil
 	case req.Params.LikedBy != nil:
@@ -1058,10 +1099,13 @@ func (h *Handler) ListPosts(
 		// sees here are exactly the ones they could already read — their
 		// own posts, posts by authors they follow, posts shared with
 		// them. A tier they cannot read stays absent.
+		//
+		// Still nil rather than defaultFeedTiers under #1193: the Likes
+		// tab includes `private`, because a post you liked and can read
+		// belongs on the list of posts you liked whatever its tier.
 		visPtr = nil
 	default:
-		v := "org-only"
-		visPtr = &v
+		visPtr = defaultFeedTiers
 	}
 	var authorPtr *int64
 	if req.Params.AuthorRef != nil {
@@ -1323,17 +1367,26 @@ func (h *Handler) ListPosts(
 //
 // Where shares accumulate. A grant used to be findable only if the
 // sharer also sent a link out of band: the notification did not exist,
-// and ListPosts above pins visibility to `org-only` when the caller
-// sends no `?visibility=`, which no frontend surface does — so a shared
+// and ListPosts above pinned visibility to `org-only` when the caller
+// sent no `?visibility=`, which no frontend surface does — so a shared
 // post never entered the recipient's grid.
 //
-// The fix is NOT to widen that default. A share is low-volume and
+// #875's fix was NOT to widen that default. A share is low-volume and
 // high-salience: burying it in the busiest grid in the app is the wrong
-// place for it, and putting an EXISTS over post_acls into the feed would
-// change the shape (and the cache key) of the hottest query in the app
-// for content better served by being announced. Every prior-art surface
-// worth copying does the same two things instead — tell the recipient,
-// and give shares somewhere of their own to land. This is the second.
+// place for it, and every prior-art surface worth copying does the same
+// two things instead — tell the recipient, and give shares somewhere of
+// their own to land. This is the second, and it is unchanged.
+//
+// #1193 amends only the first half of that. The browse default is now
+// the union of the shared tiers, `explicit-share` among them, so a
+// granted post DOES appear in the recipient's grid as well. This surface
+// is not thereby redundant: the grid is a mixed feed ordered by
+// posted_at, where a share from last year sits wherever last year is,
+// while this page is the list OF shares — every one of them, in one
+// place, newest first. The old reasoning's other leg (an EXISTS over
+// post_acls would change the hottest query's shape) never applied to the
+// display filter: the read rule already carries that EXISTS on every
+// feed request, so naming the tier adds a comparison and no join.
 //
 // Everything after the query is the feed's own tail: fetchFullPost per
 // row through the shared post cache, then enrichPreview for the
@@ -2143,6 +2196,22 @@ func validVisibility(s string) bool {
 	}
 	return false
 }
+
+// defaultFeedTiers is the signed-in browse wall's default display filter
+// (#1193): the catalogue above MINUS `private`.
+//
+// It is stated as a subtraction on purpose. The set that belongs on a
+// wall is "the tiers whose whole point is that somebody else can see
+// them", and a tier added to the catalogue later will almost always be
+// one of those — so the risk worth guarding is a new SHARED tier
+// silently missing from the default, which is precisely the bug #1193
+// reports about `public`. TestDefaultFeedTiers_CoverEveryTierButPrivate
+// enumerates the column's own CHECK constraint and fails when a tier
+// exists that this list does not decide about.
+//
+// Order is irrelevant — it is spliced as `visibility = ANY($3)` — and it
+// is never mutated, so one package-level slice serves every request.
+var defaultFeedTiers = []string{"public", "org-only", "followers", "explicit-share"}
 
 // ---------------------------------------------------------------------------
 // Row → API conversions

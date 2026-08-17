@@ -79,6 +79,35 @@ class SiteState {
   setVisualSearchEnabled(next: boolean | null | undefined): void {
     this.visualSearchEnabled = next === true;
   }
+
+  /** True when this install lets anonymous visitors browse (#1195 —
+   *  `public_mode`, the #445/#709 switch). Rides the same public
+   *  /appearance boot fetch as the flags above.
+   *
+   *  It is here rather than read from the public-mode endpoint because
+   *  that endpoint is gated on `system.config.read`: the person who
+   *  needs the answer is a curator choosing a visibility tier, who has
+   *  no admin capability and should not need one to be told whether
+   *  "Public" means anything on this instance.
+   *
+   *  Uncached and defaulting to FALSE, the same rule the two flags
+   *  above follow. The consequence is worth stating plainly, because it
+   *  is the opposite of the usual one: defaulting false HIDES a
+   *  control, so on a public install the Public option arrives a beat
+   *  after the modal opens. That is the right way round — a tier option
+   *  that appears and then vanishes would let a curator click a control
+   *  that is about to stop existing, and the visibility of somebody's
+   *  work is not a good place for a flicker.
+   *
+   *  It gates an OPTION, never an outcome. A collection already at
+   *  `public` keeps that tier when the flag is false; the modal says so
+   *  rather than quietly presenting it as something else. */
+  publicModeEnabled = $state(false);
+
+  /** Called by the appearance store after the public boot fetch. */
+  setPublicModeEnabled(next: boolean | null | undefined): void {
+    this.publicModeEnabled = next === true;
+  }
 }
 
 export const site = new SiteState();
