@@ -38,6 +38,20 @@
      *  of any one member's kind: picking one member's icon for a mixed
      *  bundle says something untrue about the others (#1111). */
     count?: number;
+    /** Every asset this badge stands for is of `kind` — so the count
+     *  keeps the SET's glyph company instead of replacing it (#1203).
+     *
+     *  #1111's rule was never "a set has no kind", it was that one
+     *  member's icon cannot speak for the rest. When there is only one
+     *  answer among them that objection is gone, and Shapes is then the
+     *  vaguer of two true statements: the owner's "if they are all the
+     *  same asset, show the icon for that asset type."
+     *
+     *  Meaningless below `count` 2, where the single glyph already is
+     *  the kind. The CALLER decides — this component sees a count and a
+     *  kind, never the membership, and cannot tell a genuinely uniform
+     *  pack from a truncated payload that only looks like one. */
+    uniform?: boolean;
     /** Extra positioning classes from the caller. The badge owns its own
      *  look — pill, scrim, backdrop blur — and the caller owns where it
      *  sits, because that differs per density. */
@@ -77,6 +91,7 @@
   let {
     kind,
     count = 1,
+    uniform = false,
     class: klass = '',
     variant = 'overlay',
     tooltipKey = '',
@@ -84,7 +99,13 @@
   }: Props = $props();
 
   const multi = $derived(count > 1);
-  const KindIcon = $derived(iconForKind(kind));
+
+  /** True when the glyph stands for the SET and not for a kind — a
+   *  multi-asset badge whose members do not share one, which is the only
+   *  case Shapes was ever for. Derived once so the glyph and the
+   *  attribute that reports it cannot disagree. */
+  const statesTheSet = $derived(multi && !uniform);
+  const Glyph = $derived(statesTheSet ? MultiAssetIcon : iconForKind(kind));
   const label = $derived(
     labelOverride ||
       (multi
@@ -141,6 +162,7 @@
          {variant === 'inline' ? 'text-fg-muted' : 'bg-black/60 text-white backdrop-blur-sm'}
          {multi ? 'gap-1 px-2 py-1 text-xs font-semibold' : 'p-1.5'} {klass}"
   data-testid={multi ? 'card-kind-multi' : 'card-kind'}
+  data-glyph={statesTheSet ? 'multi' : kind}
   data-marquee-passthrough
   aria-label={label}
   onmouseenter={(e) => cardTooltip.enter(tipKey, tip, e)}
@@ -153,8 +175,15 @@
     <!-- Count to the LEFT of the glyph (#1111's spelling): the number is
          read first and the glyph qualifies it. -->
     <span class="tabular-nums">{count}</span>
-    <MultiAssetIcon size={14} strokeWidth={2.25} aria-hidden="true" />
-  {:else}
-    <KindIcon size={15} strokeWidth={2} aria-hidden="true" />
   {/if}
+  <!-- One element, whichever glyph won. The set's sizing is a touch
+       smaller and heavier than the lone glyph's so the pair reads as one
+       pill, and that stays true of a uniform pack's kind icon: what
+       changed in #1203 is WHICH glyph a set draws, never how a set is
+       drawn. -->
+  <Glyph
+    size={multi ? 14 : 15}
+    strokeWidth={multi ? 2.25 : 2}
+    aria-hidden="true"
+  />
 </button>
