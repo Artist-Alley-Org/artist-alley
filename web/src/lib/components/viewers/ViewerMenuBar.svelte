@@ -176,6 +176,16 @@
     const base = 'inline-block rounded px-2.5 py-1 hover:bg-white/10';
     return open ? `${base} bg-white/10` : base;
   }
+
+  // Class for the BUTTON `Menu` wraps the snippet in (#1109). It must
+  // generate a box — the old `display: contents` default made every
+  // one of these four menus 0×0, unfocusable and untabbable, so the
+  // menubar was pointer-only. The chip above still carries the padding,
+  // radius and hover ground; this carries the box, the matching radius
+  // so the focus ring traces the chip, and a light ring (the menubar
+  // sits on a near-black scrim, where the accent ring reads).
+  const MENU_TRIGGER_BOX =
+    'inline-flex rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70';
 </script>
 
 <!--
@@ -195,7 +205,7 @@
   class="relative z-30 flex h-9 shrink-0 items-center gap-0.5 border-b border-white/10 bg-black/85 px-1 text-xs text-white/90 backdrop-blur"
 >
   <!-- File menu -->
-  <Menu align="left">
+  <Menu align="left" triggerClass={MENU_TRIGGER_BOX}>
     {#snippet trigger({ open })}
       <span class={triggerClass(open)}>{t('viewer_menu.file')}</span>
     {/snippet}
@@ -272,7 +282,7 @@
 
   <!-- Edit menu — stubs for now. The actual editors land with the
        per-surface phases (tags / metadata / collections editors). -->
-  <Menu align="left">
+  <Menu align="left" triggerClass={MENU_TRIGGER_BOX}>
     {#snippet trigger({ open })}
       <span class={triggerClass(open)}>{t('viewer_menu.edit')}</span>
     {/snippet}
@@ -344,7 +354,7 @@
        Photoshop calls this "File Info"; "About" matches the OS menubar
        idiom the user asked for and reads more naturally for end users
        than "Info". -->
-  <Menu align="left" panelClass="min-w-[18rem]">
+  <Menu align="left" panelClass="min-w-[18rem]" triggerClass={MENU_TRIGGER_BOX}>
     {#snippet trigger({ open })}
       <span class={triggerClass(open)}>{t('viewer_menu.about')}</span>
     {/snippet}
@@ -408,7 +418,7 @@
        (future: Annotate · Compare). The dropdown highlights when any
        tool inside is active so the user can see "something's on"
        from the bar itself. -->
-  <Menu align="right" panelClass="min-w-[12rem]">
+  <Menu align="right" panelClass="min-w-[12rem]" triggerClass={MENU_TRIGGER_BOX}>
     {#snippet trigger({ open })}
       <!-- Match the File/Edit/About triggerClass exactly so the
            hover + open backgrounds look identical across the

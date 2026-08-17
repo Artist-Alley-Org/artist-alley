@@ -166,10 +166,18 @@
   }
 </script>
 
-<Menu align="right" panelClass="w-[24rem]">
+<Menu
+  align="right"
+  panelClass="w-[24rem]"
+  triggerClass="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+>
   {#snippet trigger({ open })}
-    <button
-      type="button"
+    <!-- #1109 — a SPAN, not a button. `Menu` already renders the real
+         `<button aria-haspopup="menu">` around this snippet, and a
+         button inside a button is invalid markup that put two focus
+         stops on one control. The chip keeps every visual class; the
+         wrapper carries the box, the matching radius and the ring. -->
+    <span
       title={t('nav.notifications')}
       aria-label={t('nav.notifications')}
       class="relative inline-flex h-9 w-9 items-center justify-center rounded-full text-fg-muted hover:bg-state-hover hover:text-fg"
@@ -180,7 +188,7 @@
         <path d="M13.73 21a2 2 0 0 1-3.46 0" />
       </svg>
       <Pill count={unread} />
-    </button>
+    </span>
   {/snippet}
 
   {#snippet children()}

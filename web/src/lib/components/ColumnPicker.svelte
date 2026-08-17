@@ -14,7 +14,10 @@
   const visible = $derived(new Set(browseView.listColumns));
 </script>
 
-<Menu align="right">
+<Menu
+  align="right"
+  triggerClass="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+>
   {#snippet trigger({ open })}
     <span
       class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg hover:bg-state-hover"

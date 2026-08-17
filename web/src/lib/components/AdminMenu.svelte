@@ -30,7 +30,12 @@
 </script>
 
 {#if canSeeAdmin}
-  <Menu align="right" triggerTestId="nav-admin-menu-trigger" panelTestId="admin-menu-panel">
+  <Menu
+    align="right"
+    triggerTestId="nav-admin-menu-trigger"
+    panelTestId="admin-menu-panel"
+    triggerClass="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
     {#snippet trigger({ open })}
       <span
         class="relative inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-state-hover"

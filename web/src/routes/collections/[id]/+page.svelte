@@ -506,14 +506,22 @@
            non-owner deleter gets a one-item menu rather than an empty
            panel or a set of controls the server would refuse. -->
       {#if isOwner || canDeleteCollection}
-        <Menu align="right">
+        <Menu
+          align="right"
+          triggerTestId="collection-detail-more-button"
+          triggerClass="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           {#snippet trigger({ open })}
-            <button
-              type="button"
+            <!-- #1109 — a SPAN, and the testid + aria-haspopup /
+                 aria-expanded move onto the button `Menu` already
+                 renders around this snippet. It used to be a nested
+                 `<button aria-haspopup="menu">`: invalid markup, a
+                 duplicate menu trigger in the accessibility tree, and
+                 an `aria-expanded` that had to be kept in sync by hand.
+                 `collection-detail-more-button` is unchanged, so the
+                 ui-18 / ui-35 / ui-36 specs still find it. -->
+            <span
               aria-label={t('collections.more')}
-              aria-haspopup="menu"
-              aria-expanded={open}
-              data-testid="collection-detail-more-button"
               class="inline-flex items-center rounded-md border border-border bg-surface px-2 py-1.5 text-sm hover:bg-surface-elevated"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -521,7 +529,7 @@
                 <circle cx="19" cy="12" r="1" />
                 <circle cx="5" cy="12" r="1" />
               </svg>
-            </button>
+            </span>
           {/snippet}
           {#if isOwner}
             <button
