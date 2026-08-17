@@ -5,22 +5,26 @@
   //
   // Top section is the header bar — breadcrumbs + name + visibility
   // badge + owner. Below it sits an action toolbar (Upload here,
-  // Share, Edit, More menu). The body is the membership, which is TWO
-  // tables: posts (`collection_posts`, #882) and assets
-  // (`collection_resources`).
+  // Share, Edit, More menu). The body is the collection's POSTS
+  // (`collection_posts`, #882) and nothing else.
   //
-  // Two sections rather than one merged grid, deliberately. They are
-  // different entities with different cards, different detail routes
-  // and independent curator orderings — `sort_order` is per-table, so
-  // there is no single sequence to interleave them into that the
-  // curator ever arranged. A merged wall would have to invent one.
+  // #1185 — this page used to render a SECOND grid underneath, the
+  // bare assets pinned through `collection_resources`. It is gone. A
+  // collection is a wall of posts: a post is the unit an author framed
+  // and the unit a reader saves, and a bare asset belongs to whoever
+  // uploaded it, not to a shared curated surface. That ruling also
+  // deletes the reason the two-section layout existed — with one kind
+  // of member there is one ordering, the curator's, and no headings to
+  // disambiguate.
   //
-  // Neither section renders when it is empty, so a collection of only
-  // assets looks exactly as it did before #882.
+  // `collection_resources` still EXISTS: the table, the API endpoints
+  // and the "save an asset to a collection" writers are all untouched,
+  // and dropping them is #1161's job. This route simply no longer reads
+  // them — `GET /collections/{id}/resources` has no caller here any more.
   //
-  // The member grid renders through the shared ContentGrid + the
+  // The post grid renders through the shared ContentGrid + the
   // floating ViewControls bar (#582), the same chrome browse and the
-  // profile pages use — a collection is an asset-showing surface, so it
+  // profile pages use — a collection is a card-showing surface, so it
   // gets the mode switcher, tile size and sort like every other one.
   // Previously this route hand-rolled its own responsive grid and had no
   // controls at all.
@@ -37,9 +41,8 @@
   import { t } from '$stores/lang.svelte';
   import { browseView } from '$stores/browseView.svelte';
   import { createScrollSnapshot } from '$lib/util/scrollSnapshot';
-  import AssetCard from '$components/AssetCard.svelte';
   import PostCard from '$components/PostCard.svelte';
-  import type { CardAsset, CardCoverAsset } from '$components/cardAsset';
+  import type { CardCoverAsset } from '$components/cardAsset';
   import ContentGrid from '$components/ContentGrid.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import ViewControls from '$components/ViewControls.svelte';
@@ -67,49 +70,6 @@
     // already selected rather than reading "use mosaic" and clearing it
     // on the next unrelated save.
     cover_asset_id?: string | null;
-  }
-
-  // #883 — every asset-derived field is OPTIONAL because a member the
-  // viewer may not see arrives as a placeholder that omits all of them.
-  // `restricted` is the flag that says which shape this row is; reading
-  // any field below without checking it first is the bug this issue
-  // closes.
-  interface MemberRow {
-    asset_id: string;
-    restricted?: boolean;
-    owner_display_name?: string | null;
-    title?: string;
-    asset_type?: number;
-    file_hash?: string | null;
-    // Media type + blur-up (#595). A member tile renders through the
-    // same CardThumb as a browse tile, which reads the media TYPE off
-    // the extension alone — that is what puts the video / 3D badge on
-    // the tile and what makes the hover sprite-scrub preview play.
-    // These were missing from both this row type and the API response,
-    // so every video and 3D member rendered as an untyped still.
-    file_extension?: string | null;
-    thumbhash?: string | null;
-    sort_order: number;
-    added_at: string;
-    asset_created_at?: string | null;
-    preview_available?: boolean;
-    /** Every configured rung exists (#610). Feeds the card's responsive
-     *  srcset (#502) — the API row carries it, so pass it through rather
-     *  than letting the tile fall back to the square `col` crop. */
-    ladder_available?: boolean;
-    /** A `sprites.vtt` hover-scrub cue file exists (#835). The gate the
-     *  card's hover preview now reads instead of guessing from the file
-     *  extension; the CollectionResource row carries it. */
-    scrub_available?: boolean;
-    /** Recorded source dimensions (#640) — the masonry tile's aspect
-     *  ratio, carried by the CollectionResource row. */
-    pixel_width?: number | null;
-    pixel_height?: number | null;
-    /** The at-a-glance `show_on_card` strip (#552), server-resolved to
-     *  display strings (#1133). Absent until this page's API row
-     *  started carrying it, which is why the flag rendered on browse
-     *  and on nothing here for a year. */
-    card_fields?: Array<{ code: string; label: string; value: string }> | null;
   }
 
   // #882 — a post pinned in this collection. The API returns the FULL
@@ -166,10 +126,8 @@
   }
 
   let collection = $state<Collection | null>(null);
-  let members = $state<MemberRow[]>([]);
   let posts = $state<PostRow[]>([]);
   let loading = $state(true);
-  let membersLoading = $state(true);
   let postsLoading = $state(true);
   let error = $state<string | null>(null);
   // Separate from `error` on purpose: one is "we could not load this",
@@ -203,75 +161,16 @@
   //
   // The BASE order is the curator's `sort_order` (ADR 0009 — a collection
   // is "an ordered, optionally-shared" set, and the server already
-  // returns `ORDER BY cr.sort_order ASC, cr.added_at ASC`). The sort
+  // returns `ORDER BY cp.sort_order ASC, cp.added_at ASC`). The sort
   // toggle REVERSES that order; it deliberately does not re-sort by date,
   // which would throw away the curation.
-  const sortedMembers = $derived(
-    browseView.feedDir === 'asc' ? [...members].reverse() : members,
-  );
-
-  // ContentGrid keys rows by `id`; a member row is keyed by asset_id, so
-  // map once here rather than teaching the grid about two shapes.
   //
-  // This literal is annotated `CardAsset[]` on purpose (#595). It is the
-  // one place on this page that RE-SHAPES an API row into card props,
-  // and it is exactly where the media-type + blur-up fields were lost:
-  // an un-annotated object literal is assignable to a card prop that
-  // only asks for optional fields, so dropping two of them raised
-  // nothing. With the annotation, forgetting a presentation field is a
-  // type error here rather than a missing badge in the browser.
-  const memberItems = $derived<CardAsset[]>(
-    sortedMembers.map((m) =>
-      // #883 — a member the viewer may not see arrives as a placeholder:
-      // `restricted: true`, the owner's display name, and NOT ONE of the
-      // asset fields below. The zeros and empty strings here are the
-      // card contract's required shape being satisfied with values the
-      // restricted plate never reads; they are not data, and mapping the
-      // absent API fields through `?? ''` on the normal branch instead
-      // would have quietly turned a withheld title into a blank one.
-      m.restricted
-        ? {
-            id: m.asset_id,
-            title: '',
-            file_hash: null,
-            file_extension: null,
-            thumbhash: null,
-            asset_type: 0,
-            created_at: m.added_at,
-            preview_available: false,
-            ladder_available: false,
-            scrub_available: false,
-            pixel_width: null,
-            pixel_height: null,
-            restricted: true,
-            owner_display_name: m.owner_display_name ?? null,
-          }
-        : {
-            id: m.asset_id,
-            title: m.title ?? '',
-            file_hash: m.file_hash ?? null,
-            file_extension: m.file_extension ?? null,
-            thumbhash: m.thumbhash ?? null,
-            asset_type: m.asset_type ?? 0,
-            created_at: m.asset_created_at ?? m.added_at,
-            preview_available: !!m.preview_available,
-            ladder_available: !!m.ladder_available,
-            scrub_available: !!m.scrub_available,
-            // #640 — the masonry tile's aspect ratio. The annotation
-            // above is what forced this line to be written; without it
-            // the member tiles would silently have gone back to being
-            // squares in masonry while every other surface followed its
-            // art.
-            pixel_width: m.pixel_width ?? null,
-            pixel_height: m.pixel_height ?? null,
-            restricted: false,
-            // #1133 — the at-a-glance strip. Passed through rather than
-            // reconstructed: the server already resolved every slug to
-            // its label (ADR 0012's rule, one home), so there is nothing
-            // for this page to format.
-            card_fields: m.card_fields ?? null,
-          },
-    ),
+  // #1185 — this reversal used to be applied to the ASSET grid only, so
+  // removing that grid would have left the footer's sort toggle wired to
+  // nothing on this route. The rule was never about assets; it is the
+  // curator-order rule, and the posts wall is now the curated sequence.
+  const orderedPosts = $derived(
+    browseView.feedDir === 'asc' ? [...posts].reverse() : posts,
   );
 
   onMount(() => {
@@ -306,24 +205,9 @@
     } finally {
       loading = false;
     }
-    void loadMembers();
     void loadPosts();
   }
 
-  async function loadMembers() {
-    membersLoading = true;
-    try {
-      const { data } = await api.GET('/collections/{id}/resources', {
-        params: { path: { id }, query: { limit: 200 } },
-      });
-      members = ((data?.items ?? []) as MemberRow[]);
-    } finally {
-      membersLoading = false;
-    }
-  }
-
-  // Fired alongside loadMembers rather than after it — the two are
-  // independent tables and neither section blocks the other's paint.
   async function loadPosts() {
     postsLoading = true;
     try {
@@ -700,13 +584,13 @@
     </div>
 
     <!-- Membership -->
-    {#if membersLoading || postsLoading}
+    {#if postsLoading}
       <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
         {#each { length: 10 } as _, i (i)}
           <div class="aspect-square animate-pulse rounded-lg bg-surface-elevated"></div>
         {/each}
       </div>
-    {:else if members.length === 0 && posts.length === 0}
+    {:else if posts.length === 0}
       <section class="rounded-lg border border-dashed border-border bg-surface-elevated/50 px-6 py-12 text-center">
         <p class="text-sm text-fg-muted">{t('collections.detail_empty')}</p>
         <p class="mt-1 text-xs text-fg-muted">{t('collections.detail_empty_hint')}</p>
@@ -721,56 +605,31 @@
         {/if}
       </section>
     {:else}
-      <!-- Posts first (#882). A collection that holds someone else's
-           work holds it as a POST — that is the unit the author framed
-           and the unit the reader saved — so it leads.
+      <!-- The whole body (#882, #1185). A collection that holds someone
+           else's work holds it as a POST — that is the unit the author
+           framed and the unit the reader saved.
 
-           Headings render only when BOTH sections have content: with one
-           kind of member the labels are noise, and a collection of only
-           assets must look exactly as it did before this landed. -->
-      {#if posts.length > 0}
-        {#if members.length > 0}
-          <h2 class="mb-2 text-sm font-medium text-fg-muted">{t('collections.posts_heading')}</h2>
-        {/if}
-        <div data-testid="collection-posts">
-          <ContentGrid mode={browseView.mode} items={posts} tileMin={browseView.tileMin}>
-            {#snippet card(item, mode)}
-              <PostCard post={item as PostRow} {mode} tileSizes={browseView.tileSizes} />
-            {/snippet}
-            {#snippet list()}
-              <!-- #1137. This snippet was simply MISSING, and its absence
-                   is the whole of the reported bug for the posts half: a
-                   collection's posts are the same rows the browse feed
-                   passes to this exact table, so `list` mode fell through
-                   to the grid branch and drew tiles while the control said
-                   LIST. Not a payload problem and not a shape mismatch —
-                   an omission. -->
-              <PostListTable items={posts} loading={false} />
-            {/snippet}
-          </ContentGrid>
-        </div>
-      {/if}
-
-      {#if members.length > 0}
-        {#if posts.length > 0}
-          <h2 class="mb-2 mt-6 text-sm font-medium text-fg-muted">{t('collections.assets_heading')}</h2>
-        {/if}
-        <!-- Shared grid (#511/#582), so mode + tile size + sort match
-             browse. Assets still carry no list table — PostListTable's row
-             type is the posts-feed shape and an asset is not one — so
-             `list` falls back to the grid here, exactly as it does in
-             UserProfile's and the team page's asset sections. Since #1137
-             that fallback STATES ITSELF on the page instead of silently
-             drawing tiles under a control that says LIST; an asset list
-             table is the follow-up, not a thing to fake with a cast. -->
-        <div data-testid="collection-assets">
-          <ContentGrid mode={browseView.mode} items={memberItems} tileMin={browseView.tileMin}>
-            {#snippet card(item, mode)}
-              <AssetCard asset={item} {mode} tileSizes={browseView.tileSizes} />
-            {/snippet}
-          </ContentGrid>
-        </div>
-      {/if}
+           No heading: there is one kind of member, so a label over the
+           only grid on the page is noise. It existed to disambiguate the
+           posts wall from the assets grid below it, and that grid is
+           gone. -->
+      <div data-testid="collection-posts">
+        <ContentGrid mode={browseView.mode} items={orderedPosts} tileMin={browseView.tileMin}>
+          {#snippet card(item, mode)}
+            <PostCard post={item as PostRow} {mode} tileSizes={browseView.tileSizes} />
+          {/snippet}
+          {#snippet list()}
+            <!-- #1137. This snippet was simply MISSING, and its absence
+                 is the whole of the reported bug for the posts half: a
+                 collection's posts are the same rows the browse feed
+                 passes to this exact table, so `list` mode fell through
+                 to the grid branch and drew tiles while the control said
+                 LIST. Not a payload problem and not a shape mismatch —
+                 an omission. -->
+            <PostListTable items={orderedPosts} loading={false} />
+          {/snippet}
+        </ContentGrid>
+      </div>
     {/if}
   {/if}
 </div>
@@ -789,10 +648,13 @@
      dialog resolved from where it is DECLARED, so it would render
      underneath their top layer — in the DOM, invisible on screen.
 
-     `ordered` is the pinned posts in the curator's order, so ← / → walk
-     the collection. No `onEndReached`: the whole membership arrives in
-     one request (limit 200), so there is no next page to spill into. -->
-<PostParamHost ordered={() => posts.map((p) => p.id)} />
+     `ordered` is the pinned posts AS THE WALL SHOWS THEM — the curator's
+     order, reversed when the footer's sort toggle is flipped — so ← / →
+     walk the collection in the sequence the reader is looking at rather
+     than in the one the API happened to return. No `onEndReached`: the
+     whole membership arrives in one request (limit 200), so there is no
+     next page to spill into. -->
+<PostParamHost ordered={() => orderedPosts.map((p) => p.id)} />
 
 {#if collection}
   <!-- The shared floating view controls (mode switcher + tile size +
