@@ -270,7 +270,23 @@
     "origin_label": "This item is hosted by another server",
     "multi": {
       "badge_label": "{count} assets in this post",
-      "badge_label_format": "{count} {format} assets in this post"
+      "badge_label_format": "{count} {format} assets in this post",
+      "badge_label_kind": "{count} {kind} assets in this post",
+      "kind": {
+        "image": "image",
+        "video": "video",
+        "pdf": "PDF",
+        "audio": "audio",
+        "sequence": "image sequence",
+        "font": "typeface",
+        "sprite": "sprite sheet",
+        "3d": "3D",
+        "ebook": "e-book",
+        "doc": "document",
+        "audiobook": "audiobook",
+        "archive": "archive",
+        "placeholder": "file"
+      }
     },
     "band": {
       "mixed": "mixed",

@@ -386,6 +386,170 @@ describe('PostCard — the extension is a ONE-ANSWER fact', () => {
       const c = cardOf([null, 'png']);
       expect(band(c)!.querySelector('[data-testid^="card-kind"]')).toBeNull();
     });
+
+    // #1203's middle rung. One kind, several formats: the band's format
+    // slot has no single answer and says "mixed", but the assets
+    // themselves are not a mixture — they are five videos, and the
+    // sentence says so.
+    it('⭐ names the KIND when the formats differ but the kind does not', () => {
+      expect(badgeLabel(cardOf(['mp4', 'webm', 'mov', 'mp4', 'webm']))).toBe(
+        '5 video assets in this post',
+      );
+      // ...and the band beside it still reads "mixed", because that slot
+      // answers "what format" and there genuinely is no one answer.
+      expect(extText(cardOf(['mp4', 'webm']))).toBe('mixed');
+    });
+
+    it('⭐ keeps the WORD when the kinds differ too', () => {
+      // The both-ways half: a kind-named sentence must not leak onto a
+      // post that has no one kind, or "mixed" would never be reachable.
+      expect(badgeLabel(cardOf(['png', 'mp4']))).toBe('2 mixed assets in this post');
+    });
+  });
+
+  // ── #1203: the glyph is the same ONE-ANSWER rule, one rung coarser ──
+  //
+  // The owner: "Multi asset posts with all the same asset show the
+  // shapes icon. If they are all the same asset, show the icon for that
+  // asset type." Shapes was never a claim that a set is heterogeneous —
+  // #1111 reached for it because one member's icon cannot speak for the
+  // others. Where every member answers the same, that objection is gone.
+  //
+  // Pinned BOTH WAYS throughout, because each rung passes on the wrong
+  // implementation of the other: "a video pack shows the video glyph"
+  // passes on a card that always draws the cover's kind, and "a mixed
+  // pack shows Shapes" passes on the card we had before this issue.
+  describe('PostCard — the pack glyph states the kind when there is only one', () => {
+    // `data-glyph` and not the rendered <svg>: the assertion is about
+    // which glyph the component CHOSE, and lucide's internal markup is
+    // not this file's business to depend on.
+    const glyph = (c: HTMLElement) =>
+      band(c)!.querySelector('[data-testid^="card-kind"]')!.getAttribute('data-glyph');
+
+    it('⭐ shows the KIND glyph when one extension is shared', () => {
+      // Rung one: 4 × glb — count, the 3D glyph, "glb".
+      const c = cardOf(['glb', 'glb', 'glb', 'glb']);
+      expect(glyph(c)).toBe('3d');
+      expect(glyph(c)).not.toBe('multi');
+      // Still a SET badge — the count did not disappear with Shapes.
+      expect(band(c)!.querySelector('[data-testid="card-kind-multi"]')).toBeTruthy();
+      expect(extText(c)).toBe('glb');
+    });
+
+    it('⭐ shows the KIND glyph when only the extensions differ', () => {
+      // Rung two: mp4 + webm are two formats and one kind.
+      const c = cardOf(['mp4', 'webm', 'mov', 'mp4', 'webm']);
+      expect(glyph(c)).toBe('video');
+      expect(glyph(c)).not.toBe('multi');
+    });
+
+    it('⭐ shows SHAPES when the kinds genuinely differ', () => {
+      // Rung three, unchanged — and the direction that keeps the other
+      // two honest.
+      const c = cardOf(['png', 'psd', 'mp4', 'glb', 'png', 'psd', 'mp4']);
+      expect(glyph(c)).toBe('multi');
+      expect(extText(c)).toBe('mixed');
+    });
+
+    it('reads the KIND, not the extension — a sprite atlas is not a PNG', () => {
+      // `kindForAsset` and not a second extension table: these members
+      // are PNGs by extension and sprite sheets by asset_type, so the
+      // uniform kind is `sprite` even though the band says "png".
+      const sheets = {
+        id: POST_ID,
+        title: 'Two sheets',
+        created_at: '2026-08-01T12:00:00.000Z',
+        like_count: 0,
+        comment_count: 0,
+        members: [0, 1].map((i) => ({
+          asset_id: `3f1b8e2c-0000-4000-8000-00000000d${i}0`,
+          asset: asset({ id: `3f1b8e2c-0000-4000-8000-00000000d${i}0`, asset_type: 13 }),
+        })),
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const c = render(PostCard, { post: sheets as any, mode: 'thumbnail' as ViewMode }).container;
+      expect(glyph(c)).toBe('sprite');
+      expect(extText(c)).toBe('png');
+    });
+
+    it('⭐⭐ decides uniformity over the members this READER can see', () => {
+      // The withholding rule carries to the glyph, which is a derived
+      // copy of the same fact. A hidden member must not flip a wall of
+      // visible PNGs to Shapes — that announces that something foreign
+      // is in there (#902/#1066's class, on a card).
+      expect(glyph(cardOf(['png', 'png', null, 'png']))).toBe('image');
+      // The reader who CAN see that member gets the truthful Shapes.
+      expect(glyph(cardOf(['png', 'png', 'mp4', 'png']))).toBe('multi');
+    });
+
+    it('stays on SHAPES when the payload carries only part of the set', () => {
+      // A search hit ships one member out of four: uniformity is
+      // unknowable, and Shapes is the honest "a pack, contents
+      // unstated". Drawing the cover's glyph would state a set fact this
+      // card never received.
+      expect(glyph(cardOf(['png'], { memberCount: 4 }))).toBe('multi');
+    });
+
+    it('leaves the single-asset arm alone', () => {
+      // One asset: the glyph was always that asset's kind, and `uniform`
+      // must not turn a lone item into a set badge.
+      const one = postCard('thumbnail', 1);
+      expect(glyph(one)).toBe('image');
+      expect(band(one)!.querySelector('[data-testid="card-kind-multi"]')).toBeNull();
+    });
+
+    // THE GLYPH FOLLOWS THE CARD, not the view (owner ruling on #1203).
+    //
+    // It landed on the thumbnail band first because that is where the
+    // incoherence was reported, but the SAME badge in the grid overlay
+    // and in the feed/list corner was already telling a hover "4 glb
+    // assets in this post" (#1191) while drawing Shapes at rest.
+    // Scoping the fix to one density would have left that contradiction
+    // standing in two places and made a tile mean different things
+    // depending on which switcher button was last pressed.
+    //
+    // Anywhere the badge renders, then — and pinned in both directions
+    // per density, because "grid shows the 3D glyph" passes just as well
+    // on a card that always draws the cover's kind.
+    //
+    // `list` here is PostCard's list mode, which is the #1137 FALLBACK
+    // ("list view isn't available for this content — showing tiles
+    // instead"), not the list table: a surface that supplies the table
+    // snippet never renders this component at all, so there is no badge
+    // on it to be wrong.
+    const anyBadge = (c: HTMLElement) =>
+      c.querySelector('[data-testid^="card-kind"]')?.getAttribute('data-glyph') ?? null;
+
+    it('⭐⭐ states the same kind in every density that draws a badge', () => {
+      for (const mode of ['grid', 'feed', 'list'] as const) {
+        expect(anyBadge(cardOf(['glb', 'glb', 'glb'], { mode })), mode).toBe('3d');
+        expect(anyBadge(cardOf(['mp4', 'webm'], { mode })), mode).toBe('video');
+        // ...and a genuinely mixed pack keeps Shapes in each of them.
+        expect(anyBadge(cardOf(['png', 'mp4'], { mode })), mode).toBe('multi');
+      }
+    });
+
+    it('carries the gates into those densities too, rather than re-deriving them', () => {
+      // The gates live on `packKind`, so a truncated payload stays on
+      // Shapes off the thumbnail band as well — the call sites pass a
+      // value, they do not each decide one.
+      for (const mode of ['grid', 'feed', 'list'] as const) {
+        expect(anyBadge(cardOf(['glb'], { mode, memberCount: 4 })), mode).toBe('multi');
+        // A hidden member cannot flip the glyph in any view either.
+        expect(anyBadge(cardOf(['png', 'png', null, 'png'], { mode })), mode).toBe('image');
+      }
+    });
+
+    it('draws NO badge on a compact masonry tile, which is why masonry is absent above', () => {
+      // Not an oversight in the loop: `compact` suppresses this badge
+      // entirely (#652 — on a 60px tile it collides with the ⋮ menu),
+      // and an unmeasured tile in jsdom is always the minimal tier. The
+      // facts live in that density's hover tooltip instead.
+      expect(cardOf(['glb', 'glb'], { mode: 'masonry' })).toBeTruthy();
+      expect(
+        cardOf(['glb', 'glb'], { mode: 'masonry' }).querySelector('[data-testid^="card-kind"]'),
+      ).toBeNull();
+    });
   });
 
   it('shows no extension in grid or masonry, which have no band', () => {

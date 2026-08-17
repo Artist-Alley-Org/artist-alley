@@ -29,7 +29,7 @@
   import { masonryLayout, masonryOverlayTier } from '$stores/masonryLayout.svelte';
   import { api } from '$api/client';
   import type { CardCoverAsset, ContentOrigin } from '$components/cardAsset';
-  import { kindForAsset } from './viewers/controller';
+  import { kindForAsset, type ViewKind } from './viewers/controller';
   import { thumbhashMatteColor } from '$lib/util/thumbhash';
   import CardKindBadge from './CardKindBadge.svelte';
   import CardAuthorLink from './CardAuthorLink.svelte';
@@ -429,8 +429,8 @@
 
   const memberCount = $derived(memberCountProp ?? post.members.length);
 
-  /** The extensions of the members this reader may actually READ, in
-   *  the normalised form the band prints.
+  /** The members this reader may actually READ — the one set every
+   *  band fact is computed over.
    *
    *  READABLE MEMBERS ONLY, and that is a rule about disclosure, not
    *  tidiness. A restricted member ships with `restricted: true` and no
@@ -448,10 +448,32 @@
    *  is the thing doing the work. Both paths read the SAME `restricted`
    *  flag the server wrote from its one readability decision — this is
    *  not a second opinion about who may see what. */
+  const readableMembers = $derived(post.members.filter((m) => !m.restricted && m.asset));
+
+  /** Their extensions, in the normalised form the band prints. */
   const readableExtensions = $derived(
-    post.members
-      .filter((m) => !m.restricted && m.asset)
-      .map((m) => (m.asset?.file_extension ?? '').replace(/^\./, '').toLowerCase()),
+    readableMembers.map((m) => (m.asset?.file_extension ?? '').replace(/^\./, '').toLowerCase()),
+  );
+
+  /** The KINDS of the same members, off the same list (#1203).
+   *
+   *  ONE pass over ONE filtered set, so the two facts the band states —
+   *  "what format" and "what kind of thing" — can never be computed over
+   *  different memberships. A second `post.members.filter(...)` here
+   *  would be a parallel derivation of the disclosure rule above, and
+   *  the whole point of that rule is that there is exactly one of it.
+   *
+   *  `kindForAsset` and not the extension: a PNG uploaded as a sprite
+   *  atlas is a sprite sheet, and a pack of those is uniform in kind
+   *  even though `readableExtensions` says "png" — which is the same
+   *  resolver the cover, CardFallback and the viewer router use. */
+  const readableKinds = $derived(
+    readableMembers.map((m) =>
+      kindForAsset({
+        asset_type: m.asset?.asset_type ?? null,
+        file_extension: m.asset?.file_extension ?? null,
+      }),
+    ),
   );
 
   /** Does this payload carry the whole membership?
@@ -474,6 +496,16 @@
     readableExtensions.length > 0 && new Set(readableExtensions).size === 1
       ? readableExtensions[0] || null
       : null,
+  );
+
+  /** The one KIND every readable member shares, or null when they
+   *  disagree — the genuinely mixed post — or when there is nothing to
+   *  compare. The extension rule's twin, one rung coarser: .mp4 and
+   *  .webm are two answers to "what format" and one answer to "what kind
+   *  of thing", so a post can be mixed by the line above and uniform by
+   *  this one. */
+  const uniformKind = $derived(
+    readableKinds.length > 0 && new Set(readableKinds).size === 1 ? readableKinds[0] : null,
   );
 
   /** The extension the thumbnail's band shows, or null to show none.
@@ -523,6 +555,71 @@
     bandExtension !== null && !coverRestricted && memberCount > 1 && uniformExtension === null,
   );
 
+  /** The kind the PACK badge's glyph states, or null to fall back to
+   *  Shapes — the multi-asset glyph (#1203).
+   *
+   *  The owner: "Multi asset posts with all the same asset show the
+   *  shapes icon. If they are all the same asset, show the icon for that
+   *  asset type." Shapes was never a claim that a set is heterogeneous;
+   *  #1111 reached for it because picking ONE member's icon for a bundle
+   *  says something untrue about the others. Where every member is a
+   *  .glb — or an .mp4 beside a .webm — there is nothing untrue about
+   *  the box glyph, and the badge can say what the pack IS instead of
+   *  only that it is a pack. Same "one ANSWER, not one asset" rule the
+   *  extension slot already runs on, applied one rung up.
+   *
+   *  Gated on `membersComplete` for the reason the extension is: a
+   *  search hit ships one member out of four, and a glyph derived from
+   *  it would state a set fact this card never received. Unknowable is
+   *  spelled as Shapes — the honest "a pack, contents unstated" — not as
+   *  a guess from the cover.
+   *
+   *  Readable members only, so the same withholding rule carries: a
+   *  hidden .glb must not be able to flip a wall of visible PNGs from
+   *  the image glyph to Shapes, which would announce that something
+   *  foreign is in there (#902/#1066's class, on a card).
+   *
+   *  EVERY DENSITY, not just the thumbnail band (owner ruling). This
+   *  landed on the band first because that is where the incoherence was
+   *  reported, and the card is one card: the SAME badge in the grid
+   *  overlay and in the feed corner was already telling a hover "4 glb
+   *  assets in this post" (#1191) while drawing Shapes at rest. Scoping
+   *  the glyph to one view would have kept that contradiction in two
+   *  places and made the card mean different things depending on which
+   *  switcher button you last pressed. The gates above ride along for
+   *  free, because they live HERE rather than at any call site. */
+  const packKind = $derived(
+    coverRestricted || memberCount <= 1 || !membersComplete ? null : uniformKind,
+  );
+
+  /** The kind's name AS IT READS MID-SENTENCE, or null when this
+   *  catalogue cannot name it (#1203).
+   *
+   *  A separate string from `card.fallback.kind.*` on purpose, and the
+   *  reason is not English capitalisation. Those labels are STANDALONE —
+   *  a checkbox in the type filter, a badge's accessible name — and a
+   *  language that inflects (or that capitalises every noun, or that
+   *  needs a different word inside a counted phrase) has no way to make
+   *  one string serve both. `.toLowerCase()` on the label would look
+   *  like the fix in English and be wrong in German on the first
+   *  translation.
+   *
+   *  It degrades rather than leaking a key: an unnamed kind falls back
+   *  to the standalone label, and a kind this catalogue does not know at
+   *  all returns null, which drops the sentence to the "mixed" form
+   *  instead of printing `card.multi.kind.whatever` into a tooltip. */
+  function kindNoun(kind: ViewKind): string | null {
+    for (const key of [`card.multi.kind.${kind}`, `card.fallback.kind.${kind}`]) {
+      const s = t(key);
+      if (s !== key) return s;
+    }
+    return null;
+  }
+
+  /** That name for the kind this badge's glyph is drawing, or null when
+   *  there is no such glyph (or no such name) to talk about. */
+  const packKindName = $derived(packKind ? kindNoun(packKind) : null);
+
   /**
    * What the kind badge says when you hover or focus it, on a PACK.
    *
@@ -547,14 +644,29 @@
    * beside it can never disagree. When it is null — a truncated payload
    * whose uniformity is unknowable — the badge falls back to the count
    * alone rather than inventing a format for it.
+   *
+   * THE MIDDLE RUNG (#1203). One kind, several formats — five videos as
+   * .mp4 and .webm — used to fall through to "5 mixed assets in this
+   * post", which is true of the formats and false of the thing the
+   * reader is being told about: those five assets are not a mixture,
+   * they are five videos. So when the glyph states a kind, the sentence
+   * names that kind instead. The band's own slot still reads "mixed",
+   * because that slot answers "what format" and there genuinely is no
+   * one answer — the two are not disagreeing, they are answering
+   * different questions at the resolution each can.
    */
   const packLabel = $derived(
-    memberCount > 1 && bandExtension
-      ? t('card.multi.badge_label_format', {
-          count: String(memberCount),
-          format: bandExtension,
-        })
-      : undefined,
+    memberCount <= 1 || !bandExtension
+      ? undefined
+      : uniformExtension === null && packKindName
+        ? t('card.multi.badge_label_kind', {
+            count: String(memberCount),
+            kind: packKindName,
+          })
+        : t('card.multi.badge_label_format', {
+            count: String(memberCount),
+            format: bandExtension,
+          }),
   );
 
   // ── #1111: the grid card's overlay ──────────────────────────────────
@@ -872,9 +984,15 @@
              The band keeps its `gap-2` for what it still separates: this
              unit from the checkbox at the far edge. -->
         <div class="flex min-w-0 items-center">
+          <!-- `packKind` is the pack's own kind when every readable
+               member agrees (#1203) and null otherwise, so a mixed post
+               keeps Shapes and a single-asset post keeps reading the
+               cover — which IS the whole post there. The same pair goes
+               to every other density's badge; see `packKind`. -->
           <CardKindBadge
-            kind={coverKind}
+            kind={packKind ?? coverKind}
             count={memberCount}
+            uniform={packKind !== null}
             variant="inline"
             tooltipKey={post.id}
             label={packLabel}
@@ -967,7 +1085,10 @@
          said nothing at all about a SINGLE-asset post, whose kind was
          left to CardThumb's two-of-thirteen text chip. CardKindBadge
          answers both: the count plus Shapes for a set, the kind glyph
-         for one.
+         for one — and since #1203 the count plus the KIND's glyph when
+         the set has only one, which is the same `packKind` the band and
+         the grid overlay pass. One card, one meaning, whichever
+         switcher button the reader last pressed.
 
          Suppressed under `compact` (#652). On a 60px masonry tile
          "bottom-right" and "top-right" are the same 44px band, so the
@@ -983,8 +1104,9 @@
          its type indicator and which leaves the artwork untouched. -->
     {#if !compact && !showOverlay && !coverRestricted && !detailed}
       <CardKindBadge
-        kind={coverKind}
+        kind={packKind ?? coverKind}
         count={memberCount}
+        uniform={packKind !== null}
         class="absolute bottom-2 right-2 z-[2]" tooltipKey={post.id} label={packLabel} />
     {/if}
 
@@ -1072,17 +1194,26 @@
           data-testid="post-card-scrim"
         ></div>
         <!-- TOP-LEFT: the kind, as an icon and never as a word.
-             A multi-asset post states the SET instead of any one
-             member's kind, with the count to the LEFT of the glyph —
-             #1111's spelling, and the right way round: the number is
-             read first and the glyph qualifies it.
+             A multi-asset post carries the count to the LEFT of the
+             glyph — #1111's spelling, and the right way round: the
+             number is read first and the glyph qualifies it. The glyph
+             states the SET (Shapes) only when its members disagree;
+             where they share a kind it states that kind (#1203, via
+             `packKind` — the same value the thumbnail band uses, so the
+             tile does not change its mind between densities).
 
              `memberCount` is the truth rule from the props block: a
              search hit ships one member and carries its real size
              beside it, so this never becomes `members.length` and never
              becomes an unbounded query for a badge. -->
         <div class="relative flex items-start justify-between gap-2">
-          <CardKindBadge kind={coverKind} count={memberCount} tooltipKey={post.id} label={packLabel} />
+          <CardKindBadge
+            kind={packKind ?? coverKind}
+            count={memberCount}
+            uniform={packKind !== null}
+            tooltipKey={post.id}
+            label={packLabel}
+          />
         </div>
 
         <!-- BOTTOM-LEFT: identity. Title, then the author.
