@@ -9,10 +9,13 @@
 // both:
 //
 //   - #875: nothing told the recipient. AddPostAcl emitted no
-//     notification, and the browse feed pins visibility to `org-only`
-//     when no ?visibility= is sent (which no frontend surface sends), so
+//     notification, and the browse feed pinned visibility to `org-only`
+//     when no ?visibility= was sent (which no frontend surface sends), so
 //     the shared post never entered the recipient's grid either. A share
-//     only worked if the sharer ALSO sent a link out of band.
+//     only worked if the sharer ALSO sent a link out of band. The
+//     notification is #875's; the grid is #1193's, which made the browse
+//     default the union of the shared tiers — `explicit-share` among
+//     them — so both halves of that sentence are now false.
 //   - #876: gating the ACL list on "can read the post" meant a grantee
 //     could enumerate the rest of the guest list, plus who granted each
 //     row and when it expires.
@@ -25,13 +28,16 @@
 //     just as happily if #667 were reverted and the grantee could not
 //     read the post at all — the fix would look done while the feature
 //     it protects was dead.
-//   - TestListPosts_DefaultFeedIsUnchangedByGrants snapshots the default
-//     browse response BEFORE any grant exists and compares it byte for
-//     byte with the response AFTER granting the same caller every tier.
-//     Adding an EXISTS over post_acls to the feed is the accident this
-//     PR is most likely to have, and it would change the shape of the
-//     hottest query in the app. The snapshot is asserted non-empty, so
-//     "identical" cannot be satisfied by two empty pages.
+//   - TestListPosts_GrantsReachTheDefaultFeed drives the default browse
+//     response BEFORE any grant exists and again AFTER granting the same
+//     caller every tier. It used to require the two to be byte-identical
+//     — #875's position was that a share belongs in a notification and on
+//     its own page, not in the busiest grid in the app. #1193 overturned
+//     that half: the browse default is the union of the shared tiers, so
+//     a granted post now appears on the wall as well. The test kept its
+//     shape and reversed its expectation, because "the grant changed
+//     nothing" and "the grant did not work" are indistinguishable
+//     otherwise.
 //
 // Skips without AA_DB_PASSWORD (reuses the previewPool harness).
 
@@ -39,7 +45,6 @@ package posts
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
@@ -609,29 +614,35 @@ func TestSharedWithMe_AnonymousIsRefused(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The constraint this PR is most likely to break by accident
+// Where a grant shows up (#875, amended by #1193)
 // ---------------------------------------------------------------------------
 
-// TestListPosts_DefaultFeedIsUnchangedByGrants.
+// TestListPosts_GrantsReachTheDefaultFeed.
 //
-// #875 was NOT fixed by widening the browse feed. `GET /posts` with no
-// query string still means "the org-only tier", and adding an EXISTS
-// over post_acls to it would change the shape and the cache key of the
-// hottest query in the app for content that deserves a notification
-// instead.
+// #875 answered "a share is invisible" with a notification and a page of
+// its own, and deliberately NOT by widening the browse feed: `GET /posts`
+// with no query string meant "the org-only tier", full stop.
 //
-// So: snapshot the full default response for the grantee before any
-// grant exists, grant the same caller every tier the author owns, and
-// require the response to be byte-identical. Comparing marshalled JSON
-// rather than an id set catches an ordering change, a cursor change or a
-// field appearing, not just membership.
+// #1193 overturned the tier default for an unrelated and much larger
+// reason — a member's wall excluded every PUBLIC post on the instance —
+// and the union it replaced org-only with contains `explicit-share`. So
+// a granted post now does reach the wall, and this test asserts the new
+// contract in both directions on one fixture:
 //
-// Two guards keep it from passing trivially:
-//   - the "before" snapshot must be non-empty and must contain the
-//     org-only fixture post, so two empty pages cannot satisfy it;
-//   - the grants must demonstrably WORK, asserted through the
-//     shared-with-me surface, so a no-op grant cannot satisfy it either.
-func TestListPosts_DefaultFeedIsUnchangedByGrants(t *testing.T) {
+//   - before any grant, the grantee's default feed has the org-only post
+//     and NOT the explicit-share one. Without this the "after" assertion
+//     would pass on a feed that never filtered at all.
+//   - after granting every tier, the explicit-share, followers and
+//     public posts are all on it, because the read rule's ACL disjunct
+//     admits them and the display filter no longer subtracts them.
+//   - `private` stays off it even fully granted. That is the half of the
+//     old default #1193 kept, and it is the one assertion here that a
+//     "just delete the filter" implementation fails.
+//
+// The grants are separately proved through the shared-with-me surface,
+// so a build where AddPostAcl wrote nothing fails as a setup error
+// rather than passing the negative assertions by accident.
+func TestListPosts_GrantsReachTheDefaultFeed(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)
 
@@ -642,7 +653,7 @@ func TestListPosts_DefaultFeedIsUnchangedByGrants(t *testing.T) {
 
 	// The default feed: no visibility, no author, no filters at all —
 	// exactly what the browse page sends.
-	feed := func() []byte {
+	feed := func() map[uuid.UUID]bool {
 		t.Helper()
 		resp, err := h.ListPosts(
 			auth.WithIdentity(t.Context(), lvIdentity(shGrantee)),
@@ -655,40 +666,28 @@ func TestListPosts_DefaultFeedIsUnchangedByGrants(t *testing.T) {
 		if !is {
 			t.Fatalf("ListPosts returned %T, want 200", resp)
 		}
-		b, err := json.Marshal(openapi.PostList(ok))
-		if err != nil {
-			t.Fatalf("marshal feed: %v", err)
+		out := make(map[uuid.UUID]bool, len(ok.Items))
+		for _, p := range ok.Items {
+			out[uuid.UUID(p.Id)] = true
 		}
-		return b
+		return out
 	}
 
 	before := feed()
-	if len(before) == 0 {
-		t.Fatal("the default feed marshalled to nothing")
+	if !before[ids["org-only"]] {
+		t.Fatal("the ungranted default feed does not contain the org-only fixture post — " +
+			"the assertions below would be vacuous")
 	}
-
-	// The org-only fixture post must be in the "before" snapshot, or
-	// "identical" is being asserted about an empty page.
-	var beforeList openapi.PostList
-	if err := json.Unmarshal(before, &beforeList); err != nil {
-		t.Fatalf("unmarshal feed: %v", err)
-	}
-	var sawOrgOnly bool
-	for _, p := range beforeList.Items {
-		if uuid.UUID(p.Id) == ids["org-only"] {
-			sawOrgOnly = true
-		}
-	}
-	if !sawOrgOnly {
-		t.Fatal("the default feed did not contain the org-only fixture post — the snapshot below would be vacuous")
+	if before[ids["explicit-share"]] {
+		t.Fatal("the explicit-share post is on the feed BEFORE any grant exists — the " +
+			"fixture proves nothing about what a grant does")
 	}
 
 	for _, tier := range aclTiers {
 		aclGrant(t, pool, ids[tier], "user", shGranteePrincipal, nil)
 	}
 
-	// The grants are real. Without this the byte-comparison would pass
-	// on a build where AddPostAcl wrote nothing.
+	// The grants are real.
 	shared := shSharedWithMe(t, h, shGrantee)
 	for _, tier := range aclTiers {
 		if !shared[ids[tier]] {
@@ -696,9 +695,16 @@ func TestListPosts_DefaultFeedIsUnchangedByGrants(t *testing.T) {
 		}
 	}
 
-	if after := feed(); string(after) != string(before) {
-		t.Errorf("the default browse response changed when the caller gained grants.\n"+
-			"#875 was decided against widening the feed; a post_acls EXISTS has leaked into ListPosts.\nbefore: %s\nafter:  %s",
-			before, after)
+	after := feed()
+	for _, tier := range []string{"public", "org-only", "followers", "explicit-share"} {
+		if !after[ids[tier]] {
+			t.Errorf("a granted %s post is absent from the grantee's default wall — the "+
+				"display filter is narrower than the read rule (#1193)", tier)
+		}
+	}
+	if after[ids["private"]] {
+		t.Error("a granted PRIVATE post reached the browse wall. The default filter is " +
+			"the union of the SHARED tiers; dropping it entirely puts a moderator's " +
+			"wall full of other people's drafts")
 	}
 }

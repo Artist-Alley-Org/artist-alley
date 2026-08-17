@@ -27,6 +27,7 @@ import (
 	"context"
 	"regexp"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -368,5 +369,194 @@ func TestListPosts_VisibilityFilterOnlyNarrows(t *testing.T) {
 	}
 	if sawTheirs {
 		t.Error("?visibility=private returned another author's private post — #660 has regressed")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #1193 — the DEFAULT display filter
+// ---------------------------------------------------------------------------
+
+// TestDefaultFeedTiers_IsEveryTierButPrivate reads the tiers out of the
+// database's own CHECK constraint and requires the browse default to
+// decide about every one of them.
+//
+// It is the counterpart of postVisibilityTiers' use above, and it exists
+// because #1193 IS the failure it guards: `public` was added to the
+// column by migration 00008 and the browse default — a hand-written list
+// of one tier — never learned about it, so for three releases a member's
+// wall silently excluded every post published to the world. A tier added
+// tomorrow will be a SHARED tier far more often than a private one, so
+// the list that must not go stale is this one.
+//
+// Stated as "the constraint's tiers, minus private" rather than as a
+// literal set, so it fails on a NEW tier rather than passing on a
+// hardcoded copy of the answer.
+func TestDefaultFeedTiers_IsEveryTierButPrivate(t *testing.T) {
+	pool := previewPool(t)
+
+	want := map[string]bool{}
+	for _, tier := range postVisibilityTiers(t, pool) {
+		if tier != "private" {
+			want[tier] = true
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("no tiers parsed out of posts_visibility_check — the comparison below would be vacuous")
+	}
+
+	got := map[string]bool{}
+	for _, tier := range defaultFeedTiers {
+		got[tier] = true
+	}
+	if got["private"] {
+		t.Error("defaultFeedTiers contains `private` — the browse wall would show a " +
+			"caller their own unpublished drafts, and a moderator EVERY user's")
+	}
+	for tier := range want {
+		if !got[tier] {
+			t.Errorf("the tier %q exists in posts_visibility_check and is missing from "+
+				"defaultFeedTiers — a post at that tier is invisible on the browse wall "+
+				"to everyone entitled to read it, which is exactly #1193", tier)
+		}
+	}
+	for tier := range got {
+		if tier != "private" && !want[tier] {
+			t.Errorf("defaultFeedTiers names %q, which the database does not allow", tier)
+		}
+	}
+}
+
+// TestListPosts_DefaultWallIsTheReadableUnion is #1193's regression test,
+// and the assertion that fails loudest on the old code is the first one:
+// a PUBLIC post was absent from a signed-in member's default wall.
+//
+// One post per tier by one author, plus the two relationships that open
+// tiers (a follow, an ACL grant), then the DEFAULT page — no
+// `?visibility=` at all, which is what every frontend surface sends —
+// for four caller classes.
+//
+// Both directions are asserted per caller. "Everything readable is
+// present" is the fix; "private is absent" is the half of the old
+// default that survives it, and without it the fix would be indist-
+// inguishable from dropping the display filter entirely — which would
+// put a moderator's wall full of other people's private drafts.
+func TestListPosts_DefaultWallIsTheReadableUnion(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	ids := map[string]uuid.UUID{}
+	for _, tier := range postVisibilityTiers(t, pool) {
+		ids[tier] = seedTierPost(t, pool, lvAuthor, tier)
+	}
+	// lvFollower follows the author; lvStranger holds an explicit grant
+	// on the explicit-share post. Two different doors into the union, so
+	// a fix that opened only one of them fails here.
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO user_follows (follower_user_ref, followee_user_ref) VALUES ($1,$2)
+		 ON CONFLICT DO NOTHING`, lvFollower, lvAuthor); err != nil {
+		t.Fatalf("seed follow: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM user_follows WHERE follower_user_ref=$1`, lvFollower)
+	})
+	aclGrant(t, pool, ids["explicit-share"], "user", strconv.FormatInt(lvStranger, 10), nil)
+
+	cases := []struct {
+		caller string
+		id     *auth.Identity
+		want   map[string]bool
+	}{
+		{
+			// The whole point. A signed-in member with no relationship to
+			// the author sees the world-visible post and the walled-garden
+			// one; the old default showed them only the second.
+			caller: "stranger", id: lvIdentity(lvStranger),
+			want: map[string]bool{
+				"public": true, "org-only": true,
+				"followers": false, "explicit-share": true, "private": false,
+			},
+		},
+		{
+			// A follow pays off on the WALL, not only on the Following tab.
+			caller: "follower", id: lvIdentity(lvFollower),
+			want: map[string]bool{
+				"public": true, "org-only": true,
+				"followers": true, "explicit-share": false, "private": false,
+			},
+		},
+		{
+			// The author's own private post stays off their own wall. It is
+			// reachable — `?visibility=private` and the own-author filter
+			// both return it — just not mixed into the browse grid.
+			caller: "author", id: lvIdentity(lvAuthor),
+			want: map[string]bool{
+				"public": true, "org-only": true,
+				"followers": true, "explicit-share": true, "private": false,
+			},
+		},
+		{
+			// The load-bearing negative. posts.admin can READ every private
+			// post on the instance, so a default of "no filter at all"
+			// would hand a moderator every user's drafts as their browse
+			// feed.
+			caller: "moderator", id: lvIdentity(lvModerator, CapPostsAdmin),
+			want: map[string]bool{
+				"public": true, "org-only": true,
+				"followers": false, "explicit-share": false, "private": false,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		got := map[uuid.UUID]bool{}
+		for _, p := range lvListed(t, h, tc.id, nil) {
+			got[uuid.UUID(p.Id)] = true
+		}
+		for tier, wantSeen := range tc.want {
+			if got[ids[tier]] == wantSeen {
+				continue
+			}
+			if wantSeen {
+				t.Errorf("%s: the %s post is MISSING from the default wall — the display "+
+					"filter is narrower than what this caller may read (#1193)",
+					tc.caller, tier)
+				continue
+			}
+			t.Errorf("%s: the %s post is PRESENT on the default wall and must not be",
+				tc.caller, tier)
+		}
+	}
+}
+
+// TestListPosts_ExplicitTierStillNarrows is the direction guard beside
+// the union above.
+//
+// Widening a DEFAULT is the kind of change that gets implemented by
+// deleting the filter, and a deleted filter takes `?visibility=` with it
+// silently: every explicit narrowing would answer the whole wall, and
+// nothing about the response would say so. So one tier is asked for by
+// name and the other four must be absent.
+func TestListPosts_ExplicitTierStillNarrows(t *testing.T) {
+	pool := previewPool(t)
+	h := peHandler(pool)
+
+	ids := map[string]uuid.UUID{}
+	for _, tier := range postVisibilityTiers(t, pool) {
+		ids[tier] = seedTierPost(t, pool, lvAuthor, tier)
+	}
+
+	v := "public"
+	got := map[uuid.UUID]bool{}
+	for _, p := range lvListed(t, h, lvIdentity(lvStranger), &v) {
+		got[uuid.UUID(p.Id)] = true
+	}
+	if !got[ids["public"]] {
+		t.Fatal("?visibility=public did not return the public post — the assertions " +
+			"below would pass on a filter that returns nothing at all")
+	}
+	if got[ids["org-only"]] {
+		t.Error("?visibility=public returned an ORG-ONLY post — the explicit filter no " +
+			"longer narrows, so the union default has swallowed it")
 	}
 }

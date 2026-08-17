@@ -241,37 +241,39 @@ func TestLikedBy_LikingDoesNotWiden(t *testing.T) {
 
 // TestLikedBy_TierDefaultDoesNotTruncate pins the display-filter call.
 //
-// `GET /posts` defaults `visibility` to org-only so the browse feed
-// shows the walled-garden tier. Left in place on the Likes tab that
-// default would silently answer a different question — "what they liked
-// in one tier" — while looking like a complete list, so `liked_by`
-// drops it exactly as an own-author filter does.
+// `GET /posts` applies a default `visibility` so the browse feed shows
+// the shared tiers and not a caller's own drafts (#1193; it was the
+// org-only tier alone when this test was written). Left in place on the
+// Likes tab that default would silently answer a different question —
+// "what they liked, minus the private ones" — while looking like a
+// complete list, so `liked_by` drops it exactly as an own-author filter
+// does.
 //
-// The assertion is that a followers-tier post the viewer CAN read
-// appears: it is outside the default tier, so it is present only if the
-// default was dropped, and it is visible only if the read rule still
-// ran. One row proves both halves.
+// The assertion is that a PRIVATE post the viewer CAN read appears: it
+// is outside the browse default under either version of that default,
+// so it is present only if the default was dropped, and it is visible
+// only if the read rule still ran. One row proves both halves.
+//
+// It was a followers-tier post before #1193 put `followers` INTO the
+// browse default, at which point the row stopped discriminating: it
+// would have been on the page whether or not the tab dropped the
+// filter. The tier moved to the one the default still excludes.
 func TestLikedBy_TierDefaultDoesNotTruncate(t *testing.T) {
 	pool := previewPool(t)
 	h := peHandler(pool)
 
-	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO user_follows (follower_user_ref, followee_user_ref) VALUES ($1,$2)
-		 ON CONFLICT DO NOTHING`, lbFollower, lbOtherRef); err != nil {
-		t.Fatalf("seed follow: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM user_follows WHERE follower_user_ref = $1`, lbFollower)
-	})
-
-	const title = "lb followers-tier, outside the default"
-	postID := lbSeedPost(t, pool, lbOtherRef, "followers", title)
+	// The VIEWER's own private post, liked by somebody else. Readable by
+	// this caller (they wrote it), outside the browse default (it is
+	// private), and reached through ?liked_by= rather than through an
+	// own-author filter — so the only thing that can put it on the page
+	// is the Likes tab dropping the tier default.
+	const title = "lb private, outside the browse default"
+	postID := lbSeedPost(t, pool, lbFollower, "private", title)
 	lbLike(t, pool, lbLiker, postID)
 
 	if got := lbLikesOf(t, h, lbFollower, lbLiker)[postID]; got != title {
-		t.Errorf("a readable followers-tier post is missing from the Likes tab (got %q). "+
-			"The org-only display default is still applied, so the tab is answering "+
-			"\"what they liked in one tier\" while looking complete", got)
+		t.Errorf("a readable private post is missing from the Likes tab (got %q). "+
+			"The browse display default is still applied, so the tab is answering "+
+			"\"what they liked, minus some tiers\" while looking complete", got)
 	}
 }

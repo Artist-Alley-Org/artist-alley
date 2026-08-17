@@ -149,11 +149,14 @@ func kfFeed(t *testing.T, h *Handler, callerRef int64, kind string) map[uuid.UUI
 	}
 	limit := 200
 	params := openapi.ListPostsParams{Limit: &limit}
-	// The fixture spans several tiers, and the handler's default display
-	// filter is org-only. Asking for the tier under test explicitly is
-	// what keeps this a test of the KIND conjunct: `visibility` narrows
-	// within what the read rule already admits, so it can never widen
-	// what an unauthorised caller receives.
+	// The fixture spans several tiers. Asking for the tier under test
+	// explicitly is what keeps this a test of the KIND conjunct rather
+	// than of the display default: `visibility` narrows within what the
+	// read rule already admits, so it can never widen what an
+	// unauthorised caller receives. It also survives #1193 changing that
+	// default from org-only to the union of the shared tiers — a test
+	// that leaned on the default would have started counting the tiers
+	// the union added.
 	vis := openapi.ListPostsParamsVisibility("public")
 	params.Visibility = &vis
 	if kind != "" {
