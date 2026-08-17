@@ -40,6 +40,11 @@ where applicable, otherwise note "no-spec-impact."
   uploader until they're made into a post. The sample library's reference collections were
   reworked so every formerly-bare asset lives in a real post, authored by its owner and public
   only when everything in it is public (#1185, PR #1186; the deeper model change is #1161).
+- **Advanced search speaks plainly and scales.** Developer wording is gone from the page, and
+  any metadata field with a large vocabulary becomes a type-to-filter box instead of an endless
+  chip wall. The type filter also learned a power move: double-click an option to select only
+  it. Multi-asset thumbnails' hover text now reads naturally — "7 mixed assets in this post"
+  (#1191, PR #1196).
 - **The type filter sees inside posts.** Filtering by a type now matches any asset in a post
   you're allowed to see, not just its cover — a post led by an image but containing an ebook
   answers the ebook filter. Hidden assets still can't be probed. Multi-asset thumbnails also
