@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/viewkind"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -88,6 +89,22 @@ type ListPostsPageParams struct {
 	// liking a post you cannot read does not make it readable by you or
 	// by anyone else.
 	LikedByUserRef *int64
+	// Kinds is the browse footer's type filter (#1166): the set of
+	// cover-asset kinds the page is restricted to, already parsed off
+	// `?kind=`. Nil means no filter; a NON-NIL EMPTY SLICE means the
+	// caller named only kinds nothing can be, which selects nothing —
+	// see KindsRequested for why the distinction is a separate field
+	// rather than a length check.
+	Kinds []viewkind.Kind
+	// KindsRequested says the caller supplied `?kind=` at all.
+	//
+	// It exists because `len(Kinds) == 0` is ambiguous and the two
+	// readings differ by the whole feed. `?kind=nonsense` parses to an
+	// empty selection and must return an empty page; an absent
+	// parameter must return everything. Collapsing them would make a
+	// typo in the query string WIDEN the result — the one direction a
+	// narrowing filter is never allowed to move.
+	KindsRequested bool
 	CursorPostedAt pgtype.Timestamptz
 	CursorID       pgtype.UUID
 	RowLimit       int32
@@ -223,6 +240,10 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 //     tag_follows PK respectively (#1123).
 //   - team_id: restrict to one team's posts (#684)
 //   - liked_by: restrict to posts a given ref has liked (#1106)
+//   - kind: restrict to posts whose COVER asset is of a given kind —
+//     the browse footer's type filter (#1166). See kindFilterSQL, and
+//     note that its EXISTS carries the field-plane readability rule for
+//     the cover, so a cover this caller cannot see matches no kind.
 //
 // Every one of those NARROWS. The read rule is ANDed onto the result,
 // never ORed into it, so no filter here can surface a row the caller
@@ -256,8 +277,9 @@ const listPostsPageColumns = `id, author_user_ref, title, description, visibilit
 // post the viewer cannot read is simply not on the page — see
 // LikedByUserRef above.
 //
-// Placeholder discipline (ADR 0063): the builder binds $1–$11, the rule's
-// fragment owns everything above, and its args are appended LAST.
+// Placeholder discipline (ADR 0063): the builder binds $1–$11, the
+// mature and kind conjuncts bind above that when present, the rule's
+// fragment owns everything above them, and its args are appended LAST.
 func (h *Handler) ListPostsPageGated(
 	ctx context.Context,
 	id *auth.Identity,
@@ -299,6 +321,17 @@ func (h *Handler) ListPostsPageGated(
 		args = append(args, matureOwnerArg(id))
 	}
 
+	// The `?kind=` conjunct (#1166). Bound AFTER the mature fragment
+	// because that one names `$12` literally, and BEFORE readRuleSQL is
+	// asked for its offset — same discipline, whoever binds last counts
+	// what is already there.
+	var kindFrag string
+	if p.KindsRequested {
+		frag, kindArgs := kindFilterSQL(id, viewkind.Compile(p.Kinds), len(args))
+		kindFrag = frag
+		args = append(args, kindArgs...)
+	}
+
 	ruleFrag, ruleArgs, err := readRuleSQL(ctx, id, "posts", len(args))
 	if err != nil {
 		return nil, err
@@ -335,6 +368,7 @@ WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
                       AND lk.target_id = posts.id
                       AND lk.user_ref = $11::BIGINT))
   AND ` + order.keysetSQL("posted_at", "id", 7, 8))
+	b.WriteString(kindFrag)
 	b.WriteString(matureFrag)
 	b.WriteString(ruleFrag)
 	b.WriteString(`
