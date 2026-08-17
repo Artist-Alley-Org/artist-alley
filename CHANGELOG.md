@@ -26,6 +26,11 @@ where applicable, otherwise note "no-spec-impact."
 
 ### Fixed
 
+- **Anonymous visitors can browse public work.** On an instance with public mode enabled, the
+  browse feed now serves signed-out viewers exactly the posts marked Public — with every
+  privacy rule (hidden names, restricted members, mature content, withheld covers) verified on
+  the anonymous path, writes still refused in both modes, and an honest empty-state when
+  nothing public matches (#1181 completing #1176, PR #1182).
 - **The "Public" visibility option actually works now.** Choosing Public when posting had
   always been refused by the server (a leftover reservation from before public mode existed),
   so nobody could ever offer a post to anonymous viewers. The gate now accepts it, the seeded
