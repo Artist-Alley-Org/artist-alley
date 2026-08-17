@@ -269,6 +269,10 @@
     "multi": {
       "badge_label": "{count} assets in this post"
     },
+    "band": {
+      "mixed": "mixed",
+      "mixed_label": "Mixed file types"
+    },
     "footer": {
       "likes": "{count} likes",
       "comments": "{count} comments"

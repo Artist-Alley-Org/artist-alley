@@ -429,36 +429,98 @@
 
   const memberCount = $derived(memberCountProp ?? post.members.length);
 
-  /** The extension thumbnail's band shows, or null to show none.
+  /** The extensions of the members this reader may actually READ, in
+   *  the normalised form the band prints.
    *
-   *  ONE ASSET ONLY. The owner's refinement: "For thumbnails on posts
-   *  with only one asset, it can show the extension, but not if there
-   *  is more than one asset in the post."
+   *  READABLE MEMBERS ONLY, and that is a rule about disclosure, not
+   *  tidiness. A restricted member ships with `restricted: true` and no
+   *  `asset` at all (#883) — there is nothing to read an extension off,
+   *  and there must not be: if a hidden .glb could flip a wall of three
+   *  visible PNGs from "png" to "mixed", the band would have announced
+   *  the existence and the foreignness of a file this reader was
+   *  refused. Recomputing over all members is exactly that leak, and it
+   *  is the #902/#1066 derived-copy class arriving on the card instead
+   *  of in a query.
    *
-   *  The reason the rule is a COUNT and not a preference: on a set, the
-   *  cover's extension is not the post's fact. A carousel of a PNG, a
-   *  PSD and an MP4 would be labelled "png" by whichever member happens
-   *  to be the cover, which says something false about the other two —
-   *  the exact failure #1111 named when it made the badge state the SET
-   *  ("4 ⬠") instead of any one member's kind. A single-asset post has
-   *  no other members to misrepresent, so the extension is simply that
-   *  asset's, and the card can say which file it is for the same reason
-   *  AssetCard's band does.
+   *  Under the default feed (#921) restricted members are dropped from
+   *  `members` upstream and this filter is a no-op; with the
+   *  show-restricted preference on they arrive as placeholders and it
+   *  is the thing doing the work. Both paths read the SAME `restricted`
+   *  flag the server wrote from its one readability decision — this is
+   *  not a second opinion about who may see what. */
+  const readableExtensions = $derived(
+    post.members
+      .filter((m) => !m.restricted && m.asset)
+      .map((m) => (m.asset?.file_extension ?? '').replace(/^\./, '').toLowerCase()),
+  );
+
+  /** Does this payload carry the whole membership?
    *
-   *  `memberCount` and not `post.members.length` is the truth rule from
-   *  the props block: a search hit ships one member with the real total
-   *  beside it, so a 4-asset post arriving as a single cover row must
-   *  still count as a set here.
+   *  A search hit ships a cover row with the real total beside it
+   *  (`memberCount`), so `readableExtensions` there describes one
+   *  member out of four and "they all share an extension" would be a
+   *  sentence about a set this card never received. Uniformity is
+   *  UNKNOWABLE on a truncated payload, and unknowable is spelled as no
+   *  band text rather than as a guess in either direction.
    *
-   *  Withheld when the cover is RESTRICTED. The extension is a DERIVED
-   *  COPY of a value this reader may not have, and the band already
-   *  suppresses the kind badge on the same condition — a card that
-   *  hides the icon and then prints "psd" beside the gap has disclosed
-   *  the thing it just withheld. */
+   *  Restricted members do NOT make a payload truncated: they arrive as
+   *  placeholder entries (or are dropped along with the count that
+   *  described them), so the totals still line up. */
+  const membersComplete = $derived(memberCount <= post.members.length);
+
+  /** The one extension every readable member shares, or null when they
+   *  disagree — the MIXED case — or when there is nothing to compare. */
+  const uniformExtension = $derived(
+    readableExtensions.length > 0 && new Set(readableExtensions).size === 1
+      ? readableExtensions[0] || null
+      : null,
+  );
+
+  /** The extension the thumbnail's band shows, or null to show none.
+   *
+   *  SINGLE ASSET — the owner's original refinement: "For thumbnails on
+   *  posts with only one asset, it can show the extension." That arm is
+   *  unchanged; it reads the cover's own extension.
+   *
+   *  MULTI-ASSET (#1190) — the owner's follow-up: "if a multi asset post
+   *  contains all the same extension (glb, png, etc...) we can place the
+   *  extension on the thumbnail. Not if it's mixed. Maybe we can put
+   *  (mixed) for the extension instead?"
+   *
+   *  This retires the old blanket suppression rather than bending it.
+   *  The reason a set used to show nothing was that the COVER's
+   *  extension is not the SET's fact — a carousel of a PNG, a PSD and an
+   *  MP4 labelled "png" says something false about the other two, the
+   *  same failure #1111 named when it made the badge state the set
+   *  ("4 ⬠") instead of one member's kind. A pack whose members are all
+   *  .glb has no such problem: "glb" is true of every one of them. So
+   *  the rule is not "one asset" but "one ANSWER", and where there is no
+   *  single answer the band says so in words instead of printing one
+   *  member's and hoping.
+   *
+   *  `memberCount` and not `post.members.length` decides which arm runs,
+   *  which is the truth rule from the props block.
+   *
+   *  Withheld entirely when the COVER is restricted. The band already
+   *  suppresses the kind badge on that condition — a card that hides the
+   *  icon and then prints "psd", or even "mixed", beside the gap has
+   *  disclosed something about what it just withheld. */
   const bandExtension = $derived(
-    coverRestricted || memberCount > 1
+    coverRestricted
       ? null
-      : (coverFileExtension ?? '').replace(/^\./, '') || null,
+      : memberCount <= 1
+        ? (coverFileExtension ?? '').replace(/^\./, '') || null
+        : !membersComplete || readableExtensions.length === 0
+          ? null
+          : (uniformExtension ?? t('card.band.mixed')),
+  );
+
+  /** True when `bandExtension` is the WORD rather than an extension.
+   *  The span reads as an extension by position and by casing, so the
+   *  accessible name spells out what it means, and the attribute gives
+   *  the placement tests something to assert that is not the English. */
+  const bandMixed = $derived(
+    bandExtension !== null && !coverRestricted && memberCount > 1 && uniformExtension === null,
   );
 
   // ── #1111: the grid card's overlay ──────────────────────────────────
@@ -754,14 +816,22 @@
         <CardKindBadge kind={coverKind} count={memberCount} variant="inline" tooltipKey={post.id} />
       {/if}
       {#if bandExtension}
-        <!-- SINGLE-ASSET POSTS ONLY — see `bandExtension`. Same type
-             scale and same position as AssetCard's band, because on a
-             one-asset post this card IS showing a file and there is no
-             reason for the two to look different when they are saying
-             the same thing. -->
+        <!-- The format, in one of three readings — see `bandExtension`.
+             Single-asset: that file's extension. Multi-asset with one
+             shared extension: that extension, because it is true of
+             every member. Multi-asset and mixed: the word, styled
+             identically so the band keeps ONE slot with one meaning
+             ("what format is this?") rather than growing a second.
+
+             Same type scale and same position as AssetCard's band,
+             because on a one-asset post this card IS showing a file and
+             there is no reason for the two to look different when they
+             are saying the same thing. -->
         <span
           class="min-w-0 truncate text-[11px] font-medium uppercase tracking-wide text-fg-muted"
           data-testid="thumb-band-extension"
+          data-mixed={bandMixed ? 'true' : undefined}
+          aria-label={bandMixed ? t('card.band.mixed_label') : undefined}
         >{bandExtension}</span>
       {/if}
       <span class="flex-1"></span>
