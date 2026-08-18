@@ -65,6 +65,28 @@
      *  bottom of the dialog — the cramped-surface complaint, reappearing
      *  one slot down. */
     maxHeightVh?: number;
+    /** FILL THE BOX THE CALLER GIVES US, instead of a vh budget (#1218).
+     *
+     *  The vh budget below is the right answer for a stage inside a
+     *  page that flows: nobody has told it how much room it has, so it
+     *  takes a share of the VIEWPORT. Inside a dialog that now sizes
+     *  itself to the viewport and hands this component a definite box,
+     *  the same budget is a second opinion about the same space — and
+     *  the smaller of two opinions always wins, which is how a stage
+     *  ends up short in a dialog with room to spare.
+     *
+     *  So in fill mode the budget is MEASURED off the box rather than
+     *  guessed from the viewport, and the sizing rule itself is
+     *  untouched: the width is still `min(width budget, height budget ×
+     *  the picture's own aspect)`, which is the shape #1212 arrived at
+     *  and the reason the picture cannot be squashed. Only the two
+     *  budgets change units.
+     *
+     *  The measured box takes its size from the FLEX LAYOUT, never from
+     *  the picture inside it (`flex-1 min-h-0 overflow-hidden`), so
+     *  there is no path from the image's rendered size back to the
+     *  budget that produced it. */
+    fill?: boolean;
     /** Extra controls beside Reset — the featured slot puts its "go back
      *  to the collection cover" button here. */
     extraActions?: import('svelte').Snippet;
@@ -83,6 +105,7 @@
     cardAlt,
     cardLabel,
     maxHeightVh = 52,
+    fill = false,
     extraActions,
   }: Props = $props();
 
@@ -143,10 +166,37 @@
    *  Before the picture has loaded there is no aspect to cap by, and the
    *  old clamp is used unchanged — no marquee is drawn at that point, so
    *  there is nothing yet to distort. */
+  /** The budgets, in fill mode, expressed in CONTAINER units.
+   *
+   *  ⚠️ NOT MEASURED IN JS, and the first attempt was — `bind:clientWidth`
+   *  on the box, budgets in px. It works, and it works one layout pass
+   *  LATE: the picture paints once at the fallback size and then jumps
+   *  to the real one when the observer fires. A spec that measured
+   *  before the second pass caught it (a 200x420 portrait sitting at
+   *  267x561 — exactly the 52vh fallback — inside an 884x689 box), which
+   *  is the visible flash, asserted.
+   *
+   *  `cqw`/`cqh` resolve against the box itself in the same pass that
+   *  sizes it, so there is no interval where the two disagree, and no
+   *  path from the picture back to the budget that produced it — the box
+   *  is `container-type: size`, which means its own size comes from the
+   *  layout and never from its contents.
+   *
+   *  ⚠️ NO INSET IS SUBTRACTED, and subtracting one was the second
+   *  mistake here: container units resolve against the container's
+   *  CONTENT box, so `100cqh` already excludes the `p-2` and the border.
+   *  Taking the frame off again left the picture 18px short of the room
+   *  it had — which the same assertion caught, one cause further in. */
+  const widthBudget = $derived(fill ? '100cqw' : 'clamp(17rem, 40vw, 38rem)');
+  const heightBudget = $derived(fill ? '100cqh' : `${maxHeightVh}vh`);
+  /** The card preview's budget. It lives in the OTHER column, so it
+   *  cannot read the stage box's container — it gets its own, less the
+   *  caption above it and the action row below. */
+  const cardHeightBudget = $derived(fill ? 'calc(100cqh - 4.5rem)' : `${maxHeightVh}vh`);
   const stageWidthCSS = $derived(
     naturalNow
-      ? `min(clamp(17rem, 40vw, 38rem), calc(${maxHeightVh}vh * ${naturalNow.w / naturalNow.h}))`
-      : 'clamp(17rem, 40vw, 38rem)',
+      ? `min(${widthBudget}, calc(${heightBudget} * ${naturalNow.w / naturalNow.h}))`
+      : widthBudget,
   );
 
   /** The zoom as a usable multiplier — 1 whenever nothing is stored. */
@@ -411,9 +461,14 @@
 </script>
 
 {#if src}
-  <div class="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+  <div
+    class="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
+    class:h-full={fill}
+    class:min-h-0={fill}
+  >
     <!-- LEFT: the whole picture at size, with the marquee on it. -->
-    <figure class="min-w-0">
+    <figure class="min-w-0" class:flex={fill} class:h-full={fill} class:min-h-0={fill}
+            class:flex-col={fill}>
       <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
         {t('collections.cover_editor_stage_label')}
       </figcaption>
@@ -445,7 +500,14 @@
            nothing measured from the DOM. Giving the wrapper a size of
            its own puts the overlay over the BOX instead of over the
            picture — the exact bug this surface exists to reveal. -->
-      <div class="flex justify-center rounded border border-border bg-surface p-2">
+      <div
+        class="flex items-center justify-center rounded border border-border bg-surface p-2"
+        class:flex-1={fill}
+        class:min-h-0={fill}
+        class:overflow-hidden={fill}
+        style={fill ? 'container-type: size;' : undefined}
+        data-testid="{testidPrefix}-stage-box"
+      >
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           bind:this={stage}
@@ -590,7 +652,8 @@
          `object-position` from the same helper the consumers use — on
          the same source. If the two ever disagree it is because the
          destination changed. -->
-    <figure class="min-w-0">
+    <figure class="min-w-0" class:h-full={fill} class:min-h-0={fill}
+            style={fill ? 'container-type: size;' : undefined}>
       <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
         {cardLabel}
       </figcaption>
@@ -604,7 +667,7 @@
            than any column it sits in. -->
       <div
         class="relative overflow-hidden rounded-lg border border-border bg-surface-elevated"
-        style="aspect-ratio: {aspect}; max-width: calc({maxHeightVh}vh * {aspect});"
+        style="aspect-ratio: {aspect}; max-width: calc({cardHeightBudget} * {aspect});"
       >
         <img
           {src}
