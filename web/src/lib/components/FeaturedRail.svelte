@@ -62,6 +62,7 @@
   import { api } from '$api/client';
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { t } from '$stores/lang.svelte';
+  import { objectPosition } from '$lib/util/featuredCrop';
   import {
     createRailScroll,
     RAIL_ARROW_CLASS,
@@ -90,6 +91,15 @@
      *  for an asset, the collection's hero-card fallback for a
      *  collection (#559). Null when nothing is servable. */
     cover_asset_id?: string | null;
+    /** Where to centre this tile's crop, as fractions of the cover
+     *  picture (#1207). Null means centre — the CSS default, and what
+     *  every tile did before the curator could position one.
+     *
+     *  The SERVER decides when these are set: only when the tile is
+     *  showing a cover the curator actually chose, never on the derived
+     *  fallback. Nothing here re-decides that. */
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
     asset_file_hash?: string | null;
     preview_available?: boolean;
     /** Every rung of the operator's CONFIGURED ladder exists for this
@@ -382,14 +392,19 @@
               style="aspect-ratio: {CARD_ASPECT}"
             >
               {#if showThumb(it)}
-                <!-- `object-cover` on a 16:9-ish frame takes a CENTRE
-                     crop of whatever the ladder served. `col` is baked
-                     `fit: cover` at 320px square, so a portrait cover
-                     loses its top and bottom here — the trade #1110
-                     accepted rather than minting a wide variant for one
-                     surface. Watch this if the strip ever features
-                     portrait-first work; the fix is a variant, not a
-                     `contain` that would letterbox every card. -->
+                <!-- `object-cover` on a 16:9-ish frame crops whatever
+                     the ladder served, and WHERE it crops is the
+                     curator's call since #1207: `object-position` comes
+                     from the focal fractions the cover editor's marquee
+                     wrote, and falls back to the 50%/50% CSS default
+                     when there are none. That is the answer to #1110's
+                     open trade — a portrait cover still loses its top
+                     and bottom, but the curator now decides which top
+                     and which bottom, which is what a wide variant
+                     would have bought at the cost of a whole rendition.
+                     One helper renders the value for the rail, the
+                     editor's live preview and the form's summary chip,
+                     so "null means centre" is decided once. -->
                 <img
                   src={thumb}
                   srcset={set || undefined}
@@ -397,6 +412,7 @@
                   alt=""
                   loading="lazy"
                   class="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                  style="object-position: {objectPosition(it.cover_focal_x, it.cover_focal_y)}"
                 />
                 <!-- The text block, ON the artwork (#1098, reshaped by
                      #1110). This is the card's ONLY title — the caption

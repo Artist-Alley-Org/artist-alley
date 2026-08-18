@@ -101,7 +101,9 @@ INSERT INTO collections (
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+          cover_focal_x, cover_focal_y
 `
 
 type CreateCollectionParams struct {
@@ -156,6 +158,11 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
 		&i.CoverAssetID,
+		&i.FeaturedCoverAssetID,
+		&i.FeaturedCoverFocalX,
+		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }
@@ -189,7 +196,9 @@ const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+       cover_focal_x, cover_focal_y
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -217,6 +226,11 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
 		&i.CoverAssetID,
+		&i.FeaturedCoverAssetID,
+		&i.FeaturedCoverFocalX,
+		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }
@@ -240,7 +254,9 @@ const getCollectionIncludingDeleted = `-- name: GetCollectionIncludingDeleted :o
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+       cover_focal_x, cover_focal_y
 FROM collections
 WHERE id = $1
 `
@@ -269,6 +285,11 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
 		&i.CoverAssetID,
+		&i.FeaturedCoverAssetID,
+		&i.FeaturedCoverFocalX,
+		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }
@@ -417,7 +438,9 @@ const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, purpose, origin_server_id,
        created_at, updated_at, search_text, smart_query,
-       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+       deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+       featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+       cover_focal_x, cover_focal_y
 FROM collections c
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
@@ -524,6 +547,11 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.DeletedReason,
 			&i.DeletedByUserRef,
 			&i.CoverAssetID,
+			&i.FeaturedCoverAssetID,
+			&i.FeaturedCoverFocalX,
+			&i.FeaturedCoverFocalY,
+			&i.CoverFocalX,
+			&i.CoverFocalY,
 		); err != nil {
 			return nil, err
 		}
@@ -588,25 +616,60 @@ UPDATE collections SET
                        ELSE COALESCE($7, expires_at) END,
     cover_asset_id = CASE WHEN $8::BOOLEAN THEN NULL
                           ELSE COALESCE($9, cover_asset_id) END,
+    -- #1207 — the featured rail's own cover, and the focal point for its
+    -- 890:500 crop. Three more columns, TWO more clear flags, and the
+    -- second one covers a PAIR: a focal point is a point, so "remove the
+    -- positioning" is one intention over two columns and giving each
+    -- half its own flag would let a caller express half a clear, which
+    -- the column CHECK then rejects with a constraint error instead of
+    -- the 400 the API should have given.
+    --
+    -- Note the focal columns COALESCE against themselves as usual, which
+    -- is why an explicit 0.5/0.5 has to reach here as a value rather
+    -- than as "centre, so send nothing": the handler is what keeps that
+    -- distinction, and the CHECK is what stops it being lost silently.
+    featured_cover_asset_id = CASE WHEN $10::BOOLEAN THEN NULL
+                          ELSE COALESCE($11, featured_cover_asset_id) END,
+    featured_cover_focal_x = CASE WHEN $12::BOOLEAN THEN NULL
+                          ELSE COALESCE($13, featured_cover_focal_x) END,
+    featured_cover_focal_y = CASE WHEN $12::BOOLEAN THEN NULL
+                          ELSE COALESCE($14, featured_cover_focal_y) END,
+    -- The regular cover's own focal pair, on the SQUARE destination. Its
+    -- own clear flag, for the reason the featured pair has one: two
+    -- columns, one intention.
+    cover_focal_x = CASE WHEN $15::BOOLEAN THEN NULL
+                          ELSE COALESCE($16, cover_focal_x) END,
+    cover_focal_y = CASE WHEN $15::BOOLEAN THEN NULL
+                          ELSE COALESCE($17, cover_focal_y) END,
     updated_at  = NOW()
-WHERE id = $10
+WHERE id = $18
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
-          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id
+          deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
+          featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
+          cover_focal_x, cover_focal_y
 `
 
 type UpdateCollectionParams struct {
-	Name           *string
-	Description    *string
-	Visibility     *string
-	Membership     *string
-	Purpose        *string
-	ClearExpiresAt bool
-	ExpiresAt      pgtype.Timestamptz
-	ClearCover     bool
-	CoverAssetID   pgtype.UUID
-	ID             pgtype.UUID
+	Name                    *string
+	Description             *string
+	Visibility              *string
+	Membership              *string
+	Purpose                 *string
+	ClearExpiresAt          bool
+	ExpiresAt               pgtype.Timestamptz
+	ClearCover              bool
+	CoverAssetID            pgtype.UUID
+	ClearFeaturedCover      bool
+	FeaturedCoverAssetID    pgtype.UUID
+	ClearFeaturedCoverFocal bool
+	FeaturedCoverFocalX     *float64
+	FeaturedCoverFocalY     *float64
+	ClearCoverFocal         bool
+	CoverFocalX             *float64
+	CoverFocalY             *float64
+	ID                      pgtype.UUID
 }
 
 // Partial update via COALESCE — NULL args keep current values.
@@ -635,6 +698,14 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.ExpiresAt,
 		arg.ClearCover,
 		arg.CoverAssetID,
+		arg.ClearFeaturedCover,
+		arg.FeaturedCoverAssetID,
+		arg.ClearFeaturedCoverFocal,
+		arg.FeaturedCoverFocalX,
+		arg.FeaturedCoverFocalY,
+		arg.ClearCoverFocal,
+		arg.CoverFocalX,
+		arg.CoverFocalY,
 		arg.ID,
 	)
 	var i Collection
@@ -656,6 +727,11 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.DeletedReason,
 		&i.DeletedByUserRef,
 		&i.CoverAssetID,
+		&i.FeaturedCoverAssetID,
+		&i.FeaturedCoverFocalX,
+		&i.FeaturedCoverFocalY,
+		&i.CoverFocalX,
+		&i.CoverFocalY,
 	)
 	return i, err
 }

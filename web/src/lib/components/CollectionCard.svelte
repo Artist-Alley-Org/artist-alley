@@ -15,9 +15,13 @@
   // entry here is renderable and there is nothing to probe or branch on.
 
   import { t } from '$stores/lang.svelte';
+  import { objectPosition } from '$lib/util/featuredCrop';
 
   interface CoverEntry {
     asset_id: string;
+    /** A CONTAIN rung exists for this asset (#1207). Decides which
+     *  source a focal-pointed cover is painted from — see coverSrc. */
+    preview_available?: boolean;
   }
 
   interface Collection {
@@ -30,6 +34,11 @@
     // Absent on a surface that did not compose covers; an empty array
     // is the honest "this collection has nothing to show".
     covers?: CoverEntry[];
+    // #1207 — where the curator put the crop, as fractions of the
+    // original picture. Null means centre, which is what every card did
+    // before this existed.
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
   }
 
   interface Props {
@@ -43,6 +52,50 @@
   function colUrl(a: CoverEntry): string {
     return `/api/v1/assets/${a.asset_id}/variants/col`;
   }
+
+  // ── The single chosen cover, and its focal point (#1207) ───────────
+  //
+  // ⚠️ THE SOURCE HAS TO CHANGE WITH THE FOCAL POINT. `col` is
+  // `fit: cover` at 320px — a 320x320 CENTRE-CROP — so by the time the
+  // browser sees it the picture's edges are already gone. Applying
+  // `object-position` to it does not move the crop the curator chose;
+  // it takes a second crop of the server's crop and lands somewhere
+  // nobody picked. The fractions are stored against the ORIGINAL, so the
+  // source has to still BE the original shape: the `preview` contain
+  // rung.
+  //
+  // Both conditions are required, and each falls back cleanly:
+  //   - no focal point  → `col`, centred. What every card always did.
+  //   - no contain rung → `col`, centred, because there is nothing else
+  //                       to paint and a 404 would be worse than a
+  //                       centred crop.
+  //
+  // MOSAIC TILES ARE UNTOUCHED. A focal point is a statement about ONE
+  // picture filling the tile; there is no meaningful place to apply it
+  // across two or four, and #1026's mosaic is a summary rather than a
+  // composition anyone framed.
+  const hasFocal = $derived(
+    collection.cover_focal_x != null && collection.cover_focal_y != null,
+  );
+  const singleCover = $derived(covers.length === 1 ? covers[0] : null);
+  const singleUsesContainRung = $derived(
+    singleCover !== null && hasFocal && singleCover.preview_available === true,
+  );
+  const singleSrc = $derived(
+    singleCover === null
+      ? ''
+      : singleUsesContainRung
+        ? `/api/v1/assets/${singleCover.asset_id}/variants/preview`
+        : colUrl(singleCover),
+  );
+  // Centre unless BOTH the focal point and the rung that makes it
+  // meaningful are present — the same helper the cover editor's preview
+  // and the featured rail use, so "null means centre" is decided once.
+  const singlePosition = $derived(
+    singleUsesContainRung
+      ? objectPosition(collection.cover_focal_x, collection.cover_focal_y)
+      : '50% 50%',
+  );
 
   const visibilityLabel = $derived(
     collection.visibility === 'public'
@@ -71,7 +124,18 @@
         </svg>
       </div>
     {:else if covers.length === 1}
-      {@render cover(covers[0], 'absolute inset-0 h-full w-full object-cover')}
+      <!-- Not `{@render cover(...)}`: this is the one tile that carries
+           a curator-chosen crop, so it needs its own source and its own
+           object-position. The mosaic snippet stays exactly as it was. -->
+      <img
+        src={singleSrc}
+        alt=""
+        loading="lazy"
+        data-testid="collection-card-cover"
+        data-focal={singleUsesContainRung ? 'on' : 'off'}
+        class="absolute inset-0 h-full w-full object-cover"
+        style="object-position: {singlePosition}"
+      />
     {:else if covers.length === 2}
       <div class="absolute inset-0 grid grid-cols-2 gap-0.5">
         {#each covers as a (a.asset_id)}

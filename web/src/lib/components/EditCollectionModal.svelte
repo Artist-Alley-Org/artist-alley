@@ -9,6 +9,8 @@
   import { previewLadder } from '$stores/previewLadder.svelte';
   import Modal from './Modal.svelte';
   import CollectionFieldsSection from './CollectionFieldsSection.svelte';
+  import CollectionCoverEditor from './CollectionCoverEditor.svelte';
+  import { objectPosition } from '$lib/util/featuredCrop';
 
   // The tiers a collection can hold, widest first.
   //
@@ -42,6 +44,16 @@
     // so a picker seeded from it would show the wrong thing to exactly
     // the people allowed to change it.
     cover_asset_id?: string | null;
+    // #1207 — the featured strip's own cover and the focal point that
+    // positions its crop. Read off the collection for the same reason
+    // `cover_asset_id` is: this is the curator's SETTING, and the rail's
+    // render answer deliberately differs from it for a reader who may
+    // not picture the chosen asset.
+    featured_cover_asset_id?: string | null;
+    featured_cover_focal_x?: number | null;
+    featured_cover_focal_y?: number | null;
+    cover_focal_x?: number | null;
+    cover_focal_y?: number | null;
   }
 
   // One choosable picture in the cover picker.
@@ -81,12 +93,6 @@
 
   let { open, collection, onclose, onsaved, focusCover = false }: Props = $props();
 
-  // The scroll target for `focusCover`. Focus moves to the section, not
-  // to the first swatch: a collection can hold hundreds of choices, and
-  // landing keyboard focus on an arbitrary one of them would strand the
-  // caret mid-grid with no indication of where it is.
-  let coverSection = $state<HTMLFieldSetElement | null>(null);
-
   let name = $state('');
   let description = $state('');
   let visibility = $state<Visibility>('private');
@@ -106,6 +112,18 @@
   let coverChoices = $state<CoverChoice[]>([]);
   let coverLoading = $state(false);
 
+  // #1207 — the other two settings the cover editor writes, held HERE
+  // rather than inside it. The editor is a viewing surface with two
+  // pickers; this component owns the collection, the concurrency
+  // baseline and the one PATCH, so it owns the values that PATCH sends.
+  let featuredCoverAssetId = $state<string | null>(null);
+  let focalX = $state<number | null>(null);
+  let focalY = $state<number | null>(null);
+  // The COLLECTION cover's own pair, on the square destination (#1207).
+  let coverFocalX = $state<number | null>(null);
+  let coverFocalY = $state<number | null>(null);
+  let coverEditorOpen = $state(false);
+
   $effect(() => {
     if (open) {
       name = collection.name;
@@ -113,23 +131,43 @@
       visibility = collection.visibility as Visibility;
       baselineUpdatedAt = collection.updated_at;
       coverAssetId = collection.cover_asset_id ?? null;
+      featuredCoverAssetId = collection.featured_cover_asset_id ?? null;
+      focalX = collection.featured_cover_focal_x ?? null;
+      focalY = collection.featured_cover_focal_y ?? null;
+      coverFocalX = collection.cover_focal_x ?? null;
+      coverFocalY = collection.cover_focal_y ?? null;
       error = null;
       conflict = null;
-      coverNatural = null;
+      focusCoverHandled = false;
       previewLadder.init();
       void loadCoverChoices(collection.id);
+    } else {
+      // A dialog raised from this one must not outlive it. Left open,
+      // it would sit on the modal stack after its host had gone and
+      // swallow the next Escape.
+      coverEditorOpen = false;
     }
   });
 
-  // Scrolling is deferred to after the choices have loaded, not fired
-  // on open: the cover section is the LAST thing in the form, so before
-  // the grid paints it sits at a scroll offset that stops existing the
-  // moment the pictures arrive. Keyed on `coverLoading` going false so
-  // it runs once the layout is final.
+  // `focusCover` (the More-actions "Set cover" entry) opens the EDITOR,
+  // not a scroll position (#1207). It used to scroll the form to a
+  // picker that lived in the modal; the picker is now its own dialog,
+  // and the entry point that says "set cover" should land on the
+  // surface that sets covers rather than on the summary of what is
+  // already set.
+  //
+  // Deferred to after the choices have loaded, for the reason the
+  // scroll was: opening the editor over an empty grid shows a stage
+  // with no pictures for as long as the fetch takes, which reads as
+  // "this collection has no covers to choose".
+  // The guard is what makes it open ONCE. Without it the editor
+  // reopens on the curator's face every time `coverLoading` settles,
+  // which includes the moment they close it after a reload.
+  let focusCoverHandled = $state(false);
   $effect(() => {
-    if (open && focusCover && !coverLoading && coverSection) {
-      coverSection.scrollIntoView({ block: 'center' });
-      coverSection.focus();
+    if (open && focusCover && !coverLoading && !focusCoverHandled) {
+      focusCoverHandled = true;
+      coverEditorOpen = true;
     }
   });
 
@@ -181,141 +219,31 @@
     }
   }
 
-  // A cover chosen from outside the member list still has to be shown as
-  // the current selection, or saving an unrelated edit would silently
-  // look like it cleared the cover.
-  const coverIsExternal = $derived(
-    coverAssetId !== null && !coverChoices.some((c) => c.asset_id === coverAssetId),
-  );
+  // ── The cover SUMMARY (#1207) ──────────────────────────────────────
+  //
+  // #1195 put a live crop preview here, and #1207's first finding was
+  // that it was too small to judge a crop by. The preview did not get
+  // bigger; it MOVED, into a dialog with room for it, and what stays in
+  // the form is a summary: the two pictures as they will actually be
+  // cropped, and the button that opens the editor.
+  //
+  // Two thumbnails rather than a line of text, because "which picture
+  // is on the strip" is a question about pictures. They are small on
+  // purpose — small enough to recognise a choice, not to make one,
+  // which is exactly the division of labour that fixes the complaint.
+  const featuredEffectiveId = $derived(featuredCoverAssetId ?? coverAssetId);
 
   function coverUrl(assetId: string) {
     return `/api/v1/assets/${assetId}/variants/col`;
   }
 
-  // ── The featured-card crop preview (#1195) ─────────────────────────
-  //
-  // Featured cards are locked to 890:500 (FeaturedRail's CARD_ASPECT)
-  // and fill that box with `object-cover`, so a portrait cover loses its
-  // top and bottom with nothing on the picker to say so. This shows the
-  // whole picture with the surviving region boxed on it, beside the card
-  // as it will actually be drawn.
-  //
-  // ⚠️ THE PREVIEW HAS TO LOAD THE SAME PICTURE THE CARD LOADS, or the
-  // box is drawn over the wrong thing. FeaturedRail picks between two
-  // sources and they have DIFFERENT shapes:
-  //
-  //   - with a ladder for this asset, a `contain` rung — the original
-  //     aspect, so the card's crop is the only crop;
-  //   - without one, `col` — which the server has ALREADY centre-cropped
-  //     to a square, so the card crops a square, not the original.
-  //
-  // Previewing `col` in both cases would tell a portrait cover's curator
-  // their picture crops to a wide band of a square that does not exist.
-  // Hence the branch, mirroring srcsetFor/srcFor in FeaturedRail.
-  //
-  // Nothing here is measured from the DOM: the crop rectangle is derived
-  // from the loaded image's own naturalWidth/naturalHeight, which is the
-  // exact ratio `object-cover` works from. That also makes it correct
-  // for the `col` case without a second branch — a square source reports
-  // 1:1 and the maths follows.
-  //
-  // ⚠️ ONE KNOWN GAP, FOUND WHILE BUILDING THIS AND REPORTED RATHER THAN
-  // FIXED HERE. `featured.ListPublicRail`'s COLLECTION arm does not read
-  // `collections.cover_asset_id` at all — its cover comes from a LATERAL
-  // over the newest eligible member post (featured/rail.go, under a
-  // comment that still says "the explicit curator override is not in the
-  // schema yet", which #1027 made untrue). So for a collection featured
-  // on the strip today, the strip renders a DERIVED picture and this
-  // preview shows the CHOSEN one.
-  //
-  // What the preview says about the crop is exact either way — the
-  // geometry below was checked against a live strip card — and the
-  // chosen cover is what `GET /collections/{id}/covers` and therefore
-  // every collection CARD already renders. What is not yet true is the
-  // rail honouring the choice; that is a backend change on a gated
-  // query and belongs in its own issue.
-  const coverChoiceFor = $derived(
-    coverAssetId === null ? null : (coverChoices.find((c) => c.asset_id === coverAssetId) ?? null),
-  );
-
-  // An EXTERNAL cover (chosen from outside this collection) has no row
-  // here, so its ladder is unknown. Unknown resolves to `col` — the same
-  // fallback FeaturedRail takes when `ladder_available` is false, so the
-  // preview degrades to the card's own worst case rather than to an
-  // optimistic guess.
-  const coverPreviewSrc = $derived.by(() => {
-    if (coverAssetId === null) return null;
-    if (coverChoiceFor?.ladder_available !== true) return coverUrl(coverAssetId);
-    const smallest = previewLadder.smallestKey();
-    return smallest ? `/api/v1/assets/${coverAssetId}/variants/${smallest}` : coverUrl(coverAssetId);
-  });
-
-  const coverPreviewSrcset = $derived(
-    coverAssetId !== null && coverChoiceFor?.ladder_available === true
-      ? (previewLadder.srcsetFor(coverAssetId) ?? undefined)
-      : undefined,
-  );
-
-  // The natural size of whatever rendered, STAMPED WITH THE ASSET IT
-  // CAME FROM.
-  //
-  // The stamp is what makes the box safe rather than merely usually
-  // right. The obvious shape — a plain {w,h} cleared by an $effect on
-  // the selection — has an ordering hazard: a picture already in the
-  // browser cache fires `load` synchronously enough to beat the effect,
-  // which then clears the value it just produced. Keying on the id and
-  // deriving "is this measurement about the current selection?" removes
-  // the question instead of timing it. A stale measurement is not
-  // discarded late; it is never the current one.
-  let coverNatural = $state<{ assetId: string; w: number; h: number } | null>(null);
-
-  const coverNaturalNow = $derived(
-    coverNatural && coverNatural.assetId === coverAssetId ? coverNatural : null,
-  );
-
-  function onPreviewLoad(e: Event) {
-    const img = e.currentTarget as HTMLImageElement;
-    if (coverAssetId && img.naturalWidth > 0 && img.naturalHeight > 0) {
-      coverNatural = { assetId: coverAssetId, w: img.naturalWidth, h: img.naturalHeight };
-    }
-  }
-
-  /** The featured card's aspect, as one number. Mirrors
-   *  FeaturedRail.CARD_ASPECT ('890 / 500'); the strip is locked to it
-   *  (#1110/#1098), so it is a constant here rather than a prop. */
-  const CARD_ASPECT = 890 / 500;
-
-  /** The surviving region, in percentages of the rendered picture.
-   *
-   *  `object-cover` scales the image to COVER the box and centres it
-   *  (`object-position` defaults to 50% 50%), so exactly ONE axis is
-   *  trimmed and it is trimmed equally at both ends. A wider-than-card
-   *  picture keeps its full height; a taller one keeps its full width.
-   *
-   *  `trim` names which axis that is, because it is what the overlay
-   *  draws: two dimmed bars on the trimmed axis and none on the other.
-   *  Two absolutely-positioned rectangles rather than a `clip-path`
-   *  cut-out — the same picture, with nothing depending on a fill-rule
-   *  and a self-intersecting polygon rendering the way it does today.
-   */
-  const cropBox = $derived.by(() => {
-    if (!coverNaturalNow) return null;
-    const aspect = coverNaturalNow.w / coverNaturalNow.h;
-    const widthPct = aspect > CARD_ASPECT ? (CARD_ASPECT / aspect) * 100 : 100;
-    const heightPct = aspect > CARD_ASPECT ? 100 : (aspect / CARD_ASPECT) * 100;
-    /** Nothing is lost — the picture is already card-shaped. Worth
-     *  saying out loud rather than boxing the whole image and leaving
-     *  the curator to work out that the box means "all of it". */
-    const exact = widthPct > 99.5 && heightPct > 99.5;
-    return {
-      widthPct,
-      heightPct,
-      leftPct: (100 - widthPct) / 2,
-      topPct: (100 - heightPct) / 2,
-      exact,
-      trim: exact ? 'none' : aspect > CARD_ASPECT ? 'x' : 'y',
-    };
-  });
+  // `col` for both summary thumbs, deliberately, where the EDITOR
+  // branches on the ladder. The summary is a square 96px chip and a
+  // contain rung would be a second, larger fetch for a picture nobody
+  // is judging a crop by; the editor, which IS judging one, loads what
+  // the strip loads. Different questions, different sources, and the
+  // difference is stated here so a later edit does not "unify" them.
+  const summaryPosition = $derived(objectPosition(focalX, focalY));
 
   async function submit() {
     if (!name.trim() || submitting) return;
@@ -340,6 +268,31 @@
               ? { clear_cover: true }
               : {}
             : { cover_asset_id: coverAssetId }),
+          // #1207 — the same tri-state twice more. The featured cover
+          // is its own value/clear pair; the focal POINT is one flag
+          // over two coordinates, because half a point is not a
+          // positioning the server can honour.
+          //
+          // The `collection.*` guards are what keep an unrelated edit
+          // — a rename — from sending a clear for something that was
+          // never set. A clear on an already-null column is harmless
+          // today, but it is also a write the curator did not ask for,
+          // and it would advance `updated_at` on every save.
+          ...(featuredCoverAssetId === null
+            ? collection.featured_cover_asset_id
+              ? { clear_featured_cover: true }
+              : {}
+            : { featured_cover_asset_id: featuredCoverAssetId }),
+          ...(focalX === null || focalY === null
+            ? collection.featured_cover_focal_x != null
+              ? { clear_featured_cover_focal: true }
+              : {}
+            : { featured_cover_focal_x: focalX, featured_cover_focal_y: focalY }),
+          ...(coverFocalX === null || coverFocalY === null
+            ? collection.cover_focal_x != null
+              ? { clear_cover_focal: true }
+              : {}
+            : { cover_focal_x: coverFocalX, cover_focal_y: coverFocalY }),
         },
       });
       if (response.status === 409) {
@@ -454,168 +407,73 @@
         <CollectionFieldsSection collectionId={collection.id} />
       </div>
 
-      <!-- tabindex="-1" so `focusCover` has something to move focus to.
-           It is NOT in the tab order: a fieldset is not a control, and
-           adding a stop here would make every keyboard user tab through
-           a wrapper on the way to the swatches. -->
-      <fieldset bind:this={coverSection} tabindex="-1" data-testid="collection-cover-section">
+      <!-- The cover SUMMARY, and the door to the editor (#1207).
+
+           This used to be the whole cover surface: a picker grid, a
+           crop preview and a mosaic option, in one column of a modal
+           that also carries identity, visibility and custom fields.
+           The owner's finding was that it left the crop illegible, and
+           the fix is not a wider column — it is a surface with room,
+           which is CollectionCoverEditor below. What belongs HERE is
+           what the form is for: showing the state and reaching the
+           control that changes it. -->
+      <fieldset data-testid="collection-cover-section">
         <legend class="mb-1 block text-xs font-medium text-fg-muted">{t('collections.cover')}</legend>
         <p class="mb-2 text-xs text-fg-muted">{t('collections.cover_hint')}</p>
 
-        <!-- The crop preview (#1195). Above the picker, because it is
-             about the CURRENT selection and the picker is how you change
-             it — the answer belongs beside the question, not after the
-             list of alternatives. -->
-        <div class="mb-3 rounded border border-border bg-surface p-2" data-testid="collection-crop-preview">
-          <p class="mb-2 text-xs font-medium text-fg-muted">{t('collections.crop_heading')}</p>
-          {#if coverAssetId === null || coverPreviewSrc === null}
-            <p class="text-xs text-fg-muted">{t('collections.crop_mosaic_note')}</p>
-          {:else}
-            <div class="flex items-start gap-3">
-              <!-- Left: the whole picture, with the surviving region
-                   boxed on it.
-
-                   The wrapper SHRINK-WRAPS the image (inline-block, no
-                   width or height of its own) so the element and the
-                   picture are the SAME rectangle. That is what lets the
-                   box be positioned in percentages with nothing measured
-                   from the DOM. Giving the wrapper a size instead —
-                   an aspect-ratio, a fixed height — reintroduces exactly
-                   the bug this preview exists to show: the image
-                   letterboxes inside a box it does not fill, and the
-                   overlay ends up marking a region of the BOX rather
-                   than of the picture. -->
-              <figure class="min-w-0 flex-1 text-center">
-                <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
-                  {t('collections.crop_full_label')}
-                </figcaption>
-                <div class="relative inline-block max-w-full align-top">
-                  <img
-                    src={coverPreviewSrc}
-                    srcset={coverPreviewSrcset}
-                    sizes="200px"
-                    alt={t('collections.crop_full_alt')}
-                    onload={onPreviewLoad}
-                    class="block max-h-32 max-w-full rounded"
-                  />
-                  {#if cropBox && !cropBox.exact}
-                    <!-- What gets cropped OFF is dimmed, and what
-                         survives is outlined: two readings of one fact,
-                         so it holds up for a colour-blind reader and in
-                         a 390px screenshot alike. Exactly one axis is
-                         ever trimmed (see cropBox.trim), so this is two
-                         bars, never four. `pointer-events-none` because
-                         it is annotation, not a control. -->
-                    {#if cropBox.trim === 'x'}
-                      <div class="pointer-events-none absolute inset-y-0 left-0 bg-black/60"
-                           style="width: {cropBox.leftPct}%"></div>
-                      <div class="pointer-events-none absolute inset-y-0 right-0 bg-black/60"
-                           style="width: {cropBox.leftPct}%"></div>
-                    {:else}
-                      <div class="pointer-events-none absolute inset-x-0 top-0 bg-black/60"
-                           style="height: {cropBox.topPct}%"></div>
-                      <div class="pointer-events-none absolute inset-x-0 bottom-0 bg-black/60"
-                           style="height: {cropBox.topPct}%"></div>
-                    {/if}
-                    <div
-                      class="pointer-events-none absolute border-2 border-accent"
-                      data-testid="collection-crop-box"
-                      style="left: {cropBox.leftPct}%; top: {cropBox.topPct}%; width: {cropBox.widthPct}%; height: {cropBox.heightPct}%;"
-                    ></div>
-                  {/if}
-                </div>
-              </figure>
-
-              <!-- Right: the card itself, drawn the way FeaturedRail
-                   draws it — an 890:500 box with `object-cover`. Not a
-                   simulation of the crop: the same two CSS properties
-                   the strip uses, on the same source, so if the two ever
-                   disagree it is because the strip changed. -->
-              <figure class="min-w-0 flex-1">
-                <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
-                  {t('collections.crop_card_label')}
-                </figcaption>
-                <div
-                  class="overflow-hidden rounded border border-border bg-surface-elevated"
-                  style="aspect-ratio: 890 / 500"
-                >
-                  <img
-                    src={coverPreviewSrc}
-                    srcset={coverPreviewSrcset}
-                    alt={t('collections.crop_card_alt')}
-                    data-testid="collection-crop-card"
-                    class="h-full w-full object-cover"
-                  />
-                </div>
-              </figure>
-            </div>
-            <p class="mt-2 text-xs text-fg-muted">{t('collections.crop_hint')}</p>
-          {/if}
-        </div>
-
-        {#if coverLoading}
-          <p class="text-xs text-fg-muted">{t('collections.cover_loading')}</p>
-        {:else if coverChoices.length === 0 && !coverIsExternal}
-          <p class="text-xs text-fg-muted">{t('collections.cover_none')}</p>
-        {:else}
-          <!-- The choices SCROLL inside a fixed height. A collection can
-               hold hundreds of members, and letting the grid size itself
-               pushes the modal's Save button below the fold — the control
-               the whole form exists to reach. Its own scroll container
-               keeps the footer where it was for a two-member collection
-               and a two-hundred-member one alike. -->
-          <div class="grid max-h-56 grid-cols-4 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-5">
-            <!-- "Use mosaic" is a CHOICE in the same grid as the pictures,
-                 not a clear button off to one side: reverting to the
-                 derived cover is what the collection does by default, so
-                 it reads as one of the options rather than an undo. -->
-            <button
-              type="button"
-              onclick={() => (coverAssetId = null)}
-              aria-pressed={coverAssetId === null}
-              class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
-              class:border-accent={coverAssetId === null}
-              class:border-border={coverAssetId !== null}
-            >
-              <span class="font-medium">{t('collections.cover_derived')}</span>
-              <span class="mt-0.5 opacity-70">{t('collections.cover_derived_hint')}</span>
-            </button>
-
-            {#if coverIsExternal && coverAssetId}
-              <button
-                type="button"
-                aria-pressed="true"
-                title={t('collections.cover_current_external')}
-                class="relative aspect-square overflow-hidden rounded border-2 border-accent"
-              >
+        <div class="flex flex-wrap items-start gap-4 rounded border border-border bg-surface p-3">
+          <!-- The featured chip is drawn at the STRIP's aspect with the
+               strip's own object-position, so the summary answers "what
+               did my positioning do" without opening anything. A square
+               chip here would have hidden the very setting the editor
+               exists to make. -->
+          <figure class="w-32">
+            <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+              {t('collections.cover_summary_featured')}
+            </figcaption>
+            <div class="overflow-hidden rounded border border-border bg-surface-elevated"
+                 style="aspect-ratio: 890 / 500">
+              {#if featuredEffectiveId}
                 <img
-                  src={coverUrl(coverAssetId)}
-                  alt={t('collections.cover_current_external')}
-                  loading="lazy"
-                  class="h-full w-full object-cover"
-                />
-              </button>
-            {/if}
-
-            {#each coverChoices as choice (choice.asset_id)}
-              <button
-                type="button"
-                onclick={() => (coverAssetId = choice.asset_id)}
-                aria-pressed={coverAssetId === choice.asset_id}
-                class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
-                class:border-accent={coverAssetId === choice.asset_id}
-                class:border-border={coverAssetId !== choice.asset_id}
-              >
-                <img
-                  src={coverUrl(choice.asset_id)}
+                  src={coverUrl(featuredEffectiveId)}
                   alt=""
-                  loading="lazy"
+                  data-testid="cover-summary-featured"
                   class="h-full w-full object-cover"
+                  style="object-position: {summaryPosition}"
                 />
-              </button>
-            {/each}
-          </div>
-        {/if}
+              {:else}
+                <div class="flex h-full items-center justify-center text-[10px] text-fg-muted">
+                  {t('collections.cover_summary_none')}
+                </div>
+              {/if}
+            </div>
+          </figure>
+
+          <figure class="w-20">
+            <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+              {t('collections.cover_summary_cover')}
+            </figcaption>
+            <div class="aspect-square overflow-hidden rounded border border-border bg-surface-elevated">
+              {#if coverAssetId}
+                <img src={coverUrl(coverAssetId)} alt="" data-testid="cover-summary-collection"
+                     class="h-full w-full object-cover" />
+              {:else}
+                <div class="flex h-full items-center justify-center text-center text-[10px] text-fg-muted">
+                  {t('collections.cover_summary_none')}
+                </div>
+              {/if}
+            </div>
+          </figure>
+
+          <button
+            type="button"
+            onclick={() => (coverEditorOpen = true)}
+            data-testid="collection-cover-edit-button"
+            class="rounded border border-border-strong bg-surface-elevated px-3 py-1.5 text-sm font-medium hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          >
+            {t('collections.cover_editor_open')}
+          </button>
+        </div>
       </fieldset>
     </div>
   </div>
@@ -638,3 +496,28 @@
     </button>
   {/snippet}
 </Modal>
+
+<!-- Declared OUTSIDE the form modal rather than nested inside its body.
+     Both portal to the same place, so the DOM is identical either way —
+     but a dialog declared inside the scrolling body of another dialog
+     is a dialog whose lifetime is tangled with a scroll container, and
+     the one thing this surface must not do is disappear mid-drag.
+
+     Escape steps back exactly one level: Modal only answers the key
+     when it is on top of the shared stack (see modalStack.ts), which
+     this is the first surface to need. Everything it edits is bound
+     back to the state above, so closing it commits nothing and Cancel
+     on the form still discards the lot. -->
+<CollectionCoverEditor
+  open={coverEditorOpen}
+  onclose={() => (coverEditorOpen = false)}
+  choices={coverChoices}
+  loading={coverLoading}
+  collectionVisibility={visibility}
+  bind:coverAssetId
+  bind:featuredCoverAssetId
+  bind:focalX
+  bind:focalY
+  bind:coverFocalX
+  bind:coverFocalY
+/>
