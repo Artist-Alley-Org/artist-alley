@@ -21,6 +21,21 @@
  */
 export const CARD_ASPECT = 890 / 500;
 
+/** The COLLECTION card's aspect (#1207).
+ *
+ *  Mirrors CollectionCard's `aspect-[4/3]` tile — the shape a chosen
+ *  cover is actually cropped to on the hub, the profile and search.
+ *
+ *  ⚠️ NOT A SQUARE, and the correction is worth recording. The square
+ *  looks like the right answer because `col` is one: `fit: cover` at
+ *  320px, a 320x320 centre-crop, and it is what every small collection
+ *  thumbnail is MADE of. But `col` is a SOURCE, not a destination — the
+ *  tile that paints it is 4:3, so a curator positioning against a square
+ *  would be shown a region the card never displays. The rule is that a
+ *  crop marquee locks to the dimensions of the thing that renders it,
+ *  and for a collection cover that thing is this tile. */
+export const COLLECTION_CARD_ASPECT = 4 / 3;
+
 /** How much of the picture the card actually shows, per axis, as a
  *  fraction in (0, 1].
  *

@@ -547,24 +547,24 @@ test.describe('#1207 the collection cover editor', () => {
     // point that centres a subject in a 890:500 band is not the point
     // that centres it in a square, so the two have to be able to hold
     // different values at the same time.
-    const squareMarquee = page.getByTestId('collection-crop-marquee');
+    const collMarquee = page.getByTestId('collection-crop-marquee');
     await expect(
-      squareMarquee,
-      'the collection-cover slot has no crop marquee — the square lock did not render',
+      collMarquee,
+      'the collection-cover slot has no crop marquee — the 4:3 lock did not render',
     ).toBeVisible();
-    expect(await readFocal(page, 'collection-crop'), 'the square crop must start unpositioned')
+    expect(await readFocal(page, 'collection-crop'), 'the collection crop must start unpositioned')
       .toEqual({ x: '', y: '' });
 
-    const squareCanMove = await squareMarquee.isEnabled();
-    if (squareCanMove) {
+    const collCanMove = await collMarquee.isEnabled();
+    if (collCanMove) {
       // SCROLL IT INTO VIEW FIRST. The dialog body scrolls and this slot
       // sits below the featured one, so its bounding box is real but
       // off-screen — and `page.mouse` works in VIEWPORT coordinates, so
       // the drag would be dispatched at a point the marquee is not
       // currently occupying. It moved nothing and read as "the square
       // marquee is not draggable".
-      await squareMarquee.scrollIntoViewIfNeeded();
-      const sBox = (await squareMarquee.boundingBox())!;
+      await collMarquee.scrollIntoViewIfNeeded();
+      const sBox = (await collMarquee.boundingBox())!;
       const sStage = (await page.getByTestId('collection-crop-stage-image').boundingBox())!;
       await page.mouse.move(sBox.x + sBox.width / 2, sBox.y + sBox.height / 2);
       await page.mouse.down();
@@ -575,19 +575,26 @@ test.describe('#1207 the collection cover editor', () => {
       );
       await page.mouse.up();
       const sq = await readFocal(page, 'collection-crop');
-      expect(sq.x === '' && sq.y === '', 'the square marquee did not move').toBe(false);
+      expect(sq.x === '' && sq.y === '', 'the collection-cover marquee did not move').toBe(false);
     }
 
-    // The square preview is 1:1 — the shape `col` actually is. If this
-    // ever reads 890:500 the two slots have been wired to one stage.
-    const squareRatio = await page.evaluate(() => {
+    // The collection preview is 4:3 — CollectionCard's actual tile.
+    //
+    // ⚠️ NOT 1:1, and the distinction is the point. `col` is a square
+    // (fit: cover at 320px), which makes "lock it to a square" a very
+    // reasonable read — but `col` is the SOURCE and the tile that paints
+    // it is `aspect-[4/3]`. A marquee locked to the source rather than
+    // the destination shows the curator a region the card never
+    // displays. If this ever reads 890:500 the two slots have been wired
+    // to one stage.
+    const collRatio = await page.evaluate(() => {
       const img = document.querySelector<HTMLImageElement>(
         '[data-testid="collection-crop-card-preview"]',
       )!;
       const box = img.parentElement!.getBoundingClientRect();
       return box.width / box.height;
     });
-    expect(squareRatio, 'the collection-cover preview is not square').toBeCloseTo(1, 2);
+    expect(collRatio, 'the collection-cover preview is not 4:3').toBeCloseTo(4 / 3, 2);
 
     await page.getByTestId('cover-editor-done').click();
     await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
@@ -606,7 +613,7 @@ test.describe('#1207 the collection cover editor', () => {
       expect(saved.featured_cover_focal_x).toBeGreaterThanOrEqual(0);
       expect(saved.featured_cover_focal_x).toBeLessThanOrEqual(1);
     }
-    if (squareCanMove) {
+    if (collCanMove) {
       expect(saved.cover_focal_x, 'the collection cover focal x did not persist').not.toBeNull();
       expect(saved.cover_focal_y, 'the collection cover focal y did not persist').not.toBeNull();
       // INDEPENDENT, not a mirror. The two marquees were dragged in
@@ -663,13 +670,13 @@ test.describe('#1207 the collection cover editor', () => {
       y: '',
     });
 
-    // The square crop has its own Reset, and its own clear flag behind
-    // it — same tri-state, second pair.
-    const squareReset = editor.getByTestId('collection-crop-reset-focal');
-    if (await squareReset.isEnabled()) await squareReset.click();
+    // The collection crop has its own Reset, and its own clear flag
+    // behind it — same tri-state, second pair.
+    const collReset = editor.getByTestId('collection-crop-reset-focal');
+    if (await collReset.isEnabled()) await collReset.click();
     expect(
       await readFocal(page, 'collection-crop'),
-      'the square reset must clear to null too',
+      'the collection-cover reset must clear to null too',
     ).toEqual({ x: '', y: '' });
 
     // And the collection cover back to the mosaic ("Use mosaic" is the
@@ -888,6 +895,116 @@ test.describe('#1207 the collection cover editor', () => {
     } finally {
       await anon.close();
     }
+  });
+
+
+  // ── The hub tile CONSUMES the focal point (#1207 item 3) ───────────
+  //
+  // Everything above proves the value is stored. This proves it is
+  // SPENT — that a collection card actually shows a different part of
+  // the picture because the curator moved a box.
+  //
+  // ⚠️ THE SOURCE HAS TO CHANGE WITH IT, and that is the assertion this
+  // test exists for. `col` is `fit: cover` at 320px — a 320x320
+  // CENTRE-CROP — so applying object-position to it takes a second crop
+  // of the server's crop and lands somewhere nobody chose. A card that
+  // merely set object-position on `col` would look like it worked and
+  // be wrong, so the src is checked as well as the position, and the
+  // rendered pixels are compared to catch "the CSS is right and nothing
+  // moved".
+  test('a hub tile visibly shifts when the cover has an off-centre focal point', async ({
+    page,
+    request,
+  }) => {
+    // A clean starting point: the chosen cover, no focal.
+    const reset = await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: { cover_asset_id: memberIds[0], clear_cover_focal: true },
+    });
+    expect(reset.status(), 'fixture PATCH must be accepted').toBe(200);
+
+    const hubTile = () =>
+      page
+        .locator('a[href$="/collections/' + collectionId + '"]')
+        .first()
+        .locator('[data-testid="collection-card-cover"]');
+
+    async function loadHub() {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(`/collections?q=${encodeURIComponent(COLLECTION_NAME)}`);
+      const tile = hubTile();
+      await expect(tile, 'the fixture collection has no card on the hub').toBeVisible({
+        timeout: 20000,
+      });
+      await tile.scrollIntoViewIfNeeded();
+      // Wait for the picture itself, not just the element — comparing
+      // screenshots of a tile that has not decoded yet compares two
+      // blank boxes and passes for the wrong reason.
+      await expect
+        .poll(async () => tile.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0), {
+          timeout: 20000,
+        })
+        .toBe(true);
+      return tile;
+    }
+
+    const before = await loadHub();
+    expect(
+      await before.getAttribute('data-focal'),
+      'the card claims a focal crop before one was set',
+    ).toBe('off');
+    expect(await before.getAttribute('src'), 'with no focal the card should paint col').toContain(
+      '/variants/col',
+    );
+    expect(
+      await before.evaluate((el) => getComputedStyle(el).objectPosition),
+      'with no focal the card must centre, exactly as it always did',
+    ).toBe('50% 50%');
+    const beforeShot = await before.screenshot();
+
+    // Hard to one corner, so the shift is unmistakable rather than
+    // subtle enough to be argued with.
+    const patched = await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: { cover_focal_x: 0, cover_focal_y: 0 },
+    });
+    expect(patched.status(), 'the focal PATCH must be accepted').toBe(200);
+
+    // The payload boolean the card branches on — the read path this
+    // whole item depends on, asserted directly rather than inferred
+    // from the card having worked.
+    const read = await request.get(`/api/v1/collections/${collectionId}`);
+    const body = (await read.json()) as {
+      covers?: Array<{ asset_id: string; preview_available?: boolean }>;
+    };
+    expect(body.covers?.length, 'the chosen cover should compose to exactly one entry').toBe(1);
+    expect(
+      body.covers?.[0].preview_available,
+      'CollectionCover carries no preview_available — the card cannot tell whether a contain ' +
+        'rung exists and would have to guess, which is how it ends up cropping a crop',
+    ).toBe(true);
+
+    const after = await loadHub();
+    expect(
+      await after.getAttribute('data-focal'),
+      'the card did not switch to focal mode',
+    ).toBe('on');
+    expect(
+      await after.getAttribute('src'),
+      'the card is still painting the pre-cropped col — object-position on that crops a crop',
+    ).toContain('/variants/preview');
+    expect(
+      await after.evaluate((el) => getComputedStyle(el).objectPosition),
+      'the card did not take the focal point',
+    ).toBe('0% 0%');
+
+    // AND THE PIXELS MOVED. The three assertions above are about the
+    // DOM; this one is about what a person sees, and it is the reason
+    // the source-swap defect could not hide here.
+    const afterShot = await after.screenshot();
+    expect(
+      Buffer.compare(beforeShot, afterShot) === 0,
+      'the tile renders identically before and after an extreme focal point — the value is ' +
+        'stored and read and changes nothing on screen',
+    ).toBe(false);
   });
 
   // The rail is the surface all of this exists to feed (#1200). It read

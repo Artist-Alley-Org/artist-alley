@@ -294,7 +294,19 @@ WITH override AS (
     -- paragraphs up exists to make impossible. Withholding sends the
     -- collection down to the mosaic below, exactly as a withheld tier
     -- does.
-    SELECT c.id AS collection_id, c.cover_asset_id AS asset_id
+    --
+    -- #1207: preview_available rides the row. It answers "does a
+    -- CONTAIN rung exist for this asset", which is a different question
+    -- from the 'col' gate two lines below and is the one a focal point
+    -- depends on. A cover with a focal point MUST be painted from a
+    -- contain rung: 'col' is a 320x320 centre-crop, so its edges are
+    -- already gone and applying object-position to it crops a crop.
+    -- The card branches on this and falls back to 'col' when it is
+    -- false, which is exactly what it always did.
+    SELECT c.id AS collection_id, c.cover_asset_id AS asset_id,
+           EXISTS (SELECT 1 FROM storage_variants sv2
+                    WHERE sv2.object_hash = a.file_hash
+                      AND sv2.variant_key = 'preview') AS preview_available
       FROM collections c
       JOIN assets a ON a.id = c.cover_asset_id
      WHERE c.id = ANY($1::UUID[])
@@ -343,7 +355,10 @@ renderable AS (
     -- happen HERE, before the rank, or a duplicate would eat a slot and
     -- the mosaic would come back short.
     SELECT DISTINCT ON (m.collection_id, m.asset_id)
-           m.collection_id, m.asset_id, m.added_at, m.sort_order
+           m.collection_id, m.asset_id, m.added_at, m.sort_order,
+           EXISTS (SELECT 1 FROM storage_variants sv2
+                    WHERE sv2.object_hash = a.file_hash
+                      AND sv2.variant_key = 'preview') AS preview_available
       FROM members m
       JOIN assets a ON a.id = m.asset_id
      WHERE a.deleted_at IS NULL
@@ -357,7 +372,7 @@ renderable AS (
      ORDER BY m.collection_id, m.asset_id, m.added_at ASC, m.sort_order ASC
 ),
 ranked AS (
-    SELECT r.collection_id, r.asset_id,
+    SELECT r.collection_id, r.asset_id, r.preview_available,
            ROW_NUMBER() OVER (
                PARTITION BY r.collection_id
                -- added_at first: it is the ONE axis comparable across
@@ -378,12 +393,12 @@ ranked AS (
 -- rn 0 for the override keeps ONE ordering expression for both
 -- branches; it is never compared against $2 because a single row
 -- cannot overflow a four-tile budget.
-SELECT collection_id, asset_id
+SELECT collection_id, asset_id, preview_available
   FROM (
-      SELECT o.collection_id, o.asset_id, 0 AS rn
+      SELECT o.collection_id, o.asset_id, o.preview_available, 0 AS rn
         FROM override o
       UNION ALL
-      SELECT r.collection_id, r.asset_id, r.rn
+      SELECT r.collection_id, r.asset_id, r.preview_available, r.rn
         FROM ranked r
        WHERE r.rn <= $2::INTEGER
          AND NOT EXISTS (SELECT 1 FROM override o
@@ -400,11 +415,13 @@ SELECT collection_id, asset_id
 	out := make(map[uuid.UUID][]openapi.CollectionCover, len(ids))
 	for rows.Next() {
 		var collectionID, assetID uuid.UUID
-		if err := rows.Scan(&collectionID, &assetID); err != nil {
+		var previewAvailable bool
+		if err := rows.Scan(&collectionID, &assetID, &previewAvailable); err != nil {
 			return nil, fmt.Errorf("collections: covers scan: %w", err)
 		}
 		out[collectionID] = append(out[collectionID], openapi.CollectionCover{
-			AssetId: openapi_types.UUID(assetID),
+			AssetId:          openapi_types.UUID(assetID),
+			PreviewAvailable: previewAvailable,
 		})
 	}
 	if err := rows.Err(); err != nil {

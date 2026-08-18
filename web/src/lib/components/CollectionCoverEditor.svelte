@@ -37,7 +37,7 @@
   import { putStorageObject } from '$lib/util/storageUpload';
   import Modal from './Modal.svelte';
   import CoverCropStage from './CoverCropStage.svelte';
-  import { CARD_ASPECT } from '$lib/util/featuredCrop';
+  import { CARD_ASPECT, COLLECTION_CARD_ASPECT } from '$lib/util/featuredCrop';
 
   /** One choosable picture. Mirrors EditCollectionModal's CoverChoice —
    *  the same rows, handed down rather than re-fetched, so both slots
@@ -708,30 +708,39 @@
       <h3 id="cover-slot-heading" class="text-sm font-semibold">
         {t('collections.cover_editor_cover_heading')}
       </h3>
-      <p class="mt-0.5 text-xs text-fg-muted">{t('collections.cover_hint')}</p>
+      <p class="mt-0.5 text-xs text-fg-muted">
+        {coverAssetId === null
+          ? t('collections.cover_hint')
+          : t('collections.cover_editor_cover_crop_hint')}
+      </p>
 
       <div class="mt-3 flex items-start gap-4">
-        <!-- SQUARE, and the square is not a taste call. `col` is
-             `fit: cover` at 320px — a 320x320 centre-crop
-             (sysconfig/previews.go) — and that rendition is what every
-             small collection thumbnail is made of. So the square is the
-             shape a collection cover is actually cropped to, and it is
-             what the marquee has to mark.
+        <!-- 4:3 — CollectionCard's tile, which is the shape a chosen
+             collection cover is actually cropped to on the hub, the
+             profile and search.
 
-             The owner asked for "the option to lock it to a square". It
-             is the lock, with no toggle, because the alternative has no
-             destination: an arbitrary rectangle is not a shape any
-             surface renders, so a free-crop mode would offer a choice
-             the product could not keep. The two shapes that exist are
-             this one and the rail's 890:500, and each has its own
-             marquee and its own stored pair. -->
+             ⚠️ IT LOOKED LIKE A SQUARE, and the correction is the whole
+             lesson. `col` IS a square — `fit: cover` at 320px, a
+             320x320 centre-crop — and it is what every small collection
+             thumbnail is made of, so "lock it to a square" is a very
+             reasonable read of the pipeline. But `col` is a SOURCE, not
+             a destination: the tile that paints it is `aspect-[4/3]`
+             (CollectionCard.svelte), so a curator positioning against a
+             square would have been shown a region the card never
+             displays. A crop marquee locks to the dimensions of the
+             thing that RENDERS it.
+
+             That is also why the card had to change what it fetches —
+             see CollectionCard: a focal point cannot be applied to
+             `col`, whose edges are gone before object-position could
+             act. Two shapes, two stored pairs, and both are real. -->
         <div class="min-w-0 flex-1">
           {#if coverAssetId !== null && coverSrc !== null}
             <CoverCropStage
               src={coverSrc}
               srcset={coverSrcset}
               sizes="(max-width: 640px) 90vw, 40vw"
-              aspect={1}
+              aspect={COLLECTION_CARD_ASPECT}
               bind:focalX={coverFocalX}
               bind:focalY={coverFocalY}
               testidPrefix="collection-crop"

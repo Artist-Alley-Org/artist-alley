@@ -14308,7 +14308,7 @@ components:
         entry exists only if this caller may render the asset, so
         clients paint every entry unconditionally — there is no
         `preview_available` to branch on and no placeholder rung.
-      required: [asset_id]
+      required: [asset_id, preview_available]
       properties:
         asset_id:
           type: string
@@ -14317,6 +14317,32 @@ components:
             Fetch the picture from
             `/assets/{asset_id}/variants/col`. Guaranteed to have that
             rendition — an asset without one is not a cover candidate.
+        preview_available:
+          type: boolean
+          description: |
+            A CONTAIN rung (`preview`) exists for this asset (#1207) — a
+            different question from the `col` guarantee above, and the
+            one a focal point depends on.
+
+            ⚠️ A COVER WITH A FOCAL POINT MUST BE PAINTED FROM A CONTAIN
+            RUNG. `col` is `fit: cover` at 320px, a 320x320 CENTRE-CROP,
+            so the picture's edges are gone before `object-position`
+            could act on them: applying `collections.cover_focal_*` to
+            `col` crops a crop and lands somewhere the curator did not
+            choose. The focal fractions are stored against the ORIGINAL,
+            so the source has to be one that still is the original
+            shape.
+
+            When this is false there is no such rung and the client
+            falls back to `col` with a centred crop — which is exactly
+            what every collection card did before focal points existed,
+            so the fallback is the old behaviour rather than a
+            degradation.
+
+            Populated for every entry, mosaic tiles included, even
+            though only the single-cover case consumes it: a field that
+            is present on some rows and absent on others is a field
+            every reader has to branch on twice.
     CollectionCreate:
       type: object
       required: [name]
