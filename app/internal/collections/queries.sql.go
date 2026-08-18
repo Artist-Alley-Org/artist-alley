@@ -103,7 +103,8 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
           featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-          cover_focal_x, cover_focal_y
+          cover_focal_x, cover_focal_y,
+          featured_cover_zoom, cover_zoom
 `
 
 type CreateCollectionParams struct {
@@ -163,6 +164,8 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.FeaturedCoverFocalY,
 		&i.CoverFocalX,
 		&i.CoverFocalY,
+		&i.FeaturedCoverZoom,
+		&i.CoverZoom,
 	)
 	return i, err
 }
@@ -198,7 +201,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
        featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-       cover_focal_x, cover_focal_y
+       cover_focal_x, cover_focal_y,
+       featured_cover_zoom, cover_zoom
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -231,6 +235,8 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.FeaturedCoverFocalY,
 		&i.CoverFocalX,
 		&i.CoverFocalY,
+		&i.FeaturedCoverZoom,
+		&i.CoverZoom,
 	)
 	return i, err
 }
@@ -256,7 +262,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
        featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-       cover_focal_x, cover_focal_y
+       cover_focal_x, cover_focal_y,
+       featured_cover_zoom, cover_zoom
 FROM collections
 WHERE id = $1
 `
@@ -290,6 +297,8 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.FeaturedCoverFocalY,
 		&i.CoverFocalX,
 		&i.CoverFocalY,
+		&i.FeaturedCoverZoom,
+		&i.CoverZoom,
 	)
 	return i, err
 }
@@ -440,7 +449,8 @@ SELECT id, owner_user_ref, name, description, visibility, membership,
        created_at, updated_at, search_text, smart_query,
        deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
        featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-       cover_focal_x, cover_focal_y
+       cover_focal_x, cover_focal_y,
+       featured_cover_zoom, cover_zoom
 FROM collections c
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
@@ -552,6 +562,8 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.FeaturedCoverFocalY,
 			&i.CoverFocalX,
 			&i.CoverFocalY,
+			&i.FeaturedCoverZoom,
+			&i.CoverZoom,
 		); err != nil {
 			return nil, err
 		}
@@ -641,14 +653,28 @@ UPDATE collections SET
                           ELSE COALESCE($16, cover_focal_x) END,
     cover_focal_y = CASE WHEN $15::BOOLEAN THEN NULL
                           ELSE COALESCE($17, cover_focal_y) END,
+    -- #1212 — how far each crop is tightened. One column per slot and
+    -- one clear flag per column, and the flag is NOT optional dressing
+    -- on a numeric field: NULL means "leave alone" here exactly as it
+    -- does above, so without the CASE a curator who zoomed and then
+    -- reset would get a 200 and an unchanged column — #1073's silent
+    -- non-clear, on a new pair of columns. It is a SEPARATE flag from
+    -- the focal pair's because zoom and position are independent
+    -- settings: "back to fit, still positioned left" is an ordinary
+    -- thing to want, and one shared flag could not say it.
+    featured_cover_zoom = CASE WHEN $18::BOOLEAN THEN NULL
+                          ELSE COALESCE($19, featured_cover_zoom) END,
+    cover_zoom = CASE WHEN $20::BOOLEAN THEN NULL
+                          ELSE COALESCE($21, cover_zoom) END,
     updated_at  = NOW()
-WHERE id = $18
+WHERE id = $22
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, purpose, origin_server_id,
           created_at, updated_at, search_text, smart_query,
           deleted_at, deleted_reason, deleted_by_user_ref, cover_asset_id,
           featured_cover_asset_id, featured_cover_focal_x, featured_cover_focal_y,
-          cover_focal_x, cover_focal_y
+          cover_focal_x, cover_focal_y,
+          featured_cover_zoom, cover_zoom
 `
 
 type UpdateCollectionParams struct {
@@ -669,6 +695,10 @@ type UpdateCollectionParams struct {
 	ClearCoverFocal         bool
 	CoverFocalX             *float64
 	CoverFocalY             *float64
+	ClearFeaturedCoverZoom  bool
+	FeaturedCoverZoom       *float64
+	ClearCoverZoom          bool
+	CoverZoom               *float64
 	ID                      pgtype.UUID
 }
 
@@ -706,6 +736,10 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.ClearCoverFocal,
 		arg.CoverFocalX,
 		arg.CoverFocalY,
+		arg.ClearFeaturedCoverZoom,
+		arg.FeaturedCoverZoom,
+		arg.ClearCoverZoom,
+		arg.CoverZoom,
 		arg.ID,
 	)
 	var i Collection
@@ -732,6 +766,8 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.FeaturedCoverFocalY,
 		&i.CoverFocalX,
 		&i.CoverFocalY,
+		&i.FeaturedCoverZoom,
+		&i.CoverZoom,
 	)
 	return i, err
 }

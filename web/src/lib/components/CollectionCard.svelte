@@ -15,7 +15,7 @@
   // entry here is renderable and there is nothing to probe or branch on.
 
   import { t } from '$stores/lang.svelte';
-  import { objectPosition } from '$lib/util/featuredCrop';
+  import { coverPlacement } from '$lib/util/featuredCrop';
 
   interface CoverEntry {
     asset_id: string;
@@ -39,6 +39,9 @@
     // before this existed.
     cover_focal_x?: number | null;
     cover_focal_y?: number | null;
+    // #1212 — how far the curator tightened that crop. Null is the fit,
+    // which is what every card rendered before this existed.
+    cover_zoom?: number | null;
   }
 
   interface Props {
@@ -74,12 +77,20 @@
   // picture filling the tile; there is no meaningful place to apply it
   // across two or four, and #1026's mosaic is a summary rather than a
   // composition anyone framed.
+  //
+  // ZOOM (#1212) NEEDS THE CONTAIN RUNG FOR THE SAME REASON THE FOCAL
+  // POINT DOES, and it needs it on its own: a collection zoomed but
+  // never moved off centre has no focal point at all, and painting that
+  // zoom onto `col` would tighten a crop that was already taken at the
+  // centre of a square the curator never saw. So the test is "has the
+  // curator framed this in any way", not "has the curator moved it".
   const hasFocal = $derived(
     collection.cover_focal_x != null && collection.cover_focal_y != null,
   );
+  const hasZoom = $derived(collection.cover_zoom != null);
   const singleCover = $derived(covers.length === 1 ? covers[0] : null);
   const singleUsesContainRung = $derived(
-    singleCover !== null && hasFocal && singleCover.preview_available === true,
+    singleCover !== null && (hasFocal || hasZoom) && singleCover.preview_available === true,
   );
   const singleSrc = $derived(
     singleCover === null
@@ -88,13 +99,15 @@
         ? `/api/v1/assets/${singleCover.asset_id}/variants/preview`
         : colUrl(singleCover),
   );
-  // Centre unless BOTH the focal point and the rung that makes it
-  // meaningful are present — the same helper the cover editor's preview
-  // and the featured rail use, so "null means centre" is decided once.
-  const singlePosition = $derived(
+  // Centred and at the fit unless BOTH the framing and the rung that
+  // makes it meaningful are present — the same helper the cover
+  // editor's preview and the featured rail use, so "null means centre,
+  // at the fit" is decided once and every surface renders the identical
+  // rectangle.
+  const singlePlacement = $derived(
     singleUsesContainRung
-      ? objectPosition(collection.cover_focal_x, collection.cover_focal_y)
-      : '50% 50%',
+      ? coverPlacement(collection.cover_focal_x, collection.cover_focal_y, collection.cover_zoom)
+      : coverPlacement(null, null, null),
   );
 
   const visibilityLabel = $derived(
@@ -116,7 +129,10 @@
   href="/collections/{collection.id}"
   class="group block overflow-hidden rounded-xl border border-border bg-surface-elevated transition-colors hover:border-fg-muted/60"
 >
-  <div class="relative aspect-[4/3] bg-surface">
+  <!-- `overflow-hidden` is what makes a zoomed cover safe (#1212): the
+       image is laid out LARGER than this box and clipped by it. At the
+       fit it changes nothing, because the image is exactly the box. -->
+  <div class="relative aspect-[4/3] overflow-hidden bg-surface">
     {#if covers.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -133,8 +149,11 @@
         loading="lazy"
         data-testid="collection-card-cover"
         data-focal={singleUsesContainRung ? 'on' : 'off'}
-        class="absolute inset-0 h-full w-full object-cover"
-        style="object-position: {singlePosition}"
+        data-zoom={singleUsesContainRung && collection.cover_zoom != null
+          ? String(collection.cover_zoom)
+          : ''}
+        class="object-cover"
+        style={singlePlacement}
       />
     {:else if covers.length === 2}
       <div class="absolute inset-0 grid grid-cols-2 gap-0.5">

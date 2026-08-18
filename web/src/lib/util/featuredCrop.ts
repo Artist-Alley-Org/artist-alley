@@ -36,6 +36,73 @@ export const CARD_ASPECT = 890 / 500;
  *  and for a collection cover that thing is this tile. */
 export const COLLECTION_CARD_ASPECT = 4 / 3;
 
+/** The two cover slots a collection has (#1213).
+ *
+ *  Named here, beside the two aspects, because the SLOT and its
+ *  DESTINATION SHAPE are the same fact: `featured` is the rail's
+ *  890:500 card and `collection` is the hub's 4:3 tile, and every other
+ *  difference between the two — which column stores the focal pair,
+ *  which stores the zoom, which picture the picker writes — follows
+ *  from that. The cover editor is one page rendered twice with this as
+ *  its parameter, so the type is what stops "the two slots" being two
+ *  copies of a surface.
+ */
+export type CoverSlot = 'featured' | 'collection';
+
+/** Each slot's destination aspect, so a caller parameterised by slot
+ *  never re-decides which constant it wanted. */
+export const COVER_SLOT_ASPECT: Record<CoverSlot, number> = {
+  featured: CARD_ASPECT,
+  collection: COLLECTION_CARD_ASPECT,
+};
+
+/** THE WIDTH BELOW WHICH THE CROP STAGE IS NOT OFFERED (#1213).
+ *
+ *  MEASURED, NOT CHOSEN. The stage's picture is
+ *  `width: clamp(17rem, 40vw, 38rem)` capped by the height budget, and
+ *  driving a 2:1 cover through a ladder of viewport widths gives:
+ *
+ *      viewport   stage px   marquee short side at max zoom
+ *        320      209x105                26
+ *        390      272x136                34
+ *        480      272x136                34
+ *        600      272x136                34
+ *        680      272x136                34
+ *        720      288x144                36
+ *        768      307x154                38
+ *        900      360x180                45
+ *       1280      512x256                64
+ *
+ *  The flat run is the finding. From 390 to 680 the `17rem` floor is
+ *  what binds, so 290px of extra screen buys ZERO extra control — the
+ *  stage is frozen at its minimum while the dialog around it keeps
+ *  growing. 680 is where `40vw` overtakes the floor and the stage starts
+ *  scaling with the screen again, and 768 is the first standard step
+ *  above it — the same `md` the edit modal already uses to decide it has
+ *  two columns' worth of room, rather than a bespoke number a later edit
+ *  would forget to keep in step.
+ *
+ *  The grab target is the other half of the same measurement. At the
+ *  floor the marquee's short side at maximum zoom is 34px, under the
+ *  44px comfortable target (WCAG 2.5.5), and at 320px it is 26px —
+ *  barely over the 24px minimum (WCAG 2.5.8). It clears 44px at 900px
+ *  of viewport, which is above any phone.
+ *
+ *  ⚠️ WHAT IS WITHHELD IS ONLY THE TWO-DIMENSIONAL PART. WCAG 2.2 SC
+ *  1.4.10 (Reflow) requires content to reflow to 320px EXCEPT "parts of
+ *  the content which require two-dimensional layout for usage or
+ *  meaning", and the criterion's own examples name interfaces that must
+ *  keep toolbars in view while manipulating content. Dragging a marquee
+ *  across a picture while watching a live preview of the result is
+ *  squarely that. What the exemption does NOT cover is switching off
+ *  unrelated functionality, so the source switch, the search, the
+ *  upload and the choice itself all stay: a narrow screen can still set
+ *  or replace either cover. It renders CENTRED, which is the
+ *  null-focal/null-zoom behaviour every collection had before #1207 and
+ *  needs no separate code path.
+ */
+export const CROP_STAGE_MIN_WIDTH = 768;
+
 /** How much of the picture the card actually shows, per axis, as a
  *  fraction in (0, 1].
  *
@@ -51,11 +118,56 @@ export const COLLECTION_CARD_ASPECT = 4 / 3;
 export function cropWindow(
   naturalAspect: number,
   cardAspect: number = CARD_ASPECT,
+  zoom: number | null | undefined = null,
 ): { w: number; h: number } {
   if (!(naturalAspect > 0) || !(cardAspect > 0)) return { w: 1, h: 1 };
-  return naturalAspect > cardAspect
-    ? { w: cardAspect / naturalAspect, h: 1 }
-    : { w: 1, h: naturalAspect / cardAspect };
+  const fit =
+    naturalAspect > cardAspect
+      ? { w: cardAspect / naturalAspect, h: 1 }
+      : { w: 1, h: naturalAspect / cardAspect };
+  const z = clampZoom(zoom);
+  return { w: fit.w / z, h: fit.h / z };
+}
+
+/** The bounds a cover zoom is clamped to (#1212), and neither end is a
+ *  matter of taste.
+ *
+ *  MIN is geometry. The window is the fit window DIVIDED by the zoom,
+ *  so anything below 1 asks for a window bigger than the picture, and
+ *  there are no pixels out there. 1 is the fit itself — what every
+ *  collection rendered before zoom existed.
+ *
+ *  MAX COMES FROM THE PREVIEW LADDER'S REAL RUNGS. A cover carrying a
+ *  crop has to be painted from a CONTAIN rung: `col` is `fit: cover` at
+ *  320px, a square already cropped at the centre, so positioning
+ *  applied to it crops a crop. The contain rungs this install ships are
+ *  `preview` 1024, `screen` 1920 and `hires` 4096
+ *  (app/internal/sysconfig/previews.go), and `preview` is the one a
+ *  cover is GUARANTEED to have — it is exactly what
+ *  `CollectionCover.preview_available` reports. Zooming to z feeds the
+ *  card 1/z of the picture's fitted width, so it demands z times the
+ *  source pixels per CSS pixel; the browser answers that by climbing
+ *  the srcset, and 4096 is precisely four times 1024. At 4 the ladder
+ *  still has a rung to climb to; past 4 it has none, and every further
+ *  step is upscaling bytes the server never made.
+ *
+ *  The same two numbers are the column CHECK in migration 00056 and
+ *  `MinCoverZoom`/`MaxCoverZoom` in the Go handler. Three copies on
+ *  purpose: the constraint is where a broken client stops, the handler
+ *  is where a caller gets a 400 it can act on, and this is where the
+ *  curator is stopped before either — a slider that could request a
+ *  value the server refuses is a slider that produces a save error
+ *  instead of a framing.
+ */
+export const MIN_ZOOM = 1;
+export const MAX_ZOOM = 4;
+
+/** A stored zoom as a usable multiplier. Null, undefined and NaN all
+ *  mean FIT, which is 1 — the single place that decision is made, for
+ *  the reason [objectPosition] centralises "null means centre". */
+export function clampZoom(zoom: number | null | undefined): number {
+  if (zoom == null || !Number.isFinite(zoom)) return MIN_ZOOM;
+  return zoom < MIN_ZOOM ? MIN_ZOOM : zoom > MAX_ZOOM ? MAX_ZOOM : zoom;
 }
 
 /** Where the marquee's top-left corner sits, as a fraction of the
@@ -127,6 +239,110 @@ export function hasTravel(windowFraction: number): boolean {
  */
 export function objectPosition(x: number | null | undefined, y: number | null | undefined): string {
   return `${clamp01(x ?? 0.5) * 100}% ${clamp01(y ?? 0.5) * 100}%`;
+}
+
+/** EVERY CONSUMER'S CSS, from one place (#1212).
+ *
+ *  # Why `object-fit: cover` alone could not stay
+ *
+ *  A covered box shows the largest rectangle of its own aspect that
+ *  fits the picture, and `object-position` slides that rectangle along
+ *  the one axis that overflows. There is no CSS property that makes the
+ *  rectangle SMALLER — `background-size` can name a size but not "cover,
+ *  times two", and neither can `object-fit`. So zoom has to come from
+ *  somewhere else, and there were two candidates.
+ *
+ *  `transform: scale()` was rejected. The featured rail's tile already
+ *  carries `group-hover:scale-[1.02]`, and a second transform on the
+ *  same element does not compose with it — the later declaration wins
+ *  outright, so either the zoom or the hover would silently stop
+ *  working depending on class order. That is a bug that looks like a
+ *  CSS ordering accident rather than a decision, which is the worst
+ *  kind to leave for the next reader.
+ *
+ *  What is used instead is the box model: the image is made z TIMES THE
+ *  BOX in both axes and offset so the chosen part lands in the box,
+ *  inside a clipping parent. `object-fit: cover` still does the fitting
+ *  — against a box of z times the size, which selects the same shaped
+ *  rectangle and then shows 1/z of it through the real box.
+ *
+ *  # Why the ARITHMETIC is two independent halves
+ *
+ *  The image is laid out against a virtual box z times the real one, so
+ *  it has two sources of travel and both are needed:
+ *
+ *    - `object-position` moves the picture inside the virtual box, over
+ *      the FIT window's travel, 1 - fit.
+ *    - `left`/`top` move the virtual box across the real one, over
+ *      (z - 1)/z of the fit window.
+ *
+ *  Driving BOTH from the same focal fraction is what makes them add up:
+ *  focal x (1 - fit) + focal x fit (z - 1)/z = focal x (1 - fit/z),
+ *  which is exactly `marqueeOrigin(focal, fit/z)` — the marquee's own
+ *  origin against the window `cropWindow` returns for the same zoom. The
+ *  editor and the surface are therefore the same equation, not two that
+ *  agree.
+ *
+ *  # Why null zoom is byte-identical to what shipped before
+ *
+ *  At z = 1 this emits `width: 100%; height: 100%; left: 0; top: 0`
+ *  with the same `object-position` the surfaces already had, and
+ *  `transform-origin: 50% 50%`, which is the CSS default. An absolutely
+ *  positioned image with those four values occupies exactly the box its
+ *  `inset-0 h-full w-full` predecessor did. That is the regression this
+ *  change is most at risk of and the reason the numbers are emitted
+ *  rather than branched around: there is no "zoomed" code path for an
+ *  unzoomed collection to fall into.
+ *
+ *  # Caller contract
+ *
+ *  The image must be `position: absolute` inside a `position: relative;
+ *  overflow: hidden` box of the destination aspect. The overflow is not
+ *  optional once z > 1 — without it the enlarged picture paints over
+ *  whatever sits below the tile.
+ *
+ *  `transform-origin` is emitted for one consumer and harmless for the
+ *  rest: the rail's hover scale must grow about the part of the picture
+ *  the tile is SHOWING, not about the enlarged image's own centre,
+ *  which at z = 4 is somewhere off-screen. The visible centre sits at
+ *  (focal x (z - 1) + 0.5) / z of the image, which collapses to 50% at
+ *  z = 1.
+ */
+export function coverPlacement(
+  x: number | null | undefined,
+  y: number | null | undefined,
+  zoom: number | null | undefined,
+): string {
+  const z = clampZoom(zoom);
+  const px = clamp01(x ?? 0.5);
+  const py = clamp01(y ?? 0.5);
+  const size = pct(z);
+  return [
+    `position: absolute`,
+    // Tailwind's preflight caps every image at `max-width: 100%`, which
+    // is exactly the constraint this mechanism has to break: a zoomed
+    // cover IS wider than its box on purpose. Found by driving it —
+    // `data-zoom` said 3, the DOM said `width: 300%`, and the laid-out
+    // box measured 1x, because the cap silently won. Emitted at every
+    // zoom rather than only above 1, so there is no branch whose absence
+    // is the bug; at the fit it constrains nothing, because the image is
+    // already exactly the box.
+    `max-width: none`,
+    `max-height: none`,
+    `width: ${size}`,
+    `height: ${size}`,
+    `left: ${pct(-px * (z - 1))}`,
+    `top: ${pct(-py * (z - 1))}`,
+    `object-position: ${pct(px)} ${pct(py)}`,
+    `transform-origin: ${pct((px * (z - 1) + 0.5) / z)} ${pct((py * (z - 1) + 0.5) / z)}`,
+  ].join('; ');
+}
+
+/** A fraction as a percentage string, rounded to four decimals so the
+ *  value is stable enough to assert on and never renders `-0%`. */
+function pct(v: number): string {
+  const n = Math.round(v * 1e6) / 1e4;
+  return `${n === 0 ? 0 : n}%`;
 }
 
 function clamp01(v: number): number {

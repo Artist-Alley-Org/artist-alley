@@ -358,6 +358,9 @@ func railRowToAPI(r RailRow) openapi.FeaturedItem {
 	// renders exactly what it rendered before they existed.
 	out.CoverFocalX = r.CoverFocalX
 	out.CoverFocalY = r.CoverFocalY
+	// #1212 — the same rule, one field wider: nil is the fit, and the
+	// query only emits a value on the rungs the curator actually framed.
+	out.CoverZoom = r.CoverZoom
 	out.AssetFileHash = r.AssetFileHash
 	out.PreviewAvailable = r.AssetPreviewAvailable
 	out.LadderAvailable = r.AssetLadderAvailable

@@ -62,7 +62,7 @@
   import { api } from '$api/client';
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { t } from '$stores/lang.svelte';
-  import { objectPosition } from '$lib/util/featuredCrop';
+  import { clampZoom, coverPlacement } from '$lib/util/featuredCrop';
   import {
     createRailScroll,
     RAIL_ARROW_CLASS,
@@ -100,6 +100,11 @@
      *  fallback. Nothing here re-decides that. */
     cover_focal_x?: number | null;
     cover_focal_y?: number | null;
+    /** How far that crop is tightened, as a multiplier on the fitting
+     *  rectangle (#1212). Null is the fit — what every tile did before
+     *  the curator could zoom. Set on the same rungs, by the same
+     *  server decision, as the focal pair above. */
+    cover_zoom?: number | null;
     asset_file_hash?: string | null;
     preview_available?: boolean;
     /** Every rung of the operator's CONFIGURED ladder exists for this
@@ -277,6 +282,25 @@
    *  the hint into 100vw. */
   const CARD_SIZES = `auto, (max-width: ${Math.round(CARD_WIDTH / 0.85)}px) 85vw, ${CARD_WIDTH}px`;
 
+  /** `sizes` for a tile that is ZOOMED (#1212).
+   *
+   *  Not decoration, and not the same hint. `sizes` states how wide the
+   *  image is LAID OUT, and a zoomed tile lays its picture out at z
+   *  times the card so that the card can show 1/z of it. Leaving the
+   *  unzoomed hint in place would have the browser pick a rung sized
+   *  for the card and then magnify it — the ladder would have `screen`
+   *  and `hires` sitting there unasked-for, which is the whole reason
+   *  the 4x cap is stated in terms of real rungs. Multiplying here is
+   *  what makes that cap true rather than aspirational.
+   *
+   *  The `auto` keyword and the two zones are kept verbatim from
+   *  CARD_SIZES, including #639's no-`min()` rule. */
+  function sizesFor(it: FeaturedItem): string {
+    const z = clampZoom(it.cover_zoom);
+    if (z === 1) return CARD_SIZES;
+    return `auto, (max-width: ${Math.round(CARD_WIDTH / 0.85)}px) ${Math.round(85 * z)}vw, ${Math.round(CARD_WIDTH * z)}px`;
+  }
+
   function srcsetFor(it: FeaturedItem): string {
     if (!it.ladder_available || !it.cover_asset_id) return '';
     return previewLadder.srcsetFor(it.cover_asset_id) ?? '';
@@ -404,15 +428,28 @@
                      would have bought at the cost of a whole rendition.
                      One helper renders the value for the rail, the
                      editor's live preview and the form's summary chip,
-                     so "null means centre" is decided once. -->
+                     so "null means centre" is decided once.
+
+                     SINCE #1212 THAT HELPER ALSO CARRIES THE ZOOM, and
+                     that is why the image is absolutely positioned with
+                     an explicit width rather than `h-full w-full`: a
+                     zoomed tile lays the picture out larger than this
+                     box and lets the box clip it. `object-fit: cover`
+                     cannot express a window smaller than the fit, and
+                     `transform: scale()` could not be used because the
+                     hover polish on this very element already owns the
+                     transform. At the fit the emitted values are
+                     100%/100%/0/0, which is the box exactly — an
+                     unzoomed tile paints what it always painted. -->
                 <img
                   src={thumb}
                   srcset={set || undefined}
-                  sizes={set ? CARD_SIZES : undefined}
+                  sizes={set ? sizesFor(it) : undefined}
                   alt=""
                   loading="lazy"
-                  class="h-full w-full object-cover transition group-hover:scale-[1.02]"
-                  style="object-position: {objectPosition(it.cover_focal_x, it.cover_focal_y)}"
+                  data-zoom={it.cover_zoom == null ? '' : String(it.cover_zoom)}
+                  class="object-cover transition group-hover:scale-[1.02]"
+                  style={coverPlacement(it.cover_focal_x, it.cover_focal_y, it.cover_zoom)}
                 />
                 <!-- The text block, ON the artwork (#1098, reshaped by
                      #1110). This is the card's ONLY title — the caption

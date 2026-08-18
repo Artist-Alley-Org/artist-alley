@@ -14254,6 +14254,47 @@ components:
           description: |
             The vertical half of the collection cover's focal point
             (#1207). See `cover_focal_x`.
+        featured_cover_zoom:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            How far the featured rail's 890:500 crop is tightened, as a
+            multiplier on the fitting rectangle (#1212).
+
+            The crop window is the FIT window divided by this, so 1 is
+            the fit itself and 2 shows a quarter of the area. It exists
+            because the fit window always has one axis equal to the
+            whole picture — `object-fit: cover` keeps one axis whole —
+            so at the fit exactly one axis can travel, and a subject
+            sitting in the left half of a portrait cover can never be
+            brought to the middle. Below the fit BOTH axes gain travel,
+            which is what makes `featured_cover_focal_x` mean anything
+            for such a picture.
+
+            Null means fit: what every collection rendered before this
+            existed, so a client that ignores it renders exactly what it
+            rendered before. Null and an explicit 1 paint the same
+            picture and are stored differently on purpose — the editor's
+            reset is a clear, so "never zoomed" stays distinguishable
+            from "zoomed and came back".
+
+            Bounded 1..4. Below 1 the window would be larger than the
+            picture. The upper bound comes from the preview ladder's
+            real rungs: a cover carrying a crop is painted from a
+            CONTAIN rung, the rung it is guaranteed to have is `preview`
+            (1024) and the tallest one is `hires` (4096), so 4x is the
+            last step the ladder can still answer with real pixels.
+        cover_zoom:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            How far the collection card's 4:3 crop is tightened (#1212).
+            Separate from `featured_cover_zoom` for the reason the focal
+            pairs are separate: the tightening that frames a subject in
+            a wide band is not the one that frames it in a 4:3 tile. See
+            `featured_cover_zoom` for the semantics and the 1..4 bound.
         covers:
           type: array
           items: { $ref: "#/components/schemas/CollectionCover" }
@@ -14394,7 +14435,8 @@ components:
         "leave alone", not "clear" — removing a value that is already
         set is an explicit flag (`clear_expires_at`, `clear_cover`,
         `clear_featured_cover`, `clear_featured_cover_focal`,
-        `clear_cover_focal`).
+        `clear_cover_focal`, `clear_featured_cover_zoom`,
+        `clear_cover_zoom`).
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         description: { type: string }
@@ -14544,6 +14586,47 @@ components:
             Mutually exclusive with either coordinate. Independent of
             `clear_cover`, which removes the picture rather than its
             positioning.
+        featured_cover_zoom:
+          type: number
+          format: double
+          minimum: 1
+          maximum: 4
+          description: |
+            Tighten the featured rail's crop to this multiple of the
+            fitting rectangle (#1212). 1 is the fit itself; 2 shows a
+            quarter of the area.
+
+            INDEPENDENT OF THE FOCAL PAIR, and sent on its own. "Zoomed
+            in, still centred" and "at the fit, positioned left" are
+            both ordinary framings, so zoom is not validated with
+            `featured_cover_focal_x`/`_y` and does not share their clear
+            flag.
+
+            Refused outside 1..4 with a 400 rather than reaching the
+            column CHECK as a constraint error. Send
+            `clear_featured_cover_zoom` to go back to the fit; omitting
+            this field leaves whatever is stored alone, which is why the
+            clear flag exists at all.
+        clear_featured_cover_zoom:
+          type: boolean
+          description: |
+            Remove the featured cover's zoom, returning it to the fit
+            (#1212). Mutually exclusive with `featured_cover_zoom` — 400
+            if both are sent, the exclusivity rule every clear flag on
+            this endpoint carries.
+        cover_zoom:
+          type: number
+          format: double
+          minimum: 1
+          maximum: 4
+          description: |
+            Tighten the COLLECTION card's crop (#1212). Same rules as
+            `featured_cover_zoom`, over the 4:3 tile.
+        clear_cover_zoom:
+          type: boolean
+          description: |
+            Remove the collection cover's zoom, returning it to the fit
+            (#1212). Mutually exclusive with `cover_zoom`.
         if_unchanged_since:
           type: string
           format: date-time
@@ -15260,6 +15343,21 @@ components:
           description: |
             The vertical half of the tile's focal point (#1207). See
             `cover_focal_x`.
+        cover_zoom:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            How far this tile's crop is tightened, as a multiplier on
+            the fitting rectangle (#1212) — the curator's
+            `featured_cover_zoom`, ready to be applied alongside
+            `cover_focal_x`/`_y`.
+
+            Null means fit, which is what every tile did before this
+            existed. ONLY EVER SET WHEN THE TILE IS SHOWING A CHOSEN
+            COVER, for the reason the focal point is: a derived cover is
+            a picture the curator never framed, so a framing chosen for
+            a different picture is not carried onto it.
         asset_file_hash:
           type: string
           nullable: true

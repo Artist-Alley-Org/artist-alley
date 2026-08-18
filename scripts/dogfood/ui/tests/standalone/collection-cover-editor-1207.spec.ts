@@ -36,6 +36,8 @@ interface CollectionPayload {
   featured_cover_focal_y?: number | null;
   cover_focal_x?: number | null;
   cover_focal_y?: number | null;
+  featured_cover_zoom?: number | null;
+  cover_zoom?: number | null;
 }
 
 let collectionId: string | undefined;
@@ -43,6 +45,11 @@ let memberIds: string[] = [];
 /** Deliberately NOT a member — the #1074 proof needs a picture the
  *  collection does not contain. */
 let outsiderId = '';
+/** A TALL picture, and the only one here. #1212's defect and #1207's
+ *  stage distortion are both properties of a portrait in a wide window,
+ *  and every other fixture is wide — a suite that never provisions one
+ *  cannot see either. */
+let portraitId = '';
 
 /** A real PNG, BUILT rather than pasted, and UNIQUE PER RUN.
  *
@@ -262,6 +269,7 @@ test.describe('#1207 the collection cover editor', () => {
     const memberA = await provisionAsset(request, 'member-a', 400, 200);
     const memberB = await provisionAsset(request, 'member-b', 440, 220);
     outsiderId = await provisionAsset(request, 'outsider', 360, 240);
+    portraitId = await provisionAsset(request, 'portrait', 200, 420);
     memberIds = [memberA, memberB];
 
     // ANONYMOUSLY PICTURABLE, VERIFIED — not assumed from the fact that
@@ -274,7 +282,7 @@ test.describe('#1207 the collection cover editor', () => {
     // session: the `col` variant a visitor's tile would request.
     const anon = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     try {
-      for (const id of [...memberIds, outsiderId]) {
+      for (const id of [...memberIds, outsiderId, portraitId]) {
         await expect
           .poll(async () => (await anon.request.get(`/api/v1/assets/${id}/variants/col`)).status(), {
             timeout: 120000,
@@ -311,7 +319,7 @@ test.describe('#1207 the collection cover editor', () => {
     expect(created.status(), 'fixture collection must be created').toBe(201);
     collectionId = ((await created.json()) as { id: string }).id;
 
-    for (const assetId of memberIds) {
+    for (const assetId of [...memberIds, portraitId]) {
       const pinned = await request.post(`/api/v1/collections/${collectionId}/resources`, {
         data: { asset_id: assetId, pinned: true },
       });
@@ -343,23 +351,52 @@ test.describe('#1207 the collection cover editor', () => {
     }
   });
 
-  async function openCoverEditor(page: Page) {
+  /** Open the edit modal and stop on PAGE 1.
+   *
+   *  WAIT FOR THE FORM TO HAVE SEEDED ITSELF before touching anything.
+   *  The modal reads the collection in an effect that runs on open; a
+   *  click that lands first is overwritten by that seed, and the save
+   *  then stores what the collection already had. Nobody clicks that
+   *  fast — Playwright does. The cover section is the observable that
+   *  says the seed has run (#1195 learned this the expensive way with
+   *  the visibility radios). */
+  async function openEditModal(page: Page) {
     await page.goto(`/collections/${collectionId}`);
     await page.getByTestId('collection-detail-more-button').first().click();
     await page.getByTestId('collection-detail-edit-menuitem').first().click();
-
-    // WAIT FOR THE FORM TO HAVE SEEDED ITSELF before touching anything.
-    // The modal reads the collection in an effect that runs on open; a
-    // click that lands first is overwritten by that seed, and the save
-    // then stores what the collection already had. Nobody clicks that
-    // fast — Playwright does. The summary chip is the observable that
-    // says the seed has run (#1195 learned this the expensive way with
-    // the visibility radios).
     await expect(page.getByTestId('collection-cover-section')).toBeVisible();
-    await page.getByTestId('collection-cover-edit-button').click();
+  }
+
+  /** Open the modal and navigate to PAGE 2 for one slot (#1213).
+   *
+   *  ⚠️ THERE IS ONE DIALOG NOW. The cover surface used to be a second
+   *  `<dialog>` raised over this one and the whole editor was on screen
+   *  at once; it is a PAGE of the same dialog, reached by clicking the
+   *  slot's own thumbnail, and only one slot is mounted at a time. A
+   *  test that wants the other slot navigates to it — which is the
+   *  behaviour a curator has, so the spec exercising it is not a tax. */
+  async function openCoverPage(page: Page, slot: 'featured' | 'collection' = 'collection') {
+    await openEditModal(page);
+    await gotoCoverPage(page, slot);
+    return page.getByTestId('collection-cover-editor');
+  }
+
+  /** Navigate to a slot's page from page 1 (the modal already open). */
+  async function gotoCoverPage(page: Page, slot: 'featured' | 'collection') {
+    await page
+      .getByTestId(slot === 'featured' ? 'collection-cover-edit-featured' : 'collection-cover-edit-button')
+      .click();
     const editor = page.getByTestId('collection-cover-editor');
     await expect(editor).toBeVisible();
+    await expect(editor).toHaveAttribute('data-cover-slot', slot);
     return editor;
+  }
+
+  /** Step back to page 1. */
+  async function backToDetails(page: Page) {
+    await page.getByTestId('collection-cover-back').click();
+    await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
+    await expect(page.getByTestId('collection-cover-section')).toBeVisible();
   }
 
   /** The editor's live readout of the stored pair. Empty string is
@@ -374,6 +411,17 @@ test.describe('#1207 the collection cover editor', () => {
       x: (await el.getAttribute('data-focal-x')) ?? '',
       y: (await el.getAttribute('data-focal-y')) ?? '',
     };
+  }
+
+  /** The editor's live readout of the stored ZOOM (#1212). Empty string
+   *  is null — "never tightened" — which renders identically to a
+   *  stored 1 and is a different value, which is the whole reason the
+   *  attribute is not defaulted to '1'. */
+  async function readZoom(
+    page: Page,
+    prefix: 'cover-editor' | 'collection-crop' = 'cover-editor',
+  ): Promise<string> {
+    return (await page.getByTestId(`${prefix}-position`).getAttribute('data-zoom')) ?? '';
   }
 
   /** Click Save and WAIT FOR THE WRITE, not for the dialog.
@@ -406,10 +454,8 @@ test.describe('#1207 the collection cover editor', () => {
   test('picks two different covers, drags the crop, and all three values persist', async ({
     page,
   }) => {
-    const editor = await openCoverEditor(page);
-
-    // Slot 1: the collection cover. Slot 2 starts inheriting it, which
-    // is the state the summary and the stage should both be showing.
+    // SLOT 1 — the collection cover, on its own page.
+    let editor = await openCoverPage(page, 'collection');
     await editor
       .getByTestId('collection-cover-choice')
       .filter({ has: page.locator(`[src*="${memberIds[0]}"]`) })
@@ -420,9 +466,13 @@ test.describe('#1207 the collection cover editor', () => {
       new RegExp(memberIds[0]),
     );
 
-    // Slot 2: a DIFFERENT picture. This is the finding — "the featured
-    // collection rail cover and regular collection cover should be
-    // different. Not force the same image for both."
+    // SLOT 2 — a DIFFERENT picture, on its own visit. This is the
+    // finding — "the featured collection rail cover and regular
+    // collection cover should be different. Not force the same image
+    // for both." Two visits to one page, and the Back in between is the
+    // #1213 shape being exercised rather than worked around.
+    await backToDetails(page);
+    editor = await gotoCoverPage(page, 'featured');
     await editor
       .getByTestId('featured-cover-choice')
       .filter({ has: page.locator(`[src*="${memberIds[1]}"]`) })
@@ -607,6 +657,13 @@ test.describe('#1207 the collection cover editor', () => {
     // point that centres a subject in a 890:500 band is not the point
     // that centres it in a square, so the two have to be able to hold
     // different values at the same time.
+    // Back to page 1, then into the OTHER slot — and the values set on
+    // the featured page have to still be there when we return. That is
+    // the #1213 promise ("Back preserves in-progress state") riding
+    // along inside the test that already had both slots to compare.
+    await backToDetails(page);
+    await gotoCoverPage(page, 'collection');
+
     const collMarquee = page.getByTestId('collection-crop-marquee');
     await expect(
       collMarquee,
@@ -617,12 +674,11 @@ test.describe('#1207 the collection cover editor', () => {
 
     const collCanMove = await collMarquee.isEnabled();
     if (collCanMove) {
-      // SCROLL IT INTO VIEW FIRST. The dialog body scrolls and this slot
-      // sits below the featured one, so its bounding box is real but
-      // off-screen — and `page.mouse` works in VIEWPORT coordinates, so
-      // the drag would be dispatched at a point the marquee is not
-      // currently occupying. It moved nothing and read as "the square
-      // marquee is not draggable".
+      // SCROLL IT INTO VIEW FIRST. The dialog body scrolls, so a
+      // bounding box can be real and off-screen — and `page.mouse` works
+      // in VIEWPORT coordinates, so the drag would be dispatched at a
+      // point the marquee is not currently occupying. It moved nothing
+      // and read as "the square marquee is not draggable".
       await collMarquee.scrollIntoViewIfNeeded();
       const sBox = (await collMarquee.boundingBox())!;
       const sStage = (await page.getByTestId('collection-crop-stage-image').boundingBox())!;
@@ -656,8 +712,10 @@ test.describe('#1207 the collection cover editor', () => {
     });
     expect(collRatio, 'the collection-cover preview is not 4:3').toBeCloseTo(4 / 3, 2);
 
-    await page.getByTestId('cover-editor-done').click();
-    await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
+    // SAVE FROM PAGE 2. One dialog means one commit, and it applies
+    // both pages wherever the curator is standing — walking back to
+    // page 1 first would be the surface asking them to remember which
+    // page owns their work.
     await saveAndAwaitPatch(page);
 
     // THE ASSERTION. Read back from the server, not from the form.
@@ -691,7 +749,7 @@ test.describe('#1207 the collection cover editor', () => {
   });
 
   test('the keyboard moves the same marquee', async ({ page }) => {
-    const editor = await openCoverEditor(page);
+    const editor = await openCoverPage(page, 'featured');
     const marquee = editor.getByTestId('cover-editor-marquee');
     await expect(marquee).toBeVisible();
     test.skip(!(await marquee.isEnabled()), 'this picture is already card-shaped: no travel');
@@ -720,7 +778,7 @@ test.describe('#1207 the collection cover editor', () => {
       'the previous test must have left a value to clear',
     ).not.toBeNull();
 
-    const editor = await openCoverEditor(page);
+    let editor = await openCoverPage(page, 'featured');
 
     await editor.getByTestId('cover-editor-clear-featured').click();
     const reset = editor.getByTestId('cover-editor-reset-focal');
@@ -731,7 +789,9 @@ test.describe('#1207 the collection cover editor', () => {
     });
 
     // The collection crop has its own Reset, and its own clear flag
-    // behind it — same tri-state, second pair.
+    // behind it — same tri-state, second pair, one page along.
+    await backToDetails(page);
+    editor = await gotoCoverPage(page, 'collection');
     const collReset = editor.getByTestId('collection-crop-reset-focal');
     if (await collReset.isEnabled()) await collReset.click();
     expect(
@@ -744,7 +804,6 @@ test.describe('#1207 the collection cover editor', () => {
     // column #1027 introduced too.
     await editor.getByTestId('collection-cover-choices').locator('button').first().click();
 
-    await page.getByTestId('cover-editor-done').click();
     await saveAndAwaitPatch(page);
 
     // `?? null` because a null column is OMITTED from the payload
@@ -774,23 +833,87 @@ test.describe('#1207 the collection cover editor', () => {
   });
 
 
-  // Modal grew a shared open-order stack for this dialog, and that is a
-  // change to a component five other surfaces use. The property it buys
-  // is the one below: Escape steps back exactly ONE level. Before it,
-  // the document-level handler had every open instance answering every
-  // press, so one Escape over the editor would also have dismissed the
-  // form behind it — taking the curator's unsaved edits with it.
-  test('Escape closes the cover editor and leaves the form open', async ({ page }) => {
-    await openCoverEditor(page);
+  // ⚠️ ESCAPE STEPS BACK, THEN OUT (#1208, re-expressed by #1213).
+  //
+  // #1208's version of this guarded a stack of two `<dialog>`s: the
+  // document-level handler had every open instance answering every
+  // press, so one Escape over the cover editor dismissed the form
+  // behind it too, taking the curator's unsaved edits with it. There is
+  // one dialog now and no stack to race, but the PROPERTY the curator
+  // sees has to be identical, because the work at risk is the same:
+  // press one leaves the crop page, press two closes the dialog.
+  //
+  // The stack machinery in Modal itself STAYS. It was never only for
+  // this pair — AssetPlaylist raises RequestAccessDialog and
+  // ConfirmDeleteDialog from inside a native `showModal()` viewer, which
+  // is the same two-layers-one-keypress shape — and removing shared
+  // infrastructure to suit one caller is how the other callers break
+  // quietly. What is gone is this surface's USE of it, which is the part
+  // that was a workaround.
+  test('Escape steps back from the cover page, then closes the dialog', async ({ page }) => {
+    await openCoverPage(page, 'featured');
     await page.keyboard.press('Escape');
-    await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
+    await expect(
+      page.getByTestId('collection-cover-editor'),
+      'Escape did not leave the cover page',
+    ).toBeHidden();
     await expect(
       page.getByTestId('collection-cover-section'),
-      'Escape dismissed the edit form as well as the dialog on top of it',
+      'Escape closed the whole dialog from the cover page — one press must step back one page, ' +
+        'because that page holds unsaved framing work',
     ).toBeVisible();
-    // And a second press closes the form, so nothing has been trapped.
+    // And a second press closes the dialog, so nothing has been trapped.
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('collection-cover-section')).toBeHidden();
+  });
+
+  // ── #1213: Back keeps the work ────────────────────────────────────
+  //
+  // A paged modal that forgets on Back is worse than the stacked
+  // dialogs it replaces, so the promise is asserted rather than
+  // assumed — and on the state that is easiest to lose, which is the
+  // picker's, because the chosen id and the framing live in the host
+  // component and would survive almost any implementation.
+  test('Back preserves the pending choice, the framing and the picker state', async ({ page }) => {
+    let editor = await openCoverPage(page, 'featured');
+
+    // A pending, UNSAVED choice.
+    await editor
+      .getByTestId('featured-cover-choice')
+      .filter({ has: page.locator(`[src*="${memberIds[1]}"]`) })
+      .first()
+      .click();
+    // A search the curator is part-way through, on the arm that is
+    // genuinely destroyed by a naive page switch.
+    await editor.getByTestId('featured-source-mine').click();
+    await editor.getByTestId('featured-search-input').fill(TOKEN);
+    await editor.getByTestId('featured-search-input').press('Enter');
+    await expect(editor.getByTestId('featured-mine-choice').first()).toBeVisible();
+
+    // Framing, set from the keyboard so it needs no travel to exist.
+    const marquee = editor.getByTestId('cover-editor-marquee');
+    await marquee.focus();
+    await page.keyboard.press('+');
+    await page.keyboard.press('+');
+    const zoomBefore = await readZoom(page);
+    expect(zoomBefore, 'the zoom did not take, so there is nothing to preserve').not.toBe('');
+
+    await backToDetails(page);
+    editor = await gotoCoverPage(page, 'featured');
+
+    expect(await readZoom(page), 'Back discarded the zoom').toBe(zoomBefore);
+    await expect(
+      editor.getByTestId('cover-editor-stage-image'),
+      'Back discarded the pending cover choice',
+    ).toHaveAttribute('src', new RegExp(memberIds[1]));
+    await expect(
+      editor.getByTestId('featured-search-input'),
+      'Back discarded the search the curator was part-way through',
+    ).toHaveValue(TOKEN);
+    await expect(
+      editor.getByTestId('featured-mine-choice').first(),
+      'Back discarded the search RESULTS, so the curator has to run it again',
+    ).toBeVisible();
   });
 
   // ── #1074, folded into #1207: a cover that is NOT a member ─────────
@@ -804,7 +927,7 @@ test.describe('#1207 the collection cover editor', () => {
     page,
     request,
   }) => {
-    const editor = await openCoverEditor(page);
+    const editor = await openCoverPage(page, 'collection');
     await editor.getByTestId('collection-source-mine').click();
 
     // SEARCH FOR THIS RUN'S OWN OUTSIDER, and select it by id.
@@ -832,7 +955,6 @@ test.describe('#1207 the collection cover editor', () => {
     ).toBeVisible({ timeout: 20000 });
     await outsider.click();
 
-    await page.getByTestId('cover-editor-done').click();
     await saveAndAwaitPatch(page);
 
     const saved = await fetchCollection(page);
@@ -864,7 +986,7 @@ test.describe('#1207 the collection cover editor', () => {
   }) => {
     await request.patch(`/api/v1/collections/${collectionId}`, { data: { visibility: 'public' } });
 
-    const editor = await openCoverEditor(page);
+    const editor = await openCoverPage(page, 'featured');
     await editor.getByTestId('featured-source-upload').click();
     await expect(editor.getByTestId('featured-upload-pane')).toBeVisible();
 
@@ -877,7 +999,6 @@ test.describe('#1207 the collection cover editor', () => {
     });
     await expect(editor.getByTestId('featured-uploading')).toBeHidden({ timeout: 30000 });
 
-    await page.getByTestId('cover-editor-done').click();
     await saveAndAwaitPatch(page);
 
     const saved = await fetchCollection(page);
@@ -1127,5 +1248,541 @@ test.describe('#1207 the collection cover editor', () => {
     } finally {
       await request.delete(`/api/v1/admin/featured/${placementId}`).catch(() => undefined);
     }
+  });
+
+  // ── #1212: the crop can be TIGHTENED ────────────────────────────────
+  //
+  // The defect #1207 left behind, in one sentence: the marquee is the
+  // LARGEST rectangle of the destination's aspect that fits the
+  // picture, so one axis is always the whole picture and only the other
+  // can travel. The owner hit it with a portrait cover in the rail's
+  // wide window; these fixtures are 2:1, so it is the VERTICAL axis
+  // that is pinned instead. Same geometry, same bug, and using the
+  // fixtures that already exist keeps this spec's provisioning honest.
+
+  test('at the fit one axis cannot move, and zooming is what frees it', async ({ page }) => {
+    const editor = await openCoverPage(page, 'featured');
+    await editor
+      .getByTestId('featured-cover-choice')
+      .filter({ has: page.locator(`[src*="${memberIds[0]}"]`) })
+      .first()
+      .click();
+    const stage = page.getByTestId('cover-editor-stage-image');
+    await expect(stage).toHaveAttribute('src', new RegExp(memberIds[0]));
+
+    const marquee = page.getByTestId('cover-editor-marquee');
+    await expect(marquee).toBeVisible();
+    expect(await readZoom(page), 'a fresh collection must start untightened').toBe('');
+
+    // THE BUG, REPRODUCED FIRST. A 2:1 picture in the 890:500 window
+    // keeps its full height, so a drag straight down has nowhere to go
+    // — and the control says so by writing the neutral 0.5 rather than
+    // accumulating pointer noise on an axis that cannot render it.
+    const fitBox = (await marquee.boundingBox())!;
+    const stageBox = (await stage.boundingBox())!;
+    expect(
+      Math.abs(fitBox.height - stageBox.height) < 2,
+      'the fixture is not pinned on the vertical axis, so this test is not testing anything',
+    ).toBe(true);
+
+    await page.mouse.move(fitBox.x + fitBox.width / 2, fitBox.y + fitBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(fitBox.x + fitBox.width / 2, fitBox.y + fitBox.height / 2 - stageBox.height * 0.4, { steps: 8 });
+    await page.mouse.up();
+    expect(
+      (await readFocal(page)).y,
+      'the pinned axis moved at the fit — the marquee is not honest about what it can do',
+    ).toBe('0.5');
+
+    // THE FIX. The slider is clicked at its midpoint — a trusted
+    // pointer event on a native range, which is the control the
+    // keyboard path uses too.
+    const slider = page.getByTestId('cover-editor-zoom');
+    await expect(slider).toBeVisible();
+    const track = (await slider.boundingBox())!;
+    await page.mouse.click(track.x + track.width / 2, track.y + track.height / 2);
+
+    const zoomed = Number(await readZoom(page));
+    expect(zoomed, 'the slider wrote nothing').toBeGreaterThan(1.5);
+    expect(zoomed).toBeLessThanOrEqual(4);
+
+    // THE MARQUEE RESIZED LIVE. Not a style assertion: the rectangle
+    // drawn on the picture is measurably smaller on BOTH axes, which is
+    // what having two axes of travel means.
+    const tightBox = (await marquee.boundingBox())!;
+    expect(tightBox.width).toBeLessThan(fitBox.width - 1);
+    expect(tightBox.height).toBeLessThan(fitBox.height - 1);
+    expect(tightBox.height / fitBox.height).toBeCloseTo(1 / zoomed, 1);
+
+    // AND NOW THE PINNED AXIS MOVES. This is the acceptance criterion
+    // in one assertion.
+    await page.mouse.move(tightBox.x + tightBox.width / 2, tightBox.y + tightBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      tightBox.x + tightBox.width / 2,
+      tightBox.y + tightBox.height / 2 - stageBox.height * 0.3,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+    const freed = await readFocal(page);
+    expect(
+      Number(freed.y),
+      'the vertical axis still will not move once the window is smaller than the picture',
+    ).toBeLessThan(0.45);
+
+    // ── THE PREVIEW STILL PREDICTS THE CARD, ZOOMED ─────────────────
+    //
+    // The #1207 alignment check above runs at the fit, where the card's
+    // image IS its frame. Zoomed it is not: the picture is laid out at
+    // z times the frame and the frame clips it, so the window the card
+    // shows has to be worked back through TWO transforms. This is the
+    // assertion that would catch the editor and the surfaces drifting
+    // apart — the failure mode where every value round-trips and the
+    // curator still frames the wrong thing.
+    const aligned = await page.evaluate(() => {
+      const card = document.querySelector<HTMLImageElement>(
+        '[data-testid="cover-editor-card-preview"]',
+      )!;
+      const stageImg = document.querySelector<HTMLImageElement>(
+        '[data-testid="cover-editor-stage-image"]',
+      )!;
+      const marqueeEl = document.querySelector<HTMLElement>('[data-testid="cover-editor-marquee"]')!;
+
+      // The FRAME is what the viewer sees; the img is the enlarged
+      // picture-holder inside it.
+      const frame = card.parentElement!.getBoundingClientRect();
+      const holder = card.getBoundingClientRect();
+      const nw = card.naturalWidth;
+      const nh = card.naturalHeight;
+      // `object-fit: cover` against the HOLDER, worked out
+      // independently of the helper that produced the CSS.
+      const scale = Math.max(holder.width / nw, holder.height / nh);
+      const rw = nw * scale;
+      const rh = nh * scale;
+      const pos = getComputedStyle(card).objectPosition.split(' ');
+      const picLeft = holder.left + (holder.width - rw) * (parseFloat(pos[0]) / 100);
+      const picTop = holder.top + (holder.height - rh) * (parseFloat(pos[1]) / 100);
+
+      const stageRect = stageImg.getBoundingClientRect();
+      const marqueeRect = marqueeEl.getBoundingClientRect();
+      return {
+        card: {
+          left: (frame.left - picLeft) / rw,
+          top: (frame.top - picTop) / rh,
+          width: frame.width / rw,
+          height: frame.height / rh,
+        },
+        marquee: {
+          left: (marqueeRect.left - stageRect.left) / stageRect.width,
+          top: (marqueeRect.top - stageRect.top) / stageRect.height,
+          width: marqueeRect.width / stageRect.width,
+          height: marqueeRect.height / stageRect.height,
+        },
+      };
+    });
+    for (const axis of ['left', 'top', 'width', 'height'] as const) {
+      expect(
+        Math.abs(aligned.marquee[axis] - aligned.card[axis]),
+        `zoomed, the marquee's ${axis} disagrees with the card's actual crop — marquee ` +
+          `${JSON.stringify(aligned.marquee)} vs card ${JSON.stringify(aligned.card)}`,
+      ).toBeLessThan(0.005);
+    }
+
+    // PERSISTED, and read back from the API rather than from the form
+    // that produced it (#946).
+    await saveAndAwaitPatch(page);
+    const saved = await fetchCollection(page);
+    expect(saved.featured_cover_zoom, 'the zoom did not survive the round trip').toBeCloseTo(
+      zoomed,
+      4,
+    );
+    expect(saved.featured_cover_focal_y).toBeCloseTo(Number(freed.y), 4);
+  });
+
+  test('+ and − zoom from the keyboard, and Reset clears the zoom to null', async ({ page }) => {
+    await openCoverPage(page, 'featured');
+    const marquee = page.getByTestId('cover-editor-marquee');
+    await expect(marquee).toBeVisible();
+
+    // The a11y twin of the slider. Focused with a real Tab-free focus
+    // call and driven with real key events, because a control that only
+    // answers a synthesised event is a control no keyboard user has.
+    await marquee.focus();
+    const start = Number(await readZoom(page)) || 1;
+    await page.keyboard.press('+');
+    await page.keyboard.press('+');
+    const up = Number(await readZoom(page));
+    expect(up, 'the + key did not tighten the crop').toBeGreaterThan(start);
+    await page.keyboard.press('-');
+    expect(Number(await readZoom(page)), 'the − key did not loosen it').toBeLessThan(up);
+
+    // RESET IS A CLEAR OF ALL THREE VALUES, not a re-set to the neutral
+    // numbers. Null and 1 render the same picture and are stored
+    // differently on purpose — this is the assertion that keeps them
+    // distinguishable.
+    await page.getByTestId('cover-editor-reset-focal').click();
+    expect(await readZoom(page), 'Reset left a zoom behind').toBe('');
+    expect(await readFocal(page)).toEqual({ x: '', y: '' });
+
+    await saveAndAwaitPatch(page);
+    const saved = await fetchCollection(page);
+    expect(
+      saved.featured_cover_zoom ?? null,
+      'the clear was accepted but the column still holds a value — #1073 all over again',
+    ).toBeNull();
+  });
+
+  test('the hub tile paints the zoom, and an unzoomed tile is unchanged', async ({
+    page,
+    request,
+  }) => {
+    // A focal point WITHOUT a zoom first: that is every collection that
+    // exists today, and its pixels are the baseline the whole change is
+    // measured against.
+    const base = await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: {
+        cover_asset_id: memberIds[0],
+        cover_focal_x: 0.25,
+        cover_focal_y: 0.75,
+        clear_cover_zoom: true,
+      },
+    });
+    expect(base.status(), 'the baseline PATCH must be accepted').toBe(200);
+
+    async function loadTile() {
+      await page.goto('/collections');
+      const card = page
+        .locator('a', { hasText: COLLECTION_NAME })
+        .locator('[data-testid="collection-card-cover"]')
+        .first();
+      await expect(card).toBeVisible();
+      await page.waitForTimeout(300);
+      return card;
+    }
+
+    const before = await loadTile();
+    expect(await before.getAttribute('data-zoom'), 'an unzoomed tile must claim no zoom').toBe('');
+    // THE BYTE-IDENTICAL CLAIM, asserted on the box the browser actually
+    // laid out: at the fit the image is exactly the tile, which is what
+    // `inset-0 h-full w-full` gave it before this change.
+    const fitGeom = await before.evaluate((el) => {
+      const img = el as HTMLImageElement;
+      const box = img.parentElement!.getBoundingClientRect();
+      const r = img.getBoundingClientRect();
+      return { dw: r.width - box.width, dh: r.height - box.height, dx: r.x - box.x, dy: r.y - box.y };
+    });
+    expect(Math.abs(fitGeom.dw)).toBeLessThan(0.5);
+    expect(Math.abs(fitGeom.dh)).toBeLessThan(0.5);
+    expect(Math.abs(fitGeom.dx)).toBeLessThan(0.5);
+    expect(Math.abs(fitGeom.dy)).toBeLessThan(0.5);
+    const beforeShot = await before.screenshot();
+
+    const zoomed = await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: { cover_zoom: 3 },
+    });
+    expect(zoomed.status(), 'the zoom PATCH must be accepted').toBe(200);
+
+    const after = await loadTile();
+    expect(await after.getAttribute('data-zoom')).toBe('3');
+    const zoomGeom = await after.evaluate((el) => {
+      const img = el as HTMLImageElement;
+      const box = img.parentElement!.getBoundingClientRect();
+      const r = img.getBoundingClientRect();
+      return { w: r.width / box.width, h: r.height / box.height };
+    });
+    expect(zoomGeom.w, 'the tile is not laying the picture out three times its own width').toBeCloseTo(3, 1);
+    expect(zoomGeom.h).toBeCloseTo(3, 1);
+
+    // AND THE PIXELS MOVED. The DOM assertions above say the geometry
+    // is right; this one says a person can see it.
+    const afterShot = await after.screenshot();
+    expect(
+      Buffer.compare(beforeShot, afterShot) === 0,
+      'the tile renders identically zoomed and unzoomed — the value is stored, read, and paints ' +
+        'nothing',
+    ).toBe(false);
+
+    // BACK TO NULL, BACK TO THE OLD PICTURE, byte for byte. This is the
+    // regression that matters: every collection that exists has a null
+    // zoom, and none of them may change.
+    const cleared = await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: { clear_cover_zoom: true },
+    });
+    expect(cleared.status()).toBe(200);
+    const restored = await loadTile();
+    expect(await restored.getAttribute('data-zoom')).toBe('');
+    expect(
+      Buffer.compare(beforeShot, await restored.screenshot()) === 0,
+      'clearing the zoom did not restore the exact picture the tile painted before it existed',
+    ).toBe(true);
+  });
+
+  test('the featured strip paints the zoom on the real card', async ({ page, request }) => {
+    await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: {
+        cover_asset_id: memberIds[0],
+        featured_cover_asset_id: memberIds[1],
+        featured_cover_focal_x: 0.2,
+        featured_cover_focal_y: 0.8,
+        clear_featured_cover_zoom: true,
+        visibility: 'public',
+      },
+    });
+    const placed = await request.post('/api/v1/admin/featured', {
+      data: { subject_kind: 'collection', subject_id: collectionId, scope: 'public' },
+    });
+    expect(placed.ok(), 'featuring the fixture collection must succeed').toBeTruthy();
+    const placementId = ((await placed.json()) as { id: string }).id;
+
+    try {
+      async function loadTile() {
+        await page.goto('/');
+        const el = page
+          .getByTestId('featured-rail-item')
+          .filter({ hasText: COLLECTION_NAME })
+          .first();
+        await expect(el).toBeVisible();
+        await page.waitForTimeout(300);
+        return el.locator('img').first();
+      }
+
+      const before = await loadTile();
+      expect(await before.getAttribute('data-zoom'), 'an unzoomed tile must claim no zoom').toBe('');
+      const beforeShot = await before.screenshot();
+
+      const patched = await request.patch(`/api/v1/collections/${collectionId}`, {
+        data: { featured_cover_zoom: 2.5 },
+      });
+      expect(patched.status(), 'the featured zoom PATCH must be accepted').toBe(200);
+
+      // THE WIRE CARRIES IT — the rail's own payload, not the
+      // collection's, because the rail resolves its cover through a
+      // preference ladder and only the chosen rungs may carry a framing.
+      const rail = await request.get('/api/v1/featured?limit=50');
+      const { items } = (await rail.json()) as {
+        items: Array<{ subject_id: string; cover_zoom?: number | null }>;
+      };
+      const row = items.find((i) => i.subject_id === collectionId);
+      expect(row?.cover_zoom, 'the rail dropped the zoom').toBeCloseTo(2.5, 6);
+
+      const after = await loadTile();
+      expect(await after.getAttribute('data-zoom')).toBe('2.5');
+      expect(
+        Buffer.compare(beforeShot, await after.screenshot()) === 0,
+        'the rail card renders identically zoomed and unzoomed',
+      ).toBe(false);
+    } finally {
+      await request.delete(`/api/v1/admin/featured/${placementId}`).catch(() => undefined);
+    }
+  });
+
+  test("a portrait cover is shown at its TRUE shape, and zoom frees its horizontal axis", async ({
+    page,
+    request,
+  }) => {
+    // THE FIXTURE IS SHARED AND THE FILE IS SERIAL, so the framing an
+    // earlier test left behind is this one's starting state. Reset it
+    // explicitly rather than depending on execution order — the
+    // assertion below is "at the FIT there is no horizontal travel",
+    // and it is meaningless if the slot arrives already tightened.
+    const reset = await request.patch(`/api/v1/collections/${collectionId}`, {
+      data: { clear_featured_cover_zoom: true, clear_featured_cover_focal: true },
+    });
+    expect(reset.status(), 'the pre-test reset must be accepted').toBe(200);
+
+    const editor = await openCoverPage(page, 'featured');
+    await editor
+      .getByTestId('featured-cover-choice')
+      .filter({ has: page.locator(`[src*="${portraitId}"]`) })
+      .first()
+      .click();
+    const stage = page.getByTestId('cover-editor-stage-image');
+    await expect(stage).toHaveAttribute('src', new RegExp(portraitId));
+    await expect(page.getByTestId('cover-editor-marquee')).toBeVisible();
+
+    // THE STAGE MUST NOT LIE ABOUT THE PICTURE'S SHAPE.
+    //
+    // This has now been got wrong twice on this element, both times by
+    // reasoning about CSS instead of measuring it. #1195 shipped a
+    // definite HEIGHT with a `max-width` and squashed wide pictures;
+    // #1207 replaced it with a definite WIDTH plus a `max-height` and
+    // recorded that the combination "cannot distort", which is false —
+    // Chrome clips the height and leaves the specified width alone, so
+    // a 200x420 fixture was laid out at 608x562. A curator framing a
+    // subject by eye against a picture of the wrong shape is not
+    // framing it, and a portrait is precisely the picture #1212 is
+    // about. So the invariant is asserted rather than argued.
+    const shape = await stage.evaluate((el) => {
+      const img = el as HTMLImageElement;
+      const r = img.getBoundingClientRect();
+      return { natural: img.naturalWidth / img.naturalHeight, laid: r.width / r.height };
+    });
+    expect(
+      Math.abs(shape.laid - shape.natural) / shape.natural,
+      `the stage is distorting the picture: natural aspect ${shape.natural}, laid out at ` +
+        `${shape.laid}`,
+    ).toBeLessThan(0.01);
+
+    // THE OWNER'S COMPLAINT, VERBATIM: "I can't center items that are
+    // left aligned." A portrait in the 890:500 window keeps its whole
+    // width, so there is no horizontal travel at all until it is
+    // tightened.
+    const marquee = page.getByTestId('cover-editor-marquee');
+    const fitBox = (await marquee.boundingBox())!;
+    const stageBox = (await stage.boundingBox())!;
+    expect(
+      Math.abs(fitBox.width - stageBox.width) < 2,
+      'the portrait fixture is not pinned horizontally, so this test proves nothing',
+    ).toBe(true);
+
+    await page.mouse.move(fitBox.x + fitBox.width / 2, fitBox.y + fitBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(fitBox.x + fitBox.width * 0.1, fitBox.y + fitBox.height / 2, { steps: 8 });
+    await page.mouse.up();
+    expect(
+      (await readFocal(page)).x,
+      'the horizontal axis moved at the fit — the marquee is not honest about what it can do',
+    ).toBe('0.5');
+
+    await marquee.focus();
+    for (let i = 0; i < 6; i++) await page.keyboard.press('+');
+    expect(Number(await readZoom(page)), 'the keyboard zoom did nothing').toBeGreaterThan(1.5);
+
+    const tight = (await marquee.boundingBox())!;
+    expect(tight.width).toBeLessThan(fitBox.width - 1);
+    await page.mouse.move(tight.x + tight.width / 2, tight.y + tight.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(tight.x + tight.width * 0.1 - stageBox.width * 0.2, tight.y + tight.height / 2, {
+      steps: 8,
+    });
+    await page.mouse.up();
+    expect(
+      Number((await readFocal(page)).x),
+      'a tightened portrait still cannot be moved sideways — the whole issue',
+    ).toBeLessThan(0.45);
+  });
+
+  // ── #1213: the crop is a two-dimensional control, and phones do not
+  //           get one — but they lose nothing else ────────────────────
+  //
+  // The owner's ruling: "most these options shouldn't be forced to use
+  // on mobile devices… Maybe tell them disabled on smaller screens."
+  //
+  // WCAG 2.2 SC 1.4.10 (Reflow) is what draws the line precisely rather
+  // than by taste: content must reflow to 320px EXCEPT "parts of the
+  // content which require two-dimensional layout for usage or meaning",
+  // and the criterion's examples name interfaces that must keep
+  // toolbars in view while manipulating content. Dragging a marquee
+  // across a picture beside a live preview is that. Switching off
+  // UNRELATED functionality is not covered, so these tests assert both
+  // halves: the stage is gone, and everything else is not.
+  test.describe('at 390px', () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test('the crop stage is withheld and named, and the picker still works', async ({
+      page,
+      request,
+    }) => {
+      await request.patch(`/api/v1/collections/${collectionId}`, {
+        data: { cover_asset_id: memberIds[0] },
+      });
+      const editor = await openCoverPage(page, 'collection');
+
+      await expect(
+        page.getByTestId('collection-crop-marquee'),
+        'a 390px screen was offered the drag-a-marquee control',
+      ).toHaveCount(0);
+      await expect(
+        editor.getByTestId('cover-page-crop-unavailable'),
+        'the crop was withheld with no explanation — a control that vanishes silently reads ' +
+          'as a broken build',
+      ).toBeVisible();
+
+      // NOT A BLANKET "use a desktop": the message has to say what
+      // cannot be done and what happens instead, because "the cover
+      // will be centred" is the part that tells the curator their
+      // choice still works.
+      const note = (await editor.getByTestId('cover-page-crop-unavailable').textContent()) ?? '';
+      expect(note.toLowerCase(), 'the message does not say the cover will be centred').toContain(
+        'centred',
+      );
+
+      // EVERYTHING ELSE IS STILL THERE. Lists and buttons reflow fine,
+      // and a phone user who cannot crop can still choose or replace
+      // either cover.
+      await expect(editor.getByTestId('collection-cover-choices')).toBeVisible();
+      await expect(editor.getByTestId('collection-source-mine')).toBeVisible();
+      await editor.getByTestId('collection-source-upload').click();
+      await expect(
+        editor.getByTestId('collection-upload-pane'),
+        'upload was withheld too, which the reflow exemption does not cover',
+      ).toBeVisible();
+
+      // And the choice itself lands.
+      await editor.getByTestId('collection-source-members').click();
+      await editor
+        .getByTestId('collection-cover-choice')
+        .filter({ has: page.locator(`[src*="${memberIds[1]}"]`) })
+        .first()
+        .click();
+      await saveAndAwaitPatch(page);
+      expect(
+        (await fetchCollection(page)).cover_asset_id,
+        'a phone could not change the cover',
+      ).toBe(memberIds[1]);
+    });
+
+    // ⚠️ THE REGRESSION THAT MATTERS ON THIS HALF. A save from a phone
+    // must not reset a crop somebody set on a desktop. The control that
+    // edits the framing is not on screen, and the tempting reading of
+    // that is "there is no framing" — which would have the narrow
+    // surface silently undoing work it cannot even display.
+    test('an existing focal and zoom survive a save from a narrow screen', async ({
+      page,
+      request,
+    }) => {
+      const seeded = await request.patch(`/api/v1/collections/${collectionId}`, {
+        data: {
+          cover_asset_id: memberIds[0],
+          cover_focal_x: 0.2,
+          cover_focal_y: 0.8,
+          cover_zoom: 2.5,
+        },
+      });
+      expect(seeded.status(), 'the desktop-set framing must seed').toBe(200);
+
+      await openCoverPage(page, 'collection');
+      await expect(page.getByTestId('cover-page-crop-unavailable')).toBeVisible();
+      // An ordinary edit on the page the phone CAN use, so the save is
+      // a real one rather than a no-op PATCH.
+      await backToDetails(page);
+      const nameField = page.getByTestId('collection-edit-details-page').locator('input[type="text"]').first();
+      await nameField.fill(`${COLLECTION_NAME} (mobile)`);
+      await saveAndAwaitPatch(page);
+
+      const after = await fetchCollection(page);
+      expect(after.cover_focal_x, 'a phone save cleared the focal point').toBeCloseTo(0.2, 6);
+      expect(after.cover_focal_y).toBeCloseTo(0.8, 6);
+      expect(after.cover_zoom, 'a phone save cleared the zoom').toBeCloseTo(2.5, 6);
+    });
+
+    // Page 1 is not exempt from anything: it is text fields, radios and
+    // two thumbnails, all of which reflow.
+    test('page 1 stays fully usable', async ({ page }) => {
+      await openEditModal(page);
+      const details = page.getByTestId('collection-edit-details-page');
+      await expect(details.locator('input[type="text"]').first()).toBeVisible();
+      await expect(details.locator('textarea').first()).toBeVisible();
+      await expect(page.getByTestId('collection-cover-edit-featured')).toBeVisible();
+      await expect(page.getByTestId('collection-cover-edit-button')).toBeVisible();
+      // The two doors work from here, which is the whole navigation.
+      await gotoCoverPage(page, 'featured');
+      await backToDetails(page);
+      // And nothing has pushed the page sideways.
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      );
+      expect(overflow, 'the dialog overflows a 390px viewport horizontally').toBe(false);
+    });
   });
 });
