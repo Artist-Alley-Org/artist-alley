@@ -1676,6 +1676,131 @@ test.describe('#1207 the collection cover editor', () => {
   // across a picture beside a live preview is that. Switching off
   // UNRELATED functionality is not covered, so these tests assert both
   // halves: the stage is gone, and everything else is not.
+  // ── #1218: page 2 SPENDS the dialog ────────────────────────────────
+  //
+  // The owner's finding on the shipped #1212 page: "we are still not
+  // using the space properly" — a ~720px dialog in a ~1130px viewport,
+  // a full-width row carrying one sentence of hint, a picker clipped to
+  // one row with the next peeking, and, before anything is chosen, a
+  // whole empty lower half where the stage's space was reserved.
+  //
+  // These assert the SHAPE of the fix rather than pixel counts, because
+  // the pixel counts are properties of the viewport and of the
+  // fixture's aspect: with nothing chosen the picker gets the room, and
+  // with a picture chosen the stage does. A ratio against the dialog is
+  // what makes "gets the room" checkable on any screen.
+  test.describe('at 1080p, the page fills the dialog', () => {
+    test.use({ viewport: { width: 1920, height: 1080 } });
+
+    /** The dialog panel — the box everything below is measured against. */
+    async function panelBox(page: Page) {
+      return (await page.locator('[role="dialog"] > div').first().boundingBox())!;
+    }
+
+    test('with nothing chosen the picker takes the room, and no stage is reserved', async ({
+      page,
+      request,
+    }) => {
+      // A cover has to be genuinely ABSENT for this: the empty state is
+      // the one the owner screenshotted, and a leftover cover from an
+      // earlier test in this serial file would show the other half.
+      const cleared = await request.patch(`/api/v1/collections/${collectionId}`, {
+        data: { clear_cover: true, clear_cover_focal: true, clear_cover_zoom: true },
+      });
+      expect(cleared.status(), 'the cover must be clearable for the empty state').toBe(200);
+
+      const editor = await openCoverPage(page, 'collection');
+      await expect(editor.getByTestId('cover-page-empty')).toBeVisible();
+      await expect(
+        page.getByTestId('collection-crop-stage-image'),
+        'the stage is reserving room for a picture nobody has chosen — the dead half',
+      ).toHaveCount(0);
+
+      const panel = await panelBox(page);
+      const grid = (await editor.getByTestId('collection-cover-choices').boundingBox())!;
+      const ratio = (grid.width * grid.height) / (panel.width * panel.height);
+      // The shipped page put this at ~0.10 (a 160px window inside a
+      // 720px dialog). Half the dialog is the floor for "the picker
+      // fills the available area"; the rest is the header, the tab row
+      // and the action bar, which are chrome and not slack.
+      expect(
+        ratio,
+        `the picker occupies ${(ratio * 100).toFixed(1)}% of the dialog with nothing chosen`,
+      ).toBeGreaterThan(0.5);
+    });
+
+    test('with a picture chosen the stage takes the room and the picker becomes a rail', async ({
+      page,
+      request,
+    }) => {
+      await request.patch(`/api/v1/collections/${collectionId}`, {
+        data: { cover_asset_id: portraitId },
+      });
+      const editor = await openCoverPage(page, 'collection');
+      const stageImg = page.getByTestId('collection-crop-stage-image');
+      await expect(stageImg).toBeVisible();
+
+      const panel = await panelBox(page);
+      const box = (await page.getByTestId('collection-crop-stage-box').boundingBox())!;
+      // The stage's own box — not the picture inside it, whose height is
+      // the picture's business — must be most of the dialog's height.
+      // The shipped page capped it at 52vh of the VIEWPORT while sitting
+      // in a dialog that was shorter than that; the budget is now the
+      // room the dialog actually has.
+      expect(
+        box.height / panel.height,
+        `the stage box is ${(100 * box.height) / panel.height}% of the dialog's height`,
+      ).toBeGreaterThan(0.55);
+
+      // AND THE PICTURE SPENDS IT. Filling one axis of the box exactly
+      // is what "as large as the room allows" means for a picture that
+      // must keep its own shape — and #1212's no-squash rule is the
+      // reason it can only be one axis.
+      const img = (await stageImg.boundingBox())!;
+      const fillsAnAxis =
+        Math.abs(img.width - (box.width - 18)) < 3 || Math.abs(img.height - (box.height - 18)) < 3;
+      expect(
+        fillsAnAxis,
+        `the picture (${img.width}x${img.height}) does not fill either axis of its box ` +
+          `(${box.width}x${box.height}) — the stage was given room it did not use`,
+      ).toBe(true);
+
+      // #1212's invariant, re-asserted HERE because this is where the
+      // budgets changed. Distortion is what a sizing change breaks, and
+      // it breaks silently.
+      const shape = await stageImg.evaluate((el) => {
+        const i = el as HTMLImageElement;
+        const r = i.getBoundingClientRect();
+        return { natural: i.naturalWidth / i.naturalHeight, laid: r.width / r.height };
+      });
+      expect(
+        Math.abs(shape.laid - shape.natural) / shape.natural,
+        `the larger stage distorted the picture: natural ${shape.natural}, laid ${shape.laid}`,
+      ).toBeLessThan(0.01);
+
+      // The picker is still THERE — collapsed, not withheld. A rail is
+      // one row that says it is one row; the defect was a grid clipped
+      // to look like a broken one.
+      const grid = (await editor.getByTestId('collection-cover-choices').boundingBox())!;
+      expect(grid.height, 'the picker did not collapse — the stage cannot have the room').toBeLessThan(
+        box.height,
+      );
+      await expect(editor.getByTestId('collection-cover-choice').first()).toBeVisible();
+    });
+
+    test('the hint is secondary text on the tab row, not a band of its own', async ({ page }) => {
+      const editor = await openCoverPage(page, 'collection');
+      const hint = editor.getByTestId('cover-page-hint');
+      await expect(hint).toBeVisible();
+      const panel = await panelBox(page);
+      const box = (await hint.boundingBox())!;
+      expect(
+        box.width / panel.width,
+        'the hint still spans the dialog — it is a band, not a caption',
+      ).toBeLessThan(0.9);
+    });
+  });
+
   test.describe('at 390px', () => {
     test.use({ viewport: { width: 390, height: 844 } });
 

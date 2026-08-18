@@ -119,7 +119,15 @@ PACK_SOURCE_ROOT = "pack"
 # fill. Kept as separate files rather than one because they answer
 # different questions and a 900-record append into the 36-record doc
 # would bury the Pexels provenance work in noise.
-DOC_SETS = ("added", "balance", "pexels")
+# The upgrade documents this script merges, by stem. Each contributes
+# `<stem>-assets.<site>.json` + `<stem>-posts.<site>.json`.
+#
+# `mature` is #1217's: twelve Met Open Access works labelled
+# `mature: true`, plus the two posts that carry them. It is here rather
+# than applied by hand to the archive share for the reason this file's
+# docstring is about — the profile is the INPUT, and a manifest edited
+# in place is undone by the next assembly.
+DOC_SETS = ("added", "balance", "pexels", "mature")
 
 _HASH_SUFFIX_RE = re.compile(r"-[0-9a-f]{8}(?:-\d+)?$")
 _CATEGORY_PREFIX_RE = re.compile(

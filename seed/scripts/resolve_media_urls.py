@@ -104,6 +104,12 @@ DIRECT_MEDIA_HOSTS = frozenset({
     "archive.org",
     "www.archive.org",
     "ia800000.us.archive.org",
+    # The Met's image CDN (#1217). Declared deliberately, per the rule
+    # this set exists for: `metadata.media_url` must be a BYTE url, and
+    # `images.metmuseum.org/CRDImages/...` is one — the object PAGE is
+    # `www.metmuseum.org/art/collection/search/<id>` and lives in
+    # `fetched_from`.
+    "images.metmuseum.org",
 })
 
 # Pexels' own resolution ladder. `hd` first because every record we hold

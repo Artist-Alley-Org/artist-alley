@@ -510,6 +510,56 @@
 
   // ── The two-dimensional half, and when it is offered (#1213) ──────
   const cropOffered = $derived(viewportWidth >= CROP_STAGE_MIN_WIDTH);
+
+  // ── TWO REGIONS, AND WHICH ONE IS GROWING (#1218) ─────────────────
+  //
+  // The owner's finding on the shipped page: "we are still not using
+  // the space properly" — a 720px dialog in a 1130px viewport, a whole
+  // row spent on one sentence of hint, and a picker clipped to one row
+  // of thumbnails with the next peeking, while the lower half sat
+  // empty because the crop stage's space was reserved for a picture
+  // nobody had chosen yet.
+  //
+  // So the page is a column that FILLS the dialog, and exactly one of
+  // its two regions grows:
+  //
+  //   nothing chosen  → there is no stage, and the picker takes the
+  //                     whole page. Reserving room for a picture that
+  //                     does not exist is what produced the dead half.
+  //   a picture chosen→ the stage grows and the picker collapses to a
+  //                     rail. The stage is the reason page 2 exists;
+  //                     the picker's job is done the moment it is used,
+  //                     but it stays reachable for a change of mind.
+  //
+  // `stageShown` is the single answer both regions read, so they cannot
+  // disagree about which one is growing — the failure that would give
+  // the dialog two scrollbars or none.
+  const stageShown = $derived(shownId !== null && stageSrc !== null && cropOffered);
+
+  /** The choice grid, in its two states.
+   *
+   *  GROWING: a real grid that takes the region it is in and scrolls
+   *  inside itself. `auto-rows-min` is what keeps the tiles square in a
+   *  tall box — without it the implicit rows stretch to fill and a
+   *  thumbnail of a square rendition is drawn as a tall rectangle.
+   *
+   *  RAIL: one row, scrolling sideways. `max-h-40` (the old fixed
+   *  window, kept for exactly this state) would show one row and a
+   *  sliver of the next, which is the "clipped" reading the owner
+   *  reported; a rail shows one row and says so. */
+  function gridClass(grow: boolean): string {
+    return grow
+      ? 'grid min-h-0 flex-1 auto-rows-min grid-cols-6 gap-2 overflow-y-auto rounded border ' +
+        'border-border p-1 sm:grid-cols-10 lg:grid-cols-12'
+      : 'flex shrink-0 gap-2 overflow-x-auto rounded border border-border p-1';
+  }
+
+  /** One tile. In the grid the column decides the width and
+   *  `aspect-square` decides the height; in the rail there is no column
+   *  to take a width from, so both are stated. */
+  function tileClass(grow: boolean): string {
+    return grow ? 'relative aspect-square' : 'relative h-16 w-16 shrink-0';
+  }
 </script>
 
 <!-- ONE picker, rendered twice (#1207/#1074).
@@ -526,13 +576,28 @@
   testidPrefix: string,
   noneLabel: string,
   warn: boolean,
+  /** GROW, or step aside (#1218). True is "no picture is chosen, so
+   *  this is the whole page"; false is "the stage has it, keep a rail".
+   *  The two states differ in the CHOICE GRID only — the source tabs,
+   *  the search box and the upload pane are the same controls either
+   *  way, and shrinking those would be taking away function to buy
+   *  room the grid has already given back. */
+  grow: boolean,
 )}
-  <div class="mt-3">
+  <div class="flex min-h-0 flex-col" class:flex-1={grow}>
     <!-- The source switch. Members FIRST and selected by default: it
          is the answer most of the time, and the two new arms are
          there for the case #1074 named — a banner that is not, and
-         should not become, a member of the collection. -->
-    <div class="mb-2 flex flex-wrap items-center gap-1" role="group"
+         should not become, a member of the collection.
+
+         THE HINT RIDES THIS ROW (#1218). It used to be a full-width
+         band of its own above the stage, which spent a whole row of a
+         dialog on one sentence and separated the tabs from the grid
+         they switch. It is secondary text: it belongs beside the
+         control it describes, and it wraps to its own line only when
+         the row runs out of width. -->
+    <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+    <div class="flex flex-wrap items-center gap-1" role="group"
          aria-label={t('collections.cover_editor_source_label')}>
       {#each [['members', t('collections.cover_editor_source_members')], ['mine', t('collections.cover_editor_source_mine')], ['upload', t('collections.cover_editor_source_upload')]] as const as [key, label] (key)}
         <button
@@ -554,6 +619,25 @@
           class:border-border={pick.source !== key}
         >{label}</button>
       {/each}
+    </div>
+    <!-- `min-w-[16rem]` is what makes the wrap happen instead of the
+         squeeze: with `flex-wrap` above, a flex item that cannot have
+         its minimum gets its own line. Without it a 390px row gave the
+         hint the ~40px the tabs left over and rendered one word per
+         line down the side of the dialog. -->
+    <p class="min-w-[16rem] flex-1 text-xs text-fg-muted" data-testid="cover-page-hint">
+      {#if !cropOffered}
+        {t('collections.cover_hint')}
+      {:else if isFeatured}
+        {featuredIsInherited
+          ? t('collections.cover_editor_featured_inherited')
+          : t('collections.cover_editor_featured_hint')}
+      {:else}
+        {coverAssetId === null
+          ? t('collections.cover_hint')
+          : t('collections.cover_editor_cover_crop_hint')}
+      {/if}
+    </p>
     </div>
 
     {#if warn}
@@ -623,7 +707,7 @@
         {:else if pick.results.length === 0}
           <p class="text-xs text-fg-muted">{t('collections.cover_editor_mine_empty')}</p>
         {:else}
-          <div class="grid max-h-40 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10">
+          <div class={gridClass(grow)} data-testid="{testidPrefix}-mine-choices">
             {#each pick.results as r (r.id)}
               <button
                 type="button"
@@ -632,7 +716,7 @@
                 title={r.title ?? ''}
                 data-testid="{testidPrefix}-mine-choice"
                 data-asset-id={r.id}
-                class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
+                class="{tileClass(grow)} overflow-hidden rounded border-2 hover:border-border-strong"
                 class:border-accent={selected === r.id}
                 class:border-border={selected !== r.id}
               >
@@ -645,13 +729,12 @@
     {:else if loading}
       <p class="text-xs text-fg-muted">{t('collections.cover_loading')}</p>
     {:else}
-      <div class="grid max-h-40 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10"
-           data-testid="{testidPrefix}-cover-choices">
+      <div class={gridClass(grow)} data-testid="{testidPrefix}-cover-choices">
         <button
           type="button"
           onclick={() => choose(null)}
           aria-pressed={selected === null}
-          class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
+          class="{tileClass(grow)} flex flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
           class:border-accent={selected === null}
           class:border-border={selected !== null}
         >
@@ -667,7 +750,7 @@
             aria-pressed="true"
             title={t('collections.cover_current_external')}
             data-testid="{testidPrefix}-external-choice"
-            class="relative aspect-square overflow-hidden rounded border-2 border-accent"
+            class="{tileClass(grow)} overflow-hidden rounded border-2 border-accent"
           >
             <img src={colUrl(selected)} alt={t('collections.cover_current_external')}
                  loading="lazy" class="h-full w-full object-cover" />
@@ -680,7 +763,7 @@
             aria-pressed={selected === choice.asset_id}
             data-testid="{testidPrefix}-cover-choice"
             data-asset-id={choice.asset_id}
-            class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
+            class="{tileClass(grow)} overflow-hidden rounded border-2 hover:border-border-strong"
             class:border-accent={selected === choice.asset_id}
             class:border-border={selected !== choice.asset_id}
           >
@@ -697,44 +780,35 @@
      dialog, rendered in its body while `page === 'cover'`. The header,
      the Back button, Cancel and Save all belong to that one dialog, so
      there is one Escape owner, one focus trap and one commit. -->
+<!-- A COLUMN THAT FILLS THE DIALOG (#1218). The host gives this page a
+     definite height and this is what spends it: `min-h-0` on the column
+     and on each region is what lets a child scroll instead of pushing
+     the column taller than the box it was given. -->
 <section
   aria-labelledby="cover-page-heading"
   data-testid="collection-cover-editor"
   data-cover-slot={coverSlot}
+  class="flex h-full min-h-0 flex-col gap-3"
 >
   <h3 id="cover-page-heading" class="sr-only">
     {isFeatured
       ? t('collections.cover_editor_featured_heading')
       : t('collections.cover_editor_cover_heading')}
   </h3>
-  <!-- The hint tells the curator what this page DOES, so it must not
-       promise a drag on a screen that is not offering one — the
-       withheld-crop note below would then be contradicting the line
-       directly above it. Where there is no stage, the hint is the plain
-       "pick a cover" sentence, which is all this page is doing there. -->
-  <p class="text-xs text-fg-muted" data-testid="cover-page-hint">
-    {#if !cropOffered}
-      {t('collections.cover_hint')}
-    {:else if isFeatured}
-      {featuredIsInherited
-        ? t('collections.cover_editor_featured_inherited')
-        : t('collections.cover_editor_featured_hint')}
-    {:else}
-      {coverAssetId === null
-        ? t('collections.cover_hint')
-        : t('collections.cover_editor_cover_crop_hint')}
-    {/if}
-  </p>
-
   {#if shownId === null || stageSrc === null}
-    <p class="mt-3 rounded border border-border bg-surface p-3 text-xs text-fg-muted"
-       data-testid="cover-page-empty">
+    <!-- ONE LINE, AND NO RESERVED STAGE BEHIND IT (#1218). What this
+         says is "there is nothing to crop yet", and it used to say it
+         in a padded band on top of the empty room the stage had
+         reserved — half a dialog of dead area to carry one sentence.
+         The room goes to the picker, which is the control that answers
+         the sentence. -->
+    <p class="shrink-0 text-xs text-fg-muted" data-testid="cover-page-empty">
       {isFeatured
         ? t('collections.cover_editor_featured_none')
         : t('collections.crop_mosaic_note')}
     </p>
   {:else if cropOffered}
-    <div class="mt-3">
+    <div class="min-h-0 flex-1">
       <!-- The destination's own shape: 890:500 for the rail card
            (#1110/#1098), 4:3 for the collection tile.
 
@@ -749,6 +823,7 @@
            displays. A crop marquee locks to the dimensions of the thing
            that RENDERS it. -->
       <CoverCropStage
+        fill
         src={stageSrc}
         srcset={stageSrcset}
         sizes="(max-width: 1024px) 90vw, 55vw"
@@ -805,7 +880,7 @@
          opposite — clearing it because the control that edits it is not
          on screen — would be the surface silently undoing somebody
          else's work, which is worse than not offering the control. -->
-    <p class="mt-3 rounded border border-border bg-surface p-3 text-xs text-fg-muted"
+    <p class="shrink-0 rounded border border-border bg-surface px-2 py-1.5 text-xs text-fg-muted"
        data-testid="cover-page-crop-unavailable">
       {t('collections.cover_editor_crop_needs_width')}
     </p>
@@ -818,5 +893,6 @@
     isFeatured ? 'featured' : 'collection',
     isFeatured ? t('collections.cover_editor_same_as_cover') : t('collections.cover_derived'),
     warning,
+    !stageShown,
   )}
 </section>
