@@ -29,8 +29,12 @@
   // copy of the tri-state clear discipline. Closing this is "done
   // looking", not "committed".
 
+  import { api } from '$api/client';
+  import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import { previewLadder } from '$stores/previewLadder.svelte';
+  import { DEFAULT_ASSET_TYPE } from '$stores/upload.svelte';
+  import { putStorageObject } from '$lib/util/storageUpload';
   import Modal from './Modal.svelte';
   import {
     CARD_ASPECT,
@@ -56,6 +60,10 @@
     onclose: () => void;
     choices: CoverChoice[];
     loading: boolean;
+    /** The collection's own tier. It decides what an uploaded cover's
+     *  `status` has to be for the collection's audience to see it, and
+     *  whether picking a narrower asset is worth warning about. */
+    collectionVisibility: string;
     /** The collection cover, null for the derived mosaic. */
     coverAssetId: string | null;
     /** The featured-rail cover, null for "same as the collection cover". */
@@ -70,6 +78,7 @@
     onclose,
     choices,
     loading,
+    collectionVisibility,
     coverAssetId = $bindable(),
     featuredCoverAssetId = $bindable(),
     focalX = $bindable(),
@@ -109,20 +118,68 @@
   // now that the curator is POSITIONING against it: a focal fraction
   // chosen against the wrong source lands somewhere else on the strip.
   //
-  // An asset with no row in `choices` (a cover chosen from outside this
-  // collection) has an unknown ladder, which resolves to `col` — the
-  // same fallback the rail takes when `ladder_available` is false, so
-  // the editor degrades to the card's own worst case rather than to an
-  // optimistic guess.
+  // ── Which source, ASKED rather than assumed (#1207/#1074) ──────────
+  //
+  // `ladder_available` decides the branch above, and a member row
+  // carries it. A NON-MEMBER does not — and since #1074 opened the
+  // picker to the curator's whole library, and to pictures that did not
+  // exist a second ago, the non-member case is the ordinary one.
+  //
+  // Guessing "no ladder" for those was wrong in a way that is invisible
+  // until you compare the editor with the strip, which is exactly what
+  // driving this in a browser did: the editor drew its marquee over
+  // `col` — a 320px SQUARE the server centre-cropped — while the rail
+  // loaded a contain rung at the picture's ORIGINAL 2.4:1, so the
+  // curator positioned a crop on one picture and the strip cropped
+  // another. The focal fraction is meaningless across that.
+  //
+  // So the flag is resolved from the server for anything the local rows
+  // cannot answer. `ladderRequested` is a PLAIN Set, deliberately not
+  // `$state`: the effect below reads the reactive map, and a reactive
+  // in-flight marker would be a write the effect depends on — the
+  // 1,694-request feedback loop shape.
+  const ladderKnown = $state<Record<string, boolean>>({});
+  const ladderRequested = new Set<string>();
+
+  function ladderFor(assetId: string | null): boolean | undefined {
+    if (assetId === null) return undefined;
+    const member = choiceFor(assetId);
+    if (member) return member.ladder_available === true;
+    const found =
+      featuredPicker.results.find((r) => r.id === assetId) ??
+      coverPicker.results.find((r) => r.id === assetId);
+    if (found?.ladder_available !== undefined) return found.ladder_available;
+    return ladderKnown[assetId];
+  }
+
+  async function ensureLadder(assetId: string) {
+    if (ladderRequested.has(assetId)) return;
+    ladderRequested.add(assetId);
+    try {
+      const { data } = await api.GET('/assets/{id}', { params: { path: { id: assetId } } });
+      ladderKnown[assetId] = (data as { ladder_available?: boolean } | undefined)?.ladder_available === true;
+    } catch {
+      // Unknown resolves to `col`, the card's own worst case — an
+      // optimistic guess would request rungs that 404.
+      ladderKnown[assetId] = false;
+    }
+  }
+
+  $effect(() => {
+    for (const id of [featuredEffectiveId, coverAssetId]) {
+      if (id && ladderFor(id) === undefined) void ensureLadder(id);
+    }
+  });
+
   function srcFor(assetId: string | null): string | null {
     if (assetId === null) return null;
-    if (choiceFor(assetId)?.ladder_available !== true) return colUrl(assetId);
+    if (ladderFor(assetId) !== true) return colUrl(assetId);
     const smallest = previewLadder.smallestKey();
     return smallest ? `/api/v1/assets/${assetId}/variants/${smallest}` : colUrl(assetId);
   }
 
   function srcsetFor(assetId: string | null): string | undefined {
-    if (assetId === null || choiceFor(assetId)?.ladder_available !== true) return undefined;
+    if (assetId === null || ladderFor(assetId) !== true) return undefined;
     return previewLadder.srcsetFor(assetId) ?? undefined;
   }
 
@@ -149,7 +206,28 @@
     const img = e.currentTarget as HTMLImageElement;
     if (featuredEffectiveId && img.naturalWidth > 0 && img.naturalHeight > 0) {
       natural = { assetId: featuredEffectiveId, w: img.naturalWidth, h: img.naturalHeight };
+      stageFailed = null;
     }
+  }
+
+  /** The picture did not load, STAMPED with which one — same reason the
+   *  measurement is stamped.
+   *
+   *  Found by driving this in a browser rather than reasoned about: a
+   *  picture chosen seconds after it was uploaded has no `col` rendition
+   *  yet, because renditions are produced asynchronously (the same fact
+   *  CallerMayPictureAsset's doc records as its reason for NOT requiring
+   *  one at the write gate). Both the stage and the live preview then
+   *  404, and the editor has to say which of the two things happened —
+   *  "still being made" is a wait, and it is not the same message as
+   *  anything else here. */
+  let stageFailed = $state<string | null>(null);
+  const stageIsPending = $derived(
+    stageFailed !== null && stageFailed === featuredEffectiveId,
+  );
+
+  function onStageError() {
+    if (featuredEffectiveId) stageFailed = featuredEffectiveId;
   }
 
   const win = $derived(naturalNow ? cropWindow(naturalNow.w / naturalNow.h, CARD_ASPECT) : null);
@@ -308,6 +386,241 @@
     return assetId !== null && !choices.some((c) => c.asset_id === assetId);
   }
 
+  // ── Beyond the members: my files, and a fresh upload (#1207/#1074) ─
+  //
+  // The API has ALWAYS accepted any asset the curator may picture — the
+  // write gate is CallerMayPictureAsset, not a membership check, and
+  // #1027 chose that deliberately so a cover can outlive the member it
+  // was picked from. What did not exist was a way to SAY it: the picker
+  // offered members only, so the documented capability was reachable by
+  // curl and not by curator. That is #1074, and closing it needs no
+  // backend change at all — verified against the handler, not inferred
+  // from the issue text.
+  //
+  // Two more sources, then:
+  //
+  //   members  — the collection's own, still the first thing offered
+  //   mine     — a search over the curator's own assets
+  //   upload   — a picture that does not exist yet
+  //
+  // "Mine" rather than "everything": an instance-wide asset browser is
+  // a different product (#1074 says so), and the owner's framing is
+  // personal storage (#1161) — the pictures a curator would reach for
+  // are their own. `owner_ref` + `q` are both already on GET /assets.
+  type PickerSource = 'members' | 'mine' | 'upload';
+
+  interface MineResult {
+    id: string;
+    title?: string;
+    status?: string;
+    /** Carried through from GET /assets so a picked non-member gets the
+     *  SAME source the rail will load — see ladderFor. */
+    ladder_available?: boolean;
+  }
+
+  /** Per-slot picker state. Two slots, two independent searches: the
+   *  curator is choosing two different pictures and a shared query box
+   *  would reset one while they were using the other. */
+  interface SlotPicker {
+    source: PickerSource;
+    query: string;
+    results: MineResult[];
+    searching: boolean;
+    uploading: boolean;
+    uploadError: string | null;
+  }
+
+  function newSlotPicker(): SlotPicker {
+    return {
+      source: 'members',
+      query: '',
+      results: [],
+      searching: false,
+      uploading: false,
+      uploadError: null,
+    };
+  }
+
+  const featuredPicker = $state<SlotPicker>(newSlotPicker());
+  const coverPicker = $state<SlotPicker>(newSlotPicker());
+
+  async function searchMine(slot: SlotPicker) {
+    const me = auth.user?.ref;
+    if (me == null) return;
+    slot.searching = true;
+    try {
+      const { data } = await api.GET('/assets', {
+        params: {
+          query: {
+            owner_ref: me,
+            // An empty `q` is OMITTED rather than sent as '': the
+            // server ANDs whitespace-separated tokens through
+            // plainto_tsquery, and an empty query there matches
+            // nothing — so sending it would make "show me my files"
+            // return an empty grid and read as "you have no files".
+            ...(slot.query.trim() ? { q: slot.query.trim() } : {}),
+            limit: 48,
+          },
+        },
+      });
+      slot.results = ((data?.items ?? []) as unknown as MineResult[]) ?? [];
+    } catch {
+      // A search that failed must not take the dialog down with it —
+      // the member grid and the marquee are still usable.
+      slot.results = [];
+    } finally {
+      slot.searching = false;
+    }
+  }
+
+  /** Upload a picture and choose it, in one gesture.
+   *
+   *  Two calls, both already in the codebase: the bytes go through the
+   *  SHARED storage-upload primitive (see $lib/util/storageUpload —
+   *  extracted here rather than copied, because the X-Content-Type
+   *  header and `withCredentials` are invisible from a call site and a
+   *  second copy is a second place to lose one), and the asset row is
+   *  an ordinary POST /assets. No bespoke cover-upload endpoint, which
+   *  is the same argument migration 00046 makes about the pointer: an
+   *  ordinary asset inherits storage, renditions, permissions,
+   *  federation and GC for free.
+   *
+   *  ⚠️ `status` IS THE VISIBILITY DECISION, and it is the axis that
+   *  actually governs here.
+   *
+   *  The owner's rule is that an uploaded cover should match the
+   *  collection's reach, so it does not silently fall back for wider
+   *  audiences. The axis that decides this is NOT `sensitivity` —
+   *  `assets.sensitivity` defaults to `public`, the widest tier, and no
+   *  API sets it (the `SetAssetSensitivity` query has zero Go callers).
+   *  It is `status`: the ANONYMOUS asset predicate requires
+   *  `status = 'active'`, while the authenticated arm requires only
+   *  that the row is not deleted.
+   *
+   *  So:
+   *    public collection    → 'active'. Anonymous readers are the
+   *                           audience, and a draft cover is exactly
+   *                           the silent fallback the rule exists to
+   *                           prevent.
+   *    anything narrower    → 'draft'. Its audience is signed in and
+   *                           sees the picture either way, so the
+   *                           conservative status is free — and it
+   *                           keeps a banner for a private collection
+   *                           out of anonymous reach.
+   *
+   *  The upload queue's own default is 'draft' for every file, which is
+   *  right for a queue whose files are on their way to becoming posts
+   *  and wrong for a picture whose entire purpose is to be looked at.
+   */
+  async function uploadAndChoose(slot: SlotPicker, file: File, assign: (id: string) => void) {
+    slot.uploading = true;
+    slot.uploadError = null;
+    try {
+      const { hash } = await putStorageObject(file, {
+        networkMessage: t('upload.err_network'),
+        abortMessage: t('upload.err_aborted'),
+      });
+      const { data, error } = await api.POST('/assets', {
+        body: {
+          title: file.name.replace(/\.[^.]+$/, '') || file.name,
+          asset_type: DEFAULT_ASSET_TYPE,
+          status: collectionVisibility === 'public' ? 'active' : 'draft',
+          file_hash: hash,
+          file_extension: file.name.includes('.') ? file.name.split('.').pop() : undefined,
+          mature: false,
+        },
+      });
+      if (error || !data) {
+        slot.uploadError =
+          (error as { error?: string } | undefined)?.error ?? t('collections.cover_editor_upload_failed');
+        return;
+      }
+      assign(data.id);
+      // Straight back to the member grid: the picture is chosen, and
+      // leaving the upload pane open would imply there is another step.
+      slot.source = 'members';
+      // Renditions are produced asynchronously, so the picture the
+      // curator just chose does not exist yet and neither does its
+      // ladder. Poll until it does, so the stage stops saying "still
+      // being prepared" and — the part that matters — switches to the
+      // SAME rung the strip will load, instead of leaving the marquee
+      // over a `col` square while the rail crops the original.
+      void awaitRenditions(data.id);
+    } catch (e) {
+      slot.uploadError = e instanceof Error ? e.message : t('collections.cover_editor_upload_failed');
+    } finally {
+      slot.uploading = false;
+    }
+  }
+
+  /** Wait for a freshly uploaded picture's renditions, bounded.
+   *
+   *  Bounded because a failed raster job never becomes ready and a
+   *  loop with no end would poll for the life of the dialog. When it
+   *  gives up the editor keeps showing "still being prepared", which is
+   *  the honest state: the picture IS stored and IS the chosen cover,
+   *  and the strip will show it whenever the worker succeeds. */
+  async function awaitRenditions(assetId: string) {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        const { data } = await api.GET('/assets/{id}', { params: { path: { id: assetId } } });
+        const a = data as { preview_available?: boolean; ladder_available?: boolean } | undefined;
+        if (a?.preview_available) {
+          ladderKnown[assetId] = a.ladder_available === true;
+          // Clearing the failure lets the <img> re-render and try again;
+          // the src is unchanged, so this is what re-attempts the load.
+          if (stageFailed === assetId) stageFailed = null;
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+  }
+
+  function onFilePicked(e: Event, slot: SlotPicker, assign: (id: string) => void) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    // Cleared so choosing the SAME file twice fires `change` again —
+    // an input that keeps its value is silent on a re-pick, which reads
+    // as "the upload button stopped working".
+    input.value = '';
+    if (file) void uploadAndChoose(slot, file, assign);
+  }
+
+  /** Would a picked asset be invisible to some of the collection's
+   *  audience?
+   *
+   *  ⚠️ PARTIAL, AND SAID SO RATHER THAN OVERSTATED. A public
+   *  collection is read by anonymous visitors, whose asset predicate
+   *  requires `status = 'active'` AND `sensitivity = 'public'` AND
+   *  `processing_status = 'ready'`. This can only check the first: the
+   *  Asset schema carries `status` and deliberately carries no
+   *  `sensitivity`, so a team-tier asset picked as a public
+   *  collection's cover still falls back on the rail with no warning
+   *  here. Answering that exactly needs a derived
+   *  "anonymously picturable" flag from the server; it is NOT inferred
+   *  client-side, because inferring it is how a warning starts lying in
+   *  the reassuring direction.
+   *
+   *  Nothing is BLOCKED by this. The rail's per-rung fallback is the
+   *  safety property and it is unchanged — this only makes the fallback
+   *  explicable instead of mysterious. */
+  function narrowerThanCollection(assetId: string | null, slot: SlotPicker): boolean {
+    if (assetId === null || collectionVisibility !== 'public') return false;
+    const found =
+      slot.results.find((r) => r.id === assetId) ??
+      // A member row carries no status, so a member picked from the
+      // first grid produces no warning either way. That is the honest
+      // answer, not a silent pass: the check has nothing to read.
+      null;
+    return found !== null && found.status !== undefined && found.status !== 'active';
+  }
+
+  const featuredWarning = $derived(narrowerThanCollection(featuredCoverAssetId, featuredPicker));
+  const coverWarning = $derived(narrowerThanCollection(coverAssetId, coverPicker));
+
   const positionLabel = $derived(
     t('collections.cover_editor_position_value', {
       x: String(Math.round(fx * 100)),
@@ -315,6 +628,186 @@
     }),
   );
 </script>
+
+<!-- ONE picker, rendered twice (#1207/#1074).
+     Both slots choose from the same three sources on the same terms;
+     a second copy of the grid was already drifting (the featured one
+     had a "same as cover" tile where the other had "use mosaic", and
+     nothing else differed) and the search and upload arms would have
+     doubled it again. `assign` is what the two slots actually
+     disagree about, so it is the parameter. -->
+{#snippet picker(
+  slot: SlotPicker,
+  selected: string | null,
+  assign: (id: string | null) => void,
+  testidPrefix: string,
+  noneLabel: string,
+  warn: boolean,
+)}
+  <div class="mt-3">
+    <!-- The source switch. Members FIRST and selected by default: it
+         is the answer most of the time, and the two new arms are
+         there for the case #1074 named — a banner that is not, and
+         should not become, a member of the collection. -->
+    <div class="mb-2 flex flex-wrap items-center gap-1" role="group"
+         aria-label={t('collections.cover_editor_source_label')}>
+      {#each [['members', t('collections.cover_editor_source_members')], ['mine', t('collections.cover_editor_source_mine')], ['upload', t('collections.cover_editor_source_upload')]] as const as [key, label] (key)}
+        <button
+          type="button"
+          data-testid="{testidPrefix}-source-{key}"
+          aria-pressed={slot.source === key}
+          onclick={() => {
+            slot.source = key;
+            // The first visit fetches; after that the results are
+            // whatever the curator last searched for, which is what
+            // they expect to come back to.
+            if (key === 'mine' && slot.results.length === 0 && !slot.searching) {
+              void searchMine(slot);
+            }
+          }}
+          class="rounded border px-2 py-1 text-xs"
+          class:border-accent={slot.source === key}
+          class:text-accent={slot.source === key}
+          class:border-border={slot.source !== key}
+        >{label}</button>
+      {/each}
+    </div>
+
+    {#if warn}
+      <!-- Not a refusal. The cover is stored and the rail's per-rung
+           fallback keeps the tile filled for everyone; what this
+           prevents is the curator wondering why the strip is showing
+           something else. -->
+      <p class="mb-2 rounded border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning"
+         data-testid="{testidPrefix}-narrow-warning">
+        {t('collections.cover_editor_narrow_warning')}
+      </p>
+    {/if}
+
+    {#if slot.source === 'upload'}
+      <div class="rounded border border-border p-3" data-testid="{testidPrefix}-upload-pane">
+        <!-- ONE PLAIN SENTENCE about what the upload does, which the
+             owner asked for and which is the difference between a
+             feature that works and one that reads as broken. It says
+             what is true of THIS collection: a public collection's
+             cover is uploaded active so visitors can see it, a
+             private one's stays a draft in the curator's own files. -->
+        <p class="mb-2 text-xs text-fg-muted">
+          {collectionVisibility === 'public'
+            ? t('collections.cover_editor_upload_note_public')
+            : t('collections.cover_editor_upload_note_private')}
+        </p>
+        <input
+          type="file"
+          accept="image/*"
+          disabled={slot.uploading}
+          data-testid="{testidPrefix}-upload-input"
+          onchange={(e) => onFilePicked(e, slot, assign)}
+          class="block w-full text-xs file:mr-2 file:rounded file:border file:border-border file:bg-surface file:px-2 file:py-1 file:text-xs"
+        />
+        {#if slot.uploading}
+          <p class="mt-2 text-xs text-fg-muted" data-testid="{testidPrefix}-uploading">
+            {t('collections.cover_editor_uploading')}
+          </p>
+        {/if}
+        {#if slot.uploadError}
+          <p role="alert" class="mt-2 text-xs text-danger">{slot.uploadError}</p>
+        {/if}
+      </div>
+    {:else if slot.source === 'mine'}
+      <div data-testid="{testidPrefix}-mine-pane">
+        <form
+          class="mb-2 flex gap-2"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void searchMine(slot);
+          }}
+        >
+          <input
+            type="search"
+            bind:value={slot.query}
+            placeholder={t('collections.cover_editor_search_placeholder')}
+            data-testid="{testidPrefix}-search-input"
+            class="min-w-0 flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          />
+          <button
+            type="submit"
+            class="rounded border border-border px-2 py-1 text-xs hover:bg-surface"
+          >{t('common.search')}</button>
+        </form>
+        {#if slot.searching}
+          <p class="text-xs text-fg-muted">{t('collections.cover_editor_searching')}</p>
+        {:else if slot.results.length === 0}
+          <p class="text-xs text-fg-muted">{t('collections.cover_editor_mine_empty')}</p>
+        {:else}
+          <div class="grid max-h-40 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10">
+            {#each slot.results as r (r.id)}
+              <button
+                type="button"
+                onclick={() => assign(r.id)}
+                aria-pressed={selected === r.id}
+                title={r.title ?? ''}
+                data-testid="{testidPrefix}-mine-choice"
+                data-asset-id={r.id}
+                class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
+                class:border-accent={selected === r.id}
+                class:border-border={selected !== r.id}
+              >
+                <img src={colUrl(r.id)} alt="" loading="lazy" class="h-full w-full object-cover" />
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else if loading}
+      <p class="text-xs text-fg-muted">{t('collections.cover_loading')}</p>
+    {:else}
+      <div class="grid max-h-40 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10"
+           data-testid="{testidPrefix}-cover-choices">
+        <button
+          type="button"
+          onclick={() => assign(null)}
+          aria-pressed={selected === null}
+          class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
+          class:border-accent={selected === null}
+          class:border-border={selected !== null}
+        >
+          <span class="font-medium">{noneLabel}</span>
+        </button>
+        <!-- A cover chosen from OUTSIDE the member list — which is now
+             the ordinary case, not the exception — still has to show
+             as the current selection, or an unrelated edit would look
+             like it had cleared the cover. -->
+        {#if isExternal(selected) && selected}
+          <button
+            type="button"
+            aria-pressed="true"
+            title={t('collections.cover_current_external')}
+            data-testid="{testidPrefix}-external-choice"
+            class="relative aspect-square overflow-hidden rounded border-2 border-accent"
+          >
+            <img src={colUrl(selected)} alt={t('collections.cover_current_external')}
+                 loading="lazy" class="h-full w-full object-cover" />
+          </button>
+        {/if}
+        {#each choices as choice (choice.asset_id)}
+          <button
+            type="button"
+            onclick={() => assign(choice.asset_id)}
+            aria-pressed={selected === choice.asset_id}
+            data-testid="{testidPrefix}-cover-choice"
+            data-asset-id={choice.asset_id}
+            class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
+            class:border-accent={selected === choice.asset_id}
+            class:border-border={selected !== choice.asset_id}
+          >
+            <img src={colUrl(choice.asset_id)} alt="" loading="lazy" class="h-full w-full object-cover" />
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <!-- Near-full-viewport. The whole point of this dialog is that the
      picture is big enough to judge, so the width is a viewport
@@ -363,6 +856,31 @@
             <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
               {t('collections.cover_editor_stage_label')}
             </figcaption>
+            <!-- The image below is sized by a DEFINITE WIDTH with
+                 `height: auto`, and both halves of that are load-bearing.
+                 It was arrived at by driving it in a browser and getting
+                 each of the other two wrong first.
+
+                 `max-height`/`max-width` alone (what #1195's small
+                 preview used) never UPSCALES, so a cover with no preview
+                 ladder rendered at the 320px `col` rendition inside a
+                 1500px dialog — the original complaint, in the case
+                 #1074 just made ordinary.
+
+                 A definite HEIGHT with `max-width` is worse: when the
+                 max binds, the browser honours both and SQUASHES the
+                 picture. The marquee is computed from
+                 naturalWidth/naturalHeight, so it then marks a region of
+                 a shape that is not on screen. A definite width with
+                 `height: auto` and a `max-height` cannot distort — the
+                 auto axis always follows the aspect.
+
+                 The wrapper stays SHRINK-WRAPPED around the image, which
+                 is what lets the marquee be positioned in percentages
+                 with nothing measured from the DOM. Giving the wrapper a
+                 size of its own — a width, an aspect-ratio — puts the
+                 overlay over the BOX instead of over the picture, which
+                 is the exact bug this surface exists to reveal. -->
             <div class="flex justify-center rounded border border-border bg-surface p-2">
               <div bind:this={stage} class="relative inline-block max-w-full align-top">
                 <img
@@ -371,9 +889,11 @@
                   sizes="(max-width: 640px) 90vw, 55vw"
                   alt={t('collections.cover_editor_stage_alt')}
                   onload={onStageLoad}
+                  onerror={onStageError}
                   data-testid="cover-editor-stage-image"
-                  class="block max-h-[52vh] max-w-full select-none rounded"
+                  class="block select-none rounded"
                   draggable="false"
+                  style="width: clamp(17rem, 40vw, 38rem); height: auto; max-height: 52vh;"
                 />
                 {#if marquee}
                   <!-- What gets cropped OFF is dimmed and what survives
@@ -433,7 +953,20 @@
               data-focal-x={focalX === null ? '' : String(focalX)}
               data-focal-y={focalY === null ? '' : String(focalY)}
             >
-              {#if !canMove}
+              <!-- THREE STATES, and the middle one is the whole point
+                   of this block. "Nothing to move" is a statement about
+                   a picture's PROPORTIONS, so it must not be printed
+                   before the proportions are known — which is what
+                   happened the first time this was driven in a browser
+                   with a freshly uploaded cover whose rendition did not
+                   exist yet: the editor confidently announced that a
+                   2.4:1 picture was already card-shaped, about an image
+                   it had failed to load. -->
+              {#if stageIsPending}
+                {t('collections.cover_editor_stage_pending')}
+              {:else if win === null}
+                {t('collections.crop_no_dimensions')}
+              {:else if !canMove}
                 {t('collections.cover_editor_no_travel')}
               {:else}
                 {t('collections.cover_editor_drag_hint')} — {positionLabel}
@@ -490,48 +1023,14 @@
         </div>
       {/if}
 
-      {#if loading}
-        <p class="mt-3 text-xs text-fg-muted">{t('collections.cover_loading')}</p>
-      {:else}
-        <div class="mt-3 grid max-h-40 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10"
-             data-testid="featured-cover-choices">
-          <button
-            type="button"
-            onclick={() => (featuredCoverAssetId = null)}
-            aria-pressed={featuredCoverAssetId === null}
-            class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
-            class:border-accent={featuredCoverAssetId === null}
-            class:border-border={featuredCoverAssetId !== null}
-          >
-            <span class="font-medium">{t('collections.cover_editor_same_as_cover')}</span>
-          </button>
-          {#if isExternal(featuredCoverAssetId) && featuredCoverAssetId}
-            <button
-              type="button"
-              aria-pressed="true"
-              title={t('collections.cover_current_external')}
-              class="relative aspect-square overflow-hidden rounded border-2 border-accent"
-            >
-              <img src={colUrl(featuredCoverAssetId)} alt={t('collections.cover_current_external')}
-                   loading="lazy" class="h-full w-full object-cover" />
-            </button>
-          {/if}
-          {#each choices as choice (choice.asset_id)}
-            <button
-              type="button"
-              onclick={() => (featuredCoverAssetId = choice.asset_id)}
-              aria-pressed={featuredCoverAssetId === choice.asset_id}
-              data-testid="featured-cover-choice"
-              data-asset-id={choice.asset_id}
-              class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
-              class:border-accent={featuredCoverAssetId === choice.asset_id}
-              class:border-border={featuredCoverAssetId !== choice.asset_id}
-            >
-              <img src={colUrl(choice.asset_id)} alt="" loading="lazy" class="h-full w-full object-cover" />
-            </button>
-          {/each}
-        </div>
-      {/if}
+      {@render picker(
+        featuredPicker,
+        featuredCoverAssetId,
+        (id: string | null) => (featuredCoverAssetId = id),
+        'featured',
+        t('collections.cover_editor_same_as_cover'),
+        featuredWarning,
+      )}
     </section>
 
     <section aria-labelledby="cover-slot-heading" data-testid="collection-cover-slot"
@@ -565,48 +1064,16 @@
           </div>
         </figure>
 
-        {#if loading}
-          <p class="text-xs text-fg-muted">{t('collections.cover_loading')}</p>
-        {:else}
-          <div class="grid max-h-40 min-w-0 flex-1 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10"
-               data-testid="collection-cover-choices">
-            <button
-              type="button"
-              onclick={() => (coverAssetId = null)}
-              aria-pressed={coverAssetId === null}
-              class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
-              class:border-accent={coverAssetId === null}
-              class:border-border={coverAssetId !== null}
-            >
-              <span class="font-medium">{t('collections.cover_derived')}</span>
-            </button>
-            {#if isExternal(coverAssetId) && coverAssetId}
-              <button
-                type="button"
-                aria-pressed="true"
-                title={t('collections.cover_current_external')}
-                class="relative aspect-square overflow-hidden rounded border-2 border-accent"
-              >
-                <img src={colUrl(coverAssetId)} alt={t('collections.cover_current_external')}
-                     loading="lazy" class="h-full w-full object-cover" />
-              </button>
-            {/if}
-            {#each choices as choice (choice.asset_id)}
-              <button
-                type="button"
-                onclick={() => (coverAssetId = choice.asset_id)}
-                aria-pressed={coverAssetId === choice.asset_id}
-                data-testid="collection-cover-choice"
-                data-asset-id={choice.asset_id}
-                class="relative aspect-square overflow-hidden rounded border-2 hover:border-border-strong"
-                class:border-accent={coverAssetId === choice.asset_id}
-                class:border-border={coverAssetId !== choice.asset_id}
-              >
-                <img src={colUrl(choice.asset_id)} alt="" loading="lazy" class="h-full w-full object-cover" />
-              </button>
-            {/each}
-          </div>
-        {/if}
+        <div class="min-w-0 flex-1">
+          {@render picker(
+            coverPicker,
+            coverAssetId,
+            (id: string | null) => (coverAssetId = id),
+            'collection',
+            t('collections.cover_derived'),
+            coverWarning,
+          )}
+        </div>
       </div>
     </section>
   </div>

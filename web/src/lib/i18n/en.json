@@ -2967,7 +2967,20 @@
     "cover_editor_cover_preview_alt": "The collection cover as a collection card shows it",
     "cover_summary_featured": "Featured strip",
     "cover_summary_cover": "Collection card",
-    "cover_summary_none": "Mosaic"
+    "cover_summary_none": "Mosaic",
+    "cover_editor_source_label": "Where to pick the picture from",
+    "cover_editor_source_members": "In this collection",
+    "cover_editor_source_mine": "My files",
+    "cover_editor_source_upload": "Upload",
+    "cover_editor_search_placeholder": "Search your files…",
+    "cover_editor_searching": "Searching…",
+    "cover_editor_mine_empty": "Nothing here. Try another word, or upload a picture.",
+    "cover_editor_upload_note_public": "The picture is added to your files as a normal picture, so anyone who can see this collection can see the cover. It isn't posted anywhere.",
+    "cover_editor_upload_note_private": "The picture is added to your files as a draft, so only people who are signed in and can already see this collection will see it. It isn't posted anywhere.",
+    "cover_editor_uploading": "Uploading…",
+    "cover_editor_upload_failed": "Couldn't upload that picture.",
+    "cover_editor_stage_pending": "This picture is still being prepared. It'll show here — and on the strip — in a moment.",
+    "cover_editor_narrow_warning": "This picture is still a draft, so visitors who aren't signed in will see the fallback cover instead. Publish it, or pick another picture."
   },
   "errors": {
     "save_failed": "Couldn't save changes."

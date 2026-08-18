@@ -501,6 +501,7 @@
   onclose={() => (coverEditorOpen = false)}
   choices={coverChoices}
   loading={coverLoading}
+  collectionVisibility={visibility}
   bind:coverAssetId
   bind:featuredCoverAssetId
   bind:focalX

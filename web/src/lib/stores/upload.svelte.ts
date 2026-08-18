@@ -26,6 +26,7 @@ import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
 import type { components } from '$api/schema';
 import type { FieldDefault } from '$lib/fieldDefaults';
+import { putStorageObject } from '$lib/util/storageUpload';
 
 type AssetCreate = components['schemas']['AssetCreate'];
 
@@ -187,7 +188,7 @@ const CONCURRENCY = 3;
 // MIME-to-asset_type mapping yet, so everything goes in as Photo
 // for the MVP. The processing pipeline will set the right one once
 // it lands.
-const DEFAULT_ASSET_TYPE = 1;
+export const DEFAULT_ASSET_TYPE = 1;
 
 // ---- The store ------------------------------------------------------------
 
@@ -625,38 +626,18 @@ class UploadState {
   }
 
   /**
-   * Single-file upload via XHR. POST /storage/objects accepts a raw
-   * octet-stream + X-Content-Type. XHR is required because `fetch`
-   * doesn't expose upload-progress events.
+   * Single-file upload. The XHR itself lives in
+   * `$lib/util/storageUpload` since #1207 gave the cover editor a
+   * second caller — see that module for why the bytes are shared and
+   * the AssetCreate body deliberately is not.
    */
   private uploadBytes(row: UploadRow): Promise<{ hash: string; deduped?: boolean }> {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/v1/storage/objects', true);
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-      const ct = row.file.type || 'application/octet-stream';
-      xhr.setRequestHeader('X-Content-Type', ct);
-      xhr.responseType = 'json';
-      xhr.withCredentials = true;
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) row.progress = e.loaded / e.total;
-      });
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-          row.progress = 1;
-          resolve(xhr.response as { hash: string; deduped?: boolean });
-        } else {
-          const err =
-            (xhr.response && (xhr.response as { error?: string }).error) ||
-            `HTTP ${xhr.status}`;
-          reject(new Error(err));
-        }
-      });
-      xhr.addEventListener('error', () => reject(new Error(t('upload.err_network'))));
-      xhr.addEventListener('abort', () => reject(new Error(t('upload.err_aborted'))));
-
-      xhr.send(row.file);
+    return putStorageObject(row.file, {
+      onProgress: (f) => {
+        row.progress = f;
+      },
+      networkMessage: t('upload.err_network'),
+      abortMessage: t('upload.err_aborted'),
     });
   }
 

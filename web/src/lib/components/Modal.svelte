@@ -54,11 +54,30 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (!open || !isTopModal()) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onclose();
-    }
+    if (e.key !== 'Escape') return;
+    // ⚠️ TWO GUARDS, AND BOTH ARE NECESSARY. Each covers a case the
+    // other cannot, and this was arrived at by instrumenting the real
+    // page after the stack alone failed.
+    //
+    // `defaultPrevented` — ONE Escape closes ONE dialog. The stack guard
+    // by itself does not achieve that, because Svelte flushes state
+    // synchronously at the end of a DOM event handler: the child's
+    // handler closes the child, the child's effect pops it, and the
+    // parent's document listener — still dispatching the SAME keypress —
+    // then finds itself on top and closes too. Observed exactly that:
+    // "Cover pictures top=true stack=2" followed by "Edit collection
+    // top=true stack=1", one keypress, both gone. Claiming the event is
+    // what makes the stack snapshot irrelevant to the rest of the
+    // dispatch.
+    //
+    // The STACK — the right dialog closes. `defaultPrevented` by itself
+    // would hand the event to whichever handler runs first, and that is
+    // the bubble path when focus is inside a panel (correct: the child)
+    // but document-listener registration order when focus is on the body
+    // (wrong: the parent, which mounted first).
+    if (e.defaultPrevented || !open || !isTopModal()) return;
+    e.preventDefault();
+    onclose();
   }
 
   onMount(() => {
@@ -92,6 +111,19 @@
 </script>
 
 {#if open}
+  <!-- ⚠️ The overlay's own `onkeydown` is the SAME guarded handler as the
+       document listener, not a second copy of the rule.
+
+       It exists at all because the overlay carries a click-to-dismiss
+       and a11y wants a keyboard equivalent beside it. But it sits on the
+       BUBBLE PATH, and that is what made the first version of the stack
+       guard useless: with a nested dialog open and focus still in the
+       HOST panel (which happens whenever the child has not taken focus
+       yet), Escape bubbled through the host's overlay, the unguarded
+       copy here closed the host, and the guarded document listener
+       correctly closed only the child — so one press dismissed both,
+       which is precisely the failure the stack was added to prevent,
+       arriving through the one handler the guard had not reached. -->
   <div
     use:modalPortal
     role="dialog"
@@ -101,7 +133,7 @@
     onclick={(e) => {
       if (e.target === e.currentTarget) onclose();
     }}
-    onkeydown={(e) => { if (e.key === 'Escape') onclose(); }}
+    onkeydown={onKeydown}
     tabindex="-1"
   >
     <div

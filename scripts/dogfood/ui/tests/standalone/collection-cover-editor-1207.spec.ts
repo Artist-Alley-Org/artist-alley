@@ -21,6 +21,8 @@
 // exercised too, because it is the a11y half of the same control and
 // nothing else would notice if it stopped answering.
 
+import zlib from 'node:zlib';
+
 import { expect, test, type Page } from '../../helpers/test';
 
 const STAMP = Date.now();
@@ -43,6 +45,55 @@ interface CollectionPayload {
 let collectionId: string | undefined;
 let memberIds: string[] = [];
 
+/** A real 2:1 PNG, BUILT rather than pasted.
+ *
+ *  Wide on purpose: the featured card is 890:500, so a 2:1 source has
+ *  real horizontal travel and the marquee is draggable rather than
+ *  pinned to a picture that is already the right shape.
+ *
+ *  Built here rather than inlined as base64 or read from a fixture file
+ *  for a reason the first version of this spec found the hard way — a
+ *  hand-written base64 blob had a bad CRC, the upload succeeded, and
+ *  the raster worker failed with `png: invalid format: invalid
+ *  checksum`. The asset then sat at `processing_status = 'failed'` and
+ *  the anonymous read 404'd, which looks exactly like the tier bug this
+ *  test is for. A generated PNG has correct chunks by construction, and
+ *  a two-tone image deflates to a couple of hundred bytes.
+ */
+function makeWidePng(width = 400, height = 200): Buffer {
+  const raw = Buffer.alloc(height * (1 + width * 3));
+  let at = 0;
+  for (let y = 0; y < height; y++) {
+    raw[at++] = 0; // filter: none
+    for (let x = 0; x < width; x++) {
+      // Four quadrants, so a screenshot shows unambiguously WHICH part
+      // of the picture the crop kept.
+      raw[at++] = x < width / 2 ? 220 : 40;
+      raw[at++] = y < height / 2 ? 200 : 60;
+      raw[at++] = 120;
+    }
+  }
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type: truecolour
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 function isRasterImage(ext?: string): boolean {
   return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'].includes((ext ?? '').toLowerCase());
 }
@@ -50,7 +101,7 @@ function isRasterImage(ext?: string): boolean {
 test.describe('#1207 the collection cover editor', () => {
   test.describe.configure({ mode: 'serial' });
 
-  test.beforeAll(async ({ request }) => {
+  test.beforeAll(async ({ request, browser }) => {
     // Sorted by id so the SAME assets are chosen on every run whatever
     // order Postgres hands them back — the #488 flake, avoided the way
     // ui-30 avoids it.
@@ -61,14 +112,39 @@ test.describe('#1207 the collection cover editor', () => {
       .filter((a) => a.processing_status === 'ready' && isRasterImage(a.file_extension))
       .sort((a, b) => a.id.localeCompare(b.id));
 
+    // ⚠️ ANONYMOUSLY READABLE, VERIFIED — not assumed from the admin's
+    // listing.
+    //
+    // The rail test below asserts what a VISITOR sees, and the seeded
+    // library is mostly `team` and `restricted` tier: `sensitivity` is
+    // deliberately absent from the Asset schema, so an admin-side
+    // listing cannot tell which rows a visitor can picture. Picking two
+    // by id order and hoping produced a test that passed until the
+    // upload test above added an asset, shifted the 200-row window, and
+    // handed the fixture a team-tier picture — at which point the rail
+    // correctly fell back and the failure read as "the rail ignores the
+    // curator's choice", which is the one thing it does not do.
+    //
+    // So each candidate is checked with a session-less context, and the
+    // first two that answer 200 are the fixture.
+    const anon = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+    try {
+      for (const a of candidates) {
+        if (memberIds.length === 2) break;
+        const r = await anon.request.get(`/api/v1/assets/${a.id}/variants/col`);
+        if (r.ok()) memberIds.push(a.id);
+      }
+    } finally {
+      await anon.close();
+    }
+
     // TWO members, not one, and the whole spec depends on it: a single
     // picture cannot tell "the featured slot took my choice" from "the
     // featured slot inherited the collection cover".
     expect(
-      candidates.length,
-      'the seeded stack needs at least two ready raster assets to tell the two cover slots apart',
-    ).toBeGreaterThanOrEqual(2);
-    memberIds = candidates.slice(0, 2).map((a) => a.id);
+      memberIds.length,
+      'the seeded stack needs two anonymously-picturable raster assets to tell the cover slots apart',
+    ).toBe(2);
 
     const created = await request.post('/api/v1/collections', {
       data: { name: COLLECTION_NAME, description: 'fixture for #1207' },
@@ -411,6 +487,172 @@ test.describe('#1207 the collection cover editor', () => {
       'clear_featured_cover_focal did not clear y',
     ).toBeNull();
     expect(after.cover_asset_id ?? null, 'clear_cover did not clear').toBeNull();
+  });
+
+
+  // Modal grew a shared open-order stack for this dialog, and that is a
+  // change to a component five other surfaces use. The property it buys
+  // is the one below: Escape steps back exactly ONE level. Before it,
+  // the document-level handler had every open instance answering every
+  // press, so one Escape over the editor would also have dismissed the
+  // form behind it — taking the curator's unsaved edits with it.
+  test('Escape closes the cover editor and leaves the form open', async ({ page }) => {
+    await openCoverEditor(page);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('collection-cover-editor')).toBeHidden();
+    await expect(
+      page.getByTestId('collection-cover-section'),
+      'Escape dismissed the edit form as well as the dialog on top of it',
+    ).toBeVisible();
+    // And a second press closes the form, so nothing has been trapped.
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('collection-cover-section')).toBeHidden();
+  });
+
+  // ── #1074, folded into #1207: a cover that is NOT a member ─────────
+  //
+  // The write gate has always been CallerMayPictureAsset, never a
+  // membership check — verified in the handler, not inferred from the
+  // issue. So the capability existed and only the picker withheld it.
+  // These two tests are the proof that a curator can now reach it.
+
+  test('a picture from MY FILES can be the cover without joining the collection', async ({
+    page,
+    request,
+  }) => {
+    const editor = await openCoverEditor(page);
+    await editor.getByTestId('collection-source-mine').click();
+    const results = editor.getByTestId('collection-mine-choice');
+    await expect(
+      results.first(),
+      'the my-files search returned nothing for the admin who owns the seeded library',
+    ).toBeVisible({ timeout: 15000 });
+
+    const outsider = await results.first().getAttribute('data-asset-id');
+    expect(outsider, 'a result carries no asset id').toBeTruthy();
+    await results.first().click();
+
+    await page.getByTestId('cover-editor-done').click();
+    await saveAndAwaitPatch(page);
+
+    const saved = await fetchCollection(page);
+    expect(saved.cover_asset_id, 'a non-member cover did not persist').toBe(outsider);
+
+    // AND IT IS NOT A MEMBER. The whole point of the free pointer is
+    // that choosing a picture does not add it to the collection — a
+    // cover that quietly joined would change what the collection IS.
+    const members = await request.get(`/api/v1/collections/${collectionId}/resources?limit=200`);
+    const { items } = (await members.json()) as { items: Array<{ asset_id: string }> };
+    expect(
+      items.some((m) => m.asset_id === outsider),
+      'choosing a cover added it to the collection — the pointer is supposed to be free',
+    ).toBe(false);
+  });
+
+  // A FRESH UPLOAD, on a PUBLIC collection, read back by an ANONYMOUS
+  // visitor. That last hop is the whole acceptance: an uploaded cover
+  // the curator can see and a visitor cannot is the "reads as broken"
+  // failure the tier rule exists to prevent — and the axis that decides
+  // it is `status`, because the anonymous asset predicate requires
+  // `status = 'active'` while assets default to `draft` from the upload
+  // queue. (`sensitivity` already defaults to the widest tier and has
+  // no write API at all.)
+  test('a freshly uploaded cover reaches an anonymous visitor on a public collection', async ({
+    page,
+    browser,
+    request,
+  }) => {
+    await request.patch(`/api/v1/collections/${collectionId}`, { data: { visibility: 'public' } });
+
+    const editor = await openCoverEditor(page);
+    await editor.getByTestId('featured-source-upload').click();
+    await expect(editor.getByTestId('featured-upload-pane')).toBeVisible();
+
+    // A real 2:1 PNG, so the marquee has travel on the x axis and the
+    // picture is unmistakably the uploaded one rather than a member.
+    await editor.getByTestId('featured-upload-input').setInputFiles({
+      name: `cover-1207-${STAMP}.png`,
+      mimeType: 'image/png',
+      buffer: makeWidePng(),
+    });
+    await expect(editor.getByTestId('featured-uploading')).toBeHidden({ timeout: 30000 });
+
+    await page.getByTestId('cover-editor-done').click();
+    await saveAndAwaitPatch(page);
+
+    const saved = await fetchCollection(page);
+    const uploaded = saved.featured_cover_asset_id;
+    expect(uploaded, 'the uploaded picture did not become the featured cover').toBeTruthy();
+    expect(uploaded, 'the uploaded picture is one of the members — it should be new').not.toBe(
+      memberIds[0],
+    );
+    expect(uploaded).not.toBe(memberIds[1]);
+
+    // THE ANONYMOUS READ. Not "the admin can see it" — the admin can
+    // see everything, which is exactly why re-reading as the writer
+    // proves nothing (#946).
+    //
+    // POLLED, because the last gate is asynchronous and that is a
+    // property of the product rather than of the test. The anonymous
+    // asset predicate wants `status = 'active'` AND
+    // `sensitivity = 'public'` AND `processing_status = 'ready'`; the
+    // first two are decided at create time by the rule this test is
+    // about, and the third is decided by the raster worker a second or
+    // so later. CallerMayPictureAsset documents the same asymmetry from
+    // the other side — it deliberately does NOT require a rendition,
+    // because refusing a just-uploaded cover would be an error the
+    // curator cannot act on. So the cover is chosen immediately and
+    // becomes visible shortly after, and a snapshot assertion here
+    // would report that ordinary sequence as the tier bug.
+    const anon = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+    try {
+      await expect
+        .poll(
+          async () => (await anon.request.get(`/api/v1/assets/${uploaded}`)).status(),
+          {
+            timeout: 60000,
+            message:
+              'a visitor never got to read the uploaded cover. If it never reaches 200 the ' +
+              'upload went up as a draft on a PUBLIC collection, which is the silent-fallback ' +
+              'failure the status rule exists to prevent.',
+          },
+        )
+        .toBe(200);
+
+      // AND ON THE RAIL, which is where the curator will look for it.
+      await request.patch(`/api/v1/collections/${collectionId}`, {
+        data: { visibility: 'public' },
+      });
+      const placed = await request.post('/api/v1/admin/featured', {
+        data: { subject_kind: 'collection', subject_id: collectionId, scope: 'public' },
+      });
+      expect(placed.ok(), 'featuring the fixture collection must succeed').toBeTruthy();
+      const placementId = ((await placed.json()) as { id: string }).id;
+      try {
+        await expect
+          .poll(
+            async () => {
+              const rail = await anon.request.get('/api/v1/featured?limit=50');
+              const { items } = (await rail.json()) as {
+                items: Array<{ subject_id: string; cover_asset_id?: string | null }>;
+              };
+              return items.find((i) => i.subject_id === collectionId)?.cover_asset_id ?? null;
+            },
+            {
+              timeout: 60000,
+              message:
+                'the anonymous rail never showed the uploaded cover — it is falling back to ' +
+                'something a visitor can see instead, which is correct behaviour for a cover ' +
+                'they cannot, and therefore the failure this test is for',
+            },
+          )
+          .toBe(uploaded);
+      } finally {
+        await request.delete(`/api/v1/admin/featured/${placementId}`).catch(() => undefined);
+      }
+    } finally {
+      await anon.close();
+    }
   });
 
   // The rail is the surface all of this exists to feed (#1200). It read
