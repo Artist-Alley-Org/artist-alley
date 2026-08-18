@@ -16,6 +16,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { t } from '$stores/lang.svelte';
   import { portal } from '$lib/portal';
+  import { modalStack, pushModal, popModal } from './modalStack';
 
   interface Props {
     title: string;
@@ -33,8 +34,27 @@
   let panel: HTMLDivElement | undefined = $state();
   let previousFocus: HTMLElement | null = null;
 
+  // ── Only the TOP modal answers Escape (#1207) ──────────────────────
+  //
+  // The Escape handler is on the DOCUMENT, so every open instance hears
+  // every press. With one modal on screen that was invisible; #1207's
+  // cover editor opens from inside the collection edit modal, and two
+  // instances both calling `onclose` means one Escape dismisses the
+  // editor AND the form behind it — the curator loses unsaved edits to
+  // a keystroke that should have stepped back one level.
+  //
+  // A module-level stack rather than a z-index comparison or a
+  // "topmost" prop: stacking order here is open ORDER, the component
+  // already knows when it opens and closes, and a prop would put the
+  // answer in the hands of every caller that nests anything. `token` is
+  // an object identity so two modals can never collide on a key.
+  const token = {};
+  function isTopModal() {
+    return modalStack.length > 0 && modalStack[modalStack.length - 1] === token;
+  }
+
   function onKeydown(e: KeyboardEvent) {
-    if (!open) return;
+    if (!open || !isTopModal()) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       onclose();
@@ -46,15 +66,20 @@
   });
   onDestroy(() => {
     document.removeEventListener('keydown', onKeydown);
+    popModal(token);
   });
 
   $effect(() => {
     if (open) {
+      pushModal(token);
       previousFocus = document.activeElement as HTMLElement | null;
       queueMicrotask(() => panel?.querySelector<HTMLElement>('input, textarea, button')?.focus());
-    } else if (previousFocus) {
-      previousFocus.focus();
-      previousFocus = null;
+    } else {
+      popModal(token);
+      if (previousFocus) {
+        previousFocus.focus();
+        previousFocus = null;
+      }
     }
   });
 
