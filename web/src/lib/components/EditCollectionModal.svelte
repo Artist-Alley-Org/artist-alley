@@ -10,7 +10,7 @@
   import Modal from './Modal.svelte';
   import CollectionFieldsSection from './CollectionFieldsSection.svelte';
   import CollectionCoverEditor from './CollectionCoverEditor.svelte';
-  import { objectPosition } from '$lib/util/featuredCrop';
+  import { coverPlacement } from '$lib/util/featuredCrop';
 
   // The tiers a collection can hold, widest first.
   //
@@ -54,6 +54,9 @@
     featured_cover_focal_y?: number | null;
     cover_focal_x?: number | null;
     cover_focal_y?: number | null;
+    // #1212 — how far each crop is tightened. Null is the fit.
+    featured_cover_zoom?: number | null;
+    cover_zoom?: number | null;
   }
 
   // One choosable picture in the cover picker.
@@ -122,6 +125,12 @@
   // The COLLECTION cover's own pair, on the square destination (#1207).
   let coverFocalX = $state<number | null>(null);
   let coverFocalY = $state<number | null>(null);
+  // #1212 — how far each crop is tightened. Null is the fit, and it is
+  // a THIRD independent tri-state rather than a companion of the focal
+  // pair: a curator can tighten without moving and move without
+  // tightening, so each carries its own value and its own clear.
+  let zoom = $state<number | null>(null);
+  let coverZoom = $state<number | null>(null);
   let coverEditorOpen = $state(false);
 
   $effect(() => {
@@ -136,6 +145,12 @@
       focalY = collection.featured_cover_focal_y ?? null;
       coverFocalX = collection.cover_focal_x ?? null;
       coverFocalY = collection.cover_focal_y ?? null;
+      // `?? null` and NOT `|| null`: a stored zoom of 1 is a real value
+      // — "framed, and the answer was the fit" — and truthiness would
+      // read it as unset, silently turning an explicit choice into a
+      // clear on the next save. Same trap #1081 closed on this table.
+      zoom = collection.featured_cover_zoom ?? null;
+      coverZoom = collection.cover_zoom ?? null;
       error = null;
       conflict = null;
       focusCoverHandled = false;
@@ -243,7 +258,7 @@
   // is judging a crop by; the editor, which IS judging one, loads what
   // the strip loads. Different questions, different sources, and the
   // difference is stated here so a later edit does not "unify" them.
-  const summaryPosition = $derived(objectPosition(focalX, focalY));
+  const summaryPlacement = $derived(coverPlacement(focalX, focalY, zoom));
 
   async function submit() {
     if (!name.trim() || submitting) return;
@@ -293,6 +308,21 @@
               ? { clear_cover_focal: true }
               : {}
             : { cover_focal_x: coverFocalX, cover_focal_y: coverFocalY }),
+          // #1212 — two more tri-states, and every test here is
+          // `=== null` / `!= null` rather than truthiness. A zoom of 1
+          // is a meaningful stored value that happens to render like
+          // the fit, so `zoom ? … : …` would send a clear for a value
+          // the curator deliberately chose.
+          ...(zoom === null
+            ? collection.featured_cover_zoom != null
+              ? { clear_featured_cover_zoom: true }
+              : {}
+            : { featured_cover_zoom: zoom }),
+          ...(coverZoom === null
+            ? collection.cover_zoom != null
+              ? { clear_cover_zoom: true }
+              : {}
+            : { cover_zoom: coverZoom }),
         },
       });
       if (response.status === 409) {
@@ -431,15 +461,15 @@
             <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
               {t('collections.cover_summary_featured')}
             </figcaption>
-            <div class="overflow-hidden rounded border border-border bg-surface-elevated"
+            <div class="relative overflow-hidden rounded border border-border bg-surface-elevated"
                  style="aspect-ratio: 890 / 500">
               {#if featuredEffectiveId}
                 <img
                   src={coverUrl(featuredEffectiveId)}
                   alt=""
                   data-testid="cover-summary-featured"
-                  class="h-full w-full object-cover"
-                  style="object-position: {summaryPosition}"
+                  class="object-cover"
+                  style={summaryPlacement}
                 />
               {:else}
                 <div class="flex h-full items-center justify-center text-[10px] text-fg-muted">
@@ -520,4 +550,6 @@
   bind:focalY
   bind:coverFocalX
   bind:coverFocalY
+  bind:zoom
+  bind:coverZoom
 />

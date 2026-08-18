@@ -25,11 +25,14 @@
 
   import { t } from '$stores/lang.svelte';
   import {
+    MAX_ZOOM,
+    MIN_ZOOM,
+    clampZoom,
+    coverPlacement,
     cropWindow,
     focalFromOrigin,
     hasTravel,
     marqueeOrigin,
-    objectPosition,
   } from '$lib/util/featuredCrop';
 
   interface Props {
@@ -44,6 +47,11 @@
     /** The stored focal pair, null for centre. Bound both ways. */
     focalX: number | null;
     focalY: number | null;
+    /** The stored zoom, null for the fit (#1212). Bound both ways.
+     *  Null rather than 1 so the caller can tell "never framed" from
+     *  "framed, and the answer was the fit" — the same distinction the
+     *  focal pair keeps, and what makes Reset a clear. */
+    zoom: number | null;
     /** Prefixes every data-testid, so two instances on one screen are
      *  addressable apart. */
     testidPrefix: string;
@@ -69,6 +77,7 @@
     aspect,
     focalX = $bindable(),
     focalY = $bindable(),
+    zoom = $bindable(),
     testidPrefix,
     stageAlt,
     cardAlt,
@@ -109,12 +118,27 @@
     if (src) failedSrc = src;
   }
 
-  const win = $derived(naturalNow ? cropWindow(naturalNow.w / naturalNow.h, aspect) : null);
-  /** Which axis the curator can actually move on. Exactly one, ever —
-   *  `object-fit: cover` trims one axis and shows the other whole. */
+  /** The zoom as a usable multiplier — 1 whenever nothing is stored. */
+  const z = $derived(clampZoom(zoom));
+
+  const win = $derived(naturalNow ? cropWindow(naturalNow.w / naturalNow.h, aspect, z) : null);
+  /** Which axis the curator can actually move on.
+   *
+   *  AT THE FIT THIS IS EXACTLY ONE AXIS, EVER — `object-fit: cover`
+   *  trims one and shows the other whole — and that is the defect #1212
+   *  is about: a portrait cover in a wide window is pinned to full
+   *  width, so a subject in its left half can never be brought to the
+   *  middle. Zooming shrinks the window on BOTH axes, so both start
+   *  travelling; nothing here special-cases that, because it falls out
+   *  of `cropWindow` taking the zoom. */
   const canMoveX = $derived(win !== null && hasTravel(win.w));
   const canMoveY = $derived(win !== null && hasTravel(win.h));
   const canMove = $derived(canMoveX || canMoveY);
+  /** Is there any tightening left? The marquee stays operable while
+   *  there is, because its `+`/`-` keys are the a11y twin of the
+   *  slider — and a picture with NO travel is precisely the one a
+   *  curator reaches for zoom on. */
+  const canZoomIn = $derived(win !== null && z < MAX_ZOOM);
 
   const fx = $derived(focalX ?? 0.5);
   const fy = $derived(focalY ?? 0.5);
@@ -130,7 +154,9 @@
         },
   );
 
-  const previewPosition = $derived(objectPosition(focalX, focalY));
+  /** The destination's own CSS, from the helper every consumer uses —
+   *  so this preview cannot drift from the card it predicts. */
+  const previewPlacement = $derived(coverPlacement(focalX, focalY, zoom));
 
   // ── Dragging ───────────────────────────────────────────────────────
   //
@@ -149,11 +175,50 @@
    *  positioning control loses the position it was showing. */
   let grabOffset = { x: 0, y: 0 };
 
+  /** Every pointer currently down ON THE MARQUEE, by id.
+   *
+   *  Kept because a pinch is two pointers and `setPointerCapture` gives
+   *  each of them its own stream: without a record of the other one
+   *  there is no distance to compare, and the gesture cannot be
+   *  recognised at all. One pointer is a drag, two are a pinch, and the
+   *  transition between them is why `dragging` is cleared rather than
+   *  left running — a second finger landing mid-drag must stop moving
+   *  the crop, not fight the scale. */
+  const pointers = new Map<number, { x: number; y: number }>();
+  /** Distance between the two pinch pointers when the gesture began,
+   *  and the zoom it began at. Ratios are taken against these rather
+   *  than accumulated per move: accumulating multiplies rounding error
+   *  by the number of events, and a pinch fires a lot of them. */
+  let pinchStart: { dist: number; zoom: number } | null = null;
+
+  /** The one place a zoom is written. Clamped to the ladder-derived
+   *  bounds, and stored as a NUMBER — including exactly 1, which is a
+   *  deliberate "back to the fit" and is not the same as the null a
+   *  Reset writes. */
+  function setZoom(v: number) {
+    zoom = clampZoom(v);
+  }
+
+  function pinchDistance(): number | null {
+    if (pointers.size < 2) return null;
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
   function onPointerDown(e: PointerEvent) {
     const rect = stage?.getBoundingClientRect();
-    if (!rect || !win || !canMove) return;
+    if (!rect || !win) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const d = pinchDistance();
+    if (d !== null) {
+      // Second finger: the gesture is a pinch from here.
+      dragging = false;
+      pinchStart = { dist: d, zoom: z };
+      return;
+    }
+    if (!canMove) return;
     dragging = true;
     grabOffset = {
       x: (e.clientX - rect.left) / rect.width - marqueeOrigin(fx, win.w),
@@ -162,6 +227,15 @@
   }
 
   function onPointerMove(e: PointerEvent) {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinchStart) {
+      const d = pinchDistance();
+      if (d !== null && pinchStart.dist > 0) {
+        e.preventDefault();
+        setZoom((pinchStart.zoom * d) / pinchStart.dist);
+      }
+      return;
+    }
     if (!dragging) return;
     const rect = stage?.getBoundingClientRect();
     if (!rect || !win) return;
@@ -178,9 +252,31 @@
   }
 
   function endDrag(e: PointerEvent) {
-    if (!dragging) return;
-    dragging = false;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStart = null;
+    if (dragging) dragging = false;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+  }
+
+  /** Wheel over the stage zooms (#1212).
+   *
+   *  MULTIPLICATIVE, not additive: a fixed step feels glacial at 1x and
+   *  violent at 4x, because what the eye reads is the RATIO of window
+   *  sizes. 1.0015 per deltaY unit gives roughly the same perceived
+   *  speed everywhere on the range.
+   *
+   *  `deltaMode` is honoured because a mouse that reports lines rather
+   *  than pixels sends deltas around 3 instead of 100, and treating
+   *  them alike makes the wheel do nothing at all on that mouse.
+   *
+   *  preventDefault stops the dialog scrolling out from under the
+   *  picture being framed, which is the same reason the arrow keys are
+   *  claimed below. */
+  function onWheel(e: WheelEvent) {
+    if (!win) return;
+    e.preventDefault();
+    const perUnit = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 0.5 : 0.0015;
+    setZoom(z * Math.exp(-e.deltaY * perUnit));
   }
 
   function setFocal(x: number, y: number) {
@@ -196,7 +292,26 @@
    *  dialog body scrolls, and an unclaimed ArrowDown would scroll the
    *  page out from under the control being used. */
   function onKeydown(e: KeyboardEvent) {
-    if (!win || !canMove) return;
+    if (!win) return;
+    // Zoom first, and NOT gated on `canMove`: a picture that is already
+    // card-shaped has no travel to nudge and is exactly the picture a
+    // curator most wants to tighten, so the keys that answer that have
+    // to work when the nudge keys do not.
+    //
+    // `=` rides with `+` because on a US layout `+` needs Shift, and a
+    // control that demands a modifier to zoom in but not to zoom out is
+    // a control people press twice and give up on.
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      setZoom(z * ZOOM_KEY_STEP);
+      return;
+    }
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      setZoom(z / ZOOM_KEY_STEP);
+      return;
+    }
+    if (!canMove) return;
     const step = e.shiftKey ? 0.1 : 0.02;
     let x = fx;
     let y = fy;
@@ -232,13 +347,28 @@
     return v < 0 ? 0 : v > 1 ? 1 : v;
   }
 
-  /** Back to centre — a CLEAR, not a re-set to 0.5. Null and 0.5 render
-   *  identically and are stored differently on purpose (see the
-   *  migration): this is what makes "the curator never positioned this"
-   *  recoverable. */
+  /** One press per keyboard step. 1.15 rather than a round 1.25 so the
+   *  full 1..4 range takes about ten presses — the same "roughly ten
+   *  presses end to end" the 2%-of-travel nudge step gives the arrows,
+   *  so the two halves of the control feel like one. */
+  const ZOOM_KEY_STEP = 1.15;
+
+  /** Back to the fit, centred — a CLEAR of all three values, not a
+   *  re-set to 0.5/0.5/1. Null and the neutral numbers render
+   *  identically and are stored differently on purpose (see migrations
+   *  00055 and 00056): this is what makes "the curator never framed
+   *  this" recoverable.
+   *
+   *  Zoom is cleared TOGETHER with the position even though the two are
+   *  independent settings on the wire. They are independent because
+   *  each can be changed without the other; Reset is not a change to
+   *  one of them, it is the single "put this back how it was" the
+   *  curator reaches for, and leaving a 3x tightening behind after it
+   *  would be the control not doing what it says. */
   function resetFocal() {
     focalX = null;
     focalY = null;
+    zoom = null;
   }
 
   const positionLabel = $derived(
@@ -277,7 +407,13 @@
            its own puts the overlay over the BOX instead of over the
            picture — the exact bug this surface exists to reveal. -->
       <div class="flex justify-center rounded border border-border bg-surface p-2">
-        <div bind:this={stage} class="relative inline-block max-w-full align-top">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          bind:this={stage}
+          onwheel={onWheel}
+          class="relative inline-block max-w-full align-top"
+          style="touch-action: none;"
+        >
           <img
             {src}
             {srcset}
@@ -323,7 +459,7 @@
               data-testid="{testidPrefix}-marquee"
               aria-label={t('collections.cover_editor_marquee_label')}
               aria-describedby="{testidPrefix}-position"
-              disabled={!canMove}
+              disabled={!canMove && !canZoomIn}
               onpointerdown={onPointerDown}
               onpointermove={onPointerMove}
               onpointerup={endDrag}
@@ -353,6 +489,7 @@
         data-testid="{testidPrefix}-position"
         data-focal-x={focalX === null ? '' : String(focalX)}
         data-focal-y={focalY === null ? '' : String(focalY)}
+        data-zoom={zoom === null ? '' : String(zoom)}
       >
         {#if isPending}
           {t('collections.cover_editor_stage_pending')}
@@ -364,6 +501,48 @@
           {t('collections.cover_editor_drag_hint')} — {positionLabel}
         {/if}
       </p>
+
+      <!-- THE ZOOM CONTROL (#1212).
+           A native `range` rather than a pair of buttons or a bespoke
+           slider, and the reason is a11y rather than effort: it is
+           focusable, arrow-key operable, announced with its value and
+           its bounds, and respects the platform's own step behaviour —
+           all of which a div with pointer handlers would have to
+           reimplement and would get subtly wrong. Wheel-over-the-stage
+           and pinch are conveniences layered on top of it; this is the
+           control, and it is the one the keyboard path uses.
+
+           It lives UNDER THE STAGE rather than beside the preview
+           because it changes what the stage's marquee shows, and a
+           control placed away from the thing it moves is the surface
+           complaint #1207 already fixed once. -->
+      {#if win}
+        <div class="mt-3 flex items-center gap-3">
+          <label
+            class="text-[10px] uppercase tracking-wide text-fg-muted"
+            for="{testidPrefix}-zoom"
+          >
+            {t('collections.cover_editor_zoom_label')}
+          </label>
+          <input
+            id="{testidPrefix}-zoom"
+            type="range"
+            data-testid="{testidPrefix}-zoom"
+            min={MIN_ZOOM}
+            max={MAX_ZOOM}
+            step="0.01"
+            value={z}
+            oninput={(e) => setZoom((e.currentTarget as HTMLInputElement).valueAsNumber)}
+            class="h-1 min-w-0 flex-1 accent-accent"
+          />
+          <span
+            class="w-12 shrink-0 text-right text-xs tabular-nums text-fg-muted"
+            data-testid="{testidPrefix}-zoom-value"
+          >
+            {t('collections.cover_editor_zoom_value', { z: z.toFixed(2) })}
+          </span>
+        </div>
+      {/if}
     </figure>
 
     <!-- RIGHT: the destination itself, drawn the way the destination
@@ -385,7 +564,7 @@
            slot down. The wide card is unaffected: 52vh x 1.78 is wider
            than any column it sits in. -->
       <div
-        class="overflow-hidden rounded-lg border border-border bg-surface-elevated"
+        class="relative overflow-hidden rounded-lg border border-border bg-surface-elevated"
         style="aspect-ratio: {aspect}; max-width: calc({maxHeightVh}vh * {aspect});"
       >
         <img
@@ -394,15 +573,15 @@
           {sizes}
           alt={cardAlt}
           data-testid="{testidPrefix}-card-preview"
-          class="h-full w-full object-cover"
-          style="object-position: {previewPosition}"
+          class="object-cover"
+          style={previewPlacement}
         />
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onclick={resetFocal}
-          disabled={focalX === null && focalY === null}
+          disabled={focalX === null && focalY === null && zoom === null}
           data-testid="{testidPrefix}-reset-focal"
           class="rounded border border-border px-2 py-1 text-xs hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
         >

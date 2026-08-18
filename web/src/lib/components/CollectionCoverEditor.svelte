@@ -71,6 +71,12 @@
      *  known shape, and 890:500 and 1:1 are different shapes. */
     coverFocalX: number | null;
     coverFocalY: number | null;
+    /** How far each slot's crop is tightened, null for the fit (#1212).
+     *  One per slot for the same reason there are two focal pairs: the
+     *  amount of tightening that frames a subject in an 890:500 band is
+     *  not the amount that frames it in a 4:3 tile. */
+    zoom: number | null;
+    coverZoom: number | null;
   }
 
   let {
@@ -85,6 +91,8 @@
     focalY = $bindable(),
     coverFocalX = $bindable(),
     coverFocalY = $bindable(),
+    zoom = $bindable(),
+    coverZoom = $bindable(),
   }: Props = $props();
 
   // ── Which picture each slot is showing ─────────────────────────────
@@ -672,6 +680,7 @@
             aspect={CARD_ASPECT}
             bind:focalX
             bind:focalY
+            bind:zoom
             testidPrefix="cover-editor"
             stageAlt={t('collections.cover_editor_stage_alt')}
             cardAlt={t('collections.cover_editor_card_alt')}
@@ -743,6 +752,7 @@
               aspect={COLLECTION_CARD_ASPECT}
               bind:focalX={coverFocalX}
               bind:focalY={coverFocalY}
+              bind:zoom={coverZoom}
               testidPrefix="collection-crop"
               maxHeightVh={32}
               stageAlt={t('collections.cover_editor_cover_stage_alt')}
