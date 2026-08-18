@@ -175,6 +175,29 @@ motion, esports tournament, retro gaming console.
   - Madame Roulin and Her Baby — Vincent van Gogh, 1888
   - The Abduction of the Sabine Women — Nicolas Poussin, 1633–34
 
+- **[Met Museum Open Access](https://www.metmuseum.org/art/collection/open-access)**
+  (CC0 1.0) — the twelve works this dataset labels `mature: true`
+  (#1217). They are classical nudes and academic life studies, added
+  because the dataset needed content that HONESTLY carries the label:
+
+  | Work | Artist | Date |
+  |---|---|---|
+  | Venus and Cupid | Lucas Cranach the Elder | ca. 1525–27 |
+  | Venus and Cupid | Lorenzo Lotto | 1520s |
+  | Venus and the Lute Player | Titian | ca. 1565–70 |
+  | Venus and Adonis | Titian | 1550s |
+  | Venus and Adonis | Peter Paul Rubens | probably mid-1630s |
+  | Mars and Venus United by Love | Paolo Veronese | 1570s |
+  | The Toilette of Venus | François Boucher | 1751 |
+  | Pygmalion and Galatea | Jean-Léon Gérôme | ca. 1890 |
+  | Study of a Female Nude | Henri Lehmann | 1840 |
+  | Study of a Nude Man | Gustave Courbet | early 1840s |
+  | Study of a Male Nude | Cavaliere d'Arpino | 1568–1640 |
+  | Marble Statue Group of the Three Graces | Roman | 2nd century CE |
+
+  Each entry carries its Met object id and object URL in
+  `metadata.met_object_id` / `metadata.met_object_url`.
+
 - **Wikimedia Commons** public-domain reproductions:
   - The Great Wave off Kanagawa — Katsushika Hokusai (c. 1831)
   - The Starry Night — Vincent van Gogh (1889), Google Art Project digitisation
@@ -195,6 +218,29 @@ motion, esports tournament, retro gaming console.
 - **The Models Resource** (referenced game rips) — NOT included in this
   Layer A dataset. Those assets live only in site_b (the local-only
   full dataset) and never ship publicly.
+
+## The `mature` label, and why these twelve
+
+`MANIFEST.json` carries a boolean `mature` on every asset. It is a
+CONTENT RATING and it is independent of `sensitivity_tier`, which is a
+clearance: a public work can be mature, and a restricted one need not
+be. Twelve assets are labelled; every other entry is `false`.
+
+**Why classical fine art with nudity.** A DAM's mature flag exists for
+the case a museum or a studio actually meets: work that is entirely
+legitimate, entirely public, and that some viewers have not opted into
+seeing. Classical nudes and academic life studies are that case exactly,
+they are public-domain, and they are content an art team genuinely keeps
+as figure reference. Labelling anything else in this dataset would have
+been a lie told to make a test fixture exist.
+
+**Why they are `public` tier.** Making them team-tier would have hidden
+them behind a clearance and left the rating untested — the two axes have
+to be able to disagree for either to be exercised.
+
+**If you do not want them**, drop the twelve entries whose `mature` is
+true and the two posts that carry them (`Life drawing reference` and
+`Anatomy reference`); nothing else in the dataset references them.
 
 ## Studio simulation metadata
 

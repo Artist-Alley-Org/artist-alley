@@ -117,6 +117,17 @@ func covFixture(t *testing.T) *catalogues {
 	for i := 0; i < 3; i++ {
 		add(fmt.Sprintf("fnt-%d", i), "font", "ttf", "face.ttf", "Beta", "UI", nil)
 	}
+	// TWO MATURE assets (#1217), and they are PUBLIC-tier on purpose:
+	// the rating and the clearance are independent axes (ADR 0090), so a
+	// fixture that only ever marked a restricted asset mature could not
+	// tell a selection that honours the rating from one that is merely
+	// following the tier. Two rather than one so the depth floor has a
+	// second candidate and the required dimension is not satisfied by an
+	// asset the greedy stage had to take anyway.
+	for i := 0; i < 2; i++ {
+		add(fmt.Sprintf("mature-%d", i), "image", "png", "b.png", "Beta", "Environment",
+			func(a *manifestAsset) { a.SensitivityTier = "public"; a.Mature = true })
+	}
 	// One asset with no typed field values, to prove the profile does not
 	// require every asset to carry them.
 	add("txt-0", "document", "txt", "notes.txt", "Alpha", "Reference",
@@ -500,6 +511,21 @@ func TestCoverageProfile_RealCatalogue(t *testing.T) {
 	if rep.Companions == 0 {
 		t.Error("no companion-bearing assets survived")
 	}
+	// #1217 — against the REAL catalogue, not just the hand-built
+	// fixture. This is the assertion that would have caught the shipped
+	// state: the dataset had no mature asset at all, so the axis had no
+	// fixture on any seeded install.
+	mature := 0
+	for _, a := range c.Assets {
+		if a.Mature {
+			mature++
+		}
+	}
+	if mature == 0 {
+		t.Error("the real catalogue's CI selection kept no mature asset — the mature axis " +
+			"(ADR 0090) cannot be exercised by a CI seed built from it")
+	}
+	t.Logf("mature assets in the CI selection: %d", mature)
 }
 
 // --- helpers ----------------------------------------------------------
@@ -560,4 +586,60 @@ func containsDim(ds []dim, want dim) bool {
 		}
 	}
 	return false
+}
+
+// ── #1217: the mature axis needs a fixture, and the profile must keep it
+//
+// The failure this guards is silent by construction: `assets.mature`
+// defaults to false, so a catalogue that cannot express the label seeds
+// an instance where every mature spec passes without the mature rule
+// ever running — which is exactly the state the seeder shipped in until
+// the manifest gained the field.
+func TestCoverageProfile_KeepsAMatureAsset(t *testing.T) {
+	c := covFixture(t)
+	rep, err := covRun(t, c, 4)
+	if err != nil {
+		t.Fatalf("coverage profile: %v", err)
+	}
+	if containsDim(rep.MissingReq, dim{dimAssetMature, "true"}) {
+		t.Fatalf("MissingReq = %v, want a mature asset to survive selection", rep.MissingReq)
+	}
+	if containsDim(rep.Uncovered, dim{dimAssetMature, "true"}) {
+		t.Fatalf("Uncovered = %v, want a mature asset to survive selection", rep.Uncovered)
+	}
+	// ⚠️ AND IT IS ACTUALLY IN THE SELECTED SET. The dimension bookkeeping
+	// and the surviving catalogue are two different things, and it is the
+	// second one CI seeds from.
+	kept := 0
+	for _, a := range c.Assets {
+		if a.Mature {
+			kept++
+		}
+	}
+	if kept == 0 {
+		t.Error("the CI profile selected no mature asset — the axis has no fixture")
+	}
+}
+
+// The other half: a catalogue with no labelled asset must FAIL the
+// profile rather than seed a fixture that cannot exercise the axis. Same
+// discipline as the media-class and companion-class checks above (ADR
+// 0068) — the dataset is refreshed independently of this repo, and a
+// refresh that drops the label should red the seed, not quietly narrow
+// what CI covers.
+func TestCoverageProfile_ErrorsWhenNoAssetIsMature(t *testing.T) {
+	c := covFixture(t)
+	for i := range c.Assets {
+		c.Assets[i].Mature = false
+	}
+	rep, err := covRun(t, c, 4)
+	if err == nil {
+		t.Fatal("expected an error: this catalogue cannot exercise the mature axis")
+	}
+	if rep == nil {
+		t.Fatal("report should come back even on the error path")
+	}
+	if !containsDim(rep.MissingReq, dim{dimAssetMature, "true"}) {
+		t.Errorf("MissingReq = %v, want it to name %s", rep.MissingReq, dim{dimAssetMature, "true"})
+	}
 }

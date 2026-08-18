@@ -96,8 +96,21 @@ type manifestAsset struct {
 	// FileSizeBytes is advisory only — the seeder writes the size it
 	// measures off disk, not this. Coverage selection reads it to
 	// prefer cheap assets over expensive ones (#768).
-	FileSizeBytes    int64           `json:"file_size_bytes"`
-	SensitivityTier  string          `json:"sensitivity_tier"`
+	FileSizeBytes   int64  `json:"file_size_bytes"`
+	SensitivityTier string `json:"sensitivity_tier"`
+	// Mature is the catalogue's own content LABEL, and it is a second
+	// axis rather than a tier inside SensitivityTier (ADR 0090): a
+	// public artwork can be mature and a restricted one need not be, so
+	// the two travel separately from the manifest all the way to the
+	// two columns. Absent/false is the honest default for a catalogue
+	// entry nobody has labelled.
+	//
+	// It has to be modelled HERE to be seeded at all — an unmodelled
+	// JSON key is silently dropped by the decoder, which is how the
+	// mature axis came to be unexercised on every seeded instance
+	// (#1217) even though the schema, the predicate and the UI had
+	// shipped.
+	Mature           bool            `json:"mature"`
 	ArchiveState     string          `json:"archive_state"`
 	OwnerUsername    string          `json:"owner_username"`
 	CollectionName   string          `json:"collection_name"`

@@ -372,6 +372,7 @@ transform):
 | `approver` | `users.username` + review actor | |
 | `status` | `workflow_states.name` | Maps to 5-state workflow |
 | `confidentiality` | `assets.sensitivity_tier` | Public→public, Internal→team, Restricted→restricted |
+| — | `assets.mature` | Manifest `mature` (bool), a CONTENT RATING and a second axis — never derived from the tier (#1217, ADR 0090). Twelve public-domain classical nudes carry `true`; see ATTRIBUTIONS.md for the list and the reasoning. Posts get theirs from a DB trigger off membership, so `posts.json` says nothing about it |
 | `license` + `usage_rights` + `attribution` | `assets.metadata.rights` jsonb | |
 | `source` | `assets.metadata.acquisition_source` | Also drives Layer A/B |
 | — | `assets.metadata.fetched_from` | Source PAGE — attribution + licence evidence (#602) |
