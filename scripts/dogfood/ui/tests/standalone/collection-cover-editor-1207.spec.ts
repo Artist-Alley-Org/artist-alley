@@ -133,6 +133,31 @@ const provisioned: string[] = [];
  *  this run's assets and a cleanup can never touch another run's. */
 const TOKEN = `cvrfix${STAMP}`;
 
+/** ⚠️ THIS SPEC OWNS THE PUBLIC-MODE SWITCH FOR ITS DURATION.
+ *
+ *  THE INSTANCE CONFIG IS A FIXTURE TOO, and forgetting that cost two CI
+ *  rounds. Half the assertions here are the ANONYMOUS story — a visitor
+ *  reading back an uploaded cover, the anonymous rail rendering the
+ *  chosen one — and on an install with anonymous browsing off every one
+ *  of those reads 401s before any asset state is consulted. The dev
+ *  stack has it on and CI's dogfood stack does not, so a spec that
+ *  assumed it passed locally and failed there for a reason that had
+ *  nothing to do with the assets it was blaming.
+ *
+ *  ENABLED, not skipped. A skip-when-off would delete exactly the
+ *  coverage this feature needs: "the curator's cover reaches a visitor"
+ *  is the claim, and there is no visitor with the switch off.
+ *
+ *  Read in beforeAll and PUT BACK in afterAll — never assumed, never
+ *  left flipped. Same shape collection-public-tier-1195 uses, which is
+ *  the spec that established it and passes on CI.
+ *
+ *  No cache dance is needed: the admin write path calls
+ *  InvalidatePublicMode BEFORE it returns (sysconfig/handler.go:799),
+ *  so a 200 from the PATCH means the flag is already live for the next
+ *  request on every node. Restart-free by construction. */
+let priorPublicMode: boolean | undefined;
+
 test.describe('#1207 the collection cover editor', () => {
   test.describe.configure({ mode: 'serial' });
 
@@ -193,7 +218,26 @@ test.describe('#1207 the collection cover editor', () => {
     return id;
   }
 
+  async function setPublicMode(
+    request: import('@playwright/test').APIRequestContext,
+    on: boolean,
+  ) {
+    const r = await request.patch('/api/v1/admin/system/public-mode', { data: { enabled: on } });
+    expect(r.status(), `public mode must be settable to ${on}`).toBe(200);
+    // The response is the stored value, so this also confirms the write
+    // landed rather than merely being accepted.
+    expect(((await r.json()) as { enabled: boolean }).enabled).toBe(on);
+  }
+
   test.beforeAll(async ({ request, browser }) => {
+    // THE CONFIG FIXTURE, FIRST — before any asset exists, because the
+    // provisioning check below reads anonymously and would otherwise be
+    // measuring the switch rather than the assets.
+    const mode = await request.get('/api/v1/admin/system/public-mode');
+    expect(mode.status(), 'public-mode state must be readable as admin').toBe(200);
+    priorPublicMode = ((await mode.json()) as { enabled: boolean }).enabled;
+    if (!priorPublicMode) await setPublicMode(request, true);
+
     // ⚠️ THE SPEC BUILDS ITS OWN FIXTURES. It used to pick two assets
     // out of the seeded library and check they were anonymously
     // picturable; that passed on the dev stack and failed on CI with
@@ -235,10 +279,16 @@ test.describe('#1207 the collection cover editor', () => {
           .poll(async () => (await anon.request.get(`/api/v1/assets/${id}/variants/col`)).status(), {
             timeout: 120000,
             message:
-              `fixture asset ${id} never became anonymously picturable. It was created ` +
-              `status=active with the default public sensitivity, so this is either the raster ` +
-              `worker failing on the generated PNG or the tier rule not holding — NOT a reason ` +
-              `to skip: every visitor-facing assertion below depends on it.`,
+              `fixture asset ${id} never became anonymously picturable. THREE CANDIDATES, in ` +
+              `the order they have actually bitten: (1) INSTANCE CONFIG — anonymous browsing ` +
+              `off, which 401s every anonymous read before asset state is even consulted; this ` +
+              `spec enables it in beforeAll, so a 401 here means that write did not take. ` +
+              `(2) THE WORKER — the raster job failed on the generated PNG, leaving ` +
+              `processing_status at 'failed' rather than 'ready' (check the app log for ` +
+              `preview.raster). (3) THE RULE — the asset was created status=active with the ` +
+              `default public sensitivity, so a 404 with a healthy worker means the tier rule ` +
+              `is not holding. NOT a reason to skip: every visitor-facing assertion below ` +
+              `depends on this.`,
           })
           .toBe(200);
       }
@@ -270,6 +320,16 @@ test.describe('#1207 the collection cover editor', () => {
   });
 
   test.afterAll(async ({ request }) => {
+    // The switch goes back to whatever this install had, whatever else
+    // happened. Restored even on failure, and only when we know what it
+    // was — an undefined prior means beforeAll never got far enough to
+    // read it, and guessing would be how a private install gets left
+    // public by a test run.
+    if (priorPublicMode !== undefined) {
+      await request
+        .patch('/api/v1/admin/system/public-mode', { data: { enabled: priorPublicMode } })
+        .catch(() => undefined);
+    }
     // Collection first, then the pictures it pointed at — the reverse
     // order would leave the collection briefly pointing at soft-deleted
     // assets. Both are soft-deletes, so neither is destructive, and
