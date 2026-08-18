@@ -10,7 +10,7 @@
   import Modal from './Modal.svelte';
   import CollectionFieldsSection from './CollectionFieldsSection.svelte';
   import CollectionCoverEditor from './CollectionCoverEditor.svelte';
-  import { coverPlacement } from '$lib/util/featuredCrop';
+  import { coverPlacement, type CoverSlot } from '$lib/util/featuredCrop';
 
   // The tiers a collection can hold, widest first.
   //
@@ -120,18 +120,81 @@
   // pickers; this component owns the collection, the concurrency
   // baseline and the one PATCH, so it owns the values that PATCH sends.
   let featuredCoverAssetId = $state<string | null>(null);
-  let focalX = $state<number | null>(null);
-  let focalY = $state<number | null>(null);
-  // The COLLECTION cover's own pair, on the square destination (#1207).
-  let coverFocalX = $state<number | null>(null);
-  let coverFocalY = $state<number | null>(null);
-  // #1212 — how far each crop is tightened. Null is the fit, and it is
-  // a THIRD independent tri-state rather than a companion of the focal
-  // pair: a curator can tighten without moving and move without
-  // tightening, so each carries its own value and its own clear.
-  let zoom = $state<number | null>(null);
-  let coverZoom = $state<number | null>(null);
-  let coverEditorOpen = $state(false);
+  // ── The framing, ONE object keyed by SLOT (#1213) ─────────────────
+  //
+  // Six loose variables until the cover editor became a PAGE of this
+  // dialog rather than a dialog of its own. The page is now one block
+  // rendered twice with a `slot` parameter — the owner's shape, "the
+  // modal can have different pages" — and a block rendered twice cannot
+  // bind to a differently-named variable each time. `framing[slot].x`
+  // is a valid assignment target, so the page binds straight through to
+  // whichever slot it was opened for and there is no second copy of the
+  // marquee, the picker or the drag arithmetic to keep in step.
+  //
+  // Deep `$state`, passed BY REFERENCE rather than `$bindable`: the
+  // page mutates the proxy and this component sees it, which is what
+  // makes "one save applies both pages" true without a sync effect
+  // anywhere.
+  //
+  // Each slot's three values are independent tri-states. Null focal is
+  // centre, null zoom is the fit, and both are distinct from the
+  // neutral numbers — see migrations 00055 and 00056.
+  let framing = $state<Record<CoverSlot, { x: number | null; y: number | null; zoom: number | null }>>(
+    { featured: { x: null, y: null, zoom: null }, collection: { x: null, y: null, zoom: null } },
+  );
+
+  // ── ONE DIALOG, TWO PAGES (#1213) ─────────────────────────────────
+  //
+  // This used to raise CollectionCoverEditor as a SECOND `<dialog>` on
+  // top of itself, and the owner's finding was the obvious one: "why is
+  // edit collection and edit collection cover two different modals that
+  // overlap. Why not one modal?"
+  //
+  // The stack existed for a reason that has since expired. #1207 needed
+  // a near-full-viewport cover surface while this modal was still
+  // `max-w-lg`, so nesting was the only way to get room; #1195 then
+  // widened this one to `max-w-4xl`, which left the second dialog
+  // buying nothing but the Escape-ownership problem #1208 had to solve.
+  //
+  // PAGES rather than an expanding section, which is the owner's call
+  // and the right one: the crop stage is the tall element on this
+  // surface, and a section that expands inside a page which also
+  // carries name, description, visibility and custom fields is the
+  // cramped-modal complaint arriving by a different route. One page at
+  // a time gives the stage the whole panel — the only shape that works
+  // at 390px without cramming.
+  let page = $state<'details' | 'cover'>('details');
+  /** Which slot page 2 is showing. TWO VISITS WITH A DIFFERENT
+   *  PARAMETER, not two components: the picker, the marquee, the zoom
+   *  control and the upload arm are one block, and this is the only
+   *  thing they disagree about. */
+  let coverSlot = $state<CoverSlot>('collection');
+
+  function openCoverPage(slot: CoverSlot) {
+    coverSlot = slot;
+    page = 'cover';
+  }
+
+  /** Escape, the backdrop and the header's X all arrive here.
+   *
+   *  ON PAGE 2 THEY GO BACK, NOT OUT. That is what a paged sheet does
+   *  everywhere else, and it is also the safe direction: page 2 holds
+   *  unsaved framing work, and a dismiss gesture that discards it is the
+   *  keystroke #1208 was fixing in the stacked version. The second press
+   *  closes the dialog, so the two-press path out is unchanged from the
+   *  curator's point of view — the difference is that there is now one
+   *  dialog answering both presses instead of two racing for one.
+   *
+   *  The backdrop and the X take the same route deliberately: three
+   *  gestures that mean "dismiss this" should not disagree about how far
+   *  back "this" goes. */
+  function requestClose() {
+    if (page === 'cover') {
+      page = 'details';
+      return;
+    }
+    onclose();
+  }
 
   $effect(() => {
     if (open) {
@@ -141,48 +204,75 @@
       baselineUpdatedAt = collection.updated_at;
       coverAssetId = collection.cover_asset_id ?? null;
       featuredCoverAssetId = collection.featured_cover_asset_id ?? null;
-      focalX = collection.featured_cover_focal_x ?? null;
-      focalY = collection.featured_cover_focal_y ?? null;
-      coverFocalX = collection.cover_focal_x ?? null;
-      coverFocalY = collection.cover_focal_y ?? null;
       // `?? null` and NOT `|| null`: a stored zoom of 1 is a real value
       // — "framed, and the answer was the fit" — and truthiness would
       // read it as unset, silently turning an explicit choice into a
       // clear on the next save. Same trap #1081 closed on this table.
-      zoom = collection.featured_cover_zoom ?? null;
-      coverZoom = collection.cover_zoom ?? null;
+      framing = {
+        featured: {
+          x: collection.featured_cover_focal_x ?? null,
+          y: collection.featured_cover_focal_y ?? null,
+          zoom: collection.featured_cover_zoom ?? null,
+        },
+        collection: {
+          x: collection.cover_focal_x ?? null,
+          y: collection.cover_focal_y ?? null,
+          zoom: collection.cover_zoom ?? null,
+        },
+      };
+      // ⚠️ `page` IS NOT RESET HERE, and that is deliberate rather than
+      // an omission. This effect re-seeds whenever the `collection` prop
+      // changes identity, not only when the dialog opens — so a reset in
+      // this branch snaps the curator back to page 1 mid-edit if
+      // anything upstream refetches the row. Driven, not reasoned about:
+      // the 390px spec passed on its own and failed under the full
+      // parallel suite, where the refetch had time to land between two
+      // assertions, and the symptom was a picker that was in the DOM
+      // with a zero-sized box.
+      //
+      // The `else` branch below resets it on CLOSE instead, which gives
+      // the same guarantee — every open starts on page 1 — from an edge
+      // that fires once. It is also what lets `focusCover` open the
+      // dialog straight onto the cover page without the seed stealing it
+      // back.
       error = null;
       conflict = null;
       focusCoverHandled = false;
       previewLadder.init();
       void loadCoverChoices(collection.id);
     } else {
-      // A dialog raised from this one must not outlive it. Left open,
-      // it would sit on the modal stack after its host had gone and
-      // swallow the next Escape.
-      coverEditorOpen = false;
+      // Closed: back to page 1, so the next open starts where every
+      // open starts. There is no second dialog to tear down any more —
+      // that clean-up existed because a nested `<dialog>` left open
+      // would sit on the modal stack after its host had gone and
+      // swallow the next Escape (#1208). One dialog, one owner, and
+      // the page is just state.
+      page = 'details';
     }
   });
 
-  // `focusCover` (the More-actions "Set cover" entry) opens the EDITOR,
-  // not a scroll position (#1207). It used to scroll the form to a
-  // picker that lived in the modal; the picker is now its own dialog,
-  // and the entry point that says "set cover" should land on the
-  // surface that sets covers rather than on the summary of what is
-  // already set.
+  // `focusCover` (the More-actions "Set cover" entry) opens the dialog
+  // ON THE COVER PAGE (#1207, re-shaped by #1213). It used to scroll the
+  // form to a picker; the entry point that says "set cover" should land
+  // on the surface that sets covers rather than on the summary of what
+  // is already set.
+  //
+  // The COLLECTION slot, because that is the cover a collection has:
+  // the featured one is a refinement for a strip the collection may
+  // never appear on, and it is one Back and one click away.
   //
   // Deferred to after the choices have loaded, for the reason the
-  // scroll was: opening the editor over an empty grid shows a stage
+  // scroll was: opening the cover page over an empty grid shows a stage
   // with no pictures for as long as the fetch takes, which reads as
   // "this collection has no covers to choose".
-  // The guard is what makes it open ONCE. Without it the editor
-  // reopens on the curator's face every time `coverLoading` settles,
-  // which includes the moment they close it after a reload.
+  // The guard is what makes it happen ONCE. Without it the page jumps
+  // back under the curator every time `coverLoading` settles, which
+  // includes the moment they press Back.
   let focusCoverHandled = $state(false);
   $effect(() => {
     if (open && focusCover && !coverLoading && !focusCoverHandled) {
       focusCoverHandled = true;
-      coverEditorOpen = true;
+      openCoverPage('collection');
     }
   });
 
@@ -258,7 +348,20 @@
   // is judging a crop by; the editor, which IS judging one, loads what
   // the strip loads. Different questions, different sources, and the
   // difference is stated here so a later edit does not "unify" them.
-  const summaryPlacement = $derived(coverPlacement(focalX, focalY, zoom));
+  const summaryPlacement = $derived(
+    coverPlacement(framing.featured.x, framing.featured.y, framing.featured.zoom),
+  );
+
+  /** The viewport width, tracked so the cover page can withhold the
+   *  two-dimensional crop stage below CROP_STAGE_MIN_WIDTH.
+   *
+   *  Measured here rather than answered with a CSS media query because
+   *  the decision is not "lay this out differently", it is "do not
+   *  render this control" — a `hidden` stage would still be in the DOM,
+   *  still loading its picture, and still reachable by a screen reader
+   *  and by the tests, which is precisely the confusion this is meant
+   *  to remove. `bind:innerWidth` keeps it live through a rotation. */
+  let viewportWidth = $state(1024);
 
   async function submit() {
     if (!name.trim() || submitting) return;
@@ -298,31 +401,34 @@
               ? { clear_featured_cover: true }
               : {}
             : { featured_cover_asset_id: featuredCoverAssetId }),
-          ...(focalX === null || focalY === null
+          ...(framing.featured.x === null || framing.featured.y === null
             ? collection.featured_cover_focal_x != null
               ? { clear_featured_cover_focal: true }
               : {}
-            : { featured_cover_focal_x: focalX, featured_cover_focal_y: focalY }),
-          ...(coverFocalX === null || coverFocalY === null
+            : {
+                featured_cover_focal_x: framing.featured.x,
+                featured_cover_focal_y: framing.featured.y,
+              }),
+          ...(framing.collection.x === null || framing.collection.y === null
             ? collection.cover_focal_x != null
               ? { clear_cover_focal: true }
               : {}
-            : { cover_focal_x: coverFocalX, cover_focal_y: coverFocalY }),
+            : { cover_focal_x: framing.collection.x, cover_focal_y: framing.collection.y }),
           // #1212 — two more tri-states, and every test here is
           // `=== null` / `!= null` rather than truthiness. A zoom of 1
           // is a meaningful stored value that happens to render like
           // the fit, so `zoom ? … : …` would send a clear for a value
           // the curator deliberately chose.
-          ...(zoom === null
+          ...(framing.featured.zoom === null
             ? collection.featured_cover_zoom != null
               ? { clear_featured_cover_zoom: true }
               : {}
-            : { featured_cover_zoom: zoom }),
-          ...(coverZoom === null
+            : { featured_cover_zoom: framing.featured.zoom }),
+          ...(framing.collection.zoom === null
             ? collection.cover_zoom != null
               ? { clear_cover_zoom: true }
               : {}
-            : { cover_zoom: coverZoom }),
+            : { cover_zoom: framing.collection.zoom }),
         },
       });
       if (response.status === 409) {
@@ -359,13 +465,59 @@
      picker and the Save button were never on screen together. The width
      buys a two-column split at `md`, which is what actually fixes it:
      the picker sits beside the text fields instead of below them. -->
-<Modal title={t('collections.edit_title')} {open} {onclose} panelClass="max-w-4xl">
+<svelte:window bind:innerWidth={viewportWidth} />
+
+<!-- ONE DIALOG, TWO PAGES (#1213).
+     The title and the width follow the page: page 2 is the crop
+     surface and it gets the panel #1207 needed a second `<dialog>` to
+     obtain. `max-w-[min(96rem,95vw)]` rather than a Tailwind size step
+     because "big enough to judge a picture by" is a proportion of the
+     screen — `max-w-7xl` on a 4k display is the cramped modal again
+     with more whitespace around it.
+
+     `onclose` is `requestClose`, so Escape, the backdrop and the header
+     X all step BACK from page 2 and only close from page 1. -->
+<Modal
+  title={page === 'cover'
+    ? coverSlot === 'featured'
+      ? t('collections.cover_editor_featured_heading')
+      : t('collections.cover_editor_cover_heading')
+    : t('collections.edit_title')}
+  {open}
+  onclose={requestClose}
+  panelClass={page === 'cover' ? 'max-w-[min(96rem,95vw)]' : 'max-w-4xl'}
+>
   <!-- The BODY scrolls, not the page behind it. A modal that grows past
        the viewport pushes its own footer out of reach, and this one can
        grow: `CollectionFieldsSection` renders however many custom fields
        the instance defines. 70vh leaves the header and footer visible at
-       every height the app targets. -->
-  <div class="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+       every height the app targets — 80vh on the cover page, where the
+       tall element is the point.
+
+       ⚠️ BOTH PAGES ARE HIDDEN, NOT UNMOUNTED, and that is the mechanism
+       that makes Back lossless. A pending cover choice, a dragged focal
+       and a zoom all live in THIS component and would survive either
+       way — but the cover page's picker state does not: its source tab,
+       its search text and its results belong to the page, and a paged
+       modal that makes the curator re-run their search every time they
+       glance at the other slot is worse than the stack it replaces.
+       Driven, not assumed: unmounting the inactive page passed every
+       other assertion in the spec and failed exactly that one.
+
+       Hoisting the picker state up here was the alternative and was
+       rejected: it would move a search box's scratch state into the
+       component that owns the collection, to serve a lifetime question
+       that `hidden` answers directly.
+
+       `hidden` is `display: none`, so the inert page is out of the tab
+       order and out of the accessibility tree — not a visual trick. Its
+       one cost is that the cover page's stage fetches its picture when
+       the dialog opens rather than when page 2 is first shown, which is
+       one request for a picture the summary chip is already showing,
+       and it makes the first visit instant. -->
+  <div class="space-y-4 overflow-y-auto pr-1"
+       style="max-height: {page === 'cover' ? 80 : 70}vh">
+    <div class:hidden={page !== 'details'} data-testid="collection-edit-details-page">
     {#if error}
       <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
         {error}
@@ -451,18 +603,35 @@
         <legend class="mb-1 block text-xs font-medium text-fg-muted">{t('collections.cover')}</legend>
         <p class="mb-2 text-xs text-fg-muted">{t('collections.cover_hint')}</p>
 
+        <!-- THE THUMBNAILS ARE THE DOORS (#1213). Each chip is the
+             button that opens page 2 for its own slot, so "which cover
+             am I editing" is answered by the thing you clicked rather
+             than by a control you have to find afterwards. The separate
+             "Edit covers" button that used to sit beside them is gone:
+             it opened a dialog containing both slots, which is the shape
+             this replaced. -->
         <div class="flex flex-wrap items-start gap-4 rounded border border-border bg-surface p-3">
           <!-- The featured chip is drawn at the STRIP's aspect with the
                strip's own object-position, so the summary answers "what
                did my positioning do" without opening anything. A square
                chip here would have hidden the very setting the editor
                exists to make. -->
-          <figure class="w-32">
-            <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+          <!-- The featured chip is drawn at the STRIP's aspect with the
+               strip's own placement, so the summary answers "what did
+               my framing do" without opening anything. A square chip
+               here would have hidden the very setting page 2 exists to
+               make. -->
+          <button
+            type="button"
+            onclick={() => openCoverPage('featured')}
+            data-testid="collection-cover-edit-featured"
+            class="w-32 rounded text-left focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          >
+            <span class="mb-1 block text-[10px] uppercase tracking-wide text-fg-muted">
               {t('collections.cover_summary_featured')}
-            </figcaption>
-            <div class="relative overflow-hidden rounded border border-border bg-surface-elevated"
-                 style="aspect-ratio: 890 / 500">
+            </span>
+            <span class="relative block overflow-hidden rounded border border-border bg-surface-elevated hover:border-border-strong"
+                  style="aspect-ratio: 890 / 500">
               {#if featuredEffectiveId}
                 <img
                   src={coverUrl(featuredEffectiveId)}
@@ -472,43 +641,74 @@
                   style={summaryPlacement}
                 />
               {:else}
-                <div class="flex h-full items-center justify-center text-[10px] text-fg-muted">
+                <span class="flex h-full items-center justify-center text-[10px] text-fg-muted">
                   {t('collections.cover_summary_none')}
-                </div>
+                </span>
               {/if}
-            </div>
-          </figure>
+            </span>
+          </button>
 
-          <figure class="w-20">
-            <figcaption class="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+          <button
+            type="button"
+            onclick={() => openCoverPage('collection')}
+            data-testid="collection-cover-edit-button"
+            class="w-20 rounded text-left focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+          >
+            <span class="mb-1 block text-[10px] uppercase tracking-wide text-fg-muted">
               {t('collections.cover_summary_cover')}
-            </figcaption>
-            <div class="aspect-square overflow-hidden rounded border border-border bg-surface-elevated">
+            </span>
+            <span class="block aspect-square overflow-hidden rounded border border-border bg-surface-elevated hover:border-border-strong">
               {#if coverAssetId}
                 <img src={coverUrl(coverAssetId)} alt="" data-testid="cover-summary-collection"
                      class="h-full w-full object-cover" />
               {:else}
-                <div class="flex h-full items-center justify-center text-center text-[10px] text-fg-muted">
+                <span class="flex h-full items-center justify-center text-center text-[10px] text-fg-muted">
                   {t('collections.cover_summary_none')}
-                </div>
+                </span>
               {/if}
-            </div>
-          </figure>
-
-          <button
-            type="button"
-            onclick={() => (coverEditorOpen = true)}
-            data-testid="collection-cover-edit-button"
-            class="rounded border border-border-strong bg-surface-elevated px-3 py-1.5 text-sm font-medium hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
-          >
-            {t('collections.cover_editor_open')}
+            </span>
           </button>
         </div>
       </fieldset>
+      </div>
+    </div>
+
+    <div class:hidden={page !== 'cover'} data-testid="collection-edit-cover-page">
+      <CollectionCoverEditor
+        {coverSlot}
+        onback={() => (page = 'details')}
+        choices={coverChoices}
+        loading={coverLoading}
+        collectionVisibility={visibility}
+        bind:coverAssetId
+        bind:featuredCoverAssetId
+        {framing}
+        {viewportWidth}
+      />
     </div>
   </div>
 
   {#snippet footer()}
+    <!-- BACK sits on the left of the action row, away from Cancel and
+         Save, because it is a NAVIGATION and they are COMMITS. Its
+         absence on page 1 is what tells the curator where they are. -->
+    {#if page === 'cover'}
+      <button
+        type="button"
+        onclick={() => (page = 'details')}
+        data-testid="collection-cover-back"
+        class="mr-auto rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
+      >
+        {t('common.back')}
+      </button>
+    {/if}
+    <!-- Cancel and Save are on BOTH pages. One dialog means one commit:
+         Save applies the name, the description, the visibility and both
+         slots' covers and framing in the single PATCH, wherever the
+         curator happens to be standing when they decide they are done.
+         Making them walk back to page 1 to save would be the surface
+         asking them to remember which page owns their work — which is
+         exactly the confusion the two dialogs caused. -->
     <button
       type="button"
       onclick={onclose}
@@ -526,30 +726,3 @@
     </button>
   {/snippet}
 </Modal>
-
-<!-- Declared OUTSIDE the form modal rather than nested inside its body.
-     Both portal to the same place, so the DOM is identical either way —
-     but a dialog declared inside the scrolling body of another dialog
-     is a dialog whose lifetime is tangled with a scroll container, and
-     the one thing this surface must not do is disappear mid-drag.
-
-     Escape steps back exactly one level: Modal only answers the key
-     when it is on top of the shared stack (see modalStack.ts), which
-     this is the first surface to need. Everything it edits is bound
-     back to the state above, so closing it commits nothing and Cancel
-     on the form still discards the lot. -->
-<CollectionCoverEditor
-  open={coverEditorOpen}
-  onclose={() => (coverEditorOpen = false)}
-  choices={coverChoices}
-  loading={coverLoading}
-  collectionVisibility={visibility}
-  bind:coverAssetId
-  bind:featuredCoverAssetId
-  bind:focalX
-  bind:focalY
-  bind:coverFocalX
-  bind:coverFocalY
-  bind:zoom
-  bind:coverZoom
-/>

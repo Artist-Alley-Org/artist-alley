@@ -36,6 +36,73 @@ export const CARD_ASPECT = 890 / 500;
  *  and for a collection cover that thing is this tile. */
 export const COLLECTION_CARD_ASPECT = 4 / 3;
 
+/** The two cover slots a collection has (#1213).
+ *
+ *  Named here, beside the two aspects, because the SLOT and its
+ *  DESTINATION SHAPE are the same fact: `featured` is the rail's
+ *  890:500 card and `collection` is the hub's 4:3 tile, and every other
+ *  difference between the two — which column stores the focal pair,
+ *  which stores the zoom, which picture the picker writes — follows
+ *  from that. The cover editor is one page rendered twice with this as
+ *  its parameter, so the type is what stops "the two slots" being two
+ *  copies of a surface.
+ */
+export type CoverSlot = 'featured' | 'collection';
+
+/** Each slot's destination aspect, so a caller parameterised by slot
+ *  never re-decides which constant it wanted. */
+export const COVER_SLOT_ASPECT: Record<CoverSlot, number> = {
+  featured: CARD_ASPECT,
+  collection: COLLECTION_CARD_ASPECT,
+};
+
+/** THE WIDTH BELOW WHICH THE CROP STAGE IS NOT OFFERED (#1213).
+ *
+ *  MEASURED, NOT CHOSEN. The stage's picture is
+ *  `width: clamp(17rem, 40vw, 38rem)` capped by the height budget, and
+ *  driving a 2:1 cover through a ladder of viewport widths gives:
+ *
+ *      viewport   stage px   marquee short side at max zoom
+ *        320      209x105                26
+ *        390      272x136                34
+ *        480      272x136                34
+ *        600      272x136                34
+ *        680      272x136                34
+ *        720      288x144                36
+ *        768      307x154                38
+ *        900      360x180                45
+ *       1280      512x256                64
+ *
+ *  The flat run is the finding. From 390 to 680 the `17rem` floor is
+ *  what binds, so 290px of extra screen buys ZERO extra control — the
+ *  stage is frozen at its minimum while the dialog around it keeps
+ *  growing. 680 is where `40vw` overtakes the floor and the stage starts
+ *  scaling with the screen again, and 768 is the first standard step
+ *  above it — the same `md` the edit modal already uses to decide it has
+ *  two columns' worth of room, rather than a bespoke number a later edit
+ *  would forget to keep in step.
+ *
+ *  The grab target is the other half of the same measurement. At the
+ *  floor the marquee's short side at maximum zoom is 34px, under the
+ *  44px comfortable target (WCAG 2.5.5), and at 320px it is 26px —
+ *  barely over the 24px minimum (WCAG 2.5.8). It clears 44px at 900px
+ *  of viewport, which is above any phone.
+ *
+ *  ⚠️ WHAT IS WITHHELD IS ONLY THE TWO-DIMENSIONAL PART. WCAG 2.2 SC
+ *  1.4.10 (Reflow) requires content to reflow to 320px EXCEPT "parts of
+ *  the content which require two-dimensional layout for usage or
+ *  meaning", and the criterion's own examples name interfaces that must
+ *  keep toolbars in view while manipulating content. Dragging a marquee
+ *  across a picture while watching a live preview of the result is
+ *  squarely that. What the exemption does NOT cover is switching off
+ *  unrelated functionality, so the source switch, the search, the
+ *  upload and the choice itself all stay: a narrow screen can still set
+ *  or replace either cover. It renders CENTRED, which is the
+ *  null-focal/null-zoom behaviour every collection had before #1207 and
+ *  needs no separate code path.
+ */
+export const CROP_STAGE_MIN_WIDTH = 768;
+
 /** How much of the picture the card actually shows, per axis, as a
  *  fraction in (0, 1].
  *

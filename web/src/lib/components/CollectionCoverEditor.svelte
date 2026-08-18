@@ -1,33 +1,49 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // The cover editor (#1207).
+  // PAGE 2 of the collection edit modal: one cover slot, in full
+  // (#1207, re-shaped by #1213).
   //
-  // Its own near-full-viewport dialog, raised from the collection edit
-  // modal, because the owner's finding was that the cover surface "is
-  // too small and I can't really see how the cover images will be
-  // cropped". Cropping is a judgement about a picture; making that
-  // judgement in a 200px thumbnail is the defect, and no amount of
-  // re-laying a shared modal fixes it while the picture stays small.
+  // WHY THE PICTURE NEEDS ROOM. #1207's finding was that the cover
+  // surface "is too small and I can't really see how the cover images
+  // will be cropped". Cropping is a judgement about a picture, and
+  // making it in a 200px thumbnail is the defect.
   //
-  // TWO SLOTS, because the second finding was that a collection card
-  // and a featured-rail card want different pictures:
+  // ⚠️ IT IS NO LONGER A DIALOG. #1207 got that room by raising a
+  // second `<dialog>` over the edit modal, which the owner then
+  // questioned directly — "why is edit collection and edit collection
+  // cover two different modals that overlap. Why not one modal?" — and
+  // the honest answer is that the stack was a workaround for a width
+  // that has since changed: this modal was `max-w-lg` when #1207 was
+  // written and #1195 widened it to `max-w-4xl`. So this is now a PAGE
+  // of that one dialog, and it gets the whole panel while it is on
+  // screen. Everything the second dialog was for survives; the second
+  // `<dialog>`, its portal-over-portal and its share of #1208's Escape
+  // race do not.
   //
-  //   1. the collection cover  — every collection card, roughly square
-  //   2. the featured cover    — the strip only, locked to 890:500
+  // ONE SLOT PER VISIT, and that is what makes it one block instead of
+  // two. A collection cover and a featured-rail cover want different
+  // pictures (#1200) and different destination shapes, but they want
+  // the SAME surface: pick, crop, position, zoom. The `coverSlot` prop is
+  // the only thing they disagree about, and everything derived from it
+  // — the aspect, which asset id is being written, which framing triple
+  // is bound, which picker state is in play — is resolved once, below.
+  // Two copies of this markup is how the two slots drifted apart the
+  // first time (one had a "same as cover" tile where the other had "use
+  // mosaic", and nothing else differed).
   //
-  // Slot 2 DEFAULTS TO SLOT 1 rather than starting empty. "No separate
-  // choice" is the common case and it is also what the rail's fallback
-  // chain does, so the editor shows the picture the rail would actually
-  // use instead of an empty box that means "look elsewhere".
+  // THE FEATURED SLOT DEFAULTS TO THE COLLECTION COVER rather than
+  // starting empty. "No separate choice" is the common case and it is
+  // also what the rail's fallback chain does, so the editor shows the
+  // picture the rail would actually use instead of an empty box that
+  // means "look elsewhere".
   //
-  // IT OWNS NO SAVE. Every value here is a bindable prop belonging to
-  // EditCollectionModal, which has the collection, the concurrency
-  // baseline and the single PATCH. A dialog that saved its own two
-  // fields would give the curator two Save buttons with different
-  // failure modes and two chances to hit a 409 — and would need its own
-  // copy of the tri-state clear discipline. Closing this is "done
-  // looking", not "committed".
+  // IT OWNS NO SAVE. Every value here belongs to EditCollectionModal,
+  // which has the collection, the concurrency baseline and the single
+  // PATCH. One dialog now means one save, applying both pages in one
+  // action — a page that wrote its own two fields would give the
+  // curator two commits with different failure modes and two chances to
+  // hit a 409.
 
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
@@ -35,9 +51,12 @@
   import { previewLadder } from '$stores/previewLadder.svelte';
   import { DEFAULT_ASSET_TYPE } from '$stores/upload.svelte';
   import { putStorageObject } from '$lib/util/storageUpload';
-  import Modal from './Modal.svelte';
   import CoverCropStage from './CoverCropStage.svelte';
-  import { CARD_ASPECT, COLLECTION_CARD_ASPECT } from '$lib/util/featuredCrop';
+  import {
+    COVER_SLOT_ASPECT,
+    CROP_STAGE_MIN_WIDTH,
+    type CoverSlot,
+  } from '$lib/util/featuredCrop';
 
   /** One choosable picture. Mirrors EditCollectionModal's CoverChoice —
    *  the same rows, handed down rather than re-fetched, so both slots
@@ -50,8 +69,17 @@
   }
 
   interface Props {
-    open: boolean;
-    onclose: () => void;
+    /** WHICH SLOT THIS VISIT IS FOR. The page's single parameter.
+     *  Named `coverSlot` rather than `slot`: `slot` is a global HTML
+     *  attribute and was Svelte 4's own element name, and it is also
+     *  what the picker's per-slot state was called — three meanings for
+     *  one identifier on one surface is how the wrong one gets read. */
+    coverSlot: CoverSlot;
+    /** Step back to page 1. The pending choice, the dragged focal and
+     *  the zoom all live above this component, so going back keeps
+     *  them — which is the difference between a paged modal and a
+     *  wizard that forgets. */
+    onback: () => void;
     choices: CoverChoice[];
     loading: boolean;
     /** The collection's own tier. It decides what an uploaded cover's
@@ -62,37 +90,34 @@
     coverAssetId: string | null;
     /** The featured-rail cover, null for "same as the collection cover". */
     featuredCoverAssetId: string | null;
-    /** The FEATURED card's focal pair, null for centre. Always moved
-     *  together. */
-    focalX: number | null;
-    focalY: number | null;
-    /** The COLLECTION cover's focal pair, on the square destination —
-     *  a second pair because a fraction is only meaningful against a
-     *  known shape, and 890:500 and 1:1 are different shapes. */
-    coverFocalX: number | null;
-    coverFocalY: number | null;
-    /** How far each slot's crop is tightened, null for the fit (#1212).
-     *  One per slot for the same reason there are two focal pairs: the
-     *  amount of tightening that frames a subject in an 890:500 band is
-     *  not the amount that frames it in a 4:3 tile. */
-    zoom: number | null;
-    coverZoom: number | null;
+    /** BOTH SLOTS' framing, keyed by slot, owned above and mutated in
+     *  place through the deep `$state` proxy.
+     *
+     *  Keyed rather than passed one slot at a time so the binding target
+     *  can be written once — `framing[coverSlot].x` — instead of the page
+     *  needing a differently-named prop per visit, which is exactly the
+     *  thing that would have forced two copies of the markup.
+     *
+     *  A focal pair is null for centre and a zoom is null for the fit;
+     *  both stay distinct from the neutral numbers (migrations 00055
+     *  and 00056), which is what makes Reset a clear. */
+    framing: Record<CoverSlot, { x: number | null; y: number | null; zoom: number | null }>;
+    /** Viewport width, measured by the host. Below CROP_STAGE_MIN_WIDTH
+     *  the two-dimensional half of this page is withheld — see the
+     *  stage block in the markup for the reflow argument. */
+    viewportWidth: number;
   }
 
   let {
-    open,
-    onclose,
+    coverSlot,
+    onback,
     choices,
     loading,
     collectionVisibility,
     coverAssetId = $bindable(),
     featuredCoverAssetId = $bindable(),
-    focalX = $bindable(),
-    focalY = $bindable(),
-    coverFocalX = $bindable(),
-    coverFocalY = $bindable(),
-    zoom = $bindable(),
-    coverZoom = $bindable(),
+    framing,
+    viewportWidth,
   }: Props = $props();
 
   // ── Which picture each slot is showing ─────────────────────────────
@@ -103,6 +128,27 @@
   // the editor would be a second opinion about the rail's own rule.
   const featuredEffectiveId = $derived(featuredCoverAssetId ?? coverAssetId);
   const featuredIsInherited = $derived(featuredCoverAssetId === null && coverAssetId !== null);
+
+  // ── EVERYTHING THE SLOT DECIDES, RESOLVED ONCE (#1213) ────────────
+  //
+  // The whole difference between the two visits, in one place, so the
+  // markup below reads as one surface with parameters rather than as
+  // two surfaces that happen to look alike. `isFeatured` appears in
+  // exactly three places past this point — the inherited hint, the
+  // "back to the collection cover" action and which id the picker
+  // writes — and each is a real product difference rather than a
+  // divergence to tidy away.
+  const isFeatured = $derived(coverSlot === 'featured');
+  const aspect = $derived(COVER_SLOT_ASPECT[coverSlot]);
+  /** The id the PICKER is choosing for. Null on the featured slot means
+   *  "inherit the collection cover", which is a real selection. */
+  const selectedId = $derived(isFeatured ? featuredCoverAssetId : coverAssetId);
+  /** The id actually SHOWN, after the featured slot's fallback. */
+  const shownId = $derived(isFeatured ? featuredEffectiveId : coverAssetId);
+  function assign(id: string | null) {
+    if (isFeatured) featuredCoverAssetId = id;
+    else coverAssetId = id;
+  }
 
   function choiceFor(assetId: string | null): CoverChoice | null {
     if (assetId === null) return null;
@@ -206,10 +252,8 @@
     return previewLadder.srcsetFor(assetId) ?? undefined;
   }
 
-  const featuredSrc = $derived(srcFor(featuredEffectiveId));
-  const featuredSrcset = $derived(srcsetFor(featuredEffectiveId));
-  const coverSrc = $derived(srcFor(coverAssetId));
-  const coverSrcset = $derived(srcsetFor(coverAssetId));
+  const stageSrc = $derived(srcFor(shownId));
+  const stageSrcset = $derived(srcsetFor(shownId));
 
   /** A cover chosen from outside the member list still has to show as
    *  the current selection, or an unrelated edit would look like it had
@@ -276,10 +320,10 @@
   const featuredPicker = $state<SlotPicker>(newSlotPicker());
   const coverPicker = $state<SlotPicker>(newSlotPicker());
 
-  async function searchMine(slot: SlotPicker) {
+  async function searchMine(pick: SlotPicker) {
     const me = auth.user?.ref;
     if (me == null) return;
-    slot.searching = true;
+    pick.searching = true;
     try {
       const { data } = await api.GET('/assets', {
         params: {
@@ -290,18 +334,18 @@
             // plainto_tsquery, and an empty query there matches
             // nothing — so sending it would make "show me my files"
             // return an empty grid and read as "you have no files".
-            ...(slot.query.trim() ? { q: slot.query.trim() } : {}),
+            ...(pick.query.trim() ? { q: pick.query.trim() } : {}),
             limit: 48,
           },
         },
       });
-      slot.results = ((data?.items ?? []) as unknown as MineResult[]) ?? [];
+      pick.results = ((data?.items ?? []) as unknown as MineResult[]) ?? [];
     } catch {
       // A search that failed must not take the dialog down with it —
       // the member grid and the marquee are still usable.
-      slot.results = [];
+      pick.results = [];
     } finally {
-      slot.searching = false;
+      pick.searching = false;
     }
   }
 
@@ -344,9 +388,9 @@
    *  right for a queue whose files are on their way to becoming posts
    *  and wrong for a picture whose entire purpose is to be looked at.
    */
-  async function uploadAndChoose(slot: SlotPicker, file: File, assign: (id: string) => void) {
-    slot.uploading = true;
-    slot.uploadError = null;
+  async function uploadAndChoose(pick: SlotPicker, file: File, choose: (id: string) => void) {
+    pick.uploading = true;
+    pick.uploadError = null;
     try {
       const { hash } = await putStorageObject(file, {
         networkMessage: t('upload.err_network'),
@@ -363,14 +407,14 @@
         },
       });
       if (error || !data) {
-        slot.uploadError =
+        pick.uploadError =
           (error as { error?: string } | undefined)?.error ?? t('collections.cover_editor_upload_failed');
         return;
       }
-      assign(data.id);
+      choose(data.id);
       // Straight back to the member grid: the picture is chosen, and
       // leaving the upload pane open would imply there is another step.
-      slot.source = 'members';
+      pick.source = 'members';
       // Renditions are produced asynchronously, so the picture the
       // curator just chose does not exist yet and neither does its
       // ladder. Poll until it does, so the stage stops saying "still
@@ -379,9 +423,9 @@
       // over a `col` square while the rail crops the original.
       void awaitRenditions(data.id);
     } catch (e) {
-      slot.uploadError = e instanceof Error ? e.message : t('collections.cover_editor_upload_failed');
+      pick.uploadError = e instanceof Error ? e.message : t('collections.cover_editor_upload_failed');
     } finally {
-      slot.uploading = false;
+      pick.uploading = false;
     }
   }
 
@@ -416,14 +460,14 @@
     }
   }
 
-  function onFilePicked(e: Event, slot: SlotPicker, assign: (id: string) => void) {
+  function onFilePicked(e: Event, pick: SlotPicker, choose: (id: string) => void) {
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     // Cleared so choosing the SAME file twice fires `change` again —
     // an input that keeps its value is silent on a re-pick, which reads
     // as "the upload button stopped working".
     input.value = '';
-    if (file) void uploadAndChoose(slot, file, assign);
+    if (file) void uploadAndChoose(pick, file, choose);
   }
 
   /** Would a picked asset be invisible to some of the collection's
@@ -444,10 +488,10 @@
    *  Nothing is BLOCKED by this. The rail's per-rung fallback is the
    *  safety property and it is unchanged — this only makes the fallback
    *  explicable instead of mysterious. */
-  function narrowerThanCollection(assetId: string | null, slot: SlotPicker): boolean {
+  function narrowerThanCollection(assetId: string | null, pick: SlotPicker): boolean {
     if (assetId === null || collectionVisibility !== 'public') return false;
     const found =
-      slot.results.find((r) => r.id === assetId) ??
+      pick.results.find((r) => r.id === assetId) ??
       // A member row carries no status, so a member picked from the
       // first grid produces no warning either way. That is the honest
       // answer, not a silent pass: the check has nothing to read.
@@ -455,9 +499,17 @@
     return found !== null && found.status !== undefined && found.status !== 'active';
   }
 
-  const featuredWarning = $derived(narrowerThanCollection(featuredCoverAssetId, featuredPicker));
-  const coverWarning = $derived(narrowerThanCollection(coverAssetId, coverPicker));
+  /** The picker state for THIS visit. Declared here rather than beside
+   *  the other slot-derived values because the two picker objects are
+   *  themselves declared further down — and they are per-slot so that a
+   *  curator who searched their files for one cover comes back to that
+   *  search, not to an empty grid, after visiting the other slot. */
+  const activePicker = $derived(isFeatured ? featuredPicker : coverPicker);
 
+  const warning = $derived(narrowerThanCollection(selectedId, activePicker));
+
+  // ── The two-dimensional half, and when it is offered (#1213) ──────
+  const cropOffered = $derived(viewportWidth >= CROP_STAGE_MIN_WIDTH);
 </script>
 
 <!-- ONE picker, rendered twice (#1207/#1074).
@@ -468,9 +520,9 @@
      doubled it again. `assign` is what the two slots actually
      disagree about, so it is the parameter. -->
 {#snippet picker(
-  slot: SlotPicker,
+  pick: SlotPicker,
   selected: string | null,
-  assign: (id: string | null) => void,
+  choose: (id: string | null) => void,
   testidPrefix: string,
   noneLabel: string,
   warn: boolean,
@@ -486,20 +538,20 @@
         <button
           type="button"
           data-testid="{testidPrefix}-source-{key}"
-          aria-pressed={slot.source === key}
+          aria-pressed={pick.source === key}
           onclick={() => {
-            slot.source = key;
+            pick.source = key;
             // The first visit fetches; after that the results are
             // whatever the curator last searched for, which is what
             // they expect to come back to.
-            if (key === 'mine' && slot.results.length === 0 && !slot.searching) {
-              void searchMine(slot);
+            if (key === 'mine' && pick.results.length === 0 && !pick.searching) {
+              void searchMine(pick);
             }
           }}
           class="rounded border px-2 py-1 text-xs"
-          class:border-accent={slot.source === key}
-          class:text-accent={slot.source === key}
-          class:border-border={slot.source !== key}
+          class:border-accent={pick.source === key}
+          class:text-accent={pick.source === key}
+          class:border-border={pick.source !== key}
         >{label}</button>
       {/each}
     </div>
@@ -515,7 +567,7 @@
       </p>
     {/if}
 
-    {#if slot.source === 'upload'}
+    {#if pick.source === 'upload'}
       <div class="rounded border border-border p-3" data-testid="{testidPrefix}-upload-pane">
         <!-- ONE PLAIN SENTENCE about what the upload does, which the
              owner asked for and which is the difference between a
@@ -531,32 +583,32 @@
         <input
           type="file"
           accept="image/*"
-          disabled={slot.uploading}
+          disabled={pick.uploading}
           data-testid="{testidPrefix}-upload-input"
-          onchange={(e) => onFilePicked(e, slot, assign)}
+          onchange={(e) => onFilePicked(e, pick, choose)}
           class="block w-full text-xs file:mr-2 file:rounded file:border file:border-border file:bg-surface file:px-2 file:py-1 file:text-xs"
         />
-        {#if slot.uploading}
+        {#if pick.uploading}
           <p class="mt-2 text-xs text-fg-muted" data-testid="{testidPrefix}-uploading">
             {t('collections.cover_editor_uploading')}
           </p>
         {/if}
-        {#if slot.uploadError}
-          <p role="alert" class="mt-2 text-xs text-danger">{slot.uploadError}</p>
+        {#if pick.uploadError}
+          <p role="alert" class="mt-2 text-xs text-danger">{pick.uploadError}</p>
         {/if}
       </div>
-    {:else if slot.source === 'mine'}
+    {:else if pick.source === 'mine'}
       <div data-testid="{testidPrefix}-mine-pane">
         <form
           class="mb-2 flex gap-2"
           onsubmit={(e) => {
             e.preventDefault();
-            void searchMine(slot);
+            void searchMine(pick);
           }}
         >
           <input
             type="search"
-            bind:value={slot.query}
+            bind:value={pick.query}
             placeholder={t('collections.cover_editor_search_placeholder')}
             data-testid="{testidPrefix}-search-input"
             class="min-w-0 flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
@@ -566,16 +618,16 @@
             class="rounded border border-border px-2 py-1 text-xs hover:bg-surface"
           >{t('common.search')}</button>
         </form>
-        {#if slot.searching}
+        {#if pick.searching}
           <p class="text-xs text-fg-muted">{t('collections.cover_editor_searching')}</p>
-        {:else if slot.results.length === 0}
+        {:else if pick.results.length === 0}
           <p class="text-xs text-fg-muted">{t('collections.cover_editor_mine_empty')}</p>
         {:else}
           <div class="grid max-h-40 grid-cols-6 gap-2 overflow-y-auto rounded border border-border p-1 sm:grid-cols-10">
-            {#each slot.results as r (r.id)}
+            {#each pick.results as r (r.id)}
               <button
                 type="button"
-                onclick={() => assign(r.id)}
+                onclick={() => choose(r.id)}
                 aria-pressed={selected === r.id}
                 title={r.title ?? ''}
                 data-testid="{testidPrefix}-mine-choice"
@@ -597,7 +649,7 @@
            data-testid="{testidPrefix}-cover-choices">
         <button
           type="button"
-          onclick={() => assign(null)}
+          onclick={() => choose(null)}
           aria-pressed={selected === null}
           class="flex aspect-square flex-col items-center justify-center rounded border-2 bg-surface p-1 text-center text-[10px] leading-tight text-fg-muted hover:border-border-strong"
           class:border-accent={selected === null}
@@ -624,7 +676,7 @@
         {#each choices as choice (choice.asset_id)}
           <button
             type="button"
-            onclick={() => assign(choice.asset_id)}
+            onclick={() => choose(choice.asset_id)}
             aria-pressed={selected === choice.asset_id}
             data-testid="{testidPrefix}-cover-choice"
             data-asset-id={choice.asset_id}
@@ -640,156 +692,131 @@
   </div>
 {/snippet}
 
-<!-- Near-full-viewport. The whole point of this dialog is that the
-     picture is big enough to judge, so the width is a viewport
-     proportion rather than a Tailwind size step — `max-w-7xl` on a 4k
-     display is the cramped modal again with more whitespace round it. -->
-<Modal
-  title={t('collections.cover_editor_title')}
-  {open}
-  {onclose}
-  panelClass="max-w-[min(96rem,95vw)]"
+<!-- ONE SLOT, THE WHOLE PANEL (#1213).
+     No `<Modal>` here any more: this is a page of the collection edit
+     dialog, rendered in its body while `page === 'cover'`. The header,
+     the Back button, Cancel and Save all belong to that one dialog, so
+     there is one Escape owner, one focus trap and one commit. -->
+<section
+  aria-labelledby="cover-page-heading"
+  data-testid="collection-cover-editor"
+  data-cover-slot={coverSlot}
 >
-  <div class="max-h-[80vh] space-y-6 overflow-y-auto pr-1" data-testid="collection-cover-editor">
-    <!-- Slot 2 FIRST. It is the one with the work in it — the marquee,
-         the live preview — and it is the reason the curator opened this
-         dialog. The collection cover below it is a straightforward
-         pick, and putting the simple thing first would push the
-         positioning stage under the fold on a laptop. -->
-    <section aria-labelledby="featured-slot-heading" data-testid="featured-cover-slot">
-      <h3 id="featured-slot-heading" class="text-sm font-semibold">
-        {t('collections.cover_editor_featured_heading')}
-      </h3>
-      <p class="mt-0.5 text-xs text-fg-muted">
-        {featuredIsInherited
-          ? t('collections.cover_editor_featured_inherited')
-          : t('collections.cover_editor_featured_hint')}
-      </p>
+  <h3 id="cover-page-heading" class="sr-only">
+    {isFeatured
+      ? t('collections.cover_editor_featured_heading')
+      : t('collections.cover_editor_cover_heading')}
+  </h3>
+  <!-- The hint tells the curator what this page DOES, so it must not
+       promise a drag on a screen that is not offering one — the
+       withheld-crop note below would then be contradicting the line
+       directly above it. Where there is no stage, the hint is the plain
+       "pick a cover" sentence, which is all this page is doing there. -->
+  <p class="text-xs text-fg-muted" data-testid="cover-page-hint">
+    {#if !cropOffered}
+      {t('collections.cover_hint')}
+    {:else if isFeatured}
+      {featuredIsInherited
+        ? t('collections.cover_editor_featured_inherited')
+        : t('collections.cover_editor_featured_hint')}
+    {:else}
+      {coverAssetId === null
+        ? t('collections.cover_hint')
+        : t('collections.cover_editor_cover_crop_hint')}
+    {/if}
+  </p>
 
-      {#if featuredEffectiveId === null || featuredSrc === null}
-        <p class="mt-3 rounded border border-border bg-surface p-3 text-xs text-fg-muted">
-          {t('collections.cover_editor_featured_none')}
-        </p>
-      {:else}
-        <div class="mt-3">
-          <!-- 890:500 — the rail card's locked shape (#1110/#1098). -->
-          <CoverCropStage
-            src={featuredSrc}
-            srcset={featuredSrcset}
-            sizes="(max-width: 640px) 90vw, 55vw"
-            aspect={CARD_ASPECT}
-            bind:focalX
-            bind:focalY
-            bind:zoom
-            testidPrefix="cover-editor"
-            stageAlt={t('collections.cover_editor_stage_alt')}
-            cardAlt={t('collections.cover_editor_card_alt')}
-            cardLabel={t('collections.cover_editor_card_label')}
-          >
-            {#snippet extraActions()}
-              {#if featuredCoverAssetId !== null}
-                <button
-                  type="button"
-                  onclick={() => (featuredCoverAssetId = null)}
-                  data-testid="cover-editor-clear-featured"
-                  class="rounded border border-border px-2 py-1 text-xs hover:bg-surface"
-                >
-                  {t('collections.cover_editor_use_collection_cover')}
-                </button>
-              {/if}
-            {/snippet}
-          </CoverCropStage>
-        </div>
-      {/if}
+  {#if shownId === null || stageSrc === null}
+    <p class="mt-3 rounded border border-border bg-surface p-3 text-xs text-fg-muted"
+       data-testid="cover-page-empty">
+      {isFeatured
+        ? t('collections.cover_editor_featured_none')
+        : t('collections.crop_mosaic_note')}
+    </p>
+  {:else if cropOffered}
+    <div class="mt-3">
+      <!-- The destination's own shape: 890:500 for the rail card
+           (#1110/#1098), 4:3 for the collection tile.
 
-      {@render picker(
-        featuredPicker,
-        featuredCoverAssetId,
-        (id: string | null) => (featuredCoverAssetId = id),
-        'featured',
-        t('collections.cover_editor_same_as_cover'),
-        featuredWarning,
-      )}
-    </section>
-
-    <section aria-labelledby="cover-slot-heading" data-testid="collection-cover-slot"
-             class="border-t border-border pt-5">
-      <h3 id="cover-slot-heading" class="text-sm font-semibold">
-        {t('collections.cover_editor_cover_heading')}
-      </h3>
-      <p class="mt-0.5 text-xs text-fg-muted">
-        {coverAssetId === null
-          ? t('collections.cover_hint')
-          : t('collections.cover_editor_cover_crop_hint')}
-      </p>
-
-      <div class="mt-3 flex items-start gap-4">
-        <!-- 4:3 — CollectionCard's tile, which is the shape a chosen
-             collection cover is actually cropped to on the hub, the
-             profile and search.
-
-             ⚠️ IT LOOKED LIKE A SQUARE, and the correction is the whole
-             lesson. `col` IS a square — `fit: cover` at 320px, a
-             320x320 centre-crop — and it is what every small collection
-             thumbnail is made of, so "lock it to a square" is a very
-             reasonable read of the pipeline. But `col` is a SOURCE, not
-             a destination: the tile that paints it is `aspect-[4/3]`
-             (CollectionCard.svelte), so a curator positioning against a
-             square would have been shown a region the card never
-             displays. A crop marquee locks to the dimensions of the
-             thing that RENDERS it.
-
-             That is also why the card had to change what it fetches —
-             see CollectionCard: a focal point cannot be applied to
-             `col`, whose edges are gone before object-position could
-             act. Two shapes, two stored pairs, and both are real. -->
-        <div class="min-w-0 flex-1">
-          {#if coverAssetId !== null && coverSrc !== null}
-            <CoverCropStage
-              src={coverSrc}
-              srcset={coverSrcset}
-              sizes="(max-width: 640px) 90vw, 40vw"
-              aspect={COLLECTION_CARD_ASPECT}
-              bind:focalX={coverFocalX}
-              bind:focalY={coverFocalY}
-              bind:zoom={coverZoom}
-              testidPrefix="collection-crop"
-              maxHeightVh={32}
-              stageAlt={t('collections.cover_editor_cover_stage_alt')}
-              cardAlt={t('collections.cover_editor_cover_preview_alt')}
-              cardLabel={t('collections.cover_editor_cover_preview_label')}
-            />
-          {:else}
-            <p class="rounded border border-border bg-surface p-3 text-xs text-fg-muted">
-              {t('collections.crop_mosaic_note')}
-            </p>
+           ⚠️ THE COLLECTION TILE LOOKED LIKE A SQUARE, and the
+           correction is the whole lesson. `col` IS a square — `fit:
+           cover` at 320px — and it is what every small collection
+           thumbnail is made of, so "lock it to a square" is a very
+           reasonable read of the pipeline. But `col` is a SOURCE, not a
+           destination: the tile that paints it is `aspect-[4/3]`
+           (CollectionCard.svelte), so a curator positioning against a
+           square would have been shown a region the card never
+           displays. A crop marquee locks to the dimensions of the thing
+           that RENDERS it. -->
+      <CoverCropStage
+        src={stageSrc}
+        srcset={stageSrcset}
+        sizes="(max-width: 1024px) 90vw, 55vw"
+        {aspect}
+        bind:focalX={framing[coverSlot].x}
+        bind:focalY={framing[coverSlot].y}
+        bind:zoom={framing[coverSlot].zoom}
+        testidPrefix={isFeatured ? 'cover-editor' : 'collection-crop'}
+        stageAlt={isFeatured
+          ? t('collections.cover_editor_stage_alt')
+          : t('collections.cover_editor_cover_stage_alt')}
+        cardAlt={isFeatured
+          ? t('collections.cover_editor_card_alt')
+          : t('collections.cover_editor_cover_preview_alt')}
+        cardLabel={isFeatured
+          ? t('collections.cover_editor_card_label')
+          : t('collections.cover_editor_cover_preview_label')}
+      >
+        {#snippet extraActions()}
+          {#if isFeatured && featuredCoverAssetId !== null}
+            <button
+              type="button"
+              onclick={() => (featuredCoverAssetId = null)}
+              data-testid="cover-editor-clear-featured"
+              class="rounded border border-border px-2 py-1 text-xs hover:bg-surface"
+            >
+              {t('collections.cover_editor_use_collection_cover')}
+            </button>
           {/if}
+        {/snippet}
+      </CoverCropStage>
+    </div>
+  {:else}
+    <!-- ⚠️ THE CROP STAGE IS WITHHELD BELOW 768px, AND ONLY THE CROP
+         STAGE.
+         WCAG 2.2 SC 1.4.10 (Reflow) requires content to reflow to 320px
+         EXCEPT "parts of the content which require two-dimensional
+         layout for usage or meaning", and names interfaces that must
+         keep toolbars in view while manipulating content among its
+         examples. Dragging a marquee across a picture while watching a
+         live preview of the result is exactly that. What the exemption
+         does not cover is switching off unrelated functionality, so
+         everything below this line — the source switch, the search, the
+         upload, the choice itself — renders exactly as it does on a
+         desktop.
+         The message NAMES THE LIMITATION rather than saying "use a
+         desktop": what a narrow screen cannot do is position the crop,
+         and the consequence is that the cover is centred, which is the
+         null-focal/null-zoom behaviour every collection had before
+         #1207 and needs no separate code path.
+         ⚠️ AN EXISTING FRAMING IS NOT TOUCHED HERE. `framing` is seeded
+         from the collection and this branch neither reads nor writes
+         it, so a save from a phone re-sends what a desktop set. The
+         opposite — clearing it because the control that edits it is not
+         on screen — would be the surface silently undoing somebody
+         else's work, which is worse than not offering the control. -->
+    <p class="mt-3 rounded border border-border bg-surface p-3 text-xs text-fg-muted"
+       data-testid="cover-page-crop-unavailable">
+      {t('collections.cover_editor_crop_needs_width')}
+    </p>
+  {/if}
 
-          {@render picker(
-            coverPicker,
-            coverAssetId,
-            (id: string | null) => (coverAssetId = id),
-            'collection',
-            t('collections.cover_derived'),
-            coverWarning,
-          )}
-        </div>
-      </div>
-    </section>
-  </div>
-
-  {#snippet footer()}
-    <!-- ONE button, and it says Done rather than Save. Nothing here is
-         written until the form behind this dialog is submitted, and a
-         Save button that only closed a dialog would be a promise this
-         surface cannot keep. -->
-    <button
-      type="button"
-      onclick={onclose}
-      data-testid="cover-editor-done"
-      class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent"
-    >
-      {t('collections.cover_editor_done')}
-    </button>
-  {/snippet}
-</Modal>
+  {@render picker(
+    activePicker,
+    selectedId,
+    assign,
+    isFeatured ? 'featured' : 'collection',
+    isFeatured ? t('collections.cover_editor_same_as_cover') : t('collections.cover_derived'),
+    warning,
+  )}
+</section>
